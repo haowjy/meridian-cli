@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.state import spawn_store
 
@@ -28,7 +28,7 @@ def materialize_fork(
     adapter: SubprocessHarness,
     source_session_id: str,
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     native_store: str | None = None,
 ) -> str:
     """Fork one harness session and record the new session ID on the spawn row.

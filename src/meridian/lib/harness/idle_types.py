@@ -9,7 +9,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 
 COMPACT_SCREEN_NOT_RECOGNIZED = "screen-not-recognized"
@@ -114,7 +114,7 @@ class IdleSensorContext:
     tmux_pane: str | None
     tui_alive: Callable[[], bool]
     spawn_dir: Path
-    spawn_id: SpawnId | None = None
+    spawn_id: RunId | None = None
 
 
 class IdleSensor(Protocol):

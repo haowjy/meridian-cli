@@ -441,19 +441,7 @@ def resolve_transcript_source(
     project_root: Path,
     runtime_root: Path | None,
     deadline: float | None = None,
-    purpose: Literal["display", "capture"] = "display",
 ) -> SessionLogTarget:
-    if purpose == "capture":
-        parsed_capture = parse_ref(ref.strip())
-        if runtime_root is None or file_path or parsed_capture.kind not in {"spawn", "run"}:
-            raise ValueError("Native capture requires an exact local spawn reference")
-        exact_run = parse_ref(ref.strip(), row_key=True)
-        return _resolve_from_spawn_id(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            spawn_id=exact_run,
-            purpose=purpose,
-        )
     if file_path is not None and file_path.strip():
         return _resolve_file_target(file_path)
 
@@ -504,10 +492,26 @@ def resolve_transcript_source(
     )
 
 
+def resolve_capture_source(
+    run_id: RunId,
+    *,
+    project_root: Path,
+    runtime_root: Path,
+) -> SessionLogTarget:
+    """Resolve an already-authoritative run key for native snapshot capture."""
+    return _resolve_from_spawn_id(
+        project_root=project_root,
+        runtime_root=runtime_root,
+        spawn_id=run_id,
+        purpose="capture",
+    )
+
+
 __all__ = [
     "SessionLogTarget",
     "TranscriptSource",
     "native_source_label",
+    "resolve_capture_source",
     "resolve_run_sources",
     "resolve_transcript_source",
 ]

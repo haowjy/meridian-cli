@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -248,6 +249,7 @@ def start_row(
         spawn_id=SpawnId(spawn_id),
         chat_id=spawn_id,
         parent_id=parent_id,
+        parent_run_id=parse_ref(parent_id, row_key=True) if parent_id else None,
         model="test-model",
         agent="test-agent",
         harness=harness.value,

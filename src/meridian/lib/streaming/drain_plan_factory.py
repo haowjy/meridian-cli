@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.streaming.drain_coordinator import DrainPlan
@@ -31,7 +31,7 @@ class SerializedInject(Protocol):
 
     def __call__(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         message: str,
         source: str = "control_socket",
         on_result: Callable[[InjectResult], None] | None = None,
@@ -41,7 +41,7 @@ class SerializedInject(Protocol):
 class DescendantCancellationService(Protocol):
     """Application-service capability needed by Pi tracked-child cleanup."""
 
-    def cancel_descendants(self, root_id: SpawnId | str) -> Awaitable[set[str]]: ...
+    def cancel_descendants(self, root_id: RunId | str) -> Awaitable[set[str]]: ...
 
 
 BuildSpawnApplicationService = Callable[[Path, Path], DescendantCancellationService]
@@ -51,7 +51,7 @@ def build_drain_plan(
     *,
     project_root: Path,
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     receiver: HarnessConnection[Any],
     config: ConnectionConfig,
     emit_event: EmitEvent,
@@ -82,7 +82,7 @@ def build_drain_plan(
     async def _send_pi_done_nudge(message: str) -> None:
         await inject(spawn_id, message, source="pi_done_nudge")
 
-    async def _cancel_descendants(root_id: SpawnId) -> set[str]:
+    async def _cancel_descendants(root_id: RunId) -> set[str]:
         service = build_spawn_application_service(project_root, runtime_root)
         return await service.cancel_descendants(root_id)
 

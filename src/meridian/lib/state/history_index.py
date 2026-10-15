@@ -46,7 +46,7 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.elements import ColumnElement  # noqa: TC002
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
-from meridian.lib.core.refs import parse_ref, spawn_of
+from meridian.lib.core.refs import parse_ref, run_number, spawn_of
 from meridian.lib.core.types import RunId
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
@@ -440,7 +440,7 @@ class HistoryIndex:
         record = SpawnRecord.model_validate_json(location["record_json"])
         parsed = parse_ref(str(record.id))
         stable_spawn_id = spawn_of(record.id)
-        run = parsed.run if parsed.spawn_id is not None else 1
+        run = run_number(record.id) if parsed.spawn_id is not None else 1
         receipt = json.loads(location["receipt_json"]) if location["receipt_json"] else None
         active = record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
         activity = (

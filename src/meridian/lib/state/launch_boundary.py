@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import HarnessSessionId, SpawnId
+from meridian.lib.core.types import HarnessSessionId, RunId
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
@@ -57,17 +57,17 @@ class LaunchBoundarySummary:
     parent_observed_launcher_pid: int | None
 
 
-def launch_boundary_path(runtime_root: Path, spawn_id: SpawnId) -> Path:
+def launch_boundary_path(runtime_root: Path, spawn_id: RunId) -> Path:
     return runtime_root / "spawns" / str(spawn_id) / LAUNCH_BOUNDARY_FILENAME
 
 
-def launch_boundary_lock_path(runtime_root: Path, spawn_id: SpawnId) -> Path:
+def launch_boundary_lock_path(runtime_root: Path, spawn_id: RunId) -> Path:
     return runtime_root / "locks" / "launch-boundary" / f"{spawn_id!s}.lock"
 
 
 def record_launch_boundary_event(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     *,
     event: str,
     stage: str | None = None,
@@ -111,7 +111,7 @@ def record_launch_boundary_event(
 
 def read_launch_boundary_events(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
 ) -> tuple[LaunchBoundaryEvent, ...]:
     data_path = launch_boundary_path(runtime_root, spawn_id)
 
@@ -124,7 +124,7 @@ def read_launch_boundary_events(
     return tuple(read_events(data_path, _parse))
 
 
-def read_launch_boundary_summary(runtime_root: Path, spawn_id: SpawnId) -> LaunchBoundarySummary:
+def read_launch_boundary_summary(runtime_root: Path, spawn_id: RunId) -> LaunchBoundarySummary:
     events = read_launch_boundary_events(runtime_root, spawn_id)
     parent_observed_launcher_pid: int | None = None
     has_takeover = False

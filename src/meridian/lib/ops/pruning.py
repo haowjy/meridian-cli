@@ -34,6 +34,7 @@ from meridian.lib.state.spawn.runs import (
     group_runs,
     retention_dependencies,
     retention_run_ids,
+    successor_run,
 )
 from meridian.lib.state.user_paths import get_context_home
 
@@ -564,11 +565,7 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
             run_id = parse_ref(str(artifact.spawn_id), row_key=True)
             if run_id not in artifact.sibling_run_ids:
                 continue
-            spawn_id = spawn_of(run_id)
-            highest_seen = max(
-                parse_ref(str(key)).run or 1 for key in artifact.sibling_run_ids
-            )
-            successor = parse_ref(f"{spawn_id}.{highest_seen + 1}", row_key=True)
+            successor = successor_run(artifact.sibling_run_ids)
             checked_ids = (*artifact.sibling_run_ids, successor)
             rows_by_id = {
                 key: _read_prune_sibling(runtime_root, key) for key in checked_ids

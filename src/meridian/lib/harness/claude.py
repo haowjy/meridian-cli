@@ -19,7 +19,7 @@ from meridian.lib.core.native_identity import (
     PostExit,
 )
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import HarnessId, SpawnId, TransportId
+from meridian.lib.core.types import HarnessId, RunId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
     BaseHarnessAdapter,
@@ -326,7 +326,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         session: SessionRequest,
         child_cwd: Path,
         child_env: dict[str, str],
@@ -362,7 +362,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         chat_id: str | None,
         state: HarnessPrelaunchState,
     ) -> None:

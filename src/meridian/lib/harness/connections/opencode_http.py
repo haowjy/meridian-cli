@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.bundle import (
     project_managed_primary_backend_command,
     project_managed_primary_bootstrap,
@@ -210,7 +210,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
         self._state: ConnectionState = "created"
-        self._spawn_id: SpawnId | None = None
+        self._spawn_id: RunId | None = None
         self._config: ConnectionConfig | None = None
         self._process: asyncio.subprocess.Process | None = None
         self._client: aiohttp.ClientSession | None = None
@@ -258,7 +258,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         return HarnessId.OPENCODE
 
     @property
-    def spawn_id(self) -> SpawnId:
+    def spawn_id(self) -> RunId:
         if self._spawn_id is None:
             raise RuntimeError("OpenCode connection has not been started")
         return self._spawn_id

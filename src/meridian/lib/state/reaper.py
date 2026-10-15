@@ -21,7 +21,6 @@ from meridian.lib.core.spawn_lifecycle import (
     is_terminal_spawn_status,
     resolve_reconciled_terminal_state,
 )
-from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import FINALIZE_EVIDENCE_FILENAME
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import is_pgid_reachable
@@ -164,7 +163,7 @@ def _collect_artifact_snapshot(
             record.runner_pid,
             created_after_epoch=runner_created_at_epoch,
         )
-    launch_boundary = read_launch_boundary_summary(runtime_root, SpawnId(record.id))
+    launch_boundary = read_launch_boundary_summary(runtime_root, record.id)
     return ArtifactSnapshot(
         started_epoch=started_epoch,
         last_activity_epoch=last_activity_epoch,
@@ -342,7 +341,7 @@ def _log_orphan_primary_diagnostics(
 ) -> None:
     if managed_snapshot is not None:
         metadata = managed_snapshot.metadata
-        scopes = read_scopes_from_disk(runtime_root, SpawnId(record.id))
+        scopes = read_scopes_from_disk(runtime_root, record.id)
         launcher_pid = metadata.launcher_pid
         launcher_alive = managed_snapshot.launcher_pid_alive if launcher_pid is not None else None
         backend_scope = next(
@@ -422,7 +421,7 @@ def _record_orphan_finalize_evidence(
 ) -> None:
     """Persist the liveness facts observed immediately before orphan cleanup."""
 
-    spawn_id = SpawnId(record.id)
+    spawn_id = record.id
     scopes = [
         scope
         for scope in read_scopes_from_disk(runtime_root, spawn_id)
@@ -483,7 +482,7 @@ def _record_orphan_finalize_evidence(
     try:
         mutate_published_spawn_artifact(
             runtime_root,
-            parse_ref(SpawnId(record.id), row_key=True),
+            parse_ref(record.id, row_key=True),
             lambda: atomic_write_text(
                 evidence_path,
                 json.dumps(evidence, separators=(",", ":"), sort_keys=True) + "\n",
@@ -710,7 +709,7 @@ def _fallback_cleanup_scopes(
     record: SpawnRecord,
     managed_snapshot: ManagedPrimarySnapshot | None,
 ) -> tuple[ProcessScopeSnapshot, ...]:
-    if read_scopes_from_disk(runtime_root, SpawnId(record.id)):
+    if read_scopes_from_disk(runtime_root, record.id):
         return ()
     if managed_snapshot is not None:
         metadata = managed_snapshot.metadata
@@ -764,7 +763,7 @@ def _claim_reaper_cleanup(
     """Persist exact cleanup targets before attempting the terminal CAS."""
     claim_active_spawn_scopes(
         runtime_root,
-        SpawnId(record.id),
+        record.id,
         extra_scopes=(
             _fallback_cleanup_scopes(runtime_root, record, managed_snapshot)
             if include_fallback
@@ -775,7 +774,7 @@ def _claim_reaper_cleanup(
 
 def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
     """Resolve a durable claim once, retaining failed targets for a later pass."""
-    spawn_id = SpawnId(record.id)
+    spawn_id = record.id
     with lock_file(cleanup_lock_path(runtime_root, spawn_id), reentrant=False):
         claimed = read_cleanup_claim(runtime_root, spawn_id)
         if not claimed:

@@ -29,7 +29,7 @@ from typing_extensions import TypedDict
 
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.state.history_changes import HistoryChanges
@@ -88,7 +88,7 @@ class ScopeProjectionSnapshot:
 # ---------------------------------------------------------------------------
 
 
-def _sidecar_path(runtime_root: Path, spawn_id: SpawnId) -> Path:
+def _sidecar_path(runtime_root: Path, spawn_id: RunId) -> Path:
     return runtime_root / "spawns" / str(spawn_id) / _SIDECAR_FILENAME
 
 
@@ -97,14 +97,14 @@ def _read_raw(path: Path) -> ScopeProjection:
     return read_model(path, ScopeProjection) or ScopeProjection()
 
 
-def scope_projection_lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+def scope_projection_lock_path(runtime_root: Path, spawn_id: RunId | str) -> Path:
     """Return the stable lock for one scope sidecar."""
     return runtime_root / "locks" / "process-scopes" / f"{spawn_id}.lock"
 
 
 def _mutate_scope_projection(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     mutator: Callable[[ScopeProjection], ScopeProjection],
 ) -> ScopeProjection:
     """Apply one sidecar RMW under its stable per-spawn lock."""
@@ -148,7 +148,7 @@ def parse_scope_entries(entries: Iterable[object]) -> list[ProcessScopeSnapshot]
 
 def record_scope(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     snapshot: ProcessScopeSnapshot,
 ) -> None:
     """Persist a process scope snapshot for a spawn.
@@ -205,7 +205,7 @@ def record_scope(
 
 def mark_scope_released(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     release_id: str,
 ) -> None:
     """Mark a scope as released (terminated / cleaned up).
@@ -238,7 +238,7 @@ def mark_scope_released(
 
 def read_scope_projection(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
 ) -> ScopeProjectionSnapshot:
     """Read scopes and release markers from one projection snapshot.
 
@@ -271,7 +271,7 @@ def read_scope_projection(
 
 def is_scope_released(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     release_id: str,
 ) -> bool:
     """Check if a scope has been marked as released.
@@ -283,7 +283,7 @@ def is_scope_released(
 
 def read_scopes_from_disk(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
 ) -> list[ProcessScopeSnapshot]:
     """Read scope snapshots directly from disk for a spawn.
 

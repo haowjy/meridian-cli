@@ -3,7 +3,7 @@
 import json
 from typing import cast
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.state.artifact_store import ArtifactStore
 
 from .artifact_io import read_artifact_text
@@ -112,7 +112,7 @@ def _extract_from_json_value(value: object, found: list[str], seen: set[str]) ->
             _extract_from_json_value(nested, found, seen)
 
 
-def extract_written_files(artifacts: ArtifactStore, spawn_id: SpawnId) -> tuple[str, ...]:
+def extract_written_files(artifacts: ArtifactStore, spawn_id: RunId) -> tuple[str, ...]:
     """Extract explicit written-file metadata for one spawn."""
 
     found: list[str] = []

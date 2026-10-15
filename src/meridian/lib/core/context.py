@@ -6,7 +6,8 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.depth import is_nested_meridian_depth
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.identity import identity_env
+from meridian.lib.core.refs import spawn_of
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.state.paths import resolve_work_scratch_dir_for_project
@@ -27,9 +28,13 @@ class RuntimeContext(BaseModel):
     @property
     def run_key(self) -> RunId | None:
         """Exact row for explicit contexts as well as environment-derived ones."""
-        return self.run_id or (
-            parse_ref(self.spawn_id, row_key=True) if self.spawn_id is not None else None
-        )
+        if self.run_id is None:
+            if self.spawn_id is not None:
+                raise ValueError("RuntimeContext with spawn_id requires an exact run_id")
+            return None
+        if self.spawn_id is not None and spawn_of(self.run_id) != self.spawn_id:
+            raise ValueError("RuntimeContext spawn_id and run_id do not match")
+        return self.run_id
 
     @property
     def is_nested(self) -> bool:
@@ -65,8 +70,9 @@ class RuntimeContext(BaseModel):
 
         overrides: dict[str, str] = {"_MERIDIAN_DEPTH": str(self.depth)}
         if self.spawn_id is not None:
-            overrides["MERIDIAN_SPAWN_ID"] = str(self.spawn_id)
-            overrides["MERIDIAN_RUN_ID"] = str(self.run_key)
+            run_id = self.run_key
+            assert run_id is not None
+            overrides.update(identity_env(self.spawn_id, run_id))
         if self.project_root is not None:
             overrides["MERIDIAN_PROJECT_DIR"] = self.project_root.as_posix()
         if self.chat_id:

@@ -35,9 +35,7 @@ def normalize_mars_target_name(name: str) -> str:
 
 
 SpawnId = NewType("SpawnId", str)
-# Subtyping keeps existing mechanism APIs compatible without a mass rename.
-# Persistence seams require RunId: a stable SpawnId cannot enter them implicitly.
-RunId = NewType("RunId", SpawnId)
+RunId = NewType("RunId", str)
 ModelId = NewType("ModelId", str)
 ChatId = NewType("ChatId", str)
 HarnessSessionId = NewType("HarnessSessionId", str)

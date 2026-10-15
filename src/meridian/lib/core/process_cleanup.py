@@ -11,7 +11,6 @@ from pathlib import Path
 import psutil
 import structlog
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope import terminate_scope_sync, terminate_tree_sync
 from meridian.lib.platform.process_scope.base import (
     CleanupResult,
@@ -60,7 +59,7 @@ def terminate_recorded_spawn_scopes(
 ) -> list[CleanupResult]:
     """Terminate scope sidecars recorded for a spawn record."""
 
-    scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
+    scopes = read_scopes_from_disk(runtime_root, spawn_record.id)
     return _terminate_recorded_spawn_scopes(
         runtime_root,
         spawn_record,
@@ -96,7 +95,7 @@ def terminate_spawn_scopes(
 ) -> list[CleanupResult]:
     """Terminate recorded scopes, with legacy worker fallback when none exist."""
 
-    scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
+    scopes = read_scopes_from_disk(runtime_root, spawn_record.id)
     if scopes:
         return _terminate_recorded_spawn_scopes(
             runtime_root,
@@ -125,7 +124,7 @@ def _terminate_recorded_spawn_scopes(
     grace_seconds: float,
 ) -> list[CleanupResult]:
     results: list[CleanupResult] = []
-    spawn_id = SpawnId(spawn_record.id)
+    spawn_id = spawn_record.id
 
     for scope in scopes:
         if is_scope_released(runtime_root, spawn_id, scope.release_id):
@@ -305,9 +304,9 @@ def cancel_managed_primary(
     Idempotent — already-released scopes are skipped. Safe to call even when
     primary_metadata is not available (falls back to scope records only).
     """
-    scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
+    scopes = read_scopes_from_disk(runtime_root, spawn_record.id)
     results: list[CleanupResult] = []
-    spawn_id = SpawnId(spawn_record.id)
+    spawn_id = spawn_record.id
 
     # 1. Terminate launcher scope first (spawn_owned).
     for scope in scopes:
@@ -406,7 +405,7 @@ def reclaim_session_owned_scopes_for_chat(
     spawns = list_spawns(runtime_root, chat_id=chat_id).records
     results: list[CleanupResult] = []
     for record in spawns:
-        spawn_id = SpawnId(record.id)
+        spawn_id = record.id
         scopes = read_scopes_from_disk(runtime_root, spawn_id)
         for scope in scopes:
             if scope.owner_policy != "session_owned":

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import structlog
 
-from meridian.lib.core.refs import parse_ref, reference_sort_key, spawn_of
+from meridian.lib.core.refs import make_run_id, parse_ref, reference_sort_key, run_number, spawn_of
 from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import lock_file
@@ -19,12 +19,8 @@ logger = structlog.get_logger(__name__)
 _NO_LOOSE_RUNS = 0
 
 
-def _run_id(spawn_id: SpawnId, run: int) -> RunId:
-    return parse_ref(str(spawn_id) if run == 1 else f"{spawn_id}.{run}", row_key=True)
-
-
 def _run_exists(paths: RuntimePaths, spawn_id: SpawnId, run: int) -> bool:
-    return (paths.spawns_dir / _run_id(spawn_id, run) / "state.json").is_file()
+    return (paths.spawns_dir / make_run_id(spawn_id, run) / "state.json").is_file()
 
 
 def _head_path(paths: RuntimePaths, spawn_id: SpawnId) -> Path:
@@ -62,9 +58,9 @@ def _scan_and_rebuild_head(paths: RuntimePaths, spawn_id: SpawnId) -> int | None
             return None
         highest = max(
             (
-                parsed.run or 1
+                run_number(run_id)
                 for run_id in scan_spawn_ids(paths.spawns_dir)
-                if (parsed := parse_ref(str(run_id))).spawn_id == spawn_id
+                if spawn_of(run_id) == spawn_id
             ),
             default=None,
         )
@@ -92,12 +88,14 @@ def write_run_head(paths: RuntimePaths, run_id: RunId) -> None:
     """Atomically advance the highest run ever reserved for one spawn."""
 
     parsed = parse_ref(str(run_id))
-    if parsed.spawn_id is None or parsed.run is None:
+    if parsed.spawn_id is None:
         return
-    current = _read_head_file(_head_path(paths, parsed.spawn_id))
-    if current is not None and parsed.run <= current:
+    spawn_id = parsed.spawn_id
+    number = parsed.run if parsed.run is not None else 1
+    current = _read_head_file(_head_path(paths, spawn_id))
+    if current is not None and number <= current:
         return
-    _write_head_file(paths, parsed.spawn_id, parsed.run)
+    _write_head_file(paths, spawn_id, number)
 
 
 def group_runs(rows: Iterable[SpawnRecord]) -> dict[SpawnId, tuple[SpawnRecord, ...]]:
@@ -145,10 +143,9 @@ def runs_of(runtime_root: Path, spawn_id: SpawnId) -> tuple[RunId, ...]:
     latest = latest_run(runtime_root, spawn_id)
     if latest is None:
         return ()
-    last_run = parse_ref(str(latest)).run
-    assert last_run is not None
+    last_run = run_number(latest)
     return tuple(
-        _run_id(spawn_id, run)
+        make_run_id(spawn_id, run)
         for run in range(1, last_run + 1)
         if _run_exists(paths, spawn_id, run)
     )
@@ -168,13 +165,13 @@ def latest_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
     while _run_exists(paths, spawn_id, run + 1):
         run += 1
     if _run_exists(paths, spawn_id, run):
-        return _run_id(spawn_id, run)
+        return make_run_id(spawn_id, run)
 
     # reserve_run publishes the pointer before the row. A crash in between is
     # recovered by finding the highest surviving predecessor.
     for candidate in range(run - 1, 0, -1):
         if _run_exists(paths, spawn_id, candidate):
-            return _run_id(spawn_id, candidate)
+            return make_run_id(spawn_id, candidate)
     return None
 
 
@@ -187,11 +184,11 @@ def latest_bound_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
     latest = latest_run(runtime_root, spawn_id)
     if latest is None:
         return None
-    pointed_run = parse_ref(str(latest)).run or 1
+    pointed_run = run_number(latest)
     for candidate in range(pointed_run, 0, -1):
         if not _run_exists(paths, spawn_id, candidate):
             continue
-        run_id = _run_id(spawn_id, candidate)
+        run_id = make_run_id(spawn_id, candidate)
         row = read_state(paths.spawns_dir, run_id, include_prompt=False)
         if row is not None and row.session_instance_id is not None:
             return run_id
@@ -203,7 +200,18 @@ def next_run_id(paths: RuntimePaths, spawn_id: SpawnId) -> RunId:
     highest = _read_head(paths, spawn_id)
     if highest is None or highest == _NO_LOOSE_RUNS:
         raise ValueError(f"Spawn {spawn_id} has no live runs")
-    return _run_id(spawn_id, highest + 1)
+    return make_run_id(spawn_id, highest + 1)
+
+
+def successor_run(run_ids: Iterable[RunId]) -> RunId:
+    """Return the canonical key immediately after the highest sibling run."""
+    siblings = tuple(run_ids)
+    if not siblings:
+        raise ValueError("At least one sibling run is required")
+    spawn_id = spawn_of(siblings[0])
+    if any(spawn_of(run_id) != spawn_id for run_id in siblings[1:]):
+        raise ValueError("Successor runs require siblings from one spawn")
+    return make_run_id(spawn_id, max(run_number(run_id) for run_id in siblings) + 1)
 
 
 class SpawnBusy(ValueError):

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
+from meridian.lib.core.types import ChatId, HarnessSessionId, RunId
 from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
@@ -41,7 +41,7 @@ class SessionAttempt:
     chat_id: str
     session_instance_id: str
     startup_attempt_id: str | None
-    spawn_id: SpawnId | None = None
+    spawn_id: RunId | None = None
 
     def bind(self, attempted: NativeKeyFields, source: BindSource) -> BindOutcome:
         outcome = update_session_harness_id(
@@ -176,7 +176,7 @@ def session_scope(
             resolved_chat_id,
             generation,
             startup_attempt_id,
-            SpawnId(spawn_id) if spawn_id is not None else None,
+            parse_ref(spawn_id, row_key=True) if spawn_id is not None else None,
         )
     finally:
         try:

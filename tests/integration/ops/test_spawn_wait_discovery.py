@@ -7,6 +7,7 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.state.history_index as history_index
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId
 from meridian.lib.ops.session_archive import archive_history, materialize_native_history
 from meridian.lib.state import session_store, spawn_store
@@ -39,6 +40,7 @@ def _spawn(
             chat_id=chat,
             owner_chat_id=owner,
             parent_id=parent,
+            parent_run_id=parse_ref(parent, row_key=True) if parent else None,
             model="test",
             agent="coder",
             harness="pi",

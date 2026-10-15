@@ -9,7 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.refs import spawn_of
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.pi_private_state import DeliveryObservations, DeliveryReceipts
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
@@ -25,7 +26,7 @@ class PiQuiescenceTracker:
     """Track Pi parent-idle and disk-backed background work quiescence."""
 
     runtime_root: Path
-    spawn_id: SpawnId
+    spawn_id: RunId
     enabled: bool
     _ledger: PiPrivateWorkLedger = field(default_factory=PiPrivateWorkLedger)
     _parent_idle: bool = False
@@ -37,7 +38,7 @@ class PiQuiescenceTracker:
         cls,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         is_pi_connection: bool,
         session_role: str,
         ledger: PiPrivateWorkLedger | None = None,
@@ -63,7 +64,7 @@ class PiQuiescenceTracker:
             return
         self._disk_watcher = PiDiskWatcher(
             self.runtime_root,
-            self.spawn_id,
+            spawn_of(self.spawn_id),
             self._ledger,
         )
         await self._disk_watcher.start()

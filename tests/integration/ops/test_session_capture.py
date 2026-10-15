@@ -7,13 +7,14 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.ops.session_archive import (
     archive_history,
     materialize_native_history,
     session_stop_maintenance,
 )
-from meridian.lib.ops.session_target import resolve_transcript_source
+from meridian.lib.ops.session_target import resolve_capture_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.native_snapshot import (
@@ -182,12 +183,10 @@ def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path:
     stream = root / "spawns" / key / "history.jsonl"
     stream.write_bytes(b'partial original stream\n{"torn":')
     before = stream.stat()
-    target = resolve_transcript_source(
-        ref=key,
-        file_path=None,
+    target = resolve_capture_source(
+        parse_ref(key, row_key=True),
         project_root=project,
         runtime_root=root,
-        purpose="capture",
     )
     assert target.source.kind == "native_file" and target.source.path == native
     assert target.source.session_id == "exact-native"
@@ -203,8 +202,8 @@ def test_capture_uses_bound_generation_not_sidecar_identity(tmp_path: Path, monk
         runtime_root=root,
         spawn_id=key,
     )
-    target = resolve_transcript_source(
-        ref=key, project_root=project, runtime_root=root, purpose="capture"
+    target = resolve_capture_source(
+        parse_ref(key, row_key=True), project_root=project, runtime_root=root
     )
     assert target.source.session_id == "exact-native"
 

@@ -18,7 +18,7 @@ from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.core.types import ModelId, RunId
 from meridian.lib.launch.launch_types import ResolvedLaunchBinding
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
@@ -250,7 +250,7 @@ def _reserve_spawn(
     service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
     spawn_id = service.reserve(reservation)
     spawn = Spawn(
-        spawn_id=SpawnId(spawn_id),
+        spawn_id=parse_ref(spawn_id, row_key=True),
         prompt=reservation.prompt,
         model=ModelId(reservation.session_metadata.model or ""),
         status=reservation.status,
@@ -384,7 +384,7 @@ def _params_payload(
 def _write_params_json(
     project_paths: ProjectConfigPaths,
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     *,
     request_metadata: ParamsRequestMetadata,
     binding: ResolvedLaunchBinding | None = None,

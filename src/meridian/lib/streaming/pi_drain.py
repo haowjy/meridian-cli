@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.refs import spawn_of
+from meridian.lib.core.types import RunId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.streaming.completion_contracts import (
@@ -75,7 +76,7 @@ class PiCompletionEvidence:
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         lifecycle_tracker: PiLifecycleTracker,
         quiescence_tracker: PiQuiescenceTracker,
         clock: Callable[[], float],
@@ -87,7 +88,7 @@ class PiCompletionEvidence:
         self._clock = clock
         self._descendant_evidence = ReconciledDescendantEvidence(
             runtime_root=runtime_root,
-            root_spawn_id=spawn_id,
+            root_spawn_id=spawn_of(spawn_id),
         )
         self._profile: PiCompletionProfile | None = None
         self._generation = 0
@@ -447,7 +448,7 @@ class PiDrainCoordinator:
         cls,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         receiver: HarnessConnection[ResolvedLaunchSpec],
         session_role: str | None,
         child_wave_timeout_seconds: float | None,

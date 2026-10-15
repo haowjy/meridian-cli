@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.types import (
     ModelId,
-    SpawnId,
+    RunId,
 )
 from meridian.lib.core.util import FormatContext
 
@@ -99,7 +99,7 @@ class Spawn(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    spawn_id: SpawnId
+    spawn_id: RunId
     prompt: str
     model: ModelId
     status: SpawnStatus

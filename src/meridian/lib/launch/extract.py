@@ -13,7 +13,7 @@ from meridian.lib.core.spawn_lifecycle import (
     DurableReportEvidence,
     classify_durable_report_text,
 )
-from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
+from meridian.lib.core.types import ArtifactKey, HarnessId, RunId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.cost import estimate_usage_cost
@@ -57,7 +57,7 @@ class FinalizeExtraction(BaseModel):
 def _persist_report(
     *,
     artifacts: ArtifactStore,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     log_dir: Path,
     extracted: ExtractedReport,
     text_capped: bool,
@@ -110,7 +110,7 @@ def enrich_finalize(
     extractor: SpawnExtractor,
     facts: AttemptFacts,
     native_key: NativeKey | None = None,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     log_dir: Path,
     model_id: str | None = None,
     harness_id: HarnessId | str | None = None,

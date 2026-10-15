@@ -22,7 +22,7 @@ import psutil
 import structlog
 
 from meridian.lib.core.event_hooks import run_event_hooks
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
@@ -228,7 +228,7 @@ class PrimaryAttachLauncher:
     def __init__(
         self,
         *,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         spawn_dir: Path,
         connection: HarnessConnection[Any],
         tui_command_builder: TuiCommandBuilder,

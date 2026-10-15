@@ -53,6 +53,7 @@ from meridian.lib.state.spawn.runs import (
     group_runs,
     retention_dependencies,
     retention_run_ids,
+    successor_run,
 )
 from meridian.lib.state.spawn_aggregate import cleanup_retired_spawn, retire_published_spawn
 
@@ -350,15 +351,13 @@ def archive_history(
                 )
                 continue
             if not apply:
-                from meridian.lib.ops.session_target import resolve_transcript_source
+                from meridian.lib.ops.session_target import resolve_capture_source
 
                 try:
-                    resolve_transcript_source(
-                        ref=candidate.id,
-                        file_path=None,
+                    resolve_capture_source(
+                        candidate.id,
                         project_root=project_root or root,
                         runtime_root=root,
-                        purpose="capture",
                     )
                 except (ValueError, OSError, RuntimeError) as exc:
                     capture_errors[candidate.id] = str(exc)
@@ -520,12 +519,7 @@ def archive_history(
                     dependencies = retention_dependencies(siblings)
                     special_now = current.id in dependencies
                     predecessors = dependencies.get(current.id, set())
-                    highest_seen = max(
-                        parse_ref(str(sibling.id)).run or 1 for sibling in siblings
-                    )
-                    successor = parse_ref(
-                        f"{spawn_of(current.id)}.{highest_seen + 1}", row_key=True,
-                    )
+                    successor = successor_run(sibling.id for sibling in siblings)
                     retired = retire_published_spawn(
                         root,
                         current.id,
@@ -740,7 +734,7 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
 
 def materialize_native_history(project_root: Path, root: Path, spawn_id: str) -> None:
     from meridian.lib.harness.transcript_capture import native_capture
-    from meridian.lib.ops.session_target import resolve_transcript_source
+    from meridian.lib.ops.session_target import resolve_capture_source
     from meridian.lib.platform.atomic import atomic_replace, iter_atomic_temp_paths
     from meridian.lib.state.event_store import utc_now_iso
     from meridian.lib.state.history_codec import transcript_header
@@ -772,12 +766,10 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
         for stale in iter_atomic_temp_paths(spawn_dir, NATIVE_SNAPSHOT_FILENAME):
             stale.unlink(missing_ok=True)
         # Deferred until the published-aggregate guard: select from current authority.
-        target = resolve_transcript_source(
-            ref=spawn_id,
-            file_path=None,
+        target = resolve_capture_source(
+            parse_ref(spawn_id, row_key=True),
             project_root=project_root,
             runtime_root=root,
-            purpose="capture",
         )
         source = target.source
         observation = native_capture(

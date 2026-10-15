@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.connections.base import ConnectionNotReady
 from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
@@ -61,7 +61,7 @@ class ControlActionCoordinator:
     def __init__(
         self,
         *,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         spawn_dir: Path,
         default_max_attempts: int = 2,
         retry_delay_secs: float = 0.05,

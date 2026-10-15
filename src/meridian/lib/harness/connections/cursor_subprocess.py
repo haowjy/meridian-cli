@@ -11,7 +11,8 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from typing import Final, cast
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -58,7 +59,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def __init__(self) -> None:
         self._state: ConnectionState = "created"
-        self._spawn_id: SpawnId = SpawnId("")
+        self._spawn_id = parse_ref("", row_key=True)
         self._session_id: str | None = None
         self._session_id_observer: Callable[[str], None] | None = None
         self._child: ManagedStdioProcess | None = None
@@ -75,7 +76,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         return HarnessId.CURSOR
 
     @property
-    def spawn_id(self) -> SpawnId:
+    def spawn_id(self) -> RunId:
         return self._spawn_id
 
     @property

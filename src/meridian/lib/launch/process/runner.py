@@ -28,7 +28,7 @@ from meridian.lib.core.spawn_lifecycle import (
     SpawnReservation,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessContract,
@@ -129,7 +129,7 @@ class ProcessOutcome(BaseModel):
 def _write_native_primary_metadata(
     *,
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     spawn_dir: Path,
     command: tuple[str, ...],
     launch_cwd: Path,
@@ -180,7 +180,7 @@ RunPrimaryProcessWithCapture = Callable[
 RunPrimaryAttach = Callable[
     [
         HarnessId,
-        SpawnId,
+        RunId,
         Path,
         Path,
         Path | None,
@@ -321,7 +321,7 @@ def _managed_primary_stderr_excerpt(spawn_dir: Path, *, max_chars: int = 1200) -
 def _execute_via_managed_attach(
     *,
     harness_id: HarnessId,
-    primary_spawn_id: SpawnId,
+    primary_spawn_id: RunId,
     log_dir: Path,
     control_root: Path,
     task_cwd: Path | None,
@@ -377,7 +377,7 @@ def _execute_via_blackbox(
 def _execute_primary_process(
     *,
     harness_id: HarnessId,
-    primary_spawn_id: SpawnId,
+    primary_spawn_id: RunId,
     log_dir: Path,
     control_root: Path,
     launch_cwd: Path,
@@ -445,7 +445,7 @@ def _execute_primary_process(
 
 def _finalize_lifecycle(
     *,
-    primary_spawn_id: SpawnId | None,
+    primary_spawn_id: RunId | None,
     exit_code: int,
     harness_adapter: Any,
     project_root: Path,
@@ -550,7 +550,7 @@ def _create_managed_primary_connection(
 async def _run_primary_attach(
     *,
     harness_id: HarnessId,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     spawn_dir: Path,
     control_root: Path,
     task_cwd: Path | None,
@@ -614,7 +614,7 @@ async def _run_primary_attach(
 
 def run_primary_attach(
     harness_id: HarnessId,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     spawn_dir: Path,
     control_root: Path,
     task_cwd: Path | None,
@@ -684,7 +684,7 @@ def run_harness_process(
     harness_adapter = preview_context.harness
     harness_id = HarnessId(session_metadata.harness)
     chat_id: str | None = None
-    primary_spawn_id: SpawnId | None = None
+    primary_spawn_id: RunId | None = None
     primary_started = 0.0
     primary_started_epoch = 0.0
     primary_started_local_iso: str | None = None
@@ -710,7 +710,7 @@ def run_harness_process(
     try:
         if preview_request.session.reopen_spawn_id is not None:
             assert resume_chat_id is not None
-            primary_spawn_id = SpawnId(lifecycle_service.start(SpawnReservation(
+            primary_spawn_id = parse_ref(lifecycle_service.start(SpawnReservation(
                 reopen_spawn_id=preview_request.session.reopen_spawn_id,
                 chat_id=resume_chat_id,
                 session_metadata=session_metadata,
@@ -719,7 +719,7 @@ def run_harness_process(
                 control_root=str(control_root), execution_cwd=str(execution_cwd),
                 launch_mode=FOREGROUND_LAUNCH_MODE, work_id=preview_context.work_id,
                 runner_pid=os.getpid(), status=SpawnStatus.QUEUED,
-            )))
+            )), row_key=True)
             from meridian.lib.launch.continue_replay import seed_continue_scope
             seed_continue_scope(config_root, primary_spawn_id, preview_request.session)
         reopening_spawn = primary_spawn_id is not None
@@ -757,7 +757,7 @@ def run_harness_process(
                     and bool((preview_request.session.requested_harness_session_id or "").strip())
                 )
                 if primary_spawn_id is None:
-                    primary_spawn_id = SpawnId(
+                    primary_spawn_id = parse_ref(
                         lifecycle_service.start(
                             SpawnReservation(
                                 chat_id=chat_id,
@@ -775,7 +775,8 @@ def run_harness_process(
                                 runner_pid=os.getpid(),
                                 status=SpawnStatus.QUEUED,
                             )
-                        )
+                        ),
+                        row_key=True,
                     )
                 if reopening_spawn:
                     spawn_store.update_spawn(

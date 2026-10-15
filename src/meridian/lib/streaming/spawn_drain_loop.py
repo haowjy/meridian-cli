@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.drain_coordinator import (
@@ -36,11 +36,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PublishTerminal = Callable[
-    [SpawnId, SpawnSession, DrainOutcome, CompletionCleanupRequest | None], DrainOutcome
+    [RunId, SpawnSession, DrainOutcome, CompletionCleanupRequest | None], DrainOutcome
 ]
-FanOutEvent = Callable[[SpawnId, "NormalizedHarnessEvent"], None]
-FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
-RunEventHooks = Callable[[SpawnId, RawHarnessEvent], None]
+FanOutEvent = Callable[[RunId, "NormalizedHarnessEvent"], None]
+FanOutTurnBoundary = Callable[[RunId, "TerminalEventOutcome"], Awaitable[None]]
+RunEventHooks = Callable[[RunId, RawHarnessEvent], None]
 
 
 class SpawnDrainLoop:
@@ -49,7 +49,7 @@ class SpawnDrainLoop:
     def __init__(
         self,
         *,
-        sessions: dict[SpawnId, SpawnSession],
+        sessions: dict[RunId, SpawnSession],
         run_event_hooks: RunEventHooks,
         publish_terminal: PublishTerminal,
         fan_out_event: FanOutEvent,
@@ -64,7 +64,7 @@ class SpawnDrainLoop:
     async def run(
         self,
         *,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         receiver: HarnessConnection[Any],
         drain_plan: DrainPlan,
         tracer: DebugTracer | None,

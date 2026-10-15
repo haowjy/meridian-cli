@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -23,7 +23,7 @@ class TuiPassthrough(Protocol):
     def build_config(
         self,
         *,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         spec: ResolvedLaunchSpec,
         control_root: Path,
         task_cwd: Path | None,

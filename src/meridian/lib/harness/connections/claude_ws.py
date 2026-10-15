@@ -13,8 +13,9 @@ from typing import TYPE_CHECKING, Final, cast
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -92,7 +93,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def __init__(self) -> None:
         self._state: ConnectionState = "created"
-        self._spawn_id: SpawnId = SpawnId("")
+        self._spawn_id = parse_ref("", row_key=True)
         self._config: ConnectionConfig | None = None
         self._child: ManagedStdioProcess | None = None
         self._send_lock = asyncio.Lock()
@@ -113,7 +114,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return HarnessId.CLAUDE
 
     @property
-    def spawn_id(self) -> SpawnId:
+    def spawn_id(self) -> RunId:
         return self._spawn_id
 
     @property

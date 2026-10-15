@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
@@ -86,7 +86,7 @@ class PiCompletionProfile:
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         session_role: str,
         child_wave_timeout_seconds: float | None,
         emit_phase: EmitPiPhase,

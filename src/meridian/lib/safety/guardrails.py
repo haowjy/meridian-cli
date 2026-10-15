@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.models import MeridianConfig
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.platform import IS_WINDOWS
 
 DEFAULT_GUARDRAIL_TIMEOUT_SECONDS = MeridianConfig().guardrail_timeout_minutes * 60.0
@@ -58,7 +58,7 @@ def _resolve_guardrail_command(script: Path) -> list[str]:
 def run_guardrails(
     guardrails: tuple[Path, ...],
     *,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     cwd: Path,
     env: Mapping[str, str] | None,
     report_path: Path | None,

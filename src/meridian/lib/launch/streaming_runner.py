@@ -28,7 +28,7 @@ from meridian.lib.core.native_identity import (
 )
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts, parse_terminal_status
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
@@ -185,7 +185,7 @@ def _inactivity_terminal_outcome(
 
 def _touch_heartbeat_file(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     *,
     clock: Clock | None = None,
 ) -> None:
@@ -239,7 +239,7 @@ def _install_signal_handlers(
     return _cleanup
 
 
-def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
+def _read_cancel_intent(runtime_root: Path, spawn_id: RunId) -> CancelIntent | None:
     record = spawn_store.get_spawn(runtime_root, parse_ref(spawn_id, row_key=True))
     return None if record is None else record.cancel_intent
 
@@ -248,7 +248,7 @@ def _apply_cancel_intent_to_conclusion(
     conclusion: StreamingRunConclusion,
     *,
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
 ) -> bool:
     intent = _read_cancel_intent(runtime_root, spawn_id)
     if intent is None:
@@ -341,7 +341,7 @@ async def _report_watchdog(
     report_path: Path,
     completion_event: asyncio.Event,
     manager: SpawnManager,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     grace_seconds: float = REPORT_WATCHDOG_GRACE_SECONDS,
 ) -> bool:
     while not report_path.exists():
@@ -379,7 +379,7 @@ async def _inactivity_watchdog(
     last_event_at: list[float],
     completion_event: asyncio.Event,
     manager: SpawnManager,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     timeout_seconds: float,
     poll_seconds: float = SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
 ) -> bool:
@@ -431,7 +431,7 @@ async def run_streaming_spawn(
     spec: ResolvedLaunchSpec,
     runtime_root: Path,
     project_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     startup_timeout_seconds: float,
     stream_to_terminal: bool = False,
     heartbeat_touch: HeartbeatTouch | None = None,

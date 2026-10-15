@@ -19,7 +19,7 @@ from meridian.lib.core.native_identity import (
     PostExit,
 )
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import HarnessId, SpawnId, TransportId
+from meridian.lib.core.types import HarnessId, RunId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
     BootstrapMode,
@@ -104,7 +104,7 @@ from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 def _write_pi_runtime_metadata_sidecar(
     *,
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     payload: dict[str, str | None],
 ) -> None:
     """Persist the resolved Pi runtime metadata sidecar for one spawn."""
@@ -306,7 +306,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         session: SessionRequest,
         child_cwd: Path,
         child_env: dict[str, str],
@@ -601,7 +601,7 @@ PI_SEMANTICS = HarnessSemantics(
 
 
 def _event_sinks(
-    runtime_root: Path, spawn_id: SpawnId
+    runtime_root: Path, spawn_id: RunId
 ) -> tuple[Callable[[RawHarnessEvent], None], ...]:
     def lifecycle_sink(event: RawHarnessEvent) -> None:
         if event.event_type != PI_PHASE_EVENT_TYPE:

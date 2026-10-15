@@ -13,7 +13,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.streaming.types import InjectResult
@@ -50,7 +50,7 @@ def bounded_socket_path(
     return path
 
 
-def control_socket_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+def control_socket_path(runtime_root: Path, spawn_id: RunId | str) -> Path:
     """Return the deterministic, bounded control endpoint for a spawn."""
 
     if IS_WINDOWS:
@@ -73,7 +73,7 @@ def prepare_socket_directory(path: Path) -> None:
 class ControlSocketServer:
     """Handle one control socket endpoint for one active spawn."""
 
-    def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager):
+    def __init__(self, spawn_id: RunId, socket_path: Path, manager: SpawnManager):
         self._spawn_id = spawn_id
         self._socket_path = socket_path
         self._port_file = socket_path.with_suffix(".port")

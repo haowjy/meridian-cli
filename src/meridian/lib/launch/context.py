@@ -231,7 +231,11 @@ class ChildEnvContext:
         ctx = replace(self.resolved, work_dir=work_dir)
         overrides = ctx.child_env_overrides(
             increment_depth=increment_depth,
-            child_spawn_id=child_spawn_id,
+            child_run_id=(
+                parse_ref(child_spawn_id, row_key=True)
+                if child_spawn_id is not None
+                else None
+            ),
         )
         validate_child_env_keys(overrides)
         return overrides

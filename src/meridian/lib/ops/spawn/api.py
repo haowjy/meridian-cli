@@ -23,7 +23,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.identity import current_run_id
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.refs import parse_ref, spawn_of
+from meridian.lib.core.refs import display_run_id, parse_ref, spawn_of
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -915,19 +915,16 @@ def spawn_show_sync(
             if sibling is not None:
                 sibling_rows.append(sibling)
         runs = tuple(SpawnRunEntry(
-            run_id=str(item.id) if parse_ref(item.id).kind == "run" else f"{item.id}.1",
+            run_id=display_run_id(item.id),
             status=item.status, started_at=item.started_at,
             chat_id=item.chat_id, current_chat_id=item.current_chat_id,
             duration_secs=item.terminal.duration_secs if item.terminal else None,
             cost_usd=item.terminal.total_cost_usd if item.terminal else None,
         ) for item in sibling_rows)
         if omitted:
-            def display_run(run_id: RunId) -> str:
-                return str(run_id) if parse_ref(run_id).kind == "run" else f"{run_id}.1"
-
             earlier_runs = (
                 f"… {len(omitted)} earlier runs "
-                f"({display_run(omitted[0])} … {display_run(omitted[-1])})"
+                f"({display_run_id(omitted[0])} … {display_run_id(omitted[-1])})"
             )
     surfaced_activity = _surface_primary_activity(row.status, activity)
     return detail.model_copy(

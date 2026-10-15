@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.streaming.drain_teardown import TeardownReport
 
@@ -14,14 +14,14 @@ if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
-EmitEvent = Callable[[SpawnId, "RawHarnessEvent"], None]
+EmitEvent = Callable[[RunId, "RawHarnessEvent"], None]
 
 
 @dataclass(frozen=True)
 class PiDrainSessionTeardown:
     """Pi connection stop with lifecycle phase emission."""
 
-    spawn_id: SpawnId
+    spawn_id: RunId
     emit_event: EmitEvent
 
     async def stop_connection(

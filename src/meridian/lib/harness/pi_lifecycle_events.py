@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Final
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 
 PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION: Final[int] = 1
@@ -32,7 +32,7 @@ _SECRET_FLAG_SEGMENTS: Final[frozenset[str]] = frozenset(
 
 
 def build_pi_phase_event(
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     connection: HarnessConnection[Any],
     phase: str,
     **data: object,

@@ -517,7 +517,7 @@ class SpawnApplicationService:
                 reset_on_activity=resolved_request.pi_task_ping_reset_on_activity,
             )
         connection_config = ConnectionConfig(
-            spawn_id=final_spawn_id,
+            spawn_id=persisted_spawn_id,
             harness_id=harness_id,
             prompt=launch_ctx.resolved_request.prompt,
             control_root=launch_ctx.control_root,

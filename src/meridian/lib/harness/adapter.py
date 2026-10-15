@@ -32,7 +32,7 @@ from meridian.lib.core.native_identity import (
     Operation,
     PostExit,
 )
-from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
+from meridian.lib.core.types import HarnessId, ModelId, RunId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
@@ -388,7 +388,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         session: SessionRequest,
         child_cwd: Path,
         child_env: dict[str, str],
@@ -400,7 +400,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         chat_id: str | None,
         state: HarnessPrelaunchState,
     ) -> None: ...
@@ -702,7 +702,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         session: SessionRequest,
         child_cwd: Path,
         child_env: dict[str, str],
@@ -724,7 +724,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         chat_id: str | None,
         state: HarnessPrelaunchState,
     ) -> None:

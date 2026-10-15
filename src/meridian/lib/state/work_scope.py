@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.state.paths import (
     resolve_ambient_work_dir,
     resolve_work_scratch_dir_for_project,
@@ -89,7 +89,7 @@ def resolve_bound_work_scope(
 def resolve_work_scope_from_parts(
     *,
     project_root: Path | None,
-    spawn_id: SpawnId | None,
+    spawn_id: RunId | None,
     work_id: str | None,
     bound_work_dir: Path | None,
     project_work_dir: Path | None = None,

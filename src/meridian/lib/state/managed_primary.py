@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import psutil
 import structlog
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.reconciliation import (
@@ -190,7 +190,7 @@ def is_managed_primary_candidate(record: SpawnRecord) -> bool:
 
 def release_managed_primary_scopes(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     record: SpawnRecord,
 ) -> None:
     """Best-effort teardown of a terminal managed-primary orphan's processes.

@@ -616,7 +616,7 @@ def test_reserve_then_prepare_mid_prep_kill_leaves_queued_row_reconciled(
             payload=SpawnCreateInput(prompt="run", work="new-work-item"),
             request=SpawnRequest(prompt="run", model="gpt-5.4", harness="codex"),
             runtime=runtime,
-            ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+            ctx=RuntimeContext(depth=1, spawn_id="p-parent", run_id="p-parent"),
             launch_mode=BACKGROUND_LAUNCH_MODE,
         )
 

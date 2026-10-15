@@ -13,7 +13,7 @@ from meridian.lib.bootstrap.services import build_spawn_application_service_from
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_service import CompleteSpawnOutcome
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.state.session_store import ChatBusy
 
@@ -21,7 +21,7 @@ from meridian.lib.state.session_store import ChatBusy
 async def finalize_launch_failure(
     runtime_root: Path,
     project_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     error: str | Exception,
 ) -> CompleteSpawnOutcome:
     """Finalize a spawn as launch_failure. Owns the fixed tuple."""
@@ -45,7 +45,7 @@ async def finalize_launch_failure(
 def finalize_launch_failure_sync(
     runtime_root: Path,
     project_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     error: str | Exception,
 ) -> CompleteSpawnOutcome:
     """Synchronous variant for non-async call sites."""

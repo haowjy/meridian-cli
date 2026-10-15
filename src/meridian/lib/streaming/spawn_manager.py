@@ -14,7 +14,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
     reap_on_ownership_transfer_failure,
@@ -49,7 +49,7 @@ StartConnectionPort = Callable[
     ["ConnectionConfig", ResolvedLaunchSpec],
     Awaitable["HarnessConnection[Any]"],
 ]
-ControlServerFactory = Callable[[SpawnId, Path, "SpawnManager"], ControlSocketServer]
+ControlServerFactory = Callable[[RunId, Path, "SpawnManager"], ControlSocketServer]
 
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ EventHook = Callable[[RawHarnessEvent], None]
 
 
 def _default_control_server_factory(
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     socket_path: Path,
     manager: SpawnManager,
 ) -> ControlSocketServer:
@@ -97,7 +97,7 @@ class SpawnManager:
         *,
         debug: bool = False,
         heartbeat_interval_secs: float = 30.0,
-        heartbeat_touch: Callable[[Path, SpawnId], None] | None = None,
+        heartbeat_touch: Callable[[Path, RunId], None] | None = None,
         start_connection: StartConnectionPort | None = None,
         control_server_factory: ControlServerFactory | None = None,
     ):
@@ -108,11 +108,11 @@ class SpawnManager:
         self._heartbeat_touch = heartbeat_touch
         self._start_connection = start_connection or dispatch_start
         self._control_server_factory = control_server_factory or _default_control_server_factory
-        self._sessions: dict[SpawnId, SpawnSession] = {}
-        self._completion_futures: dict[SpawnId, asyncio.Future[DrainOutcome]] = {}
-        self._cleanup_tasks: dict[SpawnId, asyncio.Task[None]] = {}
-        self._heartbeat_tasks: dict[SpawnId, asyncio.Task[None]] = {}
-        self._event_hooks: dict[SpawnId, list[EventHook]] = {}
+        self._sessions: dict[RunId, SpawnSession] = {}
+        self._completion_futures: dict[RunId, asyncio.Future[DrainOutcome]] = {}
+        self._cleanup_tasks: dict[RunId, asyncio.Task[None]] = {}
+        self._heartbeat_tasks: dict[RunId, asyncio.Task[None]] = {}
+        self._event_hooks: dict[RunId, list[EventHook]] = {}
 
     @property
     def runtime_root(self) -> Path:
@@ -126,7 +126,7 @@ class SpawnManager:
 
         return self._project_root
 
-    async def _start_heartbeat(self, spawn_id: SpawnId) -> None:
+    async def _start_heartbeat(self, spawn_id: RunId) -> None:
         """Start heartbeat ownership for one spawn; idempotent."""
 
         current_task = self._heartbeat_tasks.get(spawn_id)
@@ -157,12 +157,12 @@ class SpawnManager:
 
         task.add_done_callback(_drop_heartbeat)
 
-    async def start_heartbeat(self, spawn_id: SpawnId) -> None:
+    async def start_heartbeat(self, spawn_id: RunId) -> None:
         """Start heartbeat ownership for one spawn; public observer-safe seam."""
 
         await self._start_heartbeat(spawn_id)
 
-    async def _stop_heartbeat(self, spawn_id: SpawnId) -> None:
+    async def _stop_heartbeat(self, spawn_id: RunId) -> None:
         """Stop heartbeat ownership for one spawn; idempotent."""
 
         task = self._heartbeat_tasks.pop(spawn_id, None)
@@ -274,12 +274,12 @@ class SpawnManager:
         self._completion_futures[spawn_id] = completion_future
         return connection
 
-    def register_event_hook(self, spawn_id: SpawnId, hook: EventHook) -> None:
+    def register_event_hook(self, spawn_id: RunId, hook: EventHook) -> None:
         """Register a synchronous, best-effort hook for each received event."""
 
         self._event_hooks.setdefault(spawn_id, []).append(hook)
 
-    def unregister_event_hook(self, spawn_id: SpawnId, hook: EventHook) -> None:
+    def unregister_event_hook(self, spawn_id: RunId, hook: EventHook) -> None:
         """Remove one previously registered synchronous event hook."""
 
         hooks = self._event_hooks.get(spawn_id)
@@ -290,7 +290,7 @@ class SpawnManager:
         if not hooks:
             self._event_hooks.pop(spawn_id, None)
 
-    def control_endpoint(self, spawn_id: SpawnId) -> str | None:
+    def control_endpoint(self, spawn_id: RunId) -> str | None:
         """Return the current platform-aware control endpoint for one active spawn."""
 
         session = self._sessions.get(spawn_id)
@@ -300,7 +300,7 @@ class SpawnManager:
 
     async def _drain_loop(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         receiver: HarnessConnection[Any],
         drain_plan: DrainPlan,
         tracer: DebugTracer | None = None,
@@ -322,7 +322,7 @@ class SpawnManager:
     def _select_drain_plan(
         self,
         *,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         receiver: HarnessConnection[Any],
         config: ConnectionConfig,
     ) -> DrainPlan:
@@ -338,7 +338,7 @@ class SpawnManager:
             build_spawn_application_service=_build_spawn_application_service,
         )
 
-    def raw_terminal_frames_are_authoritative(self, spawn_id: SpawnId) -> bool:
+    def raw_terminal_frames_are_authoritative(self, spawn_id: RunId) -> bool:
         """Return whether raw harness terminal frames may finalize this spawn.
 
         Coordinators own harness-specific terminal policy.  The runner uses this
@@ -351,7 +351,7 @@ class SpawnManager:
             return True
         return session.raw_terminal_frames_authoritative
 
-    def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[NormalizedHarnessEvent | None] | None:
+    def subscribe(self, spawn_id: RunId) -> asyncio.Queue[NormalizedHarnessEvent | None] | None:
         """Attach one subscriber queue to the spawn, or return None if unavailable."""
 
         session = self._sessions.get(spawn_id)
@@ -360,14 +360,14 @@ class SpawnManager:
         session.subscriber = asyncio.Queue(maxsize=1000)
         return session.subscriber
 
-    def unsubscribe(self, spawn_id: SpawnId) -> None:
+    def unsubscribe(self, spawn_id: RunId) -> None:
         """Detach the current subscriber for one spawn."""
 
         session = self._sessions.get(spawn_id)
         if session is not None:
             session.subscriber = None
 
-    async def wait_for_completion(self, spawn_id: SpawnId) -> DrainOutcome | None:
+    async def wait_for_completion(self, spawn_id: RunId) -> DrainOutcome | None:
         """Await one spawn's terminal drain outcome, if still tracked."""
 
         completion_future = self._completion_futures.get(spawn_id)
@@ -377,7 +377,7 @@ class SpawnManager:
 
     async def inject(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         message: str,
         source: str = "control_socket",
         on_result: InjectResultCallback | None = None,
@@ -429,7 +429,7 @@ class SpawnManager:
 
     async def interrupt(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         *,
         source: str = "runtime",
     ) -> None:
@@ -450,7 +450,7 @@ class SpawnManager:
 
     async def respond_request(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         *,
         request_id: str,
         decision: str,
@@ -491,7 +491,7 @@ class SpawnManager:
 
     async def respond_user_input(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         *,
         request_id: str,
         answers: dict[str, object],
@@ -541,7 +541,7 @@ class SpawnManager:
                 exc_info=True,
             )
 
-    def get_connection(self, spawn_id: SpawnId) -> HarnessConnection[Any] | None:
+    def get_connection(self, spawn_id: RunId) -> HarnessConnection[Any] | None:
         """Return the active connection for one spawn, if present."""
 
         session = self._sessions.get(spawn_id)
@@ -549,13 +549,13 @@ class SpawnManager:
             return None
         return session.connection
 
-    def get_tracer(self, spawn_id: SpawnId) -> DebugTracer | None:
+    def get_tracer(self, spawn_id: RunId) -> DebugTracer | None:
         """Return the active debug tracer for one spawn, if present."""
 
         session = self._sessions.get(spawn_id)
         return session.debug_tracer if session is not None else None
 
-    async def join_teardown(self, spawn_id: SpawnId) -> None:
+    async def join_teardown(self, spawn_id: RunId) -> None:
         """Wait for post-publication cleanup without changing terminal intent."""
         cleanup_task = self._cleanup_tasks.get(spawn_id)
         if cleanup_task is not None:
@@ -563,7 +563,7 @@ class SpawnManager:
 
     async def stop_spawn(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         *,
         status: SpawnStatus = SpawnStatus.CANCELLED,
         exit_code: int = 1,
@@ -656,7 +656,7 @@ class SpawnManager:
 
     def _publish_terminal(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         session: SpawnSession,
         drain_outcome: DrainOutcome,
         cleanup_request: CompletionCleanupRequest | None,
@@ -699,7 +699,7 @@ class SpawnManager:
 
     def _drop_cleanup_task(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         task: asyncio.Task[None],
     ) -> None:
         if self._cleanup_tasks.get(spawn_id) is task:
@@ -709,7 +709,7 @@ class SpawnManager:
         self,
         *,
         cleanup_request: CompletionCleanupRequest | None,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         session: SpawnSession,
         outcome: DrainOutcome,
     ) -> None:
@@ -720,7 +720,7 @@ class SpawnManager:
         finally:
             await self._cleanup_completed_session(spawn_id, session, outcome)
 
-    def _terminate_recorded_spawn_scope_backstop(self, spawn_id: SpawnId) -> None:
+    def _terminate_recorded_spawn_scope_backstop(self, spawn_id: RunId) -> None:
         """Best-effort recorded scope reap after transport stop attempts."""
 
         try:
@@ -742,7 +742,7 @@ class SpawnManager:
     async def _emit_cancelled_terminal_event(
         self,
         *,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         session: SpawnSession,
         exit_code: int,
         error: str | None,
@@ -762,7 +762,7 @@ class SpawnManager:
 
     async def _fan_out_turn_boundary(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         outcome: TerminalEventOutcome,
     ) -> None:
         """Emit a synthetic turn boundary event for persistent drain sessions."""
@@ -779,7 +779,7 @@ class SpawnManager:
         )
         self.emit_event(spawn_id, synthetic)
 
-    def emit_event(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
+    def emit_event(self, spawn_id: RunId, event: RawHarnessEvent) -> None:
         """Run hooks for and publish one manager-authored harness event."""
         self._run_event_hooks(spawn_id, event)
         session = self._sessions.get(spawn_id)
@@ -794,7 +794,7 @@ class SpawnManager:
                 data=event.payload,
             )
 
-    def _run_event_hooks(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
+    def _run_event_hooks(self, spawn_id: RunId, event: RawHarnessEvent) -> None:
         """Run inline hooks; callers own fan-out and delivery policy."""
         run_event_hooks(tuple(self._event_hooks.get(spawn_id, ())), event)
 
@@ -829,7 +829,7 @@ class SpawnManager:
         self._event_hooks.clear()
         self._completion_futures.clear()
 
-    def list_spawns(self) -> list[SpawnId]:
+    def list_spawns(self) -> list[RunId]:
         """List active spawn IDs."""
 
         return [
@@ -840,7 +840,7 @@ class SpawnManager:
 
     def _fan_out_event(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         event: NormalizedHarnessEvent | None,
     ) -> None:
         session = self._sessions.get(spawn_id)
@@ -886,12 +886,12 @@ class SpawnManager:
                     data={"event_type": event.raw.event_type, "reason": "queue_full"},
                 )
 
-    def _spawn_dir(self, spawn_id: SpawnId) -> Path:
+    def _spawn_dir(self, spawn_id: RunId) -> Path:
         return self._runtime_root / "spawns" / str(spawn_id)
 
     async def _cleanup_completed_session(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         session: SpawnSession,
         outcome: DrainOutcome,
     ) -> None:

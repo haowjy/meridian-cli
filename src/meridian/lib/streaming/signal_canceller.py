@@ -19,7 +19,7 @@ from meridian.lib.core.process_cleanup import (
 )
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import coerce_spawn_status, is_terminal_spawn_status
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.terminate import terminate_tree_sync
 from meridian.lib.state import spawn_store
@@ -59,7 +59,7 @@ class SignalCanceller:
         self._grace_seconds = grace_seconds
         self._manager = manager
 
-    async def cancel(self, spawn_id: SpawnId) -> CancelOutcome:
+    async def cancel(self, spawn_id: RunId) -> CancelOutcome:
         record = spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
         if record is None:
             raise ValueError(f"Spawn '{spawn_id}' not found")
@@ -88,7 +88,7 @@ class SignalCanceller:
 
     async def _cancel_cli_spawn(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         record: SpawnRecord,
     ) -> CancelOutcome:
         runner_pid, runner_created_at_epoch = self._resolve_runner_process(record)
@@ -161,7 +161,7 @@ class SignalCanceller:
 
     async def _cancel_app_spawn(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         record: SpawnRecord,
     ) -> CancelOutcome:
         if self._manager is None:
@@ -188,7 +188,7 @@ class SignalCanceller:
             finalizing=True,
         )
 
-    async def _cancel_app_spawn_over_http(self, spawn_id: SpawnId) -> CancelOutcome:
+    async def _cancel_app_spawn_over_http(self, spawn_id: RunId) -> CancelOutcome:
         aiohttp = import_module("aiohttp")
         timeout = cast("object", aiohttp.ClientTimeout(total=10.0))
 
@@ -284,7 +284,7 @@ class SignalCanceller:
 
         return None, None
 
-    async def _wait_for_terminal(self, spawn_id: SpawnId) -> SpawnRecord | None:
+    async def _wait_for_terminal(self, spawn_id: RunId) -> SpawnRecord | None:
         deadline = time.monotonic() + max(0.0, self._grace_seconds)
         while True:
             current = spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))

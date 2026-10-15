@@ -11,7 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
@@ -284,7 +284,7 @@ class ConnectionConfig:
     knowable while establishing the connection.
     """
 
-    spawn_id: SpawnId
+    spawn_id: RunId
     harness_id: HarnessId
     prompt: str
     control_root: Path
@@ -331,7 +331,7 @@ class HarnessConnection(Generic[SpecT], ABC):
 
     @property
     @abstractmethod
-    def spawn_id(self) -> SpawnId: ...
+    def spawn_id(self) -> RunId: ...
 
     @property
     @abstractmethod

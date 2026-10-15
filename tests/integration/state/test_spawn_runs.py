@@ -38,6 +38,9 @@ def _start(
         harness="codex",
         prompt="hello",
         parent_id=parent_id,
+        parent_run_id=(
+            parse_ref(str(parent_id), row_key=True) if parent_id is not None else None
+        ),
     )
 
 
@@ -257,6 +260,7 @@ def test_history_index_projects_only_runs_parented_within_each_subtree(
         SpawnReservation(
             chat_id="c1",
             parent_id="p9",
+            parent_run_id=parse_ref("p9", row_key=True),
             prompt="again",
             session_metadata=PrimarySessionMetadata(
                 harness="codex",

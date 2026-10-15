@@ -14,7 +14,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.native_identity import NativeIdentityError, NativeSessionUnavailable
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessPrelaunchState,
@@ -89,7 +89,7 @@ def _with_source_ref(exc: Exception, session: SessionRequest) -> Exception:
 def _log_launch_failure_without_traceback(
     *,
     message: str,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     exc: Exception,
 ) -> None:
     if isinstance(exc, (LaunchUserInputError, NativeIdentityError)):

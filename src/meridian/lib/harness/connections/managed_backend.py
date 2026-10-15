@@ -10,7 +10,7 @@ from typing import IO, Any
 
 import psutil
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.detached_process import (
@@ -32,7 +32,7 @@ from meridian.lib.state.process_scope_projection import record_scope
 
 def spawn_owned_process_handle(
     *,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     process: asyncio.subprocess.Process,
     scope_id: str,
     role: str,
@@ -78,7 +78,7 @@ def spawn_owned_process_handle(
 class ManagedBackendConfig:
     """Inputs for launching a managed backend process."""
 
-    spawn_id: SpawnId
+    spawn_id: RunId
     harness_id: HarnessId
     command: tuple[str, ...]
     cwd: Path
@@ -97,7 +97,7 @@ class ManagedBackendHandle:
 
 async def register_spawn_owned_process(
     *,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     control_root: Path,
     process: asyncio.subprocess.Process,
     scope_id: str,

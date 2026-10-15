@@ -24,7 +24,7 @@ from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.launch_policy_snapshot import (
     LaunchPolicySnapshot as LaunchPolicySnapshot,
 )
-from meridian.lib.core.refs import parse_ref, reference_sort_key
+from meridian.lib.core.refs import parse_ref, reference_sort_key, spawn_of
 from meridian.lib.core.spawn_lifecycle import (
     SpawnReservation,
 )
@@ -297,13 +297,15 @@ def _build_record(
 
     from meridian.lib.state.session_store import get_session_record
 
+    if parent_id is not None and parent_run_id is None:
+        raise ValueError("parent_run_id is required when parent_id is set")
+    if parent_run_id is not None and (
+        parent_id is None or spawn_of(parent_run_id) != parent_id
+    ):
+        raise ValueError("parent_id and parent_run_id must name the same spawn")
     parent = (
-        _read_state(
-            paths.spawns_dir,
-            parent_run_id or parse_ref(str(parent_id), row_key=True),
-            include_prompt=False,
-        )
-        if parent_id
+        _read_state(paths.spawns_dir, parent_run_id, include_prompt=False)
+        if parent_run_id is not None
         else None
     )
     owner = (

@@ -22,7 +22,7 @@ from meridian.lib.core.native_identity import (
     PostExit,
 )
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.session_scope import SessionAttempt
@@ -305,7 +305,7 @@ def conclude_native_run(
     adapter: SubprocessHarness,
     *,
     context: LaunchContext,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     child_env: Mapping[str, str],
     child_cwd: Path,
     pid: int | None,

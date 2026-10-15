@@ -15,8 +15,8 @@ from meridian.lib.core.depth import (
     child_meridian_depth,
     parse_meridian_depth,
 )
-from meridian.lib.core.identity import current_run_id, current_spawn_id
-from meridian.lib.core.refs import parse_ref, spawn_of
+from meridian.lib.core.identity import current_run_id, current_spawn_id, identity_env
+from meridian.lib.core.refs import spawn_of
 from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import session_store, spawn_store
@@ -230,18 +230,18 @@ class ResolvedContext:
         )
 
     def child_env_overrides(
-        self, *, increment_depth: bool = True, child_spawn_id: str | None = None
+        self, *, increment_depth: bool = True, child_run_id: RunId | None = None
     ) -> dict[str, str]:
         """Produce `MERIDIAN_*` env overrides for child processes."""
 
         next_depth = child_meridian_depth(self.depth, increment_depth=increment_depth)
         overrides: dict[str, str] = {"_MERIDIAN_DEPTH": str(next_depth)}
-        if child_spawn_id is not None:
-            overrides["MERIDIAN_SPAWN_ID"] = str(spawn_of(child_spawn_id))
-            overrides["MERIDIAN_RUN_ID"] = str(parse_ref(child_spawn_id, row_key=True))
+        if child_run_id is not None:
+            overrides.update(identity_env(spawn_of(child_run_id), child_run_id))
         elif self.spawn_id is not None:
-            overrides["MERIDIAN_SPAWN_ID"] = str(self.spawn_id)
-            overrides["MERIDIAN_RUN_ID"] = str(self.run_id or self.spawn_id)
+            if self.run_id is None:
+                raise ValueError("ResolvedContext with spawn_id requires an exact run_id")
+            overrides.update(identity_env(self.spawn_id, self.run_id))
         if self.spawn_id is not None:
             overrides["_MERIDIAN_PARENT_SPAWN_ID"] = str(self.spawn_id)
         if self.project_root is not None:

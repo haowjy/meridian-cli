@@ -17,7 +17,7 @@ from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import HarnessSessionId, ModelId, SpawnId
+from meridian.lib.core.types import HarnessSessionId, ModelId, RunId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
@@ -85,7 +85,7 @@ def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:
 
 def _record_launch_boundary_observation(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     *,
     event: str,
     stage: str | None = None,
@@ -143,7 +143,7 @@ def _load_bg_worker_request(log_dir: Path) -> BackgroundWorkerLaunchRequest:
 
 def _build_background_worker_command(
     *,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     project_paths: Any,
 ) -> tuple[str, ...]:
     return (
@@ -159,7 +159,7 @@ def _build_background_worker_command(
 
 async def _execute_existing_spawn(
     *,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     project_paths: Any,
     launch_request: BackgroundWorkerLaunchRequest,
     sink: Any | None = None,
@@ -249,7 +249,7 @@ async def _execute_existing_spawn(
         spawn_record.status if spawn_record.status != "unknown" else SpawnStatus.QUEUED
     )
     spawn = Spawn(
-        spawn_id=SpawnId(spawn_record.id),
+        spawn_id=spawn_record.id,
         prompt=resolved_prompt,
         model=ModelId(resolved_model),
         status=spawn_status,
@@ -320,7 +320,7 @@ def _background_worker_main(
     project_root = Path(parsed.project_root).expanduser().resolve()
     prepared = prepare_for_runtime_write(project_root)
     project_paths = resolve_project_config_paths(project_root=prepared.project_root)
-    spawn_id = SpawnId(parsed.spawn_id)
+    spawn_id = parse_ref(parsed.spawn_id, row_key=True)
     if prepared.runtime_root is None:
         raise ValueError("Prepared runtime write context is missing runtime root.")
     runtime_root = prepared.runtime_root

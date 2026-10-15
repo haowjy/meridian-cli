@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -109,7 +109,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return HarnessId.OPENCODE
 
     @property
-    def spawn_id(self) -> SpawnId:
+    def spawn_id(self) -> RunId:
         return self._transport().spawn_id
 
     @property

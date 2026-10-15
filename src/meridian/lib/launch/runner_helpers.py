@@ -14,7 +14,7 @@ import structlog
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.launch.constants import STDERR_FILENAME
 from meridian.lib.platform.terminate import terminate_tree as _terminate_tree
@@ -36,7 +36,7 @@ class SpawnTimeoutError(TimeoutError):
         super().__init__(f"Spawn exceeded timeout after {timeout_seconds:.3f}s")
 
 
-def spawn_kind(runtime_root: Path, spawn_id: SpawnId) -> str:
+def spawn_kind(runtime_root: Path, spawn_id: RunId) -> str:
     row = spawn_store.get_spawn(runtime_root, parse_ref(spawn_id, row_key=True))
     if row is None:
         return "child"
@@ -69,7 +69,7 @@ def guardrail_failure_text(failures: tuple[GuardrailFailure, ...]) -> str:
 def append_text_to_stderr_artifact(
     *,
     artifacts: ArtifactStore,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     text: str,
 ) -> None:
     key = make_artifact_key(spawn_id, STDERR_FILENAME)

@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.refs import parse_ref, spawn_of
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.state import spawn_store
@@ -69,7 +69,7 @@ class _ResidentCompletionEvidence:
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         poll_seconds: float,
         clock: Callable[[], float],
     ) -> None:
@@ -77,7 +77,7 @@ class _ResidentCompletionEvidence:
         self._clock = clock
         self._descendant_evidence = ReconciledDescendantEvidence(
             runtime_root=runtime_root,
-            root_spawn_id=spawn_id,
+            root_spawn_id=spawn_of(spawn_id),
         )
         self._refresh = DescendantRefreshOwner(
             self._descendant_evidence,
@@ -134,7 +134,7 @@ class _ResidentCompletionProfile:
         self,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         resident_backend: ResidentBackendControl,
         deadline_seconds: float,
         rearm_budget: int | None,
@@ -376,8 +376,8 @@ class _ResidentCompletionCleanup:
     def __init__(
         self,
         *,
-        spawn_id: SpawnId,
-        cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
+        spawn_id: RunId,
+        cancel_descendants: Callable[[RunId], Awaitable[set[str]]],
     ) -> None:
         self._spawn_id = spawn_id
         self._cancel_descendants = cancel_descendants
@@ -422,13 +422,13 @@ class ResidentDrainCoordinator:
         cls,
         *,
         runtime_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         receiver: HarnessConnection[Any],
         resident_backend: ResidentBackendControl,
         deadline_seconds: float | None,
         poll_seconds: float | None,
         rearm_budget: int | None,
-        cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
+        cancel_descendants: Callable[[RunId], Awaitable[set[str]]],
     ) -> ResidentDrainCoordinator:
         del receiver
         resolved_deadline = (

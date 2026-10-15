@@ -7,15 +7,15 @@ from collections.abc import Callable
 from pathlib import Path
 
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.state import paths
 
 
 async def heartbeat_loop(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     interval: float = 30.0,
-    touch: Callable[[Path, SpawnId], None] | None = None,
+    touch: Callable[[Path, RunId], None] | None = None,
 ) -> None:
     """Touch the per-spawn heartbeat sentinel on a fixed interval."""
 

@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
@@ -36,17 +36,17 @@ class CleanupClaim(BaseModel):
     scopes: tuple[object, ...]
 
 
-def cleanup_claim_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+def cleanup_claim_path(runtime_root: Path, spawn_id: RunId | str) -> Path:
     return runtime_root / "spawns" / str(spawn_id) / _CLAIM_FILENAME
 
 
-def cleanup_lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+def cleanup_lock_path(runtime_root: Path, spawn_id: RunId | str) -> Path:
     return runtime_root / "locks" / "reaper-cleanup" / f"{spawn_id}.lock"
 
 
 def read_cleanup_claim(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId | str,
 ) -> list[ProcessScopeSnapshot]:
     claim = read_model(cleanup_claim_path(runtime_root, spawn_id), CleanupClaim)
     return parse_scope_entries(claim.scopes) if claim is not None else []
@@ -69,7 +69,7 @@ def _delete_claim(path: Path) -> None:
 
 def claim_active_spawn_scopes(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId | str,
     *,
     extra_scopes: tuple[ProcessScopeSnapshot, ...] = (),
 ) -> list[ProcessScopeSnapshot]:
@@ -90,7 +90,7 @@ def claim_active_spawn_scopes(
         ):
             return read_cleanup_claim(runtime_root, spawn_id)
         existing = read_cleanup_claim(runtime_root, spawn_id)
-        projection = read_scope_projection(runtime_root, SpawnId(spawn_id_text))
+        projection = read_scope_projection(runtime_root, parse_ref(spawn_id_text, row_key=True))
         candidates = [
             scope
             for scope in projection.scopes
@@ -111,7 +111,7 @@ def claim_active_spawn_scopes(
 
 def replace_cleanup_claim(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId | str,
     scopes: list[ProcessScopeSnapshot],
 ) -> None:
     """Replace or clear a claim under the spawn's stable mutation lock."""

@@ -195,7 +195,7 @@ def live_observer_for_chat(
             runtime_root, row.chat_id, session_instance_id=row.session_instance_id,
         ):
             return row.id
-        scopes = read_scope_projection(runtime_root, SpawnId(row.id))
+        scopes = read_scope_projection(runtime_root, row.id)
         if any(
             scope_liveness(scope)["likely_serving"]
             for scope in scopes.scopes if scope.release_id not in scopes.released_ids

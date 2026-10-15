@@ -14,7 +14,7 @@ import structlog
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
+from meridian.lib.core.types import ArtifactKey, HarnessId, RunId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
     ReferenceRouting,
@@ -36,7 +36,7 @@ logger = structlog.get_logger(__name__)
 
 def append_runner_lifecycle_event(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     path: Path,
     *,
     clock: Clock,
@@ -71,7 +71,7 @@ class LifecycleLog:
     """Destination and clock for runner-owned lifecycle evidence."""
 
     runtime_root: Path
-    spawn_id: SpawnId
+    spawn_id: RunId
     path: Path
     clock: Clock
 
@@ -80,7 +80,7 @@ class LifecycleLog:
         cls,
         runtime_root: Path,
         project_root: Path,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         *,
         clock: Clock | None = None,
     ) -> LifecycleLog:
@@ -120,7 +120,7 @@ def record_identity_failure(
 ProjectionSurface = Literal["primary", "spawn"]
 
 
-def read_artifact_text(artifacts: ArtifactStore, spawn_id: SpawnId, name: str) -> str:
+def read_artifact_text(artifacts: ArtifactStore, spawn_id: RunId, name: str) -> str:
     key = ArtifactKey(f"{spawn_id}/{name}")
     if not artifacts.exists(key):
         return ""

@@ -11,8 +11,9 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Final, NamedTuple, cast
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -133,7 +134,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._timing = timing or PiRpcTimingPolicy()
         self._clock = clock
         self._state: ConnectionState = "created"
-        self._spawn_id: SpawnId = SpawnId("")
+        self._spawn_id = parse_ref("", row_key=True)
         self._child: ManagedStdioProcess | None = None
         self._event_stream_started = False
         self._session_id: str | None = None
@@ -167,7 +168,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         return HarnessId.PI
 
     @property
-    def spawn_id(self) -> SpawnId:
+    def spawn_id(self) -> RunId:
         return self._spawn_id
 
     @property

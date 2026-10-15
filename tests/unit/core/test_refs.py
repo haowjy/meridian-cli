@@ -2,15 +2,15 @@
 
 import pytest
 
-from meridian.lib.core.refs import parse_ref, reference_sort_key, spawn_of
+from meridian.lib.core.refs import make_run_id, parse_ref, reference_sort_key, run_number, spawn_of
 
 
 @pytest.mark.parametrize(
     ("text", "kind", "spawn", "key", "number"),
     [
-        ("p5", "spawn", "p5", None, 1),
-        (" p5 ", "spawn", "p5", None, 1),
-        ("p05", "spawn", "p05", None, 1),
+        ("p5", "spawn", "p5", None, None),
+        (" p5 ", "spawn", "p5", None, None),
+        ("p05", "spawn", "p05", None, None),
         ("p5.1", "run", "p5", "p5", 1),
         ("p5.01", "run", "p5", "p5", 1),
         ("p5.2", "run", "p5", "p5.2", 2),
@@ -33,3 +33,12 @@ def test_exact_mechanism_keys_keep_legacy_rows_visible():
     assert sorted(["p-x", "r3", "p5.10", "p5.2", "p2"], key=reference_sort_key) == [
         "p2", "r3", "p5.2", "p5.10", "p-x",
     ]
+
+
+def test_run_id_composition_and_numbering_are_canonical():
+    assert make_run_id("p5", 1) == "p5"
+    assert make_run_id("p5", 3) == "p5.3"
+    assert run_number(make_run_id("p5", 1)) == 1
+    assert run_number(make_run_id("p5", 3)) == 3
+    with pytest.raises(ValueError, match="at least 1"):
+        make_run_id("p5", 0)
