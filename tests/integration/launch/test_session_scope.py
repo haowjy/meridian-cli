@@ -74,10 +74,16 @@ def test_fresh_session_scope_binds_the_run_generation(tmp_path: Path) -> None:
         spawn_id=run_id,
     ) as managed:
         row = spawn_store.get_spawn(tmp_path, run_id)
+        session = get_session_record(tmp_path, managed.chat_id)
         assert row is not None
+        assert session is not None
         assert (row.chat_id, row.session_instance_id) == (
             managed.chat_id,
             managed.session_instance_id,
+        )
+        assert (session.spawn_id, session.session_instance_id) == (
+            str(row.id),
+            row.session_instance_id,
         )
 
 
@@ -116,11 +122,17 @@ def test_reopen_helper_binds_chat_generation_lineage_and_work(tmp_path: Path) ->
     ) as managed:
         bind_reopened_run(tmp_path, run_id, managed, work_id="w1")
         row = spawn_store.get_spawn(tmp_path, run_id)
+        session = get_session_record(tmp_path, managed.chat_id)
         assert row is not None
+        assert session is not None
         assert (row.chat_id, row.session_instance_id, row.work_id) == (
             managed.chat_id,
             managed.session_instance_id,
             "w1",
+        )
+        assert (session.spawn_id, session.session_instance_id) == (
+            str(row.id),
+            row.session_instance_id,
         )
 
 

@@ -11,6 +11,8 @@ failure raises an error with no fallback, and that fresh Codex
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +42,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.state import session_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.spawn_store import get_spawn, list_spawns
 from tests.support.launch import (
     assert_task_cwd_instruction,
@@ -516,3 +518,61 @@ def test_run_harness_process_codex_managed_failure_raises_error(
                 AssertionError("codex should not fall back to black-box")
             ),
         )
+
+
+def test_reopen_chat_busy_finalizes_reserved_run_without_session_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "codex-chat-busy"
+    project_root.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CODEX,
+        model="gpt-5.4",
+        session=SessionRequest(
+            reopen_spawn_id="p1",
+            source_run_id="p1",
+            requested_harness_session_id="00000000-0000-4000-8000-000000000010",
+            continue_chat_id="c1",
+            primary_session_mode=SessionMode.RESUME.value,
+        ),
+    )
+    first = spawn_store.start_spawn(
+        launch_context.runtime_root,
+        spawn_id="p1",
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="",
+        harness="codex",
+        prompt="first",
+    )
+    spawn_store.finalize_spawn(
+        launch_context.runtime_root,
+        first,
+        status="succeeded",
+        exit_code=0,
+        origin="runner",
+    )
+    generations_before = session_store.list_session_generations(launch_context.runtime_root)
+
+    @contextmanager
+    def refuse_session_scope(**_kwargs: object) -> Iterator[None]:
+        raise session_store.ChatBusy("c1")
+        yield
+
+    monkeypatch.setattr(process_runner, "session_scope", refuse_session_scope)
+
+    with pytest.raises(session_store.ChatBusy, match="chat_busy"):
+        run_harness_process(
+            launch_context,
+            harness_registry,
+            prepared=launch_context.prepared,
+        )
+
+    reserved = spawn_store.get_spawn(launch_context.runtime_root, "p1.2")
+    assert reserved is not None and reserved.status == "failed"
+    assert reserved.terminal is not None and reserved.terminal.error == "chat_busy"
+    assert session_store.list_session_generations(
+        launch_context.runtime_root
+    ) == generations_before

@@ -50,6 +50,21 @@ def _reserve_run_without_busy_check_worker(runtime_root: str) -> str:
     return str(spawn_store.reserve_run(Path(runtime_root), SpawnId("p1"), reservation))
 
 
+def _continue_run_worker(runtime_root: str) -> tuple[str, str]:
+    reservation = SpawnReservation(
+        chat_id="c1",
+        prompt="again",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+    )
+    try:
+        run_id = spawn_store.reserve_run(Path(runtime_root), SpawnId("p1"), reservation)
+    except spawn_store.SpawnBusy as exc:
+        return ("busy", str(exc))
+    return ("reserved", str(run_id))
+
+
 @pytest.mark.parametrize('status,live,busy', [
     ('succeeded', False, False), ('running', False, False),
     ('running', True, True), ('queued', True, True),
@@ -186,6 +201,33 @@ def test_concurrent_run_reservations_allocate_distinct_suffixes(tmp_path: Path) 
     )
 
     assert sorted(allocated) == ["p1.2", "p1.3"]
+
+
+def test_concurrent_continues_allow_one_run_and_name_it_in_busy_refusal(
+    tmp_path: Path,
+) -> None:
+    first = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="hi",
+    )
+    spawn_store.finalize_spawn(
+        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
+    )
+
+    outcomes = run_spawn_race_or_skip(
+        _continue_run_worker,
+        [(tmp_path.as_posix(),), (tmp_path.as_posix(),)],
+    )
+
+    reserved = [detail for status, detail in outcomes if status == "reserved"]
+    busy = [detail for status, detail in outcomes if status == "busy"]
+    assert reserved == ["p1.2"]
+    assert len(busy) == 1 and "p1.2" in busy[0]
 
 
 def test_interrupted_publish_leaves_pointer_that_recovers_to_published_run(

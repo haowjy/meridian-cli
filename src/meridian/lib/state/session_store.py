@@ -11,6 +11,7 @@ from typing import IO, Annotated, Literal, NamedTuple, cast
 import psutil
 from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError
 
+from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import (
     BindSource,
@@ -278,19 +279,27 @@ class ChatBusy(ValueError):
         super().__init__(f"chat_busy: Chat {chat_id} has a live owner")
 
 
-def _acquire_reopen_lock(runtime_root: Path, chat_id: str, lock_path: Path) -> IO[bytes]:
-    deadline = time.monotonic() + REOPEN_LOCK_WAIT_SECONDS
+def _acquire_reopen_lock(
+    runtime_root: Path,
+    chat_id: str,
+    lock_path: Path,
+    *,
+    clock: Clock | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> IO[bytes]:
+    resolved_clock = clock or RealClock()
+    deadline = resolved_clock.monotonic() + REOPEN_LOCK_WAIT_SECONDS
     while True:
         try:
             return acquire_file_lock(lock_path, timeout=0)
         except FileLockTimeout:
             if is_session_lease_owner_alive(runtime_root, chat_id):
                 raise ChatBusy(chat_id) from None
-            if time.monotonic() >= deadline:
+            if resolved_clock.monotonic() >= deadline:
                 raise FileLockTimeout(
                     f"Timed out waiting for transient chat lock: {chat_id}"
                 ) from None
-            time.sleep(REOPEN_LOCK_POLL_SECONDS)
+            sleep(REOPEN_LOCK_POLL_SECONDS)
 
 
 def start_session(
