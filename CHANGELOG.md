@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-10-15
+
 ### Changed
 - Replace the idle compaction total-context floor with a growth-based,
   per-harness break-even; `idle.compact_min_growth_tokens` is the explicit
