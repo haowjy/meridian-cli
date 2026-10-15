@@ -16,6 +16,7 @@ from meridian.lib.core.refs import make_run_id, parse_ref, reference_sort_key, r
         ("p5.2", "run", "p5", "p5.2", 2),
         ("p5.010", "run", "p5", "p5.10", 10),
         ("c05", "chat", None, None, None),
+        ("@latest", "alias", None, None, None),
         *[(value, "native", None, None, None) for value in
           ("P5", "p-x", "r5", "p5.0", "p5.-1", "p\uff15", "p5.2.3", "", "native-uuid")],
     ],

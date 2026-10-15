@@ -1432,6 +1432,8 @@ class HistoryIndex:
         deadline: float | None = None,
         **filters: str | set[str] | None,
     ) -> tuple[SpawnRecord, ...]:
+        # Filter vocabulary: spawn_id is stable identity; run_id is the exact
+        # persisted row key (records.local_id).
         columns = {
             "chat_id": RECORDS.c.chat,
             "current_chat_id": RECORDS.c.current_chat,

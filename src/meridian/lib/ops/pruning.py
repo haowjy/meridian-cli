@@ -376,7 +376,7 @@ def _scan_stale_spawn_artifacts(
             continue
         spawn_id = spawn_dir.name
         parsed = parse_ref(spawn_id)
-        if parsed.kind not in {"spawn", "run"}:
+        if not _is_canonical_run_key(spawn_id):
             continue
         run_id = parse_ref(spawn_id, row_key=True)
         all_run_ids.setdefault(str(parsed.spawn_id), []).append(run_id)
@@ -542,6 +542,10 @@ def _read_prune_sibling(runtime_root: Path, run_id: RunId) -> SpawnRecord | None
         return None
 
 
+def _is_canonical_run_key(value: str) -> bool:
+    return parse_ref(value).kind in {"spawn", "run"}
+
+
 def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifactPruneResult:
     """Delete stale spawn artifacts and collect their newly orphaned locks."""
 
@@ -550,7 +554,7 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
     for artifact in stale:
         artifact_path = Path(artifact.path)
         if (
-            not spawn_store.is_spawn_id_shape(artifact.spawn_id)
+            not _is_canonical_run_key(artifact.spawn_id)
             or artifact_path.name != str(artifact.spawn_id)
             or artifact_path.parent.name != "spawns"
         ):

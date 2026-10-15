@@ -2099,7 +2099,7 @@ def _source_spawn_for_follow_up(
     parsed_source = parse_ref(payload_spawn_id)
     resolved_run_id = (
         resolve_spawn_reference(project_root, payload_spawn_id, runtime_root=runtime_root)
-        if payload_spawn_id.startswith("@")
+        if parsed_source.kind == "alias"
         else None
     )
     target = resolve_continue_target(

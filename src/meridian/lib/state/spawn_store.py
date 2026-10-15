@@ -100,17 +100,11 @@ _UNASSIGNED_RUN_ID = parse_ref("p0", row_key=True)
 # ---------------------------------------------------------------------------
 
 
-def _spawn_id_index(run_id: RunId) -> int:
+def _spawn_number(run_id: RunId) -> int:
     ref = parse_ref(str(run_id))
     if ref.spawn_id is not None:
         return int(ref.spawn_id[1:])
     return 0
-
-
-def is_spawn_id_shape(spawn_id: SpawnId | RunId | str) -> bool:
-    """Return whether *spawn_id* has a canonical persisted run-row shape."""
-
-    return parse_ref(str(spawn_id)).kind in {"spawn", "run"}
 
 
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
@@ -129,7 +123,7 @@ def _read_spawn_counter(paths: RuntimePaths) -> int:
 
 def _seed_spawn_counter_from_dirs(paths: RuntimePaths) -> int:
     return max(
-        (_spawn_id_index(spawn_id) for spawn_id in _scan_spawn_ids(paths.spawns_dir)),
+        (_spawn_number(spawn_id) for spawn_id in _scan_spawn_ids(paths.spawns_dir)),
         default=0,
     )
 
@@ -542,7 +536,11 @@ def _check_reopen_chat_preflight(runtime_root: Path, chat_id: str) -> None:
 
 
 def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReservation) -> RunId:
-    """Publish max-K+1 under the allocation gate; never copy a generation."""
+    """Publish max-K+1 under the allocation gate; never copy a generation.
+
+    Reopened runs always begin queued and are owned by the allocating process;
+    caller-provided ``status`` and ``runner_pid`` are intentionally replaced.
+    """
     paths = RuntimePaths.from_root_dir(runtime_root)
     reservation = replace(reservation, status=SpawnStatus.QUEUED, runner_pid=os.getpid())
     check_spawn_available(runtime_root, spawn_id)
@@ -931,10 +929,6 @@ def mark_spawn_running(
     return _write_state_locked(paths.spawns_dir, spawn_id, mark_running)
 
 
-def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, int, str]:
-    return reference_sort_key(spawn.id)
-
-
 @dataclass(frozen=True)
 class SpawnScan:
     """Immutable partition of valid rows and quarantined persisted siblings."""
@@ -949,7 +943,10 @@ class SpawnScan:
         quarantines: Sequence[SpawnStateQuarantineReport],
     ) -> SpawnScan:
         """Build a scan with the canonical persisted-spawn ordering."""
-        return cls(tuple(sorted(records, key=_spawn_sort_key)), tuple(quarantines))
+        return cls(
+            tuple(sorted(records, key=lambda spawn: reference_sort_key(spawn.id))),
+            tuple(quarantines),
+        )
 
 
 def quarantine_hint(spawn_ids: Sequence[str]) -> str:

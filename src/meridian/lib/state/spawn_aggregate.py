@@ -41,9 +41,9 @@ def published_artifact_lock(
     """Lock a spawn-owned artifact after verifying its published row."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_spawn_id = str(spawn_id)
-    if not is_safe_spawn_dir_name(resolved_spawn_id):
-        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
+    run_name = str(spawn_id)
+    if not is_safe_spawn_dir_name(run_name):
+        raise ValueError(f"Invalid spawn ID: {run_name}")
 
     with (
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
@@ -55,7 +55,7 @@ def published_artifact_lock(
             or current.record_mode == "historical"
             or (can_mutate is not None and not can_mutate(current))
         ):
-            raise PublishedArtifactUnavailable(resolved_spawn_id)
+            raise PublishedArtifactUnavailable(run_name)
         yield
 
 
@@ -129,12 +129,17 @@ def _remove_published_spawn[T](
     remove: Callable[[Path], T],
     guard_spawn_allocation: bool = False,
 ) -> T | None:
-    """One ownership/lock seam for ordinary deletion and verified ZIP retirement."""
+    """One ownership/lock seam for ordinary deletion and verified ZIP retirement.
+
+    Ordinary deletion always takes the allocation gate so pruning cannot race a
+    reopen allocation. Archive retirement may omit it only after its caller has
+    established that no stable-spawn allocation needs serialization.
+    """
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_spawn_id = str(spawn_id)
-    if not is_safe_spawn_dir_name(resolved_spawn_id):
-        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
-    spawn_dir = paths.spawns_dir / resolved_spawn_id
+    run_name = str(spawn_id)
+    if not is_safe_spawn_dir_name(run_name):
+        raise ValueError(f"Invalid spawn ID: {run_name}")
+    spawn_dir = paths.spawns_dir / run_name
 
     # Global order: root mutation, optional allocation gate, run state, then
     # process-scope projection. A durable reaper cleanup claim must be completed
@@ -145,7 +150,7 @@ def _remove_published_spawn[T](
         if guard_spawn_allocation:
             stack.enter_context(lock_file(paths.spawns_flock))
         stack.enter_context(lock_file(spawn_lock_path(paths.spawns_dir, spawn_id)))
-        stack.enter_context(lock_file(scope_projection_lock_path(runtime_root, resolved_spawn_id)))
+        stack.enter_context(lock_file(scope_projection_lock_path(runtime_root, run_name)))
         claim_path = spawn_dir / "reaper_cleanup_claim.json"
         if claim_path.exists() or not can_delete(
             read_state(paths.spawns_dir, spawn_id, include_prompt=False)
@@ -153,15 +158,14 @@ def _remove_published_spawn[T](
             return None
         if not spawn_dir.exists():
             return None
-        changes.mark(HistorySource(kind="spawn", key=resolved_spawn_id))
+        changes.mark(HistorySource(kind="spawn", key=run_name))
         try:
-            removed = remove(spawn_dir)
+            return remove(spawn_dir)
         except OSError:
             # A rename may already have committed before synchronization failed.
             # In that case leave staging and the caller's prepared ZIP receipt
             # intact; never return a cleanup handle with uncertain durability.
             return None
-        return removed
 
 
 def _remove_artifacts(directory: Path) -> bool:

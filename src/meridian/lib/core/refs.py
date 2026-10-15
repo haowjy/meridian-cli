@@ -19,7 +19,7 @@ _LEGACY_SORT = re.compile(r"r([0-9]+)\Z")
 
 @dataclass(frozen=True)
 class ParsedRef:
-    kind: Literal["spawn", "run", "chat", "native"]
+    kind: Literal["spawn", "run", "chat", "alias", "native"]
     value: str
     spawn_id: SpawnId | None = None
     run_id: RunId | None = None
@@ -45,6 +45,8 @@ def parse_ref(text: str, *, row_key: bool = False) -> ParsedRef | RunId:
     if row_key:
         return RunId(SpawnId(text))
     value = text.strip()
+    if value.startswith("@"):
+        return ParsedRef("alias", value)
     match = _SPAWN.fullmatch(value)
     if match is not None and (match[2] is None or int(match[2]) >= 1):
         spawn = SpawnId(f"p{match[1]}")

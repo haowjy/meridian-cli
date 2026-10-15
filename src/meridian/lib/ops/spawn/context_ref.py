@@ -27,9 +27,9 @@ def _is_filesystem_path_ref(value: str) -> bool:
     """Return True when a ``--from`` value looks like a filesystem path, not a session ref."""
 
     normalized = value.strip()
-    if not normalized or normalized.startswith("@"):
+    if not normalized:
         return False
-    if parse_ref(normalized).kind in {"spawn", "run", "chat"}:
+    if parse_ref(normalized).kind in {"spawn", "run", "chat", "alias"}:
         return False
     if normalized.startswith(("./", "../", "/", "~")):
         return True
@@ -151,7 +151,7 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
     _reject_filesystem_path_context_ref(normalized)
 
     parsed = parse_ref(normalized)
-    if normalized.startswith("@") or parsed.kind in {"spawn", "run"}:
+    if parsed.kind in {"alias", "spawn", "run"}:
         spawn_id = resolve_spawn_reference(project_root, normalized)
         spawn_row = read_spawn_row(project_root, spawn_id)
         if spawn_row is None:

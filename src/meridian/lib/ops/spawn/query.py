@@ -189,7 +189,7 @@ def resolve_spawn_reference(
     normalized = ref.strip()
     if not normalized:
         raise ValueError("spawn_id is required")
-    if not normalized.startswith("@"):
+    if parse_ref(normalized).kind != "alias":
         resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
         if resolved_runtime_root is None:
             raise ValueError(f"Spawn '{normalized}' not found")
@@ -213,19 +213,6 @@ def resolve_spawn_reference(
     if resolved is None:
         raise ValueError(f"No spawns found for reference '{normalized}'")
     return parse_ref(resolved, row_key=True)
-
-
-def resolve_spawn_references(
-    project_root: Path,
-    refs: tuple[str, ...],
-    *,
-    runtime_root: Path | None = None,
-) -> tuple[RunId, ...]:
-    return tuple(
-        dict.fromkeys(
-            resolve_spawn_reference(project_root, ref, runtime_root=runtime_root) for ref in refs
-        )
-    )
 
 
 def read_spawn_row(
@@ -589,6 +576,5 @@ __all__ = [
     "read_spawn_row",
     "read_written_files",
     "resolve_spawn_reference",
-    "resolve_spawn_references",
     "spawn_session_log_available",
 ]

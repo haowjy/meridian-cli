@@ -7,7 +7,6 @@ from contextlib import suppress
 from meridian.lib.core.identity import current_spawn_id
 
 DEPTH_ENV = "_MERIDIAN_DEPTH"
-MERIDIAN_SPAWN_ID_ENV = "MERIDIAN_SPAWN_ID"
 
 
 def parse_meridian_depth(raw: str | None) -> int:
@@ -89,7 +88,6 @@ def max_depth_reached(current_depth: int, max_depth: int) -> bool:
 
 __all__ = [
     "DEPTH_ENV",
-    "MERIDIAN_SPAWN_ID_ENV",
     "child_meridian_depth",
     "current_meridian_depth",
     "has_valid_meridian_depth",

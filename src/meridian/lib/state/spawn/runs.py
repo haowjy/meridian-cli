@@ -90,7 +90,7 @@ def write_run_head(paths: RuntimePaths, run_id: RunId) -> None:
     if parsed.spawn_id is None:
         return
     spawn_id = parsed.spawn_id
-    number = parsed.run if parsed.run is not None else 1
+    number = run_number(run_id)
     current = _read_head_file(_head_path(paths, spawn_id))
     if current is not None and number <= current:
         return

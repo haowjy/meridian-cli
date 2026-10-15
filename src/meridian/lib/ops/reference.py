@@ -432,7 +432,7 @@ def resolve_continue_target(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     identity_ref = (
         str(spawn_of(resolved_run_id))
-        if normalized.startswith("@") and resolved_run_id is not None
+        if parsed.kind == "alias" and resolved_run_id is not None
         else normalized
     )
     reference = resolve_session_reference(
