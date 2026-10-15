@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -37,11 +38,29 @@ def test_native_cancel_wait_unblocks_without_terminating_child() -> None:
     from meridian.lib.launch.process.native_launcher import _RunningNativeProcess
     from meridian.lib.platform.detached_process import ParentDeathLink
 
+    class RecordingWatchdog:
+        def __init__(self) -> None:
+            self.released: list[str] = []
+            self.closed = threading.Event()
+
+        def release_scope(self, release_id: str) -> bool:
+            self.released.append(release_id)
+            return True
+
+        def close(self) -> None:
+            self.closed.set()
+
+    watchdog = RecordingWatchdog()
     child = subprocess.Popen((sys.executable, "-c", "import time; time.sleep(60)"))
     try:
         running = _RunningNativeProcess(
             process=child,
-            parent_death_link=ParentDeathLink(parent_death_linked=False),
+            parent_death_link=ParentDeathLink(
+                watchdog=watchdog,  # type: ignore[arg-type]
+                watchdog_release_id="tui:test",
+                owns_watchdog=True,
+                parent_death_linked=True,
+            ),
         )
 
         running.cancel_wait()
@@ -49,9 +68,16 @@ def test_native_cancel_wait_unblocks_without_terminating_child() -> None:
 
         assert launched.exit_code == 130
         assert _process_is_running(child.pid) is True
+        assert watchdog.closed.is_set() is False
+
+        running.terminate()
+        assert watchdog.closed.wait(timeout=5.0)
+        assert watchdog.released == ["tui:test"]
+        assert child.poll() is not None
     finally:
-        child.kill()
-        child.wait(timeout=5.0)
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5.0)
 
 
 @posix_only

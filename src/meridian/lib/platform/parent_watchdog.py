@@ -12,8 +12,7 @@ import json
 import os
 import select
 import sys
-import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import psutil
@@ -118,59 +117,6 @@ def process_is_same_birth(process: WatchedProcess) -> bool:
     return abs(actual - process.created_at_epoch) <= 1.0
 
 
-def process_scope_is_alive(scope: ProcessScope) -> bool:
-    """Return True while the scope root or one of its process-group members lives."""
-
-    root = WatchedProcess(
-        pid=scope.root_pid,
-        created_at_epoch=scope.root_created_at_epoch,
-    )
-    if process_is_same_birth(root):
-        return True
-    if scope.pgid is None:
-        return False
-
-    for process in psutil.process_iter(["pid", "status"]):
-        try:
-            if process.info["status"] == psutil.STATUS_ZOMBIE:
-                continue
-            if os.getpgid(process.pid) == scope.pgid:
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-            continue
-    return False
-
-
-def watch_parent_until_exit(
-    *,
-    parent: WatchedProcess,
-    target_scope: ProcessScope,
-    poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
-    grace_seconds: float = _DEFAULT_GRACE_SECONDS,
-    parent_alive: Callable[[WatchedProcess], bool] = process_is_same_birth,
-    target_alive: Callable[[ProcessScope], bool] | None = None,
-    terminate_scope: Callable[..., object] | None = None,
-    sleep: Callable[[float], None] = time.sleep,
-) -> int:
-    """Watch one scope. Kept as the small pure seam used by scope tests."""
-
-    target_alive_fn = target_alive or process_scope_is_alive
-    while True:
-        if not target_alive_fn(target_scope):
-            return 0
-        if not parent_alive(parent):
-            if terminate_scope is None:
-                terminate_scope_sync(target_scope, grace_seconds=grace_seconds)
-            else:
-                terminate_scope(
-                    target_scope,
-                    grace_seconds=grace_seconds,
-                    reason="parent_exit_watchdog",
-                )
-            return 0
-        sleep(max(0.05, poll_interval_seconds))
-
-
 def _json_object(value: object) -> dict[str, object] | None:
     if not isinstance(value, dict):
         return None
@@ -189,6 +135,8 @@ def _scope_from_wire(payload: object) -> WatchdogScope:
     scope_id = str(row["scope_id"])
     root_pid = int(str(row["root_pid"]))
     root_created_at_epoch = float(str(row["root_created_at_epoch"]))
+    if birth_time_unverified(root_created_at_epoch):
+        raise ValueError("watchdog scope birth time must be known")
     release_id = str(row.get("release_id", "")) or (
         f"{scope_id}:{root_pid}:{root_created_at_epoch:.6f}"
     )
@@ -216,6 +164,12 @@ def _handle_message(
     if action == "register":
         scope = _scope_from_wire(payload.get("scope"))
         scopes[scope.release_id] = scope
+        return False
+    if action == "release":
+        release_id = payload.get("release_id")
+        if not isinstance(release_id, str) or not release_id:
+            raise ValueError("watchdog release_id must be a non-empty string")
+        scopes.pop(release_id, None)
         return False
     if action == "shutdown":
         return True
@@ -356,7 +310,5 @@ __all__ = [
     "WatchedProcess",
     "main",
     "process_is_same_birth",
-    "process_scope_is_alive",
     "watch_parent_scopes",
-    "watch_parent_until_exit",
 ]

@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
-import psutil
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -17,10 +17,10 @@ from meridian.lib.harness.connections.managed_backend import (
     launch_managed_backend,
 )
 from meridian.lib.platform.detached_process import (
-    DetachedSubprocessConfig,
     ParentDeathLink,
     release_parent_death_link,
 )
+from meridian.lib.platform.process_scope import ScopedProcessHandle
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk
@@ -50,10 +50,15 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
     spawn_id = SpawnId("spawn-3")
     _publish_spawn(tmp_path, spawn_id)
     registered = []
+    released: list[str] = []
 
     class RecordingWatchdog:
         def register_scope(self, scope: object) -> bool:
             registered.append(scope)
+            return True
+
+        def release_scope(self, release_id: str) -> bool:
+            released.append(release_id)
             return True
 
     handle = await launch_managed_backend(
@@ -78,46 +83,59 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
         ("backend", handle.scope_handle.snapshot.root_pid, True)
     ]
     await handle.process.wait()
+    await asyncio.to_thread(release_parent_death_link, handle.parent_death_link)
+    assert released == [handle.scope_handle.snapshot.release_id]
 
 
 @pytest.mark.asyncio
-async def test_launch_managed_backend_records_unknown_birth_sentinel_when_create_time_fails(
+async def test_launch_managed_backend_refuses_unknown_birth_time(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spawn_id = SpawnId("spawn-unknown-birth")
     _publish_spawn(tmp_path, spawn_id)
 
-    class _InaccessibleProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
+    class RejectUnknownBirthWatchdog:
+        def register_scope(self, scope: object) -> bool:
+            snapshot = scope
+            assert snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
+            return False
 
-        def create_time(self) -> float:
-            raise psutil.AccessDenied(pid=self.pid)
+    original_spawn_owned_process_handle = managed_backend.spawn_owned_process_handle
 
-    monkeypatch.setattr(managed_backend.psutil, "Process", _InaccessibleProcess)
+    def _unknown_birth_handle(**kwargs: object) -> ScopedProcessHandle:
+        handle = original_spawn_owned_process_handle(**kwargs)  # type: ignore[arg-type]
+        return ScopedProcessHandle(
+            process=handle.process,
+            snapshot=replace(
+                handle.snapshot,
+                root_created_at_epoch=PROCESS_BIRTH_UNKNOWN_EPOCH,
+                release_id="",
+            ),
+        )
+
     monkeypatch.setattr(
         managed_backend,
-        "detached_subprocess_config",
-        lambda: DetachedSubprocessConfig(kwargs={}),
+        "spawn_owned_process_handle",
+        _unknown_birth_handle,
     )
-    handle = await launch_managed_backend(
-        ManagedBackendConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.OPENCODE,
-            command=(sys.executable, "-c", "pass"),
-            cwd=tmp_path,
-            env=os.environ.copy(),
-            control_root=tmp_path,
-        ),
-        stderr=asyncio.subprocess.DEVNULL,
-    )
+    with pytest.raises(RuntimeError, match="could not be linked"):
+        await launch_managed_backend(
+            ManagedBackendConfig(
+                spawn_id=spawn_id,
+                harness_id=HarnessId.OPENCODE,
+                command=(sys.executable, "-c", "import time; time.sleep(60)"),
+                cwd=tmp_path,
+                env=os.environ.copy(),
+                control_root=tmp_path,
+                parent_watchdog=RejectUnknownBirthWatchdog(),  # type: ignore[arg-type]
+            ),
+            stderr=asyncio.subprocess.DEVNULL,
+        )
 
-    scopes = read_scopes_from_disk(resolve_project_runtime_root_for_write(tmp_path), spawn_id)
-    assert handle.scope_handle.snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
-    assert [scope.root_created_at_epoch for scope in scopes] == [PROCESS_BIRTH_UNKNOWN_EPOCH]
-    await handle.process.wait()
-    await asyncio.to_thread(release_parent_death_link, handle.parent_death_link)
+    assert read_scopes_from_disk(
+        resolve_project_runtime_root_for_write(tmp_path), spawn_id
+    ) == []
 
 
 @pytest.mark.asyncio

@@ -8,21 +8,20 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import psutil
 
 from meridian.lib.platform import parent_watchdog
-from meridian.lib.platform.detached_process import (
-    link_child_lifetime_to_parent,
-    release_parent_death_link,
+from meridian.lib.platform.detached_process import start_parent_watchdog
+from meridian.lib.platform.process_scope.base import (
+    PROCESS_BIRTH_UNKNOWN_EPOCH,
+    ProcessScopeSnapshot,
 )
-from meridian.lib.platform.parent_watchdog import (
-    WatchedProcess,
-    process_scope_is_alive,
-    watch_parent_until_exit,
-)
-from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from tests.conftest import posix_only
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _process_is_running(pid: int) -> bool:
@@ -79,78 +78,86 @@ print(json.dumps({
 
 @posix_only
 def test_parent_death_link_waits_for_watchdog_readiness() -> None:
-    target = subprocess.Popen(
-        (sys.executable, "-c", "import time;time.sleep(60)"),
-        start_new_session=True,
-    )
-    link = None
+    watchdog = start_parent_watchdog()
     try:
-        link = link_child_lifetime_to_parent(target.pid)
-        assert link.parent_death_linked is True
-        assert link.watchdog_process is not None
-        assert link.watchdog_process.poll() is None
+        assert watchdog is not None
+        assert watchdog.process.poll() is None
     finally:
-        target.terminate()
-        target.wait(timeout=5.0)
-        release_parent_death_link(link)
+        if watchdog is not None:
+            watchdog.close()
 
 
 @posix_only
-def test_watchdog_terminates_group_after_scope_root_exits() -> None:
-    root = subprocess.Popen(
-        (
-            sys.executable,
-            "-c",
-            (
-                "import subprocess,sys;"
-                "child=subprocess.Popen((sys.executable,'-c','import time;time.sleep(60)'));"
-                "print(child.pid,flush=True)"
-            ),
-        ),
-        stdout=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
+def test_watchdog_refuses_scope_without_birth_time() -> None:
+    watchdog = start_parent_watchdog()
+    assert watchdog is not None
+    scope = ProcessScopeSnapshot(
+        scope_id="backend",
+        owner_policy="spawn_owned",
+        owner_id="watchdog-test",
+        role="harness_backend",
+        containment="pid_tree_fallback",
+        root_pid=os.getpid(),
+        root_created_at_epoch=PROCESS_BIRTH_UNKNOWN_EPOCH,
+        pgid=None,
+        job_name=None,
+        degraded_reason=None,
     )
-    child_pid = 0
     try:
-        root_created_at = psutil.Process(root.pid).create_time()
-        assert root.stdout is not None
-        child_pid = int(root.stdout.readline().strip())
-        pgid = os.getpgid(child_pid)
-        assert pgid == root.pid
-        assert root.wait(timeout=5.0) == 0
-
-        scope = ProcessScopeSnapshot(
-            scope_id="backend",
-            owner_policy="spawn_owned",
-            owner_id="watchdog-test",
-            role="harness_backend",
-            containment="posix_pgid",
-            root_pid=root.pid,
-            root_created_at_epoch=root_created_at,
-            pgid=pgid,
-            job_name=None,
-            degraded_reason=None,
-        )
-        assert process_scope_is_alive(scope) is True
-
-        watch_parent_until_exit(
-            parent=WatchedProcess(pid=-1, created_at_epoch=0.0),
-            target_scope=scope,
-            parent_alive=lambda _parent: False,
-        )
-
-        deadline = time.monotonic() + 5.0
-        while _process_is_running(child_pid) and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert _process_is_running(child_pid) is False
+        assert watchdog.register_scope(scope) is False
     finally:
-        if root.poll() is None:
-            root.terminate()
-            root.wait(timeout=5.0)
-        if child_pid > 0:
-            with suppress(ProcessLookupError):
-                os.kill(child_pid, signal.SIGKILL)
+        watchdog.close()
+
+
+def test_watchdog_release_removes_registered_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scope = ProcessScopeSnapshot(
+        scope_id="backend",
+        owner_policy="spawn_owned",
+        owner_id="watchdog-test",
+        role="harness_backend",
+        containment="pid_tree_fallback",
+        root_pid=123,
+        root_created_at_epoch=456.0,
+        pgid=None,
+        job_name=None,
+        degraded_reason=None,
+    )
+    read_fd, write_fd = os.pipe()
+    messages = (
+        json.dumps({"action": "register", "scope": scope.__dict__})
+        + "\n"
+        + json.dumps({"action": "release", "release_id": scope.release_id})
+        + "\n"
+    ).encode()
+    os.write(write_fd, messages)
+    os.close(write_fd)
+    parent_checks = iter((True, False))
+    terminated: list[object] = []
+    monkeypatch.setattr(
+        parent_watchdog,
+        "process_is_same_birth",
+        lambda _parent: next(parent_checks),
+    )
+    monkeypatch.setattr(
+        parent_watchdog,
+        "terminate_scope_sync",
+        lambda scope, **_kwargs: terminated.append(scope),
+    )
+
+    try:
+        result = parent_watchdog.watch_parent_scopes(
+            parent=parent_watchdog.WatchedProcess(pid=1, created_at_epoch=1.0),
+            control_fd=read_fd,
+            poll_interval_seconds=0.05,
+            grace_seconds=0.0,
+        )
+    finally:
+        os.close(read_fd)
+
+    assert result == 0
+    assert terminated == []
 
 
 @posix_only
@@ -160,23 +167,59 @@ def test_watchdog_kills_backend_wrapper_group_when_launcher_is_killed(
     root_pid_path = tmp_path / "backend-wrapper.pid"
     grandchild_pid_path = tmp_path / "backend-grandchild.pid"
     parent_code = """
+import asyncio
 import os
-import subprocess
 import sys
 from pathlib import Path
 
-from meridian.lib.platform.detached_process import link_child_lifetime_to_parent
-
-root_pid_path, grandchild_pid_path = sys.argv[1:]
-root = subprocess.Popen(
-    ("sh", "-c", f"sleep 300 & echo $! > {grandchild_pid_path}; wait"),
-    start_new_session=True,
+from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections.managed_backend import (
+    ManagedBackendConfig,
+    launch_managed_backend,
 )
-link = link_child_lifetime_to_parent(root.pid)
-if not link.parent_death_linked:
-    raise RuntimeError("watchdog unavailable")
-Path(root_pid_path).write_text(str(root.pid))
-root.wait()
+from meridian.lib.platform.detached_process import start_parent_watchdog
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.spawn_store import start_spawn
+
+async def main():
+    root_pid_path, grandchild_pid_path, control_root = map(Path, sys.argv[1:])
+    spawn_id = SpawnId("p-watchdog-backend")
+    runtime_root = resolve_project_runtime_root_for_write(control_root)
+    start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
+        chat_id="watchdog-test",
+        model="test",
+        agent="tester",
+        harness="codex",
+        prompt="test",
+        status="running",
+    )
+    watchdog = start_parent_watchdog()
+    if watchdog is None:
+        raise RuntimeError("watchdog unavailable")
+    handle = await launch_managed_backend(
+        ManagedBackendConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.CODEX,
+            command=(
+                "sh",
+                "-c",
+                'sleep 300 & echo $! > "$1"; wait',
+                "sh",
+                str(grandchild_pid_path),
+            ),
+            cwd=control_root,
+            env=os.environ.copy(),
+            control_root=control_root,
+            parent_watchdog=watchdog,
+        ),
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    root_pid_path.write_text(str(handle.process.pid))
+    await handle.process.wait()
+
+asyncio.run(main())
 """.strip()
     parent = subprocess.Popen(
         (
@@ -185,6 +228,7 @@ root.wait()
             parent_code,
             str(root_pid_path),
             str(grandchild_pid_path),
+            str(tmp_path),
         ),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

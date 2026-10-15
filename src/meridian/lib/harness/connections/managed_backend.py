@@ -16,7 +16,6 @@ from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.detached_process import (
     ParentDeathLink,
     ParentWatchdog,
-    detached_subprocess_config,
     link_child_lifetime_to_parent,
     release_parent_death_link,
     start_parent_watchdog,
@@ -145,7 +144,6 @@ async def launch_managed_backend(
     """
 
     runtime_root = resolve_project_runtime_root_for_write(config.control_root)
-    subprocess_config = detached_subprocess_config()
     parent_watchdog = config.parent_watchdog
     owned_watchdog: ParentWatchdog | None = None
     if not IS_WINDOWS and parent_watchdog is None:
@@ -154,6 +152,9 @@ async def launch_managed_backend(
     if not IS_WINDOWS and parent_watchdog is None:
         raise RuntimeError("Managed backend parent watchdog could not be started")
 
+    subprocess_kwargs: dict[str, Any] = (
+        {} if IS_WINDOWS else {"start_new_session": True}
+    )
     try:
         process = await asyncio.create_subprocess_exec(
             *config.command,
@@ -161,7 +162,7 @@ async def launch_managed_backend(
             env=config.env,
             stdout=stdout if stdout is not None else asyncio.subprocess.DEVNULL,
             stderr=stderr,
-            **subprocess_config.kwargs,
+            **subprocess_kwargs,
         )
     except BaseException as exc:
         if owned_watchdog is not None:
@@ -178,6 +179,11 @@ async def launch_managed_backend(
     if IS_WINDOWS:
         parent_death_link = link_child_lifetime_to_parent(pid)
     else:
+        # Registration necessarily follows process creation. If this launcher
+        # dies in that millisecond-scale window, the child can be orphaned. A
+        # pre-exec parent-death hook would cover only the wrapper PID and would
+        # reintroduce unsafe Python-after-fork work; the watchdog closes the
+        # materially larger wrapper/descendant lifetime gap instead.
         provisional_scope = spawn_owned_process_handle(
             spawn_id=config.spawn_id,
             process=process,
@@ -191,7 +197,9 @@ async def launch_managed_backend(
                 await asyncio.to_thread(owned_watchdog.close)
             raise RuntimeError("Managed backend could not be linked to launcher lifetime")
         parent_death_link = ParentDeathLink(
-            owned_watchdog=owned_watchdog,
+            watchdog=parent_watchdog,
+            watchdog_release_id=provisional_scope.release_id,
+            owns_watchdog=owned_watchdog is not None,
             parent_death_linked=True,
         )
     parent_death_linked = parent_death_link.parent_death_linked

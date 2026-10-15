@@ -170,6 +170,14 @@ def test_project_config_v2_drives_managed_primary_attach(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class RecordingWatchdog:
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    watchdog = RecordingWatchdog()
+    monkeypatch.setattr(runner_module, "start_parent_watchdog", lambda: watchdog)
     monkeypatch.delenv("MERIDIAN_HARNESS_OPENCODE_VERSION", raising=False)
     (tmp_path / "meridian.toml").write_text(
         '[project]\nid = "opencode-v2-managed-primary"\n\n[harness.opencode]\nversion = "v2"\n',
@@ -246,6 +254,8 @@ def test_project_config_v2_drives_managed_primary_attach(
     ]
     assert process_launcher.launch_envs[0]["OPENCODE_PASSWORD"] == _SERVER_PASSWORD
     assert process_launcher.output_log_paths == [None]
+    assert backend_launches[0].parent_watchdog is watchdog
+    assert watchdog.close_calls == 1
 
     # Metadata reflects the managed V2 session and observer port.
     metadata = process_launcher.metadata_seen_at_launch

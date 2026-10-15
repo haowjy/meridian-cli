@@ -16,7 +16,6 @@ import sys
 import threading
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
-from typing import Any
 
 import psutil
 import structlog
@@ -32,13 +31,6 @@ logger = structlog.get_logger(__name__)
 _WATCHDOG_READY_TIMEOUT_SECONDS = 2.0
 
 
-@dataclass(frozen=True)
-class DetachedSubprocessConfig:
-    """Subprocess options for an isolated managed backend."""
-
-    kwargs: dict[str, Any]
-
-
 @dataclass
 class ParentWatchdog:
     """One launcher-owned POSIX watchdog accepting multiple process scopes."""
@@ -48,23 +40,22 @@ class ParentWatchdog:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _closed: bool = False
 
-    @property
-    def rss_bytes(self) -> int | None:
-        try:
-            return psutil.Process(self.process.pid).memory_info().rss
-        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-            return None
-
     def register_scope(self, scope: ProcessScopeSnapshot) -> bool:
         """Commit one scope registration to the watchdog control pipe."""
 
-        message = (
-            json.dumps(
-                {"action": "register", "scope": asdict(scope)},
-                separators=(",", ":"),
-            ).encode("utf-8")
-            + b"\n"
+        if scope.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH:
+            return False
+        return self._send_message(
+            {"action": "register", "scope": asdict(scope)},
         )
+
+    def release_scope(self, release_id: str) -> bool:
+        """Stop watching a scope after its owner has terminated and reaped it."""
+
+        return self._send_message({"action": "release", "release_id": release_id})
+
+    def _send_message(self, payload: dict[str, object]) -> bool:
+        message = json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n"
         with self._lock:
             if self._closed or self.process.poll() is not None:
                 return False
@@ -93,21 +84,10 @@ class ParentDeathLink:
 
     job_name: str | None = None
     job_handle: object | None = None
-    owned_watchdog: ParentWatchdog | None = None
+    watchdog: ParentWatchdog | None = None
+    watchdog_release_id: str | None = None
+    owns_watchdog: bool = False
     parent_death_linked: bool = False
-
-    @property
-    def watchdog_process(self) -> subprocess.Popen[bytes] | None:
-        watchdog = self.owned_watchdog
-        return watchdog.process if watchdog is not None else None
-
-
-def detached_subprocess_config() -> DetachedSubprocessConfig:
-    """Return backend isolation options; parent death is linked post-spawn."""
-
-    if IS_WINDOWS:
-        return DetachedSubprocessConfig(kwargs={})
-    return DetachedSubprocessConfig(kwargs={"start_new_session": True})
 
 
 def start_parent_watchdog() -> ParentWatchdog | None:
@@ -234,49 +214,31 @@ def process_scope_for_parent_watchdog(
 
 def link_child_lifetime_to_parent(
     pid: int,
-    *,
-    target_process_group: bool = True,
-    scope_id: str = "backend",
-    role: str = "harness_backend",
 ) -> ParentDeathLink:
-    """Attach an already-started child to this process lifetime."""
+    """Attach an already-started legacy Windows child to a Job Object."""
 
-    if IS_WINDOWS:
-        from meridian.lib.platform.process_scope.windows_job import assign_to_new_job
+    from meridian.lib.platform.process_scope.windows_job import assign_to_new_job
 
-        result = assign_to_new_job(pid)
-        if result is None:
-            return ParentDeathLink(parent_death_linked=False)
-        job_name, job_handle = result
-        return ParentDeathLink(
-            job_name=job_name,
-            job_handle=job_handle,
-            parent_death_linked=True,
-        )
-
-    watchdog = start_parent_watchdog()
-    if watchdog is None:
+    result = assign_to_new_job(pid)
+    if result is None:
         return ParentDeathLink(parent_death_linked=False)
-    scope = process_scope_for_parent_watchdog(
-        pid,
-        target_process_group=target_process_group,
-        scope_id=scope_id,
-        role=role,
-    )
-    if not watchdog.register_scope(scope):
-        watchdog.close()
-        return ParentDeathLink(parent_death_linked=False)
+    job_name, job_handle = result
     return ParentDeathLink(
-        owned_watchdog=watchdog,
+        job_name=job_name,
+        job_handle=job_handle,
         parent_death_linked=True,
     )
 
 
 def release_parent_death_link(link: ParentDeathLink | None) -> None:
-    """Release/reap helper resources owned by a parent-death link."""
+    """Release a dead scope and reap any watchdog owned by this link."""
 
-    if link is not None and link.owned_watchdog is not None:
-        link.owned_watchdog.close()
+    if link is None or link.watchdog is None:
+        return
+    if link.watchdog_release_id is not None:
+        link.watchdog.release_scope(link.watchdog_release_id)
+    if link.owns_watchdog:
+        link.watchdog.close()
 
 
 def _reap_watchdog_process(process: subprocess.Popen[bytes]) -> None:
@@ -316,10 +278,8 @@ def _process_group_id(pid: int) -> int | None:
 
 
 __all__ = [
-    "DetachedSubprocessConfig",
     "ParentDeathLink",
     "ParentWatchdog",
-    "detached_subprocess_config",
     "link_child_lifetime_to_parent",
     "process_scope_for_parent_watchdog",
     "release_parent_death_link",

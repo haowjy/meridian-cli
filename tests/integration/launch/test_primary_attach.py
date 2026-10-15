@@ -32,6 +32,7 @@ from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachLauncher,
 )
+from meridian.lib.platform.detached_process import ParentWatchdog
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -345,8 +346,9 @@ class FakeProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        parent_watchdog: ParentWatchdog | None = None,
     ) -> FakeProcessLauncher:
-        _ = (cwd, output_log_path)
+        _ = (cwd, output_log_path, parent_watchdog)
         self.launch_commands.append(command)
         self.launch_envs.append(dict(env))
         self.output_log_paths.append(output_log_path)
@@ -397,8 +399,9 @@ class BlockingProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        parent_watchdog: ParentWatchdog | None = None,
     ) -> BlockingProcessLauncher:
-        _ = (cwd, env, output_log_path)
+        _ = (cwd, env, output_log_path, parent_watchdog)
         self.launch_commands.append(command)
         metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
         assert metadata_path.exists()
@@ -978,7 +981,7 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_shares_one_parent_watchdog_with_backend_and_tui(
+async def test_primary_attach_uses_but_does_not_close_runner_watchdog(
     tmp_path: Path,
 ) -> None:
     spawn_dir = tmp_path / "spawns" / "p900-watchdog"
@@ -1041,7 +1044,7 @@ async def test_primary_attach_shares_one_parent_watchdog_with_backend_and_tui(
 
     assert connection.seen_watchdog is watchdog
     assert process_launcher.seen_watchdog is watchdog
-    assert watchdog.close_calls == 1
+    assert watchdog.close_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1300,9 +1303,16 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    sigint_handlers_at_stop: list[Any] = []
+
+    class SignalAwareConnection(FakeManagedConnection):
+        async def stop(self, *, reason: str | None = None) -> None:
+            sigint_handlers_at_stop.append(signal.getsignal(signal.SIGINT))
+            await super().stop(reason=reason)
+
     spawn_dir = tmp_path / "spawns" / "p902-signal"
     tui_started = asyncio.Event()
-    connection = FakeManagedConnection(events=[], session_id="sess-signal")
+    connection = SignalAwareConnection(events=[], session_id="sess-signal")
     process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir, wait_exit_code=-signal.SIGHUP)
     terminated_scopes: list[str] = []
     installed_handlers: list[Any] = []
@@ -1352,6 +1362,7 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     assert signal.getsignal(signal.SIGTERM) is before_term
     assert signal.getsignal(signal.SIGHUP) is before_hup
     assert signal.getsignal(signal.SIGINT) is before_int
+    assert sigint_handlers_at_stop == [before_int]
 
 
 @pytest.mark.asyncio
@@ -1427,6 +1438,71 @@ async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
 
     assert outcome.cancelled is True
     assert outcome.exit_code == 130
+    assert process_launcher.launch_commands == []
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_sigint_during_backend_startup_propagates_and_tears_down(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RecordingCoordinator:
+        def __init__(self) -> None:
+            self.receivers: set[object] = set()
+            self.sigint_was_intercepted = False
+
+        def register_receiver(self, receiver: object) -> None:
+            self.receivers.add(receiver)
+
+        def unregister_receiver(self, receiver: object) -> None:
+            self.receivers.discard(receiver)
+
+        def deliver_sigint(self) -> None:
+            for receiver in tuple(self.receivers):
+                if signal.SIGINT in cast("Any", receiver).target_signals:
+                    self.sigint_was_intercepted = True
+                    cast("Any", receiver).forward_signal(signal.SIGINT)
+                    return
+            raise KeyboardInterrupt
+
+    coordinator = RecordingCoordinator()
+
+    class SigintDuringStartupConnection(FakeManagedConnection):
+        async def start(
+            self,
+            config: ConnectionConfig,
+            spec: ResolvedLaunchSpec,
+        ) -> None:
+            _ = (config, spec)
+            coordinator.deliver_sigint()
+
+    monkeypatch.setattr(primary_attach_module, "signal_coordinator", lambda: coordinator)
+    spawn_dir = tmp_path / "spawns" / "p903-sigint-startup"
+    connection = SigintDuringStartupConnection(events=[])
+    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p903-sigint-startup"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+        runtime_root=tmp_path,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        await launcher.run(
+            config=_build_config(
+                spawn_id=SpawnId("p903-sigint-startup"),
+                control_root=tmp_path,
+            ),
+            spec=_build_spec(),
+            cwd=tmp_path,
+            env={},
+        )
+
+    assert coordinator.sigint_was_intercepted is False
+    assert coordinator.receivers == set()
+    assert launcher._heartbeat_task is None
     assert process_launcher.launch_commands == []
 
 

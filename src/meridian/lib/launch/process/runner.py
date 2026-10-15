@@ -542,24 +542,28 @@ async def _run_primary_attach(
             if parent_watchdog is None:
                 raise RuntimeError("Managed primary parent watchdog could not be started")
 
-        launcher = PrimaryAttachLauncher(
-            spawn_id=spawn_id,
-            spawn_dir=spawn_dir,
-            connection=connection,
-            tui_command_builder=tui_command_builder,
-            process_launcher=process_launcher,
-            runtime_root=spawn_dir.parent.parent,
-            on_running=on_running,
-            session_id_observer=session_id_observer,
-            fold=fold,
-            parent_watchdog=parent_watchdog,
-        )
-        return await launcher.run(
-            config=config,
-            spec=spec,
-            cwd=control_root,
-            env=env,
-        )
+        try:
+            launcher = PrimaryAttachLauncher(
+                spawn_id=spawn_id,
+                spawn_dir=spawn_dir,
+                connection=connection,
+                tui_command_builder=tui_command_builder,
+                process_launcher=process_launcher,
+                runtime_root=spawn_dir.parent.parent,
+                on_running=on_running,
+                session_id_observer=session_id_observer,
+                fold=fold,
+                parent_watchdog=parent_watchdog,
+            )
+            return await launcher.run(
+                config=config,
+                spec=spec,
+                cwd=control_root,
+                env=env,
+            )
+        finally:
+            if parent_watchdog is not None:
+                await asyncio.to_thread(parent_watchdog.close)
     except (PrimaryAttachError, NativeIdentityError):
         raise
     except PassthroughError as exc:

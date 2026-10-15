@@ -376,7 +376,7 @@ class PrimaryAttachLauncher:
             callback=lambda _signum: None,
         )
         signal_coordinator().register_receiver(cancel_receiver)
-        signal_coordinator().register_receiver(sigint_receiver)
+        sigint_receiver_registered = False
         connection_started = False
         session_id: str | None = None
         running_process: RunningProcess | None = None
@@ -433,22 +433,17 @@ class PrimaryAttachLauncher:
                 if running_callback is not None:
                     running_callback(started_process.pid)
 
+            tui_env = self._tui_env(env)
             telemetry.clear()
-            if self._parent_watchdog is None:
-                running_process = self._process_launcher.start(
-                    command=command,
-                    cwd=cwd,
-                    env=self._tui_env(env),
-                    output_log_path=None,
-                )
-            else:
-                running_process = self._process_launcher.start(
-                    command=command,
-                    cwd=cwd,
-                    env=self._tui_env(env),
-                    output_log_path=None,
-                    parent_watchdog=self._parent_watchdog,
-                )
+            signal_coordinator().register_receiver(sigint_receiver)
+            sigint_receiver_registered = True
+            running_process = self._process_launcher.start(
+                command=command,
+                cwd=cwd,
+                env=tui_env,
+                output_log_path=None,
+                parent_watchdog=self._parent_watchdog,
+            )
             self._running_process = running_process
             if self._signal_cancel_requested:
                 # A signal arrived during backend startup; honor it now that the
@@ -510,6 +505,11 @@ class PrimaryAttachLauncher:
                 )
             raise
         finally:
+            if sigint_receiver_registered:
+                # The native TUI no longer owns SIGINT once its lifecycle is
+                # unwinding. Restore normal Ctrl+C behavior before async
+                # backend teardown can block.
+                signal_coordinator().unregister_receiver(sigint_receiver)
             try:
                 self._running_process = None
                 if connection_started:
@@ -551,12 +551,7 @@ class PrimaryAttachLauncher:
                 if connection_started:
                     await self._connection.stop()
             finally:
-                try:
-                    if self._parent_watchdog is not None:
-                        await asyncio.to_thread(self._parent_watchdog.close)
-                finally:
-                    signal_coordinator().unregister_receiver(cancel_receiver)
-                    signal_coordinator().unregister_receiver(sigint_receiver)
+                signal_coordinator().unregister_receiver(cancel_receiver)
 
     async def _start_primary_observer_connection_with_retry(
         self,

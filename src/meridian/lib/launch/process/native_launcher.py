@@ -25,6 +25,7 @@ class _RunningNativeProcess:
     process: subprocess.Popen[bytes]
     parent_death_link: ParentDeathLink
     wait_cancelled: threading.Event = field(default_factory=threading.Event)
+    release_started: threading.Event = field(default_factory=threading.Event)
 
     @property
     def pid(self) -> int:
@@ -45,17 +46,33 @@ class _RunningNativeProcess:
         self.wait_cancelled.set()
 
     def wait(self) -> LaunchedProcess:
-        try:
-            while True:
-                try:
-                    exit_code = self.process.wait(timeout=0.1)
-                except subprocess.TimeoutExpired:
-                    if self.wait_cancelled.is_set():
-                        return LaunchedProcess(exit_code=130, pid=self.process.pid)
-                    continue
-                return LaunchedProcess(exit_code=exit_code, pid=self.process.pid)
-        finally:
+        while True:
+            try:
+                exit_code = self.process.wait(timeout=0.1)
+            except subprocess.TimeoutExpired:
+                if self.wait_cancelled.is_set():
+                    self._release_after_exit()
+                    return LaunchedProcess(exit_code=130, pid=self.process.pid)
+                continue
             release_parent_death_link(self.parent_death_link)
+            return LaunchedProcess(exit_code=exit_code, pid=self.process.pid)
+
+    def _release_after_exit(self) -> None:
+        """Keep standalone crash protection until cancellation cleanup reaps the TUI."""
+
+        if self.release_started.is_set():
+            return
+        self.release_started.set()
+
+        def _reap_and_release() -> None:
+            self.process.wait()
+            release_parent_death_link(self.parent_death_link)
+
+        threading.Thread(
+            target=_reap_and_release,
+            name=f"meridian-native-reaper-{self.process.pid}",
+            daemon=True,
+        ).start()
 
 
 class NativeProcessLauncher(ProcessLauncher):
@@ -95,6 +112,10 @@ class NativeProcessLauncher(ProcessLauncher):
                 owned_watchdog.close()
             raise
 
+        # Registration necessarily follows Popen. A launcher SIGKILL in this
+        # millisecond-scale window can orphan the TUI. Avoid a pre-exec hook:
+        # Python-after-fork is unsafe in threaded launchers, and a PID-only
+        # parent-death signal does not contain wrapper descendants.
         scope = process_scope_for_parent_watchdog(
             process.pid,
             target_process_group=False,
@@ -111,7 +132,9 @@ class NativeProcessLauncher(ProcessLauncher):
         return _RunningNativeProcess(
             process=process,
             parent_death_link=ParentDeathLink(
-                owned_watchdog=owned_watchdog,
+                watchdog=parent_watchdog,
+                watchdog_release_id=scope.release_id,
+                owns_watchdog=owned_watchdog is not None,
                 parent_death_linked=True,
             ),
         )
