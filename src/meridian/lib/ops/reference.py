@@ -484,7 +484,7 @@ def resolve_continue_target(
         run = spawn_store.get_spawn(resolved_runtime_root, parsed.run_id)
         if run is not None and run.session_instance_id is None:
             raise ValueError(
-                f"Cannot continue spawn '{parsed.spawn_id}'; it never started a session, "
+                f"Cannot continue run '{parsed.value}'; it never started a session, "
                 "so `--fork` is unavailable."
             )
     identity_ref = (
