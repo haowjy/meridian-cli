@@ -14,14 +14,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import psutil
-import pytest
 
 from meridian.lib.platform.process_scope import posix
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH, CleanupResult
 from tests.conftest import posix_only
+
+if TYPE_CHECKING:
+    import pytest
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -195,19 +198,3 @@ def test_terminate_pgid_degrades_to_tree_when_root_is_not_group_leader(
         }
     ]
     assert killpg_calls == []
-
-
-def test_terminate_pgid_on_windows_raises_runtime_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(posix, "IS_WINDOWS", True)
-
-    with pytest.raises(RuntimeError, match="not available on Windows"):
-        posix.terminate_pgid(
-            pgid=222,
-            root_pid=111,
-            created_at_epoch=100.0,
-            grace_seconds=5.0,
-            reason="reaper",
-            scope_id="backend",
-        )

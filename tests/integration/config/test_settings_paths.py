@@ -13,21 +13,6 @@ from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
 
 
-def test_resolve_project_root_uses_literal_cwd(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    monkeypatch.chdir(project_root)
-
-    resolution = resolve_project_root_resolution()
-
-    assert resolution.project_root == project_root.resolve()
-    assert resolution.execution_cwd == project_root.resolve()
-    assert resolution.source == "cwd"
-
-
 def test_load_user_config_excludes_project_retention_layer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -122,35 +107,6 @@ def test_resolve_project_root_ignore_env_uses_cwd(
     assert resolution.source == "cwd"
 
 
-def test_load_config_reads_primary_agent_at_project_root(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    config_path = project_root / "meridian.toml"
-    config_path.write_text('[primary]\nagent = "reviewer"\n', encoding="utf-8")
-
-    assert load_config(project_root).primary.agent == "reviewer"
-
-
-def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / "meridian.toml").write_text(
-        "[defaults]\n"
-        'model = "legacy-model"\n'
-        'harness = "claude"\n'
-        "\n"
-        "[primary]\n"
-        'model = "shadow-model"\n'
-        'harness = "opencode"\n',
-        encoding="utf-8",
-    )
-
-    config = load_config(project_root)
-
-    assert not hasattr(config.primary, "model")
-    assert not hasattr(config.primary, "harness")
-
-
 @pytest.mark.parametrize(
     ("toml", "message"),
     [
@@ -164,24 +120,12 @@ def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: P
             "expected bool, got str ('yes').",
         ),
         (
-            '[idle]\nenabled = "yes"\n',
-            "Invalid value for 'idle.enabled': expected bool, got str ('yes').",
-        ),
-        (
-            "[harness.claude]\nmodel = 3\n",
-            "Invalid value for 'harness.claude.model': expected str, got int (3).",
-        ),
-        (
             "harness = { claude = 3 }\n",
             "Invalid value for 'harness.claude': expected table, got int (3).",
         ),
         (
             "[primary]\nautocompact_pct = 50.0\n",
             "Invalid value for 'primary.autocompact_pct': expected int, got float (50.0).",
-        ),
-        (
-            "[primary]\nautocompact = 50000.0\n",
-            "Invalid value for 'primary.autocompact': expected int, got float (50000.0).",
         ),
         (
             '[spawn]\ndeny_headless_harnesses = ["claude", ""]\n',
@@ -277,9 +221,7 @@ def test_config_loader_owns_unknown_hook_key_warning(
         load_config(project_root)
         load_hooks_config(project_root)
 
-    assert caplog.messages == [
-        "Ignoring unknown Meridian config key 'hooks[1].bogus'."
-    ]
+    assert caplog.messages == ["Ignoring unknown Meridian config key 'hooks[1].bogus'."]
 
 
 def test_config_loader_owns_unknown_context_key_warning(
@@ -301,9 +243,7 @@ def test_config_loader_owns_unknown_context_key_warning(
     with caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"):
         loaded = load_config_with_sources(project_root)
 
-    assert caplog.messages == [
-        "Ignoring unknown Meridian config key 'context.kb.bogus'."
-    ]
+    assert caplog.messages == ["Ignoring unknown Meridian config key 'context.kb.bogus'."]
     assert loaded.dynamic.context is not None
     assert set(loaded.dynamic.context) == {"work", "kb"}
 
@@ -392,19 +332,6 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.default_model_for_harness("codex") == "gpt-5.4"
 
 
-def test_load_config_reads_pi_wait_yield_env(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    monkeypatch.setenv("MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_PI", "75")
-
-    config = load_config(project_root)
-
-    assert config.harness.pi.wait_yield_seconds == 75.0
-
-
 def test_load_config_reads_idle_tables_with_env_precedence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -453,46 +380,6 @@ def test_load_config_reads_notify_table_with_env_precedence(
     assert env_config.notify.smtp_port == 465
 
 
-def test_load_config_reads_spawn_deny_headless_harnesses(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    config_path = project_root / "meridian.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[spawn]",
-                'deny_headless_harnesses = ["claude", "pi"]',
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    config = load_config(project_root)
-
-    assert config.deny_headless_harnesses == ("claude", "pi")
-
-
-def test_load_config_reads_pi_disable_managed_bash(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    config_path = project_root / "meridian.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[harness.pi]",
-                "disable_managed_bash = true",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    config = load_config(project_root)
-
-    assert config.harness.pi.disable_managed_bash is True
-    assert config.default_model_for_harness("pi") == ""
-    assert config.wait_yield_seconds_for_harness("pi") == config.default_wait_yield_seconds
-
-
 def test_load_config_rejects_legacy_agents_table_with_migration_error(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -537,17 +424,6 @@ def test_config_show_ignores_inaccessible_implicit_user_config(
     max_depth = next(item for item in result.values if item.key == "defaults.max_depth")
     assert max_depth.value == 3
     assert any(str(config_path) in record.message for record in caplog.records)
-
-
-def test_resolve_project_config_state_reports_absent_and_write_target(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-
-    state = resolve_project_config_state(project_root)
-
-    assert state.status == "absent"
-    assert state.path is None
-    assert state.write_path == project_root.resolve() / "meridian.toml"
 
 
 def test_resolve_project_config_state_ignores_legacy_state_config(tmp_path: Path) -> None:

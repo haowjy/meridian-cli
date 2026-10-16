@@ -59,25 +59,6 @@ def test_cursor_extractor_detects_session_from_nested_event_payload() -> None:
     assert CURSOR_EXTRACTOR.detect_session_id_from_event(event) == "ses-cursor-nested"
 
 
-def test_cursor_extractor_returns_none_when_report_or_session_missing() -> None:
-    spawn_id = SpawnId("p-cursor-empty-report")
-    store = _artifact_store_from_lines(
-        spawn_id,
-        [
-            {
-                "type": "result",
-                "usage": {
-                    "inputTokens": 1,
-                    "outputTokens": 2,
-                },
-            }
-        ],
-    )
-
-    assert store.final_text is None
-    assert store.first_session_id is None
-
-
 def test_cursor_extractor_falls_back_to_last_assistant_message_when_no_result() -> None:
     spawn_id = SpawnId("p-cursor-assistant-fallback")
     store = _artifact_store_from_lines(

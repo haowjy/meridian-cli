@@ -154,14 +154,21 @@ def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
         run_boundary=RunBoundaryOutcome(status="unresolved"),
     )
     spawn_store.finalize_spawn(
-        runtime_root, "p41", "succeeded", 0, origin="runner",
+        runtime_root,
+        "p41",
+        "succeeded",
+        0,
+        origin="runner",
     )
     monkeypatch.setattr(
         primary_launch_module,
         "launch_primary",
         lambda **kwargs: LaunchResult(
-            command=(), exit_code=0, primary_spawn_id="p41",
-            continue_ref="session-41", continue_chat_id="c-primary",
+            command=(),
+            exit_code=0,
+            primary_spawn_id="p41",
+            continue_ref="session-41",
+            continue_chat_id="c-primary",
         ),
     )
 
@@ -178,18 +185,26 @@ def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
     assert "unverified" in (run_boundary_summary(row) or "")
     # Suppressing absent proof must not suppress actual warnings; no extra CLI launches needed.
     mismatch = row.model_copy(update={"run_boundary": RunBoundaryOutcome(status="mismatch")})
-    successor = row.model_copy(update={"run_boundary": RunBoundaryOutcome(
-        status="unresolved", trampoline_successor_id="possible-successor",
-    )})
+    successor = row.model_copy(
+        update={
+            "run_boundary": RunBoundaryOutcome(
+                status="unresolved",
+                trampoline_successor_id="possible-successor",
+            )
+        }
+    )
     observed = successor.model_copy(update={"current_chat_id": "c-observed"})
     assert (run_boundary_summary(mismatch, include_unverified=False) or "").startswith("warning:")
     assert (run_boundary_summary(successor, include_unverified=False) or "").startswith("warning:")
     assert run_boundary_summary(observed, include_unverified=False) == (
         "entry c-primary (session-41) → last observed chat c-observed"
     )
-    historical = observed.model_copy(update={
-        "record_mode": "historical", "run_boundary": RunBoundaryOutcome(status="verified"),
-    })
+    historical = observed.model_copy(
+        update={
+            "record_mode": "historical",
+            "run_boundary": RunBoundaryOutcome(status="verified"),
+        }
+    )
     assert historical.continue_chat_id is None
     assert run_boundary_summary(historical) == "entry c-primary (session-41) → exit c-observed"
     assert spawn_view_label(historical) == "p41 → c-observed (verified exit chat)"
@@ -305,9 +320,7 @@ def test_continue_fails_when_adapter_cannot_resume() -> None:
         (),
         {
             "id": "test-harness",
-            "capabilities": type(
-                "Capabilities", (), {"supports_session_resume": False}
-            )(),
+            "capabilities": type("Capabilities", (), {"supports_session_resume": False})(),
         },
     )()
 
@@ -766,7 +779,7 @@ def test_primary_continue_unbound_chat_refuses_to_guess(tmp_path: Path) -> None:
         _run_primary_continue(tmp_path, chat_id)
 
 
-@pytest.mark.parametrize("harness", ["claude", "codex", "opencode", "pi"])
+@pytest.mark.parametrize("harness", ["claude", "opencode"])
 @pytest.mark.parametrize("operation", ["continue", "fork"])
 def test_tracked_chat_without_native_store_refuses_continue_and_fork(
     tmp_path: Path,

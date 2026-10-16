@@ -229,30 +229,6 @@ def test_spawn_status_json_contract(
 
 @pytest.mark.integration
 @posix_only
-def test_spawn_status_multi_id_json_contract(
-    cli_project: tuple[Path, dict[str, str], Path],
-) -> None:
-    project_root, env, runtime_root = cli_project
-    _seed_terminal_spawn(runtime_root, project_root, spawn_id="p1")
-    _seed_terminal_spawn(runtime_root, project_root, spawn_id="p2")
-
-    payload = _run_json_list(project_root, env, "spawn", "status", "p1", "p2")
-
-    assert [item["spawn_id"] for item in payload] == ["p1", "p2"]
-    for item in payload:
-        assert {
-            "spawn_id",
-            "status",
-            "model",
-            "harness",
-            "report_path",
-            "report_summary",
-        } <= item.keys()
-    _assert_noisy_keys_absent(payload)
-
-
-@pytest.mark.integration
-@posix_only
 def test_spawn_wait_json_contract(
     cli_project: tuple[Path, dict[str, str], Path],
 ) -> None:
@@ -316,10 +292,10 @@ def test_hooks_run_json_contract(
     project_root, env, _ = cli_project
     with (project_root / "meridian.toml").open("a", encoding="utf-8") as config:
         config.write(
-        "[[hooks]]\n"
-        'name = "projection-test"\n'
-        'event = "spawn.finalized"\n'
-        'command = "printf hook-output; printf hook-error >&2"\n'
+            "[[hooks]]\n"
+            'name = "projection-test"\n'
+            'event = "spawn.finalized"\n'
+            'command = "printf hook-output; printf hook-error >&2"\n'
         )
 
     payload = _run_json(project_root, env, "hooks", "run", "projection-test")

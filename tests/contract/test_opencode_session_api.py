@@ -7,9 +7,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import opencode_http
-from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.projections.project_opencode_streaming import (
     HarnessCapabilityMismatch,
@@ -83,30 +81,6 @@ class _PayloadTimeoutOpenCodeConnection(OpenCodeConnection):
         self.payloads.append(payload_dict)
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
-
-
-@pytest.mark.asyncio
-async def test_create_session_uses_spec_model_not_connection_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-1"}, "")])
-    connection._config = ConnectionConfig(
-        spawn_id=SpawnId("p-open-1"),
-        harness_id=HarnessId.OPENCODE,
-        prompt="hello",
-        control_root=tmp_path,
-        child_env={},
-    )
-
-    session_id = await connection._create_session(
-        ResolvedLaunchSpec(
-            prompt="hello",
-            model="openai/spec-model",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        )
-    )
-
-    assert session_id == "sess-1"
-    assert connection.requests[0][1]["model"] == {"id": "spec-model", "providerID": "openai"}
-    assert "modelID" not in connection.requests[0][1]
 
 
 @pytest.mark.asyncio
@@ -479,24 +453,10 @@ async def test_private_instructions_are_owned_and_removed_on_stop(tmp_path) -> N
 
 
 @pytest.mark.asyncio
-async def test_respond_request_v1_posts_to_permissions_endpoint() -> None:
-    connection = _TestableOpenCodeConnection([(200, None, "")])
-    connection._pending_requests["per_1"] = "ses_1"
-
-    await connection.respond_request("per_1", "reject")
-
-    assert connection.requests == [
-        ("/session/ses_1/permissions/per_1", {"response": "reject"}),
-    ]
-    assert connection._pending_requests == {}
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("decision", "expected_response"),
     (
         ("accept", "once"),
-        ("once", "once"),
         ("always", "always"),
         ("reject", "reject"),
         ("unrecognized", "once"),

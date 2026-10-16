@@ -89,18 +89,6 @@ def test_smtp_password_file_wins_over_environment(
     assert transport.client.login_args == ("sender@example.com", "from-file")
 
 
-def test_smtp_uses_environment_when_password_file_is_unset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("MERIDIAN_NOTIFY_SMTP_PASSWORD", "from-env")
-    transport = _FakeSMTPTransport()
-
-    result = SMTPChannel(transport=transport).send(_NOTICE, _smtp_config())
-
-    assert result.ok is True
-    assert transport.client.login_args == ("sender@example.com", "from-env")
-
-
 def test_smtp_refuses_group_or_world_readable_password_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

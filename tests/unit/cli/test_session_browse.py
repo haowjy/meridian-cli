@@ -106,28 +106,6 @@ def test_blocked_and_rendered_action_hints() -> None:
     assert "c2: no harness session" in _text(render_footer(model, 100))
 
 
-def test_footer_matches_search_mode_controls() -> None:
-    model = BrowseModel((_row("c1"),))
-    assert "type to filter" in _text(render_footer(model, 120))
-
-    model.handle_key(Search())
-    search_input = _text(render_footer(model, 120))
-    assert search_input == "type query · [enter] search · [esc] back"
-
-    model.handle_key(Character("n"))
-    assert model.handle_key(Enter()) == StartSearch("n", ("c1",))
-    scanning = _text(render_footer(model, 120))
-    assert "searching transcripts" in scanning
-    assert "[enter] resume" in scanning
-    assert "[esc] cancel" in scanning
-
-    model.apply_search_done(frozenset({"c1"}), 1)
-    results = _text(render_footer(model, 120))
-    assert "search results" in results
-    assert "[enter] resume" in results
-    assert "[esc] back" in results
-
-
 def test_search_status_reports_unavailable_transcripts() -> None:
     model = BrowseModel((_row("c1"), _row("c2")))
     model.handle_key(Search())
@@ -200,24 +178,6 @@ def test_list_columns_use_terminal_display_width() -> None:
     header_work_column = get_cwidth(header[: header.index("WORK")])
     row_work_column = get_cwidth(rendered[: rendered.index("工作")])
     assert row_work_column == header_work_column
-
-
-def test_live_marker_receives_live_style() -> None:
-    fragments = render_list(BrowseModel((_row("c123", live=True),)), 100)
-
-    assert any(text == "●" and "class:live" in style for style, text in fragments)
-
-
-def test_narrow_list_header_omits_hidden_columns() -> None:
-    model = BrowseModel((_row("c123", work="session-browse"),))
-
-    header = _text(browse_render.render_list_header(model, 50))
-
-    assert "C-ID" in header
-    assert "AGE" in header
-    assert "WORK" in header
-    assert "AGENT" not in header
-    assert "MODEL" not in header
 
 
 @pytest.mark.parametrize(

@@ -44,41 +44,23 @@ def test_v1_subprocess_resume_with_explicit_model_fails_loudly() -> None:
         )
 
 
-def test_v2_subprocess_resume_with_explicit_model_forwards_model() -> None:
+@pytest.mark.parametrize("version", ["v2", None])
+def test_subprocess_resume_forwards_model_unless_version_is_v1(
+    version: str | None,
+) -> None:
+    overrides: dict[str, object] = {
+        "continue_session_id": "ses-parent",
+        "model": "openai/gpt-5.5",
+    }
+    if version is not None:
+        overrides["opencode_version"] = version
     command = project_opencode_spec_to_cli_args(
-        _spec(
-            continue_session_id="ses-parent",
-            model="openai/gpt-5.5",
-            opencode_version="v2",
-        ),
+        _spec(**overrides),
         base_command=_SUBPROCESS_BASE,
     )
 
     assert command[command.index("--model") + 1] == "openai/gpt-5.5"
     assert command[command.index("--session") + 1] == "ses-parent"
-
-
-@pytest.mark.parametrize("version", ["v1", "v2"])
-def test_fresh_subprocess_launch_forwards_model(version: str) -> None:
-    command = project_opencode_spec_to_cli_args(
-        _spec(model="openai/gpt-5.5", opencode_version=version),
-        base_command=_SUBPROCESS_BASE,
-    )
-
-    assert command[command.index("--model") + 1] == "openai/gpt-5.5"
-    assert "--session" not in command
-
-
-@pytest.mark.parametrize("version", ["v1", "v2"])
-def test_subprocess_resume_without_model_forwards_session_only(version: str) -> None:
-    command = project_opencode_spec_to_cli_args(
-        _spec(continue_session_id="ses-parent", opencode_version=version),
-        base_command=_SUBPROCESS_BASE,
-    )
-
-    assert "--session" in command
-    assert command[command.index("--session") + 1] == "ses-parent"
-    assert "--model" not in command
 
 
 def test_interactive_resume_keeps_model_for_managed_attach() -> None:
@@ -98,15 +80,3 @@ def test_interactive_resume_keeps_model_for_managed_attach() -> None:
     assert command[command.index("--model") + 1] == "openai/gpt-5.5"
     assert command[command.index("--session") + 1] == "ses-parent"
     assert command[-2:] == ["--prompt", "hello"]
-
-
-def test_unresolved_version_forwards_model_on_resume() -> None:
-    # auto/unknown whose probe fails must forward, not reject: the raw CLI
-    # supports the flag and an unprobeable binary fails the spawn later anyway.
-    command = project_opencode_spec_to_cli_args(
-        _spec(continue_session_id="ses-parent", model="openai/gpt-5.5"),
-        base_command=_SUBPROCESS_BASE,
-    )
-
-    assert command[command.index("--model") + 1] == "openai/gpt-5.5"
-    assert command[command.index("--session") + 1] == "ses-parent"

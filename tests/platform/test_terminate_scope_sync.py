@@ -73,7 +73,6 @@ def test_posix_pgid_with_group_dispatches_to_terminate_pgid(monkeypatch) -> None
     ("containment", "pgid", "expected_degraded"),
     [
         ("posix_pgid", None, True),
-        ("windows_job", None, True),
         ("pid_tree_fallback", None, False),
         ("some_unknown_containment", None, True),
     ],

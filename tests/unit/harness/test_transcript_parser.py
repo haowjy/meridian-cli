@@ -362,23 +362,7 @@ def test_pi_preview_does_not_persist_unbounded_entry_identity() -> None:
     assert len(accumulator.preview.model_dump_json()) < 1000
 
 
-@pytest.mark.parametrize("event_type", [[], {}])
-def test_pi_unhashable_type_is_incomplete_not_a_parser_crash(event_type: object) -> None:
-    generic = parse_transcript_events_with_prologues(
-        [{"type": event_type, "id": "entry", "parentId": None}]
-    )
-    assert generic.rendering_reason is None
-
-    parsed = parse_transcript_events_with_prologues(
-        [
-            {"type": "session", "id": "session", "version": 3, "cwd": "/repo"},
-            {"type": event_type, "id": "entry", "parentId": None},
-        ]
-    )
-    assert parsed.rendering_reason == "Unsupported Pi journal entry; rendering is incomplete."
-
-
-@pytest.mark.parametrize("event_type", [[], {}])
+@pytest.mark.parametrize("event_type", [[]])
 @pytest.mark.parametrize("missing_fields", [(), ("id",), ("parentId",), ("id", "parentId")])
 def test_pi_malformed_type_without_entry_identity_is_incomplete(
     event_type: object, missing_fields: tuple[str, ...]

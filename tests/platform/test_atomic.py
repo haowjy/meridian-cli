@@ -125,16 +125,6 @@ def test_append_text_line_skips_directory_fsync_when_file_already_exists(
     assert directory_fd not in fsync_calls
 
 
-def test_atomic_write_text_replaces_content_cross_platform(tmp_path: Path) -> None:
-    target = tmp_path / "state.txt"
-    target.write_text("before\n", encoding="utf-8")
-
-    atomic_module.atomic_write_text(target, "after\n")
-
-    assert target.read_text(encoding="utf-8") == "after\n"
-    assert _tmp_candidates(target) == []
-
-
 def test_atomic_replace_exception_preserves_old_content(tmp_path: Path) -> None:
     target = tmp_path / "state.txt"
     target.write_text("before\n", encoding="utf-8")

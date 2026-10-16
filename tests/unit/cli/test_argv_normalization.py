@@ -43,14 +43,6 @@ def test_normalize_optional_value_flags(argv: list[str], expected: list[str]) ->
         (["--continue"], ["session", "browse"]),
         (["--continue="], ["session", "browse"]),
         (["--continue", "--plain"], ["session", "browse", "--plain"]),
-        (
-            ["--continue", "--limit", "1"],
-            ["session", "browse", "--limit", "1"],
-        ),
-        (
-            ["--continue", "--config", "/tmp/config.toml"],
-            ["session", "browse", "--config", "/tmp/config.toml"],
-        ),
         (["-C", "/tmp/project", "--continue"], ["session", "browse", "-C", "/tmp/project"]),
         (["--continue", "c9"], ["--continue", "c9"]),
         (["--", "--continue"], ["--", "--continue"]),
@@ -58,9 +50,7 @@ def test_normalize_optional_value_flags(argv: list[str], expected: list[str]) ->
         (["mars", "--continue"], ["mars", "--continue"]),
     ],
 )
-def test_canonicalize_argv_routes_bare_continue(
-    argv: list[str], expected: list[str]
-) -> None:
+def test_canonicalize_argv_routes_bare_continue(argv: list[str], expected: list[str]) -> None:
     canonical = canonicalize_argv(argv)
 
     assert canonical == expected
@@ -77,20 +67,8 @@ def test_bare_continue_classifies_as_runtime_read() -> None:
 
 
 def test_positional_scanner_stops_at_passthrough_separator() -> None:
-    assert list(iter_positional_tokens(["spawn", "--", "--format", "json"])) == [
-        (0, "spawn")
-    ]
+    assert list(iter_positional_tokens(["spawn", "--", "--format", "json"])) == [(0, "spawn")]
     assert list(iter_positional_tokens(["--format", "--", "spawn"])) == []
-
-
-def test_resolve_fork_ref_self_sentinel(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p42")
-    assert resolve_fork_ref(SELF_FORK_REF_SENTINEL) == "p42"
-
-
-def test_resolve_optional_ref_self_sentinel(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p42")
-    assert resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name="--from") == "p42"
 
 
 def test_resolve_fork_ref_self_sentinel_without_context_errors(
@@ -109,48 +87,52 @@ def test_resolve_optional_ref_self_sentinel_without_context_errors(
         resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name="--from")
 
 
-
-def test_validate_fork_mode_conflicts_fork_and_fork_fresh() -> None:
-    with pytest.raises(ValueError, match=re.escape("Cannot combine --fork with --fork-fresh.")):
-        validate_fork_mode(fork_from="p1", fork_fresh_from="p2", continue_from=None)
-
-
-def test_validate_fork_mode_conflicts_fork_and_continue() -> None:
-    with pytest.raises(ValueError, match=re.escape("Cannot combine --fork with --continue.")):
-        validate_fork_mode(fork_from="p1", fork_fresh_from=None, continue_from="c1")
-
-
-def test_validate_fork_mode_conflicts_from_and_continue() -> None:
-    with pytest.raises(ValueError, match=re.escape("Cannot combine --from with --continue.")):
-        validate_fork_mode(
-            fork_from=None,
-            fork_fresh_from=None,
-            continue_from="p1",
-            context_from=("c1",),
-        )
-
-
-def test_validate_fork_mode_conflicts_fork_and_from() -> None:
-    with pytest.raises(
-        ValueError, match=re.escape("Cannot combine --fork with --from (MVP limitation).")
-    ):
-        validate_fork_mode(
-            fork_from="p1",
-            fork_fresh_from=None,
-            continue_from=None,
-            context_from=("c1",),
-        )
-
-
-def test_validate_fork_mode_rejects_identity_override_agent() -> None:
-    with pytest.raises(ValueError, match=re.escape(FORK_IDENTITY_ERROR)):
-        validate_fork_mode(
-            fork_from="p1",
-            fork_fresh_from=None,
-            continue_from=None,
-            agent="reviewer",
-        )
-
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        (
+            {"fork_from": "p1", "fork_fresh_from": "p2", "continue_from": None},
+            "Cannot combine --fork with --fork-fresh.",
+        ),
+        (
+            {"fork_from": "p1", "fork_fresh_from": None, "continue_from": "c1"},
+            "Cannot combine --fork with --continue.",
+        ),
+        (
+            {
+                "fork_from": None,
+                "fork_fresh_from": None,
+                "continue_from": "p1",
+                "context_from": ("c1",),
+            },
+            "Cannot combine --from with --continue.",
+        ),
+        (
+            {
+                "fork_from": "p1",
+                "fork_fresh_from": None,
+                "continue_from": None,
+                "context_from": ("c1",),
+            },
+            "Cannot combine --fork with --from (MVP limitation).",
+        ),
+        (
+            {
+                "fork_from": "p1",
+                "fork_fresh_from": None,
+                "continue_from": None,
+                "agent": "reviewer",
+            },
+            FORK_IDENTITY_ERROR,
+        ),
+    ],
+)
+def test_validate_fork_mode_rejects_conflicting_inputs(
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        validate_fork_mode(**kwargs)  # type: ignore[arg-type]
 
 
 def test_validate_fork_mode_allows_fork_fresh_with_agent_model_and_skills() -> None:
@@ -163,36 +145,6 @@ def test_validate_fork_mode_allows_fork_fresh_with_agent_model_and_skills() -> N
         skills="foo,bar",
     ) == ForkModeResolution(
         fork_ref=None, fork_fresh_ref="p1", is_fork=True, is_fresh=True, resolved_context_from=()
-    )
-
-
-def test_validate_fork_mode_no_fork_no_continue_returns_empty_resolution() -> None:
-    assert validate_fork_mode(
-        fork_from=None,
-        fork_fresh_from=None,
-        continue_from=None,
-    ) == ForkModeResolution(
-        fork_ref=None, fork_fresh_ref=None, is_fork=False, is_fresh=False, resolved_context_from=()
-    )
-
-
-def test_validate_fork_mode_resolves_fork_ref() -> None:
-    assert validate_fork_mode(
-        fork_from="p123",
-        fork_fresh_from=None,
-        continue_from=None,
-    ) == ForkModeResolution(
-        fork_ref="p123", fork_fresh_ref=None, is_fork=True, is_fresh=False, resolved_context_from=()
-    )
-
-
-def test_validate_fork_mode_resolves_fork_fresh_ref() -> None:
-    assert validate_fork_mode(
-        fork_from=None,
-        fork_fresh_from="p456",
-        continue_from=None,
-    ) == ForkModeResolution(
-        fork_ref=None, fork_fresh_ref="p456", is_fork=True, is_fresh=True, resolved_context_from=()
     )
 
 

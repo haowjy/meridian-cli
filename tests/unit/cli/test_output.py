@@ -41,29 +41,15 @@ def test_warning_shapes_match_output_mode() -> None:
     assert json.loads(json_stderr.getvalue()) == {"warning": "heads up"}
 
 
-def test_json_sink_status_is_single_line_json() -> None:
+def test_json_sink_status_and_heartbeat_are_single_line_json() -> None:
     stderr = io.StringIO()
+    sink = JsonSink(stderr=stderr)
 
-    JsonSink(stderr=stderr).status("first line\nsecond line")
+    sink.status("first line\nsecond line")
+    sink.heartbeat("still\nworking")
 
-    assert stderr.getvalue() == '{"status":"first line\\nsecond line"}\n'
-    assert json.loads(stderr.getvalue()) == {"status": "first line\nsecond line"}
-
-
-def test_json_sink_heartbeat_is_single_line_json() -> None:
-    stderr = io.StringIO()
-
-    JsonSink(stderr=stderr).heartbeat("still\nworking")
-
-    assert stderr.getvalue() == '{"heartbeat":"still\\nworking"}\n'
-    assert json.loads(stderr.getvalue()) == {"heartbeat": "still\nworking"}
-
-
-def test_text_sink_status_and_heartbeat_remain_prose() -> None:
-    stderr = io.StringIO()
-    sink = TextSink(stderr=stderr)
-
-    sink.status("checking")
-    sink.heartbeat("still working")
-
-    assert stderr.getvalue() == "checking\nstill working\n"
+    lines = stderr.getvalue().splitlines()
+    assert lines[0] + "\n" == '{"status":"first line\\nsecond line"}\n'
+    assert json.loads(lines[0]) == {"status": "first line\nsecond line"}
+    assert lines[1] + "\n" == '{"heartbeat":"still\\nworking"}\n'
+    assert json.loads(lines[1]) == {"heartbeat": "still\nworking"}

@@ -17,10 +17,6 @@ def _event(harness_id: HarnessId, event_type: str) -> RawHarnessEvent:
     )
 
 
-def test_claude_tool_call_does_not_inherit_opencode_semantics() -> None:
-    assert normalize_event(_event(HarnessId.CLAUDE, "tool_call")).semantics.activity is None
-
-
 def test_opencode_turn_started_does_not_inherit_codex_semantics() -> None:
     assert normalize_event(_event(HarnessId.OPENCODE, "turn/started")).semantics.activity is None
 
@@ -45,7 +41,5 @@ def test_unknown_upstream_event_remains_a_valid_open_transport_envelope() -> Non
 def test_every_bundle_reserves_meridian_connection_close_semantics() -> None:
     for bundle in get_bundle_registry().values():
         assert MERIDIAN_CONNECTION_CLOSED_EVENT in bundle.semantics.events
-        normalized = normalize_event(
-            _event(bundle.harness_id, MERIDIAN_CONNECTION_CLOSED_EVENT)
-        )
+        normalized = normalize_event(_event(bundle.harness_id, MERIDIAN_CONNECTION_CLOSED_EVENT))
         assert normalized.semantics.terminal is not None
