@@ -51,6 +51,7 @@ async def test_launch_managed_backend_records_scope(tmp_path: Path) -> None:
             cwd=tmp_path,
             env=os.environ.copy(),
             control_root=tmp_path,
+            grace_seconds=0.1,
         ),
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -90,6 +91,7 @@ async def test_launch_managed_backend_refuses_unknown_birth(
                 cwd=tmp_path,
                 env=os.environ.copy(),
                 control_root=tmp_path,
+                grace_seconds=0.1,
             ),
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -124,6 +126,7 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
                     cwd=tmp_path,
                     env=os.environ.copy(),
                     control_root=tmp_path,
+                    grace_seconds=0.1,
                 ),
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -137,3 +140,94 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
             if process.returncode is None:
                 process.kill()
                 await process.wait()
+
+
+@pytest.mark.asyncio
+async def test_scope_termination_disarms_guardian_without_waiting_its_grace(tmp_path: Path) -> None:
+    import time
+
+    from tests.support.async_determinism import wait_until
+
+    spawn_id = SpawnId("p-fast-stop")
+    _publish_spawn(tmp_path, spawn_id)
+    ready = tmp_path / "ready"
+    grace = 5.0
+    handle = await launch_managed_backend(
+        ManagedBackendConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.CODEX,
+            command=(
+                sys.executable,
+                "-c",
+                f"import pathlib,time; pathlib.Path({str(ready)!r}).touch(); time.sleep(60)",
+            ),
+            cwd=tmp_path,
+            env=dict(os.environ),
+            control_root=tmp_path,
+            grace_seconds=grace,
+        ),
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await wait_until(ready.exists)
+        start = time.monotonic()
+        result = await handle.scope_handle.terminate(grace_seconds=grace)
+        assert time.monotonic() - start < grace / 2
+        assert not result.kill_escalated
+        assert handle.process.returncode is not None
+    finally:
+        if handle.process.returncode is None:
+            await handle.scope_handle.terminate(grace_seconds=0.1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["backend", "stdio"])
+async def test_missing_binary_uses_launch_path_and_keeps_typed_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from meridian.lib.harness.connections.base import ConnectionConfig
+    from meridian.lib.harness.connections.managed_stdio import launch_managed_stdio
+    from meridian.lib.harness.errors import HarnessBinaryNotFound
+
+    spawn_id = SpawnId("p-missing-binary")
+    _publish_spawn(tmp_path, spawn_id)
+    binary = tmp_path / "runner-only-binary"
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    env = {"PATH": str(tmp_path / "empty-child-path")}
+    with pytest.raises(HarnessBinaryNotFound) as caught:
+        if mode == "backend":
+            await launch_managed_backend(
+                ManagedBackendConfig(
+                    spawn_id=spawn_id,
+                    harness_id=HarnessId.CODEX,
+                    command=(binary.name,),
+                    cwd=tmp_path,
+                    env=env,
+                    control_root=tmp_path,
+                    grace_seconds=0.1,
+                ),
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        else:
+            await launch_managed_stdio(
+                config=ConnectionConfig(
+                    spawn_id=spawn_id,
+                    harness_id=HarnessId.PI,
+                    prompt="",
+                    control_root=tmp_path,
+                    child_env=env,
+                    runtime_root=resolve_project_runtime_root_for_write(tmp_path),
+                ),
+                harness_id=HarnessId.PI,
+                command=(binary.name,),
+                env=env,
+                cwd=str(tmp_path),
+                stdin=asyncio.subprocess.PIPE,
+                stdout_limit=65536,
+                kill_grace_seconds=0.1,
+                terminate_reason="test",
+            )
+    assert caught.value.binary_name == binary.name
+    assert caught.value.searched_path == env["PATH"]

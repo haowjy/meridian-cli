@@ -27,7 +27,7 @@ from meridian.lib.platform.process_scope import is_pgid_reachable
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
-from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.liveness import is_process_alive, is_process_dead_with_birth
 from meridian.lib.state.managed_primary import (
     ManagedPrimaryReconciliationStrategy,
     ManagedPrimarySnapshot,
@@ -100,9 +100,7 @@ def scope_liveness(scope: ProcessScopeSnapshot) -> ScopeLiveness:
         scope.root_pid,
         created_after_epoch=(scope.root_created_at_epoch or None),
     )
-    pgid_reachable = (
-        is_pgid_reachable(scope.pgid) if scope.pgid is not None else None
-    )
+    pgid_reachable = is_pgid_reachable(scope.pgid) if scope.pgid is not None else None
     return {
         "root_alive": root_alive,
         "pgid_reachable": pgid_reachable,
@@ -348,9 +346,7 @@ def _log_orphan_primary_diagnostics(
             (scope for scope in scopes if scope.root_pid == metadata.backend_pid),
             None,
         )
-        backend_liveness = (
-            scope_liveness(backend_scope) if backend_scope is not None else None
-        )
+        backend_liveness = scope_liveness(backend_scope) if backend_scope is not None else None
         backend_alive = (
             backend_liveness["likely_serving"]
             if backend_liveness is not None
@@ -380,14 +376,10 @@ def _log_orphan_primary_diagnostics(
             backend_pid=metadata.backend_pid,
             backend_alive=backend_alive,
             backend_root_alive=(
-                backend_liveness["root_alive"]
-                if backend_liveness is not None
-                else backend_alive
+                backend_liveness["root_alive"] if backend_liveness is not None else backend_alive
             ),
             backend_pgid_reachable=(
-                backend_liveness["pgid_reachable"]
-                if backend_liveness is not None
-                else None
+                backend_liveness["pgid_reachable"] if backend_liveness is not None else None
             ),
             tui_pid=metadata.tui_pid,
             tui_alive=tui_alive,
@@ -452,9 +444,7 @@ def _record_orphan_finalize_evidence(
             else is_process_alive(record.worker_pid, created_after_epoch=snapshot.started_epoch)
         )
 
-    heartbeat_epoch = _artifact_mtime_epoch(
-        runtime_root / "spawns" / record.id / "heartbeat"
-    )
+    heartbeat_epoch = _artifact_mtime_epoch(runtime_root / "spawns" / record.id / "heartbeat")
     evidence = {
         "reason": "orphan_run",
         "timestamp": datetime.fromtimestamp(now, UTC).isoformat().replace("+00:00", "Z"),
@@ -774,6 +764,12 @@ def _claim_reaper_cleanup(
 
 def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
     """Resolve a durable claim once, retaining failed targets for a later pass."""
+    # Terminal cleanup claims can survive a reconciler crash. Revalidate the
+    # runner here too, rather than trusting an old heartbeat/grace decision.
+    if record.kind == "primary" and not is_process_dead_with_birth(
+        record.runner_pid, record.runner_created_at_epoch
+    ):
+        return
     spawn_id = SpawnId(record.id)
     with lock_file(cleanup_lock_path(runtime_root, spawn_id), reentrant=False):
         claimed = read_cleanup_claim(runtime_root, spawn_id)
@@ -808,6 +804,12 @@ def reconcile_active_spawn(
 ) -> SpawnRecord:
     """Reconcile one active spawn. Is the responsible process alive?"""
     if record.record_mode == "historical":
+        return record
+    # All primary paths (generic, managed, finalizing and durable claims) need
+    # positive death evidence before reconciliation can terminate their scopes.
+    if record.kind == "primary" and not is_process_dead_with_birth(
+        record.runner_pid, record.runner_created_at_epoch
+    ):
         return record
     if not is_active_spawn_status(record.status):
         if is_root_side_effect_process() and is_terminal_spawn_status(record.status):

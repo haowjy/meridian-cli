@@ -13,7 +13,6 @@ import pytest
 from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.connections import managed_backend as managed_backend_module
 from meridian.lib.harness.connections.base import HarnessConnection, HarnessRequest
 from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
@@ -502,34 +501,34 @@ async def test_process_adoption_does_not_recreate_deleted_spawn(
         spawn_id,
         can_delete=lambda row: row is not None,
     )
-    terminated: list[str] = []
+    import asyncio
 
-    async def _record_termination(
-        _handle: object,
-        *,
-        reason: str,
-        **_kwargs: object,
-    ) -> None:
-        terminated.append(reason)
+    from meridian.lib.platform.launch_gate import LaunchGate
 
-    monkeypatch.setattr(
-        managed_backend_module.ScopedProcessHandle,
-        "terminate",
-        _record_termination,
+    gate = LaunchGate()
+    launch = gate.spawn_kwargs(("/bin/sleep", "60"), os.environ)
+    process = await asyncio.create_subprocess_exec(
+        *launch["args"],
+        env=launch["env"],
+        pass_fds=launch["pass_fds"],
+        start_new_session=launch["start_new_session"],
     )
-
-    class _FakeProcess:
-        pid = os.getpid()
-
-    with pytest.raises(ValueError, match="spawn does not exist"):
-        await register_spawn_owned_process(
-            spawn_id=spawn_id,
-            control_root=project_root,
-            runtime_root=runtime_root,
-            process=cast("Any", _FakeProcess()),
-            scope_id="backend",
-            role="harness_backend",
-        )
-
-    assert terminated == ["scope_registration_failed"]
-    assert not spawn_dir.exists()
+    try:
+        with pytest.raises(ValueError, match="spawn does not exist"):
+            await register_spawn_owned_process(
+                spawn_id=spawn_id,
+                control_root=project_root,
+                runtime_root=runtime_root,
+                process=process,
+                identity=gate.adopt(process.pid),
+                gate=gate,
+                scope_id="backend",
+                role="harness_backend",
+            )
+        assert process.returncode is not None
+        assert not spawn_dir.exists()
+    finally:
+        gate.close()
+        if process.returncode is None:
+            process.kill()
+        await process.wait()

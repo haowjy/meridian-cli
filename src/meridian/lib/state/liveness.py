@@ -57,6 +57,19 @@ def is_process_alive_with_birth(pid: int, birth_epoch: float | None) -> bool:
         return False
 
 
+def is_process_dead_with_birth(pid: int | None, birth_epoch: float | None) -> bool:
+    """Prove the recorded process is gone; inaccessible/unknown is not dead."""
+    if pid is None or pid <= 0 or birth_epoch is None or birth_time_unverified(birth_epoch):
+        return False
+    try:
+        process = psutil.Process(pid)
+        return process.create_time() != birth_epoch or process.status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True
+    except (psutil.AccessDenied, OSError):
+        return False
+
+
 def is_spawn_genuinely_active(runtime_root: Path, spawn_id: str) -> bool:
     """Read-only check: is this spawn genuinely active?
 

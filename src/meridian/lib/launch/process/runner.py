@@ -61,6 +61,8 @@ from meridian.lib.launch.constants import (
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
+from meridian.lib.platform.launch_gate import ProcessIdentity
+from meridian.lib.platform.process_scope import scope_from_identity
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_spawn_log_dir
@@ -91,7 +93,6 @@ from ..types import SessionMode
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
     ProcessBackendId,
-    ProcessIdentity,
     ProcessLauncher,
     ProcessLauncherSelector,
     ProcessPlatformContract,
@@ -201,7 +202,7 @@ RunPrimaryProcessWithCapture = Callable[
         Path,
         dict[str, str],
         Path | None,
-        Callable[[ProcessIdentity], None] | None,
+        Callable[[ProcessIdentity], None],
         Path,
     ],
     PrimaryProcessResult,
@@ -288,7 +289,7 @@ def run_primary_process_with_capture(
     cwd: Path,
     env: dict[str, str],
     output_log_path: Path | None,
-    on_child_started: Callable[[ProcessIdentity], None] | None,
+    on_child_started: Callable[[ProcessIdentity], None],
     launcher_diagnostics_path: Path,
     *,
     launcher_selector: ProcessLauncherSelector = select_process_launcher,
@@ -304,8 +305,7 @@ def run_primary_process_with_capture(
             terminal_fds=window.terminal_fds,
         )
         try:
-            if on_child_started is not None:
-                on_child_started(running.identity)
+            on_child_started(running.identity)
         except BaseException:
             running.terminate()
             running.wait()
@@ -469,6 +469,22 @@ def _execute_primary_process(
     blackbox_env = dict(child_env)
     if harness_contract.primary_stderr_log:
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
+
+    def record_blackbox_started(identity: ProcessIdentity) -> None:
+        captured = output_log_path is not None
+        record_scope(
+            log_dir.parent.parent,
+            primary_spawn_id,
+            scope_from_identity(
+                identity,
+                scope_id="stdio" if captured else "tui",
+                role="harness_stdio" if captured else "harness_tui",
+                owner_policy="spawn_owned",
+                owner_id=str(primary_spawn_id),
+            ),
+        )
+        on_running(identity)
+
     blackbox_result = _execute_via_blackbox(
         command=command,
         launch_cwd=launch_cwd,
@@ -476,7 +492,7 @@ def _execute_primary_process(
         output_log_path=output_log_path,
         launcher_diagnostics_path=launcher_diagnostics_path,
         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
-        on_running=on_running,
+        on_running=record_blackbox_started,
     )
     fold = get_harness_bundle(harness_id).extractor.create_fold()
     if output_log_path is not None and output_log_path.is_file():
@@ -989,11 +1005,6 @@ def run_harness_process(
                     def _record_primary_started(identity: ProcessIdentity) -> None:
                         nonlocal native_primary_tui_pid
                         child_pid = identity.pid
-                        record_scope(
-                            runtime_root,
-                            primary_spawn_id,
-                            identity.scope(owner_id=str(primary_spawn_id)),
-                        )
                         native_primary_tui_pid = child_pid
                         observe_child(child_pid)
                         lifecycle_service.mark_running(
@@ -1038,9 +1049,7 @@ def run_harness_process(
                     exit_code = execution_result.exit_code
                     managed_cancelled = execution_result.managed_cancelled
                     facts = execution_result.facts
-                    launcher_diagnostics_path = (
-                        execution_result.launcher_diagnostics_path
-                    )
+                    launcher_diagnostics_path = execution_result.launcher_diagnostics_path
                 if execution_result.managed_session_id is not None:
                     resolved_harness_session_id = execution_result.managed_session_id
                 with suppress(Exception):

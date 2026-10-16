@@ -12,7 +12,7 @@ do not extend it as product support.
 | `containment` | Backend | Mechanism |
 |---|---|---|
 | `posix_pgid` | `posix.py` | `os.killpg()` — kills the entire process group |
-| `windows_job` | legacy fallback | Job Object helpers exist; dispatch uses the psutil fallback |
+| `windows_job` | legacy Job Object | Handle-owned termination; snapshots use tree fallback |
 | `pid_tree_fallback` | `fallback.py` | psutil tree snapshot + SIGTERM → SIGKILL |
 
 ## Key Rules
@@ -52,8 +52,8 @@ process group.
 ## Legacy Windows Job Object Handle Lifetime
 
 `assign_to_new_job(pid)` returns `(job_name, job_handle)`. The handle must stay alive —
-`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` kills all job members when the handle is garbage
-collected. Letting the handle go early releases the containment boundary silently.
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` kills all job members when the handle is closed. `ScopedProcessHandle` owns and
+explicitly closes it after termination.
 
 ## Entry Points
 

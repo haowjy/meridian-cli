@@ -10,59 +10,15 @@ from typing import IO, Any
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.errors import HarnessBinaryNotFound
-from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.detached_process import (
-    ParentDeathLink,
-    link_child_lifetime_to_parent,
-)
-from meridian.lib.platform.launch_gate import LaunchGate, child_birth_epoch
+from meridian.lib.platform.launch_gate import LaunchGate, ProcessIdentity
 from meridian.lib.platform.process_scope import (
-    ProcessScopeSnapshot,
     ScopedProcessHandle,
+    scope_from_identity,
 )
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
 )
 from meridian.lib.state.process_scope_projection import record_scope
-
-
-def spawn_owned_process_handle(
-    *,
-    spawn_id: SpawnId,
-    process: asyncio.subprocess.Process,
-    scope_id: str,
-    role: str,
-    job_name: str | None = None,
-) -> ScopedProcessHandle:
-    """Capture process-tree termination facts for an already launched child."""
-
-    pid = process.pid
-    pgid: int | None = None
-    containment: str
-    if not IS_WINDOWS:
-        try:
-            pgid = os.getpgid(pid)
-            containment = "posix_pgid"
-        except OSError:
-            containment = "pid_tree_fallback"
-    else:
-        containment = "windows_job"
-
-    birth_time = child_birth_epoch(pid)
-
-    snapshot = ProcessScopeSnapshot(
-        scope_id=scope_id,
-        owner_policy="spawn_owned",
-        owner_id=str(spawn_id),
-        role=role,
-        containment=containment,
-        root_pid=pid,
-        root_created_at_epoch=birth_time,
-        pgid=pgid,
-        job_name=job_name,
-        degraded_reason=None,
-    )
-    return ScopedProcessHandle(process=process, snapshot=snapshot)
 
 
 @dataclass(frozen=True)
@@ -75,6 +31,7 @@ class ManagedBackendConfig:
     cwd: Path
     env: dict[str, str]
     control_root: Path
+    grace_seconds: float
 
 
 @dataclass(frozen=True)
@@ -83,7 +40,6 @@ class ManagedBackendHandle:
 
     process: asyncio.subprocess.Process
     scope_handle: ScopedProcessHandle
-    parent_death_link: ParentDeathLink | None = None
 
 
 async def register_spawn_owned_process(
@@ -93,19 +49,24 @@ async def register_spawn_owned_process(
     process: asyncio.subprocess.Process,
     scope_id: str,
     role: str,
-    job_name: str | None = None,
+    identity: ProcessIdentity,
+    gate: LaunchGate,
     runtime_root: Path | None = None,
     persist: bool = True,
 ) -> ScopedProcessHandle:
     """Persist crash-recovery ownership for an already launched child process."""
 
     resolved_runtime_root = runtime_root or resolve_project_runtime_root_for_write(control_root)
-    scope_handle = spawn_owned_process_handle(
-        spawn_id=spawn_id,
+    scope_handle = ScopedProcessHandle(
         process=process,
-        scope_id=scope_id,
-        role=role,
-        job_name=job_name,
+        snapshot=scope_from_identity(
+            identity,
+            scope_id=scope_id,
+            role=role,
+            owner_policy="spawn_owned",
+            owner_id=str(spawn_id),
+        ),
+        gate=gate,
     )
     try:
         if persist:
@@ -130,43 +91,41 @@ async def launch_managed_backend(
     """
 
     runtime_root = resolve_project_runtime_root_for_write(config.control_root)
-    gate = None if IS_WINDOWS else LaunchGate()
+    gate = LaunchGate(grace_seconds=config.grace_seconds)
     process: asyncio.subprocess.Process | None = None
     try:
         try:
+            launch = gate.spawn_kwargs(config.command, config.env, cwd=config.cwd)
             process = await asyncio.create_subprocess_exec(
-                *(gate.command(config.command) if gate is not None else config.command),
+                *launch["args"],
                 cwd=str(config.cwd),
-                env=gate.environment(config.env) if gate is not None else config.env,
+                env=launch["env"],
                 stdout=stdout if stdout is not None else asyncio.subprocess.DEVNULL,
                 stderr=stderr,
-                start_new_session=not IS_WINDOWS,
-                pass_fds=(gate.read_fd,) if gate is not None else (),
+                start_new_session=launch["start_new_session"],
+                pass_fds=launch["pass_fds"],
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HarnessBinaryNotFound.from_os_error(
                 harness_id=config.harness_id,
                 error=exc,
                 binary_name=config.command[0],
+                searched_path=os.pathsep.join(os.get_exec_path(config.env)),
             ) from exc
-        if gate is not None:
-            gate.close_read_end()
-        parent_death_link = link_child_lifetime_to_parent(process.pid) if IS_WINDOWS else None
+        identity = gate.adopt(process.pid)
         scope_handle = await register_spawn_owned_process(
             spawn_id=config.spawn_id,
             control_root=config.control_root,
             process=process,
             scope_id="backend",
             role="harness_backend",
-            job_name=parent_death_link.job_name if parent_death_link is not None else None,
+            identity=identity,
+            gate=gate,
             runtime_root=runtime_root,
         )
-        if gate is not None:
-            gate.open()
-            gate.watch_exit(process)
+        gate.open()
     except BaseException:
-        if gate is not None:
-            gate.close()
+        gate.close()
         if process is not None and process.returncode is None:
             process.kill()
             await process.wait()
@@ -175,7 +134,6 @@ async def launch_managed_backend(
     return ManagedBackendHandle(
         process=process,
         scope_handle=scope_handle,
-        parent_death_link=parent_death_link,
     )
 
 

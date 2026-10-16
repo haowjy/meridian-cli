@@ -38,7 +38,8 @@ from meridian.lib.idle import sidecar as idle_sidecar
 from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
-from meridian.lib.platform.process_scope import terminate_scope_sync
+from meridian.lib.platform.launch_gate import ProcessIdentity
+from meridian.lib.platform.process_scope import scope_from_identity, terminate_scope_sync
 from meridian.lib.platform.process_scope.base import (
     ProcessScopeSnapshot,
 )
@@ -46,7 +47,7 @@ from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, writ
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 
-from .ports import LaunchedProcess, ProcessIdentity, ProcessLauncher, RunningProcess
+from .ports import TUI_TERMINATE_GRACE_SECONDS, LaunchedProcess, ProcessLauncher, RunningProcess
 from .terminal_ownership import tui_terminal_window
 
 TuiCommandBuilder = Callable[[str], tuple[str, ...]]
@@ -83,12 +84,10 @@ def _start_process_wait(running_process: RunningProcess) -> asyncio.Future[Launc
 
     Thread(
         target=_wait,
-        name=f"meridian-primary-wait-{running_process.pid}",
+        name=f"meridian-primary-wait-{running_process.identity.pid}",
         daemon=True,
     ).start()
     return result_future
-
-
 
 
 class PrimaryAttachError(Exception):
@@ -407,9 +406,7 @@ class PrimaryAttachLauncher:
                     # while a clean TUI exit returns its own code. This avoids
                     # turning a session that exited normally just before a signal
                     # landed into a cancel.
-                    cancelled = (
-                        self._signal_cancel_requested and launched.exit_code == 130
-                    )
+                    cancelled = self._signal_cancel_requested and launched.exit_code == 130
                     if cancelled:
                         # The relay stopped on the signal, so the TUI is still alive.
                         await self._stop_idle_task()
@@ -625,7 +622,13 @@ class PrimaryAttachLauncher:
     def _record_tui_scope(self, identity: ProcessIdentity, session_id: str | None) -> None:
         runtime_root = self._spawn_dir.parent.parent
         owner_id = (session_id or "").strip() or str(self._spawn_id)
-        snapshot = identity.scope(owner_id=owner_id, owner_policy="session_owned")
+        snapshot = scope_from_identity(
+            identity,
+            scope_id="tui",
+            role="harness_tui",
+            owner_id=owner_id,
+            owner_policy="session_owned",
+        )
         self._tui_scope_snapshot = snapshot
         record_scope(runtime_root, self._spawn_id, snapshot)
 
@@ -674,7 +677,7 @@ class PrimaryAttachLauncher:
         await asyncio.to_thread(
             terminate_scope_sync,
             snapshot,
-            grace_seconds=5.0,
+            grace_seconds=TUI_TERMINATE_GRACE_SECONDS,
             reason=reason,
         )
 

@@ -13,6 +13,7 @@ from pathlib import Path
 import psutil
 import pytest
 
+from meridian.lib.launch.process.ports import TUI_TERMINATE_GRACE_SECONDS
 from tests.conftest import posix_only
 
 pytestmark = posix_only
@@ -92,7 +93,7 @@ async def run():
         managed_backend.register_spawn_owned_process = register
         handle = await managed_backend.launch_managed_backend(
             managed_backend.ManagedBackendConfig(
-                spawn, HarnessId.CODEX, backend_command, root, os.environ.copy(), root
+                spawn, HarnessId.CODEX, backend_command, root, os.environ.copy(), root, 0.1
             ),
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -103,7 +104,7 @@ if mode == "primary":
     from meridian.lib.launch.process.runner import run_primary_process_with_capture
 
     def started(identity):
-        boundary(getattr(identity, "pid", identity))
+        boundary(identity.pid)
 
     run_primary_process_with_capture(
         command, root, os.environ.copy(), None, started, root / "launcher.log"
@@ -201,6 +202,7 @@ def test_guardian_not_a_child_of_harness(tmp_path: Path) -> None:
         start_new_session=True,
     )
     try:
+        gate.adopt(child.pid)
         gate.open()
         output, _ = child.communicate(timeout=5)
         assert output == b"done\n"
@@ -233,17 +235,17 @@ from meridian.lib.platform.launch_gate import LaunchGate
 
 # Deliberately allocate around 9 and above dash's redirection range.
 opened = [os.open("/dev/null", os.O_RDONLY) for _ in range(15)]
-gate = LaunchGate()
-os.dup2(gate.read_fd, int(sys.argv[1]))
-os.close(gate.read_fd)
-gate.read_fd = int(sys.argv[1])
+from tests.support.launch_gate import gate_at_fd
+gate = gate_at_fd(int(sys.argv[1]))
 p = subprocess.Popen(
-    gate.command(("/bin/sh", "-c", 'test -z "$_MERIDIAN_GATE_FD$_MERIDIAN_GATE_SCOPE" && echo ok')),
+    gate.command(("/bin/sh", "-c",
+        'test -z "$_MERIDIAN_GATE_FD$_MERIDIAN_GATE_SCOPE$_MERIDIAN_GATE_GRACE" && echo ok')),
     env=gate.environment(os.environ),
     pass_fds=(gate.read_fd,),
     stdout=subprocess.PIPE,
     start_new_session=True,
 )
+gate.adopt(p.pid)
 gate.open()
 out, _ = p.communicate(timeout=5)
 gate.stop()
@@ -260,44 +262,47 @@ def test_gate_fd_above_nine() -> None:
 
 
 @pytest.mark.parametrize("pty_output", [False, True])
-def test_harness_exit_gives_eof_before_stop(pty_output: bool) -> None:
+def test_harness_exit_gives_eof_before_stop(pty_output: bool, tmp_path: Path) -> None:
     import select
+    from concurrent.futures import ThreadPoolExecutor
 
+    from meridian.lib.launch.process.ports import TerminalFds
+    from meridian.lib.launch.process.pty_launcher import PtyProcessLauncher
     from meridian.lib.platform import pty
     from meridian.lib.platform.launch_gate import LaunchGate
 
-    gate = LaunchGate()
     unrelated_fd = os.open(sys.executable, os.O_RDONLY)
     os.set_inheritable(unrelated_fd, True)
     master, slave = pty.openpty() if pty_output else os.pipe()
-    command = gate.command(("/bin/sh", "-c", "echo ready; read x; echo done"))
-    env = gate.environment(os.environ)
+    command = ("/bin/sh", "-c", "echo ready; read x; echo done")
+    pool = ThreadPoolExecutor(max_workers=1)
     process = None
     if pty_output:
-        child_pid = os.fork()
-        if child_pid == 0:
-            os.close(master)
-            os.login_tty(slave)
-            gate.prepare_pty_exec()
-            os.execve(command[0], command, env)
+        running = PtyProcessLauncher().start(
+            command=command,
+            cwd=tmp_path,
+            env=dict(os.environ),
+            output_log_path=None,
+            terminal_fds=TerminalFds(slave, slave, slave),
+        )
+        child_pid, gate = running.identity.pid, running.gate
+        completed = pool.submit(running.wait)
         input_fd = master
     else:
+        gate = LaunchGate()
         process = subprocess.Popen(
-            command,
-            env=env,
-            pass_fds=(gate.read_fd,),
+            **gate.spawn_kwargs(command, os.environ),
             stdin=subprocess.PIPE,
             stdout=slave,
             stderr=slave,
-            start_new_session=True,
         )
         child_pid = process.pid
+        gate.adopt(child_pid)
         assert process.stdin is not None
         input_fd = process.stdin.fileno()
+        gate.open()
     os.close(slave)
     try:
-        target = os.readlink(f"/proc/self/fd/{gate.read_fd}") if sys.platform == "linux" else None
-        gate.open()
         assert select.select([master], [], [], 5)[0]
         assert b"ready" in os.read(master, 4096)
         guardians = _until(
@@ -310,26 +315,24 @@ def test_harness_exit_gives_eof_before_stop(pty_output: bool) -> None:
                 and p.ppid() != child_pid
             ]
         )
-        if target is not None:
+        if sys.platform == "linux":
             for guardian in guardians:
                 links = [os.readlink(fd) for fd in Path(f"/proc/{guardian.pid}/fd").iterdir()]
-                assert links and all(link in (target, "/dev/null") for link in links), links
+                pipes = {link for link in links if link.startswith("pipe:")}
+                assert len(pipes) == 1
+                assert all(link == "/dev/null" or link in pipes for link in links), links
         os.write(input_fd, b"quit\n")
-        if process is not None:
-            process.wait(timeout=5)
+        if pty_output:
+            # The actual relay waits for PTY EOF before reaping and sending stop.
+            assert completed.result(timeout=5).exit_code == 0
         else:
-            _until(lambda: not _alive(child_pid))
-            os.waitpid(child_pid, 0)
-        while True:
-            assert select.select([master], [], [], 5)[0], "output held open before stop"
-            try:
-                chunk = os.read(master, 4096)
-            except OSError as exc:
-                assert pty_output and exc.errno == 5
-                break
-            if not chunk:
-                break
-        gate.stop()
+            assert process is not None
+            process.wait(timeout=5)
+            while True:
+                assert select.select([master], [], [], 5)[0], "output held open before stop"
+                if not os.read(master, 4096):
+                    break
+            gate.release_after_reap(process.returncode)
         _until(lambda: all(not _alive(p.pid) for p in guardians))
     finally:
         gate.close()
@@ -339,9 +342,7 @@ def test_harness_exit_gives_eof_before_stop(pty_output: bool) -> None:
             os.killpg(child_pid, signal.SIGKILL)
         if process is not None:
             process.wait(timeout=5)
-        else:
-            with suppress(ChildProcessError):
-                os.waitpid(child_pid, 0)
+        pool.shutdown(wait=True)
 
 
 def test_tty_stdin_primary_root_only(tmp_path: Path) -> None:
@@ -367,7 +368,7 @@ running = SubprocessProcessLauncher().start(
     env=os.environ.copy(),
     output_log_path=None, terminal_fds=TerminalFds(0, 1, 2),
 )
-(root / "ids").write_text(f"{running.pid} {sibling.pid}")
+(root / "ids").write_text(f"{running.identity.pid} {sibling.pid}")
 assert running.identity.pgid is None
 running.wait()
 """
@@ -379,7 +380,9 @@ running.wait()
         runner.kill()
         runner.wait(timeout=5)
         _until((tmp_path / "terms").exists)
-        time.sleep(2.2)  # Beyond the group-mode grace: root mode must not escalate.
+        time.sleep(
+            TUI_TERMINATE_GRACE_SECONDS + 0.2
+        )  # Beyond the group-mode grace: root mode must not escalate.
         assert (tmp_path / "terms").read_text() == "term\n"
         assert _alive(child) and _alive(sibling)
     finally:

@@ -27,12 +27,12 @@ from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
     LaunchedProcess,
-    ProcessIdentity,
     TerminalFds,
 )
 from meridian.lib.launch.process.primary_attach import PrimaryAttachError
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.launch.session_scope import SessionAttempt
+from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Bound, Conflict
@@ -142,6 +142,19 @@ def test_subprocess_launcher_cancel_wait_releases_pipe_relays(
 def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     tmp_path: Path,
 ) -> None:
+    from meridian.lib.state.spawn_store import start_spawn
+
+    start_spawn(
+        tmp_path,
+        spawn_id=SpawnId("p-contract-blackbox"),
+        chat_id="c1",
+        model="test",
+        agent="test",
+        harness="codex",
+        prompt="test",
+        status="running",
+    )
+    log_dir = tmp_path / "spawns" / "p-contract-blackbox"
     harness_registry = get_default_harness_registry()
     harness_contract = harness_registry.get_contract(HarnessId.CODEX).model_copy(
         update={"bootstrap_mode": BootstrapMode.SUBPROCESS_ONLY}
@@ -158,7 +171,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     ) -> process_runner.PrimaryProcessResult:
         nonlocal black_box_calls
         _ = (command, cwd, env, output_log_path)
-        assert launcher_diagnostics_path == tmp_path / LAUNCHER_LOG_FILENAME
+        assert launcher_diagnostics_path == log_dir / LAUNCHER_LOG_FILENAME
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(ProcessIdentity(111, 100.0, 111))
@@ -167,7 +180,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     result = process_runner._execute_primary_process(
         harness_id=HarnessId.CODEX,
         primary_spawn_id=SpawnId("p-contract-blackbox"),
-        log_dir=tmp_path,
+        log_dir=log_dir,
         control_root=tmp_path,
         launch_cwd=tmp_path,
         task_cwd=None,
@@ -197,6 +210,19 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
 def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
     tmp_path: Path,
 ) -> None:
+    from meridian.lib.state.spawn_store import start_spawn
+
+    start_spawn(
+        tmp_path,
+        spawn_id=SpawnId("p-contract-fallback"),
+        chat_id="c1",
+        model="test",
+        agent="test",
+        harness="codex",
+        prompt="test",
+        status="running",
+    )
+    log_dir = tmp_path / "spawns" / "p-contract-fallback"
     harness_registry = get_default_harness_registry()
     harness_contract = harness_registry.get_contract(HarnessId.CLAUDE).model_copy(
         update={
@@ -205,7 +231,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
         }
     )
     black_box_calls = 0
-    launcher_diagnostics_path = tmp_path / LAUNCHER_LOG_FILENAME
+    launcher_diagnostics_path = log_dir / LAUNCHER_LOG_FILENAME
     launcher_diagnostics_path.write_text("stale relay failure\n", encoding="utf-8")
 
     def _black_box(
@@ -218,7 +244,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
     ) -> process_runner.PrimaryProcessResult:
         nonlocal black_box_calls
         _ = (command, cwd, env, output_log_path)
-        assert launcher_diagnostics_path == tmp_path / LAUNCHER_LOG_FILENAME
+        assert launcher_diagnostics_path == log_dir / LAUNCHER_LOG_FILENAME
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(ProcessIdentity(222, 100.0, 222))
@@ -227,7 +253,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
     result = process_runner._execute_primary_process(
         harness_id=HarnessId.CLAUDE,
         primary_spawn_id=SpawnId("p-contract-fallback"),
-        log_dir=tmp_path,
+        log_dir=log_dir,
         control_root=tmp_path,
         launch_cwd=tmp_path,
         task_cwd=None,
@@ -287,7 +313,8 @@ def _native_run(root: Path) -> NativeRun:
 
 
 def test_native_observer_acks_each_publication_and_dies_with_its_block(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
 
@@ -303,15 +330,23 @@ def test_native_observer_acks_each_publication_and_dies_with_its_block(
 
     chat = session_store.start_session(tmp_path, "claude", "entry", "", native_store="/s")
     spawn_store.start_spawn(
-        tmp_path, spawn_id="p1", chat_id=chat, harness="claude", kind="primary",
-        harness_session_id="entry", model="", agent="", prompt="",
+        tmp_path,
+        spawn_id="p1",
+        chat_id=chat,
+        harness="claude",
+        kind="primary",
+        harness_session_id="entry",
+        model="",
+        agent="",
+        prompt="",
     )
     record = session_store.get_session_record(tmp_path, chat)
     assert record is not None
     attempt = SessionAttempt(tmp_path, chat, record.session_instance_id, None, SpawnId("p1"))
     run = NativeRun(attempt, None, NativeKeyFields("claude", "/s", "entry"), None, None)
     with run.observing(
-        cast("Any", SimpleNamespace(native_observation_reader=lambda **_: None)), child_env={},
+        cast("Any", SimpleNamespace(native_observation_reader=lambda **_: None)),
+        child_env={},
     ) as start:
         start(1)
         assert observers() == []  # Unsupported adapters never idle a thread.
@@ -341,10 +376,13 @@ def test_native_observer_acks_each_publication_and_dies_with_its_block(
         pending = tuple(fact for fact in facts if fact.next_cursor > cursor)
         return NativeObservationBatch(pending, pending[-1].next_cursor if pending else cursor)
 
-    with pytest.raises(RuntimeError, match="caller failed"), run.observing(
-        cast("Any", SimpleNamespace(native_observation_reader=lambda **_: reader)),
-        child_env={},
-    ) as start:
+    with (
+        pytest.raises(RuntimeError, match="caller failed"),
+        run.observing(
+            cast("Any", SimpleNamespace(native_observation_reader=lambda **_: reader)),
+            child_env={},
+        ) as start,
+    ):
         start(123)
         for _ in range(200):
             if len(published) == 3:

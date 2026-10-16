@@ -14,7 +14,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   [upgrade notes](docs/upgrading.md#history-index-schema-10).
 
 - Gate harness execution on durable process ownership and clean up harness groups
-  when their runner dies, including re-execed managed backends.
+  when their runner dies, including re-execed managed backends. Remove the macOS
+  Python watchdog and `parent_death_linked` from new scope rows.
+- Preserve typed missing-harness errors, reap stubs killed or cancelled before
+  exec, and honor adapter grace even with a hostile PATH. Reaper cleanup of
+  primaries now requires proven runner death, never stale heartbeat evidence.
 
 ## [0.10.11] - 2026-10-16
 

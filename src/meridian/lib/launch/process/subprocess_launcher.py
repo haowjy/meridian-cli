@@ -14,12 +14,12 @@ from queue import Empty, Full, Queue
 from typing import BinaryIO
 
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.launch_gate import LaunchGate, child_birth_epoch
+from meridian.lib.platform.launch_gate import LaunchGate, ProcessIdentity
 
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
+    TUI_TERMINATE_GRACE_SECONDS,
     LaunchedProcess,
-    ProcessIdentity,
     ProcessLauncher,
     TerminalFds,
 )
@@ -130,36 +130,26 @@ class _RunningSubprocess:
     output_log_path: Path | None
     stderr_log_path: Path | None
     terminal_stderr_fd: int | None
-    gate: LaunchGate | None = None
+    gate: LaunchGate
     wait_cancelled: threading.Event = field(default_factory=threading.Event)
 
-    @property
-    def pid(self) -> int:
-        return self.process.pid
-
     def terminate(self) -> None:
-        if self.gate is not None:
-            self.gate.close()
-            self.gate = None
-        if self.process.poll() is None:
+        self.gate.close()
+        if IS_WINDOWS and self.process.poll() is None:
             self.process.terminate()
 
     def cancel_wait(self) -> None:
         self.wait_cancelled.set()
 
     def wait(self) -> LaunchedProcess:
-        gate = self.gate
         try:
-            if gate is not None:
-                gate.open()
+            if self.wait_cancelled.is_set():
+                self.gate.close()
+                return LaunchedProcess(exit_code=self.process.wait(), pid=self.identity.pid)
+            self.gate.open()
             return self._wait()
         finally:
-            if gate is not None:
-                if self.process.poll() is not None:
-                    gate.stop()
-                else:
-                    gate.close()
-                self.gate = None
+            self.gate.release_after_reap(self.process.poll())
 
     def _wait(self) -> LaunchedProcess:
         stderr_thread: threading.Thread | None = None
@@ -264,20 +254,16 @@ class SubprocessProcessLauncher(ProcessLauncher):
             if output_log_path is None and stderr_log_path is not None
             else None
         )
-        gate: LaunchGate | None = None
+        # fd 0 may already be /dev/null inside the terminal ownership window.
+        group = output_log_path is not None or not os.isatty(terminal_fds.stdin)
+        gate = LaunchGate(group=group, grace_seconds=TUI_TERMINATE_GRACE_SECONDS)
         try:
-            # fd 0 may already be /dev/null inside the terminal ownership window.
-            group = output_log_path is not None or not os.isatty(terminal_fds.stdin)
-            if not IS_WINDOWS:
-                gate = LaunchGate(group=group)
-                command = gate.command(command)
-                child_env = gate.environment(child_env)
+            launch = gate.spawn_kwargs(command, child_env, cwd=cwd)
             if output_log_path is not None:
                 output_log_path.parent.mkdir(parents=True, exist_ok=True)
             process = subprocess.Popen(
-                command,
+                **launch,
                 cwd=cwd,
-                env=child_env,
                 stdin=terminal_fds.stdin,
                 stdout=subprocess.PIPE if output_log_path is not None else terminal_fds.stdout,
                 stderr=(
@@ -288,31 +274,17 @@ class SubprocessProcessLauncher(ProcessLauncher):
                     else terminal_fds.stderr
                 ),
                 text=output_log_path is None and stderr_log_path is None,
-                start_new_session=not IS_WINDOWS and group,
-                pass_fds=(gate.read_fd,) if gate is not None else (),
             )
-            if gate is not None:
-                gate.close_read_end()
-            try:
-                birth = child_birth_epoch(process.pid)
-            except BaseException:
-                process.kill()
-                process.wait()
-                raise
+            identity = gate.adopt(process.pid)
         except BaseException:
-            if gate is not None:
-                gate.close()
+            gate.close()
             if terminal_stderr_fd is not None:
                 with suppress(OSError):
                     os.close(terminal_stderr_fd)
             raise
         return _RunningSubprocess(
             process=process,
-            identity=ProcessIdentity(
-                process.pid,
-                birth,
-                process.pid if not IS_WINDOWS and group else None,
-            ),
+            identity=identity,
             gate=gate,
             output_log_path=output_log_path,
             stderr_log_path=stderr_log_path,

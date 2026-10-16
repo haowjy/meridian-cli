@@ -55,7 +55,7 @@ class ScopeProjection(BaseModel):
     released: _TolerantTuple = ()
 
 
-@with_config(ConfigDict(strict=True, extra="ignore"))
+@with_config(ConfigDict(strict=True, extra="forbid"))
 class ScopeRow(TypedDict):
     scope_id: str
     owner_policy: str
@@ -68,6 +68,8 @@ class ScopeRow(TypedDict):
     job_name: str | None
     degraded_reason: str | None
     release_id: NotRequired[str]
+    # Ignored legacy rows from before PR 1; remove after v0.11.
+    parent_death_linked: NotRequired[bool]
 
 
 _SCOPE_ROW_ADAPTER = TypeAdapter(ScopeRow)
@@ -123,7 +125,19 @@ def scope_snapshot_from_dict(data: object) -> ProcessScopeSnapshot | None:
     """Deserialize one scope dict; return None on any error."""
     try:
         row = _SCOPE_ROW_ADAPTER.validate_python(data)
-        return ProcessScopeSnapshot(**row)
+        return ProcessScopeSnapshot(
+            scope_id=row["scope_id"],
+            owner_policy=row["owner_policy"],
+            owner_id=row["owner_id"],
+            role=row["role"],
+            containment=row["containment"],
+            root_pid=row["root_pid"],
+            root_created_at_epoch=row["root_created_at_epoch"],
+            pgid=row["pgid"],
+            job_name=row["job_name"],
+            degraded_reason=row["degraded_reason"],
+            release_id=row.get("release_id", ""),
+        )
     except (TypeError, ValidationError):
         logger.debug("process_scope_projection: failed to deserialize scope: %r", data)
         return None

@@ -11,7 +11,6 @@ import pytest
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.launch.process.ports import ProcessIdentity
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -19,7 +18,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
-from meridian.lib.platform.launch_gate import child_birth_epoch
+from meridian.lib.platform.launch_gate import ProcessIdentity, child_birth_epoch
 from meridian.lib.state import session_store
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve

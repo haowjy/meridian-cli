@@ -19,7 +19,6 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME
-from meridian.lib.launch.process.ports import ProcessIdentity
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import PrimaryProcessResult, run_harness_process
 from meridian.lib.launch.request import (
@@ -29,6 +28,7 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
+from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.launch import (
     assert_task_cwd_instruction,

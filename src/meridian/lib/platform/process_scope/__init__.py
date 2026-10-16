@@ -14,6 +14,7 @@ from meridian.lib.platform.process_scope.base import (
     CleanupResult,
     ProcessScopeSnapshot,
     ScopedProcessHandle,
+    scope_from_identity,
 )
 from meridian.lib.platform.process_scope.fallback import (
     terminate_tree,
@@ -81,6 +82,7 @@ __all__ = [
     "ProcessScopeSnapshot",
     "ScopedProcessHandle",
     "is_pgid_reachable",
+    "scope_from_identity",
     "terminate_scope_sync",
     "terminate_tree",
     "terminate_tree_sync",

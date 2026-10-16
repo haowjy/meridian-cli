@@ -78,6 +78,7 @@ Existing callers work unchanged; new code should use `ScopedProcessHandle`.
 ## Entry Points
 
 - `__init__.py` — `IS_WINDOWS`, `IS_POSIX`, `get_home_path()`, deferred POSIX proxies
+- `launch_gate.py` — pre-exec identity gate and EOF-driven guardian; close means runner death/kill
 - `locking.py` — advisory file locking plus validated lock-GC unlink primitive
 - `process_scope/` — `ScopedProcessHandle`, `ProcessScopeSnapshot`, platform backends
 

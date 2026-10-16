@@ -81,7 +81,6 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_recv,
     trace_wire_send,
 )
-from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
@@ -244,7 +243,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._primary_observer_mode = False
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
-        self._parent_death_link: ParentDeathLink | None = None
         self._stop_lock = asyncio.Lock()
 
     @property
@@ -915,8 +913,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                                 yield event
                             return
                         logger.warning(
-                            "OpenCode event stream dropped; reconnecting persistent "
-                            "observer: %s",
+                            "OpenCode event stream dropped; reconnecting persistent observer: %s",
                             exc,
                         )
                         break
@@ -1012,12 +1009,12 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 cwd=config.control_root,
                 env=env,
                 control_root=config.control_root,
+                grace_seconds=self._STOP_GRACE_SECONDS,
             ),
             stderr=self._stderr_handle,
         )
         self._process = handle.process
         self._scope_handle = handle.scope_handle
-        self._parent_death_link = handle.parent_death_link
 
     def _startup_timeout_budgets(self, configured_timeout: float | None) -> tuple[float, float]:
         if configured_timeout is None:
@@ -1200,9 +1197,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         request_kwargs: dict[str, Any] = {}
         if timeout is not None:
             # aiohttp treats total=0 as "no timeout"; keep it strictly positive.
-            request_kwargs["timeout"] = aiohttp.ClientTimeout(
-                total=max(timeout, 0.001)
-            )
+            request_kwargs["timeout"] = aiohttp.ClientTimeout(total=max(timeout, 0.001))
         async with client.get(self._url(path), **request_kwargs) as response:
             status = int(response.status)
             content_type = str(response.headers.get("Content-Type", "")).lower()
@@ -1635,7 +1630,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         self._scope_handle = None
         self._process = None
-        self._parent_death_link = None
         self._base_url = None
         self._session_id = None
         self._event_path = None

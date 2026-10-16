@@ -23,16 +23,28 @@ launcher is the fallback.
 not assume capture based on launcher type alone.
 
 `ProcessLauncher.start()` returns a `RunningProcess` immediately after process birth.
-Its `ProcessIdentity` carries the observed birth and the intended group (not a
-racy post-fork `getpgid` read). The lifecycle callback persists that scope before
+`LaunchGate.adopt()` captures its `ProcessIdentity`: observed birth and intended
+group, not a racy post-fork `getpgid` read. Scope persistence finishes before
 `RunningProcess.wait()` opens the gate and begins the blocking terminal relay.
 No-capture subprocesses inherit the runner group only with TTY stdin; their scope
-has no pgid, protecting other shell pipeline members. Keep those phases separate: managed-primary cancellation depends on having a
+has no pgid, protecting other shell pipeline members.
+
+Keep those phases separate: managed-primary cancellation depends on having a
 concrete process identity before it can wait for exit or terminate the scope.
 `RunningProcess.cancel_wait()` must release its caller-facing wait even when scope
-termination cannot confirm child exit. Managed attach also directly terminates the
-concrete process as a fallback and bridges the synchronous wait through a daemon thread,
+termination cannot confirm child exit. Managed attach also closes the gate as a
+fallback and bridges the synchronous wait through a daemon thread,
 so an uncooperative relay cannot be re-joined by `asyncio.run()` during loop shutdown.
+
+
+Black-box execution requires a durable start callback. Managed attach alone
+records the TUI's session-owned scope; its runner callback only observes/marks
+running. Captured print runs use `stdio` / `harness_stdio`, not TUI labels.
+
+Cancel before wait closes the gate and reaps the stub's exit 125, without exec.
+`terminate()` closes the gate: it must not send an additional root TERM. After
+relay EOF, a known reaped returncode disarms the guardian; an interrupted wait
+closes it as runner death. The TUI teardown grace also configures the guardian.
 
 ## Managed Attach vs Black-Box
 

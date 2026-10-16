@@ -24,7 +24,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.process.ports import ProcessIdentity
 from meridian.lib.launch.process.runner import (
     PrimaryExecutionResult,
     PrimaryProcessResult,
@@ -38,6 +37,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.claude_boundary_process import ENTRY_SESSION_TOKEN

@@ -25,7 +25,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
-from meridian.lib.launch.process.ports import ProcessIdentity, ProcessLauncher
+from meridian.lib.launch.process.ports import ProcessLauncher
 from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachOutcome,
@@ -40,6 +40,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import get_spawn, list_spawns

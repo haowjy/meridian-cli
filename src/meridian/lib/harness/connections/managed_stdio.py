@@ -14,11 +14,9 @@ from typing import Final
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
-    reap_on_ownership_transfer_failure,
 )
 from meridian.lib.harness.connections.managed_backend import (
     register_spawn_owned_process,
-    spawn_owned_process_handle,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform import IS_WINDOWS
@@ -185,65 +183,50 @@ async def launch_managed_stdio(
         config.control_root,
         config.spawn_id,
         runtime_root=(
-            config.runtime_root
-            or resolve_project_runtime_root_for_write(config.control_root)
+            config.runtime_root or resolve_project_runtime_root_for_write(config.control_root)
         ),
     )
     stderr_log_path = spawn_dir / "stderr.log"
     stderr_handle = stderr_log_path.open("ab")
     stderr_read_offset = stderr_handle.tell()
-    provisional_scope_handle: ScopedProcessHandle | None = None
-    gate = None if IS_WINDOWS else LaunchGate(grace_seconds=kill_grace_seconds)
+    gate = LaunchGate(grace_seconds=kill_grace_seconds)
     process: asyncio.subprocess.Process | None = None
     try:
         try:
+            launch = gate.spawn_kwargs(command, env, cwd=cwd)
             process = await asyncio.create_subprocess_exec(
-                *(gate.command(command) if gate is not None else command),
+                *launch["args"],
                 cwd=cwd,
-                env=gate.environment(env) if gate is not None else env,
+                env=launch["env"],
                 stdin=stdin,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=stderr_handle,
                 limit=stdout_limit,
-                start_new_session=not IS_WINDOWS,
-                pass_fds=(gate.read_fd,) if gate is not None else (),
+                start_new_session=launch["start_new_session"],
+                pass_fds=launch["pass_fds"],
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HarnessBinaryNotFound.from_os_error(
                 harness_id=harness_id,
                 error=exc,
                 binary_name=command[0],
+                searched_path=os.pathsep.join(os.get_exec_path(dict(env))),
             ) from exc
-        if gate is not None:
-            gate.close_read_end()
-        provisional_scope_handle = spawn_owned_process_handle(
-            spawn_id=config.spawn_id,
-            process=process,
-            scope_id="stdio",
-            role="harness_stdio",
-        )
+        identity = gate.adopt(process.pid)
         scope_handle = await register_spawn_owned_process(
             spawn_id=config.spawn_id,
             control_root=config.control_root,
             process=process,
             scope_id="stdio",
             role="harness_stdio",
+            identity=identity,
+            gate=gate,
             runtime_root=config.runtime_root,
             persist=config.runtime_root is not None,
         )
-        if gate is not None:
-            gate.open()
-            gate.watch_exit(process)
+        gate.open()
     except BaseException:
-        if gate is not None:
-            gate.close()
-        if provisional_scope_handle is not None:
-            await reap_on_ownership_transfer_failure(
-                lambda: provisional_scope_handle.terminate(
-                    grace_seconds=kill_grace_seconds,
-                    reason=terminate_reason,
-                )
-            )
+        gate.close()
         if process is not None and process.returncode is None:
             process.kill()
             await process.wait()
