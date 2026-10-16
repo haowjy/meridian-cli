@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import signal
 import struct
 import sys
 import threading
@@ -14,15 +13,11 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from meridian.lib.platform import IS_WINDOWS, fcntl, pty, select, termios, tty
+from meridian.lib.platform.launch_gate import LaunchGate, ProcessIdentity
 
-from .ports import LaunchedProcess, ProcessLauncher, TerminalFds
+from .ports import TUI_TERMINATE_GRACE_SECONDS, LaunchedProcess, ProcessLauncher, TerminalFds
 
-_MOUSE_MODE_RESET_SEQUENCE = (
-    b"\x1b[?1000l"
-    b"\x1b[?1002l"
-    b"\x1b[?1003l"
-    b"\x1b[?1006l"
-)
+_MOUSE_MODE_RESET_SEQUENCE = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
 _ALTERNATE_SCREEN_EXIT_SEQUENCE = b"\x1b[?1049l"
 _CURSOR_SHOW_SEQUENCE = b"\x1b[?25h"
 _ALTERNATE_SCREEN_TRANSITION = re.compile(rb"\x1b\[\?(?:47|1047|1049)([hl])")
@@ -98,7 +93,7 @@ def _copy_primary_pty_output(
     output_log_path: Path | None,
     terminal_fds: TerminalFds,
     wait_cancelled: threading.Event | None = None,
-) -> int:
+) -> int | None:
     stdin_fd = terminal_fds.stdin
     stdout_fd = terminal_fds.stdout
     stdin_open = True
@@ -118,7 +113,7 @@ def _copy_primary_pty_output(
 
             while True:
                 if wait_cancelled is not None and wait_cancelled.is_set():
-                    return 130
+                    return None
                 winsize = _read_winsize(stdout_fd)
                 if winsize is not None and winsize != last_forwarded_winsize:
                     try:
@@ -170,46 +165,52 @@ def _copy_primary_pty_output(
                 os.write(
                     stdout_fd,
                     _MOUSE_MODE_RESET_SEQUENCE
-                    + (
-                        _ALTERNATE_SCREEN_EXIT_SEQUENCE
-                        if alternate_screen.enabled
-                        else b""
-                    )
+                    + (_ALTERNATE_SCREEN_EXIT_SEQUENCE if alternate_screen.enabled else b"")
                     + _CURSOR_SHOW_SEQUENCE,
                 )
 
     if wait_cancelled is not None and wait_cancelled.is_set():
-        return 130
+        return None
     _, status = os.waitpid(child_pid, 0)
     return os.waitstatus_to_exitcode(status)
 
 
 @dataclass
 class _RunningPtyProcess:
-    pid: int
+    identity: ProcessIdentity
     master_fd: int
     output_log_path: Path | None
     relay_terminal_fds: TerminalFds
+    gate: LaunchGate
     wait_cancelled: threading.Event = field(default_factory=threading.Event)
 
     def wait(self) -> LaunchedProcess:
+        reaped_code: int | None = None
         try:
-            exit_code = _copy_primary_pty_output(
-                child_pid=self.pid,
+            if self.wait_cancelled.is_set():
+                self.gate.close()
+                _, status = os.waitpid(self.identity.pid, 0)
+                reaped_code = os.waitstatus_to_exitcode(status)
+                return LaunchedProcess(exit_code=reaped_code, pid=self.identity.pid)
+            self.gate.open()
+            reaped_code = _copy_primary_pty_output(
+                child_pid=self.identity.pid,
                 master_fd=self.master_fd,
                 output_log_path=self.output_log_path,
                 terminal_fds=self.relay_terminal_fds,
                 wait_cancelled=self.wait_cancelled,
             )
-            return LaunchedProcess(exit_code=exit_code, pid=self.pid)
+            return LaunchedProcess(
+                exit_code=reaped_code if reaped_code is not None else 130, pid=self.identity.pid
+            )
         finally:
+            self.gate.release_after_reap(reaped_code)
             with suppress(OSError):
                 os.close(self.master_fd)
             _close_terminal_fds(self.relay_terminal_fds)
 
     def terminate(self) -> None:
-        with suppress(ProcessLookupError):
-            os.kill(self.pid, signal.SIGTERM)
+        self.gate.close()
 
     def cancel_wait(self) -> None:
         self.wait_cancelled.set()
@@ -232,15 +233,28 @@ class PtyProcessLauncher(ProcessLauncher):
 
         relay_terminal_fds = _duplicate_terminal_fds(terminal_fds)
         try:
-            master_fd, slave_fd = pty.openpty()
-            _sync_pty_winsize(source_fd=terminal_fds.stdout, target_fd=master_fd)
-
-            child_pid = os.fork()
+            gate = LaunchGate(grace_seconds=TUI_TERMINATE_GRACE_SECONDS)
+            try:
+                launch = gate.spawn_kwargs(command, env, cwd=cwd)
+                command, env = launch["args"], launch["env"]
+                master_fd, slave_fd = pty.openpty()
+            except BaseException:
+                gate.close()
+                raise
+            try:
+                _sync_pty_winsize(source_fd=terminal_fds.stdout, target_fd=master_fd)
+                child_pid = os.fork()
+            except BaseException:
+                os.close(master_fd)
+                os.close(slave_fd)
+                gate.close()
+                raise
             if child_pid == 0:
                 try:
                     os.close(master_fd)
                     os.login_tty(slave_fd)
                     os.chdir(cwd)
+                    gate.prepare_pty_exec()
                     os.execvpe(command[0], command, env)
                 except FileNotFoundError:
                     os._exit(127)
@@ -248,8 +262,15 @@ class PtyProcessLauncher(ProcessLauncher):
                     os._exit(1)
 
             os.close(slave_fd)
+            try:
+                identity = gate.adopt(child_pid)
+            except BaseException:
+                os.close(master_fd)
+                gate.close()
+                raise
             return _RunningPtyProcess(
-                pid=child_pid,
+                identity=identity,
+                gate=gate,
                 master_fd=master_fd,
                 output_log_path=output_log_path,
                 relay_terminal_fds=relay_terminal_fds,

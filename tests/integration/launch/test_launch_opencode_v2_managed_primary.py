@@ -32,7 +32,6 @@ from meridian.lib.harness.connections.managed_backend import (
 )
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.launch.process import runner as runner_module
-from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.integration.launch.test_launch_process_opencode import _build_primary_launch_context
 from tests.integration.launch.test_primary_attach import FakeProcessLauncher
@@ -153,7 +152,6 @@ def _install_fake_v2_transport(
         return ManagedBackendHandle(
             process=cast("Any", _FakeV2Process(pid=4242, stdout=reader)),
             scope_handle=cast("Any", None),
-            parent_death_link=ParentDeathLink(parent_death_linked=False),
         )
 
     monkeypatch.setattr(opencode_connection_module, "OpenCodeV2Connection", _v2_factory)

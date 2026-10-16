@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from contextlib import suppress
+from dataclasses import dataclass, replace
 from hashlib import sha256
+from typing import Any
 
 import structlog
+
+from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.launch_gate import LaunchGate, ProcessIdentity
 
 logger = structlog.get_logger(__name__)
 
@@ -58,9 +63,6 @@ class ProcessScopeSnapshot:
     degraded_reason: str | None
     """Set when containment fell back from the preferred mechanism."""
 
-    parent_death_linked: bool = False
-    """True when the scope root is linked to the launcher lifetime by platform support."""
-
     release_id: str = ""
     """Stable identity for this concrete scope release."""
 
@@ -75,6 +77,34 @@ class ProcessScopeSnapshot:
                     root_created_at_epoch=self.root_created_at_epoch,
                 ),
             )
+
+
+def scope_from_identity(
+    identity: ProcessIdentity, *, scope_id: str, role: str, owner_policy: str, owner_id: str
+) -> ProcessScopeSnapshot:
+    return ProcessScopeSnapshot(
+        scope_id=scope_id,
+        role=role,
+        owner_policy=owner_policy,
+        owner_id=owner_id,
+        containment="windows_job"
+        if IS_WINDOWS
+        else "posix_pgid"
+        if identity.pgid is not None
+        else "pid_tree_fallback",
+        root_pid=identity.pid,
+        root_created_at_epoch=identity.birth_epoch,
+        pgid=identity.pgid,
+        job_name=None,
+        degraded_reason=None,
+    )
+
+
+async def release_after_reap(process: asyncio.subprocess.Process, gate: LaunchGate) -> None:
+    try:
+        await process.wait()
+    finally:
+        gate.release_after_reap(process.returncode)
 
 
 def process_scope_release_id(
@@ -117,9 +147,25 @@ class ScopedProcessHandle:
         self,
         process: asyncio.subprocess.Process,
         snapshot: ProcessScopeSnapshot,
+        gate: LaunchGate | None = None,
     ) -> None:
         self._process = process
         self._snapshot = snapshot
+        self._exit_task = (
+            asyncio.create_task(
+                release_after_reap(process, gate), name=f"launch-gate-{process.pid}"
+            )
+            if gate is not None
+            else None
+        )
+        self._job_handle: Any = None
+        if IS_WINDOWS:
+            from meridian.lib.platform.process_scope.windows_job import assign_to_new_job
+
+            job = assign_to_new_job(process.pid)
+            if job is not None:
+                job_name, self._job_handle = job
+                self._snapshot = replace(snapshot, job_name=job_name)
 
     @property
     def process(self) -> asyncio.subprocess.Process:
@@ -155,7 +201,8 @@ class ScopedProcessHandle:
                     # Degenerate case: containment says posix_pgid but pgid is missing.
                     result = await _fallback_terminate(self._process, snap, grace_seconds, reason)
                 else:
-                    result = terminate_pgid(
+                    result = await asyncio.to_thread(
+                        terminate_pgid,
                         pgid=snap.pgid,
                         root_pid=snap.root_pid,
                         created_at_epoch=snap.root_created_at_epoch,
@@ -165,12 +212,15 @@ class ScopedProcessHandle:
                     )
 
             elif snap.containment == "windows_job":
-                # job_name is stored; the handle must be kept alive by the caller.
-                # At this layer the handle is not yet threaded through, so we fall
-                # back to tree termination and mark degraded_fallback.  A later
-                # subphase will wire the handle through ScopedProcessHandle.
-                result = await _fallback_terminate(
-                    self._process, snap, grace_seconds, reason, degraded=True
+                from meridian.lib.platform.process_scope.windows_job import terminate_job
+
+                result = terminate_job(
+                    self._job_handle,
+                    snap.root_pid,
+                    snap.root_created_at_epoch,
+                    grace_seconds,
+                    reason,
+                    snap.scope_id,
                 )
 
             else:
@@ -196,6 +246,16 @@ class ScopedProcessHandle:
                 skip_reason="termination_exception",
             )
 
+        if self._exit_task is not None:
+            self._exit_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._exit_task
+            self._exit_task = None
+        if self._job_handle is not None:
+            from meridian.lib.platform.process_scope.windows_job import close_job_handle
+
+            close_job_handle(self._job_handle)
+            self._job_handle = None
         _emit_termination_event(snap, result)
         return result
 
@@ -210,8 +270,6 @@ async def _fallback_terminate(
     snap: ProcessScopeSnapshot,
     grace_seconds: float,
     reason: str,
-    *,
-    degraded: bool = False,
 ) -> CleanupResult:
     from meridian.lib.platform.process_scope.fallback import terminate_tree
 
@@ -221,7 +279,7 @@ async def _fallback_terminate(
         reason=reason,
         scope_id=snap.scope_id,
         root_created_at_epoch=snap.root_created_at_epoch,
-        degraded_fallback=degraded or snap.containment != "pid_tree_fallback",
+        degraded_fallback=snap.containment != "pid_tree_fallback",
     )
 
 
@@ -250,4 +308,5 @@ __all__ = [
     "ScopedProcessHandle",
     "birth_time_unverified",
     "process_scope_release_id",
+    "scope_from_identity",
 ]

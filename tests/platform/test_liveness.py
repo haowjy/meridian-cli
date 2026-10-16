@@ -118,11 +118,13 @@ def test_is_spawn_genuinely_active_returns_false_for_stale_heartbeat(tmp_path, m
     assert liveness.is_spawn_genuinely_active(tmp_path, "p1") is False
 
 
-def test_is_process_alive_with_birth_returns_true_for_matching_live_process(monkeypatch) -> None:
-    monkeypatch.setattr(liveness.psutil, "pid_exists", lambda pid: True)
-    monkeypatch.setattr(liveness.psutil, "Process", lambda pid: _FakeProcess(create_time=100.0))
-
-    assert liveness.is_process_alive_with_birth(123, 100.5) is True
+def test_birth_liveness_tolerates_clock_steps_on_live_process() -> None:
+    pid = os.getpid()
+    birth = psutil.Process(pid).create_time()
+    for shift in (-1.0, 1.0, 0.01):
+        recorded_birth = birth + shift
+        assert liveness.is_process_alive_with_birth(pid, recorded_birth) is True
+        assert liveness.is_process_dead_with_birth(pid, recorded_birth) is False
 
 
 def test_is_process_alive_with_birth_returns_false_for_birth_mismatch(monkeypatch) -> None:

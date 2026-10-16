@@ -20,9 +20,7 @@ from meridian.lib.platform import IS_WINDOWS, fcntl, pty, termios
 
 _ENABLED_MODES = b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1049h\x1b[?25l"
 _RESTORED_MODES = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h"
-_RESTORED_MODES_WITHOUT_ALT_SCREEN = (
-    b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h"
-)
+_RESTORED_MODES_WITHOUT_ALT_SCREEN = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h"
 _FAKE_TERMINAL_FDS = TerminalFds(stdin=10, stdout=11, stderr=2)
 
 
@@ -218,8 +216,7 @@ def test_child_alt_screen_exit_is_not_repeated_after_exit(
     from meridian.lib.launch.process import pty_launcher
 
     child_output = (
-        b"\x1b[?1049hframe\x1b[?1049l"
-        b"Resume this session with: claude --resume session-id\r\n"
+        b"\x1b[?1049hframe\x1b[?1049lResume this session with: claude --resume session-id\r\n"
     )
     master_reads = iter((child_output, b""))
     writes: list[tuple[int, bytes]] = []
@@ -295,7 +292,7 @@ def test_split_alt_screen_enter_is_restored_after_child_exit(
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
-def test_wait_cancelled_after_eof_returns_130_without_waitpid(
+def test_wait_cancelled_after_eof_reports_unreaped_without_waitpid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from meridian.lib.launch.process import pty_launcher
@@ -327,7 +324,7 @@ def test_wait_cancelled_after_eof_returns_130_without_waitpid(
         wait_cancelled=cancelled,
     )
 
-    assert exit_code == 130
+    assert exit_code is None
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")

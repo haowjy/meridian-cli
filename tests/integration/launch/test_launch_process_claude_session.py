@@ -37,6 +37,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.claude_boundary_process import ENTRY_SESSION_TOKEN
@@ -137,7 +138,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
             idx = command.index("--session-id")
             captured["command_session_id"] = command[idx + 1]
         assert callable(on_child_started)
-        on_child_started(555)
+        on_child_started(ProcessIdentity(555, 100.0, 555))
         return PrimaryProcessResult(0, 555, None)
 
     outcome = run_harness_process(
@@ -187,7 +188,7 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
     ) -> tuple[int, int, None]:
         _ = command, cwd, env, output_log_path, launcher_diagnostics_path
         assert callable(on_child_started)
-        on_child_started(666)
+        on_child_started(ProcessIdentity(666, 100.0, 666))
         return PrimaryProcessResult(0, 666, None)
 
     def capture_facts(*args: object, **kwargs: object):
@@ -295,7 +296,7 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
             encoding="utf-8",
         )
         assert callable(on_child_started)
-        on_child_started(667)
+        on_child_started(ProcessIdentity(667, 100.0, 667))
         return PrimaryProcessResult(0, 667, None)
 
     outcome = run_harness_process(

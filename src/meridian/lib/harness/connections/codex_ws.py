@@ -76,7 +76,6 @@ from meridian.lib.observability.trace_helpers import (
     trace_state_change,
     trace_wire_send,
 )
-from meridian.lib.platform.detached_process import ParentDeathLink, release_parent_death_link
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
@@ -225,7 +224,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._stderr_read_offset = 0
         self._codex_home: Path | None = None
         self._scope_handle: ScopedProcessHandle | None = None
-        self._parent_death_link: ParentDeathLink | None = None
 
         self._next_request_id = 1
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
@@ -380,8 +378,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             config.control_root,
             config.spawn_id,
             runtime_root=(
-                config.runtime_root
-                or resolve_project_runtime_root_for_write(config.control_root)
+                config.runtime_root or resolve_project_runtime_root_for_write(config.control_root)
             ),
         )
         self._stderr_log_path = spawn_dir / "stderr.log"
@@ -404,12 +401,12 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                     cwd=effective_cwd,
                     env=env,
                     control_root=config.control_root,
+                    grace_seconds=_STOP_WAIT_TIMEOUT_SECONDS,
                 ),
                 stderr=self._stderr_handle,
             )
             self._process = handle.process
             self._scope_handle = handle.scope_handle
-            self._parent_death_link = handle.parent_death_link
 
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._ws = await self._connect_with_retry(
@@ -835,9 +832,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return_code = await process.wait()
             if self._state not in {"starting", "connected"}:
                 return
-            await self._emit_connection_closed_once(
-                self._backend_exit_payload(return_code)
-            )
+            await self._emit_connection_closed_once(self._backend_exit_payload(return_code))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -953,16 +948,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                         await process.wait()
                 except Exception:
                     logger.warning("Codex subprocess cleanup failed", exc_info=True)
-
-            parent_death_link = self._parent_death_link
-            self._parent_death_link = None
-            try:
-                await asyncio.to_thread(
-                    release_parent_death_link,
-                    parent_death_link,
-                )
-            except Exception:
-                logger.warning("Codex parent-death link cleanup failed", exc_info=True)
 
             try:
                 self._fail_pending_requests(RuntimeError("Codex connection stopped"))

@@ -98,7 +98,6 @@ def _scope(
         ("pgid", True),
         ("job_name", 1),
         ("degraded_reason", 1),
-        ("parent_death_linked", 1),
         ("release_id", 1),
     ],
 )
@@ -307,9 +306,7 @@ def test_concurrent_scope_releases_preserve_every_marker(
         assert not thread.is_alive()
 
     payload = json.loads(
-        (runtime_root / "spawns" / spawn_id / "process_scopes.json").read_text(
-            encoding="utf-8"
-        )
+        (runtime_root / "spawns" / spawn_id / "process_scopes.json").read_text(encoding="utf-8")
     )
     assert set(payload["released"]) == {scope_a.release_id, scope_b.release_id}
 
@@ -445,8 +442,7 @@ def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(
     assert terminated_scope_ids == ["backend", "tui"]
     assert [result.scope_id for result in results] == ["backend", "tui"]
     assert (
-        is_scope_released(runtime_root, SpawnId(spawn_one), scope_records[0][1].release_id)
-        is True
+        is_scope_released(runtime_root, SpawnId(spawn_one), scope_records[0][1].release_id) is True
     )
     assert is_scope_released(runtime_root, SpawnId("p2"), scope_records[2][1].release_id) is True
     assert is_scope_released(runtime_root, SpawnId("p2"), already_released_scope.release_id) is True
@@ -484,6 +480,8 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    # A reused PID proves the recorded runner (birth 1.0) is gone.
+    spawn_store.update_spawn(runtime_root, spawn_id, runner_created_at_epoch=1.0)
     session_id = "session-1"
     scope_records = (
         _scope(

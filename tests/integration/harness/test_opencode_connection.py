@@ -28,7 +28,6 @@ from meridian.lib.harness.connections.opencode_connection import (
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
 from meridian.lib.safety.permissions import (
     UnsafeNoOpPermissionResolver,
@@ -527,12 +526,10 @@ async def test_opencode_launch_process_passes_child_env_to_managed_backend(
             pgid=None,
             job_name=None,
             degraded_reason=None,
-            parent_death_linked=False,
         )
         return SimpleNamespace(
             process=fake_process,
             scope_handle=ScopedProcessHandle(process=fake_process, snapshot=snapshot),
-            parent_death_link=ParentDeathLink(parent_death_linked=False),
         )
 
     monkeypatch.setattr(opencode_http, "find_free_port", lambda _host="127.0.0.1": 17777)

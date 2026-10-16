@@ -61,6 +61,8 @@ from meridian.lib.launch.constants import (
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
+from meridian.lib.platform.launch_gate import ProcessIdentity
+from meridian.lib.platform.process_scope import scope_from_identity
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_spawn_log_dir
@@ -69,6 +71,7 @@ from meridian.lib.state.primary_meta import (
     PrimaryMetadata,
     write_primary_metadata,
 )
+from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
     update_session_claude_config_dir,
@@ -199,7 +202,7 @@ RunPrimaryProcessWithCapture = Callable[
         Path,
         dict[str, str],
         Path | None,
-        Callable[[int], None] | None,
+        Callable[[ProcessIdentity], None],
         Path,
     ],
     PrimaryProcessResult,
@@ -214,7 +217,7 @@ RunPrimaryAttach = Callable[
         dict[str, str],
         ResolvedLaunchSpec,
         ProcessLauncher,
-        Callable[[int], None] | None,
+        Callable[[ProcessIdentity], None] | None,
         Callable[[str], None],
     ],
     PrimaryAttachOutcome,
@@ -286,7 +289,7 @@ def run_primary_process_with_capture(
     cwd: Path,
     env: dict[str, str],
     output_log_path: Path | None,
-    on_child_started: Callable[[int], None] | None,
+    on_child_started: Callable[[ProcessIdentity], None],
     launcher_diagnostics_path: Path,
     *,
     launcher_selector: ProcessLauncherSelector = select_process_launcher,
@@ -302,9 +305,8 @@ def run_primary_process_with_capture(
             terminal_fds=window.terminal_fds,
         )
         try:
-            if on_child_started is not None:
-                on_child_started(running.pid)
-        except Exception:
+            on_child_started(running.identity)
+        except BaseException:
             running.terminate()
             running.wait()
             raise
@@ -364,7 +366,7 @@ def _execute_via_managed_attach(
     launch_spec: ResolvedLaunchSpec,
     native_run: NativeRun,
     run_primary_attach_fn: RunPrimaryAttach,
-    on_running: Callable[[int], None],
+    on_running: Callable[[ProcessIdentity], None],
 ) -> PrimaryExecutionResult:
     """Run managed attach path and persist managed session id when available."""
 
@@ -397,7 +399,7 @@ def _execute_via_blackbox(
     output_log_path: Path | None,
     launcher_diagnostics_path: Path,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
-    on_running: Callable[[int], None],
+    on_running: Callable[[ProcessIdentity], None],
 ) -> PrimaryProcessResult:
     """Run legacy black-box launch path and return process exit code."""
 
@@ -426,7 +428,7 @@ def _execute_primary_process(
     native_run: NativeRun,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     run_primary_attach_fn: RunPrimaryAttach,
-    on_running: Callable[[int], None],
+    on_running: Callable[[ProcessIdentity], None],
 ) -> PrimaryExecutionResult:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
@@ -467,6 +469,22 @@ def _execute_primary_process(
     blackbox_env = dict(child_env)
     if harness_contract.primary_stderr_log:
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
+
+    def record_blackbox_started(identity: ProcessIdentity) -> None:
+        captured = output_log_path is not None
+        record_scope(
+            log_dir.parent.parent,
+            primary_spawn_id,
+            scope_from_identity(
+                identity,
+                scope_id="stdio" if captured else "tui",
+                role="harness_stdio" if captured else "harness_tui",
+                owner_policy="spawn_owned",
+                owner_id=str(primary_spawn_id),
+            ),
+        )
+        on_running(identity)
+
     blackbox_result = _execute_via_blackbox(
         command=command,
         launch_cwd=launch_cwd,
@@ -474,7 +492,7 @@ def _execute_primary_process(
         output_log_path=output_log_path,
         launcher_diagnostics_path=launcher_diagnostics_path,
         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
-        on_running=on_running,
+        on_running=record_blackbox_started,
     )
     fold = get_harness_bundle(harness_id).extractor.create_fold()
     if output_log_path is not None and output_log_path.is_file():
@@ -599,7 +617,7 @@ async def _run_primary_attach(
     env: dict[str, str],
     spec: ResolvedLaunchSpec,
     process_launcher: ProcessLauncher,
-    on_running: Callable[[int], None] | None = None,
+    on_running: Callable[[ProcessIdentity], None] | None = None,
     session_id_observer: Callable[[str], None] | None = None,
 ) -> PrimaryAttachOutcome:
     """Launch managed backend + primary TUI attach flow for supported harnesses."""
@@ -663,7 +681,7 @@ def run_primary_attach(
     env: dict[str, str],
     spec: ResolvedLaunchSpec,
     process_launcher: ProcessLauncher,
-    on_running: Callable[[int], None] | None = None,
+    on_running: Callable[[ProcessIdentity], None] | None = None,
     session_id_observer: Callable[[str], None] | None = None,
 ) -> PrimaryAttachOutcome:
     """Run managed primary attach lifecycle from sync runner code."""
@@ -980,11 +998,13 @@ def run_harness_process(
 
                 # The observer's lifetime is this block, including exceptions.
                 with native_run.observing(
-                    harness_adapter, child_env=child_env,
+                    harness_adapter,
+                    child_env=child_env,
                 ) as observe_child:
 
-                    def _record_primary_started(child_pid: int) -> None:
+                    def _record_primary_started(identity: ProcessIdentity) -> None:
                         nonlocal native_primary_tui_pid
+                        child_pid = identity.pid
                         native_primary_tui_pid = child_pid
                         observe_child(child_pid)
                         lifecycle_service.mark_running(
@@ -1029,9 +1049,7 @@ def run_harness_process(
                     exit_code = execution_result.exit_code
                     managed_cancelled = execution_result.managed_cancelled
                     facts = execution_result.facts
-                    launcher_diagnostics_path = (
-                        execution_result.launcher_diagnostics_path
-                    )
+                    launcher_diagnostics_path = execution_result.launcher_diagnostics_path
                 if execution_result.managed_session_id is not None:
                     resolved_harness_session_id = execution_result.managed_session_id
                 with suppress(Exception):

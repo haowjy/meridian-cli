@@ -101,7 +101,9 @@ an awaited startup boundary, artifact opens and guarded scope registration fail 
 - `managed_backend.py` — managed backend subprocess launch helper and
   `register_spawn_owned_process()` for durable scope recording. The generic
   `register_spawn_owned_process` helper also serves stdio children (Claude, Pi,
-  Cursor) — its placement here is accepted naming debt ahead of #424's layering
+  Cursor). Both managed launchers use `LaunchGate` to adopt the blocked child,
+  persist its scope, and only then release exec; the scope handle owns the exit
+  watcher and disarms the guardian after reaping. Its placement here is accepted naming debt ahead of #424's layering
   split.
 - `managed_stdio.py` — spawn-lifetime stdio child ownership, durable scope
   registration, termination escalation, and bounded current-launch stderr tails.

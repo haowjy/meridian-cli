@@ -217,13 +217,13 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
                 cwd=config.control_root,
                 env=env,
                 control_root=config.control_root,
+                grace_seconds=self._STOP_GRACE_SECONDS,
             ),
             stderr=self._stderr_handle,
             stdout=asyncio.subprocess.PIPE,
         )
         self._process = handle.process
         self._scope_handle = handle.scope_handle
-        self._parent_death_link = handle.parent_death_link
 
     async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
         await self._await_server_password(timeout_seconds)

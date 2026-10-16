@@ -40,6 +40,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import get_spawn, list_spawns
@@ -373,7 +374,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         captured["task_env"] = dict(env).get("MERIDIAN_TASK_DIR")
         captured["project_env"] = dict(env).get("MERIDIAN_PROJECT_DIR")
         if callable(on_running):
-            on_running(5152)
+            on_running(ProcessIdentity(5152, 100.0, 5152))
         return PrimaryAttachOutcome(
             exit_code=0,
             session_id=spec.native_identity.session_id,
@@ -448,7 +449,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         _ = harness_id, spawn_id, spawn_dir, control_root, task_cwd, env, spec, process_launcher
         assert callable(on_running)
         assert list_spawns(launch_context.runtime_root).records[0].status == "queued"
-        on_running(5151)
+        on_running(ProcessIdentity(5151, 100.0, 5151))
         running_record = list_spawns(launch_context.runtime_root).records[0]
         captured["status_seen_before_return"] = running_record.status
         captured["worker_pid_seen_before_return"] = running_record.worker_pid

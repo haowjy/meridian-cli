@@ -199,6 +199,11 @@ def release_managed_primary_scopes(
     metadata PIDs, then recorded process scopes, then the legacy worker fallback.
     """
 
+    from meridian.lib.state.liveness import is_process_dead_with_birth
+
+    if not is_process_dead_with_birth(record.runner_pid, record.runner_created_at_epoch):
+        return
+
     metadata = read_primary_metadata(runtime_root, str(spawn_id))
     if metadata is not None:
         if metadata.managed_backend:

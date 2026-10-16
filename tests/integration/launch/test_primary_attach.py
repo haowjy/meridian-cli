@@ -10,7 +10,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
-import psutil
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -36,8 +35,8 @@ from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachLauncher,
 )
+from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
-from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk, record_scope
 from meridian.lib.state.spawn_store import start_spawn
@@ -366,6 +365,10 @@ class FakeProcessLauncher(ProcessLauncher):
     def terminate(self) -> None:
         return None
 
+    @property
+    def identity(self) -> ProcessIdentity:
+        return ProcessIdentity(self.pid, 100.0, self.pid)
+
     def cancel_wait(self) -> None:
         return None
 
@@ -413,6 +416,10 @@ class BlockingProcessLauncher(ProcessLauncher):
     def terminate(self) -> None:
         if self.terminate_releases:
             self.release.set()
+
+    @property
+    def identity(self) -> ProcessIdentity:
+        return ProcessIdentity(self.pid, 100.0, self.pid)
 
     def cancel_wait(self) -> None:
         self.cancel_wait_calls += 1
@@ -559,29 +566,6 @@ async def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard(
     assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": ""}) is False
     assert outcome.exit_code == 0
     assert sidecar_hooks == [(autocompact_off, opencode_idle.detect_ttl)]
-
-
-def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _InaccessibleProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def create_time(self) -> float:
-            raise psutil.AccessDenied(pid=self.pid)
-
-    monkeypatch.setattr(primary_attach_module.psutil, "Process", _InaccessibleProcess)
-
-    snapshot = primary_attach_module._make_scope_snapshot(
-        pid=987_654_321,
-        scope_id="tui",
-        owner_policy="session_owned",
-        owner_id="thread-unknown",
-        role="primary_tui",
-    )
-
-    assert snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
 
 
 @pytest.mark.asyncio
@@ -1450,3 +1434,55 @@ async def test_pi_primary_folds_and_persists_phase_without_history(tmp_path: Pat
     assert facts.usage.input_tokens == 7
     phase = json.loads((tmp_path / "spawns" / spawn_id / "pi-lifecycle.json").read_text())
     assert phase["phase"] == "cleanup_completed"
+
+
+@pytest.mark.asyncio
+async def test_managed_attach_persists_one_tui_scope_before_real_exec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import sys
+
+    from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
+
+    spawn_id = SpawnId("p-gated-attach")
+    spawn_dir = tmp_path / "spawns" / spawn_id
+    _publish_spawn(spawn_dir)
+    marker = tmp_path / "exec-seen"
+    writes: list[ProcessScopeSnapshot] = []
+    original_record = primary_attach_module.record_scope
+
+    def record(runtime: Path, spawn: SpawnId, scope: ProcessScopeSnapshot) -> None:
+        if scope.scope_id == "tui":
+            assert not marker.exists()
+            writes.append(scope)
+        original_record(runtime, spawn, scope)
+
+    monkeypatch.setattr(primary_attach_module, "record_scope", record)
+    # The child reads the durable sidecar itself, before emitting any result.
+    program = (
+        "import json,pathlib,os; "
+        f"p=pathlib.Path({str(spawn_dir / 'process_scopes.json')!r}); "
+        "scopes=[s for s in json.loads(p.read_text())['scopes'] if s['scope_id']=='tui']; "
+        "assert len(scopes)==1 and scopes[0]['root_pid']==os.getpid(); "
+        "assert scopes[0]['owner_policy']=='session_owned'; "
+        f"pathlib.Path({str(marker)!r}).touch()"
+    )
+    launcher = PrimaryAttachLauncher(
+        spawn_id=spawn_id,
+        spawn_dir=spawn_dir,
+        connection=FakeManagedConnection(events=[], session_id="sess-gated-attach"),
+        tui_command_builder=lambda _session: (sys.executable, "-c", program),
+        process_launcher=SubprocessProcessLauncher(),
+        on_running=lambda _identity: None,
+    )
+    outcome = await launcher.run(
+        config=_build_config(spawn_id=spawn_id, control_root=tmp_path),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env=dict(os.environ),
+    )
+    assert outcome.exit_code == 0
+    assert marker.exists()
+    assert len(writes) == 1
+    assert writes[0].owner_id == "sess-gated-attach"

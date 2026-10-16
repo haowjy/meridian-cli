@@ -8,6 +8,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from meridian.lib.platform.launch_gate import ProcessIdentity
+
+TUI_TERMINATE_GRACE_SECONDS = 5.0
+
 PRIMARY_STDERR_LOG_PATH_ENV = "_MERIDIAN_PRIMARY_STDERR_LOG_PATH"
 
 
@@ -58,7 +62,7 @@ class RunningProcess(Protocol):
     """A started primary process whose blocking exit wait is a separate phase."""
 
     @property
-    def pid(self) -> int: ...
+    def identity(self) -> ProcessIdentity: ...
 
     def wait(self) -> LaunchedProcess: ...
 

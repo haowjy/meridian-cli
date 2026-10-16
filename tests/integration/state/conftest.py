@@ -187,13 +187,19 @@ def fake_reaper_liveness(
 
     Reaper reconciliation, managed-primary reconciliation, and nested read
     projection each consult ``is_process_alive`` via module-local bindings.
-    Patch all three so fixture PIDs never fall through to the real OS.
+    Patch all three and the positive-death seam so fixture PIDs never fall
+    through to the real OS. Unknown birth is still not proof of death.
     """
 
     def _is_alive(pid: int, created_after_epoch: float | None = None) -> bool:
         _ = created_after_epoch
         return live_pids(pid) if callable(live_pids) else pid in live_pids
 
+    def _is_dead(pid: int | None, birth_epoch: float | None) -> bool:
+        return pid is not None and birth_epoch not in (None, 0.0) and not _is_alive(pid)
+
+    monkeypatch.setattr("meridian.lib.state.reaper.is_process_dead_with_birth", _is_dead)
+    monkeypatch.setattr("meridian.lib.state.liveness.is_process_dead_with_birth", _is_dead)
     monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", _is_alive)
     monkeypatch.setattr("meridian.lib.state.managed_primary.is_process_alive", _is_alive)
     monkeypatch.setattr("meridian.lib.ops.spawn.query.is_process_alive", _is_alive)
@@ -283,6 +289,7 @@ def recording_scope_cleanup(monkeypatch, target: str) -> list[int | str]:
 
     monkeypatch.setattr(target, _cleanup)
     if target == "meridian.lib.core.process_cleanup.terminate_tree_sync":
+
         def _cleanup_claimed(scope, *, grace_seconds: float, reason: str):
             calls.append(scope.root_pid)
             return CleanupResult(

@@ -38,17 +38,16 @@ from meridian.lib.idle import sidecar as idle_sidecar
 from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
-from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope import terminate_scope_sync
+from meridian.lib.platform.launch_gate import ProcessIdentity
+from meridian.lib.platform.process_scope import scope_from_identity, terminate_scope_sync
 from meridian.lib.platform.process_scope.base import (
-    PROCESS_BIRTH_UNKNOWN_EPOCH,
     ProcessScopeSnapshot,
 )
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 
-from .ports import LaunchedProcess, ProcessLauncher, RunningProcess
+from .ports import TUI_TERMINATE_GRACE_SECONDS, LaunchedProcess, ProcessLauncher, RunningProcess
 from .terminal_ownership import tui_terminal_window
 
 TuiCommandBuilder = Callable[[str], tuple[str, ...]]
@@ -85,52 +84,10 @@ def _start_process_wait(running_process: RunningProcess) -> asyncio.Future[Launc
 
     Thread(
         target=_wait,
-        name=f"meridian-primary-wait-{running_process.pid}",
+        name=f"meridian-primary-wait-{running_process.identity.pid}",
         daemon=True,
     ).start()
     return result_future
-
-
-def _make_scope_snapshot(
-    pid: int,
-    scope_id: str,
-    owner_policy: str,
-    owner_id: str,
-    role: str,
-) -> ProcessScopeSnapshot:
-    """Build a ProcessScopeSnapshot for a managed-primary process.
-
-    Determines containment type (posix_pgid / windows_job / pid_tree_fallback)
-    and reads the process birth time via psutil for the PID-reuse guard.
-    """
-    try:
-        birth_time = psutil.Process(pid).create_time()
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        birth_time = PROCESS_BIRTH_UNKNOWN_EPOCH
-
-    pgid: int | None = None
-    containment: str
-    if not IS_WINDOWS:
-        try:
-            pgid = os.getpgid(pid)
-            containment = "posix_pgid"
-        except OSError:
-            containment = "pid_tree_fallback"
-    else:
-        containment = "windows_job"
-
-    return ProcessScopeSnapshot(
-        scope_id=scope_id,
-        owner_policy=owner_policy,
-        owner_id=owner_id,
-        role=role,
-        containment=containment,
-        root_pid=pid,
-        root_created_at_epoch=birth_time,
-        pgid=pgid,
-        job_name=None,
-        degraded_reason=None,
-    )
 
 
 class PrimaryAttachError(Exception):
@@ -237,7 +194,7 @@ class PrimaryAttachLauncher:
         tui_command_builder: TuiCommandBuilder,
         process_launcher: ProcessLauncher,
         runtime_root: Path | None = None,
-        on_running: Callable[[int], None] | None = None,
+        on_running: Callable[[ProcessIdentity], None] | None = None,
         fold: AttemptFold | None = None,
         session_id_observer: Callable[[str], None] | None = None,
     ) -> None:
@@ -349,7 +306,7 @@ class PrimaryAttachLauncher:
         spec: ResolvedLaunchSpec,
         cwd: Path,
         env: dict[str, str],
-        on_running: Callable[[int], None] | None = None,
+        on_running: Callable[[ProcessIdentity], None] | None = None,
     ) -> PrimaryAttachOutcome:
         """Execute the full primary attach lifecycle."""
 
@@ -409,11 +366,11 @@ class PrimaryAttachLauncher:
             command = tuple(self._tui_command_builder(session_id))
             running_callback = on_running if on_running is not None else self._on_running
 
-            def _handle_running(pid: int) -> None:
-                self._set_tui_pid(pid)
-                self._record_tui_scope(pid, session_id)
+            def _handle_running(identity: ProcessIdentity) -> None:
+                self._set_tui_pid(identity.pid)
                 if running_callback is not None:
-                    running_callback(pid)
+                    running_callback(identity)
+                self._record_tui_scope(identity, session_id)
 
             telemetry.clear()
             with tui_terminal_window(self._spawn_dir / LAUNCHER_LOG_FILENAME) as window:
@@ -431,8 +388,8 @@ class PrimaryAttachLauncher:
                         # TUI relay exists.
                         running_process.cancel_wait()
                     try:
-                        _handle_running(running_process.pid)
-                    except Exception:
+                        _handle_running(running_process.identity)
+                    except BaseException:
                         running_process.terminate()
                         await _start_process_wait(running_process)
                         raise
@@ -449,9 +406,7 @@ class PrimaryAttachLauncher:
                     # while a clean TUI exit returns its own code. This avoids
                     # turning a session that exited normally just before a signal
                     # landed into a cancel.
-                    cancelled = (
-                        self._signal_cancel_requested and launched.exit_code == 130
-                    )
+                    cancelled = self._signal_cancel_requested and launched.exit_code == 130
                     if cancelled:
                         # The relay stopped on the signal, so the TUI is still alive.
                         await self._stop_idle_task()
@@ -664,17 +619,15 @@ class PrimaryAttachLauncher:
 
         record_scope(self._spawn_dir.parent.parent, self._spawn_id, scope_snapshot)
 
-    def _record_tui_scope(self, pid: int, session_id: str | None) -> None:
-        if pid <= 0:
-            return
+    def _record_tui_scope(self, identity: ProcessIdentity, session_id: str | None) -> None:
         runtime_root = self._spawn_dir.parent.parent
         owner_id = (session_id or "").strip() or str(self._spawn_id)
-        snapshot = _make_scope_snapshot(
-            pid=pid,
+        snapshot = scope_from_identity(
+            identity,
             scope_id="tui",
-            owner_policy="session_owned",
-            owner_id=owner_id,
             role="harness_tui",
+            owner_id=owner_id,
+            owner_policy="session_owned",
         )
         self._tui_scope_snapshot = snapshot
         record_scope(runtime_root, self._spawn_id, snapshot)
@@ -724,7 +677,7 @@ class PrimaryAttachLauncher:
         await asyncio.to_thread(
             terminate_scope_sync,
             snapshot,
-            grace_seconds=5.0,
+            grace_seconds=TUI_TERMINATE_GRACE_SECONDS,
             reason=reason,
         )
 

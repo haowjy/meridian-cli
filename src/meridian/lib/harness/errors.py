@@ -39,12 +39,15 @@ class HarnessBinaryNotFound(HarnessLaunchFailure):
         harness_id: HarnessId | str,
         error: FileNotFoundError | NotADirectoryError,
         binary_name: str | None = None,
+        searched_path: str | None = None,
     ) -> HarnessBinaryNotFound:
         resolved_binary = binary_name or _binary_name_from_error(error) or "<unknown>"
         return cls(
             harness_id=str(harness_id),
             binary_name=resolved_binary,
-            searched_path=os.environ.get("PATH", ""),
+            searched_path=searched_path
+            if searched_path is not None
+            else os.environ.get("PATH", ""),
         )
 
 

@@ -12,7 +12,7 @@ Two dispatch entry points share the same routing logic but serve different call 
 # Async callers (launch paths)
 ScopedProcessHandle.terminate()
   ├── containment == "posix_pgid"        → posix.terminate_pgid()
-  ├── containment == "windows_job"       → legacy psutil fallback
+  ├── containment == "windows_job"       → windows_job.terminate_job()
   └── containment == "pid_tree_fallback" → fallback.terminate_tree()
 
 # Sync callers (reaper, cancel, session-exit) — same dispatch, sync I/O
@@ -59,14 +59,16 @@ members that ignore SIGTERM after their leader exits (PROC-004 sweep).
 
 `assign_to_new_job(pid)` returns `(job_name, job_handle)`. The handle **must
 stay alive** until the scope should be released — `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
-kills all job members when the handle closes. Callers must hold the handle in
-a live Python object; letting it get garbage-collected releases the containment
-boundary early.
+kills all job members when the handle closes. `ScopedProcessHandle` owns the handle,
+uses it for termination, and closes it explicitly. This branch remains unsupported
+and untested. Persisted snapshots have no live handle and use the sync tree fallback.
 
-Current status: `ScopedProcessHandle` with `containment="windows_job"` falls
-back to psutil tree kill because the Job Object handle is not connected to the
-scope handle. This branch is unsupported and untested; no support work is
-planned. `degraded_fallback=True` in the result flags this path.
+### Gate Release
+
+The scope handle owns the async wait task. Observed child exit sends `stop`; task
+cancellation without observed exit closes the pipe as runner death. Termination
+cancels and awaits this task. POSIX termination runs off the event loop so the
+child watcher can reap and disarm the guardian during the grace wait.
 
 ### Fallback Path Limitations
 

@@ -183,7 +183,10 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path, kind="primary", runner_pid=7301, started_at=_OLD_STARTED_AT
+    )
+    spawn_store.update_spawn(runtime_root, spawn_id, runner_created_at_epoch=100.0)
     _write_primary_meta(
         runtime_root,
         spawn_id,
@@ -239,6 +242,7 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
         worker_pid=worker_pid,
         started_at=_OLD_STARTED_AT,
     )
+    spawn_store.update_spawn(runtime_root, spawn_id, runner_created_at_epoch=100.0)
     _write_corrupt_primary_meta(runtime_root, spawn_id)
 
     _patch_spawn_cancel_runtime_resolution(

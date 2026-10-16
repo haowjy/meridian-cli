@@ -180,3 +180,12 @@ def terminate_job(
 
 
 __all__ = ["assign_to_new_job", "terminate_job"]
+
+
+def close_job_handle(handle: Any) -> None:
+    """Release the owned kill-on-close Job Object handle."""
+    if IS_WINDOWS:
+        import ctypes
+
+        kernel32 = cast("Any", ctypes.windll.kernel32)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]  # Windows-only ctypes API.
+        kernel32.CloseHandle(handle)

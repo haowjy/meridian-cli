@@ -72,19 +72,26 @@ process_scope/
   fallback.py      — psutil children(recursive=True) + SIGTERM → SIGKILL (degraded)
 ```
 
-**POSIX:** `setsid()` at launch; `os.killpg(pgid, SIGTERM)` on teardown. Catches
-reparented descendants that single-PID kill misses. Linux installs
-`PR_SET_PDEATHSIG` before exec when available. POSIX platforms without a native
-parent-death signal (macOS/BSD, or Linux without `prctl`) launch a detached
-watchdog helper after spawn. The helper acknowledges readiness over an inherited
-pipe before containment is recorded, watches the Meridian launcher by
-birth-validated PID, and terminates the full target process group if the launcher
-disappears first. It remains alive while any non-zombie process-group member exists,
-even if the scope root exits before its descendants.
+**POSIX:** every harness starts behind `launch_gate.py`'s pipe handshake.
+The launcher reads the blocked child's birth and persists its scope before `go`;
+unknown birth or failed scope persistence aborts without exec. After exec a double-forked
+`sh` guardian blocks on the pipe, without holding harness stdio. Runner death
+closes the sole writer: group mode sends TERM then KILL, with group membership
+pinning the target; TTY-stdin primary inheritance instead sends one root TERM
+and never a delayed PID signal. Normal reaping sends `stop` to disarm it.
 
-**Legacy Windows branch (untested):** Job Object setup exists, but scoped
-termination currently routes to the psutil fallback because Job Object handle
-threading is not wired through.
+
+Group launches establish a new session before the shell gate. Root-only TTY-stdin
+inheritance shares the invoking shell's group and never signals that group.
+`LaunchGate.spawn_kwargs()` resolves the executable against the launch environment
+and cwd; `adopt()` captures the identity once, killing/reaping on birth failure.
+Async launchers use `adopt_async()` with caller-owned, cancellation-shielded
+kill-and-reap so only asyncio reaps its subprocesses.
+`scope_from_identity()` constructs scopes without another OS identity read.
+
+**Legacy Windows branch (untested):** the gate is a no-op. Managed scope handles
+own their Job Object handle, terminate through it, then close it explicitly.
+Persisted snapshots alone still use the tree fallback for sync cleanup.
 
 **Invariants:**
 - Scope snapshot must be persisted **before** `connection.stop()` — both connections

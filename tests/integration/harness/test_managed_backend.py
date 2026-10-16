@@ -16,8 +16,7 @@ from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
     launch_managed_backend,
 )
-from meridian.lib.platform.detached_process import DetachedSubprocessConfig, ParentDeathLink
-from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
+from meridian.lib.platform import launch_gate
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk
 from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
@@ -40,29 +39,9 @@ def _publish_spawn(tmp_path: Path, spawn_id: SpawnId, *, status: str = "running"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("preexec_linked", "post_spawn_linked"),
-    ((True, False), (False, True)),
-)
-async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    preexec_linked: bool,
-    post_spawn_linked: bool,
-) -> None:
+async def test_launch_managed_backend_records_scope(tmp_path: Path) -> None:
     spawn_id = SpawnId("spawn-3")
     _publish_spawn(tmp_path, spawn_id)
-
-    monkeypatch.setattr(
-        managed_backend,
-        "detached_subprocess_config",
-        lambda: DetachedSubprocessConfig(kwargs={}, parent_death_linked=preexec_linked),
-    )
-    monkeypatch.setattr(
-        managed_backend,
-        "link_child_lifetime_to_parent",
-        lambda _pid: ParentDeathLink(parent_death_linked=post_spawn_linked),
-    )
 
     handle = await launch_managed_backend(
         ManagedBackendConfig(
@@ -72,6 +51,7 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
             cwd=tmp_path,
             env=os.environ.copy(),
             control_root=tmp_path,
+            grace_seconds=0.1,
         ),
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -79,15 +59,14 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     scopes = read_scopes_from_disk(runtime_root, spawn_id)
 
-    assert handle.scope_handle.snapshot.parent_death_linked is True
-    assert [(scope.scope_id, scope.root_pid, scope.parent_death_linked) for scope in scopes] == [
-        ("backend", handle.scope_handle.snapshot.root_pid, True)
+    assert [(scope.scope_id, scope.root_pid) for scope in scopes] == [
+        ("backend", handle.process.pid)
     ]
     await handle.process.wait()
 
 
 @pytest.mark.asyncio
-async def test_launch_managed_backend_records_unknown_birth_sentinel_when_create_time_fails(
+async def test_launch_managed_backend_refuses_unknown_birth(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -101,34 +80,23 @@ async def test_launch_managed_backend_records_unknown_birth_sentinel_when_create
         def create_time(self) -> float:
             raise psutil.AccessDenied(pid=self.pid)
 
-    monkeypatch.setattr(managed_backend.psutil, "Process", _InaccessibleProcess)
-    monkeypatch.setattr(
-        managed_backend,
-        "detached_subprocess_config",
-        lambda: DetachedSubprocessConfig(kwargs={}, parent_death_linked=False),
-    )
-    monkeypatch.setattr(
-        managed_backend,
-        "link_child_lifetime_to_parent",
-        lambda _pid: ParentDeathLink(parent_death_linked=False),
-    )
-
-    handle = await launch_managed_backend(
-        ManagedBackendConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.OPENCODE,
-            command=(sys.executable, "-c", "pass"),
-            cwd=tmp_path,
-            env=os.environ.copy(),
-            control_root=tmp_path,
-        ),
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-
-    scopes = read_scopes_from_disk(resolve_project_runtime_root_for_write(tmp_path), spawn_id)
-    assert handle.scope_handle.snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
-    assert [scope.root_created_at_epoch for scope in scopes] == [PROCESS_BIRTH_UNKNOWN_EPOCH]
-    await handle.process.wait()
+    monkeypatch.setattr(launch_gate.psutil, "Process", _InaccessibleProcess)
+    marker = tmp_path / "executed"
+    with pytest.raises(RuntimeError, match="birth time"):
+        await launch_managed_backend(
+            ManagedBackendConfig(
+                spawn_id=spawn_id,
+                harness_id=HarnessId.OPENCODE,
+                command=("/bin/sh", "-c", f"touch {marker}"),
+                cwd=tmp_path,
+                env=os.environ.copy(),
+                control_root=tmp_path,
+                grace_seconds=0.1,
+            ),
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    assert not marker.exists()
+    assert not read_scopes_from_disk(resolve_project_runtime_root_for_write(tmp_path), spawn_id)
 
 
 @pytest.mark.asyncio
@@ -139,7 +107,6 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
     spawn_id = SpawnId("terminal-spawn")
     _publish_spawn(tmp_path, spawn_id, status="succeeded")
     launched: list[asyncio.subprocess.Process] = []
-    released: list[ParentDeathLink | None] = []
     original_launch = asyncio.create_subprocess_exec
 
     async def capture_launch(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
@@ -148,12 +115,6 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
         return process
 
     monkeypatch.setattr(managed_backend.asyncio, "create_subprocess_exec", capture_launch)
-    monkeypatch.setattr(
-        managed_backend,
-        "release_parent_death_link",
-        lambda link: released.append(link),
-        raising=False,
-    )
 
     try:
         with pytest.raises(ValueError, match="after cleanup began"):
@@ -165,6 +126,7 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
                     cwd=tmp_path,
                     env=os.environ.copy(),
                     control_root=tmp_path,
+                    grace_seconds=0.1,
                 ),
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -173,9 +135,100 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
         # psutil can observe exit before asyncio's child watcher sets returncode.
         await asyncio.wait_for(launched[0].wait(), timeout=1.0)
         assert launched[0].returncode is not None
-        assert len(released) == 1
     finally:
         for process in launched:
             if process.returncode is None:
                 process.kill()
                 await process.wait()
+
+
+@pytest.mark.asyncio
+async def test_scope_termination_disarms_guardian_without_waiting_its_grace(tmp_path: Path) -> None:
+    import time
+
+    from tests.support.async_determinism import wait_until
+
+    spawn_id = SpawnId("p-fast-stop")
+    _publish_spawn(tmp_path, spawn_id)
+    ready = tmp_path / "ready"
+    grace = 5.0
+    handle = await launch_managed_backend(
+        ManagedBackendConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.CODEX,
+            command=(
+                sys.executable,
+                "-c",
+                f"import pathlib,time; pathlib.Path({str(ready)!r}).touch(); time.sleep(60)",
+            ),
+            cwd=tmp_path,
+            env=dict(os.environ),
+            control_root=tmp_path,
+            grace_seconds=grace,
+        ),
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await wait_until(ready.exists)
+        start = time.monotonic()
+        result = await handle.scope_handle.terminate(grace_seconds=grace)
+        await asyncio.wait_for(handle.process.wait(), timeout=5)
+        assert time.monotonic() - start < grace / 2
+        assert not result.kill_escalated
+        assert handle.process.returncode is not None
+    finally:
+        if handle.process.returncode is None:
+            await handle.scope_handle.terminate(grace_seconds=0.1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["backend", "stdio"])
+async def test_missing_binary_uses_launch_path_and_keeps_typed_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from meridian.lib.harness.connections.base import ConnectionConfig
+    from meridian.lib.harness.connections.managed_stdio import launch_managed_stdio
+    from meridian.lib.harness.errors import HarnessBinaryNotFound
+
+    spawn_id = SpawnId("p-missing-binary")
+    _publish_spawn(tmp_path, spawn_id)
+    binary = tmp_path / "runner-only-binary"
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    env = {"PATH": str(tmp_path / "empty-child-path")}
+    with pytest.raises(HarnessBinaryNotFound) as caught:
+        if mode == "backend":
+            await launch_managed_backend(
+                ManagedBackendConfig(
+                    spawn_id=spawn_id,
+                    harness_id=HarnessId.CODEX,
+                    command=(binary.name,),
+                    cwd=tmp_path,
+                    env=env,
+                    control_root=tmp_path,
+                    grace_seconds=0.1,
+                ),
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        else:
+            await launch_managed_stdio(
+                config=ConnectionConfig(
+                    spawn_id=spawn_id,
+                    harness_id=HarnessId.PI,
+                    prompt="",
+                    control_root=tmp_path,
+                    child_env=env,
+                    runtime_root=resolve_project_runtime_root_for_write(tmp_path),
+                ),
+                harness_id=HarnessId.PI,
+                command=(binary.name,),
+                env=env,
+                cwd=str(tmp_path),
+                stdin=asyncio.subprocess.PIPE,
+                stdout_limit=65536,
+                kill_grace_seconds=0.1,
+                terminate_reason="test",
+            )
+    assert caught.value.binary_name == binary.name
+    assert caught.value.searched_path == env["PATH"]
