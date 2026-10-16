@@ -12,6 +12,7 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from tests.support.async_determinism import assert_still_pending, wait_until
+from tests.support.history import warm_history_index
 from tests.support.pi import (
     FakePiConnection,
     event_phases,
@@ -151,6 +152,7 @@ async def test_spawn_manager_child_wave_timeout_publishes_before_descendant_canc
         HarnessId.CODEX,
         str(spawn_id),
     )
+    warm_history_index(tmp_path)
     manager = await start_pi_manager(
         tmp_path,
         _GatedIdleConnection([]),
