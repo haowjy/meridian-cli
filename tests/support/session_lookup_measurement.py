@@ -84,7 +84,7 @@ def main() -> None:
     if not index.path.exists():
         index.rebuild(timeout=120)
     index.spawns()
-    if hasattr(s, "chats_rows"):
+    if operation == "close" and hasattr(s, "chats_rows"):
         from meridian.lib.launch.session_scope import warm_close_imports
 
         warm_close_imports().join()

@@ -58,6 +58,15 @@ def compare_reads(root: Path, chats: list[str], identities: set[tuple[str, str]]
     return counts
 
 
+def sample(items: list, limit: int | None) -> list:
+    """Spread bounded disk checks across the corpus instead of only its oldest prefix."""
+    if limit is None:
+        return items
+    if limit < 1:
+        raise ValueError("Sample limit must be positive")
+    return items[:: max(1, len(items) // limit)][:limit]
+
+
 def compare_corpus(root: Path, writer: Path, *, limit: int | None = None) -> dict[str, int]:
     raw = read_events(root / "sessions.jsonl", lambda row: row)
     events = [event for row in raw if (event := parse_event(row)) is not None]
@@ -85,7 +94,9 @@ def compare_corpus(root: Path, writer: Path, *, limit: int | None = None) -> dic
         )
         raw_keys = [record.get("harness_session_id"), *record.get("harness_session_ids", [])]
         native_keys.update(
-            (harness, key.strip()) for harness in harnesses for key in raw_keys
+            (harness, key.strip())
+            for harness in harnesses
+            for key in raw_keys
             if isinstance(key, str) and key.strip()
         )
     counts = {}
@@ -102,7 +113,9 @@ def compare_corpus(root: Path, writer: Path, *, limit: int | None = None) -> dic
         mp.setattr(old, "list_session_generations", lambda _root: generations)
         mp.setattr(s, "utc_now_iso", lambda: "2026-10-16T00:00:00Z")
         mp.setattr(old, "utc_now_iso", lambda: "2026-10-16T00:00:00Z")
-        counts = compare_reads(root, sorted(by_chat)[:limit], set(sorted(native_keys)[:limit]))
+        counts = compare_reads(
+            root, sample(sorted(by_chat), limit), set(sample(sorted(native_keys), limit))
+        )
         actual = outcome(identity.session_records_for_spawns, root, spawns)
         expected = outcome(old.session_records_for_spawns, root, spawns)
         assert actual == expected, ("spawns", root.name, actual, expected)
@@ -113,7 +126,7 @@ def compare_corpus(root: Path, writer: Path, *, limit: int | None = None) -> dic
             for r in live
             if r.native_store and r.harness_session_id
         }
-        keys = sorted(keys)[:limit]
+        keys = sample(sorted(keys), limit)
         for index, (harness, store, native) in enumerate(keys):
             source = live[index % len(live)].chat_id
             kwargs = dict(harness=harness, native_store=store, session_id=native)
@@ -122,7 +135,9 @@ def compare_corpus(root: Path, writer: Path, *, limit: int | None = None) -> dic
             assert actual == expected, ("observed", root.name, source, kwargs, actual, expected)
         counts["observed_chat"] = len(keys)
         writer.mkdir(parents=True, exist_ok=True)
-        selections = [e for e in events if isinstance(e, s.SessionModelSelectionEvent)][:limit]
+        selections = sample(
+            [e for e in events if isinstance(e, s.SessionModelSelectionEvent)], limit
+        )
         for event in selections:
             actual_rows = []
             expected_rows = []
