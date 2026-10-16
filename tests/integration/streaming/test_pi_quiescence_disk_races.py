@@ -28,6 +28,7 @@ from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import AsyncDeterminism, assert_still_pending, wait_until
+from tests.support.history import warm_history_index
 from tests.support.pi import FakePiConnection as _FakePiConnection
 from tests.support.pi import NoopControlServer as _NoopControlServer
 from tests.support.pi import PiDrainScenario, write_pi_bash_record
@@ -53,6 +54,10 @@ async def _started_pi_coordinator(
     monkeypatch: pytest.MonkeyPatch | None = None,
 ) -> PiDrainCoordinator:
     assert monkeypatch is not None
+    # Descendant refreshes run in a worker thread.  Keep index initialization
+    # out of that async wait so this race suite waits for a real refresh wake,
+    # not an unbounded cold-index build under xdist load.
+    warm_history_index(tmp_path)
     scenario = await PiDrainScenario.start(
         tmp_path,
         monkeypatch,
@@ -94,6 +99,7 @@ async def _started_micro_drain_coordinator(
     monkeypatch: pytest.MonkeyPatch | None = None,
 ) -> PiDrainScenario:
     assert monkeypatch is not None
+    warm_history_index(tmp_path)
     return await PiDrainScenario.start(
         tmp_path,
         monkeypatch,
@@ -556,6 +562,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    warm_history_index(tmp_path)
     monkeypatch.setattr(
         "meridian.lib.streaming.pi_drain.PI_MICRO_DRAIN_TIMEOUT_SECONDS",
         0.2,
