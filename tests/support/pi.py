@@ -25,7 +25,6 @@ from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
-from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.streaming import pi_completion_profile as profile_module
 from meridian.lib.streaming import pi_drain as drain_module
@@ -183,11 +182,6 @@ def write_pi_bash_record(
             },
         },
     )
-
-
-def warm_history_index(runtime_root: Path) -> None:
-    """Build the history baseline outside time-bounded Pi evidence reads."""
-    HistoryIndex(runtime_root).rebuild()
 
 
 @dataclass

@@ -14,7 +14,8 @@ from meridian.lib.harness.pi_private_state import BashEvidenceFile
 from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.drain_policy import DrainAction
-from tests.support.pi import PiDrainScenario, pi_event, warm_history_index
+from tests.support.history import warm_history_index
+from tests.support.pi import PiDrainScenario, pi_event
 
 
 def write_private(root: Path, name: str, value: object) -> None:
