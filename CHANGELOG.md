@@ -6,15 +6,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.10.13] - 2026-10-16
 
+### Fixed
+- Harness now dies with its runner on every launch path: Codex native re-exec, Claude, Pi, Cursor, primaries. Linux and macOS. (#629)
+- Harness never runs before its process scope is recorded.
+- macOS Python watchdog gone (~17 MB per launch). One ~1 MB `sh` guardian per harness instead. Linux PDEATHSIG gone too.
+
 ## [0.10.12] - 2026-10-16
 
 ### Fixed
 - Recover every native-history record after a launcher crash followed by
   `--continue`: capture defers quietly while the continued owner is live, then
   retries all records bound to that native session when the owner stops.
-- Harness now dies with its runner on every launch path: Codex native re-exec, Claude, Pi, Cursor, primaries. Linux and macOS. (#629)
-- Harness never runs before its process scope is recorded.
-- macOS Python watchdog gone (~17 MB per launch). One ~1 MB `sh` guardian per harness instead. Linux PDEATHSIG gone too.
 
 ### Upgrade notes
 - First indexed read rebuilds history schema 10; no authority migration. See
