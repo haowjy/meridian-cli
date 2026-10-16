@@ -158,3 +158,73 @@ def test_live_primary_stale_heartbeat_survives_reconciliation(
     finally:
         child.kill()
         child.wait()
+
+
+@pytest.mark.parametrize("unknown_identity", ["pid", "birth", "access_denied"])
+def test_primary_unknown_runner_finalizes_without_signalling_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unknown_identity: str
+) -> None:
+    from meridian.lib.core.types import SpawnId
+    from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+    from meridian.lib.state import spawn_store
+    from meridian.lib.state.process_scope_projection import record_scope
+    from meridian.lib.state.reaper import reconcile_active_spawn
+
+    monkeypatch.setattr("meridian.lib.state.reaper.is_root_side_effect_process", lambda: True)
+    runtime = tmp_path / "runtime"
+    spawn_id = SpawnId("p1")
+    spawn_store.start_spawn(
+        runtime,
+        spawn_id=spawn_id,
+        chat_id="c1",
+        model="test",
+        agent="test",
+        harness="claude",
+        prompt="test",
+        kind="primary",
+        status="running" if unknown_identity == "pid" else "finalizing",
+        started_at="2000-01-01T00:00:00Z",
+    )
+    birth = psutil.Process().create_time()
+    monkeypatch.setattr(spawn_store, "_runner_created_at_epoch_for_pid", lambda _pid: None)
+    spawn_store.update_spawn(
+        runtime,
+        spawn_id,
+        runner_pid=None if unknown_identity == "pid" else os.getpid(),
+        runner_created_at_epoch=None if unknown_identity == "birth" else birth,
+    )
+    record_scope(
+        runtime,
+        spawn_id,
+        ProcessScopeSnapshot(
+            scope_id="tui",
+            owner_policy="spawn_owned",
+            owner_id=str(spawn_id),
+            role="harness_tui",
+            containment="posix_pgid",
+            root_pid=os.getpid(),
+            root_created_at_epoch=birth,
+            pgid=os.getpgrp(),
+            job_name=None,
+            degraded_reason=None,
+        ),
+    )
+    if unknown_identity == "access_denied":
+
+        def denied(pid: int) -> psutil.Process:
+            raise psutil.AccessDenied(pid)
+
+        monkeypatch.setattr("meridian.lib.state.liveness.psutil.Process", denied)
+
+    def unexpected_signal(*args, **kwargs):
+        pytest.fail("unproven runner death must not authorize scope termination")
+
+    monkeypatch.setattr("meridian.lib.core.process_cleanup.terminate_scope_sync", unexpected_signal)
+    record = spawn_store.get_spawn(runtime, spawn_id)
+    assert record is not None
+    finalized = reconcile_active_spawn(tmp_path, runtime, record)
+    assert finalized.status == "failed"
+    persisted = spawn_store.get_spawn(runtime, spawn_id)
+    assert persisted is not None and persisted.status == "failed"
+    # A retained cleanup claim must remain safe on a later terminal-row pass too.
+    reconcile_active_spawn(tmp_path, runtime, persisted)

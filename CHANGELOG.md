@@ -18,7 +18,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Python watchdog and `parent_death_linked` from new scope rows.
 - Preserve typed missing-harness errors, reap stubs killed or cancelled before
   exec, and honor adapter grace even with a hostile PATH. Reaper cleanup of
-  primaries now requires proven runner death, never stale heartbeat evidence.
+  primary scopes now requires proven runner death, with clock-step tolerance,
+  never stale heartbeat evidence. Unknown runner identity no longer blocks status
+  finalization. Keep failed async adoption reaping with asyncio’s child watcher.
 
 ## [0.10.11] - 2026-10-16
 

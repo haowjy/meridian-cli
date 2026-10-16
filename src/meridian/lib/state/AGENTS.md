@@ -190,9 +190,11 @@ path, then terminates the claimed, birth-validated scopes. A separate stable cle
 lock prevents concurrent reapers from double-signalling; terminal rows retain failed
 claims for the next doctor pass.
 Both paths share decision rules in `reaper.py` and completion/cancel precedence in
-`reconciliation.py`. Primary side effects additionally require positive runner-death
-evidence against the exact recorded birth. Unknown identity, access errors and stale
-heartbeats never authorize primary cleanup, including replayed terminal claims.
+`reconciliation.py`. Primary scope termination additionally requires positive runner-death
+evidence against the recorded birth, with the same one-second clock tolerance as
+the liveness check. Unknown identity, access errors and stale heartbeats never
+authorize primary scope termination, including replayed terminal claims; they do
+not block status finalization.
 Read-only projected status is not authorization to terminate a scope.
 
 ## Native Chat Identity

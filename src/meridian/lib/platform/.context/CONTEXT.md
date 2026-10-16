@@ -85,6 +85,8 @@ Group launches establish a new session before the shell gate. Root-only TTY-stdi
 inheritance shares the invoking shell's group and never signals that group.
 `LaunchGate.spawn_kwargs()` resolves the executable against the launch environment
 and cwd; `adopt()` captures the identity once, killing/reaping on birth failure.
+Async launchers use `adopt_async()` with caller-owned, cancellation-shielded
+kill-and-reap so only asyncio reaps its subprocesses.
 `scope_from_identity()` constructs scopes without another OS identity read.
 
 **Legacy Windows branch (untested):** the gate is a no-op. Managed scope handles

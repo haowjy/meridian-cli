@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
@@ -41,6 +42,13 @@ class ManagedBackendHandle:
 
     process: asyncio.subprocess.Process
     scope_handle: ScopedProcessHandle
+
+
+async def kill_and_reap_unowned_process(process: asyncio.subprocess.Process) -> None:
+    """Abort startup without taking reaping away from asyncio's child watcher."""
+    with suppress(ProcessLookupError):
+        process.kill()
+    await reap_on_ownership_transfer_failure(process.wait)
 
 
 async def register_spawn_owned_process(
@@ -115,7 +123,9 @@ async def launch_managed_backend(
                 binary_name=config.command[0],
                 searched_path=os.pathsep.join(os.get_exec_path(config.env)),
             ) from exc
-        identity = gate.adopt(process.pid)
+        identity = await gate.adopt_async(
+            process.pid, kill_and_reap=lambda: kill_and_reap_unowned_process(process)
+        )
         scope_handle = await register_spawn_owned_process(
             spawn_id=config.spawn_id,
             control_root=config.control_root,
@@ -130,8 +140,7 @@ async def launch_managed_backend(
     except BaseException:
         gate.close()
         if process is not None and process.returncode is None:
-            process.kill()
-            await reap_on_ownership_transfer_failure(process.wait)
+            await kill_and_reap_unowned_process(process)
         raise
 
     return ManagedBackendHandle(

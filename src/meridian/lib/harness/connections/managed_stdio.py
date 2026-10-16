@@ -12,11 +12,9 @@ from pathlib import Path
 from typing import Final
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.connections.base import (
-    ConnectionConfig,
-    reap_on_ownership_transfer_failure,
-)
+from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.managed_backend import (
+    kill_and_reap_unowned_process,
     register_spawn_owned_process,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
@@ -213,7 +211,9 @@ async def launch_managed_stdio(
                 binary_name=command[0],
                 searched_path=os.pathsep.join(os.get_exec_path(dict(env))),
             ) from exc
-        identity = gate.adopt(process.pid)
+        identity = await gate.adopt_async(
+            process.pid, kill_and_reap=lambda: kill_and_reap_unowned_process(process)
+        )
         scope_handle = await register_spawn_owned_process(
             spawn_id=config.spawn_id,
             control_root=config.control_root,
@@ -229,8 +229,7 @@ async def launch_managed_stdio(
     except BaseException:
         gate.close()
         if process is not None and process.returncode is None:
-            process.kill()
-            await reap_on_ownership_transfer_failure(process.wait)
+            await kill_and_reap_unowned_process(process)
         with suppress(OSError):
             stderr_handle.flush()
         stderr_handle.close()

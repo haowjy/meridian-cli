@@ -805,12 +805,6 @@ def reconcile_active_spawn(
     """Reconcile one active spawn. Is the responsible process alive?"""
     if record.record_mode == "historical":
         return record
-    # All primary paths (generic, managed, finalizing and durable claims) need
-    # positive death evidence before reconciliation can terminate their scopes.
-    if record.kind == "primary" and not is_process_dead_with_birth(
-        record.runner_pid, record.runner_created_at_epoch
-    ):
-        return record
     if not is_active_spawn_status(record.status):
         if is_root_side_effect_process() and is_terminal_spawn_status(record.status):
             _cleanup_claimed_scopes(runtime_root, record)

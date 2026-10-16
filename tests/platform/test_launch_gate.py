@@ -86,7 +86,7 @@ async def run():
             terminate_reason="test",
         )
     else:
-        # The native server is a child of a wrapper, not the PDEATHSIG target.
+        # The native server is a child of a wrapper, inside the guarded process group.
         backend_command = (sys.executable, '-c',
             'import subprocess; subprocess.Popen(' + repr(command) + ').wait()')
         original = managed_backend.register_spawn_owned_process

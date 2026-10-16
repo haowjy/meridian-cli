@@ -124,7 +124,7 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_cancels(
     assert terminated_pids == [8882, 9992]
 
 
-def test_reconcile_active_spawn_managed_primary_candidate_unknown_runner_birth_preserves_worker_pg(
+def test_reconcile_active_spawn_unknown_runner_birth_finalizes_but_preserves_worker_pg(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -146,8 +146,10 @@ def test_reconcile_active_spawn_managed_primary_candidate_unknown_runner_birth_p
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
-    assert reconciled == record
-    assert _get_spawn(runtime_root, spawn_id).status == "running"
+    assert reconciled.status == "failed"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_primary"
+    assert _get_spawn(runtime_root, spawn_id).status == "failed"
     assert terminated_pids == []
 
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 import signal
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from threading import Lock
@@ -99,19 +99,33 @@ class LaunchGate:
             start_new_session=not IS_WINDOWS and self.group,
         )
 
-    def adopt(self, pid: int) -> ProcessIdentity:
-        """Capture a blocked child's identity, or kill and reap on failure."""
+    def _capture_identity(self, pid: int) -> ProcessIdentity:
         self.close_read_end()
+        return ProcessIdentity(
+            pid, child_birth_epoch(pid), pid if self.group and not IS_WINDOWS else None
+        )
+
+    def adopt(self, pid: int) -> ProcessIdentity:
+        """Capture a sync child's identity, or kill and reap on failure."""
         try:
-            return ProcessIdentity(
-                pid, child_birth_epoch(pid), pid if self.group and not IS_WINDOWS else None
-            )
+            return self._capture_identity(pid)
         except BaseException:
             self.close()
             with suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGKILL)
             with suppress(ChildProcessError):
                 os.waitpid(pid, 0)
+            raise
+
+    async def adopt_async(
+        self, pid: int, *, kill_and_reap: Callable[[], Awaitable[object]]
+    ) -> ProcessIdentity:
+        """Leave reaping to the async owner, never racing its child watcher."""
+        try:
+            return self._capture_identity(pid)
+        except BaseException:
+            self.close()
+            await kill_and_reap()
             raise
 
     def command(self, command: Sequence[str]) -> tuple[str, ...]:
