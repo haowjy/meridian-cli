@@ -14,7 +14,7 @@ from meridian.lib.harness.pi_private_state import BashEvidenceFile
 from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.drain_policy import DrainAction
-from tests.support.pi import PiDrainScenario, pi_event
+from tests.support.pi import PiDrainScenario, pi_event, warm_history_index
 
 
 def write_private(root: Path, name: str, value: object) -> None:
@@ -53,6 +53,7 @@ def bash_file(*, status: str = "exited", consumed: float | None = None) -> dict[
 
 
 async def scenario(root: Path, monkeypatch: pytest.MonkeyPatch) -> PiDrainScenario:
+    warm_history_index(root)
     started = await PiDrainScenario.start(root, monkeypatch, patch_clock=False)
     core = started.coordinator._coordinator
     core._clock = started.clock.monotonic

@@ -13,7 +13,7 @@ from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
     SingleTurnDrainPolicy,
 )
-from tests.support.pi import PiDrainScenario, pi_event
+from tests.support.pi import PiDrainScenario, pi_event, warm_history_index
 
 
 def _retryable_error() -> object:
@@ -259,6 +259,7 @@ async def test_done_can_release_work_after_manual_compaction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    warm_history_index(tmp_path)
     started = await PiDrainScenario.start(tmp_path, monkeypatch, patch_clock=False)
     coordinator = started.coordinator
     try:
