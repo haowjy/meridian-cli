@@ -275,7 +275,7 @@ def bind_late_legacy_sessions(runtime_root: Path) -> LateBinding:
         # also shared rather than replaying sessions.jsonl once per chat.
         report = report_legacy_native_import(runtime_root, records=list(candidates.values()))
         bound = 0
-        with session_bindings(runtime_root, chat_ids=set(candidates)) as bindings:
+        with session_bindings(runtime_root, scope=candidates.keys()) as bindings:
             current_ids: dict[str, set[str]] = defaultdict(set)
             for event in bindings.events:
                 session_id = getattr(event, "harness_session_id", None)

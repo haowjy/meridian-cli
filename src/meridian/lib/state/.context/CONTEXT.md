@@ -71,7 +71,9 @@ Single-chat reads and binds (`read_session_events(root, chat_ids)`: `get_session
 the work-, harness- and generation-ID lookups, `update_session_harness_id`'s
 `SessionBindings`) still scan the whole file, but decode only rows a byte prefilter
 nominates. One chat's projection reads no other chat's events, so the selected fold
-equals the full one; the prefilter may only nominate, never decide.
+equals the full one; the prefilter may only nominate, never decide. A scoped
+`SessionBindings` (`scope` set) holds only its chats' events and raises
+`ChatOutsideBindingScope` for any other chat; cross-chat checks need `scope is None`.
 
 ### One-time native identity import
 

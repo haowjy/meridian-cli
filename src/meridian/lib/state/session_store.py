@@ -479,7 +479,7 @@ def update_session_harness_id(
     """Atomically bind the first native key; conflicts never append a rebind."""
     from meridian.lib.state.session_binding import session_bindings
 
-    with session_bindings(runtime_root, chat_ids={chat_id}) as bindings:
+    with session_bindings(runtime_root, scope={chat_id}) as bindings:
         return bindings.bind(
             chat_id, attempted, source=source,
             session_instance_id=session_instance_id, startup_attempt_id=startup_attempt_id,
