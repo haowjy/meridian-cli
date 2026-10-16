@@ -106,8 +106,7 @@ class HarnessCapabilities(BaseModel):
     # Whether a black-box primary launches with captured output in its
     # non-interactive print mode (Claude `--print`).
     captures_blackbox_output: bool = False
-    terminal_surface_modes: tuple[TerminalSurfaceMode, ...] = (TerminalSurfaceMode.PTY_MEDIATED,)
-    default_terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
+    terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
 
 
 class HarnessContract(BaseModel):

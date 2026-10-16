@@ -14,7 +14,7 @@ run_harness_process()
     │
     ├── session_scope()            ← open/close session store entry
     ├── lifecycle_service.start()  ← create spawn row
-    ├── select_process_backend()   ← pick {PTY, subprocess, legacy Windows console}
+    ├── select_process_launcher()  ← pick {native, PTY, subprocess, legacy Windows console}
     │
     ├── _execute_via_managed_attach()   ← PrimaryAttachLauncher path
     │       └── fallback on PrimaryAttachError → _execute_via_blackbox()
@@ -24,14 +24,14 @@ run_harness_process()
             └── _finalize_lifecycle() → complete_execution()
 ```
 
-**Backend selection rules:**
-- Legacy native-Windows branch (untested): `WindowsConsoleLauncher`
-- POSIX + TTY available: `PtyProcessLauncher`
-- POSIX + no TTY (CI, piped): `SubprocessProcessLauncher`
+**Backend selection:** `selector.py` consumes the resolved `TerminalSurfaceMode`.
+Codex/OpenCode adapters default to native terminal inheritance; Claude/Pi retain
+the PTY relay. Output capture uses PTY with pipe fallback. A TTY alone does not
+choose the managed launch mode. Adapter-derived mode is never persisted/replayed
+in launch-policy snapshots.
 
-**Managed-attach fallback:** if `PrimaryAttachLauncher` raises `PrimaryAttachError`
-(harness didn't start the server), it falls back to `_execute_via_blackbox()`. This
-is intentional — managed-primary is best-effort for the primary path.
+**Managed-attach fallback:** `PrimaryAttachError` follows the adapter's policy:
+Codex raises, OpenCode falls back to black-box execution.
 
 ## Native-Primary Adapter Hooks
 
@@ -93,17 +93,23 @@ same pointer after restoration, and only when the current window grew the log.
 
 ## Key Rules
 
-**Don't add launcher types without registering in `select_process_backend()`.** The
-selection logic reads `ProcessPlatformContract` — new launchers need entries there.
+**Don't add launcher types without registering in `select_process_launcher()`.** It is the
+single selection seam for both managed attach and black-box execution.
 
-**Managed-attach fallback is silent.** The user sees the primary TUI either way —
-the distinction is whether Meridian controls the turn or just observes.
+**Native job control belongs to the shell.** Launcher and TUI share its foreground
+process group. Both drivers enter `native_sigint_shield()` on the main thread alongside the
+terminal window, intercepting SIGINT only during the native TUI lifecycle;
+SIGTSTP is left alone. The native gate records no pgid and sends one root TERM on
+runner death, never a shared-group signal or delayed KILL. The managed backend
+uses its existing separate group gate.
 
 ## Entry Points
 
 - `runner.py` — `run_harness_process()`. The sole external entry point.
+- `selector.py` — terminal policy/capture → process backend.
+- `native_launcher.py` — root-only gate, saved terminal fds, no inner PTY.
 - `terminal_ownership.py` — fd-level exclusive terminal window shared by TUI drivers.
-- `ports.py` — `ProcessLauncher` protocol, `ProcessBackendId`, backend selection types.
+- `ports.py` — `ProcessLauncher` and `RunningProcess` protocols, saved terminal fds.
 
 ## Depth
 

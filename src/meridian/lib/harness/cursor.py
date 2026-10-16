@@ -111,8 +111,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_native_agents=False,
             supports_primary_launch=False,
             supports_native_file_injection=False,
-            terminal_surface_modes=(TerminalSurfaceMode.PTY_MEDIATED,),
-            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
+            terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
     def run_prompt_policy(self) -> RunPromptPolicy:

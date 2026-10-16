@@ -9,11 +9,10 @@ import pytest
 from meridian.lib.catalog.agent import AgentProfile, MeridianCapabilities
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import CLAUDE_SPAWN_USAGE_VARIANTS
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_policy_snapshot
-from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policy_snapshot import _snapshot_profile, replay_launch_policy_snapshot
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.spawn_guidance import (
@@ -43,11 +42,6 @@ def _profile(
         path=Path("/tmp/tech-lead.md"),
         raw_content="raw profile content",
     )
-
-
-def _terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
-    _ = harness_id
-    return TerminalSurfaceMode.PTY_MEDIATED
 
 
 def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
@@ -134,7 +128,6 @@ def test_snapshot_replay_uses_persisted_policy_inventory() -> None:
         harness_registry=get_default_harness_registry(),
         skills_readonly=True,
         alias_catalog={},
-        resolve_terminal_surface_mode=_terminal_surface_mode,
     )
 
     assert replayed.model == "gpt-5.4"
@@ -153,5 +146,4 @@ def test_snapshot_replay_rejects_empty_harness() -> None:
             harness_registry=get_default_harness_registry(),
             skills_readonly=True,
             alias_catalog={},
-            resolve_terminal_surface_mode=_terminal_surface_mode,
         )

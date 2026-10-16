@@ -90,25 +90,19 @@ from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
 from ..types import SessionMode
+from .native_launcher import native_sigint_shield
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
-    ProcessBackendId,
     ProcessLauncher,
-    ProcessLauncherSelector,
-    ProcessPlatformContract,
-    ProcessSurfaceMode,
-    SelectedProcessLauncher,
 )
 from .primary_attach import PrimaryAttachError, PrimaryAttachLauncher, PrimaryAttachOutcome
-from .pty_launcher import PtyProcessLauncher, can_use_pty
+from .selector import select_process_launcher
 from .session import (
     build_session_metadata,
     resolve_attached_work_id,
     resolve_primary_session_mode,
 )
-from .subprocess_launcher import SubprocessProcessLauncher
 from .terminal_ownership import tui_terminal_window
-from .windows_launcher import WindowsConsoleLauncher, can_use_windows_console_launcher
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +196,7 @@ RunPrimaryProcessWithCapture = Callable[
         Path,
         dict[str, str],
         Path | None,
+        ProcessLauncher,
         Callable[[ProcessIdentity], None],
         Path,
     ],
@@ -224,80 +219,20 @@ RunPrimaryAttach = Callable[
 ]
 
 
-def select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
-    """Choose the launch backend for one primary process invocation."""
-
-    return select_process_backend(output_log_path).launcher
-
-
-def select_process_backend(output_log_path: Path | None) -> SelectedProcessLauncher:
-    """Choose the launch backend plus explicit process/platform contract."""
-
-    if output_log_path is not None:
-        if can_use_pty():
-            return SelectedProcessLauncher(
-                launcher=PtyProcessLauncher(),
-                contract=ProcessPlatformContract(
-                    backend_id=ProcessBackendId.PTY,
-                    surface_mode=ProcessSurfaceMode.PTY_MEDIATED,
-                    captures_output_to_artifact=True,
-                    platform_family="posix",
-                ),
-            )
-        return SelectedProcessLauncher(
-            launcher=SubprocessProcessLauncher(),
-            contract=ProcessPlatformContract(
-                backend_id=ProcessBackendId.SUBPROCESS,
-                surface_mode=ProcessSurfaceMode.PIPE_CAPTURE,
-                captures_output_to_artifact=True,
-                platform_family="portable",
-            ),
-        )
-    if can_use_windows_console_launcher():
-        return SelectedProcessLauncher(
-            launcher=WindowsConsoleLauncher(),
-            contract=ProcessPlatformContract(
-                backend_id=ProcessBackendId.WINDOWS_CONSOLE,
-                surface_mode=ProcessSurfaceMode.NATIVE_INHERIT,
-                captures_output_to_artifact=False,
-                platform_family="windows",
-            ),
-        )
-    if can_use_pty():
-        return SelectedProcessLauncher(
-            launcher=PtyProcessLauncher(),
-            contract=ProcessPlatformContract(
-                backend_id=ProcessBackendId.PTY,
-                surface_mode=ProcessSurfaceMode.PTY_MEDIATED,
-                captures_output_to_artifact=False,
-                platform_family="posix",
-            ),
-        )
-    return SelectedProcessLauncher(
-        launcher=SubprocessProcessLauncher(),
-        contract=ProcessPlatformContract(
-            backend_id=ProcessBackendId.SUBPROCESS,
-            surface_mode=ProcessSurfaceMode.NATIVE_INHERIT,
-            captures_output_to_artifact=False,
-            platform_family="portable",
-        ),
-    )
-
-
 def run_primary_process_with_capture(
     command: tuple[str, ...],
     cwd: Path,
     env: dict[str, str],
     output_log_path: Path | None,
+    process_launcher: ProcessLauncher,
     on_child_started: Callable[[ProcessIdentity], None],
     launcher_diagnostics_path: Path,
-    *,
-    launcher_selector: ProcessLauncherSelector = select_process_launcher,
 ) -> PrimaryProcessResult:
-    launcher: ProcessLauncher = launcher_selector(output_log_path)
-
-    with tui_terminal_window(launcher_diagnostics_path) as window:
-        running = launcher.start(
+    with (
+        native_sigint_shield(process_launcher),
+        tui_terminal_window(launcher_diagnostics_path) as window,
+    ):
+        running = process_launcher.start(
             command=command,
             cwd=cwd,
             env=env,
@@ -364,6 +299,7 @@ def _execute_via_managed_attach(
     task_cwd: Path | None,
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
+    process_launcher: ProcessLauncher,
     native_run: NativeRun,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[ProcessIdentity], None],
@@ -378,7 +314,7 @@ def _execute_via_managed_attach(
         task_cwd,
         child_env,
         launch_spec,
-        select_process_launcher(None),
+        process_launcher,
         on_running,
         native_run.observe,
     )
@@ -398,6 +334,7 @@ def _execute_via_blackbox(
     child_env: dict[str, str],
     output_log_path: Path | None,
     launcher_diagnostics_path: Path,
+    process_launcher: ProcessLauncher,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     on_running: Callable[[ProcessIdentity], None],
 ) -> PrimaryProcessResult:
@@ -408,6 +345,7 @@ def _execute_via_blackbox(
         launch_cwd,
         child_env,
         output_log_path,
+        process_launcher,
         on_running,
         launcher_diagnostics_path,
     )
@@ -432,9 +370,13 @@ def _execute_primary_process(
 ) -> PrimaryExecutionResult:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
+    terminal_surface_mode = harness_contract.capabilities.terminal_surface_mode
     use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
     launcher_diagnostics_path = log_dir / LAUNCHER_LOG_FILENAME
     if use_managed_backend:
+        process_launcher = select_process_launcher(
+            None, terminal_surface_mode=terminal_surface_mode
+        )
         try:
             return _execute_via_managed_attach(
                 harness_id=harness_id,
@@ -444,6 +386,7 @@ def _execute_primary_process(
                 task_cwd=task_cwd,
                 child_env=child_env,
                 launch_spec=launch_spec,
+                process_launcher=process_launcher,
                 native_run=native_run,
                 run_primary_attach_fn=run_primary_attach_fn,
                 on_running=on_running,
@@ -490,6 +433,9 @@ def _execute_primary_process(
         launch_cwd=launch_cwd,
         child_env=blackbox_env,
         output_log_path=output_log_path,
+        process_launcher=select_process_launcher(
+            output_log_path, terminal_surface_mode=terminal_surface_mode
+        ),
         launcher_diagnostics_path=launcher_diagnostics_path,
         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
         on_running=record_blackbox_started,
@@ -1165,6 +1111,4 @@ __all__ = [
     "run_harness_process",
     "run_primary_attach",
     "run_primary_process_with_capture",
-    "select_process_backend",
-    "select_process_launcher",
 ]

@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Codex/OpenCode primaries own the real terminal, including `--continue`. No inner
+  PTY: resize, Ctrl+C, shell Ctrl+Z/`fg` work natively. Claude/Pi keep the relay.
+- Native TUI never runs before its process scope is recorded; runner death sends it
+  one TERM through the start gate.
+
 ## [0.10.14] - 2026-10-16
 
 ### Fixed

@@ -360,11 +360,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             # than forwarding ``--model``.
             supports_named_primary_resume=True,
             supports_native_file_injection=False,
-            terminal_surface_modes=(
-                TerminalSurfaceMode.PTY_MEDIATED,
-                TerminalSurfaceMode.NATIVE_INHERIT,
-            ),
-            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
+            terminal_surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
         )
 
     def run_prompt_policy(self) -> RunPromptPolicy:

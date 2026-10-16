@@ -28,7 +28,6 @@ class LaunchPolicySnapshot(BaseModel):
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
     tools: ToolsField | None = None
     mcp_tools: tuple[str, ...] = ()
-    terminal_surface_mode: str | None = None
     matched_policy_rule: str | None = None
     model_selection_requested_token: str | None = None
     model_selection_selected_token: str | None = None

@@ -13,6 +13,24 @@ For `meridian codex`, Meridian now:
 
 This gives Meridian a real Codex thread ID, managed startup telemetry, and hidden instruction delivery for the role/system tiers.
 
+## Terminal Ownership and Job Control
+
+Codex and OpenCode managed primaries attach their TUI directly to the user's
+stdin, stdout, and stderr. Meridian does not put another PTY or byte relay
+between these TUIs and the terminal. The managed backend connection, events,
+idle sensing, metadata, heartbeat, and teardown continue independently of the
+terminal path. Claude and Pi primaries continue to use Meridian's PTY relay.
+
+The Meridian launcher and a native TUI remain in the shell's foreground process
+group. Pressing `Ctrl+Z` therefore stops both processes; run `fg` in the invoking
+shell to resume them together. Meridian does not take foreground ownership away
+from the shell.
+
+Normal TUI exit restores terminal state through the harness. If the TUI itself
+is killed with `kill -9`, it cannot run that cleanup and the screen may retain
+mouse, cursor, or alternate-screen state. Run `reset` after the shell returns if
+the terminal remains garbled.
+
 ## Workspace Roots
 
 Configured `[workspace.*]` roots are projected when Meridian launches the managed
@@ -113,17 +131,21 @@ startup time by:
 
 ## Failure Behavior
 
-Codex primary is managed-only. If managed startup fails, Meridian fails loudly instead of silently falling back to black-box Codex. This is deliberate: hidden instruction delivery and managed session tracking are the point of the command.
+Codex uses the `raise` managed-attach failure policy. If managed startup raises
+`PrimaryAttachError`, Meridian fails loudly instead of falling back to black-box
+Codex. Hidden instruction delivery and managed session tracking are the point of
+the command.
 
-OpenCode managed-primary startup also fails loudly rather than falling back to
-black-box execution. An explicit provider/model selection is applied through
-launch-local configuration; a conflicting native primary-agent model triggers at
-most one verified backend replacement before session creation. Native config files
-are not edited. Dry-run describes serve, inspection, bootstrap and attach stages;
-it does not claim to know native-resolved defaults or an actual message model.
-Dry-run uses cached model resolution without native availability probes; normal
-launch still validates availability. CLI telemetry/cache setup may write local
-files. Invalid inherited OpenCode JSON is rejected, never silently discarded.
+OpenCode uses the `fallback_to_blackbox` policy. On `PrimaryAttachError`, Meridian
+logs a warning, removes managed sidecars, and starts a black-box OpenCode TUI. An
+explicit provider/model selection is applied through launch-local configuration; a
+conflicting native primary-agent model triggers at most one verified backend
+replacement before session creation. Native config files are not edited. Dry-run
+describes serve, inspection, bootstrap and attach stages; it does not claim to know
+native-resolved defaults or an actual message model. Dry-run uses cached model
+resolution without native availability probes; normal launch still validates
+availability. CLI telemetry/cache setup may write local files. Invalid inherited
+OpenCode JSON is rejected, never silently discarded.
 
 Continue preserves native choice. Later injected turns use the last committed
 native agent/model/variant, not the original launch model. Unsubmitted TUI-local

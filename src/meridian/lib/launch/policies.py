@@ -180,19 +180,6 @@ class ResolvedLaunchPolicy:
 ResolvedPolicies = ResolvedLaunchPolicy
 
 
-def _resolve_terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
-    """Resolve the interactive terminal surface mode at the policy boundary.
-
-    Stage 3.4 lands the typed policy field without changing interactive launch
-    behavior. The compatibility default remains PTY-mediated for every harness.
-    Claude is permanently pinned to PTY-mediated; Codex/OpenCode also remain on
-    PTY-mediated until later rollout gates enable native inherit.
-    """
-
-    _ = harness_id
-    return TerminalSurfaceMode.PTY_MEDIATED
-
-
 def _policy_warnings(
     *,
     profile_warning: str | None,
@@ -583,7 +570,9 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         warnings=tuple(policy_warnings),
         alias_catalog=alias_catalog,
         harness_registry=surface.harness_registry,
-        terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=resolved_harness),
+        terminal_surface_mode=surface.harness_registry.get_contract(
+            resolved_harness
+        ).capabilities.terminal_surface_mode,
         provenance_overrides=provenance_overrides or None,
     )
 
@@ -601,8 +590,6 @@ def _resolve_policy_from_snapshot(
         harness_registry=surface.harness_registry,
         skills_readonly=surface.skills_readonly,
         alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
-        resolve_terminal_surface_mode=_resolve_terminal_surface_mode,
-        logger=_LOGGER,
     )
     return ResolvedLaunchPolicy(
         profile=replayed.profile,

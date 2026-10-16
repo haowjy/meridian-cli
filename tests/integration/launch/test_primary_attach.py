@@ -1211,14 +1211,23 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handlers(
+async def test_primary_attach_sighup_before_zero_exit_is_cancelled_and_restores_handlers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    sigint_handlers_at_stop: list[Any] = []
+
+    class SignalAwareConnection(FakeManagedConnection):
+        async def stop(self, *, reason: str | None = None) -> None:
+            sigint_handlers_at_stop.append(signal.getsignal(signal.SIGINT))
+            await super().stop(reason=reason)
+
     spawn_dir = tmp_path / "spawns" / "p902-signal"
     tui_started = asyncio.Event()
-    connection = FakeManagedConnection(events=[], session_id="sess-signal")
-    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir, wait_exit_code=130)
+    connection = SignalAwareConnection(events=[], session_id="sess-signal")
+    # OpenCode handles pane-close SIGHUP and exits cleanly. The signal still
+    # wins because the launcher observes it before the fake TUI's zero exit.
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir, wait_exit_code=0)
     terminated_scopes: list[str] = []
     installed_handlers: list[Any] = []
 
@@ -1235,6 +1244,7 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
     before_term = signal.getsignal(signal.SIGTERM)
     before_hup = signal.getsignal(signal.SIGHUP)
+    before_int = signal.getsignal(signal.SIGINT)
     launcher = PrimaryAttachLauncher(
         spawn_id=SpawnId("p902-signal"),
         spawn_dir=spawn_dir,
@@ -1255,6 +1265,7 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     await tui_started.wait()
     assert installed_handlers
     assert installed_handlers[0] not in (signal.SIG_DFL, signal.SIG_IGN)
+    assert signal.getsignal(signal.SIGINT) not in (signal.SIG_DFL, signal.SIG_IGN)
 
     launcher._request_signal_cancel()
     outcome = await run_task
@@ -1264,6 +1275,8 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     assert terminated_scopes == ["tui:signal_cancelled"]
     assert signal.getsignal(signal.SIGTERM) is before_term
     assert signal.getsignal(signal.SIGHUP) is before_hup
+    assert signal.getsignal(signal.SIGINT) is before_int
+    assert sigint_handlers_at_stop == [before_int]
 
 
 @pytest.mark.asyncio
@@ -1300,6 +1313,71 @@ async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
 
     assert outcome.cancelled is True
     assert outcome.exit_code == 130
+    assert process_launcher.launch_commands == []
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_sigint_during_backend_startup_propagates_and_tears_down(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RecordingCoordinator:
+        def __init__(self) -> None:
+            self.receivers: set[object] = set()
+            self.sigint_was_intercepted = False
+
+        def register_receiver(self, receiver: object) -> None:
+            self.receivers.add(receiver)
+
+        def unregister_receiver(self, receiver: object) -> None:
+            self.receivers.discard(receiver)
+
+        def deliver_sigint(self) -> None:
+            for receiver in tuple(self.receivers):
+                if signal.SIGINT in cast("Any", receiver).target_signals:
+                    self.sigint_was_intercepted = True
+                    cast("Any", receiver).forward_signal(signal.SIGINT)
+                    return
+            raise KeyboardInterrupt
+
+    coordinator = RecordingCoordinator()
+
+    class SigintDuringStartupConnection(FakeManagedConnection):
+        async def start(
+            self,
+            config: ConnectionConfig,
+            spec: ResolvedLaunchSpec,
+        ) -> None:
+            _ = (config, spec)
+            coordinator.deliver_sigint()
+
+    monkeypatch.setattr(primary_attach_module, "signal_coordinator", lambda: coordinator)
+    spawn_dir = tmp_path / "spawns" / "p903-sigint-startup"
+    connection = SigintDuringStartupConnection(events=[])
+    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p903-sigint-startup"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+        runtime_root=tmp_path,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        await launcher.run(
+            config=_build_config(
+                spawn_id=SpawnId("p903-sigint-startup"),
+                control_root=tmp_path,
+            ),
+            spec=_build_spec(),
+            cwd=tmp_path,
+            env={},
+        )
+
+    assert coordinator.sigint_was_intercepted is False
+    assert coordinator.receivers == set()
+    assert launcher._heartbeat_task is None
     assert process_launcher.launch_commands == []
 
 

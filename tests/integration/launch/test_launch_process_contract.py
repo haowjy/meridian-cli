@@ -166,6 +166,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        process_launcher: Any,
         on_child_started: Any,
         launcher_diagnostics_path: Path,
     ) -> process_runner.PrimaryProcessResult:
@@ -239,6 +240,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        process_launcher: Any,
         on_child_started: Any,
         launcher_diagnostics_path: Path,
     ) -> process_runner.PrimaryProcessResult:

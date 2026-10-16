@@ -47,6 +47,7 @@ from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, writ
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 
+from .native_launcher import native_sigint_shield
 from .ports import TUI_TERMINATE_GRACE_SECONDS, LaunchedProcess, ProcessLauncher, RunningProcess
 from .terminal_ownership import tui_terminal_window
 
@@ -58,8 +59,10 @@ _TUI_WAIT_CANCEL_TIMEOUT_SECONDS = 1.0
 logger = structlog.get_logger(__name__)
 
 
-def _start_process_wait(running_process: RunningProcess) -> asyncio.Future[LaunchedProcess]:
-    """Run a synchronous terminal relay without joining it during loop shutdown."""
+def _start_process_wait(
+    running_process: RunningProcess,
+) -> asyncio.Future[LaunchedProcess]:
+    """Run a synchronous process wait without joining it during loop shutdown."""
 
     loop = asyncio.get_running_loop()
     result_future: asyncio.Future[LaunchedProcess] = loop.create_future()
@@ -223,7 +226,7 @@ class PrimaryAttachLauncher:
         self._signal_cancel_requested = False
 
     def _request_signal_cancel(self) -> None:
-        """Handle SIGTERM/SIGHUP: stop the TUI relay so ``run`` can finalize."""
+        """Handle SIGTERM/SIGHUP: stop the TUI wait so ``run`` can finalize."""
 
         self._signal_cancel_requested = True
         running = self._running_process
@@ -373,7 +376,10 @@ class PrimaryAttachLauncher:
                 self._record_tui_scope(identity, session_id)
 
             telemetry.clear()
-            with tui_terminal_window(self._spawn_dir / LAUNCHER_LOG_FILENAME) as window:
+            with (
+                native_sigint_shield(self._process_launcher),
+                tui_terminal_window(self._spawn_dir / LAUNCHER_LOG_FILENAME) as window,
+            ):
                 try:
                     running_process = self._process_launcher.start(
                         command=command,
@@ -385,7 +391,7 @@ class PrimaryAttachLauncher:
                     self._running_process = running_process
                     if self._signal_cancel_requested:
                         # A signal arrived during backend startup; honor it now that the
-                        # TUI relay exists.
+                        # TUI process exists.
                         running_process.cancel_wait()
                     try:
                         _handle_running(running_process.identity)
@@ -401,14 +407,11 @@ class PrimaryAttachLauncher:
                     )
                     # The TUI owns the primary. Observer silence is not a quit.
                     launched = await asyncio.shield(launch_task)
-                    # Cancellation is only asserted when the relay was actually
-                    # interrupted by the signal: ``cancel_wait`` returns exit 130,
-                    # while a clean TUI exit returns its own code. This avoids
-                    # turning a session that exited normally just before a signal
-                    # landed into a cancel.
-                    cancelled = self._signal_cancel_requested and launched.exit_code == 130
+                    # A pane close can make the TUI return zero. Observation order,
+                    # not its exit code, distinguishes cancellation from normal quit.
+                    cancelled = self._signal_cancel_requested
                     if cancelled:
-                        # The relay stopped on the signal, so the TUI is still alive.
+                        # The wait stopped on the signal; ensure the TUI scope is gone.
                         await self._stop_idle_task()
                         await self._stop_tui_launch_task(
                             running_process,
@@ -431,7 +434,7 @@ class PrimaryAttachLauncher:
 
             return PrimaryAttachOutcome(
                 facts=self._facts,
-                exit_code=launched.exit_code,
+                exit_code=130 if cancelled else launched.exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
                 cancelled=cancelled,
@@ -456,35 +459,37 @@ class PrimaryAttachLauncher:
                 )
             raise
         finally:
-            signal_coordinator().unregister_receiver(cancel_receiver)
-            self._running_process = None
-            if connection_started:
-                self._set_activity("finalizing")
-            consumer_task = self._event_consumer_task
-            if consumer_task is not None:
-                consumer_task.cancel()
-                try:
-                    await consumer_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    # An observer failure must not mask cancellation or skip
-                    # TUI/backend teardown.
-                    logger.warning(
-                        "primary_attach.observer_failed",
-                        spawn_id=str(self._spawn_id),
-                        exc_info=True,
-                    )
-                self._event_consumer_task = None
-            await self._stop_idle_task()
-            heartbeat_task = self._heartbeat_task
-            if heartbeat_task is not None:
-                heartbeat_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await heartbeat_task
-                self._heartbeat_task = None
-            if connection_started:
-                await self._connection.stop()
+            try:
+                self._running_process = None
+                if connection_started:
+                    self._set_activity("finalizing")
+                consumer_task = self._event_consumer_task
+                if consumer_task is not None:
+                    consumer_task.cancel()
+                    try:
+                        await consumer_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        # An observer failure must not mask cancellation or skip
+                        # TUI/backend teardown.
+                        logger.warning(
+                            "primary_attach.observer_failed",
+                            spawn_id=str(self._spawn_id),
+                            exc_info=True,
+                        )
+                    self._event_consumer_task = None
+                await self._stop_idle_task()
+                heartbeat_task = self._heartbeat_task
+                if heartbeat_task is not None:
+                    heartbeat_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await heartbeat_task
+                    self._heartbeat_task = None
+                if connection_started:
+                    await self._connection.stop()
+            finally:
+                signal_coordinator().unregister_receiver(cancel_receiver)
 
     async def _start_primary_observer_connection_with_retry(
         self,
@@ -640,6 +645,7 @@ class PrimaryAttachLauncher:
         reason: str,
     ) -> None:
         await self._terminate_tui_scope(reason=reason)
+        running_process.terminate()
         try:
             await asyncio.wait_for(
                 asyncio.shield(launch_task),
