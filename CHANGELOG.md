@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.15] - 2026-10-16
+
 ### Changed
 - Codex/OpenCode primaries own the real terminal, including `--continue`. No inner
   PTY: resize, Ctrl+C, shell Ctrl+Z/`fg` work natively. Claude/Pi keep the relay.
