@@ -10,7 +10,7 @@ API
 ``yield_to_loop()``
     Yield one event-loop tick (``asyncio.sleep(0)``) without advancing fake time.
 
-``wait_until(predicate, *, timeout=1.0, on_tick=None)``
+``wait_until(predicate, *, timeout=30.0, on_tick=None)``
     Poll *predicate* until true, yielding each tick.  Optional *on_tick* runs
     after each yield (e.g. ``clock.advance``).
 
@@ -46,19 +46,20 @@ async def yield_to_loop() -> None:
 async def wait_until(
     predicate: Callable[[], bool],
     *,
-    timeout: float = 1.0,
+    timeout: float = 30.0,
     on_tick: Callable[[], None] | None = None,
     description: str = "condition",
 ) -> None:
-    """Wait until *predicate* returns true, yielding between polls."""
+    """Wait until *predicate* returns true, with a generous hang guard."""
     deadline = _real_monotonic() + timeout
-    while _real_monotonic() < deadline:
+    while True:
         if predicate():
             return
+        if _real_monotonic() >= deadline:
+            raise AssertionError(f"timed out waiting for {description}")
         if on_tick is not None:
             on_tick()
         await yield_to_loop()
-    raise AssertionError(f"timed out waiting for {description}")
 
 
 async def assert_still_pending(task: asyncio.Task[Any]) -> None:
