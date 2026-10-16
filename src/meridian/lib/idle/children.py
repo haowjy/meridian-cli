@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import UUID
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.state import spawn_store
@@ -19,6 +20,8 @@ class SpawnRow:
     id: str
     parent_id: str | None
     status: str
+    history_id: UUID | None = None
+    parent_history_id: UUID | None = None
 
 
 SpawnStoreReader = Callable[[], Iterable[SpawnRow]]
@@ -49,7 +52,13 @@ def spawn_store_reader(env: Mapping[str, str]) -> SpawnStoreReader:
         if runtime_root is None:
             return ()
         return (
-            SpawnRow(id=row.id, parent_id=row.parent_id, status=str(row.status))
+            SpawnRow(
+                id=row.id,
+                parent_id=row.parent_id,
+                status=str(row.status),
+                history_id=row.history_id,
+                parent_history_id=row.parent_history_id,
+            )
             for row in spawn_store.list_spawns(runtime_root).records
         )
 

@@ -110,6 +110,7 @@ RECORDS = Table(
     Column("current_chat", Text),
     Column("owner", Text),
     Column("parent", Text),
+    Column("parent_history", Text),
     Column("work", Text),
     Column("status", Text, nullable=False),
     Column("kind", Text, nullable=False),
@@ -125,6 +126,7 @@ Index("owner_records", RECORDS.c.owner, RECORDS.c.started)
 Index("chat_records", RECORDS.c.chat, RECORDS.c.started)
 Index("current_chat_records", RECORDS.c.current_chat, RECORDS.c.started)
 Index("parent_records", RECORDS.c.parent)
+Index("parent_history_records", RECORDS.c.parent_history)
 Index("work_records", RECORDS.c.work, RECORDS.c.started)
 Index("status_records", RECORDS.c.status, RECORDS.c.started)
 Index("activity_records", RECORDS.c.activity)
@@ -450,9 +452,9 @@ class HistoryIndex:
         )
         db.exec_driver_sql(
             "INSERT INTO records (history_id, local_id, spawn_id, run, chat, current_chat, "
-            "owner, parent, "
+            "owner, parent, parent_history, "
             "work, status, kind, started, activity, active, archive_id, record_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 history_id,
                 record.id,
@@ -462,6 +464,7 @@ class HistoryIndex:
                 record.current_chat_id,
                 record.owner_chat_id or record.chat_id,
                 record.parent_id,
+                str(record.parent_history_id) if record.parent_history_id else None,
                 record.work_id,
                 str(record.status),
                 record.kind,
@@ -1482,28 +1485,22 @@ class HistoryIndex:
         statement = text(
             """
             WITH RECURSIVE
-            edges(spawn_id, parent) AS (
-                -- Keep each distinct run-level parent edge for reachability;
-                -- repeated generations with the same edge add no information.
-                SELECT DISTINCT spawn_id, parent
+            subtree(history_id, spawn_id) AS (
+                SELECT history_id, spawn_id
                   FROM records
-                 WHERE parent IS NOT NULL
-            ),
-            subtree(spawn_id) AS (
-                SELECT spawn_id
-                  FROM edges
-                 WHERE parent = :root AND spawn_id != :root
+                 WHERE spawn_id = :root
                 UNION
-                SELECT child.spawn_id
-                  FROM edges AS child
-                  JOIN subtree ON child.parent = subtree.spawn_id
-                 WHERE child.spawn_id != :root
+                SELECT child.history_id, child.spawn_id
+                  FROM records AS child
+                  JOIN subtree AS parent
+                    ON (child.parent_history = parent.history_id
+                        OR (child.parent_history IS NULL
+                            AND child.parent = parent.spawn_id))
             )
             SELECT records.local_id, records.parent, records.archive_id IS NOT NULL
               FROM records
-              JOIN subtree ON subtree.spawn_id = records.spawn_id
-             WHERE (records.parent = :root
-                    OR records.parent IN (SELECT spawn_id FROM subtree))
+              JOIN subtree ON subtree.history_id = records.history_id
+             WHERE records.spawn_id != :root
                AND (:active_only = 0 OR records.active = 1)
              ORDER BY records.local_id
             """

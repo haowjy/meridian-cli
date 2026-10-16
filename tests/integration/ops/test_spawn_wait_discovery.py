@@ -14,6 +14,7 @@ from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import SpawnKind, SpawnRecord
 from tests.support.resident_drain import start_row
+from tests.support.spawn_runs import seed_run
 
 
 def _runtime(tmp_path: Path) -> tuple[Path, Path]:
@@ -141,6 +142,29 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
 
     assert [row.id for row in rows] == ["p3"]
     assert "p-sibling" not in {row.id for row in rows}
+
+
+def test_nested_discovery_follows_reopened_runs_exact_parent_history(tmp_path: Path) -> None:
+    _, root = _runtime(tmp_path)
+    seed_run(root, "p1", status=None, chat_id="c1")
+    original_child = seed_run(root, "p2", status=None, parent="p1", chat_id="c2")
+    seed_run(root, "p9", status=None, chat_id="c9")
+    reopened_child = seed_run(root, "p2.2", status=None, parent="p9", chat_id="c2.2")
+    grandchild = seed_run(root, "p10", status=None, parent="p2.2", chat_id="c10")
+
+    under_original = spawn_api._discover_pending_spawns(
+        root,
+        "c1",
+        only_descendants_of="p1",
+    )
+    under_reopen = spawn_api._discover_pending_spawns(
+        root,
+        "c9",
+        only_descendants_of="p9",
+    )
+
+    assert [row.id for row in under_original] == [original_child]
+    assert {row.id for row in under_reopen} == {reopened_child, grandchild}
 
 
 def test_discovery_rereads_terminal_authority_for_active_index_row(

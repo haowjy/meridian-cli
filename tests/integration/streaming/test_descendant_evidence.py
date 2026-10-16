@@ -189,6 +189,26 @@ def test_archived_intermediate_preserves_live_grandchild_membership(tmp_path: Pa
     assert [blocker.identity for blocker in assessment.blockers] == ["p3"]
 
 
+def test_reopened_run_grandchild_blocks_only_the_new_parent_drain(tmp_path: Path) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    start_row(tmp_path, "p9", HarnessId.PI, None)
+    start_row(tmp_path, "p2.2", HarnessId.CODEX, "p9")
+    start_row(tmp_path, "p10", HarnessId.CODEX, "p2.2")
+
+    original = ReconciledDescendantEvidence(
+        runtime_root=tmp_path,
+        root_spawn_id=SpawnId("p1"),
+    ).assess()
+    reopened = ReconciledDescendantEvidence(
+        runtime_root=tmp_path,
+        root_spawn_id=SpawnId("p9"),
+    ).assess()
+
+    assert [blocker.identity for blocker in original.blockers] == ["p2"]
+    assert {blocker.identity for blocker in reopened.blockers} == {"p2.2", "p10"}
+
+
 def test_descendant_projection_stops_when_indexed_parent_edges_cycle(tmp_path: Path) -> None:
     start_row(tmp_path, "p1", HarnessId.PI, "p2")
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")

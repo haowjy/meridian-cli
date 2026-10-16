@@ -45,7 +45,7 @@ def _state_root(project_root: Path) -> Path:
     return runtime_root
 
 
-def _start_reparented_runs(runtime_root: Path) -> tuple[RunId, RunId]:
+def _start_reparented_runs(runtime_root: Path) -> tuple[RunId, RunId, RunId]:
     seed_run(runtime_root, "p1", status=None, chat_id="c1", prompt="root")
     seed_run(runtime_root, "p9", status=None, chat_id="c9", prompt="other root")
     p2 = seed_run(
@@ -59,7 +59,15 @@ def _start_reparented_runs(runtime_root: Path) -> tuple[RunId, RunId]:
         chat_id="c2-reopened",
         prompt="reopened elsewhere",
     )
-    return p2, p2_reopened
+    grandchild = seed_run(
+        runtime_root,
+        "p10",
+        status=None,
+        parent=str(p2_reopened),
+        chat_id="c10",
+        prompt="launched by reopened run",
+    )
+    return p2, p2_reopened, grandchild
 
 
 @pytest.mark.parametrize("observe", [True, False])
@@ -362,15 +370,25 @@ def test_spawn_stats_scopes_each_reopened_run_by_its_own_parent(tmp_path: Path) 
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
-    p2, p2_reopened = _start_reparented_runs(runtime_root)
+    p2, p2_reopened, grandchild = _start_reparented_runs(runtime_root)
 
-    output = spawn_api.spawn_stats_sync(
+    original_tree = spawn_api.spawn_stats_sync(
         SpawnStatsInput(project_root=project_root.as_posix(), spawn_id="p1")
     )
+    reopened_tree = spawn_api.spawn_stats_sync(
+        SpawnStatsInput(project_root=project_root.as_posix(), spawn_id="p9")
+    )
 
-    assert output.total_runs == 2
-    assert [child.spawn_id for child in output.children] == ["p1", str(p2)]
-    assert str(p2_reopened) not in {child.spawn_id for child in output.children}
+    assert original_tree.total_runs == 2
+    assert [child.spawn_id for child in original_tree.children] == ["p1", str(p2)]
+    assert str(p2_reopened) not in {child.spawn_id for child in original_tree.children}
+    assert str(grandchild) not in {child.spawn_id for child in original_tree.children}
+    assert reopened_tree.total_runs == 3
+    assert {child.spawn_id for child in reopened_tree.children} == {
+        "p9",
+        str(p2_reopened),
+        str(grandchild),
+    }
 
 
 def test_spawn_cancel_all_excludes_a_run_reopened_below_another_parent(
@@ -382,7 +400,7 @@ def test_spawn_cancel_all_excludes_a_run_reopened_below_another_parent(
     prepared = prepare_for_runtime_write(project_root)
     runtime_root = prepared.runtime_root
     assert runtime_root is not None
-    p2, p2_reopened = _start_reparented_runs(runtime_root)
+    p2, p2_reopened, grandchild = _start_reparented_runs(runtime_root)
     cancelled: list[str] = []
 
     def _fake_spawn_cancel_sync(
@@ -415,6 +433,19 @@ def test_spawn_cancel_all_excludes_a_run_reopened_below_another_parent(
     assert output.total_running == 1
     assert cancelled == [str(p2)]
     assert str(p2_reopened) not in cancelled
+    assert str(grandchild) not in cancelled
+
+    cancelled.clear()
+    output = spawn_api.spawn_cancel_all_sync(
+        SpawnCancelAllInput(project_root=project_root.as_posix()),
+        ctx=RuntimeContext(
+            spawn_id=SpawnId("p9"), run_id=RunId("p9"), chat_id="c9"
+        ),
+        prepared=prepared,
+    )
+
+    assert output.total_running == 2
+    assert set(cancelled) == {str(p2_reopened), str(grandchild)}
 
 
 def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(

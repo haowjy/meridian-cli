@@ -174,13 +174,18 @@ def test_history_index_projects_only_runs_parented_within_each_subtree(
             agent="coder",
         ),
     )
+    grandchild = seed_run(tmp_path, "p10", status=None, parent=str(reopened_child))
 
     index = HistoryIndex(tmp_path)
     assert index.rebuild().complete
     assert index.descendant_projection("p1") == (("p2", "p1", False),)
     assert index.descendant_projection("p1", active_only=True) == ()
-    assert index.descendant_projection("p9") == (("p2.2", "p9", False),)
+    assert index.descendant_projection("p9") == (
+        ("p10", "p2", False),
+        ("p2.2", "p9", False),
+    )
     assert index.descendant_projection("p9", active_only=True) == (
+        (str(grandchild), "p2", False),
         (str(reopened_child), "p9", False),
     )
 

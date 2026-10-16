@@ -25,7 +25,9 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 
-# Stable-spawn/run and current-chat columns change projection and query semantics.
+# Schema 9 is unshipped and no v9 index exists on the target machine, so the
+# parent-history edge remains part of v9 rather than forcing another namespace.
+# Stable-spawn/run, parent-history, and current-chat columns change projection semantics.
 SCHEMA_VERSION = 9
 
 

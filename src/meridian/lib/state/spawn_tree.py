@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID
 
 from meridian.lib.core.refs import spawn_of
 from meridian.lib.core.spawn_lifecycle import SpawnReservation, is_active_spawn_status
@@ -22,40 +23,56 @@ class DescendantRow(Protocol):
     def parent_id(self) -> str | None: ...
 
     @property
+    def history_id(self) -> UUID | None: ...
+
+    @property
+    def parent_history_id(self) -> UUID | None: ...
+
+    @property
     def status(self) -> str: ...
 
 
 def iter_run_parent_descendants[Row: DescendantRow](
     root_id: str, rows: Iterable[Row]
 ) -> Iterator[Row]:
-    """Yield concrete runs whose own parent edge puts them below ``root_id``.
+    """Yield concrete runs whose exact parent run puts them below ``root_id``.
 
-    This answers which run rows belong to the root's operational subtree. A
-    reopened run with a parent outside that subtree is excluded even when an
-    older generation of the same spawn remains below the root.
+    Rows predating exact parent history fall back to their stable spawn edge.
+    A reopened run with a parent outside the subtree, and children launched by
+    that run, stay excluded even when an older generation remains below the root.
     """
     materialized = tuple(rows)
     root_spawn = spawn_of(root_id)
-    reachable = {root_spawn}
+    selected_runs = {row.id for row in materialized if spawn_of(row.id) == root_spawn}
+    selected_histories = {
+        row.history_id
+        for row in materialized
+        if row.id in selected_runs and row.history_id is not None
+    }
+    selected_spawns = {root_spawn}
     changed = True
     while changed:
         changed = False
         for row in materialized:
-            if row.parent_id is None:
+            if row.id in selected_runs:
                 continue
-            child_spawn = spawn_of(row.id)
-            if child_spawn in reachable:
+            if row.parent_history_id is not None:
+                selected = row.parent_history_id in selected_histories
+            else:
+                selected = (
+                    row.parent_id is not None
+                    and spawn_of(row.parent_id) in selected_spawns
+                )
+            if not selected:
                 continue
-            if spawn_of(row.parent_id) in reachable:
-                reachable.add(child_spawn)
-                changed = True
+            selected_runs.add(row.id)
+            if row.history_id is not None:
+                selected_histories.add(row.history_id)
+            selected_spawns.add(spawn_of(row.id))
+            changed = True
 
     for row in materialized:
-        if (
-            spawn_of(row.id) != root_spawn
-            and row.parent_id is not None
-            and spawn_of(row.parent_id) in reachable
-        ):
+        if row.id in selected_runs and spawn_of(row.id) != root_spawn:
             yield row
 
 
