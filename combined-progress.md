@@ -1,7 +1,0 @@
-2026-10-15 pass 5 started: reading review/design and inventorying test interceptors.
-2026-10-15 group 1: added alias-aware IOProbe, replaced scan/lock interceptors, and captured red proofs in /tmp/616-pass5-red-blind-{scan,locked-read}.txt.
-2026-10-15 group 2: converted sequence/private-helper guards to alias-aware count bounds and removed the owner-session reread micro-guard; focused 84 tests passed.
-2026-10-15 group 3: added chat-busy finalization/no-start, injected-clock lock timeout, live two-process continue race, and bidirectional run/session binding contracts. Red proofs: /tmp/616-pass5-red-{chat-busy-finalization,reopen-lock-timeout,continue-race,run-session-binding}.txt. Lock-order remains deferred to #418 B1.
-2026-10-15 group 4: added spawn-run seeding/reservation helpers, removed all 12 repeated PrimarySessionMetadata fixtures and dozens of start/finalize pairs in reviewed files, generalized Codex rollout placement/content, and kept lock waits on injected time. Focused 85 tests passed.
-2026-10-15 group 5: removed mocked duplicate, merged ancestor refusal coverage, removed large-N duplicates and unshipped schema-8 test, normalized head vocabulary, corrected retention naming, and asserted restore behavior through runs API. Focused 103 tests passed.
-2026-10-15 gates: ruff passed; pyright 0/0; ref-boundary gate passed; pytest-llm 1557 passed. Full suite: 2756 passed, 1 skipped, 1 Pi delivery timing failure under load; serial file reruns passed 18/18 on this head and 18/18 on origin/main.

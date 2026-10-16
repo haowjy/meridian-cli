@@ -5,8 +5,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Harden spawn/run continuation coverage with alias-aware I/O probes and
-  deterministic lock-timeout and concurrent-continue tests.
 - Spawn action and detail JSON now expose the stable `spawn_id` and exact
   `run_id` as separate fields.
 - `--continue pN` keeps `pN`; each launch is run `pN.K` (`MERIDIAN_RUN_ID`).
