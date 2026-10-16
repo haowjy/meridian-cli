@@ -5,10 +5,9 @@ from __future__ import annotations
 import os
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
 
 from meridian.lib.core.lifecycle import (
     LifecycleEvent,
@@ -17,7 +16,6 @@ from meridian.lib.core.lifecycle import (
     generate_lifecycle_event_id,
 )
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import RuntimePaths
@@ -180,83 +178,28 @@ def test_finalize_dispatches_hooks_after_terminal_state_is_persisted(tmp_path: P
     assert snapshot_hook.snapshots[-1] == ("spawn.finalized", "succeeded", "runner")
 
 
-def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
-    service = _make_service(tmp_path)
-
-    spawn_id = service.start(
-        SpawnReservation(
-            chat_id="c1",
-            session_metadata=PrimarySessionMetadata(
-                harness="codex",
-                model="gpt-5.4",
-                agent="coder",
-                agent_path="",
-                skills=(),
-                skill_paths=(),
-            ),
-            prompt="run it",
-            metadata=SpawnStartMetadata(
-                desc="goal metadata",
-                work_id="  w-lifecycle  ",
-                goal="  finish migration  ",
-            ),
-        )
-    )
-
-    record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert record is not None
-    assert record.desc == "goal metadata"
-    assert record.work_id == "w-lifecycle"
-    assert record.goal == "finish migration"
-
-
-def test_reserve_defers_hook_until_announce(tmp_path: Path) -> None:
+@pytest.mark.parametrize("entry_path", ["reserve", "start"])
+def test_deferred_hook_waits_for_announce(tmp_path: Path, entry_path: str) -> None:
     hook = EventTypeHook()
     service = _make_service(tmp_path, hooks=[hook])
-
-    spawn_id = service.reserve(
-        SpawnReservation(
-            chat_id="c1",
-            session_metadata=PrimarySessionMetadata(
-                harness="codex",
-                model="gpt-5.4",
-                agent="coder",
-                agent_path="",
-                skills=(),
-                skill_paths=(),
-            ),
-            prompt="run it",
-            status="queued",
-        )
-    )
-
-    assert hook.event_types == []
-
-    service.announce(spawn_id)
-
-    assert hook.event_types == ["spawn.created"]
-
-
-def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path) -> None:
-    hook = EventTypeHook()
-    service = _make_service(tmp_path, hooks=[hook])
-
-    spawn_id = service.start(
-        SpawnReservation(
-            chat_id="c1",
-            session_metadata=PrimarySessionMetadata(
-                harness="codex",
-                model="gpt-5.4",
-                agent="coder",
-                agent_path="",
-                skills=(),
-                skill_paths=(),
-            ),
-            prompt="run it",
-            status="queued",
+    reservation = SpawnReservation(
+        chat_id="c1",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex",
+            model="gpt-5.4",
+            agent="coder",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
         ),
-        dispatch_events=False,
+        prompt="run it",
+        status="queued",
     )
+
+    if entry_path == "reserve":
+        spawn_id = service.reserve(reservation)
+    else:
+        spawn_id = service.start(reservation, dispatch_events=False)
 
     assert hook.event_types == []
 

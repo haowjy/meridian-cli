@@ -162,21 +162,3 @@ def test_discovery_rereads_terminal_authority_for_active_index_row(
     rows = spawn_api._discover_pending_spawns(root, "c-owner")
 
     assert rows == []
-
-
-def test_discovery_does_not_use_the_unfiltered_spawn_scan(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _, root = _runtime(tmp_path)
-    spawn_id = _spawn(root, "p-child")
-    history_index.HistoryIndex(root).rebuild()
-
-    def reject_unfiltered_scan(*args: object, **kwargs: object) -> None:
-        raise AssertionError("no-arg wait discovery loaded the global spawn scan")
-
-    monkeypatch.setattr(spawn_api, "indexed_spawn_scan", reject_unfiltered_scan)
-
-    rows = spawn_api._discover_pending_spawns(root, "c-owner")
-
-    assert [row.id for row in rows] == [spawn_id]

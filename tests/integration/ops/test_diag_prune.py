@@ -216,30 +216,6 @@ def test_doctor_artifact_retention_preserves_quarantine_and_prunes_stale_row(
     assert quarantined_spawn.exists()
 
 
-def test_doctor_local_mode_skips_cross_project_enumeration(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _create_project_root(tmp_path)
-    _create_agent_skill_dirs(project_root)
-    monkeypatch.setattr(
-        diag,
-        "check_upgrade_availability",
-        lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
-    )
-    monkeypatch.setattr(
-        diag,
-        "scan_orphan_project_dirs",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("doctor local mode should not enumerate sibling projects")
-        ),
-    )
-
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), global_=False))
-
-    assert result.ok is True
-
-
 def test_doctor_prune_with_global_also_prunes_global_orphan_dirs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

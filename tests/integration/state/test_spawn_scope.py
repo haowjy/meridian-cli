@@ -65,22 +65,12 @@ def test_spawn_scope_missing_file_is_absent_not_cleared(tmp_path: Path) -> None:
     assert scope == SpawnScope()
 
 
-def test_spawn_scope_corrupt_file_falls_through(tmp_path: Path) -> None:
+@pytest.mark.parametrize("contents", ["{not json", ""], ids=["corrupt", "empty"])
+def test_spawn_scope_invalid_file_falls_through(tmp_path: Path, contents: str) -> None:
     project_root = _project(tmp_path)
     scope_dir = resolve_project_runtime_root_for_write(project_root) / "spawns" / "p1"
     scope_dir.mkdir(parents=True)
-    (scope_dir / "scope.json").write_text("{not json", encoding="utf-8")
-
-    scope = read_spawn_scope(project_root, "p1")
-
-    assert scope == SpawnScope()
-
-
-def test_spawn_scope_empty_file_falls_through(tmp_path: Path) -> None:
-    project_root = _project(tmp_path)
-    scope_dir = resolve_project_runtime_root_for_write(project_root) / "spawns" / "p1"
-    scope_dir.mkdir(parents=True)
-    (scope_dir / "scope.json").write_text("", encoding="utf-8")
+    (scope_dir / "scope.json").write_text(contents, encoding="utf-8")
 
     scope = read_spawn_scope(project_root, "p1")
 

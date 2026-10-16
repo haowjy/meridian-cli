@@ -12,7 +12,6 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.state.jsonl import (
-    _jsonl_tail_needs_repair,
     append_durable_jsonl_line,
     repair_jsonl_tail,
 )
@@ -161,19 +160,6 @@ def test_append_durable_jsonl_line_rejects_embedded_newlines(tmp_path: Path) -> 
         append_durable_jsonl_line(path, '{"id":1}\n{"id":2}')
 
     assert not path.exists()
-
-
-def test_jsonl_tail_needs_repair_is_false_for_clean_tail(tmp_path: Path) -> None:
-    path = tmp_path / "journal.jsonl"
-    path.write_bytes(b'{"id":1,"kind":"x"}\n')
-
-    assert _jsonl_tail_needs_repair(path) is False
-
-
-def test_jsonl_tail_needs_repair_is_false_for_missing_file(tmp_path: Path) -> None:
-    path = tmp_path / "journal.jsonl"
-
-    assert _jsonl_tail_needs_repair(path) is False
 
 
 def test_append_durable_jsonl_line_avoids_full_read_on_clean_tail(

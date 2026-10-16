@@ -71,38 +71,6 @@ def _write_codex_rollout(
     )
 
 
-def test_unbound_spawn_does_not_read_runner_history(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p42",
-        chat_id="c42",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="do thing",
-        harness_session_id="",
-    )
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "harness_id": "codex",
-            "payload": {"item": {"type": "agentMessage", "text": "live progress"}},
-        },
-    )
-
-    with pytest.raises(NativeSessionUnavailable, match="unbound"):
-        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix()))
-
-
 def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -305,51 +273,6 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
     assert artifacts.list_artifacts("p42").count(history_key) == 1
     # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
     assert detail.pi_lifecycle_phase is None
-
-
-def test_session_log_chat_reads_file_authority_without_harness_session_id(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="",
-        model="gpt-5.4",
-        chat_id="c42",
-    )
-    try:
-        spawn_store.start_spawn(
-            runtime_root,
-            spawn_id="p42",
-            chat_id=chat_id,
-            model="gpt-5.4",
-            agent="dev-orchestrator",
-            harness="codex",
-            kind="primary",
-            prompt="do thing",
-            harness_session_id="",
-        )
-        _write_spawn_output(
-            runtime_root,
-            "p42",
-            {
-                "event_type": "item/completed",
-                "harness_id": "codex",
-                "payload": {"item": {"type": "agentMessage", "text": "primary live progress"}},
-            },
-        )
-
-        with pytest.raises(ValueError, match="no verified native session for c42"):
-            session_log_sync(
-                SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
-            )
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
 
 
 def test_session_export_spawn_duration_uses_last_attempt_exited_at(

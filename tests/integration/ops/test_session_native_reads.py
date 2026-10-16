@@ -53,16 +53,6 @@ def seed(tmp_path: Path) -> tuple[Path, Path, str]:
     return root, native, sid
 
 
-@pytest.mark.parametrize("ref", ["p1", "raw"])
-def test_old_spawn_and_raw_id_choose_native(tmp_path: Path, ref: str) -> None:
-    root, native, sid = seed(tmp_path)
-    target = resolve_transcript_source(
-        ref=sid if ref == "raw" else ref, file_path=None, project_root=tmp_path, runtime_root=root
-    )
-    assert target.source.path == native
-    assert target.source.kind == "native_file"
-
-
 def test_bound_missing_never_falls_back(tmp_path: Path) -> None:
     root, native, _ = seed(tmp_path)
     native.unlink()
@@ -143,14 +133,23 @@ def test_spawn_view_matrix(tmp_path, status, boundary, current, label, selected)
             "OpenCode native history is stored in its database",
         ),
         ("notes.txt", b"just text", "not a native transcript"),
-        ("unknown.jsonl", b'{"hello":"world"}\n', "not a native transcript"),
+        ("spawn-history", None, "not a native transcript"),
+        (
+            "renamed.jsonl",
+            b'{"record":"meridian.transcript","version":2}\n',
+            "not a native transcript",
+        ),
     ],
 )
 def test_explicit_file_must_be_supported_native_jsonl(tmp_path, name, content, expected):
     from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 
-    path = tmp_path / name
-    path.write_bytes(content)
+    if name == "spawn-history":
+        root, _, _ = seed(tmp_path)
+        path = root / "spawns/p1/history.jsonl"
+    else:
+        path = tmp_path / name
+        path.write_bytes(content)
     with pytest.raises(ValueError, match=expected):
         session_log_sync(SessionLogInput(file_path=str(path)))
 
@@ -171,19 +170,6 @@ def test_raw_id_in_two_stores_is_ambiguous(tmp_path):
     with pytest.raises(NativeSessionUnavailable) as exc:
         resolve_transcript_source(ref=sid, project_root=tmp_path, runtime_root=root)
     assert exc.value.reason == "ambiguous_native_file"
-
-
-@pytest.mark.parametrize("renamed", [False, True])
-def test_explicit_legacy_file_is_rejected(tmp_path, renamed):
-    from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
-
-    root, _, _ = seed(tmp_path)
-    history = root / "spawns/p1/history.jsonl"
-    if renamed:
-        history = tmp_path / "renamed.jsonl"
-        history.write_text(json.dumps({"record": "meridian.transcript", "version": 2}) + "\n")
-    with pytest.raises(ValueError, match="not a native transcript"):
-        session_log_sync(SessionLogInput(file_path=str(history)))
 
 
 def test_unbound_chat_never_reads_legacy_bytes(tmp_path):

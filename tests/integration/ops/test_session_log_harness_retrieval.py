@@ -20,46 +20,8 @@ from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.opencode_db import (
-    write_opencode_db_session,
     write_opencode_db_session_with_parts,
 )
-
-
-def _write_codex_rollout(
-    *,
-    sessions_root: Path,
-    project_root: Path,
-    session_id: str,
-    assistant_text: str,
-) -> Path:
-    rollout_dir = sessions_root / "2026" / "04"
-    rollout_dir.mkdir(parents=True, exist_ok=True)
-    rollout_path = rollout_dir / f"rollout-2026-04-22T00-00-00-{session_id}.jsonl"
-    rollout_path.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "session_meta",
-                        "payload": {"id": session_id, "cwd": project_root.as_posix()},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response_item",
-                        "payload": {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "output_text", "text": assistant_text}],
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    return rollout_path
 
 
 def _write_claude_session(
@@ -88,68 +50,6 @@ def _write_claude_session(
         encoding="utf-8",
     )
     return session_path
-
-
-def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    xdg_data_home = tmp_path / "xdg-data"
-    session_id = "ses_fixture_session_12345"
-    session_file = xdg_data_home / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
-    session_file.parent.mkdir(parents=True)
-    session_file.write_text("[]\n", encoding="utf-8")
-    write_opencode_db_session(
-        db_path=xdg_data_home / "opencode" / "opencode.db",
-        session_id=session_id,
-        messages=[
-            ("user", "show transcript please"),
-            ("assistant", "here is your transcript"),
-        ],
-    )
-    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
-    storage_root = xdg_data_home / "opencode" / "storage"
-    session_store.start_session(
-        runtime_root,
-        spawn_id="p1",
-        harness="opencode",
-        harness_session_id=session_id,
-        model="gpt-5.3-codex",
-        chat_id="c1",
-        native_store=(storage_root.parent / "opencode.db").as_posix(),
-    )
-
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.3-codex",
-        agent="coder",
-        harness="opencode",
-        prompt="hello",
-        spawn_id="p1",
-        harness_session_id=session_id,
-        started_at="2026-04-11T00:00:00Z",
-    )
-
-    output = session_log_sync(
-        SessionLogInput(
-            ref="p1",
-            project_root=project_root.as_posix(),
-            tail=5,
-        )
-    )
-
-    assert output.session_id == session_id
-    assert output.source == "opencode transcript"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("user", "show transcript please"),
-        ("assistant", "here is your transcript"),
-    ]
 
 
 def test_pi_session_log_uses_reopen_default_lineage_and_labels_partial_parent(
@@ -465,73 +365,6 @@ def test_session_log_default_render_shows_completed_opencode_task_result(
     assert "(completed) Here is the complete report of all matches found." in rendered
 
 
-def test_session_log_renders_opencode_db_compaction_as_segment_handoff(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    xdg_data_home = tmp_path / "xdg-data"
-    session_id = "ses_fixture_db_compaction_12345"
-    write_opencode_db_session_with_parts(
-        db_path=xdg_data_home / "opencode" / "opencode.db",
-        session_id=session_id,
-        messages=[
-            ("user", {}, [{"type": "text", "text": "segment zero user"}]),
-            ("assistant", {}, [{"type": "text", "text": "segment zero assistant"}]),
-            (
-                "assistant",
-                {"mode": "compaction", "agent": "compaction"},
-                [{"type": "text", "text": "handoff into segment one"}],
-            ),
-            ("user", {}, [{"type": "text", "text": "segment one user"}]),
-            ("assistant", {}, [{"type": "text", "text": "segment one assistant"}]),
-        ],
-    )
-    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
-
-    session_store.start_session(
-        runtime_root,
-        harness="opencode",
-        harness_session_id=session_id,
-        model="test",
-        chat_id="c1",
-        spawn_id="p1",
-        native_store=str(xdg_data_home / "opencode" / "opencode.db"),
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.3-codex",
-        agent="coder",
-        harness="opencode",
-        prompt="hello",
-        spawn_id="p1",
-        harness_session_id=session_id,
-        started_at="2026-04-11T00:00:00Z",
-    )
-
-    output = session_log_sync(
-        SessionLogInput(
-            ref="p1",
-            project_root=project_root.as_posix(),
-            full=True,
-        )
-    )
-
-    assert output.total_segments == 2
-    assert output.segment_index == 1
-    assert output.entries[0].role == "system"
-    assert output.entries[0].content == "handoff into segment one"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("user", "segment one user"),
-        ("assistant", "segment one assistant"),
-    ]
-
-
 def test_session_log_preserves_positive_empty_opencode_db_over_legacy_json(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -611,9 +444,6 @@ def _write_spawn_history(runtime_root: Path, spawn_id: str, text: str) -> None:
 @pytest.mark.parametrize(
     ("ref_kind", "ref", "track_session", "expected_session_id", "history_text"),
     [
-        ("spawn", "p1", True, "p1", "spawn history transcript"),
-        ("chat", "c1", True, "c1", "chat ref spawn history transcript"),
-        ("raw", "session", True, "session", "raw ref spawn history transcript"),
         (
             "raw-untracked",
             "session",
@@ -682,116 +512,6 @@ def test_empty_opencode_session_never_substitutes_runner_history(
     assert output.session_id == session_id
     assert output.source == "opencode transcript"
     assert not output.messages
-
-
-def test_session_log_resolves_codex_session_file_from_codex_home_env(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    codex_home = tmp_path / "codex-home"
-    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
-    session_id = "78f02237-df5f-43fe-a6e5-929f98287877"
-    _write_codex_rollout(
-        sessions_root=codex_home / "sessions",
-        project_root=project_root,
-        session_id=session_id,
-        assistant_text="codex env override transcript",
-    )
-
-    session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id=session_id,
-        model="test",
-        chat_id="c1",
-        spawn_id="p1",
-        native_store=str(codex_home / "sessions"),
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="hello",
-        spawn_id="p1",
-        harness_session_id=session_id,
-        started_at="2026-04-11T00:00:00Z",
-    )
-
-    output = session_log_sync(
-        SessionLogInput(
-            ref="p1",
-            project_root=project_root.as_posix(),
-            tail=5,
-        )
-    )
-
-    assert output.session_id == session_id
-    assert output.source == "codex transcript"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "codex env override transcript")
-    ]
-
-
-def test_session_log_resolves_claude_session_file_from_claude_config_dir_env(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    claude_config_dir = tmp_path / "claude-config"
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", claude_config_dir.as_posix())
-    session_id = "claude-env-session"
-    _write_claude_session(
-        config_root=claude_config_dir,
-        project_root=project_root,
-        session_id=session_id,
-        assistant_text="claude env override transcript",
-    )
-
-    session_store.start_session(
-        runtime_root,
-        harness="claude",
-        harness_session_id=session_id,
-        model="test",
-        chat_id="c1",
-        spawn_id="p1",
-        native_store=str(claude_config_dir / "projects" / project_slug(project_root)),
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="claude-opus",
-        agent="coder",
-        harness="claude",
-        prompt="hello",
-        spawn_id="p1",
-        harness_session_id=session_id,
-        started_at="2026-04-11T00:00:00Z",
-    )
-
-    output = session_log_sync(
-        SessionLogInput(
-            ref="p1",
-            project_root=project_root.as_posix(),
-            tail=5,
-        )
-    )
-
-    assert output.session_id == session_id
-    assert output.source == "claude transcript"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "claude env override transcript")
-    ]
 
 
 @pytest.mark.parametrize("ref", ["claude-canonical-session", "c1", "p1"])

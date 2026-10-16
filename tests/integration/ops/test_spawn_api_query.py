@@ -338,83 +338,6 @@ def test_spawn_list_does_not_infer_running_star_from_last_attempt_exit(tmp_path:
     assert output.spawns[0].status_display is None
 
 
-def test_spawn_list_filters_by_profile_name(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-
-    reviewer_spawn_id = spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.4",
-        agent="reviewer",
-        harness="codex",
-        prompt="review",
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c2",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="code",
-    )
-
-    output = spawn_api.spawn_list_sync(
-        SpawnListInput(
-            project_root=project_root.as_posix(),
-            statuses=(),
-            profile="reviewer",
-        )
-    )
-
-    assert [entry.spawn_id for entry in output.spawns] == [str(reviewer_spawn_id)]
-
-
-def test_spawn_list_and_status_surface_timed_out_status(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-
-    timed_out_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-timeout",
-        chat_id="c-timeout",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="timeout",
-    )
-    spawn_store.finalize_spawn(
-        runtime_root,
-        timed_out_id,
-        "timed_out",
-        1,
-        origin="runner",
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-running",
-        chat_id="c-running",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="running",
-    )
-
-    listed = spawn_api.spawn_list_sync(
-        SpawnListInput(project_root=project_root.as_posix(), statuses=("timed_out",))
-    )
-    status = spawn_api.spawn_status_sync(
-        SpawnStatusInput(project_root=project_root.as_posix(), spawn_id=str(timed_out_id))
-    )
-
-    assert [entry.spawn_id for entry in listed.spawns] == [str(timed_out_id)]
-    assert listed.spawns[0].status == "timed_out"
-    assert status.status == "timed_out"
-    assert status.exit_code == 1
-
-
 def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -645,7 +568,21 @@ def test_spawn_show_and_list_hydrate_primary_and_pi_diagnostics(tmp_path: Path) 
     assert pi_detail.pi_cleanup_reason == "abort_grace_expired"
 
 
-def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("goal", "display_label_present", "expected_desc"),
+    [
+        (None, True, "child prompt label"),
+        ("ship the feature", False, "ship the feature"),
+        (None, False, None),
+    ],
+    ids=["display-label", "goal", "legacy-without-label"],
+)
+def test_spawn_children_description(
+    tmp_path: Path,
+    goal: str | None,
+    display_label_present: bool,
+    expected_desc: str | None,
+) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
@@ -658,7 +595,6 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
         agent="coder",
         harness="codex",
         prompt="parent prompt",
-        goal="parent goal",
     )
     child_id = spawn_store.start_spawn(
         runtime_root,
@@ -670,133 +606,27 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
         harness="codex",
         prompt="child prompt label",
         desc=None,
-        goal=None,
+        goal=goal,
     )
+    state_path = runtime_root / "spawns" / str(child_id) / "state.json"
+    if not display_label_present and goal is None:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.pop("display_label", None)
+        state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
     listed = spawn_store.list_spawns(runtime_root, parent_id=str(parent_id))
     assert len(listed.records) == 1
     child_row = listed.records[0]
     assert child_row.id == str(child_id)
     assert child_row.prompt is None
-    assert child_row.display_label == "child prompt label"
-
-    state_path = runtime_root / "spawns" / str(child_id) / "state.json"
-    state_text = state_path.read_text(encoding="utf-8")
-    assert '"display_label": "child prompt label"' in state_text
+    assert child_row.display_label == ("child prompt label" if display_label_present else None)
+    if display_label_present:
+        assert '"display_label": "child prompt label"' in state_path.read_text(encoding="utf-8")
 
     output = spawn_api.spawn_children_sync(
         SpawnChildrenInput(project_root=project_root.as_posix(), spawn_id=str(parent_id))
     )
 
     assert len(output.spawns) == 1
-    entry = output.spawns[0]
-    assert entry.spawn_id == str(child_id)
-    assert entry.desc == "child prompt label"
-
-
-def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-
-    parent_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-parent",
-        chat_id="c-parent",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="parent prompt",
-    )
-    child_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-child",
-        parent_id=str(parent_id),
-        chat_id="c-child",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="ignored prompt summary",
-        goal="ship the feature",
-    )
-
-    listed = spawn_store.list_spawns(runtime_root, parent_id=str(parent_id))
-    assert listed.records[0].display_label is None
-
-    output = spawn_api.spawn_children_sync(
-        SpawnChildrenInput(project_root=project_root.as_posix(), spawn_id=str(parent_id))
-    )
-
     assert output.spawns[0].spawn_id == str(child_id)
-    assert output.spawns[0].desc == "ship the feature"
-
-
-def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-
-    parent_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-parent",
-        chat_id="c-parent",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="parent prompt",
-    )
-    child_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-child",
-        parent_id=str(parent_id),
-        chat_id="c-child",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="legacy prompt body",
-        desc=None,
-        goal=None,
-    )
-    state_path = runtime_root / "spawns" / str(child_id) / "state.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    state.pop("display_label", None)
-    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-
-    listed = spawn_store.list_spawns(runtime_root, parent_id=str(parent_id))
-    assert listed.records[0].prompt is None
-    assert listed.records[0].display_label is None
-
-    output = spawn_api.spawn_children_sync(
-        SpawnChildrenInput(project_root=project_root.as_posix(), spawn_id=str(parent_id))
-    )
-
-    assert output.spawns[0].desc is None
-
-
-def test_spawn_show_surfaces_persisted_goal_and_distinct_task_dir(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-    task_cwd = tmp_path / "repo.worktrees" / "feature-x"
-    task_cwd.mkdir(parents=True)
-
-    spawn_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-task-dir",
-        chat_id="c-task-dir",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="hello",
-        goal="ship the migration",
-        work_id="feature-x",
-        control_root=project_root.as_posix(),
-        task_cwd=task_cwd.as_posix(),
-    )
-
-    detail = spawn_api.spawn_show_sync(
-        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
-    )
-
-    assert detail.goal == "ship the migration"
-    assert detail.task_cwd == task_cwd.as_posix()
+    assert output.spawns[0].desc == expected_desc

@@ -1,15 +1,113 @@
 """The disposable projection must replay the same accepted bindings as authority."""
 
+import hashlib
 import json
+import random
 import sqlite3
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from meridian.lib.platform.locking import lock_file
+from meridian.lib.state import session_store as s
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.session_store import list_session_generations
+
+# Generated replay golden, recorded from ae9a7c2a before the binding rewrite.
+#
+# The digest covers complete serialized generation and chat records, not a subset
+# of fields. No real journal data is retained. Regenerate the reference only from
+# the baseline, never from the implementation under test.
+
+
+def _run_golden(tmp_path: Path) -> None:
+    results = []
+    for seed in range(1000):
+        rng = random.Random(seed)
+        events = []
+        for i in range(35):
+            event = rng.choice(["start", "start", "update", "update", "stop"])
+            row = {
+                "event": event,
+                "chat_id": rng.choice(["c1", "c2"]),
+                "session_instance_id": rng.choice(["", "a", "b", " a "]),
+            }
+            if event == "start":
+                row.update(
+                    harness=rng.choice(["claude", "codex"]),
+                    harness_session_id=rng.choice(["", "id1", "id2", None]),
+                    native_store=rng.choice([None, "", "/a", "/b"]),
+                    model="test",
+                    started_at=str(i),
+                )
+            elif event == "update":
+                row.update(
+                    harness_session_id=rng.choice(["", "id1", "id2", None]),
+                    native_store=rng.choice([None, "", "/a", "/b"]),
+                    active_work_id="work",
+                    source=rng.choice(["legacy_import", "observed"]),
+                )
+            events.append(row)
+        # An inert historical chat then a new generation; store-only and attempt links.
+        historical = s.SessionRecord(
+            chat_id="c3",
+            kind="spawn",
+            harness="codex",
+            harness_session_id="historical",
+            model="test",
+            agent="",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+            params=(),
+            started_at="0",
+            stopped_at="1",
+            session_instance_id="historical-old",
+            record_mode="historical",
+        )
+        events.extend(
+            [
+                {"event": "historical_import", "record": historical.model_dump(mode="json")},
+                {
+                    "event": "start",
+                    "chat_id": "c3",
+                    "harness": "codex",
+                    "harness_session_id": "historical",
+                    "model": "test",
+                    "started_at": "2",
+                    "session_instance_id": "new",
+                },
+                {
+                    "event": "update",
+                    "chat_id": "c3",
+                    "session_instance_id": "new",
+                    "native_store": "/import",
+                    "source": "legacy_import",
+                },
+                {
+                    "event": "update",
+                    "chat_id": "c3",
+                    "session_instance_id": "new",
+                    "harness_session_id": "historical",
+                    "startup_attempt_id": "retry",
+                },
+            ]
+        )
+        (tmp_path / "sessions.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events))
+        with capture_logs() as logs:
+            result = [
+                # Compare the pre-restructure schema, not later additive settings.
+                [r.model_dump(mode="json", exclude={"launch_policy_snapshot"}) for r in f(tmp_path)]
+                for f in (s.list_session_generations, s.list_all_session_records)
+            ]
+        assert not logs
+        results.append(result)
+    serialized = json.dumps(results, sort_keys=True, separators=(",", ":")).encode()
+    assert hashlib.sha256(serialized).hexdigest() == (
+        "f5c5954b1f3a2ecf2754d99cfe1e6733984c7e4128fc9c8c6fef017f79f9cc32"
+    )
 
 
 def _append(root: Path, *events: dict) -> None:
@@ -184,9 +282,8 @@ def test_generated_histories_index_bindings_match_authority(tmp_path: Path, monk
     from sqlalchemy import create_engine
 
     from meridian.lib.state.history_index import INDEX_SCHEMA
-    from tests.integration.state import test_generated_session_fold as golden
 
-    original = golden.s.list_session_generations
+    original = s.list_session_generations
     projected_root = tmp_path / "projection"
     projected_root.mkdir()
     engine = create_engine("sqlite://")
@@ -220,14 +317,14 @@ def test_generated_histories_index_bindings_match_authority(tmp_path: Path, monk
         assert Counter(tuple(row.get(f) for f in fields) for row in projected) == (
             Counter(tuple(row.model_dump().get(f) for f in fields) for row in expected)
         )
-        accepted = golden.s.list_all_session_records(root)
+        accepted = s.list_all_session_records(root)
         assert {r["chat_id"]: tuple(r.get(f) for f in fields[2:]) for r in chats} == {
             r.chat_id: tuple(r.model_dump().get(f) for f in fields[2:]) for r in accepted
         }
         return expected
 
-    monkeypatch.setattr(golden.s, "list_session_generations", check_projection)
-    golden.test_generated_histories_match_pre_restructure_fold(tmp_path)
+    monkeypatch.setattr(s, "list_session_generations", check_projection)
+    _run_golden(tmp_path)
 
 
 def test_metadata_is_history_blind(tmp_path: Path):

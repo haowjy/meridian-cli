@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.harness.claude import project_slug
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.state import session_store
 from meridian.lib.state.history_changes import HistoryChanges
@@ -166,69 +165,13 @@ def test_session_search_global_scope_includes_runtime_root(tmp_path: Path, monke
     assert output.matches[0].corpus == "runtime:orphan-one"
 
 
-def test_session_search_corpus_resolves_tracked_claude_canonical_transcript(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    user_home = tmp_path / "meridian-home"
-    home = tmp_path / "home"
-    runtime_root = user_home / "projects" / "orphan-one"
-    runtime_root.mkdir(parents=True)
-    current_root = tmp_path / "current"
-    current_root.mkdir()
-    (current_root / "meridian.toml").write_text("", encoding="utf-8")
-    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
-    monkeypatch.setenv("HOME", home.as_posix())
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", (tmp_path / "unrelated-overlay").as_posix())
-
-    session_id = "claude-corpus-session"
-    project_dir = home / ".claude" / "projects" / project_slug(runtime_root)
-    project_dir.mkdir(parents=True)
-    (project_dir / f"{session_id}.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps({"sessionId": session_id}),
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [{"type": "text", "text": "corpus canonical needle"}]
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="claude",
-        harness_session_id=session_id,
-        model="claude-opus",
-        claude_config_dir=(tmp_path / "recorded-overlay").as_posix(),
-        native_store=str(project_dir),
-    )
-    try:
-        output = session_search_sync(
-            SessionSearchInput(
-                query="canonical needle",
-                project_root=current_root.as_posix(),
-                global_scope=True,
-            )
-        )
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
-
-    assert len(output.matches) == 1
-    assert output.matches[0].corpus == "runtime:orphan-one"
-
-
 def test_large_native_transcript_is_rebuild_only(tmp_path: Path, monkeypatch) -> None:
+    from meridian.lib.ops import session_search_index
     from meridian.lib.state import spawn_store
     from meridian.lib.state.history_index import HistoryIndex
 
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(session_search_index, "LAZY_SOURCE_BYTES", 32 * 1024)
     project = tmp_path / "project"
     project.mkdir()
     (project / "meridian.toml").write_text('[project]\nid = "large-history"\n')
@@ -265,9 +208,9 @@ def test_large_native_transcript_is_rebuild_only(tmp_path: Path, monkeypatch) ->
     )
     padding = json.dumps({"type": "padding", "data": "x" * 4096}) + "\n"
     with path.open("a") as handle:
-        for _ in range(16640):
+        for _ in range(16):
             handle.write(padding)
-    assert path.stat().st_size > 64 * 1024 * 1024
+    assert path.stat().st_size > 2 * session_search_index.LAZY_SOURCE_BYTES
     HistoryIndex(root).rebuild()
     result = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
     assert not result.matches

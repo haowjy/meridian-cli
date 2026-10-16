@@ -385,20 +385,31 @@ def _recovered_reference(
     )
 
 
-def test_spawn_continue_uses_recovered_session_id(
+@pytest.mark.parametrize(
+    ("action", "ref", "provenance"),
+    [
+        ("continue", "p32", RecoveryProvenance.SESSION_STORE),
+        ("fork", "p33", RecoveryProvenance.SPAWN_ROW),
+    ],
+)
+def test_recovered_session_id_is_refused(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    ref: str,
+    provenance: RecoveryProvenance,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
-    _seed_spawn(runtime_root, spawn_id="p32", harness_session_id=None)
+    if action == "continue":
+        _seed_spawn(runtime_root, spawn_id=ref, harness_session_id=None)
     monkeypatch.setattr(
         spawn_api,
         "resolve_session_reference",
         lambda *_args, **_kwargs: _recovered_reference(
             source_execution_cwd=tmp_path.as_posix(),
-            provenance=RecoveryProvenance.SESSION_STORE,
+            provenance=provenance,
         ),
     )
     stub_bundle_request_and_resolve(
@@ -411,48 +422,21 @@ def test_spawn_continue_uses_recovered_session_id(
     calls = _record_spawn_create(monkeypatch)
 
     with pytest.raises(NativeSessionUnavailable) as exc:
-        spawn_api.spawn_continue_sync(
-            SpawnContinueInput(
-                spawn_id="p32",
-                prompt="follow-up prompt",
-                project_root=project_root.as_posix(),
+        if action == "continue":
+            spawn_api.spawn_continue_sync(
+                SpawnContinueInput(
+                    spawn_id=ref,
+                    prompt="follow-up prompt",
+                    project_root=project_root.as_posix(),
+                )
             )
-        )
-    assert (exc.value.ref, exc.value.reason) == ("p32", "unbound")
-    assert not calls
-
-
-def test_spawn_fork_uses_recovered_session_id(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    _state_root(project_root)
-    monkeypatch.setattr(
-        spawn_api,
-        "resolve_session_reference",
-        lambda *_args, **_kwargs: _recovered_reference(
-            source_execution_cwd=tmp_path.as_posix(),
-            provenance=RecoveryProvenance.SPAWN_ROW,
-        ),
-    )
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.3-codex",
-        model_token="gpt-5.3-codex",
-        harness=HarnessId.CODEX,
-        harness_model="openai/gpt-5.3-codex",
-    )
-    calls = _record_spawn_create(monkeypatch)
-
-    with pytest.raises(NativeSessionUnavailable) as exc:
-        spawn_api.spawn_fork_sync(
-            spawn_api.SpawnForkInput(
-                source_ref="p33",
-                prompt="fork prompt",
-                project_root=project_root.as_posix(),
+        else:
+            spawn_api.spawn_fork_sync(
+                spawn_api.SpawnForkInput(
+                    source_ref=ref,
+                    prompt="fork prompt",
+                    project_root=project_root.as_posix(),
+                )
             )
-        )
-    assert (exc.value.ref, exc.value.reason) == ("p33", "unbound")
+    assert (exc.value.ref, exc.value.reason) == (ref, "unbound")
     assert not calls

@@ -99,7 +99,7 @@ def test_cold_budget_reports_coverage_without_partial_source_hits(tmp_path, monk
     assert not output.truncated
 
 
-def test_text_search_always_reports_single_coverage_line():
+def test_session_search_output_text_and_json_contract():
     from meridian.lib.ops.session_search import SessionSearchOutput
 
     complete = SessionSearchOutput(matches=(), sources_total=4)
@@ -119,6 +119,22 @@ def test_text_search_always_reports_single_coverage_line():
         "100-hit cap reached)."
     ) in rendered
     assert rendered.count("Searched ") == 1
+
+    warnings = SessionSearchOutput(
+        matches=(),
+        sources_total=8,
+        sources_not_searched=4,
+        errors=tuple(f"project c{i}: missing" for i in range(4)),
+        warnings=tuple(f"project c{i}: renderer warning" for i in range(4, 8)),
+    )
+    assert not warnings.complete
+    assert warnings.model_dump()["warnings"] == warnings.warnings
+    assert warnings.model_dump()["errors"] == warnings.errors
+    assert (
+        "Searched 4/8 sources (incomplete: 4 unavailable (missing); 4 warnings)."
+        in warnings.format_text()
+    )
+    assert "project c" not in warnings.format_text()
 
 
 def test_opencode_in_place_update_and_shared_chat_owners(tmp_path, monkeypatch):
@@ -283,23 +299,3 @@ def test_append_between_inspect_and_refresh_uses_current_before_witness(tmp_path
     projection.refresh(projection.bindings, deadline=deadline)
     assert len(projection.search("appended needle")) == 1
     assert not projection.errors
-
-
-def test_search_warning_and_unavailability_text_json_contract():
-    from meridian.lib.ops.session_search import SessionSearchOutput
-
-    output = SessionSearchOutput(
-        matches=(),
-        sources_total=8,
-        sources_not_searched=4,
-        errors=tuple(f"project c{i}: missing" for i in range(4)),
-        warnings=tuple(f"project c{i}: renderer warning" for i in range(4, 8)),
-    )
-    assert not output.complete
-    assert output.model_dump()["warnings"] == output.warnings
-    assert output.model_dump()["errors"] == output.errors
-    assert (
-        "Searched 4/8 sources (incomplete: 4 unavailable (missing); 4 warnings)."
-        in output.format_text()
-    )
-    assert "project c" not in output.format_text()

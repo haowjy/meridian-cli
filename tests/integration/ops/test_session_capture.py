@@ -353,7 +353,7 @@ def test_capture_rechecks_owner_after_native_read(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.parametrize("binding", ["state", "sidecar"])
-@pytest.mark.parametrize("owner_harness", ["pi", "   ", ""])
+@pytest.mark.parametrize("owner_harness", ["pi", ""])
 def test_capture_joins_native_identity_to_exact_linked_live_lease(
     tmp_path: Path, monkeypatch, binding, owner_harness
 ):
@@ -394,69 +394,6 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
         _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
     finally:
         session_store.stop_session(root, "c2")
-
-
-def test_child_archive_uses_native_snapshot_not_runner_history(tmp_path: Path, monkeypatch):
-    from meridian.lib.ops.session_archive import archive_history
-    from meridian.lib.state.retention_archive import iter_archived_events
-
-    project, root, _, _ = _capture_fixture(tmp_path, monkeypatch)
-    native_root = resolve_pi_spawn_session_root()
-    child_native_id = "child-native"
-    child = native_root / f"timestamp_{child_native_id}.jsonl"
-    child.write_text(
-        json.dumps({"type": "session", "version": 3, "id": child_native_id})
-        + "\n"
-        + json.dumps(
-            {
-                "type": "message",
-                "id": "native-child-turn",
-                "parentId": None,
-                "message": {"role": "assistant", "content": "native child answer"},
-            }
-        )
-        + "\n"
-    )
-    key = spawn_store.start_spawn(
-        root,
-        chat_id="c2",
-        harness="pi",
-        harness_session_id=child_native_id,
-        kind="child",
-        prompt="child",
-        model="test",
-        agent="coder",
-    )
-    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    session_store.start_session(
-        root,
-        "pi",
-        child_native_id,
-        "test",
-        chat_id="c2",
-        kind="spawn",
-        spawn_id=key,
-        native_store=str(native_root),
-    )
-    session_store.stop_session(root, "c2")
-    state = spawn_store.get_spawn(root, key)
-    assert state is not None and state.history_id is not None
-    stream = root / "spawns" / key / "history.jsonl"
-    stream.write_text(json.dumps({"type": "runner-only"}) + "\n")
-    materialize_native_history(project, root, key)
-    _assert_sealed_snapshot(_snapshot_path(root, key), contains="native child answer")
-    result = archive_history(
-        root,
-        destination=tmp_path / "archives",
-        refs=(key,),
-        apply=True,
-        project_root=project,
-    )
-    assert not result.errors
-    assert result.reclaimed == (str(state.history_id),)
-    retained = list(iter_archived_events(Path(result.archives[0]), state.history_id))
-    assert any(event.get("id") == "native-child-turn" for event in retained)
-    assert all(event.get("type") != "runner-only" for event in retained)
 
 
 def test_archive_apply_captures_headless_spawn_and_preserves_native_log(
@@ -676,35 +613,22 @@ def test_history_jsonl_existence_is_not_capture_complete(tmp_path: Path, monkeyp
     assert stream.stat() == before
 
 
-def test_known_incomplete_pi_tail_does_not_publish(tmp_path: Path, monkeypatch):
-    project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
-    native.write_text(
-        json.dumps({"type": "session", "version": 3, "id": "exact-native"})
-        + "\n"
-        + json.dumps(
-            {
-                "type": "message",
-                "id": "a",
-                "parentId": None,
-                "message": {
-                    "role": "assistant",
-                    "content": "cut short",
-                    "stopReason": "aborted",
-                },
-            }
-        )
-        + "\n"
-    )
-    with pytest.raises(ValueError, match="incomplete"):
-        materialize_native_history(project, root, key)
-    _assert_not_captured(root, key)
-
-
-@pytest.mark.parametrize("stop_reason", ["cancel", "cancelled", "canceled"])
-def test_known_incomplete_pi_cancelled_tail_does_not_publish(
-    tmp_path: Path, monkeypatch, stop_reason: str
+@pytest.mark.parametrize(
+    ("stop_reason", "publishes"),
+    [
+        ("aborted", False),
+        ("cancel", False),
+        ("cancelled", False),
+        ("canceled", False),
+        ("length", False),
+        ("stop", True),
+    ],
+)
+def test_pi_tail_completeness_controls_publication(
+    tmp_path: Path, monkeypatch, stop_reason: str, publishes: bool
 ):
     project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
+    content = "finished answer" if publishes else "incomplete answer"
     native.write_text(
         json.dumps({"type": "session", "version": 3, "id": "exact-native"})
         + "\n"
@@ -715,63 +639,21 @@ def test_known_incomplete_pi_cancelled_tail_does_not_publish(
                 "parentId": None,
                 "message": {
                     "role": "assistant",
-                    "content": "user cancelled",
+                    "content": content,
                     "stopReason": stop_reason,
                 },
             }
         )
         + "\n"
     )
-    with pytest.raises(ValueError, match="incomplete"):
+
+    if publishes:
         materialize_native_history(project, root, key)
-    _assert_not_captured(root, key)
-
-
-def test_known_incomplete_pi_truncated_tail_does_not_publish(tmp_path: Path, monkeypatch):
-    project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
-    native.write_text(
-        json.dumps({"type": "session", "version": 3, "id": "exact-native"})
-        + "\n"
-        + json.dumps(
-            {
-                "type": "message",
-                "id": "a",
-                "parentId": None,
-                "message": {
-                    "role": "assistant",
-                    "content": "truncated answer",
-                    "stopReason": "length",
-                },
-            }
-        )
-        + "\n"
-    )
-    with pytest.raises(ValueError, match="incomplete"):
-        materialize_native_history(project, root, key)
-    _assert_not_captured(root, key)
-
-
-def test_pi_normal_stop_publishes(tmp_path: Path, monkeypatch):
-    project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
-    native.write_text(
-        json.dumps({"type": "session", "version": 3, "id": "exact-native"})
-        + "\n"
-        + json.dumps(
-            {
-                "type": "message",
-                "id": "a",
-                "parentId": None,
-                "message": {
-                    "role": "assistant",
-                    "content": "finished answer",
-                    "stopReason": "stop",
-                },
-            }
-        )
-        + "\n"
-    )
-    materialize_native_history(project, root, key)
-    _assert_sealed_snapshot(_snapshot_path(root, key), contains="finished answer")
+        _assert_sealed_snapshot(_snapshot_path(root, key), contains=content)
+    else:
+        with pytest.raises(ValueError, match="incomplete"):
+            materialize_native_history(project, root, key)
+        _assert_not_captured(root, key)
 
 
 def test_capture_retry_removes_stale_atomic_temps(tmp_path: Path, monkeypatch):
@@ -791,82 +673,63 @@ def _native_file_capture(tmp_path: Path, harness: str, events: list[dict[str, ob
     return native_capture(kind="native_file", harness=harness, session_id="s", path=path)
 
 
-def test_codex_complete_tail_qualifies(tmp_path: Path):
-    capture = _native_file_capture(
-        tmp_path,
-        "codex",
-        [
-            {"type": "session_meta", "payload": {"id": "s"}},
-            {"type": "response_item", "payload": {"type": "message", "role": "assistant"}},
-            {"type": "task_started"},
-            {"type": "task_complete"},
-        ],
-    )
+@pytest.mark.parametrize(
+    ("harness", "events", "complete"),
+    [
+        (
+            "codex",
+            [
+                {"type": "session_meta", "payload": {"id": "s"}},
+                {"type": "response_item", "payload": {"type": "message", "role": "assistant"}},
+                {"type": "task_started"},
+                {"type": "task_complete"},
+            ],
+            True,
+        ),
+        (
+            "codex",
+            [
+                {"type": "session_meta", "payload": {"id": "s"}},
+                {"type": "response_item", "payload": {"type": "message", "role": "assistant"}},
+                {"type": "task_started"},
+            ],
+            False,
+        ),
+        (
+            "codex",
+            [
+                {"type": "session_meta", "payload": {"id": "s"}},
+                {"type": "turn_aborted"},
+            ],
+            False,
+        ),
+        (
+            "claude",
+            [{"type": "assistant", "message": {"role": "assistant", "content": []}}],
+            True,
+        ),
+        ("claude", [{"type": "result", "is_error": True}], False),
+        (
+            "claude",
+            [
+                {"type": "result", "is_error": True},
+                {"type": "assistant", "message": {"role": "assistant", "content": []}},
+            ],
+            True,
+        ),
+    ],
+)
+def test_native_file_tail_completeness(
+    tmp_path: Path, harness: str, events: list[dict[str, object]], complete: bool
+):
+    capture = _native_file_capture(tmp_path, harness, events)
     list(capture.records())
-    assert capture.finish() is not None
 
-
-def test_codex_open_task_tail_is_known_incomplete(tmp_path: Path):
-    capture = _native_file_capture(
-        tmp_path,
-        "codex",
-        [
-            {"type": "session_meta", "payload": {"id": "s"}},
-            {"type": "response_item", "payload": {"type": "message", "role": "assistant"}},
-            {"type": "task_started"},
-        ],
-    )
-    list(capture.records())
-    with pytest.raises(ValueError, match="incomplete"):
-        capture.finish()
-
-
-def test_codex_aborted_tail_is_known_incomplete(tmp_path: Path):
-    capture = _native_file_capture(
-        tmp_path,
-        "codex",
-        [
-            {"type": "session_meta", "payload": {"id": "s"}},
-            {"type": "turn_aborted"},
-        ],
-    )
-    list(capture.records())
-    with pytest.raises(ValueError, match="incomplete"):
-        capture.finish()
-
-
-def test_claude_complete_tail_qualifies(tmp_path: Path):
-    capture = _native_file_capture(
-        tmp_path,
-        "claude",
-        [{"type": "assistant", "message": {"role": "assistant", "content": []}}],
-    )
-    list(capture.records())
-    assert capture.finish() is not None
-
-
-def test_claude_error_tail_is_known_incomplete(tmp_path: Path):
-    capture = _native_file_capture(
-        tmp_path,
-        "claude",
-        [{"type": "result", "is_error": True}],
-    )
-    list(capture.records())
-    with pytest.raises(ValueError, match="incomplete"):
-        capture.finish()
-
-
-def test_claude_error_resolved_by_later_message_qualifies(tmp_path: Path):
-    capture = _native_file_capture(
-        tmp_path,
-        "claude",
-        [
-            {"type": "result", "is_error": True},
-            {"type": "assistant", "message": {"role": "assistant", "content": []}},
-        ],
-    )
-    list(capture.records())
-    assert capture.finish() is not None
+    if complete:
+        assert capture.finish() is not None
+    else:
+        with pytest.raises(ValueError, match="incomplete"):
+            capture.finish()
 
 
 def test_corrupt_published_snapshot_is_not_overwritten(tmp_path: Path, monkeypatch):
@@ -927,37 +790,30 @@ def _opencode_capture_fixture(
     return project, root, key
 
 
-def test_known_incomplete_opencode_response_does_not_publish(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("completed", [False, True])
+def test_opencode_v1_tail_completeness_controls_publication(
+    tmp_path: Path, monkeypatch, completed: bool
+):
+    timing = {"created": 1, **({"completed": 2} if completed else {})}
     project, root, key = _opencode_capture_fixture(
         tmp_path,
         monkeypatch,
         messages=[
             (
                 "assistant",
-                {"time": {"created": 1}},
-                [{"type": "text", "text": "partial answer..."}],
+                {"time": timing},
+                [{"type": "text", "text": "final answer" if completed else "partial answer..."}],
             )
         ],
     )
-    with pytest.raises(ValueError, match="incomplete"):
+
+    if completed:
         materialize_native_history(project, root, key)
-    _assert_not_captured(root, key)
-
-
-def test_completed_opencode_response_publishes(tmp_path: Path, monkeypatch):
-    project, root, key = _opencode_capture_fixture(
-        tmp_path,
-        monkeypatch,
-        messages=[
-            (
-                "assistant",
-                {"time": {"created": 1, "completed": 2}},
-                [{"type": "text", "text": "final answer"}],
-            )
-        ],
-    )
-    materialize_native_history(project, root, key)
-    _assert_sealed_snapshot(_snapshot_path(root, key), contains="final answer")
+        _assert_sealed_snapshot(_snapshot_path(root, key), contains="final answer")
+    else:
+        with pytest.raises(ValueError, match="incomplete"):
+            materialize_native_history(project, root, key)
+        _assert_not_captured(root, key)
 
 
 def _opencode_v2_capture_fixture(

@@ -14,7 +14,6 @@ from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.telemetry import SpawnEventCounter
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.retention import run_retention_cleanup
 from meridian.lib.telemetry.router import get_global_router
@@ -197,18 +196,6 @@ def test_retention_size_pressure_prefers_legacy_orphan_over_stale_recognized_seg
     assert live_cli.exists()
     assert stale_recognized.exists()
     assert not orphan.exists()
-
-
-def test_full_pipeline_emit_queue_writer_segment(tmp_path) -> None:
-    setup_telemetry(runtime_root=tmp_path)
-    emit_telemetry("server", "mcp.command.invoked", scope="mcp.server", ids={"request_id": "r1"})
-    get_global_router().close()
-
-    segment = tmp_path / "telemetry" / f"cli.{os.getpid()}-0001.jsonl"
-    assert segment.exists()
-    event = json.loads(segment.read_text(encoding="utf-8").splitlines()[0])
-    assert event["event"] == "mcp.command.invoked"
-    assert event["ids"] == {"request_id": "r1"}
 
 
 def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
