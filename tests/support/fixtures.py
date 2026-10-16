@@ -9,23 +9,6 @@ def _write(path: Path, content: str) -> Path:
     return path
 
 
-def write_skill(
-    project_root: Path,
-    name: str,
-    body: str | None = None,
-    *,
-    description: str | None = None,
-) -> Path:
-    """Write one skill manifest/body under `.mars/skills/<name>/SKILL.md`."""
-
-    skill_body = body if body is not None else f"# {name}\n"
-    summary = description if description is not None else f"{name} skill"
-    return _write(
-        project_root / ".mars" / "skills" / name / "SKILL.md",
-        (f"---\nname: {name}\ndescription: {summary}\n---\n\n{skill_body}\n"),
-    )
-
-
 def write_agent(
     project_root: Path,
     *,
@@ -69,17 +52,3 @@ def allow_headless_claude(project_root: Path) -> None:
     (project_root / "meridian.toml").write_text(
         "[spawn]\ndeny_headless_harnesses = []\n", encoding="utf-8"
     )
-
-
-def write_minimal_mars_config(project_root: Path) -> Path:
-    """Write a minimal mars.toml config for tests that need project setup.
-
-    Used in tests that exercise model selection, launch resolution, and similar
-    flows that scan the project root for a mars config.
-    """
-    mars_toml = project_root / "mars.toml"
-    mars_toml.write_text(
-        '[settings]\ntargets = [".claude"]\n',
-        encoding="utf-8",
-    )
-    return mars_toml

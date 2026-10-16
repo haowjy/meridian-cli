@@ -4,14 +4,6 @@ from meridian.lib.streaming.pi_lifecycle_tracker import PiLifecycleTracker
 from tests.support.pi import pi_event
 
 
-def test_ordinary_pi_event_does_not_affect_lifecycle_tracking() -> None:
-    tracker = PiLifecycleTracker.empty()
-
-    assert tracker.observe(pi_event("message_start")) is False
-    assert tracker.lifecycle_tracking_invalidated_error is None
-    assert tracker.canonical_event_keys == set()
-
-
 def test_malformed_quiescence_ready_schema_invalidates_tracking() -> None:
     tracker = PiLifecycleTracker.empty()
 

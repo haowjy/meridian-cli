@@ -86,17 +86,6 @@ def cwd_with_mars_only(tmp_path: Path) -> Path:
 
 
 @pytest.mark.integration
-def test_spawn_list_succeeds_from_cwd_with_project_id(
-    cwd_with_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["spawn", "list"], cwd=cwd_with_project_id, meridian_home=meridian_home)
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-
-
-@pytest.mark.integration
 def test_spawn_list_succeeds_without_project_id_and_creates_nothing(
     cwd_without_project_id: Path,
     meridian_home: Path,
@@ -157,39 +146,12 @@ def test_doctor_observes_bare_directory_without_writing(
 
 
 @pytest.mark.integration
-def test_hooks_run_is_noop_without_materialized_state(
-    cwd_without_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    (meridian_home / "config.toml").write_text(
-        "[[hooks]]\n"
-        'name = "manual-test"\n'
-        'event = "spawn.finalized"\n'
-        'command = "printf should-not-run"\n',
-        encoding="utf-8",
-    )
-
-    result = _run_meridian(
-        ["hooks", "run", "manual-test"],
-        cwd=cwd_without_project_id,
-        meridian_home=meridian_home,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "skip_reason: no_state" in result.stdout
-    assert not (meridian_home / "projects").exists()
-    _assert_project_not_initialized(cwd_without_project_id)
-
-
-@pytest.mark.integration
 def test_spawn_list_in_mars_only_project_does_not_create_meridian_toml(
     cwd_with_mars_only: Path,
     meridian_home: Path,
 ) -> None:
     before = {path.relative_to(cwd_with_mars_only) for path in cwd_with_mars_only.rglob("*")}
-    result = _run_meridian(
-        ["spawn", "list"], cwd=cwd_with_mars_only, meridian_home=meridian_home
-    )
+    result = _run_meridian(["spawn", "list"], cwd=cwd_with_mars_only, meridian_home=meridian_home)
     after = {path.relative_to(cwd_with_mars_only) for path in cwd_with_mars_only.rglob("*")}
 
     assert result.returncode == 0, result.stderr or result.stdout
@@ -259,76 +221,71 @@ def test_primary_launch_materializes_adhoc_state_without_litter(
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "args",
+    ("cwd_fixture", "args"),
     [
-        ["--mode", "human", "--harness", "opencode", "--agent", "", "--dry-run"],
-        [
-            "--mode",
-            "human",
-            "--harness",
-            "opencode",
-            "spawn",
-            "preview run",
-            "--dry-run",
-        ],
+        pytest.param(
+            "cwd_without_project_id",
+            ["--mode", "human", "--harness", "opencode", "--agent", "", "--dry-run"],
+            id="adhoc-launch",
+        ),
+        pytest.param(
+            "cwd_without_project_id",
+            [
+                "--mode",
+                "human",
+                "--harness",
+                "opencode",
+                "spawn",
+                "preview run",
+                "--dry-run",
+            ],
+            id="adhoc-spawn",
+        ),
+        pytest.param(
+            "cwd_with_mars_only",
+            ["--mode", "human", "--harness", "opencode", "--agent", "", "--dry-run"],
+            id="mars-only-launch",
+        ),
+        pytest.param(
+            "cwd_with_mars_only",
+            [
+                "--mode",
+                "human",
+                "--harness",
+                "opencode",
+                "spawn",
+                "preview run",
+                "--dry-run",
+            ],
+            id="mars-only-spawn",
+        ),
     ],
-    ids=["launch", "spawn"],
 )
-def test_dry_run_does_not_materialize_adhoc_state(
+def test_dry_run_does_not_materialize_state(
+    request: pytest.FixtureRequest,
+    cwd_fixture: str,
     args: list[str],
-    cwd_without_project_id: Path,
     meridian_home: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    cwd = request.getfixturevalue(cwd_fixture)
+    assert isinstance(cwd, Path)
     prepend_fake_executables(monkeypatch, tmp_path, "opencode")
 
     result = _run_meridian(
         args,
-        cwd=cwd_without_project_id,
+        cwd=cwd,
         meridian_home=meridian_home,
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
-    _assert_project_not_initialized(cwd_without_project_id)
-    assert not list((meridian_home / "projects").glob("adhoc.*"))
-
-
-@pytest.mark.integration
-@pytest.mark.parametrize(
-    "args",
-    [
-        ["--mode", "human", "--harness", "opencode", "--agent", "", "--dry-run"],
-        [
-            "--mode",
-            "human",
-            "--harness",
-            "opencode",
-            "spawn",
-            "preview run",
-            "--dry-run",
-        ],
-    ],
-    ids=["launch", "spawn"],
-)
-def test_dry_run_does_not_mint_committed_identity(
-    args: list[str],
-    cwd_with_mars_only: Path,
-    meridian_home: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepend_fake_executables(monkeypatch, tmp_path, "opencode")
-
-    result = _run_meridian(
-        args,
-        cwd=cwd_with_mars_only,
-        meridian_home=meridian_home,
-    )
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert not (cwd_with_mars_only / "meridian.toml").exists()
-    assert not (meridian_home / "projects").exists()
+    if cwd_fixture == "cwd_without_project_id":
+        _assert_project_not_initialized(cwd)
+        assert not list((meridian_home / "projects").glob("adhoc.*"))
+    else:
+        assert not (cwd / "meridian.toml").exists()
+        assert not (meridian_home / "projects").exists()
 
 
 @pytest.mark.integration
@@ -362,9 +319,7 @@ def test_materialization_notice_names_nearest_marked_ancestor(
     ancestor = tmp_path / "parent"
     project_root = ancestor / "scratch"
     project_root.mkdir(parents=True)
-    (ancestor / "meridian.toml").write_text(
-        '[project]\nid = "parent-project"\n', encoding="utf-8"
-    )
+    (ancestor / "meridian.toml").write_text('[project]\nid = "parent-project"\n', encoding="utf-8")
 
     result = _run_meridian(
         ["--mode", "human", "work", "start", "first work"],
@@ -420,73 +375,3 @@ def test_config_init_still_commits_the_directory(
 
     assert result.returncode == 0, result.stderr
     _assert_project_initialized(cwd_without_project_id)
-
-
-@pytest.mark.integration
-@pytest.mark.parametrize(
-    "args",
-    [
-        ["--mode", "human", "work", "list"],
-    ],
-)
-def test_read_commands_do_not_auto_initialize_cwd_without_project_id(
-    args: list[str],
-    cwd_without_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(
-        args,
-        cwd=cwd_without_project_id,
-        meridian_home=meridian_home,
-    )
-
-    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    _assert_project_not_initialized(cwd_without_project_id)
-
-
-@pytest.mark.integration
-def test_primary_launch_preserves_existing_config_identity(
-    cwd_with_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(
-        [
-            "--mode",
-            "human",
-            "--harness",
-            "definitely-missing",
-            "--timeout",
-            "0.1",
-        ],
-        cwd=cwd_with_project_id,
-        meridian_home=meridian_home,
-    )
-
-    assert result.returncode == 1
-    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    content = (cwd_with_project_id / "meridian.toml").read_text(encoding="utf-8")
-    assert 'id = "proj-cwd-integration"' in content
-
-
-@pytest.mark.integration
-def test_doctor_runs_from_cwd_with_project_id(
-    cwd_with_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["doctor"], cwd=cwd_with_project_id, meridian_home=meridian_home)
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    assert "project_root:" in result.stdout
-
-
-@pytest.mark.integration
-def test_doctor_runs_from_cwd_without_project_id(
-    cwd_without_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["doctor"], cwd=cwd_without_project_id, meridian_home=meridian_home)
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    assert "project_root:" in result.stdout

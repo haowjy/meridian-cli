@@ -36,12 +36,15 @@ def test_simultaneous_cold_callers_reuse_one_published_build(tmp_path: Path, mon
 
 def test_cold_query_can_exceed_the_warm_two_second_budget(tmp_path: Path, monkeypatch) -> None:
     original_project = HistoryIndex._project
+    now = 0.0
 
     def slow_sessions(self, db, source):
+        nonlocal now
         if source.kind == "sessions":
-            time.sleep(2.1)
+            now += 2.1
         return original_project(self, db, source)
 
+    monkeypatch.setattr(time, "monotonic", lambda: now)
     monkeypatch.setattr(HistoryIndex, "_project", slow_sessions)
     assert HistoryIndex(tmp_path).spawns() == ()
 

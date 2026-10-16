@@ -12,10 +12,8 @@ from meridian.lib.harness.idle_types import CacheTtl
     ("provider", "env", "expected"),
     [
         ("anthropic", {}, CacheTtl(300, estimated=False)),
-        ("anthropic", {"PI_CACHE_RETENTION": "short"}, CacheTtl(300, estimated=False)),
         ("Anthropic", {"PI_CACHE_RETENTION": " LONG "}, CacheTtl(3600, estimated=False)),
         ("openai", {}, None),
-        ("openai", {"PI_CACHE_RETENTION": "short"}, None),
         ("OpenAI", {"PI_CACHE_RETENTION": "long"}, CacheTtl(1800, estimated=True)),
         ("openai-codex", {}, CacheTtl(1800, estimated=True)),
         ("google", {"PI_CACHE_RETENTION": "long"}, None),

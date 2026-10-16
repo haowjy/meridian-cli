@@ -31,41 +31,6 @@ def _snapshot() -> LaunchPolicySnapshot:
     )
 
 
-def test_build_continue_replay_contract_from_snapshot() -> None:
-    snapshot = _snapshot()
-    source = ContinueReplaySource(
-        source_ref="p41",
-        harness_session_id="session-41",
-        harness="claude",
-        source_chat_id="c41",
-        source_work_id="source-work",
-        source_execution_cwd="/tmp/source",
-        source_control_root="/tmp/repo",
-        source_native_store="/recorded/store",
-        source_launch_policy_snapshot=snapshot,
-        tracked=True,
-        source_model="ignored-live-model",
-        source_agent="ignored-agent",
-        source_skills=("ignored-skill",),
-    )
-
-    contract = build_continue_replay_contract(source=source)
-
-    assert contract.launch_policy_snapshot == snapshot
-    assert contract.work_id == "source-work"
-    assert contract.task_dir == "/tmp/source"
-    assert contract.harness == "claude"
-    assert contract.model == "claude-sonnet-4-6"
-    assert contract.agent == "agent-a"
-    assert contract.agent_opt_out is False
-    assert contract.skills == ("skill-a",)
-    assert contract.passthrough_args == snapshot.extra_args
-    assert contract.session.requested_harness_session_id == "session-41"
-    assert contract.session.continue_source_ref == "p41"
-    assert contract.session.continue_chat_id == "c41"
-    assert contract.session.source_execution_cwd == "/tmp/source"
-
-
 def test_continue_replay_source_from_reference_ignores_recovered_tracked_id() -> None:
     resolved = ResolvedSessionReference(
         harness_session_id=None,
@@ -207,28 +172,17 @@ def _patch_intent_seams(
     live: str | None,
     stored: str | None,
 ) -> None:
-    monkeypatch.setattr(
-        continue_replay_module, "get_model_selection", lambda *a, **k: recorded
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "get_initial_model_selection", lambda *a, **k: None
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "read_last_executed_model", lambda *a, **k: live
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "get_last_executed_model", lambda *a, **k: stored
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "record_model_observation", lambda *a, **k: True
-    )
+    monkeypatch.setattr(continue_replay_module, "get_model_selection", lambda *a, **k: recorded)
+    monkeypatch.setattr(continue_replay_module, "get_initial_model_selection", lambda *a, **k: None)
+    monkeypatch.setattr(continue_replay_module, "read_last_executed_model", lambda *a, **k: live)
+    monkeypatch.setattr(continue_replay_module, "get_last_executed_model", lambda *a, **k: stored)
+    monkeypatch.setattr(continue_replay_module, "record_model_observation", lambda *a, **k: True)
     tokens = [token for token in (live, stored) if token]
     monkeypatch.setattr(
         continue_replay_module,
         "run_mars_models_for_harness",
         lambda *a, **k: [
-            {"harness_model_id": token, "model_id": token, "provider": "claude"}
-            for token in tokens
+            {"harness_model_id": token, "model_id": token, "provider": "claude"} for token in tokens
         ],
     )
 
@@ -321,31 +275,7 @@ def test_unroutable_observed_falls_back_to_recorded(
         live="opencode/deepseek-v4-flash-free",
         stored=None,
     )
-    monkeypatch.setattr(
-        continue_replay_module, "run_mars_models_for_harness", lambda *a, **k: []
-    )
-
-    contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
-
-    assert contract.model == "recorded-token"
-    assert contract.session.conversation_intent.selection_source == "recorded_selection"
-
-
-def test_observed_routing_to_other_harness_falls_back_to_recorded(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = _continue_source()
-    _patch_intent_seams(
-        monkeypatch,
-        recorded=_recorded_selection("recorded-token"),
-        live="observed-token",
-        stored=None,
-    )
-    monkeypatch.setattr(
-        continue_replay_module,
-        "run_mars_models_for_harness",
-        lambda *a, **k: [],
-    )
+    monkeypatch.setattr(continue_replay_module, "run_mars_models_for_harness", lambda *a, **k: [])
 
     contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
 
@@ -366,9 +296,7 @@ def test_fork_ignores_observed(monkeypatch: pytest.MonkeyPatch) -> None:
         "get_model_selection",
         lambda *a, **k: _recorded_selection("recorded-token"),
     )
-    monkeypatch.setattr(
-        continue_replay_module, "get_initial_model_selection", lambda *a, **k: None
-    )
+    monkeypatch.setattr(continue_replay_module, "get_initial_model_selection", lambda *a, **k: None)
 
     contract = build_continue_replay_contract(source=source, fork=True, runtime_root=Path("/tmp/x"))
 

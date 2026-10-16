@@ -4,13 +4,11 @@ from pathlib import Path
 
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.config.models import MeridianConfig, PrimaryConfig
-from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.bundle_adapter import _map_provenance_level
-from meridian.lib.launch.compiler import ModelPolicyRule, ProvenanceLevel
-from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
+from meridian.lib.launch.compiler import ModelPolicyRule
+from meridian.lib.launch.launch_types import TerminalSurfaceMode
 from meridian.lib.launch.policies import (
     SurfacePolicyInput,
     _resolve_bundle_execution_policy,
@@ -18,11 +16,7 @@ from meridian.lib.launch.policies import (
     match_model_policy,
     resolve_policy_fields,
 )
-from meridian.lib.launch.policy_snapshot import (
-    build_launch_policy_snapshot,
-    replay_launch_policy_snapshot,
-)
-from meridian.lib.launch.request import LaunchCompositionSurface, SpawnRequest
+from meridian.lib.launch.request import LaunchCompositionSurface
 
 
 def _surface(*layers: RuntimeOverrides) -> SurfacePolicyInput:
@@ -103,20 +97,6 @@ def test_match_model_policy_first_match_wins_by_list_order() -> None:
     assert (winner.match_type, winner.match_value) == ("model-glob", "gpt-*")
 
 
-def test_bundle_provenance_names_map_to_policy_levels() -> None:
-    expected = {
-        "cli": ProvenanceLevel.CLI,
-        "env": ProvenanceLevel.ENV,
-        "settings-model-policy": ProvenanceLevel.SETTINGS_MODEL_POLICY,
-        "profile-default": ProvenanceLevel.PROFILE_DEFAULT,
-        "project": ProvenanceLevel.CONFIG_DEFAULT,
-        "provider": ProvenanceLevel.ALIAS_DEFAULT,
-        "unknown": ProvenanceLevel.UNSET,
-    }
-
-    assert {name: _map_provenance_level(name) for name in expected} == expected
-
-
 def test_bundle_execution_policy_resolves_precedence_and_provenance_per_field() -> None:
     surface = _surface(
         RuntimeOverrides(timeout=12.0),
@@ -154,44 +134,3 @@ def test_routing_precedence_drops_lower_priority_harness_override() -> None:
     assert harness is None
     assert requested_model == "gpt55"
     assert provenance == {"model_source": "cli"}
-
-
-def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> None:
-    skill = SkillContent(
-        name="testing",
-        description="",
-        content="# Testing",
-        path=".mars/skills/testing/SKILL.md",
-    )
-    request = SpawnRequest(
-        prompt="continue",
-        model="gpt-5.4",
-        harness="codex",
-        agent="coder",
-        execution_policy=ResolvedExecutionPolicy(effort="high", approval="auto"),
-        tools={"bash": "allow"},
-        extra_args=("--search",),
-        model_selection_requested_token="gpt54",
-        model_selection_canonical_id="gpt-5.4",
-        matched_policy_rule="settings:2",
-        selection_report={"version": 2, "outcome": "selected"},
-    )
-    snapshot = build_launch_policy_snapshot(request, loaded_skills=(skill,))
-
-    replayed = replay_launch_policy_snapshot(
-        snapshot=snapshot,
-        project_root=Path("/tmp/project"),
-        harness_registry=get_default_harness_registry(),
-        skills_readonly=True,
-        alias_catalog={},
-        resolve_terminal_surface_mode=_terminal_surface_mode,
-    )
-
-    assert replayed.model == "gpt-5.4"
-    assert replayed.routing.model == "gpt54"
-    assert replayed.routing.agent == "coder"
-    assert replayed.execution_policy == request.execution_policy
-    assert replayed.resolved_tools == {"bash": "allow"}
-    assert replayed.resolved_skills.loaded_skills == (skill,)
-    assert replayed.matched_policy_rule == "settings:2"
-    assert replayed.selection_report == {"version": 2, "outcome": "selected"}

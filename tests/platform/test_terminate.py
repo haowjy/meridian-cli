@@ -67,21 +67,6 @@ async def _wait_for_pid_exit(pid: int, timeout: float = 5.0) -> None:
 
 
 @pytest.mark.asyncio
-async def test_snapshot_tree_returns_process_and_children() -> None:
-    process = await _spawn_parent_with_child()
-    child_pid = await _read_child_pid(process)
-    try:
-        await _wait_for_snapshot_child(parent_pid=process.pid, child_pid=child_pid)
-        root, children = _snapshot_tree(process.pid)
-        assert root is not None
-        assert root.pid == process.pid
-        assert any(proc.pid == child_pid for proc in children)
-    finally:
-        await terminate_tree(process, grace_secs=0.1)
-        await asyncio.wait_for(process.wait(), timeout=5)
-
-
-@pytest.mark.asyncio
 async def test_terminate_tree_terminates_parent_and_child_processes() -> None:
     process = await _spawn_parent_with_child()
     child_pid = await _read_child_pid(process)

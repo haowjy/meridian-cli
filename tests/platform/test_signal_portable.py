@@ -42,21 +42,8 @@ def _invoke_handler(signum: signal.Signals) -> None:
 
 
 @pytest.mark.asyncio
-async def test_install_returns_cleanup_callable() -> None:
-    """_install_signal_handlers returns a callable from the main thread."""
-    loop = asyncio.get_running_loop()
-    shutdown_event = asyncio.Event()
-    received_signal: list[signal.Signals | None] = [None]
-
-    cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
-    assert cleanup is not None
-    assert callable(cleanup)
-    cleanup()  # restore
-
-
-@pytest.mark.asyncio
-async def test_sigint_sets_shutdown_event() -> None:
-    """SIGINT causes the shutdown_event to be set."""
+@pytest.mark.parametrize("received", [signal.SIGINT, signal.SIGTERM])
+async def test_signal_sets_shutdown_event(received: signal.Signals) -> None:
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
     received_signal: list[signal.Signals | None] = [None]
@@ -64,31 +51,11 @@ async def test_sigint_sets_shutdown_event() -> None:
     cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
     assert cleanup is not None
     try:
-        _invoke_handler(signal.SIGINT)
-        # Allow the event loop to process the call_soon_threadsafe callback
+        _invoke_handler(received)
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert shutdown_event.is_set()
-        assert received_signal[0] == signal.SIGINT
-    finally:
-        cleanup()
-
-
-@pytest.mark.asyncio
-async def test_sigterm_sets_shutdown_event() -> None:
-    """SIGTERM causes the shutdown_event to be set."""
-    loop = asyncio.get_running_loop()
-    shutdown_event = asyncio.Event()
-    received_signal: list[signal.Signals | None] = [None]
-
-    cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
-    assert cleanup is not None
-    try:
-        _invoke_handler(signal.SIGTERM)
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        assert shutdown_event.is_set()
-        assert received_signal[0] == signal.SIGTERM
+        assert received_signal[0] == received
     finally:
         cleanup()
 

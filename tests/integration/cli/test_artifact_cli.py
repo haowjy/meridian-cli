@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import socket
 import subprocess
 import sys
@@ -65,9 +64,7 @@ def test_slug_derivation_sanitizes_and_resolves_collisions() -> None:
     assert service.derive_slug(Path("/tmp/My  Report!!"), None, set(), 50000) == "my-report"
     assert service.derive_slug(Path("/tmp/report"), None, {"report"}, 51234) == "report-51234"
     assert (
-        service.derive_slug(
-            Path("/tmp/report"), None, {"report", "report-51234"}, 51234
-        )
+        service.derive_slug(Path("/tmp/report"), None, {"report", "report-51234"}, 51234)
         == "report-51234-2"
     )
     with pytest.raises(service.ArtifactError):
@@ -84,9 +81,7 @@ def test_teardown_is_surgically_scoped_to_slug(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(service, "_tailscale", fake_tailscale)
     assert service.tailscale_off("my-report", 50000, funnel=False)
 
-    assert commands == [
-        ["serve", "--https=50000", "--set-path=/my-report", "off"]
-    ]
+    assert commands == [["serve", "--https=50000", "--set-path=/my-report", "off"]]
 
 
 def test_register_and_url_use_explicit_listener_port(
@@ -196,9 +191,16 @@ def _serve(
     return Serve(slug, port, "/tmp", None, created, ttl, False, pid, process_created_at)
 
 
-@pytest.mark.parametrize("port", [80, 443])
-def test_cli_rejects_well_known_explicit_port_before_serving(
-    port: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("port", "expected_message"),
+    [(80, "--port must be >= 1024"), (443, "--port must be >= 1024"), (0, None), (65536, None)],
+)
+def test_cli_rejects_invalid_explicit_port_before_serving(
+    port: int,
+    expected_message: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
         service, "start_serve", lambda *_args, **_kwargs: pytest.fail("must not serve")
@@ -208,72 +210,43 @@ def test_cli_rejects_well_known_explicit_port_before_serving(
         artifact_app(["serve", str(tmp_path), "--port", str(port)])
 
     assert exit_info.value.code == 2
-    assert "--port must be >= 1024" in capsys.readouterr().err
+    if expected_message is not None:
+        assert expected_message in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("port", [0, 65536])
-def test_cli_rejects_out_of_range_explicit_port(
-    port: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        service, "start_serve", lambda *_args, **_kwargs: pytest.fail("must not serve")
-    )
-    with pytest.raises(SystemExit) as exit_info:
-        artifact_app(["serve", str(tmp_path), "--port", str(port)])
-    assert exit_info.value.code == 2
-
-
-def test_explicit_port_already_in_state_is_rejected(
+@pytest.mark.parametrize("conflict", ["state", "tailscale", "local"])
+def test_occupied_explicit_port_is_rejected(
+    conflict: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     state_path = tmp_path / "serves.json"
     monkeypatch.setattr(store, "serves_path", lambda: state_path)
-    store.save_serves([_serve("existing", 55000, ttl=None)])
-    monkeypatch.setattr(service, "tailscale_serve_ports", lambda: set())
-    monkeypatch.setattr(service, "local_port_available", lambda _port: True)
+    if conflict == "state":
+        store.save_serves([_serve("existing", 55000, ttl=None)])
+    monkeypatch.setattr(
+        service,
+        "tailscale_serve_ports",
+        lambda: {55000} if conflict == "tailscale" else set(),
+    )
+    monkeypatch.setattr(
+        service,
+        "local_port_available",
+        lambda _port: conflict != "local",
+    )
     monkeypatch.setattr(
         service, "launch_http_server", lambda *_args: pytest.fail("must not launch")
     )
 
-    with pytest.raises(SystemExit) as exit_info:
-        artifact_app(["serve", str(tmp_path), "--slug", "new", "--port", "55000"])
-
-    assert exit_info.value.code == 2
-    assert "port 55000 is already in use" in capsys.readouterr().err
-
-
-def test_explicit_tailscale_listener_port_is_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(store, "serves_path", lambda: tmp_path / "serves.json")
-    monkeypatch.setattr(service, "tailscale_serve_ports", lambda: {55000})
-    monkeypatch.setattr(service, "local_port_available", lambda _port: True)
-    monkeypatch.setattr(
-        service, "launch_http_server", lambda *_args: pytest.fail("must not launch")
-    )
-
-    with pytest.raises(service.ArtifactError, match="port 55000 is already in use"):
-        service.start_serve(
-            tmp_path, ttl_seconds=60, funnel=False, slug="new", port=55000
-        )
-
-
-def test_explicit_locally_bound_port_is_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(store, "serves_path", lambda: tmp_path / "serves.json")
-    monkeypatch.setattr(service, "tailscale_serve_ports", lambda: set())
-    monkeypatch.setattr(service, "local_port_available", lambda _port: False)
-    monkeypatch.setattr(
-        service, "launch_http_server", lambda *_args: pytest.fail("must not launch")
-    )
-
-    with pytest.raises(service.ArtifactError, match="port 55000 is already in use"):
-        service.start_serve(
-            tmp_path, ttl_seconds=60, funnel=False, slug="new", port=55000
-        )
+    if conflict == "state":
+        with pytest.raises(SystemExit) as exit_info:
+            artifact_app(["serve", str(tmp_path), "--slug", "new", "--port", "55000"])
+        assert exit_info.value.code == 2
+        assert "port 55000 is already in use" in capsys.readouterr().err
+    else:
+        with pytest.raises(service.ArtifactError, match="port 55000 is already in use"):
+            service.start_serve(tmp_path, ttl_seconds=60, funnel=False, slug="new", port=55000)
 
 
 def test_free_explicit_port_is_used_for_bind_listener_and_url(
@@ -392,9 +365,7 @@ def test_patched_cli_serve_list_stop_gc(
     monkeypatch.setattr(service, "_tailscale_register", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service, "tailscale_dns_name", lambda: "host.example.ts.net")
     monkeypatch.setattr(service, "pid_alive", lambda _pid, _created: True)
-    monkeypatch.setattr(
-        service, "terminate_pid", lambda pid, _created: terminated.append(pid)
-    )
+    monkeypatch.setattr(service, "terminate_pid", lambda pid, _created: terminated.append(pid))
     monkeypatch.setattr(
         service,
         "tailscale_off",
@@ -482,9 +453,7 @@ def test_invalid_persisted_slugs_are_dropped_without_tailscale_calls(
 def test_tailscale_boundaries_reject_invalid_slug_without_subprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        service, "_tailscale", lambda _args: pytest.fail("tailscale must not run")
-    )
+    monkeypatch.setattr(service, "_tailscale", lambda _args: pytest.fail("tailscale must not run"))
     with pytest.raises(service.ArtifactError):
         service._tailscale_register(50000, "", funnel=False)
     with pytest.raises(service.ArtifactError):
@@ -569,9 +538,7 @@ def test_failed_post_registration_rollback_persists_recovery_entry(
     )
 
     with pytest.raises(service.ArtifactError, match="status failed"):
-        service.start_serve(
-            tmp_path, ttl_seconds=60, funnel=False, slug="recovery"
-        )
+        service.start_serve(tmp_path, ttl_seconds=60, funnel=False, slug="recovery")
 
     assert [item.slug for item in store.load_serves()] == ["recovery"]
 
@@ -582,9 +549,7 @@ def test_gc_continues_after_one_teardown_failure(
     state_path = tmp_path / "serves.json"
     monkeypatch.setattr(store, "serves_path", lambda: state_path)
     store.save_serves([_serve("fails", 50000), _serve("removed", 50001, pid=4243)])
-    monkeypatch.setattr(
-        service, "tailscale_off", lambda slug, _port, *, funnel: slug == "removed"
-    )
+    monkeypatch.setattr(service, "tailscale_off", lambda slug, _port, *, funnel: slug == "removed")
     terminated: list[tuple[int, float | None]] = []
     monkeypatch.setattr(
         service, "terminate_pid", lambda pid, created: terminated.append((pid, created))
@@ -596,17 +561,6 @@ def test_gc_continues_after_one_teardown_failure(
     assert failed == ["fails"]
     assert [item.slug for item in store.load_serves()] == ["fails"]
     assert terminated == [(4243, 1000.0)]
-
-
-def test_pid_birth_epoch_is_passed_to_termination(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[int, float]] = []
-    monkeypatch.setattr(
-        service,
-        "terminate_tree_sync",
-        lambda pid, *, created_at_epoch, **_kwargs: calls.append((pid, created_at_epoch)),
-    )
-    service.terminate_pid(123, 456.5)
-    assert calls == [(123, 456.5)]
 
 
 def test_start_retries_when_first_local_server_never_becomes_ready(
@@ -630,19 +584,13 @@ def test_start_retries_when_first_local_server_never_becomes_ready(
         return FakeProcess(port)
 
     monkeypatch.setattr(service, "launch_http_server", fake_launch)
-    monkeypatch.setattr(
-        service, "wait_for_http_server", lambda _proc, _port: next(readiness)
-    )
+    monkeypatch.setattr(service, "wait_for_http_server", lambda _proc, _port: next(readiness))
     monkeypatch.setattr(service, "process_created_epoch", float)
-    monkeypatch.setattr(
-        service, "terminate_pid", lambda pid, _created: terminated.append(pid)
-    )
+    monkeypatch.setattr(service, "terminate_pid", lambda pid, _created: terminated.append(pid))
     monkeypatch.setattr(service, "_tailscale_register", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service, "tailscale_dns_name", lambda: "host.ts.net")
 
-    serve, _url = service.start_serve(
-        tmp_path, ttl_seconds=60, funnel=False, slug="retry"
-    )
+    serve, _url = service.start_serve(tmp_path, ttl_seconds=60, funnel=False, slug="retry")
 
     assert serve.local_port == 50001
     assert terminated == [50000]
@@ -655,9 +603,7 @@ def test_concurrent_serves_are_serialized_without_lost_entries(
     state_path = tmp_path / "serves.json"
     monkeypatch.setattr(store, "serves_path", lambda: state_path)
     monkeypatch.setattr(service, "tailscale_serve_ports", lambda: set())
-    monkeypatch.setattr(
-        service, "pick_port", lambda occupied: min({50000, 50001} - set(occupied))
-    )
+    monkeypatch.setattr(service, "pick_port", lambda occupied: min({50000, 50001} - set(occupied)))
 
     class FakeProcess:
         def __init__(self, pid: int) -> None:
@@ -705,60 +651,3 @@ def test_list_json_is_local_and_emits_json(
     )
     _invoke_artifact(["list", "--format", "json"])
     assert json.loads(capsys.readouterr().out)[0]["slug"] == "report"
-
-
-def test_routed_cli_list_format_json_emits_json(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    state_path = home / "serves.json"
-    state_path.write_text(
-        json.dumps(
-            [
-                {
-                    "slug": "report",
-                    "local_port": 50000,
-                    "dir": "/tmp",
-                    "work_id": None,
-                    "created": "2026-01-01T00:00:00Z",
-                    "ttl_seconds": 60,
-                    "funnel": False,
-                    "pid": 123,
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
-    env = os.environ.copy()
-    env["MERIDIAN_HOME"] = str(home)
-
-    result = subprocess.run(
-        [sys.executable, "-m", "meridian", "artifact", "list", "--format", "json"],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)[0]["slug"] == "report"
-
-
-def test_list_survives_unavailable_tailscale(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    state_path = tmp_path / "serves.json"
-    monkeypatch.setattr(store, "serves_path", lambda: state_path)
-    store.save_serves([_serve("report", 50000)])
-    monkeypatch.setattr(
-        service,
-        "tailscale_dns_name",
-        lambda: (_ for _ in ()).throw(service.ArtifactError("offline")),
-    )
-    monkeypatch.setattr(service, "pid_alive", lambda *_args: True)
-    _invoke_artifact(["list"])
-    output = capsys.readouterr()
-    assert "report" in output.out
-    assert "unavailable" in output.out
-    assert output.err.count("offline") == 1

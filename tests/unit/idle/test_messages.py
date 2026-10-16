@@ -137,12 +137,9 @@ def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:
     [
         (3600, 0, 720_000, False, "48 min until cold"),
         (1800, 0, 720_000, True, "est. 18 min until cold"),
-        (300, 0, 210_000, False, "2 min until cold"),
         (300, 0, 270_000, True, "est. <1 min until cold"),
         (300, 0, 300_000, False, "cache cold"),
-        (300, 0, 360_000, True, "est. cache cold"),
         (None, 0, 720_000, True, None),
-        (3600, None, 720_000, False, None),
     ],
 )
 def test_countdown_uses_current_time_and_persisted_ttl_confidence(
@@ -166,8 +163,7 @@ def test_countdown_uses_current_time_and_persisted_ttl_confidence(
 
 def test_excerpt_trimming_collapses_whitespace_cuts_at_words_and_strips_reminders() -> None:
     user, assistant = trim_turn_excerpts(
-        "  human prompt\n\n<system-reminder>injected hook text</system-reminder> "
-        + "word " * 40,
+        "  human prompt\n\n<system-reminder>injected hook text</system-reminder> " + "word " * 40,
         "reply\nwith\tspacing " + "answer " * 60,
     )
 

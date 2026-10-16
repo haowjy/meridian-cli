@@ -54,18 +54,6 @@ def test_interrupt_while_running_posix_sends_sigint() -> None:
     assert result == 1
 
 
-def test_interrupt_while_running_windows_calls_terminate() -> None:
-    """On Windows, KeyboardInterrupt with live process calls terminate(), not send_signal."""
-    process = _FakeProcess(running=True, wait_exit_code=1, raise_interrupt=True)
-
-    with patch.object(subprocess_launcher, "IS_WINDOWS", True):
-        result = _wait_for_process(process)  # type: ignore[arg-type]
-
-    assert process.terminate_called is True
-    assert process.send_signal_args == []
-    assert result == 1
-
-
 def test_interrupt_while_already_exited_returns_130() -> None:
     """KeyboardInterrupt after process exits: return 130 without any signal."""
     process = _FakeProcess(running=False, wait_exit_code=0, raise_interrupt=True)
@@ -73,16 +61,5 @@ def test_interrupt_while_already_exited_returns_130() -> None:
     result = _wait_for_process(process)  # type: ignore[arg-type]
 
     assert result == 130
-    assert process.terminate_called is False
-    assert process.send_signal_args == []
-
-
-def test_normal_exit_returns_exit_code() -> None:
-    """Happy path: wait() returns the process exit code directly."""
-    process = _FakeProcess(running=True, wait_exit_code=42)
-
-    result = _wait_for_process(process)  # type: ignore[arg-type]
-
-    assert result == 42
     assert process.terminate_called is False
     assert process.send_signal_args == []

@@ -1,6 +1,8 @@
 # qa-validated: orchestrator-opencode-fallback-runtime
 from __future__ import annotations
 
+import pytest
+
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
@@ -96,7 +98,11 @@ def test_compile_launch_params_routing_precedence_cli_beats_profile() -> None:
     assert result.model == "openai/gpt-5.4-mini"
 
 
-def test_compile_launch_params_policy_precedence_cli_effort_wins() -> None:
+@pytest.mark.parametrize(("cli_effort", "expected"), [("xhigh", "xhigh"), (None, "high")])
+def test_compile_launch_params_effort_precedence(
+    cli_effort: str | None,
+    expected: str,
+) -> None:
     alias = _alias_entry()
     profile_rule = ModelPolicyRule(
         match_type="alias",
@@ -104,7 +110,7 @@ def test_compile_launch_params_policy_precedence_cli_effort_wins() -> None:
         overrides={"effort": "high"},
     )
     request = _request(
-        cli=RuntimeOverrides(model="gptmini", effort="xhigh"),
+        cli=RuntimeOverrides(model="gptmini", effort=cli_effort),
         profile_policy_defaults=ResolvedExecutionPolicy(effort="low"),
         profile_model_policies=(profile_rule,),
         config=RuntimeOverrides(effort="low"),
@@ -113,27 +119,7 @@ def test_compile_launch_params_policy_precedence_cli_effort_wins() -> None:
 
     result = compile_launch_params(request)
 
-    assert result.execution_policy.effort == "xhigh"
-
-
-def test_compile_launch_params_policy_precedence_matched_policy_wins() -> None:
-    alias = _alias_entry()
-    profile_rule = ModelPolicyRule(
-        match_type="alias",
-        match_value="gptmini",
-        overrides={"effort": "high"},
-    )
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        profile_policy_defaults=ResolvedExecutionPolicy(effort="low"),
-        profile_model_policies=(profile_rule,),
-        config=RuntimeOverrides(effort="low"),
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.execution_policy.effort == "high"
+    assert result.execution_policy.effort == expected
 
 
 def test_compile_launch_params_timeout_excludes_profile_defaults() -> None:
@@ -150,8 +136,10 @@ def test_compile_launch_params_timeout_excludes_profile_defaults() -> None:
     assert result.execution_policy.timeout == 40.0
 
 
-def test_compile_launch_params_model_derived_harness_beats_policy_harness_override() -> None:
-    """Model-derived harness beats policy harness when model has higher precedence."""
+@pytest.mark.parametrize("lower_precedence_source", ["policy", "profile"])
+def test_compile_launch_params_model_derived_harness_wins(
+    lower_precedence_source: str,
+) -> None:
     alias = _alias_entry()
     profile_rule = ModelPolicyRule(
         match_type="alias",
@@ -160,36 +148,14 @@ def test_compile_launch_params_model_derived_harness_beats_policy_harness_overri
     )
     request = _request(
         cli=RuntimeOverrides(model="gptmini"),
-        profile_model_policies=(profile_rule,),
+        profile_model_policies=(profile_rule,) if lower_precedence_source == "policy" else None,
+        profile_routing_harness=("claude" if lower_precedence_source == "profile" else None),
         alias_entry=alias,
     )
 
     result = compile_launch_params(request)
 
     assert result.harness == "codex"
-
-
-def test_compile_launch_params_first_match_wins_no_ambiguity_error() -> None:
-    alias = _alias_entry()
-    first_glob = ModelPolicyRule(
-        match_type="model-glob",
-        match_value="openai/*",
-        overrides={"effort": "medium"},
-    )
-    second_glob = ModelPolicyRule(
-        match_type="model-glob",
-        match_value="*/gpt-5.4-*",
-        overrides={"effort": "high"},
-    )
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        profile_model_policies=(first_glob, second_glob),
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.execution_policy.effort == "medium"
 
 
 def test_compile_launch_params_ignores_unsupported_execution_fields() -> None:
@@ -251,16 +217,3 @@ def test_resident_rearm_budget_resolves_cli_env_profile_config_precedence() -> N
     assert env_wins.execution_policy.resident_rearm_budget == 2
     assert cli_wins.execution_policy.resident_rearm_budget == 1
     assert ResolvedExecutionPolicy().resident_rearm_budget is None
-
-
-def test_compile_launch_params_harness_prefers_model_derived_over_profile() -> None:
-    alias = _alias_entry()
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        profile_routing_harness="claude",
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.harness == "codex"

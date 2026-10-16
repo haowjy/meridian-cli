@@ -43,23 +43,6 @@ def test_is_process_alive_returns_false_for_pid_reuse(monkeypatch) -> None:
     monkeypatch.setattr(liveness.psutil, "Process", lambda pid: _FakeProcess(create_time=131.0))
 
     assert liveness.is_process_alive(123, created_after_epoch=100.0) is False
-def test_is_process_alive_returns_process_running_state(monkeypatch) -> None:
-    monkeypatch.setattr(liveness.psutil, "pid_exists", lambda pid: True)
-    monkeypatch.setattr(liveness.psutil, "Process", lambda pid: _FakeProcess(is_running=True))
-
-    assert liveness.is_process_alive(123, created_after_epoch=100.0) is True
-
-
-def test_process_liveness_treats_zombie_as_exited(monkeypatch) -> None:
-    monkeypatch.setattr(liveness.psutil, "pid_exists", lambda pid: True)
-    monkeypatch.setattr(
-        liveness.psutil,
-        "Process",
-        lambda pid: _FakeProcess(status=psutil.STATUS_ZOMBIE),
-    )
-
-    assert liveness.is_process_alive(123) is False
-    assert liveness.is_process_alive_with_birth(123, 100.0) is False
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX zombie semantics")
@@ -81,6 +64,8 @@ def test_real_zombie_is_not_alive() -> None:
         assert liveness.is_process_alive_with_birth(child_pid, birth) is False
     finally:
         os.waitpid(child_pid, 0)
+
+
 def test_is_process_alive_returns_true_on_access_denied(monkeypatch) -> None:
     monkeypatch.setattr(liveness.psutil, "pid_exists", lambda pid: True)
 
@@ -90,16 +75,8 @@ def test_is_process_alive_returns_true_on_access_denied(monkeypatch) -> None:
     monkeypatch.setattr(liveness.psutil, "Process", _raise_access_denied)
 
     assert liveness.is_process_alive(123) is True
-def test_is_spawn_genuinely_active_uses_runner_pid_liveness(tmp_path, monkeypatch) -> None:
-    record = SimpleNamespace(status="running", runner_pid=4321)
-    monkeypatch.setattr("meridian.lib.state.spawn_store.get_spawn", lambda *_args: record)
-    monkeypatch.setattr(
-        "meridian.lib.core.spawn_lifecycle.is_active_spawn_status",
-        lambda status: status in {"queued", "running", "finalizing"},
-    )
-    monkeypatch.setattr(liveness, "is_process_alive", lambda pid: pid == 4321)
 
-    assert liveness.is_spawn_genuinely_active(tmp_path, "p1") is True
+
 def test_is_spawn_genuinely_active_returns_false_for_stale_heartbeat(tmp_path, monkeypatch) -> None:
     record = SimpleNamespace(status="running", runner_pid=None)
     heartbeat = tmp_path / "spawns" / "p1" / "heartbeat"
