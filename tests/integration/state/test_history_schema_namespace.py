@@ -47,6 +47,18 @@ CREATE TABLE work_chats (work TEXT NOT NULL, chat TEXT NOT NULL, PRIMARY KEY (wo
 CREATE TABLE cursors (source TEXT NOT NULL PRIMARY KEY, inode TEXT, extent INTEGER, tail TEXT);
 """
 
+# Schemas 8 and 9 were written by unreleased builds before the
+# abandoned-generation fold rule. Schema 10 must not reuse either projection.
+_UNRELEASED_RECORDS_DDL = """
+CREATE TABLE meta (version INTEGER NOT NULL, generation TEXT NOT NULL, build TEXT NOT NULL);
+CREATE TABLE records (history_id TEXT NOT NULL PRIMARY KEY, local_id TEXT,
+    spawn_id TEXT NOT NULL, run INTEGER NOT NULL, chat TEXT, current_chat TEXT,
+    owner TEXT, parent TEXT,
+    work TEXT, status TEXT NOT NULL, kind TEXT NOT NULL, started TEXT NOT NULL,
+    activity TEXT NOT NULL, active INTEGER NOT NULL, archive_id TEXT,
+    record_json TEXT NOT NULL);
+"""
+
 
 def _legacy_projection(root: Path) -> dict[str, bytes]:
     """Write what 0.6.7 leaves behind: a schema-2 index, its queue and its latch."""
@@ -120,6 +132,29 @@ def test_every_projection_path_is_named_by_the_schema(tmp_path: Path, monkeypatc
     assert all(f"-v{SCHEMA_VERSION + 1}" in path.name for path in owned)
     # Authority is shared by every build; its gate is not versioned.
     assert changes.mutation_lock.name == "history-mutation.lock"
+
+
+@pytest.mark.parametrize("old_schema", [8, 9])
+def test_unreleased_projection_rebuilds_in_schema_10_namespace(
+    tmp_path: Path, old_schema: int
+) -> None:
+    old_path = tmp_path / "history-index" / f"history-v{old_schema}.sqlite3"
+    old_path.parent.mkdir()
+    with sqlite3.connect(old_path) as db:
+        db.executescript(_UNRELEASED_RECORDS_DDL)
+        db.execute(
+            "INSERT INTO meta VALUES (?, 'old-generation', 'branch-build')",
+            (old_schema,),
+        )
+
+    key = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
+    )
+
+    index = HistoryIndex(tmp_path)
+    assert [row.id for row in index.spawns()] == [key]
+    assert index.path.name == "history-v10.sqlite3"
+    assert old_path.exists()
 
 
 def test_initialization_latch_is_scoped_to_this_schema_file(tmp_path: Path) -> None:

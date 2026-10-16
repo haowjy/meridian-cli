@@ -259,7 +259,10 @@ def _repair_orphan_runs(
     running_after = {s.id for s in reconciled if is_active_spawn_status(s.status)}
     reconciled_orphans = tuple(sorted(running_before - running_after))
     if reconciled_orphans:
-        from meridian.lib.ops.session_archive import materialize_native_history
+        from meridian.lib.ops.session_archive import (
+            NativeCaptureDeferred,
+            materialize_native_history,
+        )
 
         by_id = {s.id: s for s in reconciled}
         for spawn_id in reconciled_orphans:
@@ -267,6 +270,12 @@ def _repair_orphan_runs(
                 continue
             try:
                 materialize_native_history(project_root, resolved_runtime_root, spawn_id)
+            except NativeCaptureDeferred as exc:
+                logger.debug(
+                    "orphan_primary_capture_deferred",
+                    spawn_id=spawn_id,
+                    owner=exc.owner,
+                )
             except Exception:
                 logger.warning(
                     "orphan_primary_capture_failed",

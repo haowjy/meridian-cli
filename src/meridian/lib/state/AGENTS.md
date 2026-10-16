@@ -199,7 +199,11 @@ starts and updates. `update_session_harness_id` atomically returns
 `BindOutcome` (`Bound`/`Same`/`Conflict`) from the one pure rule in
 `native_binding.bind`; callers mirror its accepted ID, not their candidate.
 `session_fold.py` owns event models and replay; `by_native_key(records)`
-inverts accepted chat records without discarding aliases or doing I/O. Historical multi-ID arrays are ignored on read.
+inverts accepted chat records without discarding aliases or doing I/O. A later
+accepted start projects every earlier unstopped live generation of that chat as
+stopped at the new start time: ordinary starts hold the chat's exclusive lifetime
+lock, while observed-chat starts mint a new chat and immediately stop it.
+Historical multi-ID arrays are ignored on read.
 
 ## Entry Points
 
