@@ -136,6 +136,7 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any,
         launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
@@ -216,6 +217,7 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any,
         launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
@@ -269,6 +271,7 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any,
         launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
@@ -345,6 +348,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any,
         launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
@@ -421,6 +425,7 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
         cwd,
         env,
         output_log_path,
+        terminal_surface_mode,
         on_child_started,
         launcher_diagnostics_path,
     ):

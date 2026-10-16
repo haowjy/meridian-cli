@@ -337,7 +337,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 TerminalSurfaceMode.PTY_MEDIATED,
                 TerminalSurfaceMode.NATIVE_INHERIT,
             ),
-            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
+            default_terminal_surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
         )
 
     def run_prompt_policy(self) -> RunPromptPolicy:

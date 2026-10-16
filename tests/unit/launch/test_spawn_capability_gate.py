@@ -9,8 +9,7 @@ import pytest
 from meridian.lib.catalog.agent import AgentProfile, MeridianCapabilities
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.adapter import CLAUDE_SPAWN_USAGE_VARIANTS
+from meridian.lib.harness.adapter import CLAUDE_SPAWN_USAGE_VARIANTS, SubprocessHarness
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_policy_snapshot
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
@@ -45,8 +44,8 @@ def _profile(
     )
 
 
-def _terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
-    _ = harness_id
+def _terminal_surface_mode(*, adapter: SubprocessHarness) -> TerminalSurfaceMode:
+    _ = adapter
     return TerminalSurfaceMode.PTY_MEDIATED
 
 

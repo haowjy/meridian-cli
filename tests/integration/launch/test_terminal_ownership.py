@@ -68,6 +68,7 @@ def test_primary_tui_window_captures_launcher_threads_and_children(
             from pathlib import Path
 
             from meridian.lib.launch.process.runner import run_primary_process_with_capture
+            from meridian.lib.launch.launch_types import TerminalSurfaceMode
             from meridian.lib.launch.process.terminal_ownership import (
                 format_launcher_diagnostics_pointer,
             )
@@ -102,6 +103,7 @@ def test_primary_tui_window_captures_launcher_threads_and_children(
                 Path.cwd(),
                 dict(os.environ),
                 None,
+                TerminalSurfaceMode.NATIVE_INHERIT,
                 on_child_started,
                 diagnostics_path,
             )

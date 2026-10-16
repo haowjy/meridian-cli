@@ -9,15 +9,11 @@ Selection order when output capture is requested (`output_log_path` is set):
 1. `PtyProcessLauncher` (PTY_MEDIATED, captures to artifact) — if `can_use_pty()`
 2. `SubprocessProcessLauncher` (PIPE_CAPTURE, captures to artifact) — fallback
 
-Selection order when no capture is needed (`output_log_path` is None):
-1. `WindowsConsoleLauncher` (NATIVE_INHERIT, no capture) — legacy, untested;
-   selected if `can_use_windows_console_launcher()`
-2. `PtyProcessLauncher` (PTY_MEDIATED, no capture) — elif `can_use_pty()`
-3. `SubprocessProcessLauncher` (NATIVE_INHERIT, no capture) — fallback
-
-The PTY launcher is preferred for POSIX interactive TUI harnesses. The legacy
-Windows console launcher attempts native console inheritance; the subprocess
-launcher is the fallback.
+Without capture, the resolved adapter mode chooses native inheritance or the PTY
+relay (with the existing unavailable-PTY/legacy Windows fallbacks). Native mode
+does not test `isatty`: it always preserves the shell's session/group and uses
+`LaunchGate(group=False)`. Its saved terminal descriptors come from the enclosing
+`tui_terminal_window()`, not redirected launcher fds 0/1/2.
 
 `captures_output_to_artifact` on `ProcessPlatformContract` is authoritative — callers must
 not assume capture based on launcher type alone.
@@ -77,9 +73,17 @@ receiver is unregistered in `run()`'s `finally`, which restores the previous han
   signals (main thread only) and restores any signal no longer targeted; it is the single
   seam for both the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and this
   launcher receiver.
-- The relay returns exit 130 when `cancel_wait()` unblocks it; cancellation is asserted
-  only when the signal was seen **and** the relay returned 130, so a session that exited
-  normally just before the signal is not recorded as cancelled.
+- Cancellation is decided by observation order: a SIGTERM/SIGHUP before the wait
+  thread observes TUI completion yields cancelled/130 even if the TUI exits zero.
+  Completion observed first preserves the real result. The ordering lock must be
+  reentrant because coordinator callbacks run in Python signal handlers.
+- SIGINT interception starts immediately before TUI startup, after telemetry has
+  cleared, and ends before backend teardown. Startup Ctrl+C still propagates.
+- Native `cancel_wait()` only sets a signal-safe flag to unblock the waiter; it
+  does not terminate the child. Wait release closes an unreaped gate, while the
+  lifecycle owner tears down the recorded scope and reaps the root. Normal reaped
+  exit disarms the guardian. Harness exit text is never scrubbed; Meridian's hint
+  is appended after the terminal window closes.
 - A signal that arrives before the TUI exists (during backend startup) is latched and
   honored once the TUI starts. If startup then fails, `run()` returns a cancelled outcome
   rather than raising, so `_execute_primary_process()` does not fall back to a black-box

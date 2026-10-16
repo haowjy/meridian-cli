@@ -100,14 +100,18 @@ async def run():
     await handle.process.wait()
 
 
-if mode == "primary":
+if mode in ("primary", "native"):
     from meridian.lib.launch.process.runner import run_primary_process_with_capture
+    from meridian.lib.launch.launch_types import TerminalSurfaceMode
 
     def started(identity):
         boundary(identity.pid)
 
     run_primary_process_with_capture(
-        command, root, os.environ.copy(), None, started, root / "launcher.log"
+        command, root, os.environ.copy(), None,
+        (TerminalSurfaceMode.NATIVE_INHERIT
+         if mode == "native" else TerminalSurfaceMode.PTY_MEDIATED),
+        started, root / "launcher.log"
     )
 else:
     asyncio.run(run())
@@ -179,8 +183,9 @@ def test_runner_sigkill_kills_reexeced_backend_group(tmp_path: Path) -> None:
     _runner_case(tmp_path, mode="backend", pause=False)
 
 
-def test_non_tty_primary_is_gated(tmp_path: Path) -> None:
-    _runner_case(tmp_path, mode="primary", pause=True)
+@pytest.mark.parametrize("mode", ["primary", "native"])
+def test_non_tty_primary_is_gated(tmp_path: Path, mode: str) -> None:
+    _runner_case(tmp_path, mode=mode, pause=True)
 
 
 def test_guardian_not_a_child_of_harness(tmp_path: Path) -> None:
@@ -345,20 +350,22 @@ def test_harness_exit_gives_eof_before_stop(pty_output: bool, tmp_path: Path) ->
         pool.shutdown(wait=True)
 
 
-def test_tty_stdin_primary_root_only(tmp_path: Path) -> None:
+@pytest.mark.parametrize("launcher", ["SubprocessProcessLauncher", "NativeProcessLauncher"])
+def test_tty_stdin_primary_root_only(tmp_path: Path, launcher: str) -> None:
     # A separate session is the shell pipeline: sibling must survive, harness
     # deliberately survives TERM so the single-signal/no-delayed-KILL rule is visible.
     script = r"""
 import os, pty, signal, subprocess, sys, time
 from pathlib import Path
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
+from meridian.lib.launch.process.native_launcher import NativeProcessLauncher
 from meridian.lib.launch.process.ports import TerminalFds
 
 root = Path(sys.argv[1])
 master, slave = pty.openpty()
 os.dup2(slave, 0)
 sibling = subprocess.Popen(["/bin/sleep", "60"])
-running = SubprocessProcessLauncher().start(
+running = globals()[sys.argv[2]]().start(
     command=(
         "/bin/sh",
         "-c",
@@ -370,9 +377,12 @@ running = SubprocessProcessLauncher().start(
 )
 (root / "ids").write_text(f"{running.identity.pid} {sibling.pid}")
 assert running.identity.pgid is None
+assert os.getpgid(running.identity.pid) == os.getpgrp()
 running.wait()
 """
-    runner = subprocess.Popen([sys.executable, "-c", script, str(tmp_path)], start_new_session=True)
+    runner = subprocess.Popen(
+        [sys.executable, "-c", script, str(tmp_path), launcher], start_new_session=True
+    )
     child = sibling = None
     try:
         _until((tmp_path / "harness").exists)

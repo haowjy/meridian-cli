@@ -14,7 +14,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from threading import Lock, Thread
+from threading import Lock, RLock, Thread
 from types import MappingProxyType
 from typing import Any
 
@@ -58,8 +58,44 @@ _TUI_WAIT_CANCEL_TIMEOUT_SECONDS = 1.0
 logger = structlog.get_logger(__name__)
 
 
-def _start_process_wait(running_process: RunningProcess) -> asyncio.Future[LaunchedProcess]:
-    """Run a synchronous terminal relay without joining it during loop shutdown."""
+class _TuiExitOrdering:
+    """Record whether launcher cancellation or the TUI exit was observed first."""
+
+    def __init__(self) -> None:
+        # Signal handlers can interrupt main-thread reads while this is held;
+        # reentrancy keeps record_signal() from deadlocking the same thread.
+        self._lock = RLock()
+        self._signal_received = False
+        self._exit_observed = False
+        self._signal_preceded_exit = False
+
+    def record_signal(self) -> None:
+        with self._lock:
+            self._signal_received = True
+            if not self._exit_observed:
+                self._signal_preceded_exit = True
+
+    def record_exit(self) -> None:
+        with self._lock:
+            self._exit_observed = True
+
+    @property
+    def signal_received(self) -> bool:
+        with self._lock:
+            return self._signal_received
+
+    @property
+    def signal_preceded_exit(self) -> bool:
+        with self._lock:
+            return self._signal_preceded_exit
+
+
+def _start_process_wait(
+    running_process: RunningProcess,
+    *,
+    on_exit_observed: Callable[[], None] | None = None,
+) -> asyncio.Future[LaunchedProcess]:
+    """Run a synchronous process wait without joining it during loop shutdown."""
 
     loop = asyncio.get_running_loop()
     result_future: asyncio.Future[LaunchedProcess] = loop.create_future()
@@ -79,6 +115,8 @@ def _start_process_wait(running_process: RunningProcess) -> asyncio.Future[Launc
             with suppress(RuntimeError):
                 loop.call_soon_threadsafe(_publish_error, exc)
             return
+        if on_exit_observed is not None:
+            on_exit_observed()
         with suppress(RuntimeError):
             loop.call_soon_threadsafe(_publish_result, result)
 
@@ -220,12 +258,12 @@ class PrimaryAttachLauncher:
         self._idle_error_reporter: idle_sidecar.SensorErrorReporter | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
-        self._signal_cancel_requested = False
+        self._tui_exit_ordering = _TuiExitOrdering()
 
     def _request_signal_cancel(self) -> None:
-        """Handle SIGTERM/SIGHUP: stop the TUI relay so ``run`` can finalize."""
+        """Handle SIGTERM/SIGHUP: stop the TUI wait so ``run`` can finalize."""
 
-        self._signal_cancel_requested = True
+        self._tui_exit_ordering.record_signal()
         running = self._running_process
         if running is not None:
             running.cancel_wait()
@@ -316,13 +354,18 @@ class PrimaryAttachLauncher:
             self._heartbeat_task = asyncio.create_task(
                 heartbeat_loop(self._runtime_root, self._spawn_id)
             )
-        self._signal_cancel_requested = False
+        self._tui_exit_ordering = _TuiExitOrdering()
         cancel_receiver = SignalCallbackReceiver(
             target_signals=(signal.SIGTERM, signal.SIGHUP),
             callback=lambda _signum: self._request_signal_cancel(),
             escalate_on_repeat=True,
         )
+        sigint_receiver = SignalCallbackReceiver(
+            target_signals=(signal.SIGINT,),
+            callback=lambda _signum: None,
+        )
         signal_coordinator().register_receiver(cancel_receiver)
+        sigint_receiver_registered = False
         connection_started = False
         session_id: str | None = None
         running_process: RunningProcess | None = None
@@ -373,6 +416,8 @@ class PrimaryAttachLauncher:
                 self._record_tui_scope(identity, session_id)
 
             telemetry.clear()
+            signal_coordinator().register_receiver(sigint_receiver)
+            sigint_receiver_registered = True
             with tui_terminal_window(self._spawn_dir / LAUNCHER_LOG_FILENAME) as window:
                 try:
                     running_process = self._process_launcher.start(
@@ -383,9 +428,9 @@ class PrimaryAttachLauncher:
                         terminal_fds=window.terminal_fds,
                     )
                     self._running_process = running_process
-                    if self._signal_cancel_requested:
+                    if self._tui_exit_ordering.signal_received:
                         # A signal arrived during backend startup; honor it now that the
-                        # TUI relay exists.
+                        # TUI process exists.
                         running_process.cancel_wait()
                     try:
                         _handle_running(running_process.identity)
@@ -393,7 +438,9 @@ class PrimaryAttachLauncher:
                         running_process.terminate()
                         await _start_process_wait(running_process)
                         raise
-                    launch_task = _start_process_wait(running_process)
+                    launch_task = _start_process_wait(
+                        running_process, on_exit_observed=self._tui_exit_ordering.record_exit
+                    )
                     self._start_idle_sensor(
                         session_id=session_id,
                         env=env,
@@ -401,14 +448,11 @@ class PrimaryAttachLauncher:
                     )
                     # The TUI owns the primary. Observer silence is not a quit.
                     launched = await asyncio.shield(launch_task)
-                    # Cancellation is only asserted when the relay was actually
-                    # interrupted by the signal: ``cancel_wait`` returns exit 130,
-                    # while a clean TUI exit returns its own code. This avoids
-                    # turning a session that exited normally just before a signal
-                    # landed into a cancel.
-                    cancelled = self._signal_cancel_requested and launched.exit_code == 130
+                    # A pane close can make the TUI return zero. Observation order,
+                    # not its exit code, distinguishes cancellation from normal quit.
+                    cancelled = self._tui_exit_ordering.signal_preceded_exit
                     if cancelled:
-                        # The relay stopped on the signal, so the TUI is still alive.
+                        # The wait stopped on the signal; ensure the TUI scope is gone.
                         await self._stop_idle_task()
                         await self._stop_tui_launch_task(
                             running_process,
@@ -431,7 +475,7 @@ class PrimaryAttachLauncher:
 
             return PrimaryAttachOutcome(
                 facts=self._facts,
-                exit_code=launched.exit_code,
+                exit_code=130 if cancelled else launched.exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
                 cancelled=cancelled,
@@ -439,7 +483,7 @@ class PrimaryAttachLauncher:
             )
         except Exception:
             telemetry.fail()
-            if self._signal_cancel_requested:
+            if self._tui_exit_ordering.signal_received:
                 # A signal arrived before the TUI was interruptible (e.g. during
                 # backend startup) and startup failed. Honor the cancellation
                 # instead of surfacing a failure the fallback path would relaunch.
@@ -456,6 +500,8 @@ class PrimaryAttachLauncher:
                 )
             raise
         finally:
+            if sigint_receiver_registered:
+                signal_coordinator().unregister_receiver(sigint_receiver)
             signal_coordinator().unregister_receiver(cancel_receiver)
             self._running_process = None
             if connection_started:
@@ -640,6 +686,7 @@ class PrimaryAttachLauncher:
         reason: str,
     ) -> None:
         await self._terminate_tui_scope(reason=reason)
+        running_process.terminate()
         try:
             await asyncio.wait_for(
                 asyncio.shield(launch_task),

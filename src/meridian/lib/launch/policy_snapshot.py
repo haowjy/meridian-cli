@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -170,11 +169,6 @@ def build_launch_policy_snapshot(
         ),
         matched_policy_rule=request.matched_policy_rule,
         selection_report=request.selection_report,
-        terminal_surface_mode=(
-            request.terminal_surface_mode.value
-            if request.terminal_surface_mode is not None
-            else None
-        ),
         bundle_inventory_prompt=(bundle_inventory_prompt or "").strip() or None,
     )
 
@@ -187,7 +181,6 @@ def replay_launch_policy_snapshot(
     skills_readonly: bool,
     alias_catalog: dict[str, AliasEntry],
     resolve_terminal_surface_mode: Callable[..., TerminalSurfaceMode],
-    logger: logging.Logger | None = None,
 ) -> ReplayedLaunchPolicySnapshot:
     """Resolve policy fields directly from persisted snapshot data."""
 
@@ -220,12 +213,7 @@ def replay_launch_policy_snapshot(
         snapshot_skill_names=snapshot_skill_names,
     )
     model_selection = _snapshot_model_selection(snapshot=snapshot, snapshot_model=snapshot_model)
-    terminal_surface_mode = _resolve_snapshot_terminal_mode(
-        snapshot=snapshot,
-        harness_id=harness_id,
-        resolve_terminal_surface_mode=resolve_terminal_surface_mode,
-        logger=logger,
-    )
+    terminal_surface_mode = resolve_terminal_surface_mode(adapter=adapter)
     return ReplayedLaunchPolicySnapshot(
         profile=profile,
         model=managed_model,
@@ -342,28 +330,6 @@ def _snapshot_skills(
         selected_model_token=snapshot.model_selection_requested_token or snapshot_model,
         canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
     )
-
-
-def _resolve_snapshot_terminal_mode(
-    *,
-    snapshot: LaunchPolicySnapshot,
-    harness_id: HarnessId,
-    resolve_terminal_surface_mode: Callable[..., TerminalSurfaceMode],
-    logger: logging.Logger | None,
-) -> TerminalSurfaceMode:
-    terminal_surface_mode = resolve_terminal_surface_mode(harness_id=harness_id)
-    if snapshot.terminal_surface_mode is None:
-        return terminal_surface_mode
-
-    try:
-        return TerminalSurfaceMode(snapshot.terminal_surface_mode)
-    except ValueError:
-        if logger is not None:
-            logger.warning(
-                "Ignoring unsupported snapshot terminal_surface_mode '%s'.",
-                snapshot.terminal_surface_mode,
-            )
-        return terminal_surface_mode
 
 
 __all__ = [

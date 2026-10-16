@@ -180,17 +180,22 @@ class ResolvedLaunchPolicy:
 ResolvedPolicies = ResolvedLaunchPolicy
 
 
-def _resolve_terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
+def _resolve_terminal_surface_mode(*, adapter: SubprocessHarness) -> TerminalSurfaceMode:
     """Resolve the interactive terminal surface mode at the policy boundary.
 
-    Stage 3.4 lands the typed policy field without changing interactive launch
-    behavior. The compatibility default remains PTY-mediated for every harness.
-    Claude is permanently pinned to PTY-mediated; Codex/OpenCode also remain on
-    PTY-mediated until later rollout gates enable native inherit.
+    Harness adapters declare both their supported modes and their default. Policy
+    validates that declaration once rather than teaching process orchestration
+    about harness identities.
     """
 
-    _ = harness_id
-    return TerminalSurfaceMode.PTY_MEDIATED
+    capabilities = adapter.contract.capabilities
+    default = capabilities.default_terminal_surface_mode
+    if default not in capabilities.terminal_surface_modes:
+        raise ValueError(
+            f"Harness '{adapter.id}' declares unsupported default terminal mode "
+            f"'{default.value}'"
+        )
+    return default
 
 
 def _policy_warnings(
@@ -583,7 +588,9 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         warnings=tuple(policy_warnings),
         alias_catalog=alias_catalog,
         harness_registry=surface.harness_registry,
-        terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=resolved_harness),
+        terminal_surface_mode=_resolve_terminal_surface_mode(
+            adapter=surface.harness_registry.get_subprocess_harness(resolved_harness)
+        ),
         provenance_overrides=provenance_overrides or None,
     )
 
@@ -602,7 +609,6 @@ def _resolve_policy_from_snapshot(
         skills_readonly=surface.skills_readonly,
         alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
         resolve_terminal_surface_mode=_resolve_terminal_surface_mode,
-        logger=_LOGGER,
     )
     return ResolvedLaunchPolicy(
         profile=replayed.profile,

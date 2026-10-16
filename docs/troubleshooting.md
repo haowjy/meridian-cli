@@ -73,6 +73,20 @@ This is expected for the managed path. Meridian now shows compact startup teleme
 
 See [codex-tui-passthrough.md](codex-tui-passthrough.md) for the startup phases and bootstrap rationale.
 
+## Codex or OpenCode terminal is garbled after `kill -9`
+
+Codex and OpenCode managed primaries own the real terminal directly. A
+`kill -9` prevents the TUI from restoring its terminal modes, so stale screen
+content, a hidden cursor, or mouse handling may remain after the shell returns.
+Restore the terminal with:
+
+```bash
+reset
+```
+
+Normal exit does not need this. `Ctrl+Z` stops Meridian and the TUI together;
+use the invoking shell's `fg` command to resume both.
+
 ## Codex managed attach fails instead of falling back
 
 Codex primary is intentionally managed-only. Meridian does not silently fall back to black-box Codex for `meridian codex`, because hidden instruction routing and managed session tracking are the point of that command.
