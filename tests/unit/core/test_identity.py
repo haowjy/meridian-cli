@@ -3,7 +3,12 @@
 import pytest
 
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.identity import current_run_id, current_spawn_id, identity_env
+from meridian.lib.core.identity import (
+    current_parent_spawn_id,
+    current_run_id,
+    current_spawn_id,
+    identity_env,
+)
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import SpawnId
@@ -18,6 +23,7 @@ def test_old_launcher_fallback_and_new_run_identity():
     assert current_run_id(env) == "p2.3"
     assert current_run_id({**env, "MERIDIAN_RUN_ID": " "}) == "p2"
     assert current_run_id({"MERIDIAN_SPAWN_ID": "p7", "MERIDIAN_RUN_ID": "p2.3"}) == "p7"
+    assert current_parent_spawn_id({"_MERIDIAN_PARENT_SPAWN_ID": " p2.3 "}) == "p2"
 
 
 def test_child_environment_carries_both_identities():

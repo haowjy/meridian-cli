@@ -14,6 +14,14 @@ def current_spawn_id(env: Mapping[str, str] | None = None) -> SpawnId | None:
     return spawn_of(value) if value else None
 
 
+def current_parent_spawn_id(env: Mapping[str, str] | None = None) -> SpawnId | None:
+    """Stable parent identity inherited by a child process, when present."""
+
+    source = os.environ if env is None else env
+    value = (source.get("_MERIDIAN_PARENT_SPAWN_ID") or "").strip()
+    return spawn_of(value) if value else None
+
+
 def current_run_id(env: Mapping[str, str] | None = None) -> RunId | None:
     """Exact launching run; never consult the spawn's current/latest run.
 

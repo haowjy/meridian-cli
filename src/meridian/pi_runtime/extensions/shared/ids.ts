@@ -13,18 +13,22 @@ export function parseRef(text: string): MeridianRef {
   const match = /^p([0-9]+)(?:\.([0-9]+))?$/.exec(value);
   if (match && (match[2] === undefined || BigInt(match[2]) >= 1n)) {
     const spawnId = `p${match[1]}`;
-    const run = match[2] === undefined ? 1n : BigInt(match[2]);
+    if (match[2] === undefined) {
+      return { kind: "spawn", value, spawnId };
+    }
+    const run = BigInt(match[2]);
     return {
-      kind: match[2] === undefined ? "spawn" : "run",
+      kind: "run",
       value,
       spawnId,
-      ...(match[2] === undefined ? {} : { runId: run === 1n ? spawnId : `${spawnId}.${run}` }),
+      runId: run === 1n ? spawnId : `${spawnId}.${run}`,
       run: Number(run),
     };
   }
   if (/^c[0-9]+$/.test(value)) {
     return { kind: "chat", value, chatId: value };
   }
+  // Pi extensions do not resolve CLI aliases; values such as @latest remain native here.
   return { kind: "native", value };
 }
 

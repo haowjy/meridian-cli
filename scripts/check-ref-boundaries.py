@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GRAMMAR = {
     "src/meridian/lib/core/refs.py",
-    "src/meridian/pi_runtime/extensions/shared/meridian_spawn.ts",
+    "src/meridian/pi_runtime/extensions/shared/ids.ts",
 }
 ENV = {
     "src/meridian/lib/core/identity.py",

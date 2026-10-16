@@ -3,15 +3,15 @@ import { expect, test } from "vitest";
 import { classifyWorkId, isExactRunId, isStableSpawnId, parseRef } from "./ids";
 
 test.each([
-  ["p5", "spawn", "p5", undefined, 1],
-  [" p5 ", "spawn", "p5", undefined, 1],
-  ["p05", "spawn", "p05", undefined, 1],
+  ["p5", "spawn", "p5", undefined, undefined],
+  [" p5 ", "spawn", "p5", undefined, undefined],
+  ["p05", "spawn", "p05", undefined, undefined],
   ["p5.1", "run", "p5", "p5", 1],
   ["p5.01", "run", "p5", "p5", 1],
   ["p5.2", "run", "p5", "p5.2", 2],
   ["p5.010", "run", "p5", "p5.10", 10],
   ["c05", "chat", undefined, undefined, undefined],
-  ...["P5", "p-x", "r5", "p5.0", "p5.-1", "p５", "p5.2.3", "", "native-uuid"]
+  ...["P5", "p-x", "r5", "p5.0", "p5.-1", "p５", "p5.2.3", "", "native-uuid", "@latest"]
     .map(value => [value, "native", undefined, undefined, undefined]),
 ])("reference corpus %s", (text, kind, spawnId, runId, run) => {
   const ref = parseRef(text!);

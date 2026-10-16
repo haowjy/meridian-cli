@@ -70,10 +70,12 @@ def spawn_of(run_key: str) -> SpawnId:
 def make_run_id(spawn_id: SpawnId, run: int) -> RunId:
     """Compose the persisted key for one numbered spawn run.
 
-    Callers validate stable IDs at the reference boundary. Keeping this helper
-    total for ``SpawnId`` also lets retention code guard successors of legacy
-    row identities.
+    The type boundary is not enough at runtime: reject malformed or already
+    run-scoped values rather than manufacturing another invalid key.
     """
+    match = _SPAWN.fullmatch(str(spawn_id))
+    if match is None or match[2] is not None:
+        raise ValueError(f"Invalid stable spawn ID: {spawn_id}")
     if run < 1:
         raise ValueError("Run number must be at least 1")
     return RunId(str(spawn_id) if run == 1 else f"{spawn_id}.{run}")
@@ -82,13 +84,13 @@ def make_run_id(spawn_id: SpawnId, run: int) -> RunId:
 def run_number(run_id: RunId) -> int:
     """Return the positive run number represented by an exact persisted key."""
     parsed = parse_ref(str(run_id))
+    if parsed.value != str(run_id):
+        raise ValueError(f"Invalid run ID: {run_id}")
     if parsed.kind == "spawn":
         return 1
     if parsed.kind == "run" and parsed.run is not None:
         return parsed.run
-    # Nonconforming historical row names predate numbered reopens. As exact
-    # persisted keys, they therefore represent their spawn's first run.
-    return 1
+    raise ValueError(f"Invalid run ID: {run_id}")
 
 
 def display_run_id(run_id: RunId) -> str:

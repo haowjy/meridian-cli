@@ -15,7 +15,12 @@ from meridian.lib.core.depth import (
     child_meridian_depth,
     parse_meridian_depth,
 )
-from meridian.lib.core.identity import current_run_id, current_spawn_id, identity_env
+from meridian.lib.core.identity import (
+    current_parent_spawn_id,
+    current_run_id,
+    current_spawn_id,
+    identity_env,
+)
 from meridian.lib.core.refs import spawn_of
 from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.state import paths as state_paths
@@ -92,7 +97,7 @@ class ResolvedContext:
 
         spawn_id = current_spawn_id()
         run_id = current_run_id()
-        parent_spawn_id_raw = os.getenv("_MERIDIAN_PARENT_SPAWN_ID", "").strip()
+        parent_spawn_id = current_parent_spawn_id()
         depth_raw = os.getenv(DEPTH_ENV, "0").strip()
         project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
         task_dir_raw = os.getenv("MERIDIAN_TASK_DIR", "").strip()
@@ -216,7 +221,7 @@ class ResolvedContext:
         return cls(
             spawn_id=spawn_id,
             run_id=run_id,
-            parent_spawn_id=SpawnId(parent_spawn_id_raw) if parent_spawn_id_raw else None,
+            parent_spawn_id=parent_spawn_id,
             depth=depth,
             project_root=project_root,
             runtime_root=runtime_root,

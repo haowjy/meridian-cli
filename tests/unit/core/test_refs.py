@@ -3,6 +3,7 @@
 import pytest
 
 from meridian.lib.core.refs import make_run_id, parse_ref, reference_sort_key, run_number, spawn_of
+from meridian.lib.core.types import RunId, SpawnId
 
 
 @pytest.mark.parametrize(
@@ -43,3 +44,11 @@ def test_run_id_composition_and_numbering_are_canonical():
     assert run_number(make_run_id("p5", 3)) == 3
     with pytest.raises(ValueError, match="at least 1"):
         make_run_id("p5", 0)
+    with pytest.raises(ValueError, match="Invalid stable spawn ID"):
+        make_run_id(SpawnId("junk"), 2)
+    with pytest.raises(ValueError, match="Invalid stable spawn ID"):
+        make_run_id(SpawnId("p5.2"), 2)
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        run_number(RunId("junk"))
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        run_number(RunId(" p5 "))
