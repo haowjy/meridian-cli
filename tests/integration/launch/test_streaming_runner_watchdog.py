@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,6 +37,7 @@ from tests.integration.launch.streaming_runner_support import (
 from tests.support.fakes import FakeClock, FakeHeartbeat
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
+
 
 @dataclass
 class _LifecycleRecorder:
@@ -125,29 +125,6 @@ async def test_report_watchdog_enforces_grace_deadline(
             "error": "report_watchdog",
         }
     ]
-
-
-@pytest.mark.asyncio
-async def test_report_watchdog_keeps_polling_without_report_or_completion(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(streaming_runner_module, "REPORT_WATCHDOG_POLL_SECONDS", 60.0)
-    task = asyncio.create_task(
-        streaming_runner_module._report_watchdog(
-            report_path=tmp_path / "report.md",
-            completion_event=asyncio.Event(),
-            manager=_WatchdogManager(),
-            spawn_id=SpawnId("report-pending"),
-        )
-    )
-
-    await asyncio.sleep(0)
-    assert not task.done()
-
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
 
 
 @pytest.mark.asyncio

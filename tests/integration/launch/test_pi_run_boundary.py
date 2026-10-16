@@ -258,13 +258,17 @@ def _primary_cli(
 
 
 @pytest.mark.parametrize(
-    "shape,expected_chat",
-    [("switch", "exit"), ("switch-missing", "entry")],
+    "shape,expected_chat,expected_id",
+    [
+        ("switch", "exit", "switched-id"),
+        ("switch-missing", "entry", "entry"),
+    ],
 )
-def test_primary_cli_resume_hint_uses_verified_exit_or_entry_fallback(
+def test_primary_cli_projects_verified_exit_or_entry_identity(
     pi_runtime: Path,  # noqa: F811
     shape: str,
     expected_chat: str,
+    expected_id: str,
 ) -> None:
     root = pi_runtime
     install_boundary_shim(root, shape)
@@ -277,25 +281,6 @@ def test_primary_cli_resume_hint_uses_verified_exit_or_entry_fallback(
     assert target_chat is not None
     assert output.resume_command == f"meridian --continue {target_chat}"
     assert f"meridian --continue {target_chat}" in rendered
-
-
-@pytest.mark.parametrize(
-    "shape,expected_id",
-    [
-        ("switch", "switched-id"),
-        ("switch-missing", "entry"),
-    ],
-)
-def test_primary_cli_spawn_refs_project_exit_or_entry_native_key(
-    pi_runtime: Path,  # noqa: F811
-    shape: str,
-    expected_id: str,
-) -> None:
-    root = pi_runtime
-    install_boundary_shim(root, shape)
-    runtime = resolve_project_runtime_root_for_write(root)
-    _primary_cli(root)
-    row = spawn_store.list_spawns(runtime).records[0]
     assert row is not None and row.chat_id is not None
 
     continued = _primary_cli(root, continue_ref=row.id, dry_run=True)

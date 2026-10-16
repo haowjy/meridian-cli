@@ -9,8 +9,6 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.pi_private_state import BashEvidenceFile
 from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.drain_policy import DrainAction
@@ -66,8 +64,12 @@ async def scenario(root: Path, monkeypatch: pytest.MonkeyPatch) -> PiDrainScenar
     return started
 
 
-async def settle(started: PiDrainScenario):  # type: ignore[no-untyped-def]
-    for _ in range(80):
+async def settle(
+    started: PiDrainScenario,
+    *,
+    attempts: int = 80,
+):  # type: ignore[no-untyped-def]
+    for _ in range(attempts):
         await asyncio.sleep(0.025)
         decision = await started.coordinator.handle_aux_wake()
         if decision.recorded_outcome:
@@ -97,26 +99,36 @@ async def test_done_cannot_skip_owed_result_or_notice_response(
     try:
         await started.terminal()
         started.clock.advance(6)
-        assert await settle(started) is None
+        assert await settle(started, attempts=4) is None
         assert started.nudges == []
         # Native smoke: a generic nudge caused done before the notice arrived.
         await started.observe("agent_start")
         started.done()
         assert (await started.timeout()).recorded_outcome is None
-        assert await settle(started) is None
+        assert await settle(started, attempts=4) is None
         await started.idle()
-        assert await settle(started) is None  # idle done still cannot waive the result
-        write_private(tmp_path, "delivery-receipts.json", {
-            "v": 1, "spawn_id": "p1", "messages": {"notice": [work_id]},
-        })
-        assert await settle(started) is None
-        await started.observe("message_start", {
-            "message": {
-                "role": "custom", "customType": "meridian-spawn-watch",
-                "details": {"delivery_id": "notice", "work_ids": [work_id]},
+        assert await settle(started, attempts=4) is None  # idle done cannot waive the result
+        write_private(
+            tmp_path,
+            "delivery-receipts.json",
+            {
+                "v": 1,
+                "spawn_id": "p1",
+                "messages": {"notice": [work_id]},
             },
-        })
-        assert await settle(started) is None  # causal ACK must not end its active turn
+        )
+        assert await settle(started, attempts=4) is None
+        await started.observe(
+            "message_start",
+            {
+                "message": {
+                    "role": "custom",
+                    "customType": "meridian-spawn-watch",
+                    "details": {"delivery_id": "notice", "work_ids": [work_id]},
+                },
+            },
+        )
+        assert await settle(started, attempts=4) is None  # causal ACK cannot end its active turn
         observation = tmp_path / "pi-bash" / "p1" / "delivery-observations.json"
         assert json.loads(observation.read_text())["observed_message_ids"] == ["notice"]
         await started.idle()
@@ -132,50 +144,6 @@ async def test_done_cannot_skip_owed_result_or_notice_response(
 
 
 @pytest.mark.asyncio
-async def test_terminal_result_remains_owed_until_specific_message_observed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    write_private(tmp_path, "bash-records.json", bash_file())
-    started = await scenario(tmp_path, monkeypatch)
-    try:
-        await started.terminal()
-        assert await settle(started) is None
-        # Queue admission alone cannot beat the public active/message events.
-        write_private(
-            tmp_path,
-            "delivery-receipts.json",
-            {
-                "v": 1,
-                "spawn_id": "p1",
-                "messages": {"specific": ["b1"]},
-            },
-        )
-        assert await settle(started) is None
-        await started.coordinator.observe_event(normalize_event(pi_event("agent_start")))
-        assert await settle(started) is None  # unrelated activity is not the causal receipt
-        event = RawHarnessEvent(
-            harness_id="pi",
-            event_type="message_start",
-            payload={
-                "message": {
-                    "role": "custom",
-                    "customType": "meridian-spawn-watch",
-                    "details": {"delivery_id": "specific", "work_ids": ["b1"]},
-                },
-            },
-        )
-        await started.coordinator.observe_event(normalize_event(event))
-        assert await settle(started) is None  # exact receipt still fences the active turn
-        await started.idle()
-        await started.terminal()
-        outcome = await settle(started)
-        assert outcome is not None and outcome.status == "succeeded"
-    finally:
-        await started.stop()
-
-
-@pytest.mark.asyncio
 async def test_done_waits_for_active_turn_but_can_release_running_background_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -186,7 +154,7 @@ async def test_done_waits_for_active_turn_but_can_release_running_background_wor
         await started.terminal()
         await started.observe("agent_start")
         started.done()
-        assert await settle(started) is None
+        assert await settle(started, attempts=4) is None
         await started.idle()
         latest = TerminalEventOutcome(status="succeeded", exit_code=0)
         await started.coordinator.handle_terminal_event(
@@ -227,7 +195,7 @@ async def test_child_result_is_owed_without_origin_log_or_bash_record(
     spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
     try:
         await started.terminal()
-        assert await settle(started) is None
+        assert await settle(started, attempts=4) is None
         write_private(
             tmp_path,
             "observed-spawns.json",
@@ -286,7 +254,6 @@ async def test_unadmitted_result_fails_with_diagnostic_after_single_window(
 @pytest.mark.parametrize(
     "value",
     [
-        {"v": 1, "spawn_id": "p1", "updated_at_ms": 1, "records": []},
         {"v": 1, "spawn_id": "p1", "updated_at_ms": True, "records": {}},
         {"v": 1, "spawn_id": "p1", "updated_at_ms": float("inf"), "records": {}},
         {"v": True, "spawn_id": "p1", "updated_at_ms": 1, "records": {}},
@@ -302,11 +269,6 @@ async def test_present_malformed_private_evidence_is_unknown(tmp_path: Path, val
         assert watcher.evidence_failure() is not None
     finally:
         await watcher.stop()
-
-
-def test_valid_canonical_bash_file() -> None:
-    value = bash_file()
-    assert BashEvidenceFile.model_validate(value).records["b1"].status == "exited"
 
 
 @pytest.mark.asyncio

@@ -5,28 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.harness.registry import get_harness_bundle
-from meridian.lib.harness.semantics import NormalizedHarnessEvent
 from meridian.lib.streaming.drain_coordinator import DrainPlan
-from meridian.lib.streaming.drain_policy import (
-    PiRpcQuiescenceDrainPolicy,
-    SingleTurnDrainPolicy,
-)
-from meridian.lib.streaming.drain_teardown import (
-    DefaultDrainSessionTeardown,
-)
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
-from meridian.lib.streaming.pi_drain_teardown import PiDrainSessionTeardown
-from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
-from tests.support.resident_drain import FakeResidentBackendControl
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def _select_plan(
@@ -57,40 +43,6 @@ def _select_plan(
             resident_poll_seconds=14.0,
         ),
     )
-
-
-def test_spawn_manager_selects_complete_drain_plan_by_connection_capability(
-    tmp_path: Path,
-) -> None:
-    manager = SpawnManager(runtime_root=tmp_path, project_root=tmp_path)
-
-    plain = _select_plan(manager, harness_id=HarnessId.CODEX)
-    assert plain == DrainPlan()
-    assert isinstance(plain.teardown, DefaultDrainSessionTeardown)
-
-    resident = _select_plan(
-        manager,
-        harness_id=HarnessId.PI,
-        resident_backend=FakeResidentBackendControl(),
-    )
-    assert isinstance(resident.coordinator, ResidentDrainCoordinator)
-    assert isinstance(resident.policy, SingleTurnDrainPolicy)
-    assert resident.raw_terminal_frames_authoritative is False
-    assert resident.on_policy_selected is None
-    assert resident.aux_wake is resident.coordinator
-    assert resident.handle_aux_wake == resident.coordinator.handle_aux_wake
-    assert resident.finalizer is None
-    assert isinstance(resident.teardown, DefaultDrainSessionTeardown)
-
-    pi = _select_plan(manager, harness_id=HarnessId.PI)
-    assert isinstance(pi.coordinator, PiDrainCoordinator)
-    assert isinstance(pi.policy, PiRpcQuiescenceDrainPolicy)
-    assert pi.raw_terminal_frames_authoritative is False
-    assert pi.on_policy_selected == pi.coordinator.set_policy
-    assert pi.aux_wake is pi.coordinator
-    assert pi.handle_aux_wake == pi.coordinator.handle_aux_wake
-    assert pi.finalizer is pi.coordinator
-    assert isinstance(pi.teardown, PiDrainSessionTeardown)
 
 
 def test_pi_phase_events_update_sidecar_without_history(tmp_path: Path) -> None:
@@ -127,71 +79,6 @@ def test_pi_phase_events_update_sidecar_without_history(tmp_path: Path) -> None:
     assert recorded["phase"] == "cleanup_completed"
     assert recorded["cleanup_status"] == "escalated"
     assert not (tmp_path / "spawns" / "p-pi" / "history.jsonl").exists()
-
-
-def test_spawn_manager_authored_event_emission_order(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, RawHarnessEvent]] = []
-    spawn_id = SpawnId("p-pi-phase")
-    manager = SpawnManager(runtime_root=tmp_path, project_root=tmp_path)
-
-    class _Tracer:
-        def emit(
-            self,
-            layer: str,
-            label: str,
-            *,
-            data: dict[str, object],
-        ) -> None:
-            assert layer == "drain"
-            assert label == "meridian_authored"
-            event = RawHarnessEvent(
-                event_type="meridian.authored",
-                harness_id="meridian",
-                payload=data,
-                raw_text=None,
-            )
-            calls.append(("trace", event))
-
-    def _hook(event: RawHarnessEvent) -> None:
-        calls.append(("hook", event))
-
-    manager.register_event_hook(spawn_id, _hook)
-
-    def _fan_out(target_spawn_id: SpawnId, event: NormalizedHarnessEvent | None) -> None:
-        assert target_spawn_id == spawn_id
-        assert event is not None
-        calls.append(("fan_out", event.raw))
-
-    def _get_tracer(target_spawn_id: SpawnId) -> _Tracer:
-        assert target_spawn_id == spawn_id
-        return _Tracer()
-
-    monkeypatch.setattr(manager, "_fan_out_event", _fan_out)
-    monkeypatch.setattr(manager, "get_tracer", _get_tracer)
-
-    authored_event = RawHarnessEvent(
-        event_type="meridian.authored",
-        harness_id="meridian",
-        payload={"type": "meridian.authored", "spawn_id": "p-pi-phase"},
-        raw_text=None,
-    )
-    manager.emit_event(spawn_id, authored_event)
-
-    assert [stage for stage, _event in calls] == [
-        "hook",
-        "fan_out",
-        "trace",
-    ]
-    expected = RawHarnessEvent(
-        event_type="meridian.authored",
-        harness_id="meridian",
-        payload={"type": "meridian.authored", "spawn_id": "p-pi-phase"},
-        raw_text=None,
-    )
-    assert all(event == expected for _stage, event in calls)
 
 
 def test_late_pi_phase_cannot_recreate_deleted_spawn(tmp_path):

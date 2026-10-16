@@ -152,12 +152,15 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
             return StopResult()
 
     connection = _DelayedBackgroundConnection()
+    allow_connection_start = asyncio.Event()
+    connection_start_waiting = asyncio.Event()
 
     async def _delayed_background_start(
         _config: ConnectionConfig,
         _spec: ResolvedLaunchSpec,
     ) -> _DelayedBackgroundConnection:
-        await asyncio.sleep(3.5)
+        connection_start_waiting.set()
+        await allow_connection_start.wait()
         return connection
 
     project_root = tmp_path / "repo"
@@ -220,12 +223,28 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
             ),
         )
     )
+    inject_task: asyncio.Task[None] | None = None
 
     try:
-        await asyncio.wait_for(
-            spawn_inject_module.inject_message(str(spawn_id), "SECOND"),
-            timeout=10.0,
+        await asyncio.wait_for(connection_start_waiting.wait(), timeout=1.0)
+        endpoint_polled = asyncio.Event()
+        get_spawn = spawn_inject_module.spawn_store.get_spawn
+
+        def _observed_get_spawn(
+            runtime_root: Path,
+            observed_spawn_id: SpawnId | str,
+        ):  # type: ignore[no-untyped-def]
+            endpoint_polled.set()
+            return get_spawn(runtime_root, observed_spawn_id)
+
+        monkeypatch.setattr(spawn_inject_module.spawn_store, "get_spawn", _observed_get_spawn)
+        inject_task = asyncio.create_task(
+            spawn_inject_module.inject_message(str(spawn_id), "SECOND")
         )
+        await asyncio.wait_for(endpoint_polled.wait(), timeout=1.0)
+        assert not inject_task.done()
+        allow_connection_start.set()
+        await asyncio.wait_for(inject_task, timeout=10.0)
         await asyncio.wait_for(launch_task, timeout=5.0)
         outcome = await asyncio.wait_for(
             manager.wait_for_completion(spawn_id),
@@ -237,6 +256,9 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         assert "Message delivered" in capsys.readouterr().out
         assert received_messages == ["SECOND"]
     finally:
+        allow_connection_start.set()
+        if inject_task is not None and not inject_task.done():
+            inject_task.cancel()
         if not launch_task.done():
             launch_task.cancel()
         cleanup_task = manager._cleanup_tasks.get(spawn_id)
@@ -257,11 +279,13 @@ async def _start_pi_connection(
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
+@pytest.mark.parametrize("rejection", [None, _PI_BUSY_REJECTION])
+async def test_pi_busy_turn_inject_queues_follow_up_without_failing_spawn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    rejection: str | None,
 ) -> None:
-    inbound_log = _configure_pi_runtime(monkeypatch, tmp_path, None)
+    inbound_log = _configure_pi_runtime(monkeypatch, tmp_path, rejection)
     spawn_id = SpawnId("p-pi-busy-inject")
     spawn_store.start_spawn(
         tmp_path,
@@ -306,76 +330,7 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
         inject_result = await manager.inject(spawn_id, "SECOND", source="test")
         outcome = await manager.wait_for_completion(spawn_id)
 
-        assert inject_result.success is True
-        assert outcome is not None
-        assert outcome.status == "succeeded"
-
-        commands = [
-            json.loads(line)
-            for line in inbound_log.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        prompts = [command for command in commands if command["type"] == "prompt"]
-        assert [prompt["message"] for prompt in prompts] == ["FIRST", "SECOND"]
-        assert all(prompt["streamingBehavior"] == "followUp" for prompt in prompts)
-    finally:
-        await manager.shutdown()
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-@pytest.mark.parametrize("rejection", [_PI_BUSY_REJECTION, "Future Pi prompt rejection"])
-async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    rejection: str,
-) -> None:
-    inbound_log = _configure_pi_runtime(monkeypatch, tmp_path, rejection)
-    spawn_id = SpawnId("p-pi-rejected-inject")
-    spawn_store.start_spawn(
-        tmp_path,
-        spawn_id=spawn_id,
-        chat_id=str(spawn_id),
-        model="test-model",
-        agent="test-agent",
-        harness="pi",
-        prompt="FIRST",
-    )
-    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=tmp_path).mkdir(
-        parents=True, exist_ok=True
-    )
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_pi_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="FIRST",
-            control_root=tmp_path,
-            runtime_root=tmp_path,
-            child_env={
-                "PATH": os.environ["PATH"],
-                "PI_RPC_INBOUND_LOG": str(inbound_log),
-            },
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="FIRST",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    try:
-        inject_result = await manager.inject(spawn_id, "SECOND", source="test")
-        outcome = await manager.wait_for_completion(spawn_id)
-
-        assert inject_result.success is False
+        assert inject_result.success is (rejection is None)
         assert inject_result.error == rejection
         assert outcome is not None
         assert outcome.status == "succeeded"

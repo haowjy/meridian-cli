@@ -186,33 +186,6 @@ def descendant_cancellation_from_roots(
     return _cancel_descendants
 
 
-async def awaiting_done_coordinator(
-    tmp_path: Path,
-    connection: HarnessConnection[Any],
-) -> ResidentDrainCoordinator:
-    resident_backend = connection.resident_backend
-    assert resident_backend is not None
-    coordinator = ResidentDrainCoordinator.for_connection(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
-        receiver=connection,
-        resident_backend=resident_backend,
-        deadline_seconds=30.0,
-        poll_seconds=0.01,
-        rearm_budget=None,
-        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
-    )
-    write_spawn_signal(tmp_path, "p1", "rearm")
-    terminal_event = resident_event(connection.harness_id, "agent_end", {})
-    await coordinator.observe_event(normalize_event(terminal_event))
-    await coordinator.handle_terminal_event(
-        terminal_event,
-        TerminalEventOutcome(status="succeeded", exit_code=0),
-        DrainAction(terminate=True, emit_turn_boundary=False),
-    )
-    return coordinator
-
-
 def resident_event(
     harness_id: HarnessId,
     event_type: str,

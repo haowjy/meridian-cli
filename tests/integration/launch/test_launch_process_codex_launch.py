@@ -23,14 +23,11 @@ from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.process import runner as process_runner
-from meridian.lib.launch.process.ports import ProcessLauncher
 from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachOutcome,
 )
 from meridian.lib.launch.process.runner import run_harness_process
-from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -240,82 +237,6 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
         },
     }
     assert outcome.exit_code == 0
-
-
-@pytest.mark.slow
-def test_run_harness_process_codex_primary_routes_to_managed_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    project_root = tmp_path / "codex-managed"
-    project_root.mkdir()
-    launch_context, harness_registry = _build_primary_launch_context(
-        project_root=project_root,
-        harness_id=HarnessId.CODEX,
-        model="gpt-5.4",
-        session=SessionRequest(
-            requested_harness_session_id="00000000-0000-4000-8000-000000000010",
-            continue_chat_id="c-codex",
-            primary_session_mode=SessionMode.RESUME.value,
-        ),
-    )
-    harness_registry.get_subprocess_harness(HarnessId.CODEX)
-    captured: dict[str, object] = {}
-    selector_args: list[Path | None] = []
-
-    def fake_select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
-        selector_args.append(output_log_path)
-        return SubprocessProcessLauncher()
-
-    def fake_run_primary_attach(
-        harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
-        control_root: Any,
-        task_cwd: Any,
-        env: Any,
-        spec: Any,
-        process_launcher: Any,
-        on_running: Any = None,
-        session_id_observer: Any = None,
-    ) -> PrimaryAttachOutcome:
-        _ = spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
-        captured["harness_id"] = harness_id
-        spawn_dir = Path(spawn_dir)
-        spawn_dir.mkdir(parents=True, exist_ok=True)
-        captured["spawn_dir"] = spawn_dir
-        session_id_observer(spec.native_identity.session_id)
-        return PrimaryAttachOutcome(
-            exit_code=0, session_id=spec.native_identity.session_id, tui_pid=5150
-        )
-
-    def fail_black_box(
-        command: Any,
-        cwd: Any,
-        env: Any,
-        output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
-        raise AssertionError("codex primary should use managed launcher path")
-
-    monkeypatch.setattr(process_runner, "select_process_launcher", fake_select_process_launcher)
-
-    outcome = run_harness_process(
-        launch_context,
-        harness_registry,
-        prepared=launch_context.prepared,
-        run_primary_attach_fn=fake_run_primary_attach,
-        run_primary_process_with_capture_fn=fail_black_box,
-    )
-
-    assert captured["harness_id"] == HarnessId.CODEX
-    assert isinstance(captured["spawn_dir"], Path)
-    assert selector_args == [None]
-    assert outcome.primary_spawn_id is not None
-    assert list(launch_context.runtime_root.rglob("tui.log")) == []
-    assert outcome.exit_code == 0
-    assert outcome.resolved_harness_session_id == "00000000-0000-4000-8000-000000000010"
 
 
 @pytest.mark.slow

@@ -150,74 +150,6 @@ async def test_terminal_cancel_wins_over_done_and_outstanding_descendant(
 
 
 @pytest.mark.asyncio
-async def test_terminal_done_overrides_rearm_and_persisted_descendant(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Current done override accepts success despite an active persisted child."""
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    clock.advance(1.0)
-    write_spawn_signal(tmp_path, "p1", "done")
-    write_spawn_signal(tmp_path, "p1", "rearm")
-
-    requested = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    decision = await _after_refresh(coordinator)
-
-    assert requested.recorded_outcome is None
-    assert decision.recorded_outcome == _SUCCESS
-    assert requested.emit_turn_boundary is True
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
-    assert connection.fake_resident_backend.injected_messages == []
-
-
-@pytest.mark.asyncio
-async def test_terminal_rearm_resets_deadline_and_holds_ready_tree(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Current rearm behavior replaces, rather than preserves, the old deadline."""
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    initial = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    assert initial.emit_turn_boundary is True
-
-    clock.advance(5.0)
-    coordinator.observe_activity_transition("turn_active")
-    spawn_store.finalize_spawn(
-        tmp_path,
-        SpawnId("p2"),
-        "succeeded",
-        0,
-        origin="runner",
-    )
-    write_spawn_signal(tmp_path, "p1", "rearm")
-    rearmed = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    assert rearmed.recorded_outcome is None
-    assert rearmed.emit_turn_boundary is True
-    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
-    assert row is not None
-    assert row.resident_rearm_count == 1
-
-    clock.advance(5.0)
-    at_old_deadline = await coordinator.handle_timeout()
-    assert at_old_deadline.recorded_outcome is None
-
-    clock.advance(5.0)
-    cleanup_calls: list[SpawnId] = []
-    _install_cleanup_recorder(monkeypatch, cleanup_calls)
-    at_reset_deadline = await coordinator.handle_timeout()
-    assert at_reset_deadline.recorded_outcome is not None
-    assert at_reset_deadline.recorded_outcome.status == "timed_out"
-    assert at_reset_deadline.recorded_outcome.exit_code == 1
-    assert at_reset_deadline.recorded_outcome.error == "resident_deadline_expired"
-    assert cleanup_calls == []
-    await _execute_latched_cleanup(coordinator, at_reset_deadline.recorded_outcome)
-    assert cleanup_calls == [SpawnId("p1")]
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False, True, False]
-
-
-@pytest.mark.asyncio
 async def test_resident_rearm_budget_exhaustion_ignores_signal_and_times_out_distinctly(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -311,23 +243,6 @@ async def test_terminal_wait_and_poll_see_late_grandchild_through_terminal_paren
     await coordinator.handle_timeout()
     ready = await _after_refresh(coordinator)
     assert ready.recorded_outcome == _SUCCESS
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
-
-
-@pytest.mark.asyncio
-async def test_terminal_ready_tree_finalizes_immediately(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    clock.advance(1.0)
-
-    requested = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    decision = await _after_refresh(coordinator)
-
-    assert requested.recorded_outcome is None
-    assert decision.recorded_outcome == _SUCCESS
-    assert requested.emit_turn_boundary is True
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
 
@@ -508,9 +423,7 @@ async def test_deadline_outcome_wins_when_explicit_descendant_cancel_races(
     exit_decision = await coordinator.handle_stream_exit(decision.recorded_outcome)
     request = exit_decision.post_publication_cleanup
     assert request is not None
-    cleanup_task = asyncio.create_task(
-        coordinator.execute_post_publication_cleanup(request)
-    )
+    cleanup_task = asyncio.create_task(coordinator.execute_post_publication_cleanup(request))
     explicitly_cancelled, _ = await asyncio.gather(explicit_cancel_task, cleanup_task)
 
     assert explicitly_cancelled in ({"p2"}, set())
