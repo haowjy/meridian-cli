@@ -306,7 +306,7 @@ def archive_history(
             # Explicit selection reports why capture is waiting even when the
             # record cannot yet be reclaimed. Eligibility scans avoid needless
             # native reads for otherwise protected history.
-            if candidate.id in protected and not refs:
+            if candidate.id in protected and (not refs or not apply):
                 continue
             if eligible:
                 activity = last_activity(candidate, None, "")
@@ -642,8 +642,10 @@ def _capture_ready(root: Path, candidate: SpawnRecord, session: object) -> bool:
     return False
 
 
-def _require_inactive_native_session(root: Path, harness: str | None, session_id: str) -> None:
-    """Reject known same-runtime owners; this is not an external-writer fence."""
+def _require_inactive_native_session(
+    root: Path, harness: str | None, session_id: str
+) -> tuple[str, ...]:
+    """Reject known live owners and return terminal records bound to this session."""
 
     def spawn_owner(spawn_id: str) -> str:
         return f"spawn {spawn_id}"
@@ -655,6 +657,7 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
             + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
         )
     linked = session_records_for_spawns(root, scan.records)
+    terminal_records: list[str] = []
     for row in scan.records:
         if row.record_mode == "historical":
             continue
@@ -675,6 +678,7 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
             if scope.release_id not in scopes.released_ids
         ):
             raise NativeCaptureDeferred(spawn_owner(row.id))
+        terminal_records.append(row.id)
     for session in session_store.list_all_session_records(root):
         if (
             session.record_mode == "historical"
@@ -692,9 +696,16 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
         observer = live_observer_for_chat(root, session.chat_id, records=scan.records)
         if observer is not None:
             raise NativeCaptureDeferred(spawn_owner(observer))
+    return tuple(terminal_records)
 
 
-def materialize_native_history(project_root: Path, root: Path, spawn_id: str) -> None:
+def materialize_native_history(
+    project_root: Path,
+    root: Path,
+    spawn_id: str,
+    *,
+    collect_related: bool = False,
+) -> tuple[str, ...]:
     from meridian.lib.harness.transcript_capture import native_capture
     from meridian.lib.ops.session_target import resolve_transcript_source
     from meridian.lib.platform.atomic import atomic_replace, iter_atomic_temp_paths
@@ -704,21 +715,31 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
         NATIVE_SNAPSHOT_FILENAME,
         SnapshotHeader,
         SnapshotObservation,
-        published_snapshot_state,
+        complete_published_snapshot,
         write_snapshot,
     )
     from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
+    related: tuple[str, ...] = ()
+
     def capture() -> None:
+        nonlocal related
         state = read_state(root / "spawns", spawn_id, include_prompt=False)
         if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
             raise ValueError("Native transcript capture requires an identified terminal record")
         snapshot = root / "spawns" / spawn_id / NATIVE_SNAPSHOT_FILENAME
-        snapshot_state = published_snapshot_state(snapshot, history_id=state.history_id)
-        if snapshot_state == "complete":
+        if snapshot.is_file():
+            validation = complete_published_snapshot(snapshot, history_id=state.history_id)
+            if validation.state != "complete":
+                raise ValueError("Published native snapshot is corrupt")
+            if collect_related:
+                assert validation.header is not None
+                related = _require_inactive_native_session(
+                    root,
+                    validation.header.harness,
+                    validation.header.native_session_id,
+                )
             return
-        if snapshot_state == "corrupt":
-            raise ValueError("Published native snapshot is corrupt")
         # Remove stale staging temps left by a previous interrupted capture.
         spawn_dir = root / "spawns" / spawn_id
         for stale in iter_atomic_temp_paths(spawn_dir, NATIVE_SNAPSHOT_FILENAME):
@@ -754,13 +775,15 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
         with atomic_replace(snapshot, mode="wb", encoding=None, permissions=0o600) as handle:
 
             def finish() -> SnapshotObservation:
-                _require_inactive_native_session(root, source.harness, source.session_id)
+                nonlocal related
+                related = _require_inactive_native_session(root, source.harness, source.session_id)
                 return observation.finish()
 
             write_snapshot(handle, header, observation.records(), finish)
 
     if not mutate_published_spawn_artifact(root, SpawnId(spawn_id), capture):
         raise ValueError(f"Native capture target is missing or historical: {spawn_id}")
+    return related
 
 
 def session_stop_maintenance(project_root: Path, primary_spawn_id: str) -> str | None:
@@ -774,7 +797,22 @@ def session_stop_maintenance(project_root: Path, primary_spawn_id: str) -> str |
     if roots is None:
         return None
     try:
-        materialize_native_history(project_root, roots.runtime_root, primary_spawn_id)
+        try:
+            related = materialize_native_history(
+                project_root,
+                roots.runtime_root,
+                primary_spawn_id,
+                collect_related=True,
+            )
+        except NativeCaptureDeferred:
+            related = ()
+        for related_spawn_id in related:
+            if related_spawn_id == primary_spawn_id:
+                continue
+            try:
+                materialize_native_history(project_root, roots.runtime_root, related_spawn_id)
+            except NativeCaptureDeferred:
+                continue
         config = load_config(project_root).history.archive
         if not config.automatic:
             return None
@@ -801,8 +839,6 @@ def session_stop_maintenance(project_root: Path, primary_spawn_id: str) -> str |
             if result.errors:
                 return "History maintenance: " + "; ".join(result.errors)
             atomic_write_text(marker, str(time.time()))
-    except NativeCaptureDeferred:
-        return None
     except (ValueError, OSError, RuntimeError) as exc:
         return f"History maintenance: {exc}"
     return None

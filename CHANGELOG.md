@@ -5,8 +5,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Recover native history after a launcher crash followed by `--continue`, and
-  defer capture quietly while the continued owner is still live.
+- Recover every native-history record after a launcher crash followed by
+  `--continue`: capture defers quietly while the continued owner is live, then
+  retries all records bound to that native session when the owner stops.
 
 ### Upgrade notes
 - First indexed read rebuilds history schema 10; no authority migration. See

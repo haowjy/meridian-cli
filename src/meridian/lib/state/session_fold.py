@@ -432,6 +432,36 @@ def fold_session_generations(events: Iterable[SessionEvent]) -> tuple[SessionRec
     return tuple(record for rows in generations.values() for record in rows.values())
 
 
+def _close_abandoned_generations(
+    generations: dict[tuple[str, str], dict[str, SessionRecord]],
+    open_generations: dict[str, set[str]],
+    chat_id: str,
+    generation: str,
+    stopped_at: str,
+) -> tuple[tuple[str, str], ...]:
+    """Close prior generations once a later accepted start proves lock release."""
+    prior_generations = open_generations.get(chat_id)
+    if prior_generations is None:
+        return ()
+    changed: list[tuple[str, str]] = []
+    for prior_generation in sorted(prior_generations):
+        if prior_generation == generation:
+            continue
+        prior_generations.discard(prior_generation)
+        key = (chat_id, prior_generation)
+        prior_rows = generations.get(key)
+        if prior_rows is None:
+            continue
+        prior = prior_rows.get(chat_id)
+        if prior is None or prior.record_mode == "historical" or prior.stopped_at is not None:
+            continue
+        prior_rows[chat_id] = prior.model_copy(update={"stopped_at": stopped_at})
+        changed.append(key)
+    if not prior_generations:
+        del open_generations[chat_id]
+    return tuple(changed)
+
+
 def project_session_generation(
     records: dict[str, SessionRecord],
     generations: dict[tuple[str, str], dict[str, SessionRecord]],
@@ -464,27 +494,15 @@ def project_session_generation(
         # A start is published only after its writer owns this chat's exclusive
         # lifetime lock. Its presence therefore proves every earlier generation
         # released that lock, even when its launcher died before writing a stop.
-        prior_generations = open_generations.get(chat_id)
-        if prior_generations is not None:
-            for prior_generation in sorted(prior_generations):
-                if prior_generation == generation:
-                    continue
-                prior_generations.discard(prior_generation)
-                key = (chat_id, prior_generation)
-                prior_rows = generations.get(key)
-                if prior_rows is None:
-                    continue
-                prior = prior_rows.get(chat_id)
-                if (
-                    prior is None
-                    or prior.record_mode == "historical"
-                    or prior.stopped_at is not None
-                ):
-                    continue
-                prior_rows[chat_id] = prior.model_copy(update={"stopped_at": event.started_at})
-                changed.append(key)
-            if not prior_generations:
-                del open_generations[chat_id]
+        changed.extend(
+            _close_abandoned_generations(
+                generations,
+                open_generations,
+                chat_id,
+                generation,
+                event.started_at,
+            )
+        )
     rows = generations.setdefault((chat_id, generation), {})
     if project_session_event(rows, event):
         changed.append((chat_id, generation))

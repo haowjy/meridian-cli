@@ -325,6 +325,16 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
     generations = {row.spawn_id: row for row in session_store.list_session_generations(root)}
     assert generations[old_run].stopped_at == generations[new_run].started_at
 
+    dry_run = archive_history(
+        root,
+        destination=tmp_path / "archives",
+        refs=("p1",),
+        project_root=project,
+    )
+    assert dry_run.preparation_required == ()
+    assert dry_run.selected == ()
+    assert "Apply will capture native snapshot" not in dry_run.format_text()
+
     deferred = archive_history(
         root,
         destination=tmp_path / "archives",
@@ -344,6 +354,9 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
     spawn_store.finalize_spawn(
         root, new_run, status="succeeded", exit_code=0, origin="runner"
     )
+    assert session_stop_maintenance(project, str(new_run)) is None
+    _assert_sealed_snapshot(_snapshot_path(root, str(old_run)), contains="resumed-native")
+    _assert_sealed_snapshot(_snapshot_path(root, str(new_run)), contains="resumed-native")
     old_history = next(
         str(row.history_id) for row in spawn_store.list_spawns(root).records if row.id == old_run
     )
@@ -358,6 +371,30 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
     assert not completed.deferred
     assert completed.selected == (old_history,)
     assert completed.reclaimed == (old_history,)
+
+
+def test_stop_capture_deferral_does_not_skip_automatic_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
+    owner = spawn_store.start_spawn(
+        root,
+        chat_id="c2",
+        harness="pi",
+        harness_session_id="exact-native",
+        kind="primary",
+        prompt="continued",
+        model="test",
+        agent="coder",
+    )
+    monkeypatch.setenv("MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC", "true")
+    monkeypatch.setenv("MERIDIAN_HISTORY_ARCHIVE_DESTINATION", str(tmp_path / "archives"))
+
+    assert session_stop_maintenance(project, str(key)) is None
+
+    assert (root / "history-archives/last-automatic").is_file()
+    _assert_not_captured(root, str(key))
+    _assert_not_captured(root, str(owner))
 
 
 def test_capture_rejects_same_native_session_lease_without_spawn(tmp_path: Path, monkeypatch):

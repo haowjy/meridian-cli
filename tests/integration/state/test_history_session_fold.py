@@ -108,6 +108,23 @@ def test_incremental_replay_survives_restart_and_matches_cold(tmp_path: Path):
     assert _rows(HistoryIndex(tmp_path)) == incremental
 
 
+def test_incremental_replay_closes_abandoned_generation_like_cold_rebuild(
+    tmp_path: Path,
+) -> None:
+    _append(tmp_path, _start("g1", started_at="2026-01-01T00:00:00Z"))
+    index = HistoryIndex(tmp_path)
+    index.rebuild()
+    _append(tmp_path, _start("g2", started_at="2026-01-02T00:00:00Z"))
+
+    incremental = _rows(index)
+    generations = {row["session_instance_id"]: row for row in _generation_records(index)}
+    assert generations["g1"]["stopped_at"] == "2026-01-02T00:00:00Z"
+    assert generations["g2"]["stopped_at"] is None
+
+    index.rebuild()
+    assert _rows(index) == incremental
+
+
 def test_incremental_replay_waits_for_partial_line_then_resumes(tmp_path: Path) -> None:
     _append(
         tmp_path,
@@ -227,7 +244,7 @@ def test_generated_histories_index_bindings_match_authority(tmp_path: Path, monk
         return expected
 
     monkeypatch.setattr(golden.s, "list_session_generations", check_projection)
-    golden.test_generated_histories_match_fold_golden(tmp_path)
+    golden.test_generated_histories_match_pre_restructure_fold(tmp_path, monkeypatch)
 
 
 def test_metadata_is_history_blind(tmp_path: Path):
