@@ -29,6 +29,7 @@ from meridian.lib.state.launch_boundary import (
     EVENT_WORKER_TAKEOVER_STARTED,
     record_launch_boundary_event,
 )
+from meridian.lib.state.launch_lock import adopt_handoff, take_handoff_fd
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.telemetry.bootstrap import TelemetryMode, TelemetryPlan, install
 from meridian.lib.telemetry.init import setup_telemetry
@@ -312,88 +313,92 @@ def _background_worker_main(
     *,
     ctx: RuntimeContext | None = None,
 ) -> int:
+    handoff_fd = take_handoff_fd()
     resolved_context = runtime_context(ctx)
     parser = _build_background_worker_parser()
     parsed = parser.parse_args(list(argv) if argv is not None else None)
 
     project_root = Path(parsed.project_root).expanduser().resolve()
-    prepared = prepare_for_runtime_write(project_root)
-    project_paths = resolve_project_config_paths(project_root=prepared.project_root)
     spawn_id = SpawnId(parsed.spawn_id)
-    if prepared.runtime_root is None:
-        raise ValueError("Prepared runtime write context is missing runtime root.")
-    runtime_root = prepared.runtime_root
-    log_dir: Path | None = None
-    try:
-        install(
-            TelemetryPlan(
-                mode=TelemetryMode.SEGMENT,
-                runtime_root=runtime_root,
-                logical_owner=str(spawn_id),
-            )
-        )
-        register_spawn_telemetry_observer()
-        log_dir = resolve_spawn_log_dir(
-            project_paths.project_root, spawn_id, runtime_root=runtime_root
-        )
-
+    runtime_root = Path(os.environ["_MERIDIAN_RUNTIME_DIR"])
+    launch_lock = adopt_handoff(handoff_fd, runtime_root / "spawns" / str(spawn_id))
+    with launch_lock:
+        prepared = prepare_for_runtime_write(project_root)
+        project_paths = resolve_project_config_paths(project_root=prepared.project_root)
+        if prepared.runtime_root is None:
+            raise ValueError("Prepared runtime write context is missing runtime root.")
+        runtime_root = prepared.runtime_root
+        log_dir: Path | None = None
         try:
-            launch_request = _load_bg_worker_request(log_dir)
+            install(
+                TelemetryPlan(
+                    mode=TelemetryMode.SEGMENT,
+                    runtime_root=runtime_root,
+                    logical_owner=str(spawn_id),
+                )
+            )
+            register_spawn_telemetry_observer()
+            log_dir = resolve_spawn_log_dir(
+                project_paths.project_root, spawn_id, runtime_root=runtime_root
+            )
+
+            try:
+                launch_request = _load_bg_worker_request(log_dir)
+            except Exception as exc:
+                error = f"Failed to load background worker request: {exc}"
+                _record_launch_boundary_observation(
+                    runtime_root,
+                    spawn_id,
+                    event=EVENT_WORKER_FAILURE,
+                    stage="load_worker_request",
+                    worker_pid=os.getpid(),
+                    error=error,
+                    exception=exc,
+                )
+                finalize_launch_failure_sync(
+                    runtime_root,
+                    project_root,
+                    spawn_id,
+                    error,
+                )
+                logger.error(
+                    "Failed to load background worker request.",
+                    spawn_id=str(spawn_id),
+                    log_dir=log_dir.as_posix(),
+                    exc_info=True,
+                )
+                return 1
+
+            return asyncio.run(
+                _execute_existing_spawn(
+                    spawn_id=spawn_id,
+                    project_paths=project_paths,
+                    launch_request=launch_request,
+                    ctx=resolved_context,
+                    prepared=prepared,
+                )
+            )
         except Exception as exc:
-            error = f"Failed to load background worker request: {exc}"
             _record_launch_boundary_observation(
                 runtime_root,
                 spawn_id,
                 event=EVENT_WORKER_FAILURE,
-                stage="load_worker_request",
+                stage="worker_backstop",
                 worker_pid=os.getpid(),
-                error=error,
+                error="background_worker_crash",
                 exception=exc,
             )
             finalize_launch_failure_sync(
                 runtime_root,
                 project_root,
                 spawn_id,
-                error,
+                "background_worker_crash",
             )
-            logger.error(
-                "Failed to load background worker request.",
-                spawn_id=str(spawn_id),
-                log_dir=log_dir.as_posix(),
-                exc_info=True,
-            )
+            logger.exception("Background worker crashed.", spawn_id=str(spawn_id))
             return 1
-
-        return asyncio.run(
-            _execute_existing_spawn(
-                spawn_id=spawn_id,
-                project_paths=project_paths,
-                launch_request=launch_request,
-                ctx=resolved_context,
-                prepared=prepared,
-            )
-        )
-    except Exception as exc:
-        _record_launch_boundary_observation(
-            runtime_root,
-            spawn_id,
-            event=EVENT_WORKER_FAILURE,
-            stage="worker_backstop",
-            worker_pid=os.getpid(),
-            error="background_worker_crash",
-            exception=exc,
-        )
-        finalize_launch_failure_sync(
-            runtime_root,
-            project_root,
-            spawn_id,
-            "background_worker_crash",
-        )
-        logger.exception("Background worker crashed.", spawn_id=str(spawn_id))
-        return 1
-    finally:
-        if log_dir is not None:
-            _cleanup_background_runtime_artifacts(log_dir)
+        finally:
+            if log_dir is not None:
+                _cleanup_background_runtime_artifacts(log_dir)
 
 
 if __name__ == "__main__":

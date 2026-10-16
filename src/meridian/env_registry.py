@@ -237,6 +237,9 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "Reports the invoking Meridian version to mars-agents.",
     ),
     # Internal handles.
+    _internal_handle(
+        "_MERIDIAN_LAUNCH_LOCK_FD", "Runner launch-lock handoff descriptor.", child=False
+    ),
     _internal_handle("_MERIDIAN_GATE_FD", "Launch gate read descriptor.", child=False),
     _internal_handle("_MERIDIAN_GATE_SCOPE", "Launch guardian signal scope.", child=False),
     _internal_handle("_MERIDIAN_GATE_GRACE", "Launch guardian TERM grace period.", child=False),

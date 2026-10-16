@@ -24,6 +24,7 @@ from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
 )
+from meridian.lib.launch.continue_sweep import sweep_before_continue
 from meridian.lib.launch.process.terminal_ownership import (
     format_launcher_diagnostics_pointer,
 )
@@ -238,6 +239,10 @@ def run_primary_launch(
         )
         if resolved_continue.missing_harness_session_id:
             raise NativeSessionUnavailable(resume_target, "unbound")
+        if not dry_run and resolved_continue.source_spawn_id is not None:
+            sweep_before_continue(
+                resolve_project_runtime_root(project_root), resolved_continue.source_spawn_id
+            )
         continue_contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(
                 source_ref=resume_target,
