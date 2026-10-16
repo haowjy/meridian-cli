@@ -801,12 +801,6 @@ def run_harness_process(
                         session_instance_id=managed.session_instance_id,
                         forked_from_history_id=managed.forked_from_history_id,
                     )
-                    if attached_work_id is not None:
-                        spawn_store.update_spawn(
-                            runtime_root,
-                            primary_spawn_id,
-                            work_id=attached_work_id,
-                        )
                 lifecycle = LifecycleLog.for_spawn(runtime_root, config_root, primary_spawn_id)
                 forked_session_id: str | None = None
                 if should_fork:

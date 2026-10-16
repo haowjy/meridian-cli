@@ -63,6 +63,7 @@ def _build_primary_launch_context(
     prompt: str = "primary prompt",
     extra_args: tuple[str, ...] = (),
     session: SessionRequest | None = None,
+    runtime_work_id: str | None = None,
 ) -> tuple[Any, Any]:
     _write_minimal_mars_config(project_root)
     harness_registry = get_default_harness_registry()
@@ -92,6 +93,7 @@ def _build_primary_launch_context(
         ),
         harness_registry=harness_registry,
         dry_run=True,
+        runtime_work_id=runtime_work_id,
     )
     return launch_context, harness_registry
 
@@ -114,6 +116,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
         project_root=project_root,
         harness_id=HarnessId.CLAUDE,
         model="claude-sonnet-4-5",
+        runtime_work_id="fresh-work",
     )
     harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     captured: dict[str, object] = {}
@@ -149,6 +152,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
     assert spawns.records[0].harness_session_id == seeded_id
+    assert spawns.records[0].work_id == "fresh-work"
     session = session_store.get_session_record(launch_context.runtime_root, outcome.chat_id)
     assert session is not None
     assert session.spawn_id == spawns.records[0].id
