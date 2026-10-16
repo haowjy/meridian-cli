@@ -92,7 +92,7 @@ def _row_may_select_chat(raw: bytes, chat_ids: Collection[str]) -> bool:
 
     A false positive costs one ``json.loads``; a false negative silently drops
     history, so this must return True for every row the decoded check in
-    ``_records_by_session`` would select. It applies the same predicate
+    ``read_session_events`` would select. It applies the same predicate
     (decoded value, ``strip()``, membership) to every ``chat_id`` string token
     in the row, which covers a ``historical_import`` row's nested ``record``,
     whitespace padding, escaped or raw non-ASCII values, key spacing, and
@@ -241,9 +241,14 @@ def reserve_chat_id(runtime_root: Path) -> str:
         return f"c{next_value}"
 
 
-def _records_by_session(
-    runtime_root: Path, *, chat_ids: set[str] | None = None
-) -> dict[str, SessionRecord]:
+def read_session_events(
+    runtime_root: Path, chat_ids: Collection[str] | None = None
+) -> list[SessionEvent]:
+    """Parse every session event in source order, or only those of ``chat_ids``.
+
+    One chat's projection reads no other chat's events, so folding the selected
+    events equals folding all of them for those chats.
+    """
     paths = RuntimePaths.from_root_dir(runtime_root)
 
     def selected_event(payload: Mapping[str, object]) -> SessionEvent | None:
@@ -261,12 +266,18 @@ def _records_by_session(
                 return None
         return parse_event(payload)
 
-    records: dict[str, SessionRecord] = {}
-    for event in read_events(
+    return read_events(
         paths.sessions_jsonl,
         selected_event,
         raw_filter=None if chat_ids is None else lambda raw: _row_may_select_chat(raw, chat_ids),
-    ):
+    )
+
+
+def _records_by_session(
+    runtime_root: Path, *, chat_ids: Collection[str] | None = None
+) -> dict[str, SessionRecord]:
+    records: dict[str, SessionRecord] = {}
+    for event in read_session_events(runtime_root, chat_ids):
         project_session_event(records, event)
     return records
 
@@ -468,7 +479,7 @@ def update_session_harness_id(
     """Atomically bind the first native key; conflicts never append a rebind."""
     from meridian.lib.state.session_binding import session_bindings
 
-    with session_bindings(runtime_root) as bindings:
+    with session_bindings(runtime_root, chat_ids={chat_id}) as bindings:
         return bindings.bind(
             chat_id, attempted, source=source,
             session_instance_id=session_instance_id, startup_attempt_id=startup_attempt_id,

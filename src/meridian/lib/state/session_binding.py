@@ -1,7 +1,7 @@
 """One locked native bind path, amortizing journal replay for bulk imports."""
 
 import json
-from collections.abc import Generator
+from collections.abc import Collection, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -9,21 +9,24 @@ from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.types import ChatId, HarnessSessionId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_fold as sessions
-from meridian.lib.state.event_store import read_events
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.jsonl import append_durable_jsonl_lines
 from meridian.lib.state.native_binding import BindOutcome, Bound, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.session_store import resolve_session_instance_id
+from meridian.lib.state.session_store import read_session_events, resolve_session_instance_id
 
 
 class SessionBindings:
-    """Lock-scoped authority snapshot; construct only through session_bindings."""
+    """Lock-scoped authority snapshot; construct only through session_bindings.
 
-    def __init__(self, runtime_root: Path) -> None:
+    ``chat_ids`` narrows the snapshot to those chats' events; binding any other
+    chat raises as unknown.
+    """
+
+    def __init__(self, runtime_root: Path, chat_ids: Collection[str] | None = None) -> None:
         self.runtime_root = runtime_root
         self.paths = RuntimePaths.from_root_dir(runtime_root)
-        self.events = read_events(self.paths.sessions_jsonl, sessions.parse_event)
+        self.events = read_session_events(runtime_root, chat_ids)
         self._pending: list[sessions.SessionUpdateEvent] = []
         self.records: dict[str, sessions.SessionRecord] = {}
         for event in self.events:
@@ -92,13 +95,15 @@ class SessionBindings:
 
 
 @contextmanager
-def session_bindings(runtime_root: Path) -> Generator[SessionBindings]:
+def session_bindings(
+    runtime_root: Path, *, chat_ids: Collection[str] | None = None
+) -> Generator[SessionBindings]:
     """Keep reads and appends in one sessions-lock epoch, including bulk imports."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     with (
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        bindings = SessionBindings(runtime_root)
+        bindings = SessionBindings(runtime_root, chat_ids)
         yield bindings
         bindings.commit()
