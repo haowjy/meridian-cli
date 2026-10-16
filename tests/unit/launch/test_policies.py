@@ -6,11 +6,10 @@ from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.config.models import MeridianConfig, PrimaryConfig
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
-from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.bundle_adapter import _map_provenance_level
 from meridian.lib.launch.compiler import ModelPolicyRule, ProvenanceLevel
-from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policies import (
     SurfacePolicyInput,
     _resolve_bundle_execution_policy,
@@ -35,11 +34,6 @@ def _surface(*layers: RuntimeOverrides) -> SurfacePolicyInput:
         config=config,
         harness_registry=get_default_harness_registry(),
     )
-
-
-def _terminal_surface_mode(*, adapter: SubprocessHarness) -> TerminalSurfaceMode:
-    _ = adapter
-    return TerminalSurfaceMode.PTY_MEDIATED
 
 
 def test_resolve_policy_fields_resolves_each_field_independently() -> None:
@@ -184,7 +178,6 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
         harness_registry=get_default_harness_registry(),
         skills_readonly=True,
         alias_catalog={},
-        resolve_terminal_surface_mode=_terminal_surface_mode,
     )
 
     assert replayed.model == "gpt-5.4"
@@ -196,22 +189,3 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
     assert replayed.matched_policy_rule == "settings:2"
     assert replayed.selection_report == {"version": 2, "outcome": "selected"}
     assert "terminal_surface_mode" not in snapshot.model_dump(mode="json")
-
-
-def test_snapshot_replay_ignores_legacy_terminal_surface_mode() -> None:
-    request = SpawnRequest(prompt="continue", model="gpt-5.4", harness="codex")
-    current = build_launch_policy_snapshot(request)
-    legacy_payload = current.model_dump(mode="json")
-    legacy_payload["terminal_surface_mode"] = "pty_mediated"
-    legacy = type(current).model_validate(legacy_payload)
-
-    replayed = replay_launch_policy_snapshot(
-        snapshot=legacy,
-        project_root=Path("/tmp/project"),
-        harness_registry=get_default_harness_registry(),
-        skills_readonly=True,
-        alias_catalog={},
-        resolve_terminal_surface_mode=lambda **_kwargs: TerminalSurfaceMode.NATIVE_INHERIT,
-    )
-
-    assert replayed.terminal_surface_mode is TerminalSurfaceMode.NATIVE_INHERIT

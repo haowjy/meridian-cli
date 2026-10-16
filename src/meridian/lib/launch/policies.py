@@ -180,24 +180,6 @@ class ResolvedLaunchPolicy:
 ResolvedPolicies = ResolvedLaunchPolicy
 
 
-def _resolve_terminal_surface_mode(*, adapter: SubprocessHarness) -> TerminalSurfaceMode:
-    """Resolve the interactive terminal surface mode at the policy boundary.
-
-    Harness adapters declare both their supported modes and their default. Policy
-    validates that declaration once rather than teaching process orchestration
-    about harness identities.
-    """
-
-    capabilities = adapter.contract.capabilities
-    default = capabilities.default_terminal_surface_mode
-    if default not in capabilities.terminal_surface_modes:
-        raise ValueError(
-            f"Harness '{adapter.id}' declares unsupported default terminal mode "
-            f"'{default.value}'"
-        )
-    return default
-
-
 def _policy_warnings(
     *,
     profile_warning: str | None,
@@ -588,9 +570,9 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         warnings=tuple(policy_warnings),
         alias_catalog=alias_catalog,
         harness_registry=surface.harness_registry,
-        terminal_surface_mode=_resolve_terminal_surface_mode(
-            adapter=surface.harness_registry.get_subprocess_harness(resolved_harness)
-        ),
+        terminal_surface_mode=surface.harness_registry.get_contract(
+            resolved_harness
+        ).capabilities.terminal_surface_mode,
         provenance_overrides=provenance_overrides or None,
     )
 
@@ -608,7 +590,6 @@ def _resolve_policy_from_snapshot(
         harness_registry=surface.harness_registry,
         skills_readonly=surface.skills_readonly,
         alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
-        resolve_terminal_surface_mode=_resolve_terminal_surface_mode,
     )
     return ResolvedLaunchPolicy(
         profile=replayed.profile,

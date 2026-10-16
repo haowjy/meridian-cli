@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from meridian.lib.launch.launch_types import TerminalSurfaceMode
 from meridian.lib.platform.launch_gate import ProcessIdentity
 
 TUI_TERMINATE_GRACE_SECONDS = 5.0
@@ -30,33 +28,6 @@ class LaunchedProcess:
 
     exit_code: int
     pid: int | None
-
-
-class ProcessBackendId(StrEnum):
-    """Named launch backends used for local harness process execution."""
-
-    NATIVE = "native"
-    PTY = "pty"
-    SUBPROCESS = "subprocess"
-    WINDOWS_CONSOLE = "windows_console"
-
-
-class ProcessBackendSurface(StrEnum):
-    """How the local launcher surfaces child terminal IO."""
-
-    PTY_MEDIATED = "pty_mediated"
-    PIPE_CAPTURE = "pipe_capture"
-    NATIVE_INHERIT = "native_inherit"
-
-
-@dataclass(frozen=True)
-class ProcessPlatformContract:
-    """Explicit process/platform contract for one launcher backend."""
-
-    backend_id: ProcessBackendId
-    surface: ProcessBackendSurface
-    captures_output_to_artifact: bool
-    platform_family: str
 
 
 class RunningProcess(Protocol):
@@ -86,31 +57,3 @@ class ProcessLauncher(Protocol):
         output_log_path: Path | None,
         terminal_fds: TerminalFds,
     ) -> RunningProcess: ...
-
-
-@dataclass(frozen=True)
-class SelectedProcessLauncher:
-    """Launcher instance paired with its explicit process/platform contract."""
-
-    launcher: ProcessLauncher
-    contract: ProcessPlatformContract
-
-
-class ProcessLauncherSelector(Protocol):
-    def __call__(
-        self, output_log_path: Path | None, *, terminal_surface_mode: TerminalSurfaceMode
-    ) -> ProcessLauncher: ...
-
-
-__all__ = [
-    "PRIMARY_STDERR_LOG_PATH_ENV",
-    "LaunchedProcess",
-    "ProcessBackendId",
-    "ProcessBackendSurface",
-    "ProcessLauncher",
-    "ProcessLauncherSelector",
-    "ProcessPlatformContract",
-    "RunningProcess",
-    "SelectedProcessLauncher",
-    "TerminalFds",
-]

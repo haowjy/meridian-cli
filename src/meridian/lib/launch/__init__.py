@@ -246,9 +246,7 @@ def launch_primary(
             continue_chat_id=None,
             warning=warning,
             terminal_surface_mode=(
-                preview_context.resolved_request.terminal_surface_mode.value
-                if preview_context.resolved_request.terminal_surface_mode is not None
-                else None
+                preview_context.harness.contract.capabilities.terminal_surface_mode.value
             ),
         )
 

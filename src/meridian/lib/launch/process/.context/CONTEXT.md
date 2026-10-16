@@ -2,8 +2,8 @@
 
 ## Backend Selection
 
-`select_process_backend()` returns a `SelectedProcessLauncher` with an explicit
-`ProcessPlatformContract` describing how IO is surfaced.
+`select_process_launcher()` returns the launcher directly from the adapter's
+`terminal_surface_mode` and the output-capture requirement.
 
 Selection order when output capture is requested (`output_log_path` is set):
 1. `PtyProcessLauncher` (PTY_MEDIATED, captures to artifact) — if `can_use_pty()`
@@ -11,12 +11,10 @@ Selection order when output capture is requested (`output_log_path` is set):
 
 Without capture, the resolved adapter mode chooses native inheritance or the PTY
 relay (with the existing unavailable-PTY/legacy Windows fallbacks). Native mode
-does not test `isatty`: it always preserves the shell's session/group and uses
-`LaunchGate(group=False)`. Its saved terminal descriptors come from the enclosing
+does not test `isatty`: the native TUI is always root-only, even without TTY
+stdin. It preserves the shell's session/group and uses `LaunchGate(group=False)`.
+Its saved terminal descriptors come from the enclosing
 `tui_terminal_window()`, not redirected launcher fds 0/1/2.
-
-`captures_output_to_artifact` on `ProcessPlatformContract` is authoritative — callers must
-not assume capture based on launcher type alone.
 
 `ProcessLauncher.start()` returns a `RunningProcess` immediately after process birth.
 `LaunchGate.adopt()` captures its `ProcessIdentity`: observed birth and intended
@@ -37,10 +35,13 @@ Black-box execution requires a durable start callback. Managed attach alone
 records the TUI's session-owned scope; its runner callback only observes/marks
 running. Captured print runs use `stdio` / `harness_stdio`, not TUI labels.
 
-Cancel before wait closes the gate and reaps the stub's exit 125, without exec.
-`terminate()` closes the gate: it must not send an additional root TERM. After
-relay EOF, a known reaped returncode disarms the guardian; an interrupted wait
-closes it as runner death. The TUI teardown grace also configures the guardian.
+Native cancellation before wait returns 130 without opening or closing the gate:
+the stub cannot exec, and the lifecycle owner terminates the recorded scope.
+Native `terminate()` releases after polling/reaping: an exited root disarms the
+guardian, an unreaped root closes the pipe as the fail-closed fallback. Runner
+death closes the pipe regardless of cancellation. The root-only guardian sends
+one TERM, never a shared-group signal or delayed KILL. Relay guardians use the
+TUI teardown grace for group termination.
 
 ## Managed Attach vs Black-Box
 
@@ -73,17 +74,21 @@ receiver is unregistered in `run()`'s `finally`, which restores the previous han
   signals (main thread only) and restores any signal no longer targeted; it is the single
   seam for both the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and this
   launcher receiver.
-- Cancellation is decided by observation order: a SIGTERM/SIGHUP before the wait
-  thread observes TUI completion yields cancelled/130 even if the TUI exits zero.
-  Completion observed first preserves the real result. The ordering lock must be
-  reentrant because coordinator callbacks run in Python signal handlers.
-- SIGINT interception starts immediately before TUI startup, after telemetry has
-  cleared, and ends before backend teardown. Startup Ctrl+C still propagates.
+- A SIGTERM/SIGHUP latched when the main task resumes from the TUI wait yields
+  cancelled/130 even if the TUI exits zero. Later signals do not change that
+  result. A signal concurrent with exit may be classified either way.
+- Both TUI drivers enter `native_sigint_shield()` on the main thread alongside
+  `tui_terminal_window()`. Only native launchers register the SIGINT receiver;
+  interception ends before backend teardown. Backend-startup Ctrl+C propagates.
+  The receiver is a Python handler, not SIG_IGN, so the child exec resets SIGINT.
 - Native `cancel_wait()` only sets a signal-safe flag to unblock the waiter; it
-  does not terminate the child. Wait release closes an unreaped gate, while the
-  lifecycle owner tears down the recorded scope and reaps the root. Normal reaped
-  exit disarms the guardian. Harness exit text is never scrubbed; Meridian's hint
-  is appended after the terminal window closes.
+  neither terminates the child nor releases the gate. On cancel the lifecycle
+  owner sends the single TERM via the recorded, birth-checked tree teardown,
+  escalating to birth-checked KILL after its grace if needed. `terminate()` then
+  reaps/disarms the guardian; normal reaped exit also disarms it. This owner
+  teardown is distinct from the root-only guardian's runner-death behavior.
+  Harness exit text is never scrubbed; Meridian's hint is appended after the
+  terminal window closes.
 - A signal that arrives before the TUI exists (during backend startup) is latched and
   honored once the TUI starts. If startup then fails, `run()` returns a cancelled outcome
   rather than raising, so `_execute_primary_process()` does not fall back to a black-box

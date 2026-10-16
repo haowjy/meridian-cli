@@ -102,15 +102,15 @@ async def run():
 
 if mode in ("primary", "native"):
     from meridian.lib.launch.process.runner import run_primary_process_with_capture
-    from meridian.lib.launch.launch_types import TerminalSurfaceMode
+    from meridian.lib.launch.process.native_launcher import NativeProcessLauncher
+    from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 
     def started(identity):
         boundary(identity.pid)
 
     run_primary_process_with_capture(
         command, root, os.environ.copy(), None,
-        (TerminalSurfaceMode.NATIVE_INHERIT
-         if mode == "native" else TerminalSurfaceMode.PTY_MEDIATED),
+        (NativeProcessLauncher() if mode == "native" else SubprocessProcessLauncher()),
         started, root / "launcher.log"
     )
 else:
@@ -399,3 +399,53 @@ running.wait()
         with suppress(ProcessLookupError):
             os.killpg(runner.pid, signal.SIGKILL)
         runner.wait(timeout=5)
+
+
+def test_native_cancel_leaves_one_term_to_scope_owner(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from meridian.lib.launch.process.native_launcher import NativeProcessLauncher
+    from meridian.lib.launch.process.ports import TerminalFds
+    from meridian.lib.platform.process_scope import scope_from_identity, terminate_scope_sync
+
+    signals = tmp_path / "signals"
+    ready = tmp_path / "ready"
+    command = (
+        sys.executable,
+        "-c",
+        "import signal, time\nfrom pathlib import Path\n"
+        f"log = Path({str(signals)!r})\n"
+        "signal.signal(signal.SIGTERM, lambda *_: log.open('a').write('TERM\\n'))\n"
+        f"Path({str(ready)!r}).touch()\n"
+        "while True: time.sleep(.01)\n",
+    )
+    with open(os.devnull, "r+b") as terminal:
+        running = NativeProcessLauncher().start(
+            command=command,
+            cwd=tmp_path,
+            env=dict(os.environ),
+            output_log_path=None,
+            terminal_fds=TerminalFds(terminal.fileno(), terminal.fileno(), terminal.fileno()),
+        )
+    scope = scope_from_identity(
+        running.identity,
+        scope_id="tui",
+        role="harness_tui",
+        owner_policy="session_owned",
+        owner_id="native-cancel",
+    )
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        waiting = worker.submit(running.wait)
+        try:
+            _until(ready.exists)
+            running.cancel_wait()
+            assert waiting.result(timeout=5).exit_code == 130
+            terminate_scope_sync(scope, grace_seconds=0.3, reason="signal_cancelled")
+            running.terminate()
+            assert running.process.poll() is not None
+            assert signals.read_text().splitlines() == ["TERM"]
+        finally:
+            with suppress(ProcessLookupError):
+                running.process.kill()
+            running.process.wait(timeout=5)
+            running.terminate()

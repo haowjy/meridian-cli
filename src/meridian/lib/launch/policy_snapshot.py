@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -180,7 +179,6 @@ def replay_launch_policy_snapshot(
     harness_registry: HarnessRegistry,
     skills_readonly: bool,
     alias_catalog: dict[str, AliasEntry],
-    resolve_terminal_surface_mode: Callable[..., TerminalSurfaceMode],
 ) -> ReplayedLaunchPolicySnapshot:
     """Resolve policy fields directly from persisted snapshot data."""
 
@@ -213,7 +211,7 @@ def replay_launch_policy_snapshot(
         snapshot_skill_names=snapshot_skill_names,
     )
     model_selection = _snapshot_model_selection(snapshot=snapshot, snapshot_model=snapshot_model)
-    terminal_surface_mode = resolve_terminal_surface_mode(adapter=adapter)
+    terminal_surface_mode = adapter.contract.capabilities.terminal_surface_mode
     return ReplayedLaunchPolicySnapshot(
         profile=profile,
         model=managed_model,

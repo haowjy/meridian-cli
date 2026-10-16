@@ -14,7 +14,7 @@ run_harness_process()
     │
     ├── session_scope()            ← open/close session store entry
     ├── lifecycle_service.start()  ← create spawn row
-    ├── select_process_backend()   ← pick {native, PTY, subprocess, legacy Windows console}
+    ├── select_process_launcher()  ← pick {native, PTY, subprocess, legacy Windows console}
     │
     ├── _execute_via_managed_attach()   ← PrimaryAttachLauncher path
     │       └── fallback on PrimaryAttachError → _execute_via_blackbox()
@@ -93,11 +93,12 @@ same pointer after restoration, and only when the current window grew the log.
 
 ## Key Rules
 
-**Don't add launcher types without registering in `select_process_backend()`.** The
-selection logic reads `ProcessPlatformContract` — new launchers need entries there.
+**Don't add launcher types without registering in `select_process_launcher()`.** It is the
+single selection seam for both managed attach and black-box execution.
 
 **Native job control belongs to the shell.** Launcher and TUI share its foreground
-process group. Only during the TUI lifecycle does the launcher intercept SIGINT;
+process group. Both drivers enter `native_sigint_shield()` on the main thread alongside the
+terminal window, intercepting SIGINT only during the native TUI lifecycle;
 SIGTSTP is left alone. The native gate records no pgid and sends one root TERM on
 runner death, never a shared-group signal or delayed KILL. The managed backend
 uses its existing separate group gate.
@@ -108,7 +109,7 @@ uses its existing separate group gate.
 - `selector.py` — terminal policy/capture → process backend.
 - `native_launcher.py` — root-only gate, saved terminal fds, no inner PTY.
 - `terminal_ownership.py` — fd-level exclusive terminal window shared by TUI drivers.
-- `ports.py` — `ProcessLauncher` protocol, `ProcessBackendId`, backend selection types.
+- `ports.py` — `ProcessLauncher` and `RunningProcess` protocols, saved terminal fds.
 
 ## Depth
 

@@ -14,7 +14,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from threading import Lock, RLock, Thread
+from threading import Lock, Thread
 from types import MappingProxyType
 from typing import Any
 
@@ -47,6 +47,7 @@ from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, writ
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 
+from .native_launcher import native_sigint_shield
 from .ports import TUI_TERMINATE_GRACE_SECONDS, LaunchedProcess, ProcessLauncher, RunningProcess
 from .terminal_ownership import tui_terminal_window
 
@@ -58,42 +59,8 @@ _TUI_WAIT_CANCEL_TIMEOUT_SECONDS = 1.0
 logger = structlog.get_logger(__name__)
 
 
-class _TuiExitOrdering:
-    """Record whether launcher cancellation or the TUI exit was observed first."""
-
-    def __init__(self) -> None:
-        # Signal handlers can interrupt main-thread reads while this is held;
-        # reentrancy keeps record_signal() from deadlocking the same thread.
-        self._lock = RLock()
-        self._signal_received = False
-        self._exit_observed = False
-        self._signal_preceded_exit = False
-
-    def record_signal(self) -> None:
-        with self._lock:
-            self._signal_received = True
-            if not self._exit_observed:
-                self._signal_preceded_exit = True
-
-    def record_exit(self) -> None:
-        with self._lock:
-            self._exit_observed = True
-
-    @property
-    def signal_received(self) -> bool:
-        with self._lock:
-            return self._signal_received
-
-    @property
-    def signal_preceded_exit(self) -> bool:
-        with self._lock:
-            return self._signal_preceded_exit
-
-
 def _start_process_wait(
     running_process: RunningProcess,
-    *,
-    on_exit_observed: Callable[[], None] | None = None,
 ) -> asyncio.Future[LaunchedProcess]:
     """Run a synchronous process wait without joining it during loop shutdown."""
 
@@ -115,8 +82,6 @@ def _start_process_wait(
             with suppress(RuntimeError):
                 loop.call_soon_threadsafe(_publish_error, exc)
             return
-        if on_exit_observed is not None:
-            on_exit_observed()
         with suppress(RuntimeError):
             loop.call_soon_threadsafe(_publish_result, result)
 
@@ -258,12 +223,12 @@ class PrimaryAttachLauncher:
         self._idle_error_reporter: idle_sidecar.SensorErrorReporter | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
-        self._tui_exit_ordering = _TuiExitOrdering()
+        self._signal_cancel_requested = False
 
     def _request_signal_cancel(self) -> None:
         """Handle SIGTERM/SIGHUP: stop the TUI wait so ``run`` can finalize."""
 
-        self._tui_exit_ordering.record_signal()
+        self._signal_cancel_requested = True
         running = self._running_process
         if running is not None:
             running.cancel_wait()
@@ -354,18 +319,13 @@ class PrimaryAttachLauncher:
             self._heartbeat_task = asyncio.create_task(
                 heartbeat_loop(self._runtime_root, self._spawn_id)
             )
-        self._tui_exit_ordering = _TuiExitOrdering()
+        self._signal_cancel_requested = False
         cancel_receiver = SignalCallbackReceiver(
             target_signals=(signal.SIGTERM, signal.SIGHUP),
             callback=lambda _signum: self._request_signal_cancel(),
             escalate_on_repeat=True,
         )
-        sigint_receiver = SignalCallbackReceiver(
-            target_signals=(signal.SIGINT,),
-            callback=lambda _signum: None,
-        )
         signal_coordinator().register_receiver(cancel_receiver)
-        sigint_receiver_registered = False
         connection_started = False
         session_id: str | None = None
         running_process: RunningProcess | None = None
@@ -416,9 +376,10 @@ class PrimaryAttachLauncher:
                 self._record_tui_scope(identity, session_id)
 
             telemetry.clear()
-            signal_coordinator().register_receiver(sigint_receiver)
-            sigint_receiver_registered = True
-            with tui_terminal_window(self._spawn_dir / LAUNCHER_LOG_FILENAME) as window:
+            with (
+                native_sigint_shield(self._process_launcher),
+                tui_terminal_window(self._spawn_dir / LAUNCHER_LOG_FILENAME) as window,
+            ):
                 try:
                     running_process = self._process_launcher.start(
                         command=command,
@@ -428,7 +389,7 @@ class PrimaryAttachLauncher:
                         terminal_fds=window.terminal_fds,
                     )
                     self._running_process = running_process
-                    if self._tui_exit_ordering.signal_received:
+                    if self._signal_cancel_requested:
                         # A signal arrived during backend startup; honor it now that the
                         # TUI process exists.
                         running_process.cancel_wait()
@@ -438,9 +399,7 @@ class PrimaryAttachLauncher:
                         running_process.terminate()
                         await _start_process_wait(running_process)
                         raise
-                    launch_task = _start_process_wait(
-                        running_process, on_exit_observed=self._tui_exit_ordering.record_exit
-                    )
+                    launch_task = _start_process_wait(running_process)
                     self._start_idle_sensor(
                         session_id=session_id,
                         env=env,
@@ -450,7 +409,7 @@ class PrimaryAttachLauncher:
                     launched = await asyncio.shield(launch_task)
                     # A pane close can make the TUI return zero. Observation order,
                     # not its exit code, distinguishes cancellation from normal quit.
-                    cancelled = self._tui_exit_ordering.signal_preceded_exit
+                    cancelled = self._signal_cancel_requested
                     if cancelled:
                         # The wait stopped on the signal; ensure the TUI scope is gone.
                         await self._stop_idle_task()
@@ -483,7 +442,7 @@ class PrimaryAttachLauncher:
             )
         except Exception:
             telemetry.fail()
-            if self._tui_exit_ordering.signal_received:
+            if self._signal_cancel_requested:
                 # A signal arrived before the TUI was interruptible (e.g. during
                 # backend startup) and startup failed. Honor the cancellation
                 # instead of surfacing a failure the fallback path would relaunch.
@@ -500,8 +459,6 @@ class PrimaryAttachLauncher:
                 )
             raise
         finally:
-            if sigint_receiver_registered:
-                signal_coordinator().unregister_receiver(sigint_receiver)
             try:
                 self._running_process = None
                 if connection_started:

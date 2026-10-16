@@ -217,11 +217,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_primary_launch=True,
             supports_named_primary_resume=True,
             supports_native_file_injection=False,
-            terminal_surface_modes=(
-                TerminalSurfaceMode.PTY_MEDIATED,
-                TerminalSurfaceMode.NATIVE_INHERIT,
-            ),
-            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
+            terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
     def native_store_for_launch(

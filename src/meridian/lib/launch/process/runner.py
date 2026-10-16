@@ -59,7 +59,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_META_FILENAME,
 )
 from meridian.lib.launch.extract import enrich_finalize
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity
@@ -90,10 +90,10 @@ from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
 from ..types import SessionMode
+from .native_launcher import native_sigint_shield
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
     ProcessLauncher,
-    ProcessLauncherSelector,
 )
 from .primary_attach import PrimaryAttachError, PrimaryAttachLauncher, PrimaryAttachOutcome
 from .selector import select_process_launcher
@@ -196,7 +196,7 @@ RunPrimaryProcessWithCapture = Callable[
         Path,
         dict[str, str],
         Path | None,
-        TerminalSurfaceMode,
+        ProcessLauncher,
         Callable[[ProcessIdentity], None],
         Path,
     ],
@@ -224,18 +224,15 @@ def run_primary_process_with_capture(
     cwd: Path,
     env: dict[str, str],
     output_log_path: Path | None,
-    terminal_surface_mode: TerminalSurfaceMode,
+    process_launcher: ProcessLauncher,
     on_child_started: Callable[[ProcessIdentity], None],
     launcher_diagnostics_path: Path,
-    *,
-    launcher_selector: ProcessLauncherSelector = select_process_launcher,
 ) -> PrimaryProcessResult:
-    launcher: ProcessLauncher = launcher_selector(
-        output_log_path, terminal_surface_mode=terminal_surface_mode
-    )
-
-    with tui_terminal_window(launcher_diagnostics_path) as window:
-        running = launcher.start(
+    with (
+        native_sigint_shield(process_launcher),
+        tui_terminal_window(launcher_diagnostics_path) as window,
+    ):
+        running = process_launcher.start(
             command=command,
             cwd=cwd,
             env=env,
@@ -336,8 +333,8 @@ def _execute_via_blackbox(
     launch_cwd: Path,
     child_env: dict[str, str],
     output_log_path: Path | None,
-    terminal_surface_mode: TerminalSurfaceMode,
     launcher_diagnostics_path: Path,
+    process_launcher: ProcessLauncher,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     on_running: Callable[[ProcessIdentity], None],
 ) -> PrimaryProcessResult:
@@ -348,7 +345,7 @@ def _execute_via_blackbox(
         launch_cwd,
         child_env,
         output_log_path,
-        terminal_surface_mode,
+        process_launcher,
         on_running,
         launcher_diagnostics_path,
     )
@@ -364,7 +361,6 @@ def _execute_primary_process(
     task_cwd: Path | None,
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
-    terminal_surface_mode: TerminalSurfaceMode,
     command: tuple[str, ...],
     harness_contract: HarnessContract,
     native_run: NativeRun,
@@ -374,6 +370,7 @@ def _execute_primary_process(
 ) -> PrimaryExecutionResult:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
+    terminal_surface_mode = harness_contract.capabilities.terminal_surface_mode
     use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
     launcher_diagnostics_path = log_dir / LAUNCHER_LOG_FILENAME
     if use_managed_backend:
@@ -436,7 +433,9 @@ def _execute_primary_process(
         launch_cwd=launch_cwd,
         child_env=blackbox_env,
         output_log_path=output_log_path,
-        terminal_surface_mode=terminal_surface_mode,
+        process_launcher=select_process_launcher(
+            output_log_path, terminal_surface_mode=terminal_surface_mode
+        ),
         launcher_diagnostics_path=launcher_diagnostics_path,
         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
         on_running=record_blackbox_started,
@@ -873,9 +872,6 @@ def run_harness_process(
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
-                terminal_surface_mode = runtime_context.resolved_request.terminal_surface_mode
-                if terminal_surface_mode is None:
-                    raise RuntimeError("Resolved primary launch is missing terminal surface mode")
                 managed = replace(managed, spawn_id=primary_spawn_id)
                 native_run = bind_entry(
                     managed,
@@ -989,7 +985,6 @@ def run_harness_process(
                         task_cwd=task_cwd,
                         child_env=child_env,
                         launch_spec=launch_spec,
-                        terminal_surface_mode=terminal_surface_mode,
                         command=command,
                         harness_contract=harness_adapter.contract,
                         native_run=native_run,

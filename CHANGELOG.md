@@ -9,6 +9,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Primary-launch repair streams spawn rows one at a time and folds only pending legacy chats; launcher no longer holds full spawn scan, nor full `sessions.jsonl` replay unless late legacy bind has candidates.
 - Runner work-id lookup, native-id bind, and other single-chat session reads decode only that chat's `sessions.jsonl` rows; background runner holds ~100 MB, not ~230 MB, while harness runs. Corrupt historical row in one chat no longer blocks other chats' reads and binds.
+### Fixed
+- Native fallback Ctrl+C no longer kills the launcher; native cancellation leaves
+  the single TERM to the scope owner instead of also firing the guardian.
+
 ### Changed
 - Codex/OpenCode primaries own the real terminal, including `--continue`. No inner
   PTY; resize and shell Ctrl+Z/`fg` work natively. Claude/Pi keep the relay.

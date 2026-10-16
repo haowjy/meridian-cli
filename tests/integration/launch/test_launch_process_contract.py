@@ -21,7 +21,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import (
@@ -166,7 +166,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        terminal_surface_mode: Any,
+        process_launcher: Any,
         on_child_started: Any,
         launcher_diagnostics_path: Path,
     ) -> process_runner.PrimaryProcessResult:
@@ -180,7 +180,6 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
 
     result = process_runner._execute_primary_process(
         harness_id=HarnessId.CODEX,
-        terminal_surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
         primary_spawn_id=SpawnId("p-contract-blackbox"),
         log_dir=log_dir,
         control_root=tmp_path,
@@ -241,7 +240,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        terminal_surface_mode: Any,
+        process_launcher: Any,
         on_child_started: Any,
         launcher_diagnostics_path: Path,
     ) -> process_runner.PrimaryProcessResult:
@@ -255,7 +254,6 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
 
     result = process_runner._execute_primary_process(
         harness_id=HarnessId.CLAUDE,
-        terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         primary_spawn_id=SpawnId("p-contract-fallback"),
         log_dir=log_dir,
         control_root=tmp_path,
