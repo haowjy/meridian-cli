@@ -4,9 +4,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
-- Preserve policy-boundary and integration coverage in the reduced test suite.
-
 ## [0.10.10] - 2026-10-15
 
 ### Fixed
