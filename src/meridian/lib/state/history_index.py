@@ -535,6 +535,7 @@ class HistoryIndex:
             latest_blank: dict[str, str] = {}
             chat_ordinals: dict[str, int] = {}
             generations: dict[tuple[str, str], dict[str, SessionRecord]] = {}
+            open_generations: dict[str, set[str]] = {}
             ordinals: dict[tuple[str, str], int] = {}
             loaded_chats: set[str] = set()
             dirty: set[tuple[str, str]] = set()
@@ -566,14 +567,23 @@ class HistoryIndex:
                             "SELECT generation, ordinal, record_json FROM sessions WHERE chat = ?",
                             (chat,),
                         ):
-                            generations[(chat, generation)] = {
-                                chat: SessionRecord.model_validate_json(raw)
-                            }
+                            generation_record = SessionRecord.model_validate_json(raw)
+                            generations[(chat, generation)] = {chat: generation_record}
+                            if (
+                                generation_record.record_mode == "live"
+                                and generation_record.stopped_at is None
+                            ):
+                                open_generations.setdefault(chat, set()).add(generation)
                             ordinals[(chat, generation)] = ordinal
                         loaded_chats.add(chat)
                     prior = records.get(chat)
                     changed = project_session_generation(
-                        records, generations, latest_blank, parsed_event, ordinal=offset
+                        records,
+                        generations,
+                        open_generations,
+                        latest_blank,
+                        parsed_event,
+                        ordinal=offset,
                     )
                     started = isinstance(
                         parsed_event, (SessionStartEvent, SessionHistoricalEvent)
