@@ -103,6 +103,27 @@ def test_wait_can_fetch_results_without_consuming_parent_notifications(
         assert not observed_path.exists()
 
 
+def test_single_wait_output_separates_stable_spawn_and_exact_run(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    seed_run(runtime_root, "p1")
+    run_id = seed_run(runtime_root, "p1.2")
+
+    result = spawn_api.spawn_wait_sync(
+        SpawnWaitInput(
+            project_root=str(project_root),
+            spawn_ids=(str(run_id),),
+            observe=False,
+        )
+    )
+
+    assert result.spawn_id == "p1"
+    assert result.run_id == "p1.2"
+    assert result.to_cli_wire()["spawn_id"] == "p1"
+    assert result.to_cli_wire()["run_id"] == "p1.2"
+
+
 def _write_primary_meta(
     runtime_root: Path,
     spawn_id: str,

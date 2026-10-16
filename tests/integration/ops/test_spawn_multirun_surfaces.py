@@ -8,7 +8,11 @@ import pytest
 
 import meridian.lib.state.spawn.runs as spawn_runs
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.ops.reference import resolve_continue_source_row, resolve_session_reference
+from meridian.lib.ops.reference import (
+    resolve_continue_source_row,
+    resolve_continue_target,
+    resolve_session_reference,
+)
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.ops.spawn.api import spawn_continue_sync
 from meridian.lib.ops.spawn.models import SpawnContinueInput
@@ -112,6 +116,18 @@ def test_multirun_never_bound_ref_refuses_instead_of_using_callers_chat(tmp_path
         r"so `--fork` is unavailable\.",
     ):
         resolve_session_reference(project_root, "p8", runtime_root=runtime_root)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Cannot continue spawn 'p8'; it never started a session, "
+        r"so `--fork` is unavailable\.",
+    ):
+        resolve_continue_target(
+            project_root,
+            "p8.2",
+            fork=True,
+            runtime_root=runtime_root,
+        )
 
 
 def test_bare_continue_target_walks_only_its_unbound_run_tail(

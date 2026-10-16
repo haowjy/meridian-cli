@@ -21,11 +21,17 @@ def current_run_id(env: Mapping[str, str] | None = None) -> RunId | None:
     fallback remains exact even after a tool upgrade under a running harness.
     """
     source = os.environ if env is None else env
-    value = (source.get("MERIDIAN_RUN_ID") or "").strip()
+    run_value = (source.get("MERIDIAN_RUN_ID") or "").strip()
+    spawn_value = (source.get("MERIDIAN_SPAWN_ID") or "").strip()
     # Compatibility belongs only at this environment read boundary. Launchers
     # predating run IDs emitted just MERIDIAN_SPAWN_ID, and could only launch
-    # run 1; no other spawn-to-run fallback is safe once reopen exists.
-    value = value or (source.get("MERIDIAN_SPAWN_ID") or "").strip()
+    # run 1. An inherited run ID from a newer parent does not describe a child
+    # launched by that older binary, so prefer the old launcher's spawn value.
+    value = (
+        run_value
+        if run_value and (not spawn_value or spawn_of(run_value) == spawn_value)
+        else spawn_value
+    )
     return parse_ref(value, row_key=True) if value else None
 
 

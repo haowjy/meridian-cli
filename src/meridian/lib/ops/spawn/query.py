@@ -8,14 +8,13 @@ from pathlib import Path
 from typing import NamedTuple, cast
 
 from meridian.lib.core.depth import is_root_side_effect_process
-from meridian.lib.core.refs import parse_ref, reference_sort_key, spawn_of
+from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import RunId
-from meridian.lib.ops.reference import resolve_spawn_ref
+from meridian.lib.ops.reference import resolve_spawn_alias, resolve_spawn_ref
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import pi_lifecycle, session_store, spawn_store
-from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.reaper import (
     SPAWN_HEARTBEAT_WINDOW_SECS,
@@ -26,11 +25,6 @@ from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 
 from .models import SpawnDetailOutput
 
-_SPAWN_REFERENCE_STATUS_FILTERS: dict[str, tuple[str, ...] | None] = {
-    "@latest": None,
-    "@last-failed": ("failed",),
-    "@last-completed": ("succeeded",),
-}
 _RUNNING_LOG_MESSAGE_LIMIT = 120
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
@@ -156,30 +150,6 @@ def _read_only_nested_staleness_view(
     )
 
 
-def _select_latest_spawn_id(
-    project_root: Path,
-    *,
-    statuses: tuple[str, ...] | None,
-    runtime_root: Path | None = None,
-) -> str | None:
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
-        return None
-    spawns = reconcile_spawns(
-        project_root,
-        resolved_runtime_root,
-        indexed_spawn_scan(resolved_runtime_root),
-    ).records
-    if statuses is not None:
-        wanted = set(statuses)
-        spawns = [item for item in spawns if item.status in wanted]
-    if not spawns:
-        return None
-    return max(spawns, key=lambda row: (row.started_at or "", reference_sort_key(row.id))).id
-
-
 def resolve_spawn_reference(
     project_root: Path,
     ref: str,
@@ -198,21 +168,10 @@ def resolve_spawn_reference(
             raise ValueError(f"Spawn '{normalized}' not found")
         return resolved
 
-    status_filter = _SPAWN_REFERENCE_STATUS_FILTERS.get(normalized)
-    if normalized not in _SPAWN_REFERENCE_STATUS_FILTERS:
-        supported = ", ".join(sorted(_SPAWN_REFERENCE_STATUS_FILTERS))
-        raise ValueError(
-            f"Unknown spawn reference '{normalized}'. Supported references: {supported}"
-        )
-
-    resolved = _select_latest_spawn_id(
-        project_root,
-        statuses=status_filter,
-        runtime_root=runtime_root,
-    )
-    if resolved is None:
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
         raise ValueError(f"No spawns found for reference '{normalized}'")
-    return parse_ref(resolved, row_key=True)
+    return resolve_spawn_alias(project_root, resolved_runtime_root, normalized)
 
 
 def read_spawn_row(

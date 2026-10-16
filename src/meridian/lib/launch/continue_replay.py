@@ -419,11 +419,10 @@ def _resolve_continue_conversation_intent(
 def build_continue_replay_contract(
     *,
     source: ContinueReplaySource,
-    target: ContinueReplayTarget | None = None,
+    target: ContinueReplayTarget,
     explicit_harness: str | None = None,
     requested_agent: str | None = None,
     agent_opt_out: bool = False,
-    fork: bool = False,
     requested_model_override: str | None = None,
     runtime_root: Path | None = None,
 ) -> ContinueReplayContract:
@@ -454,15 +453,12 @@ def build_continue_replay_contract(
 
     from meridian.lib.state.spawn_scope import read_spawn_scope
 
-    resolved_fork = target.fork if target is not None else fork
-    reopen_spawn = target.spawn_id if target is not None else None
-    predecessor = (
-        target.predecessor_run if target is not None else source.source_run_id
-    )
+    resolved_fork = target.fork
+    reopen_spawn = target.spawn_id
+    predecessor = target.predecessor_run
     task_dir = source.source_execution_cwd
     if (
-        target is not None
-        and reopen_spawn is not None
+        reopen_spawn is not None
         and target.predecessor_run is not None
         and source.source_control_root
     ):

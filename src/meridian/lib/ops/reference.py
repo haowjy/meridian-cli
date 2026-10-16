@@ -8,7 +8,7 @@ from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.refs import ParsedRef, parse_ref, spawn_of
+from meridian.lib.core.refs import ParsedRef, parse_ref, reference_sort_key, spawn_of
 from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
@@ -78,6 +78,7 @@ class ContinueTarget:
 
     spawn_id: SpawnId | None
     predecessor_run: RunId | None
+    source_run: RunId | None
     reference: ResolvedSessionReference
     source_ref: str
     fork: bool
@@ -121,6 +122,45 @@ def resolve_spawn_ref(runtime_root: Path, ref: str) -> RunId | None:
         return matches[0].id
 
     return None
+
+
+_SPAWN_ALIAS_STATUS_FILTERS: dict[str, tuple[str, ...] | None] = {
+    "@latest": None,
+    "@last-failed": ("failed",),
+    "@last-completed": ("succeeded",),
+}
+
+
+def resolve_spawn_alias(
+    project_root: Path,
+    runtime_root: Path,
+    alias: str,
+) -> RunId:
+    """Resolve a supported spawn alias to one exact run."""
+
+    if alias not in _SPAWN_ALIAS_STATUS_FILTERS:
+        supported = ", ".join(sorted(_SPAWN_ALIAS_STATUS_FILTERS))
+        raise ValueError(
+            f"Unknown spawn reference '{alias}'. Supported references: {supported}"
+        )
+
+    from meridian.lib.state.reaper import reconcile_spawns
+
+    rows = list(
+        reconcile_spawns(
+            project_root,
+            runtime_root,
+            indexed_spawn_scan(runtime_root),
+        ).records
+    )
+    statuses = _SPAWN_ALIAS_STATUS_FILTERS[alias]
+    if statuses is not None:
+        wanted = set(statuses)
+        rows = [row for row in rows if row.status in wanted]
+    if not rows:
+        raise ValueError(f"No spawns found for reference '{alias}'")
+    latest = max(rows, key=lambda row: (row.started_at or "", reference_sort_key(row.id)))
+    return parse_ref(latest.id, row_key=True)
 
 
 def resolve_continue_source_row(
@@ -417,7 +457,6 @@ def resolve_continue_target(
     fork: bool,
     runtime_root: Path | None = None,
     harness_hint: str | None = None,
-    resolved_run_id: RunId | None = None,
 ) -> ContinueTarget:
     """Resolve a continue reference once into its source and run identity."""
     normalized = ref.strip()
@@ -431,6 +470,23 @@ def resolve_continue_target(
         )
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    resolved_run_id = None
+    if parsed.kind == "alias":
+        if resolved_runtime_root is None:
+            raise ValueError(f"No spawns found for reference '{normalized}'")
+        resolved_run_id = resolve_spawn_alias(
+            project_root,
+            resolved_runtime_root,
+            normalized,
+        )
+    if parsed.kind == "run" and fork and resolved_runtime_root is not None:
+        assert parsed.run_id is not None and parsed.spawn_id is not None
+        run = spawn_store.get_spawn(resolved_runtime_root, parsed.run_id)
+        if run is not None and run.session_instance_id is None:
+            raise ValueError(
+                f"Cannot continue spawn '{parsed.spawn_id}'; it never started a session, "
+                "so `--fork` is unavailable."
+            )
     identity_ref = (
         str(spawn_of(resolved_run_id))
         if parsed.kind == "alias" and resolved_run_id is not None
@@ -478,6 +534,7 @@ def resolve_continue_target(
     return ContinueTarget(
         spawn_id=spawn_id,
         predecessor_run=predecessor,
+        source_run=source_run,
         reference=reference,
         source_ref=identity_ref,
         fork=fork,
@@ -490,5 +547,6 @@ __all__ = [
     "resolve_continue_source_row",
     "resolve_continue_target",
     "resolve_session_reference",
+    "resolve_spawn_alias",
     "resolve_spawn_ref",
 ]

@@ -1341,6 +1341,7 @@ class SpawnWaitMultiOutput(BaseModel):
     checkpoint_elapsed_secs: float | None = None
     # Compatibility fields for single-run callers.
     spawn_id: str | None = None
+    run_id: str | None = None
     status: str | None = None
     exit_code: int | None = None
 
@@ -1445,6 +1446,8 @@ class SpawnWaitMultiOutput(BaseModel):
         # Compatibility fields for single-run callers
         if self.spawn_id is not None:
             wire["spawn_id"] = self.spawn_id
+        if self.run_id is not None:
+            wire["run_id"] = self.run_id
         if self.status is not None:
             wire["status"] = self.status
         if self.exit_code is not None:

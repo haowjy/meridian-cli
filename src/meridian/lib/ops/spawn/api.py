@@ -1670,10 +1670,12 @@ def _build_wait_multi_output(
     )
 
     spawn_id: str | None = None
+    run_id: str | None = None
     status: str | None = None
     exit_code: int | None = None
     if total_runs == 1:
-        spawn_id = results[0].run_id
+        spawn_id = results[0].spawn_id
+        run_id = results[0].run_id
         status = results[0].status
         exit_code = results[0].exit_code
 
@@ -1688,6 +1690,7 @@ def _build_wait_multi_output(
         fail_fast=fail_fast,
         pending_ids=pending_ids,
         spawn_id=spawn_id,
+        run_id=run_id,
         status=status,
         exit_code=exit_code,
     )
@@ -2099,38 +2102,22 @@ def _source_spawn_for_follow_up(
     fork: bool = False,
 ) -> tuple[ContinueTarget, SpawnRecord | None]:
     parsed_source = parse_ref(payload_spawn_id)
-    resolved_run_id = (
-        resolve_spawn_reference(project_root, payload_spawn_id, runtime_root=runtime_root)
-        if parsed_source.kind == "alias"
-        else None
-    )
     target = resolve_continue_target(
         project_root,
         payload_spawn_id,
         fork=fork,
         runtime_root=runtime_root,
         harness_hint=harness_hint,
-        resolved_run_id=resolved_run_id,
     )
     resolved_reference = target.reference
-    if resolved_run_id is not None:
-        source_run_id = resolved_run_id
-    elif parsed_source.kind == "chat":
-        source_run_id = target.predecessor_run
-    else:
-        source_run_id = (
-            parse_ref(resolved_reference.source_spawn_id, row_key=True)
-            if resolved_reference.source_spawn_id is not None
-            else None
-        )
     row = (
-        read_spawn_row(project_root, source_run_id, runtime_root=runtime_root)
-        if source_run_id is not None
+        read_spawn_row(project_root, target.source_run, runtime_root=runtime_root)
+        if target.source_run is not None
         else None
     )
     if (
         row is not None
-        and parsed_source.kind not in {"spawn", "chat"}
+        and parsed_source.kind not in {"spawn", "alias", "chat"}
         and (
             row.chat_id != resolved_reference.source_chat_id
             or row.harness != resolved_reference.harness
