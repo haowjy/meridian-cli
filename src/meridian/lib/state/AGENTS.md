@@ -190,7 +190,9 @@ path, then terminates the claimed, birth-validated scopes. A separate stable cle
 lock prevents concurrent reapers from double-signalling; terminal rows retain failed
 claims for the next doctor pass. Startup candidate discovery streams authoritative
 spawn rows directly, selecting active rows and rows with a cleanup claim; it does not
-trust the disposable history index or retain a corpus-sized scan.
+trust the disposable history index or retain a corpus-sized scan. Orphan primaries are
+captured only after the whole pass: the capture guard defers while any row bound to the
+same native session is active, and crashed `--continue` generations share one.
 Both paths share decision rules in `reaper.py` and completion/cancel precedence in
 `reconciliation.py`. Primary scope termination additionally requires positive runner-death
 evidence against the recorded birth, with the same one-second clock tolerance as

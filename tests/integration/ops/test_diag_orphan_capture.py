@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
 import structlog.testing
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.ops import diag
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.reaper_cleanup_claim import claim_active_spawn_scopes
 from meridian.lib.state.spawn.model import SpawnKind, SpawnRecord
@@ -121,7 +125,7 @@ def test_orphan_capture_deferral_is_debug_only(
     ]
 
 
-def test_repair_stream_reconciles_active_orphan_and_terminal_cleanup_claim(
+def test_repair_reconciles_active_orphan_and_terminal_cleanup_claim(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -167,11 +171,6 @@ def test_repair_stream_reconciles_active_orphan_and_terminal_cleanup_claim(
         error="orphan_run",
     )
 
-    monkeypatch.setattr(
-        spawn_store,
-        "list_spawns",
-        lambda *_args, **_kwargs: pytest.fail("repair must not materialize all spawns"),
-    )
     monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", lambda *_a, **_k: False)
     monkeypatch.setattr(
         "meridian.lib.state.managed_primary.is_process_alive",
@@ -209,3 +208,64 @@ def test_repair_stream_reconciles_active_orphan_and_terminal_cleanup_claim(
     assert captured == ["p1"]
     assert scope.release_id in terminated
     assert not (runtime_root / "spawns" / "p2" / "reaper_cleanup_claim.json").exists()
+
+
+def test_repair_captures_every_orphan_primary_of_one_native_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Crashed ``--continue`` generations share a native id; one pass captures all.
+
+    The real capture guard defers while any row bound to the native session is
+    still active, so every orphan must be reconciled before any capture runs.
+    """
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "0")
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    project = tmp_path / "repo"
+    project.mkdir()
+    runtime_root = resolve_project_runtime_root_for_write(project)
+    native_root = resolve_pi_spawn_session_root()
+    native_root.mkdir(parents=True)
+    (native_root / "timestamp_resumed-native.jsonl").write_text(
+        json.dumps({"type": "session", "version": 3, "id": "resumed-native"}) + "\n"
+    )
+    spawn_ids = ("p1", "p2", "p3")
+    for spawn_id in spawn_ids:
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id=spawn_id,
+            chat_id="c1",
+            harness="pi",
+            harness_session_id="resumed-native",
+            kind="primary",
+            prompt="continued",
+            model="test",
+            agent="coder",
+            worker_pid=222,
+            runner_pid=111,
+            started_at="2000-01-01T00:00:00Z",
+        )
+        session_store.start_session(
+            runtime_root,
+            "pi",
+            "resumed-native",
+            "test",
+            chat_id="c1",
+            kind="primary",
+            spawn_id=spawn_id,
+            native_store=str(native_root),
+        )
+        session_store.stop_session(runtime_root, "c1")
+    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive",
+        lambda *_a, **_k: False,
+    )
+
+    count, ids = diag._repair_orphan_runs(project, runtime_root=runtime_root)
+
+    assert (count, ids) == (3, spawn_ids)
+    for spawn_id in spawn_ids:
+        record = spawn_store.get_spawn(runtime_root, spawn_id)
+        assert record is not None and record.status == "failed"
+        assert (runtime_root / "spawns" / spawn_id / NATIVE_SNAPSHOT_FILENAME).is_file()

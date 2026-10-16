@@ -251,23 +251,26 @@ def _repair_orphan_runs(
     # Terminal rows may carry a durable reaper cleanup claim left by a crash
     # after finalization. The reconciler is a no-op for other terminal rows.
     reconciled_orphans: list[str] = []
+    orphan_primaries: list[str] = []
     for spawn in iter_repair_candidates(resolved_runtime_root):
         was_active = is_active_spawn_status(spawn.status)
-        reconciled = reconcile_active_spawn(
-            project_root,
-            resolved_runtime_root,
-            spawn,
-        )
+        reconciled = reconcile_active_spawn(project_root, resolved_runtime_root, spawn)
         if not was_active or is_active_spawn_status(reconciled.status):
             continue
         reconciled_orphans.append(reconciled.id)
-        spawn_id = reconciled.id
         if reconciled.kind == "primary":
-            from meridian.lib.ops.session_archive import (
-                NativeCaptureDeferred,
-                materialize_native_history,
-            )
+            orphan_primaries.append(reconciled.id)
+    reconciled_orphans.sort()
+    # Capture only after every orphan is terminal: the capture guard defers
+    # while any row bound to the same native session is still active, and
+    # crashed --continue generations share one native session.
+    if orphan_primaries:
+        from meridian.lib.ops.session_archive import (
+            NativeCaptureDeferred,
+            materialize_native_history,
+        )
 
+        for spawn_id in sorted(orphan_primaries):
             try:
                 materialize_native_history(project_root, resolved_runtime_root, spawn_id)
             except NativeCaptureDeferred as exc:
@@ -282,7 +285,6 @@ def _repair_orphan_runs(
                     spawn_id=spawn_id,
                     exc_info=True,
                 )
-    reconciled_orphans.sort()
     return len(reconciled_orphans), tuple(reconciled_orphans)
 
 
