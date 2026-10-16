@@ -51,7 +51,13 @@ testable.
 deadlocking. The depth counter is per-thread; the OS lock is released only on
 outermost `__exit__`.
 
-**POSIX:** `fcntl.flock(LOCK_EX)` — blocking until acquired.
+**POSIX:** every harness starts behind `launch_gate.py`'s pipe handshake.
+The launcher reads the blocked child's birth and persists its scope before `go`;
+unknown birth or a failed write aborts without exec. After exec a double-forked
+`sh` guardian blocks on the pipe, without holding harness stdio. Runner death
+closes the sole writer: group mode sends TERM then KILL, with group membership
+pinning the target; TTY-stdin primary inheritance instead sends one root TERM
+and never a delayed PID signal. Normal reaping sends `stop` to disarm it.
 
 **Legacy Windows branch (untested):** `msvcrt.locking(LK_NBLCK, 1)` with a 50ms
 retry loop. It requires a non-zero-length file, writes a guard byte, and locks one

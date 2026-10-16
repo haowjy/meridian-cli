@@ -19,6 +19,7 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME
+from meridian.lib.launch.process.ports import ProcessIdentity
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import PrimaryProcessResult, run_harness_process
 from meridian.lib.launch.request import (
@@ -150,7 +151,7 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         )
         captured["log_dir"] = prompt_file_path.parent
         assert callable(on_child_started)
-        on_child_started(222)
+        on_child_started(ProcessIdentity(222, 100.0, 222))
         return PrimaryProcessResult(0, 222, None)
 
     outcome = run_harness_process(
@@ -224,7 +225,7 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
         captured["task_env"] = dict(env).get("MERIDIAN_TASK_DIR")
         captured["project_env"] = dict(env).get("MERIDIAN_PROJECT_DIR")
         assert callable(on_child_started)
-        on_child_started(4445)
+        on_child_started(ProcessIdentity(4445, 100.0, 4445))
         return PrimaryProcessResult(0, 4445, None)
 
     outcome = run_harness_process(
@@ -279,7 +280,7 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
             encoding="utf-8",
         )
         assert callable(on_child_started)
-        on_child_started(445)
+        on_child_started(ProcessIdentity(445, 100.0, 445))
         return PrimaryProcessResult(0, 445, None)
 
     outcome = run_harness_process(
@@ -351,7 +352,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         nonlocal black_box_calls
         black_box_calls += 1
         assert callable(on_child_started)
-        on_child_started(7272)
+        on_child_started(ProcessIdentity(7272, 100.0, 7272))
         return PrimaryProcessResult(0, 7272, None)
 
     outcome = run_harness_process(
@@ -428,7 +429,7 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
             b'\xff\n{"type":"broken"}\n'
             b'{"type":"result","result":"surviving report","usage":{"input_tokens":7}}\n'
         )
-        on_child_started(445)
+        on_child_started(ProcessIdentity(445, 100.0, 445))
         return PrimaryProcessResult(0, 445, None)
 
     monkeypatch.setattr(ClaudeFold, "fold_event", drifting_fold)

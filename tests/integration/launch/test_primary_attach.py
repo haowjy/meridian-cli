@@ -10,7 +10,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
-import psutil
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -28,6 +27,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
 from meridian.lib.launch.process.ports import (
     LaunchedProcess,
+    ProcessIdentity,
     ProcessLauncher,
     TerminalFds,
 )
@@ -37,7 +37,6 @@ from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachLauncher,
 )
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
-from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk, record_scope
 from meridian.lib.state.spawn_store import start_spawn
@@ -366,6 +365,10 @@ class FakeProcessLauncher(ProcessLauncher):
     def terminate(self) -> None:
         return None
 
+    @property
+    def identity(self) -> ProcessIdentity:
+        return ProcessIdentity(self.pid, 100.0, self.pid)
+
     def cancel_wait(self) -> None:
         return None
 
@@ -413,6 +416,10 @@ class BlockingProcessLauncher(ProcessLauncher):
     def terminate(self) -> None:
         if self.terminate_releases:
             self.release.set()
+
+    @property
+    def identity(self) -> ProcessIdentity:
+        return ProcessIdentity(self.pid, 100.0, self.pid)
 
     def cancel_wait(self) -> None:
         self.cancel_wait_calls += 1
@@ -559,29 +566,6 @@ async def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard(
     assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": ""}) is False
     assert outcome.exit_code == 0
     assert sidecar_hooks == [(autocompact_off, opencode_idle.detect_ttl)]
-
-
-def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _InaccessibleProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def create_time(self) -> float:
-            raise psutil.AccessDenied(pid=self.pid)
-
-    monkeypatch.setattr(primary_attach_module.psutil, "Process", _InaccessibleProcess)
-
-    snapshot = primary_attach_module._make_scope_snapshot(
-        pid=987_654_321,
-        scope_id="tui",
-        owner_policy="session_owned",
-        owner_id="thread-unknown",
-        role="primary_tui",
-    )
-
-    assert snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
 
 
 @pytest.mark.asyncio

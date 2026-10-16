@@ -27,6 +27,7 @@ from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
     LaunchedProcess,
+    ProcessIdentity,
     TerminalFds,
 )
 from meridian.lib.launch.process.primary_attach import PrimaryAttachError
@@ -160,7 +161,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         assert launcher_diagnostics_path == tmp_path / LAUNCHER_LOG_FILENAME
         black_box_calls += 1
         if callable(on_child_started):
-            on_child_started(111)
+            on_child_started(ProcessIdentity(111, 100.0, 111))
         return process_runner.PrimaryProcessResult(0, 111, None)
 
     result = process_runner._execute_primary_process(
@@ -220,7 +221,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
         assert launcher_diagnostics_path == tmp_path / LAUNCHER_LOG_FILENAME
         black_box_calls += 1
         if callable(on_child_started):
-            on_child_started(222)
+            on_child_started(ProcessIdentity(222, 100.0, 222))
         return process_runner.PrimaryProcessResult(0, 222, None)
 
     result = process_runner._execute_primary_process(

@@ -13,6 +13,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - First indexed read rebuilds history schema 10; no authority migration. See
   [upgrade notes](docs/upgrading.md#history-index-schema-10).
 
+- Gate harness execution on durable process ownership and clean up harness groups
+  when their runner dies, including re-execed managed backends.
+
 ## [0.10.11] - 2026-10-16
 
 ### Fixed

@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from meridian.lib.platform import IS_WINDOWS, fcntl, pty, select, termios, tty
+from meridian.lib.platform.launch_gate import LaunchGate, child_birth_epoch
 
-from .ports import LaunchedProcess, ProcessLauncher, TerminalFds
+from .ports import LaunchedProcess, ProcessIdentity, ProcessLauncher, TerminalFds
 
 _MOUSE_MODE_RESET_SEQUENCE = (
     b"\x1b[?1000l"
@@ -187,13 +188,18 @@ def _copy_primary_pty_output(
 @dataclass
 class _RunningPtyProcess:
     pid: int
+    identity: ProcessIdentity
     master_fd: int
     output_log_path: Path | None
     relay_terminal_fds: TerminalFds
+    gate: LaunchGate | None = None
     wait_cancelled: threading.Event = field(default_factory=threading.Event)
 
     def wait(self) -> LaunchedProcess:
+        gate = self.gate
         try:
+            if gate is not None:
+                gate.open()
             exit_code = _copy_primary_pty_output(
                 child_pid=self.pid,
                 master_fd=self.master_fd,
@@ -201,13 +207,21 @@ class _RunningPtyProcess:
                 terminal_fds=self.relay_terminal_fds,
                 wait_cancelled=self.wait_cancelled,
             )
+            if gate is not None and not self.wait_cancelled.is_set():
+                gate.stop()
             return LaunchedProcess(exit_code=exit_code, pid=self.pid)
         finally:
+            if gate is not None:
+                gate.close()
+                self.gate = None
             with suppress(OSError):
                 os.close(self.master_fd)
             _close_terminal_fds(self.relay_terminal_fds)
 
     def terminate(self) -> None:
+        if self.gate is not None:
+            self.gate.close()
+            self.gate = None
         with suppress(ProcessLookupError):
             os.kill(self.pid, signal.SIGTERM)
 
@@ -232,15 +246,28 @@ class PtyProcessLauncher(ProcessLauncher):
 
         relay_terminal_fds = _duplicate_terminal_fds(terminal_fds)
         try:
-            master_fd, slave_fd = pty.openpty()
-            _sync_pty_winsize(source_fd=terminal_fds.stdout, target_fd=master_fd)
-
-            child_pid = os.fork()
+            gate = LaunchGate()
+            command = gate.command(command)
+            env = gate.environment(env)
+            try:
+                master_fd, slave_fd = pty.openpty()
+            except BaseException:
+                gate.close()
+                raise
+            try:
+                _sync_pty_winsize(source_fd=terminal_fds.stdout, target_fd=master_fd)
+                child_pid = os.fork()
+            except BaseException:
+                os.close(master_fd)
+                os.close(slave_fd)
+                gate.close()
+                raise
             if child_pid == 0:
                 try:
                     os.close(master_fd)
                     os.login_tty(slave_fd)
                     os.chdir(cwd)
+                    gate.prepare_pty_exec()
                     os.execvpe(command[0], command, env)
                 except FileNotFoundError:
                     os._exit(127)
@@ -248,8 +275,19 @@ class PtyProcessLauncher(ProcessLauncher):
                     os._exit(1)
 
             os.close(slave_fd)
+            gate.close_read_end()
+            try:
+                birth = child_birth_epoch(child_pid)
+            except BaseException:
+                os.kill(child_pid, signal.SIGKILL)
+                os.waitpid(child_pid, 0)
+                os.close(master_fd)
+                gate.close()
+                raise
             return _RunningPtyProcess(
                 pid=child_pid,
+                identity=ProcessIdentity(child_pid, birth, child_pid),
+                gate=gate,
                 master_fd=master_fd,
                 output_log_path=output_log_path,
                 relay_terminal_fds=relay_terminal_fds,

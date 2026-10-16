@@ -76,7 +76,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_state_change,
     trace_wire_send,
 )
-from meridian.lib.platform.detached_process import ParentDeathLink, release_parent_death_link
+from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
@@ -954,15 +954,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 except Exception:
                     logger.warning("Codex subprocess cleanup failed", exc_info=True)
 
-            parent_death_link = self._parent_death_link
             self._parent_death_link = None
-            try:
-                await asyncio.to_thread(
-                    release_parent_death_link,
-                    parent_death_link,
-                )
-            except Exception:
-                logger.warning("Codex parent-death link cleanup failed", exc_info=True)
 
             try:
                 self._fail_pending_requests(RuntimeError("Codex connection stopped"))

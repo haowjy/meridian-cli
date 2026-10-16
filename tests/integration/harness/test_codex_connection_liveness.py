@@ -297,26 +297,3 @@ async def test_codex_expected_stop_cancels_watcher_before_backend_termination() 
     assert process.wait_cancelled is True
     assert scope_handle.terminate_calls == 1
     assert connection.state == "stopped"
-
-
-@pytest.mark.asyncio
-async def test_codex_cleanup_failure_still_ends_expected_stop_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _fail_parent_death_cleanup(_link: object) -> None:
-        raise OSError("watchdog reap failed")
-
-    monkeypatch.setattr(
-        codex_ws,
-        "release_parent_death_link",
-        _fail_parent_death_cleanup,
-    )
-    connection = CodexConnection()
-    connection._state = "connected"
-
-    await connection.stop(reason="test")
-
-    assert connection.state == "stopped"
-    assert connection._event_stream_ended is True
-    assert _drain_raw_event_queue(connection) == [None]
-    assert connection._event_queue.empty()

@@ -55,7 +55,7 @@ class ScopeProjection(BaseModel):
     released: _TolerantTuple = ()
 
 
-@with_config(ConfigDict(strict=True, extra="forbid"))
+@with_config(ConfigDict(strict=True, extra="ignore"))
 class ScopeRow(TypedDict):
     scope_id: str
     owner_policy: str
@@ -67,7 +67,6 @@ class ScopeRow(TypedDict):
     pgid: int | None
     job_name: str | None
     degraded_reason: str | None
-    parent_death_linked: NotRequired[bool]
     release_id: NotRequired[str]
 
 

@@ -11,6 +11,7 @@ import pytest
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.launch.process.ports import ProcessIdentity
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -18,6 +19,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from meridian.lib.platform.launch_gate import child_birth_epoch
 from meridian.lib.state import session_store
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
@@ -95,7 +97,7 @@ def test_owned_event_pins_store(
             stderr=subprocess.PIPE,
             text=True,
         )
-        on_running(process.pid)
+        on_running(ProcessIdentity(process.pid, child_birth_epoch(process.pid), None))
         stdout, _stderr = process.communicate(timeout=5)
         assert process.returncode == 0
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -278,7 +280,7 @@ def test_primary_later_switch_has_one_conflict(tmp_path, monkeypatch):
         observer,
     ):
         observer("entry-thread")
-        on_running(1234)
+        on_running(ProcessIdentity(1234, 100.0, 1234))
         observer("later-thread")
         return PrimaryAttachOutcome(exit_code=0, session_id="later-thread", tui_pid=1234)
 

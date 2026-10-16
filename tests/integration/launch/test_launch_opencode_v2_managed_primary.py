@@ -153,7 +153,7 @@ def _install_fake_v2_transport(
         return ManagedBackendHandle(
             process=cast("Any", _FakeV2Process(pid=4242, stdout=reader)),
             scope_handle=cast("Any", None),
-            parent_death_link=ParentDeathLink(parent_death_linked=False),
+            parent_death_link=ParentDeathLink(),
         )
 
     monkeypatch.setattr(opencode_connection_module, "OpenCodeV2Connection", _v2_factory)

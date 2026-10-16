@@ -23,8 +23,11 @@ launcher is the fallback.
 not assume capture based on launcher type alone.
 
 `ProcessLauncher.start()` returns a `RunningProcess` immediately after process birth.
-PID/scope recording happens before `RunningProcess.wait()` begins the blocking terminal
-relay. Keep those phases separate: managed-primary cancellation depends on having a
+Its `ProcessIdentity` carries the observed birth and the intended group (not a
+racy post-fork `getpgid` read). The lifecycle callback persists that scope before
+`RunningProcess.wait()` opens the gate and begins the blocking terminal relay.
+No-capture subprocesses inherit the runner group only with TTY stdin; their scope
+has no pgid, protecting other shell pipeline members. Keep those phases separate: managed-primary cancellation depends on having a
 concrete process identity before it can wait for exit or terminate the scope.
 `RunningProcess.cancel_wait()` must release its caller-facing wait even when scope
 termination cannot confirm child exit. Managed attach also directly terminates the

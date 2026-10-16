@@ -22,6 +22,7 @@ from meridian.lib.harness.connections.managed_backend import (
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.launch_gate import LaunchGate
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
@@ -192,17 +193,20 @@ async def launch_managed_stdio(
     stderr_handle = stderr_log_path.open("ab")
     stderr_read_offset = stderr_handle.tell()
     provisional_scope_handle: ScopedProcessHandle | None = None
+    gate = None if IS_WINDOWS else LaunchGate(grace_seconds=kill_grace_seconds)
+    process: asyncio.subprocess.Process | None = None
     try:
         try:
             process = await asyncio.create_subprocess_exec(
-                *command,
+                *(gate.command(command) if gate is not None else command),
                 cwd=cwd,
-                env=env,
+                env=gate.environment(env) if gate is not None else env,
                 stdin=stdin,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=stderr_handle,
                 limit=stdout_limit,
                 start_new_session=not IS_WINDOWS,
+                pass_fds=(gate.read_fd,) if gate is not None else (),
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HarnessBinaryNotFound.from_os_error(
@@ -210,6 +214,8 @@ async def launch_managed_stdio(
                 error=exc,
                 binary_name=command[0],
             ) from exc
+        if gate is not None:
+            gate.close_read_end()
         provisional_scope_handle = spawn_owned_process_handle(
             spawn_id=config.spawn_id,
             process=process,
@@ -225,7 +231,12 @@ async def launch_managed_stdio(
             runtime_root=config.runtime_root,
             persist=config.runtime_root is not None,
         )
+        if gate is not None:
+            gate.open()
+            gate.watch_exit(process)
     except BaseException:
+        if gate is not None:
+            gate.close()
         if provisional_scope_handle is not None:
             await reap_on_ownership_transfer_failure(
                 lambda: provisional_scope_handle.terminate(
@@ -233,6 +244,9 @@ async def launch_managed_stdio(
                     reason=terminate_reason,
                 )
             )
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()
         with suppress(OSError):
             stderr_handle.flush()
         stderr_handle.close()

@@ -69,6 +69,7 @@ from meridian.lib.state.primary_meta import (
     PrimaryMetadata,
     write_primary_metadata,
 )
+from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
     update_session_claude_config_dir,
@@ -90,6 +91,7 @@ from ..types import SessionMode
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
     ProcessBackendId,
+    ProcessIdentity,
     ProcessLauncher,
     ProcessLauncherSelector,
     ProcessPlatformContract,
@@ -199,7 +201,7 @@ RunPrimaryProcessWithCapture = Callable[
         Path,
         dict[str, str],
         Path | None,
-        Callable[[int], None] | None,
+        Callable[[ProcessIdentity], None] | None,
         Path,
     ],
     PrimaryProcessResult,
@@ -214,7 +216,7 @@ RunPrimaryAttach = Callable[
         dict[str, str],
         ResolvedLaunchSpec,
         ProcessLauncher,
-        Callable[[int], None] | None,
+        Callable[[ProcessIdentity], None] | None,
         Callable[[str], None],
     ],
     PrimaryAttachOutcome,
@@ -286,7 +288,7 @@ def run_primary_process_with_capture(
     cwd: Path,
     env: dict[str, str],
     output_log_path: Path | None,
-    on_child_started: Callable[[int], None] | None,
+    on_child_started: Callable[[ProcessIdentity], None] | None,
     launcher_diagnostics_path: Path,
     *,
     launcher_selector: ProcessLauncherSelector = select_process_launcher,
@@ -303,8 +305,8 @@ def run_primary_process_with_capture(
         )
         try:
             if on_child_started is not None:
-                on_child_started(running.pid)
-        except Exception:
+                on_child_started(running.identity)
+        except BaseException:
             running.terminate()
             running.wait()
             raise
@@ -364,7 +366,7 @@ def _execute_via_managed_attach(
     launch_spec: ResolvedLaunchSpec,
     native_run: NativeRun,
     run_primary_attach_fn: RunPrimaryAttach,
-    on_running: Callable[[int], None],
+    on_running: Callable[[ProcessIdentity], None],
 ) -> PrimaryExecutionResult:
     """Run managed attach path and persist managed session id when available."""
 
@@ -397,7 +399,7 @@ def _execute_via_blackbox(
     output_log_path: Path | None,
     launcher_diagnostics_path: Path,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
-    on_running: Callable[[int], None],
+    on_running: Callable[[ProcessIdentity], None],
 ) -> PrimaryProcessResult:
     """Run legacy black-box launch path and return process exit code."""
 
@@ -426,7 +428,7 @@ def _execute_primary_process(
     native_run: NativeRun,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     run_primary_attach_fn: RunPrimaryAttach,
-    on_running: Callable[[int], None],
+    on_running: Callable[[ProcessIdentity], None],
 ) -> PrimaryExecutionResult:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
@@ -599,7 +601,7 @@ async def _run_primary_attach(
     env: dict[str, str],
     spec: ResolvedLaunchSpec,
     process_launcher: ProcessLauncher,
-    on_running: Callable[[int], None] | None = None,
+    on_running: Callable[[ProcessIdentity], None] | None = None,
     session_id_observer: Callable[[str], None] | None = None,
 ) -> PrimaryAttachOutcome:
     """Launch managed backend + primary TUI attach flow for supported harnesses."""
@@ -663,7 +665,7 @@ def run_primary_attach(
     env: dict[str, str],
     spec: ResolvedLaunchSpec,
     process_launcher: ProcessLauncher,
-    on_running: Callable[[int], None] | None = None,
+    on_running: Callable[[ProcessIdentity], None] | None = None,
     session_id_observer: Callable[[str], None] | None = None,
 ) -> PrimaryAttachOutcome:
     """Run managed primary attach lifecycle from sync runner code."""
@@ -980,11 +982,18 @@ def run_harness_process(
 
                 # The observer's lifetime is this block, including exceptions.
                 with native_run.observing(
-                    harness_adapter, child_env=child_env,
+                    harness_adapter,
+                    child_env=child_env,
                 ) as observe_child:
 
-                    def _record_primary_started(child_pid: int) -> None:
+                    def _record_primary_started(identity: ProcessIdentity) -> None:
                         nonlocal native_primary_tui_pid
+                        child_pid = identity.pid
+                        record_scope(
+                            runtime_root,
+                            primary_spawn_id,
+                            identity.scope(owner_id=str(primary_spawn_id)),
+                        )
                         native_primary_tui_pid = child_pid
                         observe_child(child_pid)
                         lifecycle_service.mark_running(

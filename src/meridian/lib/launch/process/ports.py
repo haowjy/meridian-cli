@@ -8,7 +8,32 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+
 PRIMARY_STDERR_LOG_PATH_ENV = "_MERIDIAN_PRIMARY_STDERR_LOG_PATH"
+
+
+@dataclass(frozen=True)
+class ProcessIdentity:
+    """Identity captured while the child is blocked, before harness exec."""
+
+    pid: int
+    birth_epoch: float
+    pgid: int | None
+
+    def scope(self, *, owner_id: str, owner_policy: str = "spawn_owned") -> ProcessScopeSnapshot:
+        return ProcessScopeSnapshot(
+            scope_id="tui",
+            owner_policy=owner_policy,
+            owner_id=owner_id,
+            role="harness_tui",
+            containment="posix_pgid" if self.pgid is not None else "pid_tree_fallback",
+            root_pid=self.pid,
+            root_created_at_epoch=self.birth_epoch,
+            pgid=self.pgid,
+            job_name=None,
+            degraded_reason=None,
+        )
 
 
 @dataclass(frozen=True)
@@ -60,6 +85,9 @@ class RunningProcess(Protocol):
     @property
     def pid(self) -> int: ...
 
+    @property
+    def identity(self) -> ProcessIdentity: ...
+
     def wait(self) -> LaunchedProcess: ...
 
     def terminate(self) -> None: ...
@@ -98,6 +126,7 @@ __all__ = [
     "PRIMARY_STDERR_LOG_PATH_ENV",
     "LaunchedProcess",
     "ProcessBackendId",
+    "ProcessIdentity",
     "ProcessLauncher",
     "ProcessLauncherSelector",
     "ProcessPlatformContract",

@@ -98,7 +98,6 @@ def _scope(
         ("pgid", True),
         ("job_name", 1),
         ("degraded_reason", 1),
-        ("parent_death_linked", 1),
         ("release_id", 1),
     ],
 )

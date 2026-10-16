@@ -18,6 +18,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as runner_module
+from meridian.lib.launch.process.ports import ProcessIdentity
 from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachOutcome,
@@ -201,7 +202,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         captured_black_box_cwd = Path(cwd)
         assert output_log_path is None
         assert callable(on_child_started)
-        on_child_started(9494)
+        on_child_started(ProcessIdentity(9494, 100.0, 9494))
         return PrimaryProcessResult(0, 9494, None)
 
     outcome = run_harness_process(
