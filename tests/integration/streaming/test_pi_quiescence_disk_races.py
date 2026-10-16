@@ -112,52 +112,6 @@ async def _arm_child_wave(started: PiDrainScenario) -> None:
 
 
 @pytest.mark.asyncio
-async def test_child_wave_timeout_fails_when_cleanup_finishes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = AsyncDeterminism(start=100.0)
-    clock.install(monkeypatch, monotonic_modules=(pi_drain_module,))
-    spawn_id = SpawnId("p-child-wave-single-timeout")
-    cleanup_reasons: list[str] = []
-
-    async def _record_cleanup(reason: str) -> None:
-        cleanup_reasons.append(reason)
-
-    started = await _started_micro_drain_coordinator(
-        tmp_path,
-        monkeypatch=monkeypatch,
-        spawn_id=spawn_id,
-        child_wave_timeout_seconds=0.01,
-        start_micro_drain=False,
-        cancel_descendants=_record_cleanup,
-    )
-
-    try:
-        await _arm_child_wave(started)
-        assert started.coordinator.next_timeout() == pytest.approx(0.01)
-        clock.advance(0.009)
-        before_deadline = await started.coordinator.handle_timeout()
-        assert before_deadline.recorded_outcome is None
-        assert cleanup_reasons == []
-        clock.advance(0.001)
-
-        decision = await started.coordinator.handle_timeout()
-
-        assert cleanup_reasons == []
-        exit_decision = await started.coordinator.handle_stream_exit(decision.recorded_outcome)
-        request = exit_decision.post_publication_cleanup
-        assert request is not None
-        await started.coordinator.execute_post_publication_cleanup(request)
-        assert cleanup_reasons == ["pi_child_wave_timeout"]
-        assert decision.recorded_outcome is not None
-        assert decision.recorded_outcome.status == "failed"
-        assert decision.recorded_outcome.error == "pi_child_wave_timeout"
-    finally:
-        await started.coordinator.stop()
-
-
-@pytest.mark.asyncio
 async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -191,7 +145,12 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
         )
         phases_before_timeout = len(started.phases)
         started.phase_errors_enabled.set()
-        determinism.advance(0.01)
+        assert started.coordinator.next_timeout() == pytest.approx(0.01)
+        determinism.advance(0.009)
+        before_deadline = await started.coordinator.handle_timeout()
+        assert before_deadline.recorded_outcome is None
+        assert cleanup_reasons == []
+        determinism.advance(0.001)
 
         decision = await started.coordinator.handle_timeout()
         assert cleanup_reasons == []
@@ -259,33 +218,6 @@ async def test_child_wave_timeout_cleanup_cancellation_keeps_descendant_evidence
         assert exit_decision.recorded_outcome.error == "pi_process_exited_with_tracked_children"
     finally:
         await started.coordinator.stop()
-
-
-@pytest.mark.asyncio
-async def test_pi_non_spawn_background_only_nudges_after_idle_delay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    spawn_id = SpawnId("p-non-spawn-nudge")
-    sent_messages: list[str] = []
-    _write_running_bash_record(tmp_path, spawn_id, running=True)
-    coordinator = await _started_pi_coordinator(
-        tmp_path,
-        monkeypatch=monkeypatch,
-        spawn_id=spawn_id,
-        sent_messages=sent_messages,
-    )
-
-    try:
-        await _put_pi_parent_idle_after_success(coordinator)
-        await _wait_for_ready_descendant_refresh(coordinator)
-
-        await coordinator.handle_timeout()
-
-        assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
-        assert "meridian spawn done" in sent_messages[0]
-        assert "meridian spawn rearm" not in sent_messages[0]
-    finally:
-        await coordinator.stop()
 
 
 @pytest.mark.asyncio

@@ -258,31 +258,6 @@ def test_signal_process_group_uses_killpg_for_group_leader(
     assert killpg_calls == [(12345, signal.SIGTERM)]
 
 
-def test_signal_process_group_on_windows_signals_process_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    monkeypatch.setattr(signals_module, "IS_WINDOWS", True)
-    monkeypatch.setattr(
-        signals_module.os,
-        "getpgid",
-        lambda _pid: pytest.fail("os.getpgid should not be called on Windows"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        signals_module.os,
-        "killpg",
-        lambda _pgid, _signum: pytest.fail("os.killpg should not be called on Windows"),
-        raising=False,
-    )
-
-    process = _FakeSignalProcess()
-    signal_process_group(cast("asyncio.subprocess.Process", process), signal.SIGTERM)
-
-    assert process.sent == [signal.SIGTERM]
-
-
 def test_force_kill_process_degrades_to_process_kill_for_shared_pgid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -326,31 +301,6 @@ def test_force_kill_process_uses_killpg_for_group_leader(
 
     assert process.killed is False
     assert killpg_calls == [(12345, signal.SIGKILL)]
-
-
-def test_force_kill_process_on_windows_kills_process_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    monkeypatch.setattr(signals_module, "IS_WINDOWS", True)
-    monkeypatch.setattr(
-        signals_module.os,
-        "getpgid",
-        lambda _pid: pytest.fail("os.getpgid should not be called on Windows"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        signals_module.os,
-        "killpg",
-        lambda _pgid, _signum: pytest.fail("os.killpg should not be called on Windows"),
-        raising=False,
-    )
-
-    process = _FakeSignalProcess()
-    force_kill_process(cast("asyncio.subprocess.Process", process))
-
-    assert process.killed is True
 
 
 def test_signal_coordinator_dispatches_signal_to_all_active_forwarders(

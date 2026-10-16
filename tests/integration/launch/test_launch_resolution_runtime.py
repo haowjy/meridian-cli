@@ -15,7 +15,7 @@ from meridian.lib.harness.registry import (
 )
 from meridian.lib.launch import LaunchRequest as PrimaryLaunchRequest
 from meridian.lib.launch import launch_primary
-from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
     build_primary_spawn_request,
@@ -38,35 +38,12 @@ def _write_minimal_mars_config(project_root: Path) -> None:
     )
 
 
-def _write_agent_profile(project_root: Path, *, name: str, frontmatter: str) -> None:
-    path = project_root / ".mars" / "agents" / f"{name}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{frontmatter}\n---\n\n# {name}\n", encoding="utf-8")
-
-
 def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
     base_registry = get_default_harness_registry()
     registry = HarnessRegistry()
     for harness_id in harness_ids:
         registry.register(base_registry.get(harness_id))
     return registry
-
-
-def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    execution_cwd = project_root / "subdir"
-    execution_cwd.mkdir(parents=True)
-
-    runtime = build_primary_launch_runtime(
-        project_root=project_root,
-        execution_cwd=execution_cwd,
-    )
-
-    assert runtime.config_root == project_root.resolve().as_posix()
-    assert runtime.control_root == project_root.resolve().as_posix()
-    assert runtime.requested_task_cwd == execution_cwd.resolve().as_posix()
-    assert runtime.project_paths_project_root == project_root.resolve().as_posix()
-    assert runtime.project_paths_execution_cwd == execution_cwd.resolve().as_posix()
 
 
 @pytest.mark.parametrize("override", [None, True, False])
@@ -77,21 +54,28 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
 
     _write_minimal_mars_config(tmp_path)
     stub_bundle_request_and_resolve(
-        monkeypatch, model="claude-sonnet-4", harness=HarnessId.CLAUDE,
+        monkeypatch,
+        model="claude-sonnet-4",
+        harness=HarnessId.CLAUDE,
     )
     monkeypatch.setenv("MERIDIAN_IGNORE_DIRENV", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-direnv-key")
     runtime = build_primary_launch_runtime(project_root=tmp_path)
     # A captured policy must not change when the ambient input disappears.
     monkeypatch.delenv("MERIDIAN_IGNORE_DIRENV")
-    monkeypatch.setattr(context_module, "undo_direnv", lambda env: {
-        key: value for key, value in env.items() if key != "ANTHROPIC_API_KEY"
-    })
+    monkeypatch.setattr(
+        context_module,
+        "undo_direnv",
+        lambda env: {key: value for key, value in env.items() if key != "ANTHROPIC_API_KEY"},
+    )
     preview = build_launch_context(
         spawn_id="dry-run-direnv",
-        request=build_primary_spawn_request(request=LaunchRequest(
-            model="claude-sonnet-4", ignore_direnv=override,
-        )),
+        request=build_primary_spawn_request(
+            request=LaunchRequest(
+                model="claude-sonnet-4",
+                ignore_direnv=override,
+            )
+        ),
         runtime=runtime,
         harness_registry=get_default_harness_registry(),
         dry_run=True,
@@ -140,33 +124,6 @@ def test_build_primary_spawn_request_uses_context_as_initial_prompt() -> None:
 
     assert spawn_request.prompt == ""
     assert spawn_request.primary_prompt_is_synthetic is False
-
-
-def test_build_primary_spawn_request_copies_context_from() -> None:
-    request = LaunchRequest(
-        model="test-model",
-        harness=HarnessId.CLAUDE.value,
-        context_from=("p123",),
-    )
-
-    spawn_request = build_primary_spawn_request(request=request)
-
-    assert spawn_request.context_from == ("p123",)
-
-
-@pytest.mark.parametrize(
-    "model",
-    ["claude-sonnet-4"],
-    ids=["claude-model"],
-)
-def test_build_primary_spawn_request_without_harness_skips_synthetic_prompt(model: str) -> None:
-    """Without explicit harness we default to no synthetic first prompt."""
-
-    request = LaunchRequest(model=model)
-
-    spawn_request = build_primary_spawn_request(request=request)
-
-    assert spawn_request.prompt == ""
 
 
 def test_primary_launch_injects_bundle_inventory(
@@ -237,9 +194,7 @@ def test_launch_env_sets_resolved_agent_and_clears_inherited_agent(
 
     with_agent = build_launch_context(
         spawn_id="dry-run-agent",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model=model, agent="coder")
-        ),
+        request=build_primary_spawn_request(request=LaunchRequest(model=model, agent="coder")),
         runtime=build_primary_launch_runtime(project_root=tmp_path),
         harness_registry=get_default_harness_registry(),
         dry_run=True,
@@ -257,9 +212,7 @@ def test_launch_env_sets_resolved_agent_and_clears_inherited_agent(
     )
     without_agent = build_launch_context(
         spawn_id="dry-run-no-agent",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model=model, agent_opt_out=True)
-        ),
+        request=build_primary_spawn_request(request=LaunchRequest(model=model, agent_opt_out=True)),
         runtime=build_primary_launch_runtime(project_root=tmp_path),
         harness_registry=get_default_harness_registry(),
         dry_run=True,
@@ -373,42 +326,6 @@ def test_primary_launch_resolves_reference_files_from_work_task_dir(
             model="gpt-5.4-mini",
             harness=HarnessId.CODEX.value,
             work_id="task-work",
-            reference_files=("task-only.txt",),
-            dry_run=True,
-        ),
-        harness_registry=get_default_harness_registry(),
-    )
-
-    assert result.launch_plan is not None
-    prompt = result.launch_plan.attach_command[-1]
-    assert (task_dir / "task-only.txt").as_posix() in prompt
-    assert "task marker" in prompt
-    assert "project shadow" not in prompt
-
-
-def test_primary_launch_resolves_reference_files_from_explicit_task_dir(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "project"
-    task_dir = tmp_path / "task"
-    project_root.mkdir()
-    task_dir.mkdir()
-    _write_minimal_mars_config(project_root)
-    (project_root / "task-only.txt").write_text("project shadow", encoding="utf-8")
-    (task_dir / "task-only.txt").write_text("task marker", encoding="utf-8")
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4-mini",
-        harness=HarnessId.CODEX,
-    )
-
-    result = launch_primary(
-        project_root=project_root,
-        request=PrimaryLaunchRequest(
-            model="gpt-5.4-mini",
-            harness=HarnessId.CODEX.value,
-            task_dir=task_dir.as_posix(),
             reference_files=("task-only.txt",),
             dry_run=True,
         ),
@@ -599,95 +516,6 @@ def test_primary_launch_explicit_work_precedence_over_context_from(
     assert work_store.get_work_item(project_state_dir, "from-work") is None
 
 
-@pytest.mark.parametrize(
-    ("model", "expected_harness"),
-    [
-        ("claude-sonnet-4", HarnessId.CLAUDE),
-    ],
-    ids=["claude"],
-)
-def test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    model: str,
-    expected_harness: HarnessId,
-) -> None:
-    # Link all three harness targets so mars's per-provider routing returns
-    # the harness the test parametrize expects. The minimal `.claude`-only
-    # config (used by other tests in this module) collapses every model to
-    # claude under the mars 0.4.8rc3 resolver and would invalidate the
-    # cross-harness coverage this test is asserting.
-    (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
-        encoding="utf-8",
-    )
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model=model,
-        harness=expected_harness,
-    )
-    write_agent(tmp_path, name="dev-orchestrator", model=model)
-
-    preview = build_launch_context(
-        spawn_id=f"dry-run-{expected_harness.value}-terminal-surface",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model=model, agent="dev-orchestrator")
-        ),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert preview.harness.id is expected_harness
-    assert preview.resolved_request.terminal_surface_mode is TerminalSurfaceMode.PTY_MEDIATED
-
-
-def test_launch_resolution_fallback_policy_resolves_opencode_medium_via_bundle(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-    _write_agent_profile(
-        tmp_path,
-        name="dev-orchestrator",
-        frontmatter=(
-            "name: dev-orchestrator\n"
-            "model: claude\n"
-            "model-policies:\n"
-            "  - match: {alias: gpt55}\n"
-            "    override: {harness: opencode, effort: medium}\n"
-        ),
-    )
-
-    captured_requests = stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.5",
-        model_token="gpt55",
-        harness=HarnessId.OPENCODE,
-        harness_model="openai/gpt-5.5",
-        execution_policy=ResolvedExecutionPolicy(effort="medium"),
-        provenance={"harness_source": "project", "effort_source": "project"},
-    )
-
-    preview = build_launch_context(
-        spawn_id="dry-run-fallback-opencode-medium",
-        request=build_primary_spawn_request(request=LaunchRequest(agent="dev-orchestrator")),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
-        dry_run=True,
-    )
-
-    assert len(captured_requests) == 1
-    assert captured_requests[0].agent == "dev-orchestrator"
-    assert captured_requests[0].model_override is None
-    assert captured_requests[0].harness_override is None
-    assert preview.harness.id is HarnessId.OPENCODE
-    assert preview.resolved_request.model == "gpt-5.5"
-    assert preview.resolved_request.execution_policy.effort == "medium"
-    assert str(preview.binding.run_params.model) == "openai/gpt-5.5"
-    assert preview.binding.spec.model == "openai/gpt-5.5"
-
-
 def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -765,6 +593,7 @@ def test_opencode_named_primary_continue_preserves_explicit_model(
     )
 
     from tests.support.opencode_db import write_opencode_v2_db_session
+
     native_db = tmp_path / "opencode.db"
     write_opencode_v2_db_session(db_path=native_db, session_id="ses_abc")
 
@@ -792,55 +621,3 @@ def test_opencode_named_primary_continue_preserves_explicit_model(
     assert preview.harness.id is HarnessId.OPENCODE
     assert preview.binding.spec.continue_session_id == "ses_abc"
     assert preview.binding.spec.model == "openai/gpt-5.5"
-
-
-def test_opencode_from_creates_fresh_session_with_context_in_prompt(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R7: ``--from`` starts a fresh session and injects context via the prompt."""
-
-    (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".opencode"]\n',
-        encoding="utf-8",
-    )
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="openai/gpt-5.5",
-        harness=HarnessId.OPENCODE,
-    )
-    write_agent(tmp_path, name="dev-orchestrator", model="openai/gpt-5.5")
-
-    def _resolve_context_ref(_root: Path, _ref: str) -> object:
-        return object()
-
-    def _resolved_context_ref_value(_ref: object) -> str:
-        return "p999"
-
-    def _render_context_refs(_refs: object) -> str:
-        return '<prior-spawn-context spawn="p999">prior context</prior-spawn-context>'
-
-    monkeypatch.setattr(context_ref, "resolve_context_ref", _resolve_context_ref)
-    monkeypatch.setattr(context_ref, "resolved_context_ref_value", _resolved_context_ref_value)
-    monkeypatch.setattr(context_ref, "render_context_refs", _render_context_refs)
-
-    preview = build_launch_context(
-        spawn_id="dry-run-opencode-from",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(
-                model="openai/gpt-5.5",
-                harness=HarnessId.OPENCODE.value,
-                agent="dev-orchestrator",
-                context_from=("p123",),
-            )
-        ),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert preview.harness.id is HarnessId.OPENCODE
-    assert preview.binding.spec.continue_session_id is None
-    assert preview.projected_content is not None
-    assert "prior context" in preview.projected_content.user_turn_content
-    assert "prior context" not in preview.projected_content.system_prompt

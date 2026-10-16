@@ -475,7 +475,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
         "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
         "      printf '%s\\n' "
         '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
-        "      printf '%s\\n' '{\"type\":\"agent_settled\",\"aborted\":false}'\n"
+        '      printf \'%s\\n\' \'{"type":"agent_settled","aborted":false}\'\n'
         "      ;;\n"
         '    *\'"type":"abort"\'*)\n'
         "      exit 0\n"
@@ -587,7 +587,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
             "      printf '%s\n' '{\"type\":\"agent_start\"}'\n"
             "      printf '%s\n' "
             '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
-            "      printf '%s\\n' '{\"type\":\"agent_settled\",\"aborted\":false}'\n"
+            '      printf \'%s\\n\' \'{"type":"agent_settled","aborted":false}\'\n'
         )
     else:
         prompt_handler = "      sleep 30\n"
@@ -807,7 +807,7 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
         "# RPC mode: accept the initial prompt line, then die before any stdout event.\n"
         "read -r _prompt_line || true\n"
         f"printf '%s\\n' '{crash_stderr}' >&2\n"
-        "exit 1\n",
+        "exit 7\n",
         encoding="utf-8",
     )
     shim.chmod(0o755)
@@ -851,6 +851,8 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     assert crash_stderr in message
     assert prior_launch_stderr not in message
     assert "Pi subprocess stderr:" in message
+    assert pi_rpc_module.pi_subprocess_exit_error(7) in message
+    assert pi_rpc_module._PI_FIRST_EVENT_TIMEOUT_REASON not in message
 
     assert crash_stderr in stderr_log.read_text(encoding="utf-8")
 
@@ -906,61 +908,6 @@ async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
     ]
     assert error_messages
     assert pi_rpc_module._PI_FIRST_EVENT_TIMEOUT_REASON in error_messages[0]
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_rpc_nonzero_exit_before_first_event_reports_exit_code(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    configure_pi_extension_projection(monkeypatch, tmp_path)
-
-    crash_stderr = "Pi crashed before its first response"
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    shim = bin_dir / "pi"
-    shim.write_text(
-        "#!/bin/sh\n"
-        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
-        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
-        "read -r _prompt_line || true\n"
-        f"printf '%s\\n' '{crash_stderr}' >&2\n"
-        "exit 7\n",
-        encoding="utf-8",
-    )
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-
-    connection = PiRpcConnection()
-    await _start_existing_pi_connection(
-        connection,
-        ConnectionConfig(
-            spawn_id=SpawnId("p-pi-exit-before-first-event"),
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            child_env={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    events = [event async for event in connection.events()]
-    error_messages = [
-        str(event.payload.get("message", ""))
-        for event in events
-        if event.event_type == "meridian/error/connectionClosed"
-    ]
-
-    assert error_messages
-    assert pi_rpc_module.pi_subprocess_exit_error(7) in error_messages[0]
-    assert pi_rpc_module._PI_FIRST_EVENT_TIMEOUT_REASON not in error_messages[0]
-    assert crash_stderr in error_messages[0]
 
 
 @pytest.mark.asyncio

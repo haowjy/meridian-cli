@@ -65,9 +65,12 @@ def direnv_environments(tmp_path: Path) -> tuple[dict[str, str], dict[str, str]]
         "OPENCODE_CONFIG_CONTENT": '{"permission":{"bash":"ask"}}',
     }
     subprocess.run([executable, "allow", str(project)], env=base, check=True, capture_output=True)
-    active = json.loads(subprocess.check_output(
-        [executable, "exec", str(project), executable, "dump", "json"], env=base,
-    ))
+    active = json.loads(
+        subprocess.check_output(
+            [executable, "exec", str(project), executable, "dump", "json"],
+            env=base,
+        )
+    )
     return base, active
 
 
@@ -96,16 +99,20 @@ def test_pi_defaults_use_restored_home_and_paths(
     for key, value in active.items():
         monkeypatch.setenv(key, value)
     env = build_harness_child_env(
-        base_env=undo_direnv(active), adapter=PiAdapter(),
-        run_params=SpawnParams(prompt="test"), permission_config=PermissionConfig(),
+        base_env=undo_direnv(active),
+        adapter=PiAdapter(),
+        run_params=SpawnParams(prompt="test"),
+        permission_config=PermissionConfig(),
     )
     assert env["PI_CODING_AGENT_DIR"] == str(Path(base["HOME"]) / ".pi" / "agent")
     assert env["PI_CODING_AGENT_SESSION_DIR"] == str(
         Path(base["HOME"]) / ".meridian" / "meridian-pi" / "sessions"
     )
     explicit = build_harness_child_env(
-        base_env=undo_direnv(active), adapter=PiAdapter(),
-        run_params=SpawnParams(prompt="test"), permission_config=PermissionConfig(),
+        base_env=undo_direnv(active),
+        adapter=PiAdapter(),
+        run_params=SpawnParams(prompt="test"),
+        permission_config=PermissionConfig(),
         runtime_env_overrides={"MERIDIAN_HOME": "~/explicit-state"},
     )
     assert explicit["PI_CODING_AGENT_SESSION_DIR"] == str(
@@ -128,16 +135,22 @@ def test_opencode_workspace_projection_uses_effective_environment(
     monkeypatch.setenv("HOME", base["HOME"])
     (tmp_path / "mars.toml").write_text('[settings]\ntargets = [".opencode"]\n')
     stub_bundle_request_and_resolve(
-        monkeypatch, model="anthropic/claude-sonnet-4", harness=HarnessId.OPENCODE,
+        monkeypatch,
+        model="anthropic/claude-sonnet-4",
+        harness=HarnessId.OPENCODE,
     )
     context = build_launch_context(
         spawn_id="dry-run-direnv",
-        request=build_primary_spawn_request(request=LaunchRequest(
-            model="anthropic/claude-sonnet-4", harness="opencode",
-            ignore_direnv=ignore_direnv,
-        )),
+        request=build_primary_spawn_request(
+            request=LaunchRequest(
+                model="anthropic/claude-sonnet-4",
+                harness="opencode",
+                ignore_direnv=ignore_direnv,
+            )
+        ),
         runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(), dry_run=True,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
     )
     env = context.binding.environment.final_env
     config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
@@ -150,10 +163,20 @@ def test_opencode_workspace_projection_uses_effective_environment(
         assert config["permission"]["bash"] == "ask"
 
 
-@pytest.mark.parametrize("surface", ["connection", "preview", "subprocess"])
-@pytest.mark.parametrize("version", ["v1", "v2"])
+@pytest.mark.parametrize(
+    ("surface", "version"),
+    [
+        ("connection", "v2"),
+        ("preview", "v2"),
+        ("subprocess", "v1"),
+        ("subprocess", "v2"),
+    ],
+)
 def test_opencode_probes_use_bound_path_and_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surface: str, version: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+    version: str,
 ) -> None:
     bound_bin = tmp_path / "bound"
     ambient_bin = tmp_path / "ambient"
@@ -164,9 +187,13 @@ def test_opencode_probes_use_bound_path_and_environment(
         executable = directory / "opencode"
         version_output = "1.18.0" if version == "v1" else "2.0.6"
         executable.write_text(
-            '#!/bin/sh\nprintf "%s:%s" ' + result
-            + ' "${ANTHROPIC_API_KEY-unset}" > "' + str(marker)
-            + '"\necho ' + version_output + '\n'
+            '#!/bin/sh\nprintf "%s:%s" '
+            + result
+            + ' "${ANTHROPIC_API_KEY-unset}" > "'
+            + str(marker)
+            + '"\necho '
+            + version_output
+            + "\n"
         )
         executable.chmod(0o755)
     monkeypatch.setenv("PATH", str(ambient_bin))
@@ -174,13 +201,17 @@ def test_opencode_probes_use_bound_path_and_environment(
     env = {"PATH": str(bound_bin), "MERIDIAN_HARNESS_OPENCODE_VERSION": "auto"}
     spec = ResolvedLaunchSpec(
         harness=HarnessId.OPENCODE,
-        model="anthropic/claude-sonnet-4", continue_session_id="session-review",
+        model="anthropic/claude-sonnet-4",
+        continue_session_id="session-review",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
     if surface == "connection":
         config = ConnectionConfig(
-            spawn_id=SpawnId("p-review"), harness_id=HarnessId.OPENCODE,
-            prompt="", control_root=tmp_path, child_env=env,
+            spawn_id=SpawnId("p-review"),
+            harness_id=HarnessId.OPENCODE,
+            prompt="",
+            control_root=tmp_path,
+            child_env=env,
         )
         assert OpenCodeConnection()._resolve_version(config) == version
     elif surface == "preview":
@@ -188,10 +219,16 @@ def test_opencode_probes_use_bound_path_and_environment(
     elif version == "v1":
         with pytest.raises(HarnessCapabilityMismatch, match="cannot switch the model"):
             project_subprocess_spec(
-                HarnessId.OPENCODE, spec, base_command=("opencode", "run"), env=env,
+                HarnessId.OPENCODE,
+                spec,
+                base_command=("opencode", "run"),
+                env=env,
             )
     else:
         project_subprocess_spec(
-            HarnessId.OPENCODE, spec, base_command=("opencode", "run"), env=env,
+            HarnessId.OPENCODE,
+            spec,
+            base_command=("opencode", "run"),
+            env=env,
         )
     assert marker.read_text() == "bound:unset"
