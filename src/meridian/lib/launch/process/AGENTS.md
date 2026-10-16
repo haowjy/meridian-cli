@@ -77,12 +77,18 @@ created and closes in the finally block. If `lifecycle_service.start()` fails, t
 session is still properly closed.
 
 **The TUI owns the terminal exclusively.** `terminal_ownership.py` duplicates the
-terminal descriptors, redirects launcher fds 1 and 2 to the run's dedicated
-`launcher.log`, and yields the duplicates before the TUI process starts. Both
-black-box and managed attach callers keep that window around start callbacks and
-the relay through child exit. New native-terminal drivers must enter the same
-window and explicitly attach the TUI to its yielded fds. Only the post-exit result
-renderer may point users at captured launcher output.
+terminal descriptors, redirects launcher fd 0 to `/dev/null` and fds 1 and 2 to
+the run's dedicated `launcher.log`, and yields the duplicates before the TUI
+process starts. Programs that open `/dev/tty` directly can still draw on the
+screen. Both black-box and managed attach callers keep that window around start
+callbacks and the relay through child exit; relays retain their own descriptor
+duplicates so a timed-out daemon relay cannot write through a recycled fd. New
+native-terminal drivers must enter the same window and explicitly attach the TUI
+to its yielded fds. Terminal capability and `isatty` checks on fds 0/1/2 must run
+before the window or use its saved fds. A background write racing restoration can
+split across the descriptor swap; this is accepted because the TUI has already
+exited. Only the post-exit result renderer may point users at captured launcher
+output; an escaping error emits the same pointer after restoration.
 
 ## Key Rules
 

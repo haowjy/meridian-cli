@@ -9,16 +9,8 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.platform import IS_WINDOWS
-
-
-@dataclass(frozen=True)
-class TerminalFds:
-    """Stable terminal handles retained while the launcher's stdio is captured."""
-
-    stdin: int
-    stdout: int
-    stderr: int
+from .ports import TerminalFds
+from .pty_launcher import can_use_pty
 
 
 @dataclass
@@ -26,7 +18,7 @@ class TuiTerminalWindow:
     """State exposed to the TUI owner while it exclusively owns the terminal."""
 
     diagnostics_path: Path
-    terminal_fds: TerminalFds | None = None
+    terminal_fds: TerminalFds
     captured_path: Path | None = None
 
 
@@ -42,30 +34,29 @@ def _flush_standard_streams() -> None:
             stream.flush()
 
 
-def _terminal_is_interactive() -> bool:
-    try:
-        return not IS_WINDOWS and os.isatty(0) and os.isatty(1)
-    except OSError:
-        return False
-
-
 @contextmanager
 def tui_terminal_window(diagnostics_path: Path) -> Generator[TuiTerminalWindow, None, None]:
     """Give a TUI exclusive terminal ownership and capture every other stdio write.
 
     The yielded descriptors are duplicates of the real terminal. A relay or native
-    TUI must use them instead of process fds 0/1/2, because launcher fds 1 and 2
-    point at ``diagnostics_path`` until the context exits.
+    TUI must use them instead of process fds 0/1/2, because launcher fd 0 points
+    at ``/dev/null`` and fds 1 and 2 point at ``diagnostics_path`` until the
+    context exits. A write racing restoration may split across the descriptor
+    swap; that is accepted because the TUI has already exited by then.
     """
 
-    window = TuiTerminalWindow(diagnostics_path=diagnostics_path.resolve())
-    if not _terminal_is_interactive():
+    window = TuiTerminalWindow(
+        diagnostics_path=diagnostics_path.resolve(),
+        terminal_fds=TerminalFds(stdin=0, stdout=1, stderr=2),
+    )
+    if not can_use_pty():
         yield window
         return
 
     saved_fd_values: list[int] = []
     saved_fds: TerminalFds | None = None
     log_fd = -1
+    null_fd = -1
     start_size: int | None = None
 
     try:
@@ -82,13 +73,16 @@ def tui_terminal_window(diagnostics_path: Path) -> Generator[TuiTerminalWindow, 
             os.O_WRONLY | os.O_CREAT | os.O_APPEND,
             0o600,
         )
+        null_fd = os.open(os.devnull, os.O_RDONLY)
         start_size = os.fstat(log_fd).st_size
 
         _flush_standard_streams()
-        # stderr is the known logging channel and is redirected first. The TUI is
-        # not started or relayed until both replacements are complete.
+        # The TUI is not started or relayed until all replacements are complete.
+        os.dup2(null_fd, 0, inheritable=True)
         os.dup2(log_fd, 2, inheritable=True)
         os.dup2(log_fd, 1, inheritable=True)
+        os.close(null_fd)
+        null_fd = -1
         os.close(log_fd)
         log_fd = -1
         window.terminal_fds = saved_fds
@@ -96,6 +90,8 @@ def tui_terminal_window(diagnostics_path: Path) -> Generator[TuiTerminalWindow, 
     finally:
         if saved_fds is not None:
             _flush_standard_streams()
+            with suppress(OSError):
+                os.dup2(saved_fds.stdin, 0, inheritable=True)
             with suppress(OSError):
                 os.dup2(saved_fds.stdout, 1, inheritable=True)
             with suppress(OSError):
@@ -112,10 +108,12 @@ def tui_terminal_window(diagnostics_path: Path) -> Generator[TuiTerminalWindow, 
         if log_fd >= 0:
             with suppress(OSError):
                 os.close(log_fd)
+        if null_fd >= 0:
+            with suppress(OSError):
+                os.close(null_fd)
 
 
 __all__ = [
-    "TerminalFds",
     "TuiTerminalWindow",
     "format_launcher_diagnostics_pointer",
     "tui_terminal_window",

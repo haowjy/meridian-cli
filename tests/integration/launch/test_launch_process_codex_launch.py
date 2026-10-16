@@ -22,6 +22,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
@@ -31,6 +32,9 @@ from meridian.lib.launch.process.primary_attach import (
 )
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
+from meridian.lib.launch.process.terminal_ownership import (
+    format_launcher_diagnostics_pointer,
+)
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -493,6 +497,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
 def test_run_harness_process_codex_managed_failure_raises_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Codex primary must use managed backend; failure raises error, no fallback."""
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
@@ -509,6 +514,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         ),
     )
     harness_registry.get_subprocess_harness(HarnessId.CODEX)
+    diagnostics_paths: list[Path] = []
 
     def failing_managed(
         harness_id: Any,
@@ -523,7 +529,11 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
-        Path(spawn_dir).mkdir(parents=True, exist_ok=True)
+        spawn_path = Path(spawn_dir)
+        spawn_path.mkdir(parents=True, exist_ok=True)
+        diagnostics_path = spawn_path / LAUNCHER_LOG_FILENAME
+        diagnostics_path.write_text("relay failed\n", encoding="utf-8")
+        diagnostics_paths.append(diagnostics_path.resolve())
         raise PrimaryAttachError("managed startup error")
 
     with pytest.raises(PrimaryAttachError, match="managed startup error"):
@@ -536,3 +546,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
                 AssertionError("codex should not fall back to black-box")
             ),
         )
+
+    assert len(diagnostics_paths) == 1
+    pointer = format_launcher_diagnostics_pointer(diagnostics_paths[0])
+    assert capsys.readouterr().err.count(pointer) == 1

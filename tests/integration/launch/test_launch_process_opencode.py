@@ -22,7 +22,7 @@ from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachOutcome,
 )
-from meridian.lib.launch.process.runner import run_harness_process
+from meridian.lib.launch.process.runner import PrimaryProcessResult, run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -202,7 +202,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         assert output_log_path is None
         assert callable(on_child_started)
         on_child_started(9494)
-        return (0, 9494, None)
+        return PrimaryProcessResult(0, 9494, None)
 
     outcome = run_harness_process(
         launch_context,

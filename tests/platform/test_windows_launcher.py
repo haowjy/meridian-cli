@@ -7,6 +7,7 @@ from meridian.lib.launch.process.ports import (
     LaunchedProcess,
     ProcessBackendId,
     ProcessSurfaceMode,
+    TerminalFds,
 )
 from meridian.lib.launch.process.pty_launcher import PtyProcessLauncher
 from meridian.lib.launch.process.runner import (
@@ -14,7 +15,6 @@ from meridian.lib.launch.process.runner import (
     select_process_launcher,
 )
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
-from meridian.lib.launch.process.terminal_ownership import TerminalFds
 from meridian.lib.launch.process.windows_launcher import WindowsConsoleLauncher
 
 if TYPE_CHECKING:
@@ -142,7 +142,7 @@ def test_windows_console_launcher_forces_console_inheritance(
             cwd: Path,
             env: dict[str, str],
             output_log_path: Path | None,
-            terminal_fds: TerminalFds | None = None,
+            terminal_fds: TerminalFds,
         ) -> _Running:
             _ = terminal_fds
             captured["command"] = command
@@ -160,6 +160,7 @@ def test_windows_console_launcher_forces_console_inheritance(
         cwd=tmp_path,
         env={"MERIDIAN_TEST": "1"},
         output_log_path=tmp_path / "history.jsonl",
+        terminal_fds=TerminalFds(stdin=0, stdout=1, stderr=2),
     )
 
     assert captured["output_log_path"] == tmp_path / "history.jsonl"

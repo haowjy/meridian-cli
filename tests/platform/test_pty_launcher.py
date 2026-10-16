@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from meridian.lib.launch.process.ports import TerminalFds
 from meridian.lib.platform import IS_WINDOWS, fcntl, pty, termios
 
 _ENABLED_MODES = b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1049h\x1b[?25l"
@@ -22,6 +23,7 @@ _RESTORED_MODES = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[
 _RESTORED_MODES_WITHOUT_ALT_SCREEN = (
     b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h"
 )
+_FAKE_TERMINAL_FDS = TerminalFds(stdin=10, stdout=11, stderr=2)
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
@@ -47,6 +49,7 @@ def test_non_tty_stdout_does_not_receive_terminal_restore(
         child_pid=99,
         master_fd=12,
         output_log_path=None,
+        terminal_fds=_FAKE_TERMINAL_FDS,
     )
 
     assert exit_code == 0
@@ -81,6 +84,7 @@ def test_closed_stdout_ends_pty_forwarding_cleanly(
         child_pid=99,
         master_fd=12,
         output_log_path=output_log,
+        terminal_fds=_FAKE_TERMINAL_FDS,
     )
 
     assert exit_code == 0
@@ -115,6 +119,7 @@ def test_closed_pane_oserror_ends_pty_forwarding_cleanly(
         child_pid=99,
         master_fd=12,
         output_log_path=output_log,
+        terminal_fds=_FAKE_TERMINAL_FDS,
     )
 
     assert exit_code == 0
@@ -156,6 +161,7 @@ def test_closed_pane_oserror_on_master_write_ends_stdin_forwarding_cleanly(
         child_pid=99,
         master_fd=12,
         output_log_path=None,
+        terminal_fds=_FAKE_TERMINAL_FDS,
     )
 
     assert exit_code == 0
@@ -198,6 +204,7 @@ def test_stdin_read_oserror_marks_stdin_closed_and_forwards_to_master_eof(
         child_pid=99,
         master_fd=12,
         output_log_path=None,
+        terminal_fds=_FAKE_TERMINAL_FDS,
     )
 
     assert exit_code == 0
@@ -237,6 +244,7 @@ def test_child_alt_screen_exit_is_not_repeated_after_exit(
         child_pid=99,
         master_fd=12,
         output_log_path=None,
+        terminal_fds=_FAKE_TERMINAL_FDS,
     )
 
     assert exit_code == 0
@@ -275,6 +283,7 @@ def test_split_alt_screen_enter_is_restored_after_child_exit(
         child_pid=99,
         master_fd=12,
         output_log_path=None,
+        terminal_fds=_FAKE_TERMINAL_FDS,
     )
 
     assert exit_code == 0
@@ -314,6 +323,7 @@ def test_wait_cancelled_after_eof_returns_130_without_waitpid(
         child_pid=99,
         master_fd=12,
         output_log_path=None,
+        terminal_fds=_FAKE_TERMINAL_FDS,
         wait_cancelled=cancelled,
     )
 
@@ -368,6 +378,7 @@ if resized:
                 cwd=tmp_path,
                 env=dict(os.environ),
                 output_log_path=None,
+                terminal_fds=TerminalFds(stdin=0, stdout=1, stderr=2),
             )
             waiter = threading.Thread(target=process.wait, daemon=True)
             waiter.start()
@@ -451,6 +462,7 @@ def test_signalled_primary_child_restores_dec_modes_outside_capture(tmp_path: Pa
                 cwd=tmp_path,
                 env=dict(os.environ),
                 output_log_path=output_log,
+                terminal_fds=TerminalFds(stdin=0, stdout=1, stderr=2),
             )
             result = process.wait()
             os.write(status_write, str(result.exit_code).encode())

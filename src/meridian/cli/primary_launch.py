@@ -73,8 +73,7 @@ class PrimaryLaunchOutput(BaseModel):
                 + json.dumps(plan.bootstrap_payload)
             )
             lines.append("Attach: " + shlex.join(plan.attach_command))
-            return "\n".join(lines)
-        if self.command:
+        elif self.command:
             if self.forked_from:
                 lines.append(f"{self.message} (from {self.forked_from})")
             else:
@@ -82,23 +81,18 @@ class PrimaryLaunchOutput(BaseModel):
             if self.terminal_surface_mode:
                 lines.append(f"Terminal surface mode: {self.terminal_surface_mode}")
             lines.append(shlex.join(self.command))
-            return "\n".join(lines)
-        if self.resume_command:
+        elif self.resume_command:
             if self.forked_from:
                 lines.append(f"Session forked from {self.forked_from}.")
             else:
                 lines.append(self.message)
             lines.append("To continue with meridian:")
             lines.append(self.resume_command)
-            if self.launcher_diagnostics_path is not None:
-                lines.append(
-                    format_launcher_diagnostics_pointer(self.launcher_diagnostics_path)
-                )
-            return "\n".join(lines)
-        if self.forked_from:
-            lines.append(f"{self.message} (from {self.forked_from})")
         else:
-            lines.append(self.message)
+            if self.forked_from:
+                lines.append(f"{self.message} (from {self.forked_from})")
+            else:
+                lines.append(self.message)
         if self.launcher_diagnostics_path is not None:
             lines.append(format_launcher_diagnostics_pointer(self.launcher_diagnostics_path))
         return "\n".join(lines)

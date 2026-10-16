@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -57,7 +58,6 @@ from meridian.lib.launch.constants import (
     LAUNCHER_LOG_FILENAME,
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
-    STDERR_FILENAME,
 )
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -105,7 +105,10 @@ from .session import (
     resolve_primary_session_mode,
 )
 from .subprocess_launcher import SubprocessProcessLauncher
-from .terminal_ownership import tui_terminal_window
+from .terminal_ownership import (
+    format_launcher_diagnostics_pointer,
+    tui_terminal_window,
+)
 from .windows_launcher import WindowsConsoleLauncher, can_use_windows_console_launcher
 
 logger = logging.getLogger(__name__)
@@ -174,6 +177,26 @@ def _write_native_primary_metadata(
         logger.debug("Failed to write native primary metadata", exc_info=True)
 
 
+@dataclass(frozen=True)
+class PrimaryProcessResult:
+    """Result of one black-box primary process and terminal relay."""
+
+    exit_code: int
+    pid: int | None
+    launcher_diagnostics_path: Path | None
+
+
+@dataclass(frozen=True)
+class PrimaryExecutionResult:
+    """Normalized result shared by managed-attach and black-box execution."""
+
+    exit_code: int
+    managed_session_id: str | None
+    managed_cancelled: bool
+    facts: AttemptFacts
+    launcher_diagnostics_path: Path | None
+
+
 RunPrimaryProcessWithCapture = Callable[
     [
         tuple[str, ...],
@@ -183,7 +206,7 @@ RunPrimaryProcessWithCapture = Callable[
         Callable[[int], None] | None,
         Path,
     ],
-    tuple[int, int | None, Path | None],
+    PrimaryProcessResult,
 ]
 RunPrimaryAttach = Callable[
     [
@@ -271,7 +294,7 @@ def run_primary_process_with_capture(
     launcher_diagnostics_path: Path,
     *,
     launcher_selector: ProcessLauncherSelector = select_process_launcher,
-) -> tuple[int, int | None, Path | None]:
+) -> PrimaryProcessResult:
     launcher: ProcessLauncher = launcher_selector(output_log_path)
 
     with tui_terminal_window(launcher_diagnostics_path) as window:
@@ -291,7 +314,25 @@ def run_primary_process_with_capture(
             raise
         launched = running.wait()
 
-    return launched.exit_code, launched.pid, window.captured_path
+    return PrimaryProcessResult(
+        exit_code=launched.exit_code,
+        pid=launched.pid,
+        launcher_diagnostics_path=window.captured_path,
+    )
+
+
+def _written_launcher_diagnostics_path(path: Path) -> Path | None:
+    try:
+        return path.resolve() if path.stat().st_size > 0 else None
+    except OSError:
+        return None
+
+
+def _emit_launcher_diagnostics_pointer(path: Path) -> None:
+    """Show an error-path pointer after the terminal window has been restored."""
+
+    with suppress(BrokenPipeError, OSError, ValueError):
+        print(format_launcher_diagnostics_pointer(path), file=sys.stderr)
 
 
 def _cleanup_managed_primary_sidecars(spawn_dir: Path) -> None:
@@ -306,7 +347,7 @@ def _cleanup_managed_primary_sidecars(spawn_dir: Path) -> None:
 
 
 def _managed_primary_stderr_excerpt(spawn_dir: Path, *, max_chars: int = 1200) -> str | None:
-    stderr_path = spawn_dir / STDERR_FILENAME
+    stderr_path = spawn_dir / "stderr.log"
     max_bytes = max(max_chars * 4, 4096)
     try:
         file_size = stderr_path.stat().st_size
@@ -342,7 +383,7 @@ def _execute_via_managed_attach(
     native_run: NativeRun,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[int], None],
-) -> tuple[int, str | None, bool, AttemptFacts, Path | None]:
+) -> PrimaryExecutionResult:
     """Run managed attach path and persist managed session id when available."""
 
     managed_outcome = run_primary_attach_fn(
@@ -357,12 +398,12 @@ def _execute_via_managed_attach(
         on_running,
         native_run.observe,
     )
-    return (
-        managed_outcome.exit_code,
-        native_run.entry.session_id,
-        managed_outcome.cancelled,
-        managed_outcome.facts,
-        managed_outcome.launcher_diagnostics_path,
+    return PrimaryExecutionResult(
+        exit_code=managed_outcome.exit_code,
+        managed_session_id=native_run.entry.session_id,
+        managed_cancelled=managed_outcome.cancelled,
+        facts=managed_outcome.facts,
+        launcher_diagnostics_path=managed_outcome.launcher_diagnostics_path,
     )
 
 
@@ -375,10 +416,10 @@ def _execute_via_blackbox(
     launcher_diagnostics_path: Path,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     on_running: Callable[[int], None],
-) -> tuple[int, Path | None]:
+) -> PrimaryProcessResult:
     """Run legacy black-box launch path and return process exit code."""
 
-    exit_code, _child_pid, captured_path = run_primary_process_with_capture_fn(
+    return run_primary_process_with_capture_fn(
         command,
         launch_cwd,
         child_env,
@@ -386,7 +427,6 @@ def _execute_via_blackbox(
         on_running,
         launcher_diagnostics_path,
     )
-    return exit_code, captured_path
 
 
 def _execute_primary_process(
@@ -405,10 +445,12 @@ def _execute_primary_process(
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[int], None],
-) -> tuple[int, str | None, bool, AttemptFacts, Path | None]:
+) -> PrimaryExecutionResult:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
     use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
+    launcher_diagnostics_path = log_dir / LAUNCHER_LOG_FILENAME
+    managed_launcher_diagnostics_path: Path | None = None
     if use_managed_backend:
         try:
             return _execute_via_managed_attach(
@@ -426,6 +468,9 @@ def _execute_primary_process(
         except PrimaryAttachError as exc:
             if harness_contract.primary_attach_failure_policy == "raise":
                 raise
+            managed_launcher_diagnostics_path = _written_launcher_diagnostics_path(
+                launcher_diagnostics_path
+            )
             stderr_excerpt = _managed_primary_stderr_excerpt(log_dir)
             logger.warning(
                 "Managed backend failed, falling back to black-box TUI: %s%s",
@@ -443,20 +488,29 @@ def _execute_primary_process(
     )
     blackbox_env = dict(child_env)
     if harness_contract.primary_stderr_log:
-        blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / STDERR_FILENAME)
-    exit_code, launcher_diagnostics_path = _execute_via_blackbox(
+        blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
+    blackbox_result = _execute_via_blackbox(
         command=command,
         launch_cwd=launch_cwd,
         child_env=blackbox_env,
         output_log_path=output_log_path,
-        launcher_diagnostics_path=log_dir / LAUNCHER_LOG_FILENAME,
+        launcher_diagnostics_path=launcher_diagnostics_path,
         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
         on_running=on_running,
     )
     fold = get_harness_bundle(harness_id).extractor.create_fold()
     if output_log_path is not None and output_log_path.is_file():
         fold.fold_stdout(output_log_path, harness_id)
-    return exit_code, None, False, fold.facts, launcher_diagnostics_path
+    return PrimaryExecutionResult(
+        exit_code=blackbox_result.exit_code,
+        managed_session_id=None,
+        managed_cancelled=False,
+        facts=fold.facts,
+        launcher_diagnostics_path=(
+            blackbox_result.launcher_diagnostics_path
+            or managed_launcher_diagnostics_path
+        ),
+    )
 
 
 def _finalize_lifecycle(
@@ -981,13 +1035,7 @@ def run_harness_process(
                             )
 
                     identity_error_phase = "running"
-                    (
-                        exit_code,
-                        managed_session_id,
-                        managed_cancelled,
-                        facts,
-                        launcher_diagnostics_path,
-                    ) = _execute_primary_process(
+                    execution_result = _execute_primary_process(
                         harness_id=harness_id,
                         primary_spawn_id=primary_spawn_id,
                         log_dir=log_dir,
@@ -1003,8 +1051,14 @@ def run_harness_process(
                         run_primary_attach_fn=run_primary_attach_fn,
                         on_running=_record_primary_started,
                     )
-                if managed_session_id is not None:
-                    resolved_harness_session_id = managed_session_id
+                    exit_code = execution_result.exit_code
+                    managed_cancelled = execution_result.managed_cancelled
+                    facts = execution_result.facts
+                    launcher_diagnostics_path = (
+                        execution_result.launcher_diagnostics_path
+                    )
+                if execution_result.managed_session_id is not None:
+                    resolved_harness_session_id = execution_result.managed_session_id
                 with suppress(Exception):
                     lifecycle_service.record_exited(
                         primary_spawn_id,
@@ -1097,6 +1151,28 @@ def run_harness_process(
     except FileNotFoundError:
         logger.debug("Harness command not found", exc_info=True)
         exit_code = 2
+        if primary_spawn_id is not None:
+            launcher_diagnostics_path = _written_launcher_diagnostics_path(
+                resolve_spawn_log_dir(
+                    config_root,
+                    primary_spawn_id,
+                    runtime_root=runtime_root,
+                )
+                / LAUNCHER_LOG_FILENAME
+            )
+    except Exception:
+        if primary_spawn_id is not None:
+            diagnostics_path = _written_launcher_diagnostics_path(
+                resolve_spawn_log_dir(
+                    config_root,
+                    primary_spawn_id,
+                    runtime_root=runtime_root,
+                )
+                / LAUNCHER_LOG_FILENAME
+            )
+            if diagnostics_path is not None:
+                _emit_launcher_diagnostics_pointer(diagnostics_path)
+        raise
 
     return ProcessOutcome(
         command=command,
@@ -1112,6 +1188,8 @@ def run_harness_process(
 
 
 __all__ = [
+    "PrimaryExecutionResult",
+    "PrimaryProcessResult",
     "ProcessOutcome",
     "run_harness_process",
     "run_primary_attach",

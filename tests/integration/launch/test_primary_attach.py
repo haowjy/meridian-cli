@@ -26,13 +26,16 @@ from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
-from meridian.lib.launch.process.ports import LaunchedProcess, ProcessLauncher
+from meridian.lib.launch.process.ports import (
+    LaunchedProcess,
+    ProcessLauncher,
+    TerminalFds,
+)
 from meridian.lib.launch.process.primary_attach import (
     PortBindError,
     PrimaryAttachError,
     PrimaryAttachLauncher,
 )
-from meridian.lib.launch.process.terminal_ownership import TerminalFds
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -342,7 +345,7 @@ class FakeProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        terminal_fds: TerminalFds | None = None,
+        terminal_fds: TerminalFds,
     ) -> FakeProcessLauncher:
         _ = (cwd, output_log_path, terminal_fds)
         self.launch_commands.append(command)
@@ -391,7 +394,7 @@ class BlockingProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        terminal_fds: TerminalFds | None = None,
+        terminal_fds: TerminalFds,
     ) -> BlockingProcessLauncher:
         _ = (cwd, env, output_log_path, terminal_fds)
         self.launch_commands.append(command)

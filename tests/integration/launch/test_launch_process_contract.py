@@ -24,7 +24,11 @@ from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun
 from meridian.lib.launch.process import runner as process_runner
-from meridian.lib.launch.process.ports import PRIMARY_STDERR_LOG_PATH_ENV, LaunchedProcess
+from meridian.lib.launch.process.ports import (
+    PRIMARY_STDERR_LOG_PATH_ENV,
+    LaunchedProcess,
+    TerminalFds,
+)
 from meridian.lib.launch.process.primary_attach import PrimaryAttachError
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.launch.session_scope import SessionAttempt
@@ -50,11 +54,47 @@ def test_subprocess_launcher_captures_output_log(tmp_path: Path) -> None:
         cwd=tmp_path,
         env=dict(os.environ),
         output_log_path=output_log_path,
+        terminal_fds=TerminalFds(stdin=0, stdout=1, stderr=2),
     )
     launched = running.wait()
 
     assert launched.exit_code == 0
     assert output_log_path.read_text(encoding="utf-8").splitlines() == ["line-1", "line-2"]
+
+
+def test_subprocess_launcher_mirrors_logged_stderr_to_terminal_fd(tmp_path: Path) -> None:
+    terminal_read_fd, terminal_write_fd = os.pipe()
+    stderr_log_path = tmp_path / "stderr.log"
+    env = dict(os.environ)
+    env[PRIMARY_STDERR_LOG_PATH_ENV] = str(stderr_log_path)
+    try:
+        running = SubprocessProcessLauncher().start(
+            command=(
+                sys.executable,
+                "-c",
+                "import os; os.write(2, b'tui stderr\\n')",
+            ),
+            cwd=tmp_path,
+            env=env,
+            output_log_path=None,
+            terminal_fds=TerminalFds(
+                stdin=0,
+                stdout=1,
+                stderr=terminal_write_fd,
+            ),
+        )
+        launched = running.wait()
+    finally:
+        os.close(terminal_write_fd)
+
+    try:
+        mirrored = os.read(terminal_read_fd, 4096)
+    finally:
+        os.close(terminal_read_fd)
+
+    assert launched.exit_code == 0
+    assert mirrored == b"tui stderr\n"
+    assert stderr_log_path.read_bytes() == b"tui stderr\n"
 
 
 @pytest.mark.parametrize("capture_output", (False, True))
@@ -71,6 +111,7 @@ def test_subprocess_launcher_cancel_wait_releases_pipe_relays(
         cwd=tmp_path,
         env=env,
         output_log_path=output_log_path,
+        terminal_fds=TerminalFds(stdin=0, stdout=1, stderr=2),
     )
     results: list[LaunchedProcess] = []
     wait_started = threading.Event()
@@ -113,45 +154,43 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         output_log_path: Path | None,
         on_child_started: Any,
         launcher_diagnostics_path: Path,
-    ) -> tuple[int, int, None]:
+    ) -> process_runner.PrimaryProcessResult:
         nonlocal black_box_calls
         _ = (command, cwd, env, output_log_path)
         assert launcher_diagnostics_path == tmp_path / LAUNCHER_LOG_FILENAME
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(111)
-        return (0, 111, None)
+        return process_runner.PrimaryProcessResult(0, 111, None)
 
-    exit_code, managed_session_id, managed_cancelled, _facts, captured_path = (
-        process_runner._execute_primary_process(
-            harness_id=HarnessId.CODEX,
-            primary_spawn_id=SpawnId("p-contract-blackbox"),
-            log_dir=tmp_path,
-            control_root=tmp_path,
-            launch_cwd=tmp_path,
-            task_cwd=None,
-            child_env={},
-            launch_spec=ResolvedLaunchSpec(
-                prompt="hello",
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-                interactive=True,
-            ),
-            command=("codex",),
-            harness_contract=harness_contract,
-            native_run=_native_run(tmp_path),
-            run_primary_process_with_capture_fn=_black_box,
-            run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
-                AssertionError("subprocess_only contract should bypass managed attach")
-            ),
-            on_running=lambda _pid: None,
-        )
+    result = process_runner._execute_primary_process(
+        harness_id=HarnessId.CODEX,
+        primary_spawn_id=SpawnId("p-contract-blackbox"),
+        log_dir=tmp_path,
+        control_root=tmp_path,
+        launch_cwd=tmp_path,
+        task_cwd=None,
+        child_env={},
+        launch_spec=ResolvedLaunchSpec(
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            interactive=True,
+        ),
+        command=("codex",),
+        harness_contract=harness_contract,
+        native_run=_native_run(tmp_path),
+        run_primary_process_with_capture_fn=_black_box,
+        run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("subprocess_only contract should bypass managed attach")
+        ),
+        on_running=lambda _pid: None,
     )
 
     assert black_box_calls == 1
-    assert exit_code == 0
-    assert managed_session_id is None
-    assert managed_cancelled is False
-    assert captured_path is None
+    assert result.exit_code == 0
+    assert result.managed_session_id is None
+    assert result.managed_cancelled is False
+    assert result.launcher_diagnostics_path is None
 
 
 def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness_id(
@@ -165,6 +204,8 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         }
     )
     black_box_calls = 0
+    launcher_diagnostics_path = tmp_path / LAUNCHER_LOG_FILENAME
+    launcher_diagnostics_path.write_text("managed relay failed\n", encoding="utf-8")
 
     def _black_box(
         command: tuple[str, ...],
@@ -173,45 +214,43 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         output_log_path: Path | None,
         on_child_started: Any,
         launcher_diagnostics_path: Path,
-    ) -> tuple[int, int, None]:
+    ) -> process_runner.PrimaryProcessResult:
         nonlocal black_box_calls
         _ = (command, cwd, env, output_log_path)
         assert launcher_diagnostics_path == tmp_path / LAUNCHER_LOG_FILENAME
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(222)
-        return (0, 222, None)
+        return process_runner.PrimaryProcessResult(0, 222, None)
 
-    exit_code, managed_session_id, managed_cancelled, _facts, captured_path = (
-        process_runner._execute_primary_process(
-            harness_id=HarnessId.CLAUDE,
-            primary_spawn_id=SpawnId("p-contract-fallback"),
-            log_dir=tmp_path,
-            control_root=tmp_path,
-            launch_cwd=tmp_path,
-            task_cwd=None,
-            child_env={},
-            launch_spec=ResolvedLaunchSpec(
-                prompt="hello",
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-                interactive=True,
-            ),
-            command=("claude",),
-            harness_contract=harness_contract,
-            native_run=_native_run(tmp_path),
-            run_primary_process_with_capture_fn=_black_box,
-            run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
-                PrimaryAttachError("fallback please")
-            ),
-            on_running=lambda _pid: None,
-        )
+    result = process_runner._execute_primary_process(
+        harness_id=HarnessId.CLAUDE,
+        primary_spawn_id=SpawnId("p-contract-fallback"),
+        log_dir=tmp_path,
+        control_root=tmp_path,
+        launch_cwd=tmp_path,
+        task_cwd=None,
+        child_env={},
+        launch_spec=ResolvedLaunchSpec(
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            interactive=True,
+        ),
+        command=("claude",),
+        harness_contract=harness_contract,
+        native_run=_native_run(tmp_path),
+        run_primary_process_with_capture_fn=_black_box,
+        run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
+            PrimaryAttachError("fallback please")
+        ),
+        on_running=lambda _pid: None,
     )
 
     assert black_box_calls == 1
-    assert exit_code == 0
-    assert managed_session_id is None
-    assert managed_cancelled is False
-    assert captured_path is None
+    assert result.exit_code == 0
+    assert result.managed_session_id is None
+    assert result.managed_cancelled is False
+    assert result.launcher_diagnostics_path == launcher_diagnostics_path.resolve()
 
 
 @pytest.mark.parametrize("source", ["assigned", "observed"])

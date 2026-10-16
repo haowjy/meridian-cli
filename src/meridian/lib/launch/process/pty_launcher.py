@@ -15,8 +15,7 @@ from typing import Any, BinaryIO
 
 from meridian.lib.platform import IS_WINDOWS, fcntl, pty, select, termios, tty
 
-from .ports import LaunchedProcess, ProcessLauncher
-from .terminal_ownership import TerminalFds
+from .ports import LaunchedProcess, ProcessLauncher, TerminalFds
 
 _MOUSE_MODE_RESET_SEQUENCE = (
     b"\x1b[?1000l"
@@ -48,6 +47,29 @@ def can_use_pty() -> bool:
     return not IS_WINDOWS and sys.stdin.isatty() and sys.stdout.isatty()
 
 
+def _close_terminal_fds(terminal_fds: TerminalFds) -> None:
+    for fd in (terminal_fds.stdin, terminal_fds.stdout, terminal_fds.stderr):
+        with suppress(OSError):
+            os.close(fd)
+
+
+def _duplicate_terminal_fds(terminal_fds: TerminalFds) -> TerminalFds:
+    duplicates: list[int] = []
+    try:
+        for fd in (terminal_fds.stdin, terminal_fds.stdout, terminal_fds.stderr):
+            duplicates.append(os.dup(fd))
+    except BaseException:
+        for fd in duplicates:
+            with suppress(OSError):
+                os.close(fd)
+        raise
+    return TerminalFds(
+        stdin=duplicates[0],
+        stdout=duplicates[1],
+        stderr=duplicates[2],
+    )
+
+
 def _read_winsize(fd: int) -> bytes | None:
     """Return packed winsize bytes for one terminal fd, or None if unavailable."""
 
@@ -74,15 +96,9 @@ def _copy_primary_pty_output(
     child_pid: int,
     master_fd: int,
     output_log_path: Path | None,
-    terminal_fds: TerminalFds | None = None,
+    terminal_fds: TerminalFds,
     wait_cancelled: threading.Event | None = None,
 ) -> int:
-    if terminal_fds is None:
-        terminal_fds = TerminalFds(
-            stdin=sys.stdin.fileno(),
-            stdout=sys.stdout.fileno(),
-            stderr=sys.stderr.fileno(),
-        )
     stdin_fd = terminal_fds.stdin
     stdout_fd = terminal_fds.stdout
     stdin_open = True
@@ -173,7 +189,7 @@ class _RunningPtyProcess:
     pid: int
     master_fd: int
     output_log_path: Path | None
-    terminal_fds: TerminalFds | None
+    relay_terminal_fds: TerminalFds
     wait_cancelled: threading.Event = field(default_factory=threading.Event)
 
     def wait(self) -> LaunchedProcess:
@@ -182,13 +198,14 @@ class _RunningPtyProcess:
                 child_pid=self.pid,
                 master_fd=self.master_fd,
                 output_log_path=self.output_log_path,
-                terminal_fds=self.terminal_fds,
+                terminal_fds=self.relay_terminal_fds,
                 wait_cancelled=self.wait_cancelled,
             )
             return LaunchedProcess(exit_code=exit_code, pid=self.pid)
         finally:
             with suppress(OSError):
                 os.close(self.master_fd)
+            _close_terminal_fds(self.relay_terminal_fds)
 
     def terminate(self) -> None:
         with suppress(ProcessLookupError):
@@ -208,36 +225,38 @@ class PtyProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        terminal_fds: TerminalFds | None = None,
+        terminal_fds: TerminalFds,
     ) -> _RunningPtyProcess:
         if IS_WINDOWS:
             raise RuntimeError("PTY launcher is not available on Windows")
 
-        master_fd, slave_fd = pty.openpty()
-        terminal_stdout_fd = (
-            terminal_fds.stdout if terminal_fds is not None else sys.stdout.fileno()
-        )
-        _sync_pty_winsize(source_fd=terminal_stdout_fd, target_fd=master_fd)
+        relay_terminal_fds = _duplicate_terminal_fds(terminal_fds)
+        try:
+            master_fd, slave_fd = pty.openpty()
+            _sync_pty_winsize(source_fd=terminal_fds.stdout, target_fd=master_fd)
 
-        child_pid = os.fork()
-        if child_pid == 0:
-            try:
-                os.close(master_fd)
-                os.login_tty(slave_fd)
-                os.chdir(cwd)
-                os.execvpe(command[0], command, env)
-            except FileNotFoundError:
-                os._exit(127)
-            except Exception:
-                os._exit(1)
+            child_pid = os.fork()
+            if child_pid == 0:
+                try:
+                    os.close(master_fd)
+                    os.login_tty(slave_fd)
+                    os.chdir(cwd)
+                    os.execvpe(command[0], command, env)
+                except FileNotFoundError:
+                    os._exit(127)
+                except Exception:
+                    os._exit(1)
 
-        os.close(slave_fd)
-        return _RunningPtyProcess(
-            pid=child_pid,
-            master_fd=master_fd,
-            output_log_path=output_log_path,
-            terminal_fds=terminal_fds,
-        )
+            os.close(slave_fd)
+            return _RunningPtyProcess(
+                pid=child_pid,
+                master_fd=master_fd,
+                output_log_path=output_log_path,
+                relay_terminal_fds=relay_terminal_fds,
+            )
+        except BaseException:
+            _close_terminal_fds(relay_terminal_fds)
+            raise
 
 
 __all__ = [
