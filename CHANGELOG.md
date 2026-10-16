@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.12] - 2026-10-16
+
 ### Fixed
 - Recover every native-history record after a launcher crash followed by
   `--continue`: capture defers quietly while the continued owner is live, then
