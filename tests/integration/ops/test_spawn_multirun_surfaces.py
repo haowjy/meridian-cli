@@ -119,8 +119,7 @@ def test_multirun_never_bound_ref_refuses_instead_of_using_callers_chat(tmp_path
 
     with pytest.raises(
         ValueError,
-        match=r"Cannot continue run 'p8\.2'; it never started a session, "
-        r"so `--fork` is unavailable\.",
+        match=r"Cannot fork run 'p8\.2'; it never started a session\.",
     ):
         resolve_continue_target(
             project_root,
