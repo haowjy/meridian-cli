@@ -8,19 +8,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Recover every native-history record after a launcher crash followed by
   `--continue`: capture defers quietly while the continued owner is live, then
   retries all records bound to that native session when the owner stops.
+- Harness now dies with its runner on every launch path: Codex native re-exec, Claude, Pi, Cursor, primaries. Linux and macOS. (#629)
+- Harness never runs before its process scope is recorded.
+- macOS Python watchdog gone (~17 MB per launch). One ~1 MB `sh` guardian per harness instead. Linux PDEATHSIG gone too.
 
 ### Upgrade notes
 - First indexed read rebuilds history schema 10; no authority migration. See
   [upgrade notes](docs/upgrading.md#history-index-schema-10).
-
-- Gate harness execution on durable process ownership and clean up harness groups
-  when their runner dies, including re-execed managed backends. Remove the macOS
-  Python watchdog and `parent_death_linked` from new scope rows.
-- Preserve typed missing-harness errors, reap stubs killed or cancelled before
-  exec, and honor adapter grace even with a hostile PATH. Reaper cleanup of
-  primary scopes now requires proven runner death, with clock-step tolerance,
-  never stale heartbeat evidence. Unknown runner identity no longer blocks status
-  finalization. Keep failed async adoption reaping with asyncio’s child watcher.
 
 ## [0.10.11] - 2026-10-16
 
