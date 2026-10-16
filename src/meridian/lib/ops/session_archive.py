@@ -519,7 +519,11 @@ def archive_history(
                     dependencies = retention_dependencies(siblings)
                     special_now = current.id in dependencies
                     predecessors = dependencies.get(current.id, set())
-                    successor = successor_run(sibling.id for sibling in siblings)
+                    successor = (
+                        successor_run(sibling.id for sibling in siblings)
+                        if parse_ref(str(current.id)).kind in {"spawn", "run"}
+                        else None
+                    )
                     retired = retire_published_spawn(
                         root,
                         current.id,
@@ -529,7 +533,13 @@ def archive_history(
                             and row.history_id == captured.history_id
                             and not any(
                                 (root / "spawns" / run_id / "state.json").is_file()
-                                for run_id in (*predecessors, successor)
+                                for run_id in predecessors
+                            )
+                            and (
+                                successor is None
+                                or not (
+                                    root / "spawns" / successor / "state.json"
+                                ).is_file()
                             )
                         ),
                         guard_spawn_allocation=special_now,

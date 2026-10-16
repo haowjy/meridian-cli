@@ -545,7 +545,7 @@ def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReserva
     reservation = replace(reservation, status=SpawnStatus.QUEUED, runner_pid=os.getpid())
     check_spawn_available(runtime_root, spawn_id)
     _check_reopen_chat_preflight(runtime_root, reservation.chat_id)
-    check_reopen_ancestry(paths, spawn_id, reservation)
+    check_reopen_ancestry(paths, spawn_id, reservation.parent_id)
     with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
         record = _build_record(
             paths, _UNASSIGNED_RUN_ID,
@@ -554,7 +554,7 @@ def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReserva
         with lock_file(paths.spawns_flock):
             # Serialize ancestry validation with publication so concurrent
             # cross-reopens cannot both pass against the same old graph.
-            check_reopen_ancestry(paths, spawn_id, reservation)
+            check_reopen_ancestry(paths, spawn_id, reservation.parent_id)
             check_spawn_available(runtime_root, spawn_id)
             run_id = next_run_id(paths, spawn_id)
             _publish_record(

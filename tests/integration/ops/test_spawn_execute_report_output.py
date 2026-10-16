@@ -29,6 +29,7 @@ from meridian.lib.state.paths import resolve_project_paths
 from tests.conftest import requires_pi_dist
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.spawn_runs import bind_run_to_started_session
 
 if TYPE_CHECKING:
     import pytest
@@ -143,14 +144,10 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
             NativeKeyFields(session_id="fake-native-session"),
             source="observed",
         )
-        session = session_store.get_session_record(runtime_root, chat_id)
-        assert session is not None
-        spawn_store.bind_run_generation(
+        bind_run_to_started_session(
             runtime_root,
             parse_ref(spawn_id, row_key=True),
-            chat_id=chat_id,
-            session_instance_id=session.session_instance_id,
-            forked_from_history_id=session.forked_from_history_id,
+            chat_id,
         )
         session_store.stop_session(runtime_root, chat_id)
         spawn_store.finalize_spawn(

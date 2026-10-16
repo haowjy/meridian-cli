@@ -509,6 +509,7 @@ async def test_micro_drain_timeout_rechecks_disk_before_accepting(
         spawn_id=spawn_id,
     )
 
+    start_row(tmp_path, str(spawn_id), HarnessId.PI, None)
     start_row(tmp_path, "p-disk-child", HarnessId.CODEX, str(spawn_id))
 
     try:

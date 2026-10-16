@@ -184,6 +184,7 @@ async def test_pi_eof_during_stabilization_cannot_bypass_child_validation(
     started = await _start_coordinator(tmp_path, monkeypatch)
     coordinator = started.coordinator
     try:
+        _start_row(tmp_path, str(_SPAWN_ID), parent_id=None)
         await coordinator.wait_for_aux_wake()
         await coordinator.handle_aux_wake()
         await coordinator.observe_event(normalize_event(_AGENT_END))

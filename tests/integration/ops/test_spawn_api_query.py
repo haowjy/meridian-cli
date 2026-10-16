@@ -243,7 +243,7 @@ def test_spawn_show_bare_ref_reads_only_target_runs(
     )
 
     assert detail.spawn_id == "p1"
-    assert probe.count("get_spawn") <= 2
+    assert 1 <= probe.count("get_spawn") <= 2
     assert probe.count("scan_spawn_ids") == 0
 
 
@@ -296,7 +296,7 @@ def test_spawn_show_latest_does_not_materialize_all_run_rows(
     )
 
     assert detail.spawn_id == "p3"
-    assert probe.count("get_spawn") <= 2
+    assert 1 <= probe.count("get_spawn") <= 2
     assert probe.count("scan_spawn_ids") == 0
 
 

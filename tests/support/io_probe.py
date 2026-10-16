@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import wraps
@@ -35,7 +35,10 @@ class IOProbe:
         self._lock_target: Callable[..., Any] | None = None
 
     def watch(self, name: str, target: Callable[..., Any]) -> None:
-        """Record calls made through every loaded module alias of ``target``."""
+        """Record calls made through every loaded module alias of ``target``.
+
+        Modules imported after ``watch`` are not patched.
+        """
         if name in self._calls:
             raise ValueError(f"Probe already watches {name!r}")
         self._calls[name] = []
@@ -68,7 +71,7 @@ class IOProbe:
 
         @contextmanager
         @wraps(target)
-        def observed_lock(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        def observed_lock(*args: Any, **kwargs: Any) -> Generator[Any, None, None]:
             lock_name = self._lock_name(args, kwargs)
             with target(*args, **kwargs) as handle:
                 if lock_name is not None:
@@ -123,8 +126,6 @@ class IOProbe:
         aliases: list[tuple[ModuleType, str]] = []
         for module_name, module in tuple(sys.modules.items()):
             if not (module_name == "meridian" or module_name.startswith("meridian.")):
-                continue
-            if not isinstance(module, ModuleType):
                 continue
             aliases.extend(
                 (module, attribute)

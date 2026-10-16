@@ -13,6 +13,19 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
 
 
+def bind_run_to_started_session(root: Path, run_id: RunId, chat_id: str) -> None:
+    """Bind ``run_id`` to the session generation just started for ``chat_id``."""
+    generation = session_store.get_session_record(root, chat_id)
+    assert generation is not None
+    spawn_store.bind_run_generation(
+        root,
+        run_id,
+        chat_id=chat_id,
+        session_instance_id=generation.session_instance_id,
+        forked_from_history_id=generation.forked_from_history_id,
+    )
+
+
 def reservation(
     *,
     chat_id: str = "c1",
@@ -62,6 +75,9 @@ def seed_run(
 ) -> RunId:
     """Publish one run, optionally bind a session, and optionally finalize it."""
     parent_run_id = parse_ref(parent, row_key=True) if parent is not None else None
+    effective_runner_pid = (
+        runner_pid if runner_pid is not None or status is None else 999_999_999
+    )
     run_id = spawn_store.start_spawn(
         root,
         spawn_id=key,
@@ -74,7 +90,7 @@ def seed_run(
         harness=harness,
         prompt=prompt,
         started_at=started_at,
-        runner_pid=runner_pid,
+        runner_pid=effective_runner_pid,
     )
     if bound:
         session_store.start_session(
@@ -86,18 +102,9 @@ def seed_run(
             spawn_id=run_id,
             native_store=native_store,
         )
-        generation = session_store.get_session_record(root, chat_id)
-        assert generation is not None
-        spawn_store.bind_run_generation(
-            root,
-            run_id,
-            chat_id=chat_id,
-            session_instance_id=generation.session_instance_id,
-            forked_from_history_id=generation.forked_from_history_id,
-        )
+        bind_run_to_started_session(root, run_id, chat_id)
         session_store.stop_session(root, chat_id)
     if status is not None:
-        spawn_store.update_spawn(root, run_id, runner_pid=999_999_999)
         spawn_store.finalize_spawn(
             root,
             run_id,

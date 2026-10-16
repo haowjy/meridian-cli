@@ -49,6 +49,7 @@ from tests.support.launch import (
     build_launch_context,
     stub_bundle_request_and_resolve,
 )
+from tests.support.spawn_runs import seed_run
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -538,21 +539,14 @@ def test_reopen_chat_busy_finalizes_reserved_run_without_session_start(
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
-    first = spawn_store.start_spawn(
+    seed_run(
         launch_context.runtime_root,
-        spawn_id="p1",
+        "p1",
         chat_id="c1",
         model="gpt-5.4",
         agent="",
         harness="codex",
         prompt="first",
-    )
-    spawn_store.finalize_spawn(
-        launch_context.runtime_root,
-        first,
-        status="succeeded",
-        exit_code=0,
-        origin="runner",
     )
     generations_before = session_store.list_session_generations(launch_context.runtime_root)
 

@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.config.history_models import HistoryArchiveConfig
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
+from meridian.lib.ops import session_archive
 from meridian.lib.ops.pruning import prune_stale_spawn_artifacts, scan_stale_spawn_artifacts
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import session_store, spawn_store
@@ -116,7 +118,7 @@ def test_latest_run_stats_only_target_spawn(
     probe.watch("run_exists", spawn_runs._run_exists)
 
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"
-    assert probe.count("run_exists") <= 2
+    assert 1 <= probe.count("run_exists") <= 2
     assert all(call.args[1] == SpawnId("p1") for call in probe.calls("run_exists"))
 
 
@@ -308,9 +310,6 @@ def test_prune_failure_preserves_latest_and_bound_runs(tmp_path: Path, monkeypat
 def test_archive_apply_preserves_continuation_source_on_partial_retirement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str,
 ) -> None:
-    from meridian.lib.config.history_models import HistoryArchiveConfig
-    from meridian.lib.ops import session_archive
-
     root = tmp_path / "runtime"
     for key in ("p1", "p1.2", "p1.3"):
         if key != "p1.3":

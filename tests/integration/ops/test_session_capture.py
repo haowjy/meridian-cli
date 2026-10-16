@@ -24,6 +24,7 @@ from meridian.lib.state.native_snapshot import (
 )
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
+from tests.support.spawn_runs import bind_run_to_started_session
 
 
 def _snapshot_path(root: Path, key: str) -> Path:
@@ -921,15 +922,7 @@ def _opencode_capture_fixture(
         kind="primary",
         harness_session_id=session_id,
     )
-    session = session_store.get_session_record(root, "c1")
-    assert session is not None
-    spawn_store.bind_run_generation(
-        root,
-        key,
-        chat_id="c1",
-        session_instance_id=session.session_instance_id,
-        forked_from_history_id=session.forked_from_history_id,
-    )
+    bind_run_to_started_session(root, key, "c1")
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.stop_session(root, "c1")
     return project, root, key
@@ -1013,15 +1006,7 @@ def _opencode_v2_capture_fixture(
         kind="primary",
         harness_session_id=session_id,
     )
-    session = session_store.get_session_record(root, "c1")
-    assert session is not None
-    spawn_store.bind_run_generation(
-        root,
-        key,
-        chat_id="c1",
-        session_instance_id=session.session_instance_id,
-        forked_from_history_id=session.forked_from_history_id,
-    )
+    bind_run_to_started_session(root, key, "c1")
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.stop_session(root, "c1")
     return project, root, key

@@ -223,6 +223,7 @@ async def test_child_result_is_owed_without_origin_log_or_bash_record(
     from meridian.lib.state import spawn_store
 
     started = await scenario(tmp_path, monkeypatch)
+    started.row("p1", parent_id=None)
     started.row("p2", parent_id="p1")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
     try:

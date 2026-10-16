@@ -1,4 +1,4 @@
-"""Run allocation is serialized, generation-free, and independent of suffix holes."""
+"""Run allocation is serialized, generation-free, and independent of head gaps."""
 
 import os
 from pathlib import Path
@@ -14,27 +14,14 @@ from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.runs import latest_bound_run, latest_run
 from tests.support.io_probe import IOProbe
 from tests.support.process_race import run_spawn_race_or_skip
+from tests.support.spawn_runs import bind_run_to_started_session, seed_run
 from tests.support.spawn_runs import reservation as run_reservation
-from tests.support.spawn_runs import seed_run
-
-
-def _bind_started_session(runtime_root: Path, run_id: RunId, chat_id: str) -> None:
-    record = session_store.get_session_record(runtime_root, chat_id)
-    assert record is not None
-    spawn_store.bind_run_generation(
-        runtime_root,
-        run_id,
-        chat_id=chat_id,
-        session_instance_id=record.session_instance_id,
-        forked_from_history_id=record.forked_from_history_id,
-    )
 
 
 def _reserve_run_without_busy_check_worker(runtime_root: str) -> str:
     """Exercise allocation contention without the one-active-run policy."""
 
-    def current_run(root: Path, spawn_id: SpawnId, chat_id: str | None = None) -> RunId:
-        del chat_id
+    def current_run(root: Path, spawn_id: SpawnId) -> RunId:
         run_id = latest_run(root, spawn_id)
         assert run_id is not None
         return run_id
@@ -70,9 +57,11 @@ def test_reserve_run_contract(tmp_path: Path, status: str, live: bool, busy: boo
     )
     if status == 'queued':
         # The publisher's PID keeps a queued reservation live beyond startup grace.
-        from meridian.lib.state.spawn.repository import write_state_locked
-        write_state_locked(tmp_path / 'spawns', latest,
-                           lambda row: row.model_copy(update={'status': SpawnStatus.QUEUED}))
+        spawn_repository.write_state_locked(
+            tmp_path / 'spawns',
+            latest,
+            lambda row: row.model_copy(update={'status': SpawnStatus.QUEUED}),
+        )
     reservation = run_reservation(owner_chat_id="c9", kind="primary")
     if busy:
         with pytest.raises(ValueError, match=r'busy.*p1\.3'):
@@ -109,7 +98,7 @@ def test_missing_head_recovers_across_holes_before_continue_and_reservation(
             tmp_path, harness="codex", harness_session_id="native", model="test",
             chat_id="c1", spawn_id=run_id, reopen=True,
         )
-        _bind_started_session(tmp_path, run_id, "c1")
+        bind_run_to_started_session(tmp_path, run_id, "c1")
         session_store.stop_session(tmp_path, "c1")
         spawn_store.finalize_spawn(
             tmp_path, run_id, status="succeeded", exit_code=0, origin="runner",
@@ -238,19 +227,34 @@ def test_reserve_run_does_not_scan_for_a_fully_archived_ancestor(
     assert probe.count("scan_spawn_ids") == 0
 
 
-def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(
+@pytest.mark.parametrize(
+    "parent_id, maximum_reads",
+    [(None, 1), ("p2", 2)],
+    ids=["no-parent", "one-parent"],
+)
+def test_reserve_run_bounds_ancestry_reads_while_allocation_lock_is_held(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    parent_id: str | None,
+    maximum_reads: int,
 ) -> None:
     seed_run(tmp_path, "p1", agent="", prompt="hi")
+    if parent_id is not None:
+        seed_run(tmp_path, parent_id, agent="", prompt="parent")
     paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
     probe = IOProbe(monkeypatch)
     probe.watch_lock("spawns_flock", spawn_store.lock_file, paths.spawns_flock)
     probe.watch("read_state", spawn_repository.read_state)
-    reservation = run_reservation()
+    reservation = run_reservation(
+        parent_id=parent_id,
+        parent_run_id=(
+            parse_ref(parent_id, row_key=True) if parent_id is not None else None
+        ),
+    )
 
     assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
-    assert probe.count_under_lock("read_state", "spawns_flock") <= 1
+    locked_reads = probe.count_under_lock("read_state", "spawns_flock")
+    assert 1 <= locked_reads <= maximum_reads
 
 
 def test_spawn_started_at_is_stamped_under_the_allocation_lock(

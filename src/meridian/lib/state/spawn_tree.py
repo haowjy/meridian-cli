@@ -7,12 +7,15 @@ from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
+from meridian.lib.core.process_cleanup import terminate_spawn_scopes
 from meridian.lib.core.refs import spawn_of
-from meridian.lib.core.spawn_lifecycle import SpawnReservation, is_active_spawn_status
+from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.repository import read_state
+from meridian.lib.state.spawn.runs import runs_of
 
 
 class DescendantRow(Protocol):
@@ -123,10 +126,10 @@ def active_descendants(
     ]
 
 
-def _check_reopen_ancestry(
+def check_reopen_ancestry(
     paths: RuntimePaths,
     spawn_id: SpawnId,
-    reservation: SpawnReservation,
+    parent_id: str | None,
 ) -> None:
     """Reject a reopen cycle using every surviving run's parent edge.
 
@@ -134,12 +137,9 @@ def _check_reopen_ancestry(
     lineage could make the reopened spawn its own ancestor. The conservative
     union prevents a later reopen from hiding a cycle through an older run.
     """
-    from meridian.lib.state.spawn.repository import read_state
-    from meridian.lib.state.spawn.runs import runs_of
-
-    if reservation.parent_id is None:
+    if parent_id is None:
         return
-    pending = [SpawnId(reservation.parent_id)]
+    pending = [SpawnId(parent_id)]
     visited: set[SpawnId] = set()
     while pending:
         parent_id = pending.pop()
@@ -154,10 +154,6 @@ def _check_reopen_ancestry(
             if parent is not None and parent.parent_id is not None:
                 pending.append(parent.parent_id)
 
-
-check_reopen_ancestry = _check_reopen_ancestry
-
-
 def terminate_recorded_spawn_scope(
     runtime_root: Path,
     record: SpawnRecord,
@@ -166,8 +162,6 @@ def terminate_recorded_spawn_scope(
     grace_seconds: float = 5.0,
 ) -> list[CleanupResult]:
     """Terminate one already-selected spawn record's process scopes."""
-
-    from meridian.lib.core.process_cleanup import terminate_spawn_scopes
 
     return terminate_spawn_scopes(
         runtime_root,
