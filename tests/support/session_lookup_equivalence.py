@@ -83,7 +83,11 @@ def compare_corpus(root: Path, writer: Path, *, limit: int | None = None) -> dic
         harnesses = (
             {record["harness"]} if record.get("harness") else chat_harnesses[record.get("chat_id")]
         )
-        native_keys.update((harness, key) for harness in harnesses for key in s.native_ids(row))
+        raw_keys = [record.get("harness_session_id"), *record.get("harness_session_ids", [])]
+        native_keys.update(
+            (harness, key.strip()) for harness in harnesses for key in raw_keys
+            if isinstance(key, str) and key.strip()
+        )
     counts = {}
     with pytest.MonkeyPatch.context() as mp:
         # Only the oracle is captured. Every candidate read goes to disk.

@@ -255,3 +255,9 @@ one grouped `append_chat_rows` batch (one durable append/fsync). B2 replaces the
 bodies, including the cross-chat stable merge, and owns consolidating lock epochs.
 Bulk reads still outside the seam: `list_all_session_records`,
 `list_session_generations`, and `legacy_native_import.py`'s raw reads.
+
+The projection stores the accepted generation's bucket key separately from both
+its last-start ordinal and its mutable record. Reusing a generation can retain
+an old bucket ordinal, and normalization can change the record's generation
+spelling. Neither is a reliable join key. Schema 11 rebuilds this disposable
+projection from unchanged authority; older namespaces remain untouched.

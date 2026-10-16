@@ -58,10 +58,24 @@ def main() -> None:
     native = max(aliases, key=lambda key: (len(aliases[key]), key))
     selections = [
         s.SessionModelSelectionEvent.model_validate(row)
-        for row in raw_rows if row.get("event") == "model_selection"
-        and row.get("harness_session_id") == native
+        for row in raw_rows
+        if row.get("event") == "model_selection" and row.get("harness_session_id") == native
     ]
-    selection = selections[-1]
+    if selections:
+        selection = selections[-1]
+    else:
+        harness = next(
+            row["harness"]
+            for row in raw_rows
+            if row.get("event") == "start" and row.get("harness_session_id") == native
+        )
+        selection = s.get_initial_model_selection(root, harness, native)
+        assert selection is not None
+        # Mellow's most-aliased keys predate selection events. Seed the private
+        # clone once, outside timing, so both builds measure the same dedup path.
+        (root / "sessions.jsonl").chmod(0o600)
+        s.record_model_selection(root, selection)
+        (root / "sessions.jsonl").chmod(0o444)
     harness = selection.harness
     # Build and catch up both namespaces before timing, including close's fixture.
     HistoryIndex(root).spawns()
@@ -102,13 +116,26 @@ def main() -> None:
             holds[name] = holds.get(name, 0) + event["hold_ns"] / 1e9
     after = hashlib.sha256((root / "sessions.jsonl").read_bytes()).hexdigest()
     assert before == after, "Measured operations must not change session authority"
-    print(json.dumps(dict(
-        operation=operation, corpus=source.name, seconds=seconds, cpu_seconds=cpu,
-        filtered=sum(event["filtered"] for event in passes),
-        unfiltered=sum(not event["filtered"] for event in passes), lock_seconds=holds,
-        pending=len(pending), aliases=len(aliases[native]), native=native,
-        result=str(result)[:500], module=s.__file__, errors=0,
-    )), flush=True)
+    print(
+        json.dumps(
+            dict(
+                operation=operation,
+                corpus=source.name,
+                seconds=seconds,
+                cpu_seconds=cpu,
+                filtered=sum(event["filtered"] for event in passes),
+                unfiltered=sum(not event["filtered"] for event in passes),
+                lock_seconds=holds,
+                pending=len(pending),
+                aliases=len(aliases[native]),
+                native=native,
+                result=str(result)[:500],
+                module=s.__file__,
+                errors=0,
+            )
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

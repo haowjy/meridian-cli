@@ -909,9 +909,16 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
 
     def rows() -> Iterator[SessionEvent]:
         nonlocal recorded
-        source_rows = chat_rows(runtime_root, event.chat_id)
-        _, native_id = _bound_model_selections([*source_rows, event])[-1]
-        events = _native_scope(runtime_root, native_id, source_chat_id=event.chat_id)
+        native_id = event.harness_session_id
+        if native_id is None:
+            source_rows = chat_rows(runtime_root, event.chat_id)
+            _, native_id = _bound_model_selections([*source_rows, event])[-1]
+            events = (
+                _native_scope(runtime_root, native_id, source_chat_id=event.chat_id)
+                if native_id is not None else source_rows
+            )
+        else:
+            events = _native_scope(runtime_root, native_id, source_chat_id=event.chat_id)
         source_start = next(
             (
                 start
