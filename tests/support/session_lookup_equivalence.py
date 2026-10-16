@@ -83,6 +83,17 @@ def compare_corpus(root: Path, writer: Path) -> dict[str, int]:
     spawns = spawn_store.list_spawns(root).records
     native_keys = {(r.harness, r.harness_session_id) for r in generations if r.harness_session_id}
     native_keys |= {(r.harness, r.harness_session_id) for r in observations}
+    chat_harnesses = defaultdict(set)
+    for row in raw:
+        record = row.get("record", {}) if row.get("event") == "historical_import" else row
+        if record.get("harness"):
+            chat_harnesses[record.get("chat_id")].add(record["harness"])
+    for row in raw:
+        record = row.get("record", {}) if row.get("event") == "historical_import" else row
+        harnesses = (
+            {record["harness"]} if record.get("harness") else chat_harnesses[record.get("chat_id")]
+        )
+        native_keys.update((harness, key) for harness in harnesses for key in s.native_ids(row))
     bound_full = old._bound_model_selections(events)
     original_bound = old._bound_model_selections
     counts = {}
