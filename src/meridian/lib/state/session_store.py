@@ -1,9 +1,10 @@
 """File-backed session tracking for a Meridian state root's `sessions.jsonl`."""
 
+import json
 import os
 import re
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from contextlib import ExitStack
 from pathlib import Path
 from typing import IO, Annotated, Literal, NamedTuple, cast
@@ -78,7 +79,38 @@ from meridian.lib.state.session_fold import (
 )
 from meridian.lib.utils.json_shapes import float_or_none, int_or_none, string_or_empty
 
-_SESSION_CHAT_ID_FIELD = re.compile(rb'"chat_id"\s*:\s*"([^"\\]*)"')
+# A ``"chat_id"`` key, any JSON whitespace, then one complete JSON string token
+# (escapes included). Matches end at that token's closing quote, so no match can
+# swallow a later key.
+_SESSION_CHAT_ID_FIELD = re.compile(rb'"chat_id"\s*:\s*"((?:[^"\\]|\\.)*)"')
+# Only ``\u00XX`` escapes can spell a letter of ``chat_id`` (c h a t _ i d).
+_ESCAPED_CHAT_ID_KEY_LETTER = re.compile(rb"\\u00(?:6[13489]|74|5[fF])")
+
+
+def _row_may_select_chat(raw: bytes, chat_ids: Collection[str]) -> bool:
+    """Byte prefilter for selected replay. It may only nominate, never decide.
+
+    A false positive costs one ``json.loads``; a false negative silently drops
+    history, so this must return True for every row the decoded check in
+    ``_records_by_session`` would select. It applies the same predicate
+    (decoded value, ``strip()``, membership) to every ``chat_id`` string token
+    in the row, which covers a ``historical_import`` row's nested ``record``,
+    whitespace padding, escaped or raw non-ASCII values, key spacing, and
+    duplicate keys (the decoder keeps the last). Rows the regex cannot see
+    into are nominated unread: a NUL byte means ``json.loads`` may detect
+    UTF-16/32, and an escaped key letter could spell ``chat_id``.
+    """
+    if b"\x00" in raw or _ESCAPED_CHAT_ID_KEY_LETTER.search(raw) is not None:
+        return True
+    for match in _SESSION_CHAT_ID_FIELD.finditer(raw):
+        token = match.group(1)
+        try:
+            value: str = json.loads(b'"' + token + b'"') if b"\\" in token else token.decode()
+        except ValueError:  # Includes UnicodeDecodeError; let the decoder judge it.
+            return True
+        if value.strip() in chat_ids:
+            return True
+    return False
 
 
 def _append_session_event(
@@ -215,6 +247,8 @@ def _records_by_session(
     paths = RuntimePaths.from_root_dir(runtime_root)
 
     def selected_event(payload: Mapping[str, object]) -> SessionEvent | None:
+        # This check decides selection; _row_may_select_chat must nominate
+        # every row it accepts, so change both together.
         if chat_ids is not None:
             record = (
                 payload.get("record") if payload.get("event") == "historical_import" else payload
@@ -227,22 +261,11 @@ def _records_by_session(
                 return None
         return parse_event(payload)
 
-    selected_ids = {chat_id.encode() for chat_id in chat_ids} if chat_ids is not None else None
-
-    def raw_event_selected(raw: bytes) -> bool:
-        if selected_ids is None:
-            return True
-        # Nominate only: decoded structure below still decides whether this is
-        # the event's chat ID, so legacy key ordering and nested fields stay safe.
-        return any(
-            match.group(1) in selected_ids for match in _SESSION_CHAT_ID_FIELD.finditer(raw)
-        )
-
     records: dict[str, SessionRecord] = {}
     for event in read_events(
         paths.sessions_jsonl,
         selected_event,
-        raw_filter=raw_event_selected,
+        raw_filter=None if chat_ids is None else lambda raw: _row_may_select_chat(raw, chat_ids),
     ):
         project_session_event(records, event)
     return records
