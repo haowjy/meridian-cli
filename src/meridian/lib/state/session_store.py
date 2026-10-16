@@ -247,7 +247,10 @@ def read_session_events(
     """Parse every session event in source order, or only those of ``chat_ids``.
 
     One chat's projection reads no other chat's events, so folding the selected
-    events equals folding all of them for those chats.
+    events equals folding all of them for those chats. The one intended
+    difference: a full fold raises on any chat whose historical record is
+    followed by a mutation, while a selected fold raises only when that chat is
+    selected, so a poisoned chat no longer blocks other chats' reads and binds.
     """
     paths = RuntimePaths.from_root_dir(runtime_root)
 
