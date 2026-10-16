@@ -75,6 +75,14 @@ class SessionImportInput(BaseModel):
     archive: str
 
 
+class NativeCaptureDeferred(RuntimeError):
+    """A known live native-session owner requires capture to be retried later."""
+
+    def __init__(self, owner: str) -> None:
+        self.owner = owner
+        super().__init__(f"Native capture deferred; active owner: {owner}")
+
+
 class RestoredHistory(BaseModel):
     model_config = ConfigDict(frozen=True)
     history_id: str
@@ -91,6 +99,7 @@ class SessionArchiveOutput(BaseModel):
     restored: tuple[str, ...] = ()
     restored_histories: tuple[RestoredHistory, ...] = ()
     already_imported: tuple[str, ...] = ()
+    deferred: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
     preparation_required: tuple[str, ...] = ()
     limited: bool = False
@@ -133,6 +142,7 @@ class SessionArchiveOutput(BaseModel):
             lines.append(f"History {history_id} [{state}] {portable_digest}")
             lines.extend(f"  ZIP {row.archive_id}: {row.path}" for row in locations)
         lines.extend(f"Protected: {key}" for key in self.protected)
+        lines.extend(f"Deferred: {deferred}" for deferred in self.deferred)
         lines.extend(f"Error: {error}" for error in self.errors)
         return "\n".join(lines)
 
@@ -282,8 +292,9 @@ def archive_history(
         cutoff = datetime.now(UTC) - timedelta(days=after_days)
         preparation_required: list[str] = []
         capture_errors: dict[str, str] = {}
+        capture_deferred: dict[str, str] = {}
         for candidate in candidates:
-            if candidate.id in protected or candidate.status not in TERMINAL_SPAWN_STATUSES:
+            if candidate.status not in TERMINAL_SPAWN_STATUSES:
                 continue
             if refs and not set(refs) & {
                 candidate.id,
@@ -291,6 +302,11 @@ def archive_history(
                 candidate.chat_id,
                 candidate.owner_chat_id,
             }:
+                continue
+            # Explicit selection reports why capture is waiting even when the
+            # record cannot yet be reclaimed. Eligibility scans avoid needless
+            # native reads for otherwise protected history.
+            if candidate.id in protected and not refs:
                 continue
             if eligible:
                 activity = last_activity(candidate, None, "")
@@ -329,6 +345,8 @@ def archive_history(
                 continue
             try:
                 materialize_native_history(project_root or root, root, candidate.id)
+            except NativeCaptureDeferred as exc:
+                capture_deferred[candidate.id] = str(exc)
             except (ValueError, OSError, RuntimeError) as exc:
                 capture_errors[candidate.id] = str(exc)
         all_candidates = candidates
@@ -375,6 +393,8 @@ def archive_history(
                 candidate.owner_chat_id,
             }:
                 continue
+            if candidate.id in capture_deferred:
+                continue
             if candidate.id in protected or candidate.status not in TERMINAL_SPAWN_STATUSES:
                 continue
             if len(selected) >= policy.max_records:
@@ -420,6 +440,9 @@ def archive_history(
             return SessionArchiveOutput(
                 selected=tuple(str(row.history_id) for row in selected),
                 protected=tuple(sorted(protected)),
+                deferred=tuple(
+                    f"{key}: {message}" for key, message in capture_deferred.items()
+                ),
                 errors=tuple(errors),
                 preparation_required=tuple(preparation_required),
                 limited=limited,
@@ -490,6 +513,7 @@ def archive_history(
             protected=tuple(sorted(protected)),
             reclaimed=tuple(reclaimed),
             archives=(str(archive),),
+            deferred=tuple(f"{key}: {message}" for key, message in capture_deferred.items()),
             errors=tuple(errors),
             limited=limited,
         )
@@ -620,6 +644,10 @@ def _capture_ready(root: Path, candidate: SpawnRecord, session: object) -> bool:
 
 def _require_inactive_native_session(root: Path, harness: str | None, session_id: str) -> None:
     """Reject known same-runtime owners; this is not an external-writer fence."""
+
+    def spawn_owner(spawn_id: str) -> str:
+        return f"spawn {spawn_id}"
+
     scan = spawn_store.list_spawns(root)
     if scan.quarantines:
         raise ValueError(
@@ -635,38 +663,35 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
         if harness not in harnesses or session_id not in native_ids:
             continue
         scopes = read_scope_projection(root, SpawnId(row.id))
-        if (
-            row.status not in TERMINAL_SPAWN_STATUSES
-            or (
-                session is not None
-                and (
-                    session.stopped_at is None
-                    or session_store.is_session_lease_owner_alive(
-                        root, session.chat_id, session_instance_id=session.session_instance_id
-                    )
-                )
-            )
-            or any(
-                scope_liveness(scope)["likely_serving"]
-                for scope in scopes.scopes
-                if scope.release_id not in scopes.released_ids
-            )
+        if row.status not in TERMINAL_SPAWN_STATUSES:
+            raise NativeCaptureDeferred(spawn_owner(row.id))
+        if session is not None and session_store.is_session_lease_owner_alive(
+            root, session.chat_id, session_instance_id=session.session_instance_id
         ):
-            raise ValueError(f"Cannot capture an active native owner: {row.id}")
+            raise NativeCaptureDeferred(spawn_owner(row.id))
+        if any(
+            scope_liveness(scope)["likely_serving"]
+            for scope in scopes.scopes
+            if scope.release_id not in scopes.released_ids
+        ):
+            raise NativeCaptureDeferred(spawn_owner(row.id))
     for session in session_store.list_all_session_records(root):
         if (
-            session.record_mode != "historical"
-            and session.harness.strip().lower() == harness
-            and session.harness_session_id == session_id
-            and (
-                session.stopped_at is None
-                or session_store.is_session_lease_owner_alive(
-                    root, session.chat_id, session_instance_id=session.session_instance_id
-                )
-                or live_observer_for_chat(root, session.chat_id, records=scan.records) is not None
-            )
+            session.record_mode == "historical"
+            or session.harness.strip().lower() != harness
+            or session.harness_session_id != session_id
         ):
-            raise ValueError(f"Cannot capture an active native owner: {session.chat_id}")
+            continue
+        if session_store.is_session_lease_owner_alive(
+            root, session.chat_id, session_instance_id=session.session_instance_id
+        ):
+            generation = session.session_instance_id or "legacy"
+            raise NativeCaptureDeferred(
+                f"chat {session.chat_id}, generation {generation}"
+            )
+        observer = live_observer_for_chat(root, session.chat_id, records=scan.records)
+        if observer is not None:
+            raise NativeCaptureDeferred(spawn_owner(observer))
 
 
 def materialize_native_history(project_root: Path, root: Path, spawn_id: str) -> None:
@@ -776,6 +801,8 @@ def session_stop_maintenance(project_root: Path, primary_spawn_id: str) -> str |
             if result.errors:
                 return "History maintenance: " + "; ".join(result.errors)
             atomic_write_text(marker, str(time.time()))
+    except NativeCaptureDeferred:
+        return None
     except (ValueError, OSError, RuntimeError) as exc:
         return f"History maintenance: {exc}"
     return None

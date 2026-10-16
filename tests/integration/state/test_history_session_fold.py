@@ -227,7 +227,7 @@ def test_generated_histories_index_bindings_match_authority(tmp_path: Path, monk
         return expected
 
     monkeypatch.setattr(golden.s, "list_session_generations", check_projection)
-    golden.test_generated_histories_match_pre_restructure_fold(tmp_path)
+    golden.test_generated_histories_match_fold_golden(tmp_path)
 
 
 def test_metadata_is_history_blind(tmp_path: Path):

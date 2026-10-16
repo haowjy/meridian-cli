@@ -124,6 +124,9 @@ not the latest chat projection.
 Capture selection runs under the aggregate guard and requires agreement among
 state, primary metadata and the linked generation. Known active owners and
 unreleased live scopes block capture and are rechecked before publication.
+Those live-owner outcomes are retryable capture deferrals; archive passes report
+them separately from corrupt, quarantined or missing-source errors. A deferral
+during snapshot finalization aborts the caller-owned atomic stage.
 Only a complete provider observation seals `native-transcript.jsonl`; a valid
 seal is the idempotent no-op. Runner-stream existence is not capture evidence.
 

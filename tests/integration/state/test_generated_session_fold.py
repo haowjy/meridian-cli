@@ -1,8 +1,8 @@
-"""Generated replay golden, recorded from ae9a7c2a before the binding rewrite.
+"""Generated replay golden for accepted bindings and generation lifecycle.
 
 The digest covers complete serialized generation and chat records, not a subset
-of fields. No real journal data is retained. Regenerate the reference only from
-the baseline, never from the implementation under test.
+of fields. No real journal data is retained. Its lifecycle baseline includes the
+rule that a later chat start closes every earlier unstopped generation.
 """
 
 import hashlib
@@ -15,7 +15,7 @@ from structlog.testing import capture_logs
 from meridian.lib.state import session_store as s
 
 
-def test_generated_histories_match_pre_restructure_fold(tmp_path: Path) -> None:
+def test_generated_histories_match_fold_golden(tmp_path: Path) -> None:
     results = []
     for seed in range(1000):
         rng = random.Random(seed)
@@ -99,5 +99,5 @@ def test_generated_histories_match_pre_restructure_fold(tmp_path: Path) -> None:
         results.append(result)
     serialized = json.dumps(results, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(serialized).hexdigest() == (
-        "f5c5954b1f3a2ecf2754d99cfe1e6733984c7e4128fc9c8c6fef017f79f9cc32"
+        "42de2fe10cfc1cf4bcc2db79546fb1a4e6e18a13eaf8fb7c92c2373c0e9ec718"
     )

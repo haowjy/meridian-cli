@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Recover native history after a launcher crash followed by `--continue`, and
+  defer capture quietly while the continued owner is still live.
+
+### Upgrade notes
+- First indexed read rebuilds history schema 10; no authority migration. See
+  [upgrade notes](docs/upgrading.md#history-index-schema-10).
+
 ## [0.10.11] - 2026-10-16
 
 ### Fixed

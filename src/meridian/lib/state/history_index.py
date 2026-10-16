@@ -572,7 +572,7 @@ class HistoryIndex:
                             ordinals[(chat, generation)] = ordinal
                         loaded_chats.add(chat)
                     prior = records.get(chat)
-                    key = project_session_generation(
+                    changed = project_session_generation(
                         records, generations, latest_blank, parsed_event, ordinal=offset
                     )
                     started = isinstance(
@@ -582,10 +582,14 @@ class HistoryIndex:
                         dirty_chats.add(chat)
                         if started:
                             chat_ordinals[chat] = offset
-                    if key is not None:
-                        dirty.add(key)
-                        if started:
-                            ordinals[key] = offset
+                    dirty.update(changed)
+                    if started and changed:
+                        started_generation = parsed_event.session_instance_id
+                        if isinstance(parsed_event, SessionStartEvent) and not started_generation:
+                            started_generation = latest_blank[chat]
+                        started_key = (chat, started_generation)
+                        if started_key in changed:
+                            ordinals[started_key] = offset
                 offset = end
             for chat, generation in dirty:
                 record = generations[(chat, generation)][chat]

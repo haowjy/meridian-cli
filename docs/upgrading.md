@@ -1,5 +1,17 @@
 # Upgrade notes
 
+## History index schema 10
+
+No authority migration is needed. The rebuildable history index moves from
+schema 7 to 10 so an unstopped session generation becomes inactive when a later
+generation of the same chat starts. Schema numbers 8 and 9 are skipped because
+unreleased builds wrote projections in those namespaces.
+
+The first indexed read rebuilds `history-v10.sqlite3` from authority and may
+take longer. Older `history-v7.sqlite3`, `history-v8.sqlite3`, and
+`history-v9.sqlite3` files are left untouched and can be removed after rollback
+is no longer needed.
+
 ## Idle compaction growth floor
 
 Replace `idle.min_compact_tokens` (and per-harness equivalents) with

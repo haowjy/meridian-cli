@@ -431,29 +431,42 @@ def project_session_generation(
     event: SessionEvent,
     *,
     ordinal: int,
-) -> tuple[str, str] | None:
-    """Advance replay working sets, returning the changed generation bucket, if any."""
+) -> tuple[tuple[str, str], ...]:
+    """Advance replay working sets and return every changed generation bucket."""
     chat_id = event.chat_id
     applied = project_session_event(records, event)
     if isinstance(event, SessionStartEvent):
         if not applied:
-            return None
+            return ()
         event = with_key(event, records[chat_id].key_fields())
     elif isinstance(event, SessionUpdateEvent) and not applied:
         existing = records.get(chat_id)
         if existing is not None and isinstance(
             bind(existing.key_fields(), event.key_fields()), Conflict
         ):
-            return None
+            return ()
     generation = event.session_instance_id
     if not generation:
         if isinstance(event, SessionStartEvent):
             latest_blank[chat_id] = f"legacy:{ordinal}"
         generation = latest_blank.get(chat_id, "")
+    changed: list[tuple[str, str]] = []
+    if isinstance(event, SessionStartEvent):
+        # A start is published only after its writer owns this chat's exclusive
+        # lifetime lock. Its presence therefore proves every earlier generation
+        # released that lock, even when its launcher died before writing a stop.
+        for key, prior_rows in generations.items():
+            if key[0] != chat_id or key == (chat_id, generation):
+                continue
+            prior = prior_rows.get(chat_id)
+            if prior is None or prior.record_mode == "historical" or prior.stopped_at is not None:
+                continue
+            prior_rows[chat_id] = prior.model_copy(update={"stopped_at": event.started_at})
+            changed.append(key)
     rows = generations.setdefault((chat_id, generation), {})
     if project_session_event(rows, event):
-        return (chat_id, generation)
-    return None
+        changed.append((chat_id, generation))
+    return tuple(changed)
 
 
 def session_instance_for_event(

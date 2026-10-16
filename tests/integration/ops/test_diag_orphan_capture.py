@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog.testing
 
 from meridian.lib.ops import diag
 from meridian.lib.state import spawn_store
@@ -86,3 +87,33 @@ def test_orphan_capture_failure_does_not_break_repair(
 
     assert count == 1
     assert ids == ("p1",)
+
+
+def test_orphan_capture_deferral_is_debug_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.ops.session_archive import NativeCaptureDeferred
+
+    _install_reconciled_orphan(monkeypatch, kind="primary")
+
+    def _deferred(*_args: object) -> None:
+        raise NativeCaptureDeferred("spawn p2")
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.session_archive.materialize_native_history",
+        _deferred,
+    )
+    with structlog.testing.capture_logs() as logs:
+        count, ids = diag._repair_orphan_runs(tmp_path, runtime_root=tmp_path / "runtime")
+
+    assert count == 1
+    assert ids == ("p1",)
+    assert logs == [
+        {
+            "event": "orphan_primary_capture_deferred",
+            "log_level": "debug",
+            "owner": "spawn p2",
+            "spawn_id": "p1",
+        }
+    ]
