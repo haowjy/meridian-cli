@@ -13,7 +13,8 @@ from watchfiles import (
 )
 
 from meridian.lib.core.refs import spawn_of
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
+from meridian.lib.harness.pi_paths import run_scope_dir, spawn_scope_dir
 from meridian.lib.harness.pi_private_state import (
     BashEvidenceFile,
     ClearedSpawns,
@@ -32,13 +33,13 @@ class PiDiskWatcher:
     def __init__(
         self,
         runtime_root: Path,
-        current_spawn_id: SpawnId,
+        current_run_id: RunId,
         ledger: PiPrivateWorkLedger | None = None,
     ) -> None:
-        self._spawn_id = str(current_spawn_id)
-        self._bash_dir = runtime_root / "pi-bash" / self._spawn_id
-        self._ledger_owner = spawn_of(self._spawn_id)
-        self._ledger_dir = runtime_root / "pi-bash" / self._ledger_owner
+        self._run_id = current_run_id
+        self._spawn_id = spawn_of(current_run_id)
+        self._bash_dir = run_scope_dir(runtime_root, current_run_id)
+        self._ledger_dir = spawn_scope_dir(runtime_root, self._spawn_id)
         self._ledger = ledger or PiPrivateWorkLedger()
         self._tasks: list[asyncio.Task[None]] = []
         self._state_changed = asyncio.Event()
@@ -143,7 +144,7 @@ class PiDiskWatcher:
         self, name: str, model: type[_Model], *, spawn_scoped: bool = False
     ) -> _Model | None:
         file = (self._ledger_dir if spawn_scoped else self._bash_dir) / name
-        owner = self._ledger_owner if spawn_scoped else self._spawn_id
+        owner = self._spawn_id if spawn_scoped else self._run_id
         try:
             value = model.model_validate_json(file.read_text(encoding="utf-8"))
             if getattr(value, "spawn_id", None) != owner:

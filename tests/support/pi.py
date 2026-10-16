@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -147,7 +147,7 @@ def pi_process_exit_event(return_code: int) -> RawHarnessEvent:
 
 def write_pi_bash_record(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId | SpawnId,
     *,
     running: bool = True,
     consumed: bool = False,

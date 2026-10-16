@@ -36,7 +36,8 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
-from meridian.lib.core.types import RunId
+from meridian.lib.core.types import RunId, SpawnId
+from meridian.lib.harness.pi_paths import spawn_scope_dir
 from meridian.lib.harness.pi_private_state import SpawnObservations, WaitReservation
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
@@ -1737,7 +1738,7 @@ def _resolve_wait_checkpoint_seconds(
 def _update_pi_wait_observation(
     *,
     runtime_root: Path,
-    parent_spawn_id: str | None,
+    parent_spawn_id: SpawnId | None,
     waiting_add: tuple[str, ...] = (),
     waiting_remove: tuple[str, ...] = (),
     observed_add: tuple[str, ...] = (),
@@ -1753,8 +1754,9 @@ def _update_pi_wait_observation(
     if not parent_spawn_id or not (waiting_add or waiting_remove or observed_add):
         return
 
-    observed_path = runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.json"
-    lock_path = runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.lock"
+    scope_dir = spawn_scope_dir(runtime_root, parent_spawn_id)
+    observed_path = scope_dir / "observed-spawns.json"
+    lock_path = scope_dir / "observed-spawns.lock"
     with lock_file(lock_path):
         try:
             existing = SpawnObservations.model_validate_json(
@@ -1908,7 +1910,7 @@ def spawn_wait_sync(
     next_progress = started + progress_interval
 
     parent_wait_observer_id = (
-        str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
+        resolved_context.spawn_id if payload.observe and resolved_context.spawn_id else None
     )
     _update_pi_wait_observation(
         runtime_root=runtime_root,

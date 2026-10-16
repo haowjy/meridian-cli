@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.pi_private_state import BashEvidenceFile
 from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
@@ -296,7 +296,7 @@ async def test_unadmitted_result_fails_with_diagnostic_after_single_window(
 @pytest.mark.asyncio
 async def test_present_malformed_private_evidence_is_unknown(tmp_path: Path, value: object) -> None:
     write_private(tmp_path, "bash-records.json", value)
-    watcher = PiDiskWatcher(tmp_path, SpawnId("p1"))
+    watcher = PiDiskWatcher(tmp_path, RunId("p1"))
     await watcher.start()
     try:
         assert watcher.evidence_failure() is not None

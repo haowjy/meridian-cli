@@ -12,6 +12,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
+from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.platform import expand_home_path, get_home_path
 from meridian.lib.state.user_paths import get_user_home
 
@@ -20,6 +21,29 @@ _PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR"
 _PI_STATE_DIR_ENV = "_MERIDIAN_PI_STATE_DIR"
 _MERIDIAN_EXTENSION_NAMESPACE = "meridian"
 _MERIDIAN_PI_EXTENSION_ROOT_ENV = "MERIDIAN_PI_EXTENSION_INSTALL_ROOT"
+
+
+def spawn_scope_dir(runtime_root: Path, spawn_id: SpawnId) -> Path:
+    """Return Pi state shared by every run of a spawn.
+
+    ``observed-spawns.json``, ``observed-spawns.lock``, and
+    ``cleared-spawns.json`` are spawn-scoped, matching
+    ``resolveSpawnScopeDir`` in ``pi_state_paths.ts``.
+    """
+
+    return runtime_root / "pi-bash" / str(spawn_id)
+
+
+def run_scope_dir(runtime_root: Path, run_id: RunId) -> Path:
+    """Return Pi state owned by one exact run.
+
+    ``bash-records.json``, ``delivery-receipts.json``, ``delivery-fault.json``,
+    and ``logs/`` are run-scoped, matching ``resolveRunScopeDir`` in
+    ``pi_state_paths.ts``. Meridian's ``delivery-observations.json`` lives with
+    the receipts it acknowledges.
+    """
+
+    return runtime_root / "pi-bash" / str(run_id)
 
 
 def resolve_pi_agent_dir(*, env: Mapping[str, str] | None = None) -> Path:
@@ -104,4 +128,6 @@ __all__ = [
     "resolve_pi_default_user_extension_dir",
     "resolve_pi_extension_target_root",
     "resolve_pi_spawn_session_root",
+    "run_scope_dir",
+    "spawn_scope_dir",
 ]

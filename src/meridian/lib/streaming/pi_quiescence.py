@@ -9,8 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from meridian.lib.core.refs import spawn_of
 from meridian.lib.core.types import RunId
+from meridian.lib.harness.pi_paths import run_scope_dir
 from meridian.lib.harness.pi_private_state import DeliveryObservations, DeliveryReceipts
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
@@ -64,7 +64,7 @@ class PiQuiescenceTracker:
             return
         self._disk_watcher = PiDiskWatcher(
             self.runtime_root,
-            spawn_of(self.spawn_id),
+            self.spawn_id,
             self._ledger,
         )
         await self._disk_watcher.start()
@@ -91,9 +91,8 @@ class PiQuiescenceTracker:
     def observe_delivery_message(self, delivery_id: str, work_ids: list[str]) -> None:
         """Fence a causal admission before acknowledging its public event."""
         self.mark_turn_active()
-        receipts_file = (
-            self.runtime_root / "pi-bash" / str(self.spawn_id) / "delivery-receipts.json"
-        )
+        scope_dir = run_scope_dir(self.runtime_root, self.spawn_id)
+        receipts_file = scope_dir / "delivery-receipts.json"
         try:
             receipts = DeliveryReceipts.model_validate_json(
                 receipts_file.read_text(encoding="utf-8")
@@ -105,7 +104,7 @@ class PiQuiescenceTracker:
             or receipts.messages.get(delivery_id) != work_ids
         ):
             return
-        file = self.runtime_root / "pi-bash" / str(self.spawn_id) / "delivery-observations.json"
+        file = scope_dir / "delivery-observations.json"
         try:
             prior = DeliveryObservations.model_validate_json(file.read_text(encoding="utf-8"))
         except FileNotFoundError:

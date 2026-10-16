@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
+from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from tests.support.pi import write_pi_bash_record
 
 
@@ -17,7 +18,7 @@ from tests.support.pi import write_pi_bash_record
 async def test_hard_private_read_failure_recovers_only_after_valid_publication(
     tmp_path: Path, bytes_value: bytes
 ) -> None:
-    parent_id = SpawnId("p-parent")
+    parent_id = RunId("p-parent")
     file = tmp_path / "pi-bash" / str(parent_id) / "bash-records.json"
     file.parent.mkdir(parents=True)
     file.write_bytes(bytes_value)
@@ -36,7 +37,7 @@ async def test_hard_private_read_failure_recovers_only_after_valid_publication(
 
 @pytest.mark.asyncio
 async def test_missing_private_file_is_empty(tmp_path: Path) -> None:
-    watcher = PiDiskWatcher(tmp_path, SpawnId("p-parent"))
+    watcher = PiDiskWatcher(tmp_path, RunId("p-parent"))
     await watcher.start()
     try:
         assert watcher.evidence_failure() is None
@@ -49,7 +50,7 @@ async def test_missing_private_file_is_empty(tmp_path: Path) -> None:
 async def test_validated_disk_change_wakes_current_or_next_waiter(
     tmp_path: Path, before_wait: bool
 ) -> None:
-    parent_id = SpawnId("p-parent")
+    parent_id = RunId("p-parent")
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
     try:
@@ -70,7 +71,7 @@ async def test_retired_marker_cannot_poison_or_authorize_completion(tmp_path: Pa
     parent = tmp_path / "pi-bash" / "p-parent"
     parent.mkdir(parents=True)
     (parent / "last-notification.json").write_text("{invalid retired marker")
-    watcher = PiDiskWatcher(tmp_path, SpawnId("p-parent"))
+    watcher = PiDiskWatcher(tmp_path, RunId("p-parent"))
     await watcher.start()
     try:
         assert watcher.evidence_failure() is None
@@ -84,7 +85,7 @@ async def test_new_run_uses_shared_child_ledger_but_ignores_old_bash(tmp_path: P
 
     from meridian.lib.core.refs import parse_ref
 
-    write_pi_bash_record(tmp_path, SpawnId("p2"))
+    write_pi_bash_record(tmp_path, RunId("p2"))
     parent = tmp_path / "pi-bash" / "p2"
     (parent / "cleared-spawns.json").write_text(json.dumps({
         "v": 1, "spawn_id": "p2", "updated_at_ms": 0, "cleared_spawn_ids": ["p5"],
@@ -101,3 +102,36 @@ async def test_new_run_uses_shared_child_ledger_but_ignores_old_bash(tmp_path: P
         assert watcher.evidence_failure() is not None
     finally:
         await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_tracker_reads_reopened_run_bash_records(tmp_path: Path) -> None:
+    tracker = PiQuiescenceTracker.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=RunId("p5.2"),
+        is_pi_connection=True,
+        session_role="spawned",
+    )
+    await tracker.start()
+    try:
+        write_pi_bash_record(tmp_path, RunId("p5.2"))
+        await tracker.refresh_disk_state()
+        assert tracker.has_tracked_bash_bg()
+    finally:
+        await tracker.stop()
+
+
+@pytest.mark.asyncio
+async def test_tracker_ignores_prior_run_bash_records(tmp_path: Path) -> None:
+    write_pi_bash_record(tmp_path, RunId("p5"))
+    tracker = PiQuiescenceTracker.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=RunId("p5.2"),
+        is_pi_connection=True,
+        session_role="spawned",
+    )
+    await tracker.start()
+    try:
+        assert not tracker.has_tracked_bash_bg()
+    finally:
+        await tracker.stop()
