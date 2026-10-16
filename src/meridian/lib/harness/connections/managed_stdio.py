@@ -14,6 +14,7 @@ from typing import Final
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
+    reap_on_ownership_transfer_failure,
 )
 from meridian.lib.harness.connections.managed_backend import (
     register_spawn_owned_process,
@@ -229,7 +230,7 @@ async def launch_managed_stdio(
         gate.close()
         if process is not None and process.returncode is None:
             process.kill()
-            await process.wait()
+            await reap_on_ownership_transfer_failure(process.wait)
         with suppress(OSError):
             stderr_handle.flush()
         stderr_handle.close()

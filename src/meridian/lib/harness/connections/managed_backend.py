@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections.base import reap_on_ownership_transfer_failure
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform.launch_gate import LaunchGate, ProcessIdentity
 from meridian.lib.platform.process_scope import (
@@ -72,7 +73,9 @@ async def register_spawn_owned_process(
         if persist:
             record_scope(resolved_runtime_root, spawn_id, scope_handle.snapshot)
     except BaseException:
-        await scope_handle.terminate(reason="scope_registration_failed")
+        await reap_on_ownership_transfer_failure(
+            lambda: scope_handle.terminate(reason="scope_registration_failed")
+        )
         raise
     return scope_handle
 
@@ -128,7 +131,7 @@ async def launch_managed_backend(
         gate.close()
         if process is not None and process.returncode is None:
             process.kill()
-            await process.wait()
+            await reap_on_ownership_transfer_failure(process.wait)
         raise
 
     return ManagedBackendHandle(
