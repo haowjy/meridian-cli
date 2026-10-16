@@ -124,6 +124,11 @@ def _until(check, *, timeout: float = 8.0):
     raise AssertionError("bounded observation did not become true")
 
 
+def _written(path: Path) -> str:
+    """Wait until a file another process creates has its content, not just its name."""
+    return _until(lambda: path.exists() and path.read_text().strip())
+
+
 def _alive(pid: int) -> bool:
     try:
         return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
@@ -144,9 +149,7 @@ def _runner_case(tmp_path: Path, *, mode: str, pause: bool) -> None:
     )
     child = None
     try:
-        boundary = tmp_path / "boundary"
-        _until(boundary.exists)
-        child = int(boundary.read_text())
+        child = int(_written(tmp_path / "boundary"))
         if not pause:
             _until((tmp_path / "descendant").exists)
         runner.kill()
@@ -155,8 +158,8 @@ def _runner_case(tmp_path: Path, *, mode: str, pause: bool) -> None:
             _until(lambda: not _alive(child))
             assert not (tmp_path / "harness").exists(), "harness executed before registration"
         else:
-            descendant = int((tmp_path / "descendant").read_text())
-            native = int((tmp_path / "harness").read_text())
+            descendant = int(_written(tmp_path / "descendant"))
+            native = int(_written(tmp_path / "harness"))
             _until(lambda: not any(_alive(pid) for pid in (child, native, descendant)))
     finally:
         if child is not None:
@@ -376,7 +379,7 @@ running.wait()
     child = sibling = None
     try:
         _until((tmp_path / "harness").exists)
-        child, sibling = map(int, (tmp_path / "ids").read_text().split())
+        child, sibling = map(int, _written(tmp_path / "ids").split())
         runner.kill()
         runner.wait(timeout=5)
         _until((tmp_path / "terms").exists)
