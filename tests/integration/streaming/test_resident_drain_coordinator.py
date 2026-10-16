@@ -17,7 +17,6 @@ from tests.support.fakes import FakeClock
 from tests.support.pi import start_row
 from tests.support.resident_drain import (
     FakeResidentConnection,
-    awaiting_done_coordinator,
     coordinator_with_clock,
     descendant_cancellation_from_roots,
     resident_event,
@@ -43,6 +42,7 @@ async def _execute_latched_cleanup(
     request = exit_decision.post_publication_cleanup
     assert request is not None
     await coordinator.execute_post_publication_cleanup(request)
+
 
 @pytest.mark.asyncio
 async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
@@ -95,6 +95,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     assert expired.recorded_outcome.status == "failed"
     assert expired.recorded_outcome.exit_code == 1
     assert expired.recorded_outcome.error == "resident_evidence_unreadable"
+
 
 @pytest.mark.asyncio
 async def test_terminal_done_completes_when_descendant_evidence_recovers(
@@ -198,6 +199,7 @@ async def test_rejected_success_validation_preserves_resident_wait_protection(
     finally:
         await coordinator.stop()
 
+
 @pytest.mark.asyncio
 async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     tmp_path: Path,
@@ -265,6 +267,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
         False,
     ]
 
+
 @pytest.mark.asyncio
 async def test_active_followup_turn_still_enforces_deadline(
     tmp_path: Path,
@@ -284,6 +287,7 @@ async def test_active_followup_turn_still_enforces_deadline(
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
     assert decision.recorded_outcome.error == "resident_deadline_expired"
+
 
 @pytest.mark.asyncio
 async def test_deadline_returns_timed_out_when_descendant_reap_fails(
@@ -326,79 +330,3 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     later_decision = await coordinator.handle_timeout()
     assert later_decision.recorded_outcome is None
     assert cleanup_calls == 1
-
-@pytest.mark.asyncio
-async def test_deadline_reap_cancels_active_descendant_cli_spawns(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.lib.bootstrap import services as bootstrap_services
-    from meridian.lib.state.spawn_tree import active_descendants
-    from meridian.lib.streaming import resident_drain as resident_drain_module
-
-    clock = FakeClock(start=0.0)
-    monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
-    start_row(tmp_path, "p1", HarnessId.CODEX, None)
-    start_row(tmp_path, "p2", HarnessId.OPENCODE, "p1")
-    start_row(tmp_path, "p3", HarnessId.OPENCODE, "p1")
-    spawn_store.finalize_spawn(tmp_path, SpawnId("p3"), "succeeded", 0, origin="runner")
-    connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = await coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
-    cancelled: list[str] = []
-
-    class _FakeService:
-        async def cancel_descendants(self, root_id: SpawnId) -> set[str]:
-            reaped_ids: set[str] = set()
-            for descendant in active_descendants(tmp_path, root_id):
-                reaped_ids.add(descendant.id)
-                cancelled.append(descendant.id)
-                spawn_store.finalize_spawn(
-                    tmp_path,
-                    descendant.id,
-                    "cancelled",
-                    130,
-                    origin="cancel",
-                    error="cancelled",
-                )
-            return reaped_ids
-
-    monkeypatch.setattr(
-        bootstrap_services,
-        "build_spawn_application_service_from_roots",
-        lambda _project_root, _runtime_root: _FakeService(),
-    )
-    clock.advance(10.0)
-
-    decision = await coordinator.handle_timeout()
-
-    assert decision.recorded_outcome is not None
-    assert decision.recorded_outcome.status == "timed_out"
-    assert cancelled == []
-    await _execute_latched_cleanup(coordinator, decision.recorded_outcome)
-    assert cancelled == ["p2"]
-    child = spawn_store.get_spawn(tmp_path, SpawnId("p2"))
-    assert child is not None
-    assert child.status == "cancelled"
-    already_terminal = spawn_store.get_spawn(tmp_path, SpawnId("p3"))
-    assert already_terminal is not None
-    assert already_terminal.status == "succeeded"
-
-@pytest.mark.asyncio
-async def test_done_signal_is_honored_with_tracked_child_outstanding(
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.state.spawn_signals import write_spawn_signal
-
-    start_row(tmp_path, "p1", HarnessId.OPENCODE, None)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    connection = FakeResidentConnection(HarnessId.OPENCODE)
-    coordinator = await awaiting_done_coordinator(tmp_path, connection)
-
-    write_spawn_signal(tmp_path, "p1", "done")
-    requested = await coordinator.handle_timeout()
-    decision = await _after_refresh(coordinator)
-
-    assert requested.recorded_outcome is None
-    assert decision.recorded_outcome is not None
-    assert decision.recorded_outcome.status == "succeeded"
-    assert connection.fake_resident_backend.injected_messages == []

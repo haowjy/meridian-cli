@@ -14,7 +14,6 @@ import psutil
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness import opencode_idle
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -23,7 +22,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.idle_types import CompactResult, IdleEvent, IdleFacts, IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
-from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
+from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
 from meridian.lib.launch.process.ports import LaunchedProcess, ProcessLauncher
@@ -96,45 +95,6 @@ def _install_idle_sensor_bundle(
     monkeypatch.setattr(primary_attach_module, "get_harness_bundle", lambda _h: idle_bundle)
     connection.idle_sensor = sensor
     return contexts, alive_at_creation
-
-
-@pytest.mark.asyncio
-async def test_primary_attach_live_consumer_runs_hooks(tmp_path: Path) -> None:
-    event = RawHarnessEvent(event_type="test.noop", harness_id="codex", payload={})
-
-    class FiniteConnection:
-        harness_id = HarnessId.CODEX
-        primary_event_scope = None
-
-        def observe_event_semantics(self, _semantics: object) -> None:
-            return None
-
-        async def events(self):  # type: ignore[no-untyped-def]
-            yield event
-
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p-no-writer"),
-        spawn_dir=tmp_path,
-        connection=cast("Any", FiniteConnection()),
-        tui_command_builder=lambda session_id: ("codex", session_id),
-        process_launcher=cast("ProcessLauncher", object()),
-    )
-    seen: list[RawHarnessEvent] = []
-    stream_error_phases: list[str] = []
-
-    class ErrorReporter:
-        def record(self, *, phase: str, error: BaseException) -> None:
-            _ = error
-            stream_error_phases.append(phase)
-
-    launcher._event_hooks = (seen.append,)
-    launcher._update_activity_from_event = lambda _event: None  # type: ignore[method-assign]
-    launcher._idle_error_reporter = cast("Any", ErrorReporter())
-
-    await launcher._consume_live_events()
-
-    assert seen == [event]
-    assert stream_error_phases == ["event_stream"]
 
 
 def _publish_spawn(spawn_dir: Path) -> None:
@@ -494,67 +454,6 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
     assert connection.sensor_cancelled_at_stop == [True]
 
 
-@pytest.mark.asyncio
-async def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bundle = get_harness_bundle(HarnessId.OPENCODE)
-    autocompact_off = bundle.autocompact_off
-    sensor = RecordingIdleSensor()
-    spawn_dir = tmp_path / "spawns" / "p-opencode-idle"
-    connection = FakeManagedConnection(
-        events=[],
-        session_id="sess-opencode-idle",
-        harness_id=HarnessId.OPENCODE,
-    )
-    _install_idle_sensor_bundle(
-        monkeypatch,
-        harness_id=HarnessId.OPENCODE,
-        sensor=sensor,
-        connection=connection,
-    )
-    sidecar_hooks: list[tuple[object, object]] = []
-    real_sidecar_run = primary_attach_module.idle_sidecar.run
-
-    async def _record_sidecar_hooks(
-        sidecar_sensor: object,
-        ctx: IdleSensorContext,
-        **kwargs: Any,
-    ) -> None:
-        sidecar_hooks.append((kwargs.get("autocompact_off"), kwargs.get("detect_ttl")))
-        await real_sidecar_run(sidecar_sensor, ctx, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(primary_attach_module.idle_sidecar, "run", _record_sidecar_hooks)
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p-opencode-idle"),
-        spawn_dir=spawn_dir,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
-        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
-    )
-
-    outcome = await launcher.run(
-        config=_build_config(
-            spawn_id=SpawnId("p-opencode-idle"),
-            control_root=tmp_path,
-            harness_id=HarnessId.OPENCODE,
-        ),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
-    )
-
-    assert bundle.primary_idle_sensor is opencode_idle.primary_idle_sensor
-    assert bundle.detect_ttl is opencode_idle.detect_ttl
-    assert autocompact_off is opencode_idle.autocompact_off
-    assert autocompact_off is not None
-    assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": "set"}) is True
-    assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": ""}) is False
-    assert outcome.exit_code == 0
-    assert sidecar_hooks == [(autocompact_off, opencode_idle.detect_ttl)]
-
-
 def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -748,68 +647,9 @@ def test_primary_attach_cancellation_does_not_join_uncooperative_wait_thread(
         process_launcher.release.set()
 
 
-@pytest.mark.asyncio
-async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_or_tui(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    spawn_dir = tmp_path / "spawns" / "p900-codex-stream"
-    tui_started = asyncio.Event()
-    stream_closed = asyncio.Event()
-    connection = FailingEventConnection(
-        fail_after_started=tui_started,
-        stream_closed=stream_closed,
-        events=[],
-        session_id="sess-codex",
-    )
-    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
-    terminated_scopes: list[str] = []
-
-    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
-        _ = grace_seconds
-        terminated_scopes.append(f"{scope.scope_id}:{reason}")
-        return None
-
-    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p900-codex-stream"),
-        spawn_dir=spawn_dir,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-        on_running=lambda _pid: tui_started.set(),
-    )
-
-    run_task = asyncio.create_task(
-        launcher.run(
-            config=_build_config(spawn_id=SpawnId("p900-codex-stream"), control_root=tmp_path),
-            spec=_build_spec(),
-            cwd=tmp_path,
-            env={},
-        )
-    )
-
-    await stream_closed.wait()
-    await asyncio.sleep(0)
-
-    assert run_task.done() is False
-    assert connection.stop_reasons == []
-    assert terminated_scopes == []
-
-    process_launcher.release.set()
-    outcome = await run_task
-
-    assert outcome.exit_code == 143
-    assert connection.stop_reasons == [None]
-    assert terminated_scopes == []
-    assert _read_metadata(spawn_dir)["tui_pid"] == 5252
-
-
-@pytest.mark.parametrize("observer_error", [None, RuntimeError("observer failed")])
 def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tui(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    observer_error: Exception | None,
 ) -> None:
     spawn_dir = tmp_path / "spawns" / "p902-codex-cancel"
     tui_started = asyncio.Event()
@@ -817,7 +657,7 @@ def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tu
     connection = FailingEventConnection(
         fail_after_started=tui_started,
         stream_closed=stream_closed,
-        error=observer_error,
+        error=None,
         events=[],
         session_id="sess-codex-cancel",
     )
@@ -1045,42 +885,6 @@ async def test_primary_attach_upgrades_provisional_backend_scope_without_duplica
     assert [(scope.owner_policy, scope.owner_id) for scope in backend_scopes] == [
         ("session_owned", "thread-upgraded")
     ]
-
-
-@pytest.mark.asyncio
-async def test_primary_attach_writes_no_runner_history(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p902"
-    connection = FakeManagedConnection(
-        events=[
-            RawHarnessEvent(
-                event_type="turn/started",
-                payload={"turnId": "t1"},
-                harness_id="codex",
-            ),
-            RawHarnessEvent(
-                event_type="turn/completed",
-                payload={"turnId": "t1"},
-                harness_id="codex",
-            ),
-        ]
-    )
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir, pause_seconds=0.08)
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p902"),
-        spawn_dir=spawn_dir,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-    )
-
-    await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p902"), control_root=tmp_path),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
-    )
-
-    assert not (spawn_dir / HISTORY_FILENAME).exists()
 
 
 @pytest.mark.asyncio

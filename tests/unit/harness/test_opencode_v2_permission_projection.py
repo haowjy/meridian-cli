@@ -57,9 +57,7 @@ def test_merge_returns_raw_unchanged_without_policy() -> None:
 
 def test_merge_emits_native_permissions_and_preserves_other_config() -> None:
     raw = json.dumps({"model": "openai/gpt-6-astra", "theme": "native"})
-    merged = merge_opencode_v2_permission_config(
-        raw, json.dumps({"*": "deny", "read": "allow"})
-    )
+    merged = merge_opencode_v2_permission_config(raw, json.dumps({"*": "deny", "read": "allow"}))
     assert merged is not None
     assert json.loads(merged) == {
         "model": "openai/gpt-6-astra",
@@ -73,11 +71,7 @@ def test_merge_emits_native_permissions_and_preserves_other_config() -> None:
 
 def test_merge_places_workspace_grants_last_after_broad_deny() -> None:
     raw = json.dumps(
-        {
-            "permission": {
-                "external_directory": {"/repo/**": "allow", "/tmp/**": "allow"}
-            }
-        }
+        {"permission": {"external_directory": {"/repo/**": "allow", "/tmp/**": "allow"}}}
     )
     merged = merge_opencode_v2_permission_config(raw, json.dumps({"*": "deny"}))
     assert merged is not None
@@ -91,9 +85,7 @@ def test_merge_places_workspace_grants_last_after_broad_deny() -> None:
 
 
 def test_merge_keeps_existing_native_permissions_before_tools_policy() -> None:
-    raw = json.dumps(
-        {"permissions": [{"action": "read", "resource": "*.env", "effect": "deny"}]}
-    )
+    raw = json.dumps({"permissions": [{"action": "read", "resource": "*.env", "effect": "deny"}]})
     merged = merge_opencode_v2_permission_config(raw, json.dumps({"read": "allow"}))
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
@@ -102,36 +94,27 @@ def test_merge_keeps_existing_native_permissions_before_tools_policy() -> None:
     ]
 
 
-def test_merge_collapses_within_policy_alias_collision_to_deny() -> None:
-    merged = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit": "deny", "write": "allow"})
-    )
-    assert merged is not None
-    assert json.loads(merged)["permissions"] == [
-        {"action": "edit", "resource": "*", "effect": "deny"}
-    ]
-
-
-def test_merge_collapses_patch_alias_collision_to_deny() -> None:
-    merged = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit": "allow", "patch": "deny"})
-    )
-    assert merged is not None
-    assert json.loads(merged)["permissions"] == [
-        {"action": "edit", "resource": "*", "effect": "deny"}
-    ]
-
-
-def test_merge_warns_on_effect_collision(
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"edit": "deny", "write": "allow"},
+        {"edit": "allow", "patch": "deny"},
+    ],
+)
+def test_merge_collapses_alias_collision_to_deny_and_warns(
     caplog: pytest.LogCaptureFixture,
+    policy: dict[str, str],
 ) -> None:
     with caplog.at_level(
         logging.WARNING,
         logger="meridian.lib.harness.projections.project_opencode_streaming",
     ):
-        merge_opencode_v2_permission_config(
-            None, json.dumps({"edit": "deny", "write": "allow"})
-        )
+        merged = merge_opencode_v2_permission_config(None, json.dumps(policy))
+
+    assert merged is not None
+    assert json.loads(merged)["permissions"] == [
+        {"action": "edit", "resource": "*", "effect": "deny"}
+    ]
     assert "collision" in caplog.text
 
 
@@ -174,10 +157,15 @@ def test_merge_inherited_external_directory_grant_stays_last_after_broad_deny() 
     ]
 
 
-def test_merge_scoped_exception_refines_broad_deny() -> None:
-    merged = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit": "deny", "edit(foo)": "allow"})
-    )
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"edit": "deny", "edit(foo)": "allow"},
+        {"edit(foo)": "allow", "edit": "deny"},
+    ],
+)
+def test_merge_scoped_exception_refines_broad_deny(policy: dict[str, str]) -> None:
+    merged = merge_opencode_v2_permission_config(None, json.dumps(policy))
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
         {"action": "edit", "resource": "*", "effect": "deny"},
@@ -185,40 +173,15 @@ def test_merge_scoped_exception_refines_broad_deny() -> None:
     ]
 
 
-def test_merge_scoped_exception_refines_broad_deny_regardless_of_declaration_order() -> None:
-    merged = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit(foo)": "allow", "edit": "deny"})
-    )
-    assert merged is not None
-    assert json.loads(merged)["permissions"] == [
-        {"action": "edit", "resource": "*", "effect": "deny"},
-        {"action": "edit", "resource": "foo", "effect": "allow"},
-    ]
-
-
-def test_merge_broad_aliased_allow_does_not_bypass_scoped_deny() -> None:
+@pytest.mark.parametrize("scoped_action", ["edit", "patch"])
+def test_merge_broad_aliased_allow_does_not_bypass_scoped_deny(
+    scoped_action: str,
+) -> None:
     broad_first = merge_opencode_v2_permission_config(
-        None, json.dumps({"write": "allow", "edit(foo)": "deny"})
+        None, json.dumps({"write": "allow", f"{scoped_action}(foo)": "deny"})
     )
     scoped_first = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit(foo)": "deny", "write": "allow"})
-    )
-    assert broad_first is not None
-    assert scoped_first is not None
-    expected = [
-        {"action": "edit", "resource": "*", "effect": "allow"},
-        {"action": "edit", "resource": "foo", "effect": "deny"},
-    ]
-    assert json.loads(broad_first)["permissions"] == expected
-    assert json.loads(scoped_first)["permissions"] == expected
-
-
-def test_merge_patch_aliased_allow_does_not_bypass_scoped_deny() -> None:
-    broad_first = merge_opencode_v2_permission_config(
-        None, json.dumps({"write": "allow", "patch(foo)": "deny"})
-    )
-    scoped_first = merge_opencode_v2_permission_config(
-        None, json.dumps({"patch(foo)": "deny", "write": "allow"})
+        None, json.dumps({f"{scoped_action}(foo)": "deny", "write": "allow"})
     )
     assert broad_first is not None
     assert scoped_first is not None
@@ -238,4 +201,3 @@ def test_merge_meridian_allow_wins_over_inherited_non_root_deny() -> None:
         {"action": "edit", "resource": "*", "effect": "deny"},
         {"action": "edit", "resource": "*", "effect": "allow"},
     ]
-

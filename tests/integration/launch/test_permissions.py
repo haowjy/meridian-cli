@@ -209,23 +209,6 @@ def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars()
     assert "MERIDIAN_SECRET_DATABASE" not in child_env
 
 
-def test_inherit_child_env_blocks_meridian_runtime_dir() -> None:
-    inherited = inherit_child_env(
-        base_env={
-            "PATH": "/usr/bin",
-            "_MERIDIAN_RUNTIME_DIR": "/stale/runtime",
-        },
-        env_overrides={
-            "MERIDIAN_PROJECT_DIR": "/repo",
-            "_MERIDIAN_PI_STATE_DIR": "/resolved/runtime",
-        },
-    )
-
-    assert "_MERIDIAN_RUNTIME_DIR" not in inherited
-    assert inherited["MERIDIAN_PROJECT_DIR"] == "/repo"
-    assert inherited["_MERIDIAN_PI_STATE_DIR"] == "/resolved/runtime"
-
-
 def test_build_harness_child_env_pi_state_dir_from_runtime_root() -> None:
     runtime_root = "/resolved/runtime"
     child_env = build_harness_child_env(

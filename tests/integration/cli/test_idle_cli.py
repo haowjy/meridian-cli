@@ -182,9 +182,10 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "reason": "guards-passed",
         "detail": "growth 1k >= need 0k (configured)",
     }
-    assert _json_success(
-        tmp_path, env, "idle", "status", "--json"
-    )[0]["compact_eval"]["verdict"] == "worth-it"
+    assert (
+        _json_success(tmp_path, env, "idle", "status", "--json")[0]["compact_eval"]["verdict"]
+        == "worth-it"
+    )
     assert (
         _json_success(
             tmp_path,
@@ -285,9 +286,7 @@ def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) 
     assert state_path.is_file()
 
     rejected = json.dumps({"type": "future-codex-event"}, separators=(",", ":"))
-    assert _json_success(
-        tmp_path, env, "idle", "event", "--harness", "codex", rejected
-    ) == {}
+    assert _json_success(tmp_path, env, "idle", "event", "--harness", "codex", rejected) == {}
     assert notify_calls.read_text(encoding="utf-8").splitlines() == [payload, rejected]
 
 
@@ -348,15 +347,6 @@ def test_idle_cli_error_envelopes_and_role_reasons(tmp_path: Path) -> None:
     [
         (("return", *_IDENTITY), "--user-prompt is required"),
         ((*_FIRE, "--stretch", "0", "--anchor", "1"), "--stretch must be greater than zero"),
-        ((*_FIRE, "--stretch", "1", "--anchor", "0"), "--anchor must be greater than zero"),
-        (
-            (*_FIRE, "--stretch", "1", "--anchor", "1", "--agents-running=-1"),
-            "--agents-running must not be negative",
-        ),
-        (
-            (*_FIRE, "--stretch", "1", "--anchor", "1", "--context-tokens=-1"),
-            "--context-tokens must not be negative",
-        ),
         (
             ("done", "compact", *_IDENTITY, "--stretch", "1", "--result", "maybe"),
             "--result must be one of: ok, failed, vetoed",

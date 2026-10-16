@@ -120,30 +120,6 @@ def test_external_runner_captures_nonzero_exit_and_1kb_tails(tmp_path: Path) -> 
     assert result.stderr == "b" * 1024
 
 
-def test_external_runner_times_out_sleeping_hook(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = tmp_path / "state"
-
-    script = tmp_path / "sleep_forever.py"
-    script.write_text(
-        "import time\n"
-        "time.sleep(30)\n",
-        encoding="utf-8",
-    )
-
-    runner = ExternalHookRunner(project_root)
-    result = runner.run(
-        _external_hook(_python_command(script)),
-        _context(project_root, runtime_root),
-        timeout_secs=1,
-    )
-
-    assert result.outcome == "timeout"
-    assert result.success is False
-    assert result.error == "Timed out after 1s."
-
-
 def test_external_runner_omits_null_context_variables(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()

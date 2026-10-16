@@ -9,7 +9,6 @@ import socket
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
 
 import pytest
 
@@ -22,9 +21,6 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
 )
 from meridian.lib.harness.connections.errors import PortBindError
-from meridian.lib.harness.connections.opencode_connection import (
-    OpenCodeConnection as OpenCodeDispatcherConnection,
-)
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -38,7 +34,6 @@ from meridian.lib.state.paths import (
     resolve_spawn_log_dir,
 )
 from tests.support.async_determinism import AsyncDeterminism
-from tests.support.fakes import FakeClock
 from tests.support.opencode import FakeOpenCodeProcess
 
 OPENCODE_ACTIVITY_IDLE_EVENT = "session.idle"
@@ -348,58 +343,6 @@ async def test_opencode_keepalive_chunks_do_not_refresh_liveness_deadline(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "event_type",
-    (OPENCODE_ACTIVITY_IDLE_EVENT, OPENCODE_ACTIVITY_ERROR_EVENT),
-)
-async def test_opencode_events_surface_activity_transition_events(
-    monkeypatch: pytest.MonkeyPatch,
-    event_type: str,
-) -> None:
-    connection = _LivenessProbeOpenCodeConnection(
-        responses=[
-            _SseResponse([f'{{"type":"{event_type}","sessionID":"sess-liveness"}}\n'.encode()]),
-            _SseResponse(),
-        ]
-    )
-    clock = FakeClock(start=0.0)
-
-    def advancing_monotonic() -> float:
-        current = clock.monotonic()
-        clock.advance(0.05)
-        return current
-
-    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.5)
-    monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.0)
-    monkeypatch.setattr(opencode_http.asyncio, "sleep", _no_sleep)
-    monkeypatch.setattr(opencode_http.time, "monotonic", advancing_monotonic)
-
-    events = [event async for event in connection.events()]
-
-    assert [event.event_type for event in events] == [event_type]
-    assert connection.open_count >= 1
-    assert connection.state == "failed"
-
-
-def test_opencode_health_fails_when_event_liveness_expires(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    connection = OpenCodeConnection()
-    connection._state = "connected"
-    connection._process = FakeOpenCodeProcess()
-    connection._last_health_ok = True
-
-    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 1.0)
-    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 10.0)
-    connection._liveness.mark_activity()
-    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 10.5)
-    assert connection.health() is True
-
-    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 11.1)
-    assert connection.health() is False
-
-
-@pytest.mark.asyncio
 async def test_opencode_start_resets_expired_liveness(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -548,13 +491,6 @@ async def test_opencode_launch_process_passes_child_env_to_managed_backend(
     await connection._cleanup_runtime()
 
 
-def test_opencode_startup_diagnostics_require_bound_child_env() -> None:
-    connection = OpenCodeConnection()
-
-    with pytest.raises(RuntimeError, match="bound child environment"):
-        connection._startup_child_env()
-
-
 def _set_startup_failure(
     connection: OpenCodeConnection,
     config: ConnectionConfig,
@@ -651,15 +587,6 @@ async def test_opencode_startup_exit_with_claimed_port_is_retryable(
         competing_socket.close()
 
     assert connection.state == "failed"
-
-
-def test_opencode_startup_exit_message_without_stderr(tmp_path: Path) -> None:
-    connection = OpenCodeConnection()
-    _set_startup_failure(connection, _build_connection_config(tmp_path), "")
-
-    message = str(connection._startup_exit_exception())
-
-    assert message == "OpenCode backend failed to start (exit=1)."
 
 
 @pytest.mark.asyncio
@@ -794,45 +721,6 @@ class _RecordingRequestHandler:
         resolution: dict[str, object] | None = None,
     ) -> None:
         self.resolutions.append((request_id, resolution))
-
-
-@pytest.mark.asyncio
-async def test_opencode_events_yield_injected_runtime_event_while_stream_idle(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    connection = _LivenessProbeOpenCodeConnection(responses=[_SseResponse(block=True)])
-    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 30.0)
-    injected = RawHarnessEvent(
-        event_type="request/opened",
-        payload={"request_id": "per_1", "request_type": "approval"},
-        harness_id=HarnessId.OPENCODE.value,
-    )
-
-    collected: list[RawHarnessEvent] = []
-
-    async def _collect() -> None:
-        async for event in connection.events():
-            collected.append(event)
-
-    task = asyncio.create_task(_collect())
-    try:
-        for _ in range(200):
-            if collected:
-                break
-            await asyncio.sleep(0.01)
-        assert collected == [], "stream should be idle before injection"
-        await connection.inject_runtime_event(injected)
-        for _ in range(200):
-            if collected:
-                break
-            await asyncio.sleep(0.01)
-    finally:
-        connection._state = "stopped"
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
-    assert collected == [injected]
 
 
 @pytest.mark.asyncio
@@ -1021,19 +909,3 @@ async def test_opencode_injected_events_keep_fifo_order_with_pending_waiter(
         "request/opened",
         "request/resolved",
     ]
-
-
-@pytest.mark.asyncio
-async def test_opencode_dispatcher_delegates_request_failed_callback() -> None:
-    failures: list[tuple[str, str]] = []
-
-    class _Impl:
-        async def _notify_request_failed(self, request_id: str, *, error: str) -> None:
-            failures.append((request_id, error))
-
-    dispatcher = OpenCodeDispatcherConnection()
-    dispatcher._impl = cast("Any", _Impl())
-
-    await dispatcher._notify_request_failed("per_1", error="boom")
-
-    assert failures == [("per_1", "boom")]

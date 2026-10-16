@@ -43,12 +43,10 @@ from tests.support.launch import FakeBundleResult
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
 
-@pytest.mark.parametrize("timeout_source", ["cli", "env"])
 @pytest.mark.asyncio
 async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    timeout_source: str,
 ) -> None:
     async def _abort_tail_exit_failure(_coordinator: object, _recorded_outcome: object) -> object:
         raise RuntimeError("Pi abort tail failed while classifying stream exit")
@@ -82,18 +80,14 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
         '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
-    monkeypatch.delenv("MERIDIAN_TIMEOUT", raising=False)
-    if timeout_source == "env":
-        monkeypatch.setenv("MERIDIAN_TIMEOUT", "0.001")
-    else:
-        monkeypatch.setenv("MERIDIAN_TIMEOUT", "0.002")
+    monkeypatch.setenv("MERIDIAN_TIMEOUT", "0.002")
     request = build_create_payload(
         SpawnCreateInput(
             prompt="wait forever",
             model="pi-test-model",
             harness=HarnessId.PI.value,
             project_root=tmp_path.as_posix(),
-            timeout=0.001 if timeout_source == "cli" else None,
+            timeout=0.001,
         ),
         runtime=build_runtime_from_root_and_config(tmp_path, load_config(tmp_path)),
     ).request
@@ -150,6 +144,39 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
         r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z",
         state["terminal"]["published_at"],
     )
+
+
+def test_create_payload_uses_meridian_timeout_without_cli_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_TIMEOUT", "0.001")
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda request, *, harness_registry: FakeBundleResult(
+            model="pi-test-model",
+            model_token="pi-test-model",
+            harness=HarnessId.PI,
+            harness_model="pi-test-model",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "bundle", "harness_source": "cli"},
+        ),
+    )
+
+    request = build_create_payload(
+        SpawnCreateInput(
+            prompt="wait forever",
+            model="pi-test-model",
+            harness=HarnessId.PI.value,
+            project_root=tmp_path.as_posix(),
+        ),
+        runtime=build_runtime_from_root_and_config(tmp_path, load_config(tmp_path)),
+    ).request
+
+    assert request.execution_policy.timeout == 0.001
+    assert request.launch_policy_snapshot is not None
+    assert request.launch_policy_snapshot.execution_policy.timeout == 0.001
 
 
 @pytest.mark.asyncio
@@ -251,16 +278,16 @@ async def test_claude_failure_runs_one_real_subprocess(
         'if [ "$1" = "--version" ]; then echo "2.0.0"; exit 0; fi\n'
         f'printf "%s\n" "$*" >> {invocation_log}\n'
         "session_id=\n"
-        "while [ \"$#\" -gt 0 ]; do\n"
+        'while [ "$#" -gt 0 ]; do\n'
         '  if [ "$1" = "--session-id" ]; then shift; session_id=$1; fi\n'
         "  shift\n"
         "done\n"
         "IFS= read -r prompt\n"
-        "printf '{\"type\":\"system\",\"subtype\":\"init\","
-        "\"session_id\":\"%s\"}\n' \"$session_id\"\n"
+        'printf \'{"type":"system","subtype":"init",'
+        '"session_id":"%s"}\n\' "$session_id"\n'
         "printf '%s\n' "
-        "'{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,"
-        "\"result\":\"subscription quota exhausted\"}'\n"
+        '\'{"type":"result","subtype":"error_max_turns","is_error":true,'
+        '"result":"subscription quota exhausted"}\'\n'
         "exit 1\n",
         encoding="utf-8",
     )

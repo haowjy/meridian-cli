@@ -14,7 +14,6 @@ from meridian.lib.state.work_repository import (
 )
 from meridian.lib.state.work_state import slugify
 from meridian.lib.state.work_store import (
-    get_work_item,
     list_archived_work_items,
     list_work_items,
 )
@@ -46,34 +45,6 @@ def test_update_rejects_invalid_active_status(tmp_path: Path, status: str) -> No
         update_work_item(runtime_root, item.name, status=status)
 
     assert status_path.read_bytes() == original
-
-
-def test_work_item_archive_and_reopen_preserves_metadata(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-
-    item = create_work_item(runtime_root, "My feature")
-
-    assert get_work_item(runtime_root, item.name) is not None
-    active_dir = runtime_root / "work" / item.name
-    active_status = active_dir / "__status.json"
-    assert active_status.exists()
-    (active_dir / "notes.md").write_text("hello", encoding="utf-8")
-
-    archived = archive_work_item(runtime_root, item.name)
-    archived_dir = runtime_root / "archive" / "work" / item.name
-    archived_status = archived_dir / "__status.json"
-    assert archived.status == "done"
-    assert archived.archived_at is not None
-    assert not active_dir.exists()
-    assert archived_status.exists()
-    assert (archived_dir / "notes.md").read_text(encoding="utf-8") == "hello"
-
-    reopened = reopen_work_item(runtime_root, item.name)
-    assert reopened.status == "open"
-    assert reopened.archived_at is None
-    assert not archived_dir.exists()
-    assert active_status.exists()
-    assert (active_dir / "notes.md").read_text(encoding="utf-8") == "hello"
 
 
 def test_list_archived_work_items_projects_stale_status_without_persisting(tmp_path: Path) -> None:

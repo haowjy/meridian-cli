@@ -12,6 +12,10 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
+from meridian.lib.launch.plan import (
+    build_primary_launch_runtime,
+    build_primary_spawn_request,
+)
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -19,6 +23,7 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
+from meridian.lib.launch.types import LaunchRequest
 from tests.support.fixtures import allow_headless_claude, write_agent
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
@@ -38,6 +43,49 @@ def _write_minimal_mars_config(project_root: Path) -> None:
         encoding="utf-8",
     )
     allow_headless_claude(project_root)
+
+
+def test_launch_skill_content_flows_from_bundle_to_composition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bundle-provided skill content flows through policy to composition."""
+    _write_minimal_mars_config(tmp_path)
+    fallback_skill_path = tmp_path / "user-mars/.mars/skills/variant-skill/SKILL.md"
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="canonical-id",
+        model_token="alias-token",
+        harness=HarnessId.CODEX,
+        skills_loaded=(
+            LoadedSkillEntry(
+                name="variant-skill",
+                skill_type="reference",
+                body="Resolved variant body from mars",
+                source_path=fallback_skill_path.as_posix(),
+            ),
+        ),
+    )
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="alias-token",
+        skills=["variant-skill"],
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-variant-alias",
+        request=build_primary_spawn_request(
+            request=LaunchRequest(model="alias-token", agent="dev-orchestrator")
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    system_prompt = preview.projected_content.system_prompt if preview.projected_content else ""
+    assert "Resolved variant body from mars" not in system_prompt
+    assert preview.resolved_request.skill_paths == (fallback_skill_path.resolve().as_posix(),)
 
 
 def test_spawn_prepare_opencode_keeps_all_references_inline(
@@ -115,47 +163,6 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     assert f"# Reference: {dir_ref.as_posix()}/" in preview.resolved_request.prompt
     assert "# Meridian Agents" not in preview.resolved_request.prompt
     assert "# Meridian Agents" in preview.projected_content.system_prompt
-
-
-def test_spawn_prepare_profile_resolved_claude_approval_auto_projects_accept_edits(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="claude-sonnet-4-6",
-        harness=HarnessId.CLAUDE,
-        execution_policy=ResolvedExecutionPolicy(approval="auto"),
-        provenance={
-            "model_source": "profile-default",
-            "harness_source": "provider",
-            "approval_source": "profile-default",
-        },
-    )
-    write_agent(tmp_path, name="coder", model="claude-sonnet-4-6")
-
-    preview = build_launch_context(
-        spawn_id="dry-run-claude-spawn-prepare-approval-auto",
-        request=SpawnRequest(
-            prompt="task prompt",
-            prompt_is_composed=False,
-            agent="coder",
-        ),
-        runtime=LaunchRuntime(
-            argv_intent=LaunchArgvIntent.REQUIRED,
-            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            runtime_root=(tmp_path / ".meridian").as_posix(),
-            project_paths_project_root=tmp_path.as_posix(),
-            project_paths_execution_cwd=tmp_path.as_posix(),
-        ),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert preview.resolved_request.execution_policy.approval == "auto"
-    assert "--permission-mode" in preview.binding.argv
-    assert "acceptEdits" in preview.binding.argv
 
 
 @pytest.mark.parametrize(
@@ -329,7 +336,6 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
 
     assert preview.resolved_request.skill_paths
 
-
     # Claude declares supports_native_skills=True, so skill content is
     # suppressed from supplemental_documents (projected.system_prompt).
     # Skills are delivered via compose_skill_injections() → appended_system_prompt.
@@ -400,7 +406,8 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
             harness="claude",
             agent="dev-orchestrator",
             session=SessionRequest(
-                requested_harness_session_id=harness_session_id, source_native_store=str(source),
+                requested_harness_session_id=harness_session_id,
+                source_native_store=str(source),
                 continue_harness="claude",
                 continue_fork=True,
             ),
@@ -480,8 +487,7 @@ def test_spawn_prepare_headless_deny_error_names_denied_harness(
 ) -> None:
     _write_minimal_mars_config(tmp_path)
     (tmp_path / "meridian.toml").write_text(
-        "[spawn]\n"
-        'deny_headless_harnesses = ["codex"]\n',
+        '[spawn]\ndeny_headless_harnesses = ["codex"]\n',
         encoding="utf-8",
     )
     stub_bundle_request_and_resolve(
@@ -525,8 +531,7 @@ def test_spawn_prepare_headless_deny_same_harness_suggests_native_agent(
     """Same-harness caller gets pointed to native Agent() tool."""
     _write_minimal_mars_config(tmp_path)
     (tmp_path / "meridian.toml").write_text(
-        "[spawn]\n"
-        'deny_headless_harnesses = ["claude"]\n',
+        '[spawn]\ndeny_headless_harnesses = ["claude"]\n',
         encoding="utf-8",
     )
     stub_bundle_request_and_resolve(

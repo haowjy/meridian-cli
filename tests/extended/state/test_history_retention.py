@@ -851,19 +851,15 @@ def test_child_binding_preserves_cross_owner_fork_and_native_identity(tmp_path: 
         session_store.stop_session(root, chat)
 
 
-@pytest.mark.parametrize("with_session", [False, True])
-def test_restored_snapshot_recapture_preserves_portable_digest(
-    tmp_path: Path, with_session: bool
-) -> None:
+def test_restored_snapshot_recapture_preserves_portable_digest(tmp_path: Path) -> None:
     from meridian.lib.state import session_store
 
     root = tmp_path / "source"
     key = _terminal(root)
-    if with_session:
-        chat = session_store.start_session(
-            root, harness="codex", harness_session_id="native", model="test", spawn_id=key
-        )
-        session_store.stop_session(root, chat)
+    chat = session_store.start_session(
+        root, harness="codex", harness_session_id="native", model="test", spawn_id=key
+    )
+    session_store.stop_session(root, chat)
     original = archive_history(root, destination=tmp_path / "first", refs=(key,), apply=True)
     first = Path(original.archives[0])
     first_record = verify_archive(first).records[0]

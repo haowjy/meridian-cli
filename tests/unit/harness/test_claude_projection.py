@@ -27,7 +27,17 @@ def _flag_count(argv: list[str], flag: str) -> int:
     return sum(1 for token in argv if token == flag or token.startswith(f"{flag}="))
 
 
-def test_claude_projection_drops_inherited_agent_when_native_agents_disabled() -> None:
+@pytest.mark.parametrize(
+    ("native_agents_enabled", "expected"),
+    [
+        (False, ("Bash(meridian spawn *)",)),
+        (True, ("Agent", "Agent(custom)", "Bash(meridian spawn *)")),
+    ],
+)
+def test_claude_projection_filters_inherited_agent_by_native_agent_setting(
+    native_agents_enabled: bool,
+    expected: tuple[str, ...],
+) -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
@@ -36,33 +46,12 @@ def test_claude_projection_drops_inherited_agent_when_native_agents_disabled() -
             CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
             "Agent,Agent(custom),Bash(meridian spawn *)",
         ),
-        claude_native_agents_enabled=False,
+        claude_native_agents_enabled=native_agents_enabled,
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
-    assert _tool_flag_entries(command, "--allowedTools") == ("Bash(meridian spawn *)",)
-
-
-def test_claude_projection_keeps_inherited_agent_when_native_agents_enabled() -> None:
-    spec = ResolvedLaunchSpec(
-        harness=HarnessId.CLAUDE,
-        prompt="test",
-        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
-        extra_args=(
-            CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
-            "Agent,Agent(custom),Bash(meridian spawn *)",
-        ),
-        claude_native_agents_enabled=True,
-    )
-
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-
-    assert _tool_flag_entries(command, "--allowedTools") == (
-        "Agent",
-        "Agent(custom)",
-        "Bash(meridian spawn *)",
-    )
+    assert _tool_flag_entries(command, "--allowedTools") == expected
 
 
 def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent() -> None:
@@ -173,8 +162,6 @@ def test_claude_projection_loads_selected_plugin_dirs(
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
     projected_dirs = tuple(
-        command[index + 1]
-        for index, token in enumerate(command)
-        if token == "--plugin-dir"
+        command[index + 1] for index, token in enumerate(command) if token == "--plugin-dir"
     )
     assert projected_dirs == plugin_dirs

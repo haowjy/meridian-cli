@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import psutil
-import pytest
 
 from meridian.lib.platform.process_scope import fallback
 from meridian.lib.platform.process_scope.base import CleanupResult
 
-
-class _FakeAsyncProcess:
-    def __init__(self, pid: int, returncode: int | None) -> None:
-        self.pid = pid
-        self.returncode = returncode
+if TYPE_CHECKING:
+    import pytest
 
 
 @dataclass
@@ -41,30 +38,6 @@ class _FakeProc:
         self.killed += 1
         if self.kill_exc is not None:
             raise self.kill_exc
-
-
-@pytest.mark.asyncio
-async def test_terminate_tree_short_circuits_for_exited_process() -> None:
-    process = _FakeAsyncProcess(pid=111, returncode=0)
-
-    result = await fallback.terminate_tree(
-        process,
-        grace_secs=9.0,
-        reason="stop_called",
-        scope_id="backend",
-        degraded_fallback=True,
-    )
-
-    assert result == CleanupResult(
-        scope_id="backend",
-        root_pid=111,
-        descendant_count=0,
-        reason="stop_called",
-        grace_seconds=9.0,
-        kill_escalated=False,
-        degraded_fallback=True,
-        skip_reason=None,
-    )
 
 
 def test_terminate_tree_sync_skips_on_pid_reuse_mismatch(

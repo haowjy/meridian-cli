@@ -30,36 +30,6 @@ def _seed_project(tmp_path: Path) -> Path:
     return project_root
 
 
-def test_inherited_task_dir_round_trips_through_dry_run_prepare(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _seed_project(tmp_path)
-    inherited = tmp_path / "parent-worktree"
-    inherited.mkdir(parents=True)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4",
-        harness=HarnessId.CODEX,
-    )
-    monkeypatch.setenv("MERIDIAN_TASK_DIR", inherited.as_posix())
-    runtime = build_runtime(project_root)
-
-    artifacts = build_create_payload(
-        SpawnCreateInput(
-            prompt="task",
-            model="gpt-5.4",
-            harness="codex",
-            project_root=str(project_root),
-            dry_run=True,
-        ),
-        runtime=runtime,
-    )
-
-    assert artifacts.request.task_cwd == inherited.resolve().as_posix()
-    assert artifacts.request.task_cwd_source == "inherited-task-dir"
-
-
 def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

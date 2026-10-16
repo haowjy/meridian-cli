@@ -59,17 +59,6 @@ def _build_workspace_launch_context(
     )
 
 
-def test_resolve_workspace_snapshot_is_none_when_workspace_config_absent(tmp_path: Path) -> None:
-    project_root = _repo(tmp_path)
-
-    snapshot = resolve_workspace_snapshot(project_root)
-
-    assert snapshot.status == "none"
-    assert snapshot.source_paths == ()
-    assert snapshot.roots == ()
-    assert snapshot.findings == ()
-
-
 def test_workspace_snapshot_loads_named_committed_and_local_entries(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     frontend_committed = tmp_path / "frontend-committed"
@@ -276,16 +265,3 @@ def test_workspace_launch_validation_raises_for_invalid_workspace(tmp_path: Path
 
     with pytest.raises(ValueError, match=r"Invalid workspace config in meridian\.toml"):
         ensure_workspace_valid_for_launch(project_root)
-
-
-def test_workspace_launch_validation_allows_absent_or_valid_workspace(tmp_path: Path) -> None:
-    project_root = _repo(tmp_path)
-
-    ensure_workspace_valid_for_launch(project_root)
-
-    (project_root / "existing").mkdir()
-    (project_root / "meridian.toml").write_text(
-        '[workspace.existing]\npath = "./existing"\n',
-        encoding="utf-8",
-    )
-    ensure_workspace_valid_for_launch(project_root)

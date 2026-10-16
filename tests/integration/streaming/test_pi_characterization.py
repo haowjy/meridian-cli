@@ -21,7 +21,6 @@ from meridian.lib.streaming import pi_completion_profile as pi_completion_profil
 from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoopDecision
 from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from tests.support.pi import PiDrainScenario, pi_event, start_row, write_json, write_pi_bash_record
 
 
@@ -69,15 +68,6 @@ def _assert_failed(decision: DrainLoopDecision | DrainExitDecision, error: str) 
     assert outcome.status == "failed"
     assert outcome.exit_code == 1
     assert (outcome.error or "").split(":", 1)[0] == error
-
-
-async def _execute_latched_cleanup(
-    coordinator: PiDrainCoordinator, outcome: TerminalEventOutcome | None
-) -> None:
-    exit_decision = await coordinator.handle_stream_exit(outcome)
-    request = exit_decision.post_publication_cleanup
-    assert request is not None
-    await coordinator.execute_post_publication_cleanup(request)
 
 
 @pytest.mark.asyncio
@@ -316,61 +306,90 @@ async def test_done_completes_when_pi_descendant_evidence_recovers(
 
 
 @pytest.mark.asyncio
-async def test_done_fails_closed_on_pi_private_work_read_error(
+async def test_pi_tree_authority_polls_until_live_grandchild_finishes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    started = await _start_coordinator(
-        tmp_path,
-        monkeypatch,
-        child_wave_timeout_seconds=5.0,
-    )
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+    start_row(tmp_path, "p3", HarnessId.CODEX, "p2")
+    started = await _start_coordinator(tmp_path, monkeypatch)
     coordinator = started.coordinator
-    records_path = tmp_path / "pi-bash" / "p1" / "bash-records.json"
-    records_path.write_text("{not json", encoding="utf-8")
     try:
         await coordinator.observe_event(normalize_event(_AGENT_END))
-        terminal = await coordinator.handle_terminal_event(
-            _AGENT_END,
-            _SUCCESS,
-            _TERMINATE,
+        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+        spawn_store.finalize_spawn(
+            tmp_path,
+            SpawnId("p3"),
+            "succeeded",
+            0,
+            origin="runner",
         )
-        _write_done_signal(tmp_path, "p1")
-        waiting = await coordinator.handle_timeout()
+        write_json(
+            tmp_path / "pi-bash" / "p1" / "observed-spawns.json",
+            {
+                "v": 1,
+                "spawn_id": "p1",
+                "observed_spawn_ids": ["p2"],
+            },
+        )
+        started.clock.advance(0.25)
 
-        assert terminal.recorded_outcome is None
-        assert waiting.recorded_outcome is None
+        ready = await coordinator.handle_timeout()
+        started.clock.advance(0.05)
+        await coordinator.handle_timeout()
+        stabilized = await _after_refresh(started)
 
-        started.clock.advance(5.0)
-        expired = await coordinator.handle_timeout()
-
-        _assert_failed(expired, "pi_evidence_unreadable")
-        assert started.cleanups == []
+        assert ready.recorded_outcome is None
+        assert stabilized.recorded_outcome == _SUCCESS
     finally:
         await coordinator.stop()
 
 
 @pytest.mark.asyncio
-async def test_child_wave_timeout_without_cleanup_callback_preserves_outcome(
+async def test_pi_tree_authority_waits_for_finalizing_child_publication_and_consumption(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    started = await _start_coordinator(
-        tmp_path,
-        monkeypatch,
-        child_wave_timeout_seconds=5.0,
-        cleanup_configured=False,
-    )
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    spawn_store.mark_finalizing(tmp_path, SpawnId("p2"))
+    started = await _start_coordinator(tmp_path, monkeypatch)
     coordinator = started.coordinator
-    _start_row(tmp_path, "p-child-timeout", parent_id=str(_SPAWN_ID))
     try:
         await coordinator.observe_event(normalize_event(_AGENT_END))
-        started.clock.advance(5.0)
-        decision = await coordinator.handle_timeout()
+        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+        (tmp_path / "spawns" / "p2" / "report.md").write_text(
+            "# Report\n\nChild completed.\n",
+            encoding="utf-8",
+        )
+        started.clock.advance(0.25)
+        await coordinator.handle_timeout()
+        await coordinator.wait_for_aux_wake()
+        unpublished = await coordinator.handle_aux_wake()
+        assert unpublished.recorded_outcome is None
+        assert any(
+            blocker.code == "pi_result_publication_pending"
+            for blocker in coordinator._coordinator.state.assessment.blockers
+        )
+        spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+        write_json(
+            tmp_path / "pi-bash" / "p1" / "observed-spawns.json",
+            {
+                "v": 1,
+                "spawn_id": "p1",
+                "observed_spawn_ids": ["p2"],
+            },
+        )
+        started.clock.advance(0.25)
+        ready = await coordinator.handle_timeout()
+        started.clock.advance(0.05)
+        await coordinator.handle_timeout()
+        stabilized = await _after_refresh(started)
 
-        _assert_failed(decision, "pi_child_wave_timeout")
-        await _execute_latched_cleanup(coordinator, decision.recorded_outcome)
-        assert started.cleanups == []
+        assert ready.recorded_outcome is None
+        assert stabilized.recorded_outcome == _SUCCESS
     finally:
         await coordinator.stop()
 
@@ -429,8 +448,7 @@ async def test_initial_descendant_refresh_latency_does_not_shift_pi_nudge_anchor
         # Isolate the coordinator's scheduling anchor from the separately tested
         # index deadline by starting the bounded read after this synthetic hold.
         read_deadline = (
-            descendant_evidence_module.time.monotonic()
-            + descendant_evidence_module.QUERY_TIMEOUT
+            descendant_evidence_module.time.monotonic() + descendant_evidence_module.QUERY_TIMEOUT
         )
         return projection(index, root_spawn_id, deadline=read_deadline)  # type: ignore[arg-type]
 

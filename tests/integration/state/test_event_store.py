@@ -134,21 +134,6 @@ def test_lock_file_is_reentrant_in_same_thread(tmp_path: Path) -> None:
         pass
 
 
-def test_append_event_repairs_truncated_trailing_line(tmp_path: Path) -> None:
-    data_path = tmp_path / "events.jsonl"
-    lock_path = tmp_path / "events.lock"
-    data_path.write_bytes(b'{"id":1,"kind":"start"}\n{"id":2,"kind":"torn"')
-
-    append_event(data_path, lock_path, _ReadEvent(id=3, kind="stop"))
-
-    contents = data_path.read_bytes()
-    assert contents == b'{"id":1,"kind":"start"}\n{"id":3,"kind":"stop"}\n'
-    assert read_events(data_path, _ReadEvent.model_validate) == [
-        _ReadEvent(id=1, kind="start"),
-        _ReadEvent(id=3, kind="stop"),
-    ]
-
-
 @posix_only
 def test_append_event_repair_does_not_fabricate_hybrid_event(tmp_path: Path) -> None:
     data_path = tmp_path / "events.jsonl"

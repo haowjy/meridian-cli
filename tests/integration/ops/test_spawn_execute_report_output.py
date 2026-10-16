@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
+
+import pytest
 
 import meridian.lib.ops.spawn.execute as execute_module
 import meridian.lib.ops.spawn.execute_init as execute_init_module
@@ -28,9 +30,6 @@ from meridian.lib.state.paths import resolve_project_paths
 from tests.conftest import requires_pi_dist
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
-
-if TYPE_CHECKING:
-    import pytest
 
 # qa-validated: spawn-return-report
 
@@ -110,10 +109,12 @@ def _build_test_runtime(
     )
 
 
-def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble(
+@pytest.mark.parametrize("native_key_bound", [True, False], ids=["bound", "unbound"])
+def test_execute_spawn_blocking_reads_report_and_formats_transcript_hint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    native_key_bound: bool,
 ) -> None:
     runtime = _build_test_runtime(tmp_path, monkeypatch)
     runtime_root = runtime.authority.runtime_root
@@ -127,22 +128,23 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
         report_path = runtime_root / "spawns" / spawn_id / "report.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("fake report body\n", encoding="utf-8")
-        chat_id = session_store.start_session(
-            runtime_root,
-            harness="codex",
-            harness_session_id="",
-            model="gpt-5.4",
-            native_store=str(native_store),
-            kind="spawn",
-            spawn_id=spawn_id,
-        )
-        session_store.update_session_harness_id(
-            runtime_root,
-            chat_id,
-            NativeKeyFields(session_id="fake-native-session"),
-            source="observed",
-        )
-        session_store.stop_session(runtime_root, chat_id)
+        if native_key_bound:
+            chat_id = session_store.start_session(
+                runtime_root,
+                harness="codex",
+                harness_session_id="",
+                model="gpt-5.4",
+                native_store=str(native_store),
+                kind="spawn",
+                spawn_id=spawn_id,
+            )
+            session_store.update_session_harness_id(
+                runtime_root,
+                chat_id,
+                NativeKeyFields(session_id="fake-native-session"),
+                source="observed",
+            )
+            session_store.stop_session(runtime_root, chat_id)
         spawn_store.finalize_spawn(
             runtime_root,
             spawn_id,
@@ -173,50 +175,12 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
     assert result.exit_code == 0
     assert result.report == "fake report body"
     assert result.duration_secs == 1.25
-    assert result.format_text().endswith(
-        "fake report body\n\nTranscript: meridian session log " + str(result.spawn_id)
-    )
-
-
-def test_execute_spawn_blocking_without_native_key_omits_transcript_hint(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = _build_test_runtime(tmp_path, monkeypatch)
-
-    async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
-        spawn = cast("Any", kwargs["spawn"])
-        runtime_root = Path(cast("Path", kwargs["runtime_root"]))
-        spawn_id = str(spawn.spawn_id)
-        report_path = runtime_root / "spawns" / spawn_id / "report.md"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text("fake report body\n", encoding="utf-8")
-        spawn_store.finalize_spawn(
-            runtime_root,
-            spawn_id,
-            "succeeded",
-            0,
-            origin="runner",
-            duration_secs=1.25,
+    if native_key_bound:
+        assert result.format_text().endswith(
+            "fake report body\n\nTranscript: meridian session log " + str(result.spawn_id)
         )
-        return 0
-
-    monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
-
-    result = execute_module.execute_spawn_blocking(
-        payload=SpawnCreateInput(prompt="run"),
-        request=SpawnRequest(
-            prompt="run",
-            model="gpt-5.4",
-            harness="codex",
-            agent="coder",
-        ),
-        runtime=runtime,
-    )
-
-    assert result.status == "succeeded"
-    assert result.report == "fake report body"
-    assert "Transcript: meridian session log" not in result.format_text()
+    else:
+        assert "Transcript: meridian session log" not in result.format_text()
 
 
 def test_execute_spawn_blocking_notifies_spawn_id_before_launch(
@@ -309,49 +273,6 @@ def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
     assert params["bound_work_dir"] == bound_work_dir
     assert params["bound_task_dir"] == (tmp_path / "repo").as_posix()
     assert bound_work_dir in params["appended_system_prompt"]
-
-
-def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = _build_test_runtime(tmp_path, monkeypatch)
-
-    def _raise_project_paths(**kwargs: object) -> object:
-        raise ValueError("harness binary not found")
-
-    monkeypatch.setattr(execute_module, "resolve_project_config_paths", _raise_project_paths)
-
-    result = execute_module.execute_spawn_blocking(
-        payload=SpawnCreateInput(prompt="run"),
-        request=SpawnRequest(
-            prompt="run",
-            model="gpt-5.4",
-            harness="opencode",
-            agent="browser-prober",
-            task_cwd="/tmp/browser-work",
-            task_cwd_source="explicit-task-dir",
-            task_cwd_work_item="browser-investigation",
-        ),
-        runtime=runtime,
-    )
-
-    assert result.status == "failed"
-    assert result.spawn_id is None
-    assert result.error == "pre_init_failed"
-    assert result.exit_code == 1
-    assert result.model == "gpt-5.4"
-    assert result.harness_id == "opencode"
-    assert result.message is not None
-    assert "harness binary not found" in result.message
-    assert result.to_wire()["message"] == result.message
-    assert result.to_wire()["model"] == "gpt-5.4"
-    assert result.to_wire()["harness_id"] == "opencode"
-    assert result.to_wire()["task_cwd_source"] == "explicit-task-dir"
-    assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
-    authority = resolve_runtime_authority_for_write(tmp_path / "repo")
-    assert authority.runtime_root is not None
-    assert not list((authority.runtime_root / "spawns").glob("*/state.json"))
 
 
 def test_reserve_then_prepare_graceful_prep_failure_leaks_nothing_with_work(

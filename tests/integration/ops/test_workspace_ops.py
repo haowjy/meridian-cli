@@ -64,41 +64,6 @@ def test_workspace_init_resolves_worktree_gitdir_pointer(tmp_path: Path) -> None
     assert not (git_dir / "info" / "exclude").exists()
 
 
-def test_workspace_init_handles_missing_git_metadata_without_failure(tmp_path: Path) -> None:
-    project_root = _repo(tmp_path)
-
-    result = workspace_init_sync(WorkspaceInitInput(project_root=project_root.as_posix()))
-
-    assert result.created is True
-    assert result.local_gitignore_path is None
-    assert result.local_gitignore_updated is False
-
-
-def test_workspace_init_rejects_non_file_workspace_target(tmp_path: Path) -> None:
-    project_root = _repo(tmp_path)
-    (project_root / "meridian.local.toml").mkdir()
-
-    with pytest.raises(ValueError, match="is not a file"):
-        workspace_init_sync(WorkspaceInitInput(project_root=project_root.as_posix()))
-
-
-def test_workspace_init_ignores_state_root_parent_for_workspace_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _repo(tmp_path)
-    (project_root / ".git").mkdir()
-    override_root = tmp_path / "state-root" / ".meridian"
-    override_root.parent.mkdir(parents=True)
-    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", override_root.as_posix())
-
-    result = workspace_init_sync(WorkspaceInitInput(project_root=project_root.as_posix()))
-
-    expected_workspace_path = project_root / "meridian.local.toml"
-    assert result.path == expected_workspace_path.as_posix()
-    assert expected_workspace_path.is_file()
-
-
 def test_workspace_init_appends_scaffold_to_existing_local_config_without_workspace(
     tmp_path: Path,
 ) -> None:

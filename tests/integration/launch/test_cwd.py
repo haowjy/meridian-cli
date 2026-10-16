@@ -50,249 +50,215 @@ def _publish_spawn(project_root: Path, spawn_id: str = "p1") -> None:
     )
 
 
-def test_resolve_task_cwd_uses_explicit_task_dir_override_first(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    explicit = tmp_path / "explicit-task"
-    explicit.mkdir(parents=True, exist_ok=True)
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        explicit_task_dir=explicit.as_posix(),
-    )
-
-    assert resolved.task_cwd == explicit.resolve()
-    assert resolved.source == "explicit-task-dir"
-
-
-def test_resolve_task_cwd_explicit_task_dir_wins_over_stale_work_item(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    work_id, _ = _work_with_stale_task_dir(state_dir, tmp_path, "stale-work")
-    explicit = tmp_path / "explicit-task"
-    explicit.mkdir()
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        explicit_task_dir=explicit,
-        ambient_work_id=work_id,
-    )
-
-    assert resolved.task_cwd == explicit.resolve()
-    assert resolved.source == "explicit-task-dir"
-    assert resolved.warning is None
-
-
-def test_resolve_task_cwd_rejects_missing_explicit_task_dir(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-
-    with pytest.raises(ValueError, match="task_dir does not exist"):
-        resolve_task_cwd(
-            authority_root,
-            project_state_dir=state_dir,
-            explicit_task_dir=(tmp_path / "missing-task-dir").as_posix(),
-        )
-
-
-def test_resolve_task_cwd_explicit_work_uses_work_item_task_dir(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    work_id = _work_with_task_dir(state_dir, tmp_path, "feature-work")
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        explicit_work_id=work_id,
-    )
-
-    assert resolved.task_cwd == (tmp_path / "feature-work-task-dir").resolve()
-    assert resolved.source == "explicit-work-task-dir"
-    assert resolved.work_item == work_id
-
-
-def test_resolve_task_cwd_explicit_work_is_boundary_over_ambient(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    explicit = work_repository.create_work_item(state_dir, "explicit-work", "", None)
-    ambient_id = _work_with_task_dir(state_dir, tmp_path, "ambient-work")
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        explicit_work_id=explicit.name,
-        ambient_work_id=ambient_id,
-    )
-
-    assert resolved.task_cwd == authority_root.resolve()
-    assert resolved.source == "explicit-work-authority-root"
-    assert resolved.work_item == explicit.name
-
-
-def test_resolve_task_cwd_ambient_work_uses_task_dir(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    ambient_id = _work_with_task_dir(state_dir, tmp_path, "ambient-work")
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        ambient_work_id=ambient_id,
-    )
-
-    assert resolved.task_cwd == (tmp_path / "ambient-work-task-dir").resolve()
-    assert resolved.source == "ambient-work-task-dir"
-    assert resolved.work_item == ambient_id
-
-
-def test_resolve_task_cwd_stale_ambient_work_falls_back_with_warning(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    work_id, stale = _work_with_stale_task_dir(state_dir, tmp_path, "stale-work")
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        ambient_work_id=work_id,
-    )
-
-    assert resolved.task_cwd == authority_root.resolve()
-    assert resolved.source == "ambient-work-authority-root"
-    assert resolved.work_item == work_id
-    assert resolved.warning is not None
-    assert stale.as_posix() in resolved.warning
-
-
-def test_resolve_task_cwd_uses_caller_cwd_outside_project_tree(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    worktree = tmp_path / "worktree"
-    worktree.mkdir(parents=True, exist_ok=True)
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        caller_cwd=worktree.as_posix(),
-    )
-
-    assert resolved.task_cwd == worktree.resolve()
-    assert resolved.source == "ambient-cwd"
-    assert resolved.work_item is None
-
-
-def test_resolve_task_cwd_ignores_caller_cwd_inside_project_tree(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    inside = authority_root / "src" / "meridian"
-    inside.mkdir(parents=True, exist_ok=True)
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        caller_cwd=inside.as_posix(),
-    )
-
-    assert resolved.task_cwd == authority_root.resolve()
-    assert resolved.source == "authority-root"
-
-
-def test_resolve_task_cwd_explicit_task_dir_wins_over_caller_cwd(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    explicit = tmp_path / "explicit-task"
-    explicit.mkdir(parents=True, exist_ok=True)
-    worktree = tmp_path / "worktree"
-    worktree.mkdir(parents=True, exist_ok=True)
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        explicit_task_dir=explicit.as_posix(),
-        caller_cwd=worktree.as_posix(),
-    )
-
-    assert resolved.task_cwd == explicit.resolve()
-    assert resolved.source == "explicit-task-dir"
-
-
-def test_resolve_task_cwd_work_item_task_dir_wins_over_caller_cwd(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    work_id = _work_with_task_dir(state_dir, tmp_path, "feature-work")
-    worktree = tmp_path / "worktree"
-    worktree.mkdir(parents=True, exist_ok=True)
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        ambient_work_id=work_id,
-        caller_cwd=worktree.as_posix(),
-    )
-
-    assert resolved.task_cwd == (tmp_path / "feature-work-task-dir").resolve()
-    assert resolved.source == "ambient-work-task-dir"
-
-
-def test_resolve_task_cwd_inherited_wins_over_ambient_work(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    ambient_id = _work_with_task_dir(state_dir, tmp_path, "ambient-work")
-    inherited = tmp_path / "inherited-task"
-    inherited.mkdir(parents=True, exist_ok=True)
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        inherited_task_dir=inherited.as_posix(),
-        ambient_work_id=ambient_id,
-    )
-
-    assert resolved.task_cwd == inherited.resolve()
-    assert resolved.source == "inherited-task-dir"
-
-
-def test_resolve_task_cwd_explicit_work_task_dir_wins_over_inherited(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    work_id = _work_with_task_dir(state_dir, tmp_path, "feature-work")
-    inherited = tmp_path / "inherited-task"
-    inherited.mkdir(parents=True, exist_ok=True)
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        explicit_work_id=work_id,
-        inherited_task_dir=inherited.as_posix(),
-    )
-
-    assert resolved.task_cwd == (tmp_path / "feature-work-task-dir").resolve()
-    assert resolved.source == "explicit-work-task-dir"
-
-
-def test_resolve_task_cwd_explicit_work_without_task_dir_preserves_inherited(
+@pytest.mark.parametrize(
+    (
+        "explicit_task",
+        "explicit_work",
+        "ambient_work",
+        "inherited_task",
+        "caller_cwd",
+        "expected_path",
+        "expected_source",
+        "expected_work",
+        "expected_warning",
+        "error",
+    ),
+    [
+        (
+            "explicit",
+            None,
+            "stale",
+            None,
+            None,
+            "explicit",
+            "explicit-task-dir",
+            "skip",
+            False,
+            None,
+        ),
+        (
+            "missing",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "skip",
+            None,
+            "task_dir does not exist",
+        ),
+        (
+            None,
+            "empty",
+            "ambient",
+            None,
+            None,
+            "authority",
+            "explicit-work-authority-root",
+            "empty",
+            None,
+            None,
+        ),
+        (
+            None,
+            None,
+            "stale",
+            None,
+            None,
+            "authority",
+            "ambient-work-authority-root",
+            "stale",
+            True,
+            None,
+        ),
+        (None, None, None, None, "outside", "outside", "ambient-cwd", "none", None, None),
+        (None, None, None, None, "inside", "authority", "authority-root", "skip", None, None),
+        (
+            "explicit",
+            None,
+            None,
+            None,
+            "outside",
+            "explicit",
+            "explicit-task-dir",
+            "skip",
+            None,
+            None,
+        ),
+        (
+            None,
+            None,
+            "feature",
+            None,
+            "outside",
+            "feature",
+            "ambient-work-task-dir",
+            "feature",
+            None,
+            None,
+        ),
+        (
+            None,
+            None,
+            "ambient",
+            "inherited",
+            None,
+            "inherited",
+            "inherited-task-dir",
+            "skip",
+            None,
+            None,
+        ),
+        (
+            None,
+            "feature",
+            None,
+            "inherited",
+            None,
+            "feature",
+            "explicit-work-task-dir",
+            "feature",
+            None,
+            None,
+        ),
+        (
+            None,
+            "empty",
+            None,
+            "inherited",
+            None,
+            "authority",
+            "explicit-work-authority-root",
+            "skip",
+            None,
+            None,
+        ),
+        (
+            None,
+            None,
+            None,
+            "inside-worktree",
+            "inside-worktree",
+            "inside-worktree",
+            "inherited-task-dir",
+            "skip",
+            None,
+            None,
+        ),
+    ],
+    ids=(
+        "explicit-over-stale-work",
+        "missing-explicit",
+        "explicit-work-boundary",
+        "stale-ambient-work",
+        "outside-caller",
+        "inside-caller",
+        "explicit-over-caller",
+        "work-over-caller",
+        "inherited-over-ambient",
+        "explicit-work-over-inherited",
+        "empty-explicit-work-over-inherited",
+        "inherited-inside-project",
+    ),
+)
+def test_resolve_task_cwd_precedence(
     tmp_path: Path,
+    explicit_task: str | None,
+    explicit_work: str | None,
+    ambient_work: str | None,
+    inherited_task: str | None,
+    caller_cwd: str | None,
+    expected_path: str | None,
+    expected_source: str | None,
+    expected_work: str,
+    expected_warning: bool | None,
+    error: str | None,
 ) -> None:
     authority_root, state_dir = _roots(tmp_path)
-    explicit = work_repository.create_work_item(state_dir, "explicit-work", "", None)
-    inherited = tmp_path / "inherited-task"
-    inherited.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "authority": authority_root,
+        "explicit": tmp_path / "explicit-task",
+        "missing": tmp_path / "missing-task-dir",
+        "outside": tmp_path / "worktree",
+        "inside": authority_root / "src" / "meridian",
+        "inherited": tmp_path / "inherited-task",
+        "inside-worktree": authority_root / "worktree",
+        "feature": tmp_path / "feature-work-task-dir",
+    }
+    for name, path in paths.items():
+        if name != "missing":
+            path.mkdir(parents=True, exist_ok=True)
 
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        explicit_work_id=explicit.name,
-        inherited_task_dir=inherited.as_posix(),
-    )
+    works = {
+        "empty": work_repository.create_work_item(state_dir, "explicit-work", "", None).name,
+        "ambient": _work_with_task_dir(state_dir, tmp_path, "ambient-work"),
+        "feature": _work_with_task_dir(state_dir, tmp_path, "feature-work"),
+    }
+    works["stale"], stale_path = _work_with_stale_task_dir(state_dir, tmp_path, "stale-work")
+    kwargs = {
+        "explicit_task_dir": paths[explicit_task].as_posix() if explicit_task else None,
+        "explicit_work_id": works[explicit_work] if explicit_work else None,
+        "ambient_work_id": works[ambient_work] if ambient_work else None,
+        "inherited_task_dir": paths[inherited_task].as_posix() if inherited_task else None,
+        "caller_cwd": paths[caller_cwd].as_posix() if caller_cwd else None,
+    }
 
-    assert resolved.source == "explicit-work-authority-root"
-    assert resolved.task_cwd == authority_root.resolve()
+    if error is not None:
+        with pytest.raises(ValueError, match=error):
+            resolve_task_cwd(authority_root, project_state_dir=state_dir, **kwargs)
+        return
 
+    resolved = resolve_task_cwd(authority_root, project_state_dir=state_dir, **kwargs)
 
-def test_resolve_task_cwd_inherited_inside_project_subdir_not_ambient_cwd(
-    tmp_path: Path,
-) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    inside = authority_root / "worktree"
-    inside.mkdir(parents=True, exist_ok=True)
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        inherited_task_dir=inside.as_posix(),
-        caller_cwd=inside.as_posix(),
-    )
-
-    assert resolved.task_cwd == inside.resolve()
-    assert resolved.source == "inherited-task-dir"
+    assert resolved.task_cwd == paths[expected_path].resolve()
+    assert resolved.source == expected_source
+    if expected_work != "skip":
+        assert resolved.work_item == (None if expected_work == "none" else works[expected_work])
+    if expected_warning is not None:
+        assert (resolved.warning is not None) is expected_warning
+    if expected_warning:
+        assert stale_path.as_posix() in resolved.warning
 
 
 def test_resolve_effective_task_dir_precedence_scope_work_inherited_root(

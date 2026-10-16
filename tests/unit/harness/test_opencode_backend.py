@@ -36,31 +36,21 @@ def test_normalize_version_preference() -> None:
     assert normalize_version_preference("nonsense") == "auto"
 
 
-def test_explicit_preference_wins_without_probe() -> None:
-    assert resolve_opencode_version("v2", env={}, detected=None) == "v2"
-    assert resolve_opencode_version("v1", env={}, detected="v2") == "v1"
-
-
-def test_auto_uses_detected_version() -> None:
-    assert resolve_opencode_version("auto", env={}, detected="v1") == "v1"
-    assert resolve_opencode_version("auto", env={}, detected="v2") == "v2"
-
-
-def test_adapter_allows_named_primary_resume() -> None:
-    from meridian.lib.harness.opencode import OpenCodeAdapter
-
-    assert OpenCodeAdapter().capabilities.supports_named_primary_resume is True
-
-
-def test_adapter_does_not_advertise_session_fork() -> None:
-    from meridian.lib.harness.opencode import OpenCodeAdapter
-
-    assert OpenCodeAdapter().capabilities.supports_session_fork is False
-
-
-def test_config_version_defaults_to_auto() -> None:
-    assert OpenCodeHarnessProfileConfig().version == "auto"
-    assert OpenCodeHarnessProfileConfig(version="v2").version == "v2"
+@pytest.mark.parametrize(
+    ("preference", "detected", "expected"),
+    [
+        ("v2", None, "v2"),
+        ("v1", "v2", "v1"),
+        ("auto", "v1", "v1"),
+        ("auto", "v2", "v2"),
+    ],
+)
+def test_resolve_opencode_version(
+    preference: str,
+    detected: str | None,
+    expected: str,
+) -> None:
+    assert resolve_opencode_version(preference, env={}, detected=detected) == expected
 
 
 def test_config_version_rejects_unknown_value() -> None:

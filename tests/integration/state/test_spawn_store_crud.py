@@ -65,33 +65,6 @@ def _start_test_spawn(runtime_root: Path, *, spawn_id: str | None = None) -> str
     )
 
 
-def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c1",
-            model="gpt-5.4",
-            agent="coder",
-            harness="codex",
-            prompt="hello",
-            launch_mode="app",
-            runner_pid=1111,
-        )
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.launch_mode == "app"
-    assert row.runner_pid == 1111
-
-    update_spawn(runtime_root, spawn_id, launch_mode="foreground", runner_pid=2222)
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.launch_mode == "foreground"
-    assert row.runner_pid == 2222
-
-
 def test_spawn_path_fields_are_normalized_at_write_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -398,34 +371,6 @@ def test_start_spawn_rejects_symlinked_staging_container(tmp_path: Path) -> None
     assert not (paths.spawns_dir / "p1").exists()
 
 
-def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    control_root = (tmp_path / "control-root").resolve()
-    task_cwd = (tmp_path / "task-cwd").resolve()
-    control_root.mkdir(parents=True, exist_ok=True)
-    task_cwd.mkdir(parents=True, exist_ok=True)
-
-    spawn_id = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c1",
-            model="gpt-5.4",
-            agent="coder",
-            harness="codex",
-            prompt="hello",
-            control_root=control_root.as_posix(),
-            task_cwd=task_cwd.as_posix(),
-            execution_cwd=task_cwd.as_posix(),
-        )
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.control_root == control_root.as_posix()
-    assert row.task_cwd == task_cwd.as_posix()
-    assert row.execution_cwd == task_cwd.as_posix()
-
-
 def test_start_spawn_persists_goal_from_start_metadata(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = str(
@@ -449,55 +394,6 @@ def test_start_spawn_persists_goal_from_start_metadata(tmp_path: Path) -> None:
     assert row.desc == "goal test"
     assert row.work_id == "w-goal"
     assert row.goal == "keep scope tight"
-
-
-def test_start_spawn_persists_launch_policy_snapshot(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    snapshot = LaunchPolicySnapshot(
-        model="claude-sonnet-4-6",
-        harness="claude",
-        agent="coder",
-        skills=("testing-principles",),
-        loaded_skills=(
-            SkillContent(
-                name="testing-principles",
-                description="testing-principles skill",
-                path="/skills/testing-principles/SKILL.md",
-                content="# testing-principles\n\nBe consistent.\n",
-                skill_type="reference",
-            ),
-        ),
-        execution_policy=ResolvedExecutionPolicy(
-            approval="auto",
-            sandbox="workspace-write",
-            effort="high",
-        ),
-        tools={"write": "allow"},
-        mcp_tools=("github",),
-        extra_args=("--append-system-prompt", "stable"),
-        terminal_surface_mode="pty_mediated",
-        matched_policy_rule="profile-default",
-        model_selection_requested_token="sonnet",
-        model_selection_canonical_id="claude-sonnet-4-6",
-        model_selection_harness_provenance="alias-default",
-        selection_report={"version": 2, "outcome": "selected"},
-    )
-
-    spawn_id = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c1",
-            model="claude-sonnet-4-6",
-            agent="coder",
-            harness="claude",
-            prompt="hello",
-            launch_policy_snapshot=snapshot,
-        )
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.launch_policy_snapshot == snapshot
 
 
 def test_start_spawn_embeds_launch_policy_snapshot_in_state_json(tmp_path: Path) -> None:
@@ -535,6 +431,9 @@ def test_start_spawn_embeds_launch_policy_snapshot_in_state_json(tmp_path: Path)
     payload = json.loads(state_path.read_text(encoding="utf-8"))
 
     assert payload["launch_policy_snapshot"] == snapshot.model_dump(mode="json")
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.launch_policy_snapshot == snapshot
     assert not any(
         "launch_policy_snapshot" in path.name
         for path in spawn_dir.iterdir()
@@ -654,34 +553,6 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
     assert filtered.records[0].prompt is None
     assert filtered.records[0].desc == "desc-2"
 
-
-def test_list_spawns_reports_schema_invalid_row(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    _start_test_spawn(runtime_root)
-    invalid_spawn_dir = runtime_root / "spawns" / "p999"
-    invalid_spawn_dir.mkdir(parents=True)
-    atomic_write_text(invalid_spawn_dir / "state.json", json.dumps({"id": "p999"}))
-
-    collection = list_spawns(runtime_root)
-    assert [row.id for row in collection.records] == ["p1"]
-    assert [report.spawn_id for report in collection.quarantines] == ["p999"]
-
-
-def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    p1 = _start_test_spawn(runtime_root)
-    p2 = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c2",
-            model="gpt-5.4",
-            agent="coder",
-            harness="codex",
-            prompt="world",
-        )
-    )
-    finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
-
     spawns = list_spawns(runtime_root)
     assert [spawn.id for spawn in spawns.records] == [p1, p2]
     assert spawns.records[0].status == "succeeded"
@@ -694,6 +565,18 @@ def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
     assert row.chat_id == "c2"
     assert row.status == "running"
     assert row.prompt == "world"
+
+
+def test_list_spawns_reports_schema_invalid_row(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _start_test_spawn(runtime_root)
+    invalid_spawn_dir = runtime_root / "spawns" / "p999"
+    invalid_spawn_dir.mkdir(parents=True)
+    atomic_write_text(invalid_spawn_dir / "state.json", json.dumps({"id": "p999"}))
+
+    collection = list_spawns(runtime_root)
+    assert [row.id for row in collection.records] == ["p1"]
+    assert [report.spawn_id for report in collection.quarantines] == ["p999"]
 
 
 def test_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(

@@ -149,7 +149,7 @@ testpaths = [
   "tests/integration/telemetry",
   "tests/integration/state",
 ]
-addopts = "-ra -n 4"
+addopts = "-ra -n auto"
 asyncio_mode = "auto"
 pythonpath = ["src"]
 timeout = 60

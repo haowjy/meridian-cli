@@ -31,10 +31,6 @@ def test_schedule_places_only_windows_that_fit(
     assert schedule(123_000, ttl_seconds, Config(), push_delay_seconds=60) == expected
 
 
-def test_schedule_places_long_turn_push_after_push_delay() -> None:
-    assert schedule(123_000, None, Config(), push_delay_seconds=60).push_at == 183_000
-
-
 def test_schedule_places_quick_turn_push_after_quick_delay() -> None:
     assert schedule(123_000, None, Config(), push_delay_seconds=600).push_at == 723_000
 

@@ -27,212 +27,130 @@ def _terminal_future(
     return future
 
 
-@pytest.mark.asyncio
-async def test_terminal_frame_wins_immediately() -> None:
-    outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
-
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(outcome),
-        signal_task=_future(),
-        watchdog_task=_future(True, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.TERMINAL_FRAME
-    assert decision.terminal_outcome == outcome
-    assert decision.stop_required is True
-    assert decision.synthetic_status == "succeeded"
-    assert decision.synthetic_exit_code == 0
+_SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
+_FAILURE = TerminalEventOutcome(status="failed", exit_code=1, error="late_frame")
 
 
 @pytest.mark.asyncio
-async def test_completion_uses_already_observed_terminal_frame() -> None:
-    outcome = TerminalEventOutcome(status="failed", exit_code=1, error="late_frame")
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(outcome),
-        signal_task=_future(),
-    )
+@pytest.mark.parametrize(
+    ("ready", "expected"),
+    [
+        pytest.param(
+            {
+                "completion": True,
+                "terminal": _SUCCESS,
+                "watchdog": True,
+            },
+            {
+                "trigger": TriggerKind.TERMINAL_FRAME,
+                "terminal_outcome": _SUCCESS,
+                "stop_required": True,
+                "synthetic_status": "succeeded",
+                "synthetic_exit_code": 0,
+            },
+            id="terminal-frame-wins-immediately",
+        ),
+        pytest.param(
+            {"completion": True, "terminal": _FAILURE},
+            {
+                "trigger": TriggerKind.TERMINAL_FRAME,
+                "terminal_outcome": _FAILURE,
+                "stop_required": True,
+            },
+            id="completion-uses-observed-terminal-frame",
+        ),
+        pytest.param(
+            {"completion": True},
+            {
+                "trigger": TriggerKind.COMPLETION,
+                "terminal_outcome": None,
+                "stop_required": False,
+            },
+            id="completion-without-terminal-frame",
+        ),
+        pytest.param(
+            {"signal": True},
+            {
+                "trigger": TriggerKind.SIGNAL,
+                "stop_required": True,
+                "synthetic_status": "cancelled",
+                "synthetic_exit_code": None,
+                "synthetic_error": "cancelled",
+            },
+            id="signal-requests-cancel-stop",
+        ),
+        pytest.param(
+            {"completion": True, "budget": True},
+            {
+                "trigger": TriggerKind.BUDGET,
+                "stop_required": True,
+                "synthetic_status": "failed",
+                "synthetic_exit_code": None,
+                "synthetic_error": "budget_exceeded",
+            },
+            id="budget-beats-completion",
+        ),
+        pytest.param(
+            {"timeout": None},
+            {
+                "trigger": TriggerKind.TIMEOUT,
+                "stop_required": True,
+                "synthetic_status": "failed",
+                "synthetic_exit_code": 3,
+                "synthetic_error": "timeout",
+            },
+            id="timeout",
+        ),
+        pytest.param(
+            {"terminal": _SUCCESS, "timeout": None},
+            {
+                "trigger": TriggerKind.TERMINAL_FRAME,
+                "terminal_outcome": _SUCCESS,
+                "stop_required": True,
+            },
+            id="timeout-prefers-terminal",
+        ),
+        pytest.param(
+            {"completion": True, "timeout": None},
+            {"trigger": TriggerKind.COMPLETION, "stop_required": False},
+            id="timeout-prefers-completion",
+        ),
+        pytest.param(
+            {"completion": True, "watchdog": False},
+            {"trigger": TriggerKind.COMPLETION, "stop_required": False},
+            id="completion-beats-noop-watchdog",
+        ),
+        pytest.param(
+            {"completion": True, "watchdog": True},
+            {"trigger": TriggerKind.WATCHDOG, "stop_required": False},
+            id="watchdog",
+        ),
+        pytest.param(
+            {"completion": True, "inactivity": True},
+            {"trigger": TriggerKind.INACTIVITY, "stop_required": False},
+            id="inactivity",
+        ),
+        pytest.param(
+            {"completion": True, "signal": True},
+            {"trigger": TriggerKind.COMPLETION, "stop_required": False},
+            id="completion-beats-signal",
+        ),
+    ],
+)
+async def test_terminal_arbitration(
+    ready: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    kwargs = {
+        "completion_task": _future(None, done=ready.get("completion") is True),
+        "terminal_event_future": _terminal_future(ready.get("terminal")),  # type: ignore[arg-type]
+        "signal_task": _future(True, done=ready.get("signal") is True),
+    }
+    for name in ("budget", "timeout", "watchdog", "inactivity"):
+        if name in ready:
+            kwargs[f"{name}_task"] = _future(ready[name], done=True)
 
-    assert decision.trigger is TriggerKind.TERMINAL_FRAME
-    assert decision.terminal_outcome == outcome
-    assert decision.stop_required is True
+    decision = await arbitrate_terminal(**kwargs)  # type: ignore[arg-type]
 
-
-@pytest.mark.asyncio
-async def test_completion_without_terminal_frame_completes_normally() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(),
-    )
-
-    assert decision.trigger is TriggerKind.COMPLETION
-    assert decision.terminal_outcome is None
-    assert decision.stop_required is False
-
-
-@pytest.mark.asyncio
-async def test_signal_only_requests_cancel_stop() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(True, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.SIGNAL
-    assert decision.stop_required is True
-    assert decision.synthetic_status == "cancelled"
-    assert decision.synthetic_exit_code is None
-    assert decision.synthetic_error == "cancelled"
-
-
-@pytest.mark.asyncio
-async def test_budget_beats_completion_when_both_ready() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(),
-        budget_task=_future(True, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.BUDGET
-    assert decision.stop_required is True
-    assert decision.synthetic_status == "failed"
-    assert decision.synthetic_exit_code is None
-    assert decision.synthetic_error == "budget_exceeded"
-
-
-@pytest.mark.asyncio
-async def test_timeout_returns_timeout_when_no_terminal_or_completion() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(),
-        timeout_task=_future(None, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.TIMEOUT
-    assert decision.stop_required is True
-    assert decision.synthetic_status == "failed"
-    assert decision.synthetic_exit_code == 3
-    assert decision.synthetic_error == "timeout"
-
-
-@pytest.mark.asyncio
-async def test_timeout_prefers_terminal_when_already_observed() -> None:
-    outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
-    decision = await arbitrate_terminal(
-        completion_task=_future(),
-        terminal_event_future=_terminal_future(outcome),
-        signal_task=_future(),
-        timeout_task=_future(None, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.TERMINAL_FRAME
-    assert decision.terminal_outcome == outcome
-    assert decision.stop_required is True
-
-
-@pytest.mark.asyncio
-async def test_timeout_prefers_completion_when_already_done() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(),
-        timeout_task=_future(None, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.COMPLETION
-    assert decision.stop_required is False
-
-
-@pytest.mark.asyncio
-async def test_completion_beats_noop_watchdog_in_same_tick() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(),
-        watchdog_task=_future(False, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.COMPLETION
-    assert decision.stop_required is False
-
-
-@pytest.mark.asyncio
-async def test_watchdog_true_reports_watchdog_trigger() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(),
-        watchdog_task=_future(True, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.WATCHDOG
-    assert decision.stop_required is False
-
-
-@pytest.mark.asyncio
-async def test_completion_beats_noop_inactivity_in_same_tick() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(),
-        inactivity_task=_future(False, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.COMPLETION
-    assert decision.stop_required is False
-
-
-@pytest.mark.asyncio
-async def test_inactivity_true_reports_inactivity_trigger() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(),
-        inactivity_task=_future(True, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.INACTIVITY
-    assert decision.stop_required is False
-
-
-@pytest.mark.asyncio
-async def test_inactivity_absent_when_not_passed() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(),
-        inactivity_task=None,
-    )
-
-    assert decision.trigger is TriggerKind.COMPLETION
-    assert decision.stop_required is False
-
-
-@pytest.mark.asyncio
-async def test_completion_beats_signal_when_both_ready() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(None, done=True),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(True, done=True),
-    )
-
-    assert decision.trigger is TriggerKind.COMPLETION
-    assert decision.stop_required is False
-
-
-@pytest.mark.asyncio
-async def test_optional_triggers_are_absent_when_not_passed() -> None:
-    decision = await arbitrate_terminal(
-        completion_task=_future(),
-        terminal_event_future=_terminal_future(),
-        signal_task=_future(True, done=True),
-        timeout_task=None,
-        budget_task=None,
-        watchdog_task=None,
-    )
-
-    assert decision.trigger is TriggerKind.SIGNAL
+    for field, value in expected.items():
+        assert getattr(decision, field) == value

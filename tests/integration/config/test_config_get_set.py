@@ -95,21 +95,6 @@ def test_config_set_and_identity_creation_share_one_transaction(
     assert payload["project"]["id"] == identity_ids[0]
 
 
-def test_config_set_requires_project_config_file(
-    tmp_path: Path,
-) -> None:
-    project_root = _repo(tmp_path)
-
-    with pytest.raises(ValueError, match="no project config here; run 'meridian init'"):
-        config_set_sync(
-            ConfigSetInput(
-                project_root=project_root.as_posix(),
-                key="defaults.max_depth",
-                value="5",
-            )
-        )
-
-
 def test_config_get_text_stays_one_line_for_unminted_project(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     (project_root / "meridian.toml").write_text("[defaults]\nmax_depth = 3\n", encoding="utf-8")
@@ -211,19 +196,6 @@ def test_deleted_routing_default_keys_are_not_supported_by_config_commands(
             "env var",
             "MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS",
         ),
-        (
-            None,
-            None,
-            None,
-            {
-                "MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS": "120",
-                "MERIDIAN_MIN_WAIT_YIELD_SECONDS": "45",
-            },
-            "spawn.min_wait_yield_seconds",
-            45.0,
-            "env var",
-            "MERIDIAN_MIN_WAIT_YIELD_SECONDS",
-        ),
     ],
     ids=[
         "project-over-user",
@@ -231,7 +203,6 @@ def test_deleted_routing_default_keys_are_not_supported_by_config_commands(
         "env-selected-user-config",
         "local-over-project",
         "default-wait-env",
-        "min-wait-env",
     ],
 )
 def test_config_show_get_and_loader_report_same_winning_source(

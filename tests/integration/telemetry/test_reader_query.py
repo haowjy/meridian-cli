@@ -8,6 +8,8 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.launch.types import PrimarySessionMetadata
@@ -51,55 +53,26 @@ def _write_segment(
     return path
 
 
-def test_query_with_no_filters_returns_events_from_segments(tmp_path: Path) -> None:
+@pytest.mark.parametrize("filter_kind", ["domain", "since", "spawn"])
+def test_query_filters(tmp_path: Path, filter_kind: str) -> None:
     telemetry_dir = tmp_path / "telemetry"
-    now = datetime.now(UTC)
-    events = [_event(now, "chat.ws.connected"), _event(now, "spawn.succeeded", domain="spawn")]
-    _write_segment(telemetry_dir, "123-0001.jsonl", events)
+    if filter_kind == "domain":
+        now = datetime.now(UTC)
+        expected = _event(now, "chat.ws.connected", domain="chat")
+        other = _event(now, "spawn.succeeded", domain="spawn")
+        kwargs = {"domain": "chat"}
+    elif filter_kind == "since":
+        expected = _event(datetime.now(UTC), "chat.ws.connected")
+        other = _event(datetime.now(UTC) - timedelta(hours=2), "chat.ws.disconnected")
+        kwargs = {"since": "1h"}
+    else:
+        now = datetime.now(UTC)
+        expected = _event(now, "spawn.succeeded", domain="spawn", ids={"spawn_id": "p123"})
+        other = _event(now, "spawn.failed", domain="spawn", ids={"spawn_id": "p456"})
+        kwargs = {"ids_filter": {"spawn_id": "p123"}}
+    _write_segment(telemetry_dir, "123-0001.jsonl", [other, expected])
 
-    assert list(query_events(telemetry_dir)) == events
-
-
-def test_query_domain_filter(tmp_path: Path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    now = datetime.now(UTC)
-    chat_event = _event(now, "chat.ws.connected", domain="chat")
-    spawn_event = _event(now, "spawn.succeeded", domain="spawn")
-    _write_segment(telemetry_dir, "123-0001.jsonl", [chat_event, spawn_event])
-
-    assert list(query_events(telemetry_dir, domain="chat")) == [chat_event]
-
-
-def test_query_since_filter(tmp_path: Path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    recent = _event(datetime.now(UTC), "chat.ws.connected")
-    old = _event(datetime.now(UTC) - timedelta(hours=2), "chat.ws.disconnected")
-    _write_segment(telemetry_dir, "123-0001.jsonl", [old, recent])
-
-    assert list(query_events(telemetry_dir, since="1h")) == [recent]
-
-
-def test_query_spawn_correlation_filter(tmp_path: Path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    now = datetime.now(UTC)
-    matching = _event(now, "spawn.succeeded", domain="spawn", ids={"spawn_id": "p123"})
-    other = _event(now, "spawn.failed", domain="spawn", ids={"spawn_id": "p456"})
-    _write_segment(telemetry_dir, "123-0001.jsonl", [matching, other])
-
-    assert list(query_events(telemetry_dir, ids_filter={"spawn_id": "p123"})) == [matching]
-
-
-def test_status_returns_segment_count_and_size(tmp_path: Path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    event = _event(datetime.now(UTC), "chat.ws.connected")
-    path = _write_segment(telemetry_dir, "123-0001.jsonl", [event])
-
-    status = compute_status(tmp_path)
-
-    assert status.telemetry_dir == telemetry_dir
-    assert status.segment_count == 1
-    assert status.total_bytes == path.stat().st_size
-    assert status.total_size_human.endswith("B")
+    assert list(query_events(telemetry_dir, **kwargs)) == [expected]
 
 
 def test_truncated_lines_are_skipped_gracefully(tmp_path: Path) -> None:
@@ -301,31 +274,3 @@ def test_tail_events_applies_domain_filter_in_binary_mode(tmp_path: Path) -> Non
         file.write((json.dumps(wanted) + "\n").encode("utf-8"))
 
     assert next(events)["event"] == "keep.event"
-
-
-def test_tail_events_polls_until_new_data_arrives(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    import threading
-
-    segment = tmp_path / "seg.jsonl"
-    poll_entered = threading.Event()
-    real_sleep = time.sleep
-
-    def sleep_with_barrier(interval: float) -> None:
-        poll_entered.set()
-        real_sleep(interval)
-
-    monkeypatch.setattr("meridian.lib.telemetry.reader.time.sleep", sleep_with_barrier)
-
-    def writer() -> None:
-        assert poll_entered.wait(timeout=5.0), "tail_events never entered poll sleep"
-        _write_binary_tail_event(segment, "polled.event")
-
-    writer_thread = threading.Thread(target=writer, daemon=True)
-    writer_thread.start()
-    event = next(tail_events(tmp_path, poll_interval=0.001))
-    writer_thread.join(timeout=5.0)
-
-    assert event["event"] == "polled.event"

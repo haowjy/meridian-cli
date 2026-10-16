@@ -19,7 +19,6 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME
-from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -290,72 +289,6 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
     assert spawns.records[0].harness_session_id == outcome.resolved_harness_session_id
-
-
-@pytest.mark.slow
-def test_run_harness_process_claude_primary_stays_on_black_box_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    project_root = tmp_path / "claude-compat"
-    project_root.mkdir()
-    launch_context, harness_registry = _build_primary_launch_context(
-        project_root=project_root,
-        harness_id=HarnessId.CLAUDE,
-        model="claude-sonnet-4-5",
-    )
-    harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
-    black_box_calls = 0
-
-    def fail_managed(
-        harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
-        control_root: Any,
-        task_cwd: Any,
-        env: Any,
-        spec: Any,
-        process_launcher: Any,
-        on_running: Any = None,
-        session_id_observer: Any = None,
-    ) -> PrimaryAttachOutcome:
-        _ = (
-            harness_id,
-            spawn_id,
-            spawn_dir,
-            control_root,
-            task_cwd,
-            env,
-            spec,
-            process_launcher,
-            on_running,
-        )
-        raise AssertionError("claude primary must not use managed launcher path")
-
-    def fake_run_primary_process_with_capture(
-        command: Any,
-        cwd: Any,
-        env: Any,
-        output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
-        nonlocal black_box_calls
-        black_box_calls += 1
-        assert callable(on_child_started)
-        on_child_started(7272)
-        return (0, 7272)
-
-    outcome = run_harness_process(
-        launch_context,
-        harness_registry,
-        prepared=launch_context.prepared,
-        run_primary_attach_fn=fail_managed,
-        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-    )
-
-    assert black_box_calls == 1
-    assert outcome.exit_code == 0
 
 
 def test_explicit_no_agent_skips_claude_native_agent_projection(

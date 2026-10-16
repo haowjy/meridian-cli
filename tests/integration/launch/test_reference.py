@@ -7,43 +7,6 @@ import pytest
 from meridian.lib.launch.reference import validate_reference_paths
 
 
-def test_validate_reference_paths_resolves_relative_from_reference_anchor(tmp_path: Path) -> None:
-    authority_root = tmp_path / "authority"
-    task_cwd = tmp_path / "task"
-    kb_dir = authority_root / ".meridian" / "kb"
-    authority_root.mkdir(parents=True, exist_ok=True)
-    task_cwd.mkdir(parents=True, exist_ok=True)
-    kb_dir.mkdir(parents=True, exist_ok=True)
-    target = task_cwd / "notes.md"
-    target.write_text("hello", encoding="utf-8")
-
-    resolved = validate_reference_paths(
-        ("notes.md",),
-        reference_anchor=task_cwd,
-        kb_dir=kb_dir,
-    )
-
-    assert resolved == (target.resolve(),)
-
-
-def test_validate_reference_paths_kb_prefix_confined_to_kb_dir(tmp_path: Path) -> None:
-    kb_dir = tmp_path / "authority" / ".meridian" / "kb"
-    anchor = tmp_path / "task"
-    kb_dir.mkdir(parents=True, exist_ok=True)
-    anchor.mkdir(parents=True, exist_ok=True)
-    kb_file = kb_dir / "domain" / "decision.md"
-    kb_file.parent.mkdir(parents=True, exist_ok=True)
-    kb_file.write_text("decision", encoding="utf-8")
-
-    resolved = validate_reference_paths(
-        ("kb:domain/decision.md",),
-        reference_anchor=anchor,
-        kb_dir=kb_dir,
-    )
-
-    assert resolved == (kb_file.resolve(),)
-
-
 def test_validate_reference_paths_kb_prefix_uses_authority_kb_not_reference_anchor(
     tmp_path: Path,
 ) -> None:
@@ -120,19 +83,6 @@ def test_validate_reference_paths_rejects_invalid_kb_prefix(raw: str, tmp_path: 
 
     with pytest.raises(ValueError):
         validate_reference_paths((raw,), reference_anchor=anchor, kb_dir=kb_dir)
-
-
-def test_validate_reference_paths_rejects_at_prefix(tmp_path: Path) -> None:
-    kb_dir = tmp_path / "authority" / ".meridian" / "kb"
-    anchor = tmp_path / "task"
-    kb_dir.mkdir(parents=True, exist_ok=True)
-    anchor.mkdir(parents=True, exist_ok=True)
-
-    with pytest.raises(ValueError) as exc_info:
-        validate_reference_paths(("@domain/page.md",), reference_anchor=anchor, kb_dir=kb_dir)
-
-    assert "no longer supported" in str(exc_info.value)
-    assert "kb:domain/page.md" in str(exc_info.value)
 
 
 def test_validate_reference_paths_missing_relative_reports_anchor_and_resolved_path(

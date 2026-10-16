@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
@@ -19,31 +21,27 @@ def _spec(*, interactive: bool) -> ResolvedLaunchSpec:
     )
 
 
-def test_interactive_codex_app_server_injects_idle_notify() -> None:
+@pytest.mark.parametrize("interactive", [True, False])
+def test_codex_app_server_injects_idle_notify_only_when_interactive(
+    interactive: bool,
+) -> None:
     command = project_codex_spec_to_appserver_command(
-        _spec(interactive=True),
+        _spec(interactive=interactive),
         host="127.0.0.1",
         port=1234,
     )
 
-    notify_override = next(argument for argument in command if argument.startswith("notify="))
-    key, separator, raw_command = notify_override.partition("=")
-    assert key == "notify"
-    assert separator == "="
-    assert json.loads(raw_command) == [
-        "meridian",
-        "idle",
-        "event",
-        "--harness",
-        "codex",
-    ]
-
-
-def test_noninteractive_codex_app_server_does_not_inject_idle_notify() -> None:
-    command = project_codex_spec_to_appserver_command(
-        _spec(interactive=False),
-        host="127.0.0.1",
-        port=1234,
-    )
-
-    assert not any(argument.startswith("notify=") for argument in command)
+    if interactive:
+        notify_override = next(argument for argument in command if argument.startswith("notify="))
+        key, separator, raw_command = notify_override.partition("=")
+        assert key == "notify"
+        assert separator == "="
+        assert json.loads(raw_command) == [
+            "meridian",
+            "idle",
+            "event",
+            "--harness",
+            "codex",
+        ]
+    else:
+        assert not any(argument.startswith("notify=") for argument in command)

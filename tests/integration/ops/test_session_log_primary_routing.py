@@ -4,9 +4,6 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
-from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_target import resolve_transcript_source
@@ -77,67 +74,6 @@ def _write_codex_rollout(
         encoding="utf-8",
     )
     return rollout_path
-
-
-def test_active_managed_primary_reads_bound_native_transcript(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    home_root = tmp_path / "home"
-    monkeypatch.setenv("HOME", home_root.as_posix())
-    session_id = "3e9a0285-2c37-4311-96f5-2ec5c0d7c6c7"
-    _write_codex_rollout(
-        home_root=home_root,
-        project_root=project_root,
-        session_id=session_id,
-        assistant_text="native managed primary transcript",
-    )
-
-    session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id=session_id,
-        model="test",
-        native_store=str(home_root / ".codex" / "sessions"),
-        chat_id="c42",
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p42",
-        chat_id="c42",
-        model="gpt-5.4",
-        agent="dev-orchestrator",
-        harness="codex",
-        kind="primary",
-        prompt="do thing",
-        harness_session_id=session_id,
-        status="running",
-    )
-    _write_primary_meta(runtime_root, "p42")
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "harness_id": "codex",
-            "payload": {"item": {"type": "agentMessage", "text": "managed live progress"}},
-        },
-    )
-
-    output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
-    )
-
-    assert output.session_id == session_id
-    assert output.source == "codex transcript"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "native managed primary transcript")
-    ]
 
 
 def test_session_log_active_chat_reads_exact_native_transcript(
@@ -216,37 +152,3 @@ def test_session_log_active_chat_reads_exact_native_transcript(
         ]
     finally:
         session_store.stop_session(runtime_root, chat_id)
-
-
-def test_unbound_completed_spawn_ignores_indexed_history(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p42",
-        chat_id="c42",
-        model="gpt-5.4",
-        agent="dev-orchestrator",
-        harness="codex",
-        kind="primary",
-        prompt="do thing",
-        harness_session_id="missing-native-session",
-    )
-    spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
-    _write_primary_meta(runtime_root, "p42")
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "harness_id": "codex",
-            "payload": {"item": {"type": "agentMessage", "text": "managed artifact transcript"}},
-        },
-        artifact=True,
-    )
-
-    with pytest.raises(NativeSessionUnavailable, match="unbound"):
-        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix()))

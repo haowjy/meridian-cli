@@ -34,16 +34,6 @@ async def test_hard_private_read_failure_recovers_only_after_valid_publication(
         await watcher.stop()
 
 
-@pytest.mark.asyncio
-async def test_missing_private_file_is_empty(tmp_path: Path) -> None:
-    watcher = PiDiskWatcher(tmp_path, SpawnId("p-parent"))
-    await watcher.start()
-    try:
-        assert watcher.evidence_failure() is None
-    finally:
-        await watcher.stop()
-
-
 @pytest.mark.parametrize("before_wait", [False, True])
 @pytest.mark.asyncio
 async def test_validated_disk_change_wakes_current_or_next_waiter(

@@ -193,9 +193,15 @@ def test_list_and_reentry_refuse_primary_metadata_as_binding(tmp_path: Path) -> 
     assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
 
 
-def test_recorded_primary_spawn_id_avoids_global_spawn_recovery_scan(
+@pytest.mark.parametrize(
+    "spawn_harness_session_id",
+    ["42424242-4242-4242-8242-424242424242", None],
+    ids=["bound-spawn", "unbound-spawn"],
+)
+def test_recorded_primary_spawn_avoids_global_spawn_recovery_scan(
     tmp_path: Path,
     monkeypatch,
+    spawn_harness_session_id: str | None,
 ) -> None:
     project_root, runtime_root = _project_roots(tmp_path)
     chat_id = session_store.start_session(
@@ -215,47 +221,11 @@ def test_recorded_primary_spawn_id_avoids_global_spawn_recovery_scan(
         harness="codex",
         kind="primary",
         prompt="primary",
-        harness_session_id="42424242-4242-4242-8242-424242424242",
+        harness_session_id=spawn_harness_session_id,
     )
 
     def fail_global_scan(*_args, **_kwargs):
-        raise AssertionError("direct primary relationship should avoid list_spawns")
-
-    monkeypatch.setattr(spawn_store, "list_spawns", fail_global_scan)
-    try:
-        listing = session_list_sync(SessionListInput(project_root=project_root.as_posix(), limit=1))
-        assert isinstance(listing.rows[0].reentry, Blocked)
-        assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
-
-
-def test_recorded_primary_spawn_without_harness_id_does_not_scan_globally(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    project_root, runtime_root = _project_roots(tmp_path)
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="",
-        model="gpt-5.4",
-        kind="primary",
-        spawn_id="p42",
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p42",
-        chat_id=chat_id,
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        kind="primary",
-        prompt="primary",
-    )
-
-    def fail_global_scan(*_args, **_kwargs):
-        raise AssertionError("a recorded primary row should bound failed recovery")
+        raise AssertionError("a recorded primary row should avoid list_spawns")
 
     monkeypatch.setattr(spawn_store, "list_spawns", fail_global_scan)
     try:
@@ -402,6 +372,7 @@ def test_subset_search_is_ordered_and_failure_isolated(tmp_path: Path, monkeypat
         native_store=(home / ".codex" / "sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
+        spawn_id="p42",
     )
     other_chat = session_store.start_session(
         runtime_root,
@@ -413,6 +384,17 @@ def test_subset_search_is_ordered_and_failure_isolated(tmp_path: Path, monkeypat
     )
     session_store.stop_session(runtime_root, matching_chat)
     session_store.stop_session(runtime_root, other_chat)
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p42",
+        chat_id=matching_chat,
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        kind="primary",
+        prompt="primary",
+        harness_session_id=matching_id,
+    )
     _write_codex_rollout(
         home=home,
         project_root=project_root,
@@ -457,60 +439,6 @@ def test_subset_search_is_ordered_and_failure_isolated(tmp_path: Path, monkeypat
     assert steps[2].matched is True and steps[2].error is None
     assert record_scan_count == 0
     assert spawn_scan_count == 0
-
-
-def test_subset_search_uses_recorded_primary_spawn_without_global_scan(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    project_root, runtime_root = _project_roots(tmp_path)
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", home.as_posix())
-    harness_session_id = "77777777-7777-4777-8777-777777777777"
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id=harness_session_id,
-        native_store=(home / ".codex" / "sessions").as_posix(),
-        model="gpt-5.4",
-        kind="primary",
-        spawn_id="p42",
-    )
-    session_store.stop_session(runtime_root, chat_id)
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p42",
-        chat_id=chat_id,
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        kind="primary",
-        prompt="primary",
-        harness_session_id=harness_session_id,
-    )
-    _write_codex_rollout(
-        home=home,
-        project_root=project_root,
-        session_id=harness_session_id,
-        text="direct relationship needle",
-    )
-
-    def fail_global_scan(*_args, **_kwargs):
-        raise AssertionError("direct primary relationship should avoid list_spawns")
-
-    monkeypatch.setattr(spawn_store, "list_spawns", fail_global_scan)
-
-    steps = list(
-        iter_session_subset_search(
-            project_root=project_root.as_posix(),
-            chat_ids=(chat_id,),
-            query="needle",
-        )
-    )
-
-    assert len(steps) == 1
-    assert steps[0].matched is True
-    assert steps[0].error is None
 
 
 def test_subset_search_does_not_borrow_sibling_history_when_primary_spawn_is_missing(

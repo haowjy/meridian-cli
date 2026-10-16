@@ -80,48 +80,25 @@ def test_spawn_subagents_uses_explicit_allow_list(
     assert tuple(entry.scope for entry in output.agents) == ("root", "fallback")
 
 
-def test_spawn_subagents_empty_allow_list_is_leaf_agent(
+@pytest.mark.parametrize(
+    ("agent", "allow_list"),
+    [("coder", ()), ("unknown-agent", None)],
+    ids=["leaf", "unresolved"],
+)
+def test_spawn_subagents_without_resolved_children_returns_empty(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    agent: str,
+    allow_list: tuple[str, ...] | None,
 ) -> None:
     project_root = _seed_project(tmp_path)
-    _seed_spawn(project_root, spawn_id="p2", agent="coder")
+    _seed_spawn(project_root, spawn_id="p2", agent=agent)
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p2")
 
     def fake_agent_subagents(root: Path, agent_name: str) -> tuple[str, ...] | None:
         assert root == project_root
-        assert agent_name == "coder"
-        return ()
-
-    def fail_list_subagents(root: Path) -> tuple[MarsAgentEntry, ...]:
-        raise AssertionError(f"mars_list_subagents should not run: {root}")
-
-    monkeypatch.setattr(
-        "meridian.lib.ops.spawn.api.mars_agent_subagents",
-        fake_agent_subagents,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.ops.spawn.api.mars_list_subagents",
-        fail_list_subagents,
-    )
-
-    output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
-
-    assert output.agents == ()
-
-
-def test_spawn_subagents_unresolved_agent_returns_empty(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _seed_project(tmp_path)
-    _seed_spawn(project_root, spawn_id="p3", agent="unknown-agent")
-    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p3")
-
-    def fake_agent_subagents(root: Path, agent_name: str) -> tuple[str, ...] | None:
-        assert root == project_root
-        assert agent_name == "unknown-agent"
-        return None
+        assert agent_name == agent
+        return allow_list
 
     def fail_list_subagents(root: Path) -> tuple[MarsAgentEntry, ...]:
         raise AssertionError(f"mars_list_subagents should not run: {root}")

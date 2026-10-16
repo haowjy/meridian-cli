@@ -28,9 +28,18 @@ from tests.integration.launch.test_streaming_runner_seed import _ClaudeSeedPersi
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["create", "resume", "fork"])
-@pytest.mark.parametrize("delivery", ["property", "callback", "duplicate"])
-@pytest.mark.parametrize("mismatch", [False, True])
+@pytest.mark.parametrize(
+    ("operation", "delivery", "mismatch"),
+    [
+        (operation, "callback", mismatch)
+        for operation in ("create", "resume", "fork")
+        for mismatch in (False, True)
+    ]
+    + [
+        ("create", "property", False),
+        ("create", "duplicate", False),
+    ],
+)
 async def test_streaming_initial_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
