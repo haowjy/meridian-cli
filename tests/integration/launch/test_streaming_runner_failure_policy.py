@@ -38,6 +38,7 @@ from tests.integration.launch.streaming_runner_support import (
     streaming_runner_module,
 )
 from tests.support.fakes import FakeClock, FakeHeartbeat
+from tests.support.history import warm_history_index
 from tests.support.launch import FakeBundleResult
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
@@ -348,6 +349,7 @@ async def test_guardrail_failure_does_not_rerun_harness(
         launch_mode="foreground",
         status="queued",
     )
+    warm_history_index(runtime_root)
     guardrail = tmp_path / "fail.sh"
     guardrail.write_text("exit 1\n", encoding="utf-8")
 
