@@ -1413,7 +1413,7 @@ async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> No
         }
     )
     native_run = bind_entry(
-        SessionAttempt(tmp_path, chat_id, record.session_instance_id, None),
+        SessionAttempt(tmp_path, chat_id, record.session_instance_id, None, record),
         spec,
         harness="codex",
         policy=None,

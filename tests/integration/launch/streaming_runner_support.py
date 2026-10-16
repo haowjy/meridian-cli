@@ -530,7 +530,7 @@ async def _execute_with_context(
         assert record is not None
         spawn_store.update_spawn(runtime_root, run.spawn_id, chat_id=chat_id)
         kwargs["session_attempt"] = SessionAttempt(
-            runtime_root, chat_id, record.session_instance_id, "attempt-1", run.spawn_id
+            runtime_root, chat_id, record.session_instance_id, "attempt-1", record, run.spawn_id
         )
     return await streaming_runner_module.execute_with_streaming(
         run,
