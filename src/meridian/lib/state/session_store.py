@@ -219,7 +219,7 @@ def resolve_session_instance_id(paths: RuntimePaths, runtime_root: Path, chat_id
     if held_generation is None:
         _, lease_generation = _read_session_lease(paths, chat_id)
         if not lease_generation.strip():
-            record = _records_by_session(runtime_root).get(chat_id)
+            record = get_session_record(runtime_root, chat_id)
     return session_instance_for_event(held_generation, lease_generation, record)
 
 
@@ -885,9 +885,7 @@ def get_last_session(runtime_root: Path) -> SessionRecord | None:
             continue
         last_session_id = event.chat_id
 
-    if last_session_id is None:
-        return None
-    return _records_by_session(runtime_root).get(last_session_id)
+    return get_session_record(runtime_root, last_session_id)
 
 
 def resolve_session_ref(
@@ -921,7 +919,7 @@ def resolve_session_ref(
 def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
     """Return the active work item ID for a session, or None."""
 
-    record = _records_by_session(runtime_root).get(chat_id)
+    record = get_session_record(runtime_root, chat_id)
     if record is None:
         return None
     return record.active_work_id
@@ -930,7 +928,7 @@ def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
 def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
     """Return harness session ID for a Meridian session ID."""
 
-    record = _records_by_session(runtime_root).get(chat_id)
+    record = get_session_record(runtime_root, chat_id)
     if record is None:
         return None
     return record.harness_session_id
@@ -1073,7 +1071,7 @@ def append_historical_session(runtime_root: Path, record: SessionRecord) -> None
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        existing = _records_by_session(runtime_root).get(record.chat_id)
+        existing = get_session_record(runtime_root, record.chat_id)
         if existing is not None:
             if existing == record:
                 return
