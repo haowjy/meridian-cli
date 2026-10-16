@@ -1,6 +1,8 @@
 import pytest
 
 from meridian.lib.core.spawn_lifecycle import (
+    DurableReportEvidence,
+    classify_durable_report_text,
     has_durable_report_completion,
     parse_terminal_status,
     resolve_completion_cancel_precedence,
@@ -36,47 +38,51 @@ def test_parse_terminal_status_rejects_nonterminal_values(status: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("content", "expected"),
+    ("content", "expected_evidence"),
     [
-        pytest.param("# Report\n\nDone.\n", True, id="report"),
-        pytest.param('{"message":"Done."}', True, id="message"),
+        pytest.param(
+            "# Report\n\nDone.\n", DurableReportEvidence.COMPLETION, id="report"
+        ),
+        pytest.param(
+            '{"message":"Done."}', DurableReportEvidence.COMPLETION, id="message"
+        ),
         pytest.param(
             "# Report\n\n"
             '{"event_type":"permission.asked","payload":{"properties":'
             '{"permission":"external_directory"}}}',
-            False,
+            DurableReportEvidence.ABSENT,
             id="wrapped-permission",
         ),
         pytest.param(
             '{"id":"evt_1","properties":{"permission":"external_directory"},'
             '"type":"permission.asked"}',
-            False,
+            DurableReportEvidence.ABSENT,
             id="permission",
         ),
         pytest.param(
             '{"message":"Root cause: missing WebSocket close frame handling."}',
-            True,
+            DurableReportEvidence.COMPLETION,
             id="report-about-control-frame",
         ),
         pytest.param(
             '{"event_type":"cancelled","payload":{"status":"cancelled","error":"cancelled"}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="cancelled",
         ),
         pytest.param(
             "# Spawn failed\n\nClaude subprocess exited with code 130.",
-            False,
+            DurableReportEvidence.SYNTHETIC_FAILURE,
             id="spawn-failed",
         ),
         pytest.param(
             '# Report\n\n{"type":"error","message":"no close frame received or sent"}\n',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="error",
         ),
         pytest.param(
             '{"event_type":"item/started",'
             '"payload":{"item":{"type":"commandExecution","command":"sleep 600"}}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="item-started",
         ),
         pytest.param(
@@ -85,87 +91,93 @@ def test_parse_terminal_status_rejects_nonterminal_values(status: str) -> None:
             '"id":"019e92fc-88d3-7430-9b93-67a2230470c8","items":[],'
             '"itemsView":"notLoaded","startedAt":1780582484,"status":"inProgress"},'
             '"type":"turn/started"}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="turn-started",
         ),
         pytest.param(
             '{"type":"thread/updated","threadId":"t1"}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="thread-updated",
         ),
         pytest.param(
             '{"type":"user","message":{"role":"user","content":['
             '{"type":"text","text":"[Request interrupted by user]"}]}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="interrupted",
         ),
         pytest.param(
             '{"type":"user","message":{"role":"user","content":['
             '{"type":"tool_result","is_error":true,"content":"Exit code 144"}]}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="tool-result",
         ),
         pytest.param(
             '{"type":"assistant","message":{"role":"assistant","content":['
             '{"type":"tool_use","name":"Bash","input":{"command":"sleep 600"}}]}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="tool-use",
         ),
         pytest.param(
             '{"type":"assistant","message":{"role":"assistant","content":['
             '{"type":"thinking","thinking":"I should call Bash."}]}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="thinking",
         ),
         pytest.param(
             f"# Report\n\n{OPENCODE_LIVE_MESSAGE_PART_UPDATED}\n",
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="message-part-updated",
         ),
         pytest.param(
             '{"type":"message.part.delta","properties":{"part":{"type":"text","text":"O"}}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="message-part-delta",
         ),
         pytest.param(
             '{"type":"message.updated","properties":{"info":{"role":"assistant"}}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="message-updated",
         ),
         pytest.param(
             '{"type":"server.connected","properties":{}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="server-connected",
         ),
         pytest.param(
             '{"type":"meridian/error/connectionClosed","message":"connection lost"}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="connection-closed",
         ),
         pytest.param(
             '{"type":"mcpServer/statusChanged","status":"connected"}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="mcp-status",
         ),
         pytest.param(
             '{"type":"result","is_error":true,"terminal_reason":"aborted_streaming","result":""}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="aborted-result",
         ),
         pytest.param(
             '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}',
-            False,
+            DurableReportEvidence.CONTROL_FRAME,
             id="rate-limit",
         ),
         pytest.param(
             '{"type":"result","is_error":false,"terminal_reason":"end_turn","result":"OK"}',
-            True,
+            DurableReportEvidence.COMPLETION,
             id="completed-result",
         ),
     ],
 )
-def test_has_durable_report_completion(content: str, expected: bool) -> None:
-    assert has_durable_report_completion(content) is expected
+def test_has_durable_report_completion(
+    content: str,
+    expected_evidence: DurableReportEvidence,
+) -> None:
+    assert classify_durable_report_text(content) is expected_evidence
+    assert has_durable_report_completion(content) is (
+        expected_evidence is DurableReportEvidence.COMPLETION
+    )
 
 
 @pytest.mark.parametrize(

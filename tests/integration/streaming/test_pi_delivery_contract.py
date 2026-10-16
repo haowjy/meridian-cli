@@ -117,7 +117,7 @@ async def test_done_cannot_skip_owed_result_or_notice_response(
                 "messages": {"notice": [work_id]},
             },
         )
-        assert await settle(started, attempts=4) is None
+        assert await settle(started) is None
         await started.observe(
             "message_start",
             {

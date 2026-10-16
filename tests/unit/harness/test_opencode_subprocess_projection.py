@@ -63,6 +63,26 @@ def test_subprocess_resume_forwards_model_unless_version_is_v1(
     assert command[command.index("--session") + 1] == "ses-parent"
 
 
+def test_fresh_subprocess_launch_forwards_model() -> None:
+    command = project_opencode_spec_to_cli_args(
+        _spec(model="openai/gpt-5.5", opencode_version="v1"),
+        base_command=_SUBPROCESS_BASE,
+    )
+
+    assert command[command.index("--model") + 1] == "openai/gpt-5.5"
+    assert "--session" not in command
+
+
+def test_subprocess_resume_without_model_forwards_session_only() -> None:
+    command = project_opencode_spec_to_cli_args(
+        _spec(continue_session_id="ses-parent", opencode_version="v1"),
+        base_command=_SUBPROCESS_BASE,
+    )
+
+    assert command[command.index("--session") + 1] == "ses-parent"
+    assert "--model" not in command
+
+
 def test_interactive_resume_keeps_model_for_managed_attach() -> None:
     # Interactive primary continues go through managed attach; the version-aware
     # streaming guard is the enforcement point, so the argv fallback preview may

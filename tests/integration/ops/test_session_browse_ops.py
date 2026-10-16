@@ -8,7 +8,7 @@ import pytest
 import meridian.lib.ops.session_list as session_list_module
 from meridian.lib.ops.session_list import SessionListInput, session_list_sync
 from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
-from meridian.lib.ops.session_reentry import Blocked, Fork, resolve_session_reentry
+from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, resolve_session_reentry
 from meridian.lib.ops.session_search import iter_session_subset_search
 from meridian.lib.state import primary_meta, session_store, spawn_store, work_repository
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
@@ -131,6 +131,24 @@ def test_session_list_breaks_equal_timestamp_ties_by_chat_id(tmp_path: Path, mon
             session_store.stop_session(runtime_root, chat_id)
 
     assert [row.chat_id for row in output.rows] == [chat_ids[-1]]
+
+
+def test_session_reentry_rechecks_live_lease(tmp_path: Path) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="44444444-4444-4444-8444-444444444444",
+        native_store=(tmp_path / "codex-sessions").as_posix(),
+        model="gpt-5.4",
+        kind="primary",
+    )
+
+    assert resolve_session_reentry(project_root.as_posix(), chat_id) == Fork(chat_id)
+
+    session_store.stop_session(runtime_root, chat_id)
+
+    assert resolve_session_reentry(project_root.as_posix(), chat_id) == Resume(chat_id)
 
 
 def test_list_and_reentry_refuse_primary_metadata_as_binding(tmp_path: Path) -> None:

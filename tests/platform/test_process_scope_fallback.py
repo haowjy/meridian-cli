@@ -12,12 +12,6 @@ if TYPE_CHECKING:
     import pytest
 
 
-class _FakeAsyncProcess:
-    def __init__(self, pid: int, returncode: int | None) -> None:
-        self.pid = pid
-        self.returncode = returncode
-
-
 @dataclass
 class _FakeProc:
     pid: int

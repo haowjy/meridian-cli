@@ -39,7 +39,7 @@ def _policy(
             "turn", 11.0, 4242, False, LivenessDecision.BACKEND_DEAD, False, id="stale-turn"
         ),
         pytest.param(
-            None, 11.0, None, False, LivenessDecision.BACKEND_DEAD, None, id="missing-pid"
+            None, 11.0, None, True, LivenessDecision.BACKEND_DEAD, None, id="missing-pid"
         ),
         pytest.param("awaiting", 11.0, 4242, True, LivenessDecision.SUPPRESS, True, id="awaiting"),
         pytest.param(
