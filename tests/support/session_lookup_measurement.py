@@ -7,6 +7,7 @@ Each invocation is a fresh process. Setup/cold-index build are outside the timer
 Count iter_jsonl_file (not its wrappers) once per physical filtered/full pass.
 """
 
+import gc
 import hashlib
 import json
 import os
@@ -55,7 +56,7 @@ def main() -> None:
         record = row.get("record", {}) if row.get("event") == "historical_import" else row
         if record.get("chat_id") and record.get("harness_session_id"):
             aliases.setdefault(record["harness_session_id"], set()).add(record["chat_id"])
-    native = max(aliases, key=lambda key: (len(aliases[key]), key))
+    native = max(aliases.items(), key=lambda item: (len(item[1]), item[0]))[0]
     selections = [
         s.SessionModelSelectionEvent.model_validate(row)
         for row in raw_rows
@@ -77,13 +78,22 @@ def main() -> None:
         s.record_model_selection(root, selection)
         (root / "sessions.jsonl").chmod(0o444)
     harness = selection.harness
+    alias_count = len(aliases[native])
     # Build and catch up both namespaces before timing, including close's fixture.
-    HistoryIndex(root).spawns()
+    index = HistoryIndex(root)
+    if not index.path.exists():
+        index.rebuild(timeout=120)
+    index.spawns()
     if hasattr(s, "chats_rows"):
         from meridian.lib.launch.session_scope import warm_close_imports
 
         warm_close_imports().join()
     before = hashlib.sha256((root / "sessions.jsonl").read_bytes()).hexdigest()
+    # Corpus discovery is probe setup, not a production request's live heap.
+    # Keeping raw dictionaries here forces GC to traverse a corpus-sized graph
+    # during the operation and charges one side for setup's incidental GC phase.
+    del raw_rows, aliases, selections
+    gc.collect()
     events.clear()
     started = time.perf_counter()
     cpu = time.process_time()
@@ -127,7 +137,7 @@ def main() -> None:
                 unfiltered=sum(not event["filtered"] for event in passes),
                 lock_seconds=holds,
                 pending=len(pending),
-                aliases=len(aliases[native]),
+                aliases=alias_count,
                 native=native,
                 result=str(result)[:500],
                 module=s.__file__,
