@@ -39,19 +39,16 @@ def _crash_session_cleanup(runtime_root: Path, crash_stage: str) -> None:
 
 def _crash_session_cleanup_during_append(runtime_root: Path) -> None:
     def append_partial_then_crash(
-        data_path: Path,
-        _event: object,
-        *,
-        exclude_none: bool = False,
+        root: Path,
+        _batches: object,
     ) -> None:
-        del exclude_none
-        with data_path.open("ab") as handle:
+        with (root / "sessions.jsonl").open("ab") as handle:
             handle.write(b'{"event":"stop","session_instance_id"')
             handle.flush()
             os.fsync(handle.fileno())
         os.kill(os.getpid(), signal.SIGKILL)
 
-    session_store._append_session_event = append_partial_then_crash  # type: ignore[assignment]
+    session_store.append_chat_rows = append_partial_then_crash  # type: ignore[assignment]
     session_store.cleanup_stale_sessions(runtime_root)
 
 
@@ -96,7 +93,7 @@ def test_live_session_appends_do_not_replay_the_session_log(
 ) -> None:
     runtime_root = _state_root(tmp_path)
     chat_id = session_store.start_session(runtime_root, "codex", "thread", "test").chat_id
-    record = session_store.get_session_record(runtime_root, chat_id)
+    record = session_store.chat_record(runtime_root, chat_id)
     assert record is not None
 
     def refuse_replay(*args: object, **kwargs: object) -> None:
@@ -125,7 +122,7 @@ def test_live_session_appends_do_not_replay_the_session_log(
         ),
     )
     paths = session_store.RuntimePaths.from_root_dir(runtime_root)
-    session_store.append_chat_rows(runtime_root, chat_id, [selection])
+    session_store.append_chat_rows(runtime_root, {chat_id: [selection]})
     session_store.stop_session(runtime_root, chat_id)
 
     event_names = [
@@ -232,7 +229,7 @@ def test_live_session_cannot_append_reserved_historical_generation(tmp_path: Pat
     )
 
     with pytest.raises(ValueError, match="reserved historical generation prefix"):
-        session_store.append_chat_rows(runtime_root, "c1", [event])
+        session_store.append_chat_rows(runtime_root, {"c1": [event]})
 
 
 def test_prefixed_live_generation_from_older_build_replays(tmp_path: Path) -> None:
@@ -480,7 +477,7 @@ def test_cleanup_stale_sessions_releases_handles_when_event_append_fails(
     def fail_append(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("injected append failure")
 
-    monkeypatch.setattr(session_store, "_append_session_event", fail_append)
+    monkeypatch.setattr(session_store, "append_chat_rows", fail_append)
 
     with pytest.raises(RuntimeError, match="injected append failure"):
         session_store.cleanup_stale_sessions(runtime_root)
@@ -668,7 +665,7 @@ def test_cleanup_repairs_torn_event_tail_before_retrying_stop(tmp_path: Path) ->
 
     session_store.cleanup_stale_sessions(runtime_root)
 
-    record = session_store.get_session_record(runtime_root, chat_id)
+    record = session_store.chat_record(runtime_root, chat_id)
     assert record is not None
     assert record.stopped_at is not None
     assert not lock_path.exists()
@@ -689,7 +686,7 @@ def test_empty_harness_session_id_normalizes_to_none_before_update(tmp_path: Pat
             runtime_root, chat_id, NativeKeyFields(session_id="resolved-thread"), source="observed"
         )
 
-        record = session_store.get_session_record(runtime_root, chat_id)
+        record = session_store.chat_record(runtime_root, chat_id)
         assert record is not None
         assert record.harness_session_id == "resolved-thread"
 
@@ -722,7 +719,7 @@ def test_session_path_fields_are_normalized_at_write_boundary(
         execution_cwd="",
     ).chat_id
     try:
-        record = session_store.get_session_record(runtime_root, chat_id)
+        record = session_store.chat_record(runtime_root, chat_id)
         assert record is not None
         assert record.control_root == (tmp_path / "project/root").as_posix()
         assert record.task_cwd is None
@@ -964,7 +961,7 @@ def test_native_binding_is_immutable(tmp_path: Path) -> None:
             ),
             Same,
         )
-        before = session_store.get_session_record(runtime_root, chat_id)
+        before = session_store.chat_record(runtime_root, chat_id)
         conflict = session_store.update_session_harness_id(
             runtime_root,
             chat_id,
@@ -982,7 +979,7 @@ def test_native_binding_is_immutable(tmp_path: Path) -> None:
             ),
             Conflict,
         )
-        assert session_store.get_session_record(runtime_root, chat_id) == before
+        assert session_store.chat_record(runtime_root, chat_id) == before
         assert (runtime_root / "sessions.jsonl").read_bytes() == bound_bytes
     finally:
         session_store.stop_session(runtime_root, chat_id)
@@ -1012,7 +1009,7 @@ def test_historical_binding_conflict_is_silent_on_reads_and_logged_on_write(
     _write_session_start(runtime_root=runtime_root, chat_id="c2", session_instance_id="gen-2")
 
     with capture_logs() as logs:
-        assert session_store.get_session_record(runtime_root, "c2") is not None
+        assert session_store.chat_record(runtime_root, "c2") is not None
     assert not [log for log in logs if log["event"] == "native_binding_conflict"]
 
     with capture_logs() as logs:
@@ -1035,7 +1032,7 @@ def test_legacy_binding_rows_ignore_identity_list(tmp_path: Path) -> None:
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     rows[0]["harness_session_ids"] = ["other", "first"]
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
-    record = session_store.get_session_record(runtime_root, "c1")
+    record = session_store.chat_record(runtime_root, "c1")
     assert record is not None
     records = {"c1": record}
     session_store.project_session_event(
@@ -1056,10 +1053,10 @@ def test_restart_cannot_rebind_chat(tmp_path: Path) -> None:
     root = _state_root(tmp_path)
     chat_id = session_store.start_session(root, "claude", "first", "sonnet").chat_id
     session_store.stop_session(root, chat_id)
-    before = session_store.get_session_record(root, chat_id)
+    before = session_store.chat_record(root, chat_id)
     with pytest.raises(ValueError, match="entry_mismatch"):
         session_store.start_session(root, "claude", "other", "sonnet", chat_id=chat_id)
-    assert session_store.get_session_record(root, chat_id) == before
+    assert session_store.chat_record(root, chat_id) == before
 
 
 def test_concurrent_native_binding_has_one_winner(tmp_path: Path) -> None:

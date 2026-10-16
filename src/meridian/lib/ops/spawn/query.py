@@ -474,7 +474,7 @@ def spawn_session_log_available(
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     if row is None or row.continue_chat_id is None:
         return False
-    record = session_store.get_session_record(runtime_root, row.continue_chat_id)
+    record = session_store.chat_record(runtime_root, row.continue_chat_id)
     return record is not None and record.native_key() is not None
 
 

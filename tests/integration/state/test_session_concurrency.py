@@ -76,24 +76,23 @@ def test_start_session_acquires_lifetime_lock_before_appending_start_event(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime_root = _state_root(tmp_path)
-    original_append_event = session_store._append_session_event
+    original_append_event = session_store.append_chat_rows
     observed = {"checked": False}
 
-    def _append_event_with_lock_check(*args: object, **kwargs: object) -> None:
-        event = kwargs.get("event")
-        if event is None and len(args) >= 2:
-            event = args[1]
-        if isinstance(event, session_store.SessionStartEvent):
-            lock_path = runtime_root / "sessions" / f"{event.chat_id}.lock"
-            held = run_spawn_race_or_skip(
-                _can_acquire_lock_nonblocking_worker,
-                [(lock_path.as_posix(),)],
-            )
-            assert held == [False]
-            observed["checked"] = True
-        original_append_event(*args, **kwargs)
+    def _append_event_with_lock_check(root, batches):
+        for rows in batches.values():
+            for event in rows:
+                if isinstance(event, session_store.SessionStartEvent):
+                    lock_path = runtime_root / "sessions" / f"{event.chat_id}.lock"
+                    held = run_spawn_race_or_skip(
+                        _can_acquire_lock_nonblocking_worker,
+                        [(lock_path.as_posix(),)],
+                    )
+                    assert held == [False]
+                    observed["checked"] = True
+        original_append_event(root, batches)
 
-    monkeypatch.setattr(session_store, "_append_session_event", _append_event_with_lock_check)
+    monkeypatch.setattr(session_store, "append_chat_rows", _append_event_with_lock_check)
 
     chat_id = session_store.start_session(
         runtime_root,
@@ -142,7 +141,7 @@ def test_start_session_rolls_back_lock_and_event_on_append_failure(
     def _raise_append_error(*_: object, **__: object) -> None:
         raise RuntimeError("append failed")
 
-    monkeypatch.setattr(session_store, "_append_session_event", _raise_append_error)
+    monkeypatch.setattr(session_store, "append_chat_rows", _raise_append_error)
 
     with pytest.raises(RuntimeError, match="append failed"):
         session_store.start_session(

@@ -134,8 +134,8 @@ def test_every_projection_path_is_named_by_the_schema(tmp_path: Path, monkeypatc
     assert changes.mutation_lock.name == "history-mutation.lock"
 
 
-@pytest.mark.parametrize("old_schema", [8, 9])
-def test_unreleased_projection_rebuilds_in_schema_10_namespace(
+@pytest.mark.parametrize("old_schema", [9, 10])
+def test_unreleased_projection_rebuilds_in_schema_11_namespace(
     tmp_path: Path, old_schema: int
 ) -> None:
     old_path = tmp_path / "history-index" / f"history-v{old_schema}.sqlite3"
@@ -153,7 +153,7 @@ def test_unreleased_projection_rebuilds_in_schema_10_namespace(
 
     index = HistoryIndex(tmp_path)
     assert [row.id for row in index.spawns()] == [key]
-    assert index.path.name == "history-v10.sqlite3"
+    assert index.path.name == "history-v11.sqlite3"
     assert old_path.exists()
 
 

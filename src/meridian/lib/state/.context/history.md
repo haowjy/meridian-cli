@@ -210,7 +210,7 @@ unprefixed restore already appended by an older build bypasses the append guard 
 remains inoperable: operations refuse to continue or fork historical sessions. An unfinished older-build `RestorePlan`
 does not resume; backward compatibility is not supported.
 
-Per-operation session reads use `chat_rows`/`chat_record`/`chat_generations` and
+Per-operation session reads use `chats_rows`/`chat_rows`/`chat_record`/`chat_generations` and
 `native_chats`/`native_observations`; they decode only selected rows. Their bodies
 still scan `sessions.jsonl` bytes. Bulk repair/import bindings keep one
 `SessionBindings` snapshot; cross-chat checks require its full (`scope=None`)
@@ -247,3 +247,11 @@ previews with the shared normalizer. Source signatures invalidate stale content;
 there is no runner-stream cursor. Cache publication checks generation and the
 selected source/digest under the existing locks. Incomplete or rendering-partial
 snapshots do not count as compatible cached previews.
+
+`chats_rows(root, chats)` is one selected pass. Its mapping retains each chat's row
+order; `.ordered` retains global interleaving for cross-chat decisions. Never sort
+these rows by timestamps. `SessionBindings` reads through this seam and publishes
+one grouped `append_chat_rows` batch (one durable append/fsync). B2 replaces these
+bodies, including the cross-chat stable merge, and owns consolidating lock epochs.
+Bulk reads still outside the seam: `list_all_session_records`,
+`list_session_generations`, and `legacy_native_import.py`'s raw reads.

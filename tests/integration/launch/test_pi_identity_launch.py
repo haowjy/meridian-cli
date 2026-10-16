@@ -143,7 +143,7 @@ def assert_prebound(root: Path, chat_id: str) -> tuple[str, Path]:
     argv = (root.parent / "argv").read_text().splitlines()
     native_id = argv[argv.index("--session-id") + 1]
     store = Path(argv[argv.index("--session-dir") + 1])
-    record = session_store.get_session_record(root / ".meridian", chat_id)
+    record = session_store.chat_record(root / ".meridian", chat_id)
     assert record is not None
     assert record.harness_session_id == native_id
     assert record.native_store == str(store)
@@ -235,7 +235,7 @@ def test_resume_and_fork_use_verified_absolute_source(
     )
     assert first.chat_id is not None
     native_id, store = assert_prebound(root, first.chat_id)
-    before = session_store.get_session_record(root / ".meridian", first.chat_id)
+    before = session_store.chat_record(root / ".meridian", first.chat_id)
     source = store / f"1_{native_id}.jsonl"
     install_shim(root, behavior=behavior)
     resumed_context = context(
@@ -263,7 +263,7 @@ def test_resume_and_fork_use_verified_absolute_source(
         assert new_id != native_id
     else:
         assert "--session-id" not in argv
-    after = session_store.get_session_record(root / ".meridian", first.chat_id)
+    after = session_store.chat_record(root / ".meridian", first.chat_id)
     assert before is not None and after is not None
     assert (after.harness_session_id, after.native_store) == (
         before.harness_session_id,
@@ -433,7 +433,7 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
                 20,
             )
             assert code == 0
-            record = session_store.get_session_record(ctx.runtime_root, managed.chat_id)
+            record = session_store.chat_record(ctx.runtime_root, managed.chat_id)
             assert record is not None
             if source is None:
                 source = record
@@ -447,7 +447,7 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
             else:
                 assert record.chat_id == "c2"
                 assert record.harness_session_id != source.harness_session_id
-                unchanged = session_store.get_session_record(ctx.runtime_root, source.chat_id)
+                unchanged = session_store.chat_record(ctx.runtime_root, source.chat_id)
                 assert unchanged is not None
                 assert (unchanged.harness_session_id, unchanged.native_store) == (
                     source.harness_session_id,

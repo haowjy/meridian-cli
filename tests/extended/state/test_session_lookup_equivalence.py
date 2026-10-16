@@ -11,8 +11,8 @@ from meridian.lib.state import session_binding, session_identity
 from meridian.lib.state import session_store as s
 from meridian.lib.state.native_binding import Bound, Conflict
 from meridian.lib.state.spawn.model import SpawnRecord
-from tests.integration.state.test_generated_session_fold import generated_session_events
 from tests.support import session_lookup_oracle as old
+from tests.support.session_corpus import generated_session_events
 from tests.support.session_lookup_equivalence import compare_reads
 
 
@@ -26,7 +26,9 @@ def test_generated_lookup_equivalence(tmp_path: Path, monkeypatch: pytest.Monkey
         rows = [row for row in rows if row.get("chat_id") != "c3"]
         for index, row in enumerate(rows):
             if row.get("event") == "start":
-                row["started_at"] = f"2026-10-15T00:00:{index:02}Z"
+                row["started_at"] = (
+                    f"2026-10-15T00:00:{(index // 2 if seed % 2 else 59 - index):02}Z"
+                )
         for i in range(4, 7):
             rows.append(
                 s.SessionStartEvent(
@@ -158,8 +160,10 @@ def test_observed_alias_order_and_selection_decisions(
             )
             patch.setattr(
                 s,
-                "_append_session_event",
-                lambda _path, event, output=actual_rows, **_: output.append(event),
+                "append_chat_rows",
+                lambda _root, batches, output=actual_rows: output.extend(
+                    event for rows in batches.values() for event in rows
+                ),
             )
             assert s.record_model_selection(tmp_path, event) == old.record_model_selection(
                 tmp_path, event
@@ -170,7 +174,11 @@ def test_observed_alias_order_and_selection_decisions(
 def test_native_ids_covers_model_fields_and_raw_legacy_rows(tmp_path: Path) -> None:
     models = (*get_args(s.SessionEvent.__value__), s.SessionModelObservationEvent, s.SessionRecord)
     fields = {
-        model.__name__: {name for name in model.model_fields if "harness_session" in name}
+        model.__name__: {
+            name
+            for name in model.model_fields
+            if "session" in name and name not in {"session_instance_id", "parent_session_id"}
+        }
         for model in models
     }
     assert fields == {
@@ -292,3 +300,89 @@ assert not late, late
         timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("case", ["A", "B", "C", "D", "D2"])
+def test_review_ordering_corpora(
+    tmp_path: Path, case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """p8288: log order wins over chat numbers, timestamp ties and clock steps."""
+
+    def start(chat, time, native="alias"):
+        return s.SessionStartEvent(
+            chat_id=chat,
+            session_instance_id=chat,
+            harness="codex",
+            harness_session_id=native,
+            native_store="/native",
+            model=f"from-{chat}",
+            started_at=time,
+        )
+
+    def selection(chat, time, spawn):
+        return s.SessionModelSelectionEvent(
+            kind="invocation_started",
+            chat_id=chat,
+            session_instance_id=chat,
+            spawn_id=spawn,
+            startup_attempt_id=spawn,
+            harness="codex",
+            harness_session_id="alias",
+            recorded_at=time,
+            selection=s.ConversationModelSelection(
+                selection_source="unknown",
+                requested_token=f"from-{spawn}",
+                model_mode="harness_default",
+            ),
+        )
+
+    if case == "A":
+        rows = [
+            start("c9", "01"),
+            start("c10", "01"),
+            selection("c10", "02", "c10"),
+            selection("c9", "02", "c9"),
+        ]
+    elif case == "B":
+        rows = [start("c9", "01"), selection("c9", "03", "first"), selection("c9", "02", "last")]
+    elif case == "C":
+        rows = [start("c5", "02"), start("c3", "02")]
+    else:
+        rows = [
+            start("c1", "01", "source"),
+            start("c6", "03"),
+            start("c5", "03" if case == "D" else "02"),
+        ]
+    (tmp_path / "sessions.jsonl").write_text("".join(row.model_dump_json() + "\n" for row in rows))
+    monkeypatch.setattr(s, "utc_now_iso", lambda: "now")
+    monkeypatch.setattr(old, "utc_now_iso", lambda: "now")
+    if case in {"A", "B"}:
+        assert s.get_model_selection(tmp_path, "codex", "alias") == old.get_model_selection(
+            tmp_path, "codex", "alias"
+        )
+    elif case == "C":
+        assert s.get_initial_model_selection(
+            tmp_path, "codex", "alias"
+        ) == old.get_initial_model_selection(tmp_path, "codex", "alias")
+    else:
+        kwargs = dict(harness="codex", native_store="/native", session_id="alias")
+        assert s._get_or_create_observed_chat_locked(
+            tmp_path, "c1", **kwargs
+        ) == old._get_or_create_observed_chat_locked(tmp_path, "c1", **kwargs)
+
+
+def test_recent_sessions_reused_generation_seed_42(tmp_path: Path) -> None:
+    from meridian.lib.state.history_index import HistoryIndex
+
+    rows = [
+        row
+        for row in generated_session_events(42)
+        if row.get("chat_id") != "c3" and row.get("event") != "historical_import"
+    ]
+    for index, row in enumerate(rows):
+        if row["event"] == "start":
+            row.update(kind="primary", started_at=f"2026-10-15T00:00:{index:02}Z")
+    (tmp_path / "sessions.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+    expected = old._records_by_session(tmp_path)
+    actual, _ = HistoryIndex(tmp_path).recent_sessions(limit=100, live_chat_ids=set())
+    assert {r.chat_id for r in actual} == set(expected)

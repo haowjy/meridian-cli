@@ -268,7 +268,7 @@ def test_opencode_preview_refreshes_recorded_database_wal(tmp_path):
         model="test",
         chat_id="c1",
     )
-    record = session_store.get_session_record(root, "c1")
+    record = session_store.chat_record(root, "c1")
     assert record is not None
     identity = PreviewIdentity("c1", generation=record.session_instance_id or sid)
     from meridian.lib.state.history_index import HistoryIndex

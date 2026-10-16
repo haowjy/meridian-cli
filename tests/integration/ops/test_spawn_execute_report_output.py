@@ -704,7 +704,7 @@ def test_tracked_pi_without_store_preserves_unbound_launch_failure(
     assert row.terminal.error == "unbound"
     assert result.status == "failed"
     assert result.exit_code == 1
-    source = session_store.get_session_record(runtime.authority.runtime_root, chat)
+    source = session_store.chat_record(runtime.authority.runtime_root, chat)
     assert source is not None and source.native_store is None
     assert source.harness_session_id == sid
     output = capsys.readouterr()

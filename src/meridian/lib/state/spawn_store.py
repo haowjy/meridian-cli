@@ -282,12 +282,12 @@ def start_spawn(
             next_value = current + 1
             atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
             resolved_spawn_id = SpawnId(f"p{next_value}")
-        from meridian.lib.state.session_store import get_session_record
+        from meridian.lib.state.session_store import chat_record
 
         parent = (
             _read_state(paths.spawns_dir, parent_id, include_prompt=False) if parent_id else None
         )
-        owner = get_session_record(runtime_root, owner_chat_id or chat_id)
+        owner = chat_record(runtime_root, owner_chat_id or chat_id)
         record = SpawnRecord(
             session_instance_id=owner.session_instance_id if owner and kind == "primary" else None,
             parent_history_id=parent.history_id if parent else None,

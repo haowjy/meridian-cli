@@ -166,7 +166,7 @@ def _resolve_spawn_reference(
     # One selection, one resolution path: the continue target's session record
     # owns settings/work whether a hook, a verified exit or the entry chose it.
     target_chat_id = row.continue_chat_id
-    target = session_store.get_session_record(runtime_root, target_chat_id) if (
+    target = session_store.chat_record(runtime_root, target_chat_id) if (
         target_chat_id
     ) else None
     if target is not None:

@@ -608,7 +608,7 @@ async def test_streaming_claude_exec_receives_prebound_identity(
             native_id = argv[argv.index("--session-id") + 1]
             events = [json.loads(line) for line in binding_log.read_text().splitlines()]
             assert any(row.get("harness_session_id") == native_id for row in events)
-            record = session_store.get_session_record(runtime_root, managed.chat_id)
+            record = session_store.chat_record(runtime_root, managed.chat_id)
             assert record is not None
             assert record.harness_session_id == native_id
             assert record.native_store == str(

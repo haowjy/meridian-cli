@@ -146,7 +146,7 @@ class SessionPreview:
                     return True
                 if not self.roots or not identity.generation:
                     return False
-                session = session_store.get_session_record(self.roots.runtime_root, identity.ref)
+                session = session_store.chat_record(self.roots.runtime_root, identity.ref)
                 return session is not None and identity.generation == (
                     session.session_instance_id or session.harness_session_id or session.started_at
                 )

@@ -175,6 +175,7 @@ SESSION_CHATS = Table(
     "session_chats",
     INDEX_SCHEMA,
     Column("chat", Text, primary_key=True),
+    Column("generation", Text, nullable=False),
     Column("ordinal", Integer, nullable=False),
     Column("latest_blank", Text),
     Column("record_json", Text, nullable=False),
@@ -510,9 +511,7 @@ class HistoryIndex:
             snapshot_extent = stat.st_size
             inode = f"{stat.st_dev}:{stat.st_ino}"
             cursor = (
-                db.execute(select(CURSORS).where(CURSORS.c.source == "sessions"))
-                .mappings()
-                .first()
+                db.execute(select(CURSORS).where(CURSORS.c.source == "sessions")).mappings().first()
             )
             offset = 0
             if (
@@ -534,6 +533,7 @@ class HistoryIndex:
             records: dict[str, SessionRecord] = {}
             latest_blank: dict[str, str] = {}
             chat_ordinals: dict[str, int] = {}
+            chat_generations: dict[str, str] = {}
             generations: dict[tuple[str, str], dict[str, SessionRecord]] = {}
             open_generations: dict[str, set[str]] = {}
             ordinals: dict[tuple[str, str], int] = {}
@@ -554,12 +554,14 @@ class HistoryIndex:
                     chat = parsed_event.chat_id
                     if chat not in loaded_chats:
                         accepted = db.exec_driver_sql(
-                            "SELECT ordinal, latest_blank, record_json FROM session_chats "
+                            "SELECT ordinal, latest_blank, record_json, generation "
+                            "FROM session_chats "
                             "WHERE chat = ?",
                             (chat,),
                         ).first()
                         if accepted is not None:
                             chat_ordinals[chat] = accepted[0]
+                            chat_generations[chat] = accepted[3]
                             if accepted[1] is not None:
                                 latest_blank[chat] = accepted[1]
                             records[chat] = SessionRecord.model_validate_json(accepted[2])
@@ -585,13 +587,14 @@ class HistoryIndex:
                         parsed_event,
                         ordinal=offset,
                     )
-                    started = isinstance(
-                        parsed_event, (SessionStartEvent, SessionHistoricalEvent)
-                    )
+                    started = isinstance(parsed_event, (SessionStartEvent, SessionHistoricalEvent))
                     if records.get(chat) is not prior:
                         dirty_chats.add(chat)
                         if started:
                             chat_ordinals[chat] = offset
+                            chat_generations[chat] = (
+                                parsed_event.session_instance_id or latest_blank.get(chat, "")
+                            )
                     dirty.update(changed)
                     if started and changed:
                         started_generation = parsed_event.session_instance_id
@@ -639,13 +642,14 @@ class HistoryIndex:
             if dirty_chats:
                 db.exec_driver_sql(
                     "INSERT OR REPLACE INTO session_chats "
-                    "(chat, ordinal, latest_blank, record_json) VALUES (?, ?, ?, ?)",
+                    "(chat, ordinal, latest_blank, record_json, generation) VALUES (?, ?, ?, ?, ?)",
                     [
                         (
                             chat,
                             chat_ordinals[chat],
                             latest_blank.get(chat),
                             records[chat].model_dump_json(),
+                            chat_generations[chat],
                         )
                         for chat in dirty_chats
                     ],
@@ -1140,9 +1144,7 @@ class HistoryIndex:
         except FileLockTimeout:
             return ()
         return tuple(
-            _source_label(marker.source)
-            for marker in pending
-            if marker.source.kind != "sessions"
+            _source_label(marker.source) for marker in pending if marker.source.kind != "sessions"
         )
 
     @staticmethod
@@ -1516,8 +1518,8 @@ class HistoryIndex:
     def recent_sessions(
         self, *, limit: int, live_chat_ids: set[str]
     ) -> tuple[list[SessionRecord | SpawnRecord], int]:
-        # This ordinal points to the accepted start, not MAX(bucket ordinal).
-        # Generation spelling can change on an update while bucket keys stay raw.
+        # A reused bucket keeps its first ordinal. Join the accepted bucket key,
+        # not that ordinal or the record's mutable/normalized generation spelling.
         live_expr = SESSIONS.c.chat.in_(sorted(live_chat_ids)) if live_chat_ids else literal(0)
         browse = union_all(
             select(
@@ -1526,11 +1528,13 @@ class HistoryIndex:
                 SESSIONS.c.activity,
                 live_expr.label("live"),
                 func.cast(func.substr(SESSIONS.c.chat, 2), Integer).label("tie"),
-            ).join(
+            )
+            .join(
                 SESSION_CHATS,
                 (SESSION_CHATS.c.chat == SESSIONS.c.chat)
-                & (SESSIONS.c.ordinal == SESSION_CHATS.c.ordinal),
-            ).where(
+                & (SESSIONS.c.generation == SESSION_CHATS.c.generation),
+            )
+            .where(
                 SESSIONS.c.kind == "primary",
                 ~exists().where(
                     RECORDS.c.archive_id.is_not(None),

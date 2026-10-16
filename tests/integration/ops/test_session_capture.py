@@ -111,7 +111,7 @@ def test_stop_maintenance_captures_completed_spawn_with_another_chat(
         (native_root / f"timestamp_{native_id}.jsonl").write_text(
             "".join(json.dumps(event) + "\n" for event in events)
         )
-    latest = session_store.get_session_record(root, "c2")
+    latest = session_store.chat_record(root, "c2")
     assert latest is not None and latest.spawn_id == keys[1]
     assert session_stop_maintenance(project, keys[0]) is None
     captured = _snapshot_path(root, keys[0])

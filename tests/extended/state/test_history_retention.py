@@ -473,7 +473,7 @@ def test_session_recovery_metadata_participates_in_portable_digest(tmp_path: Pat
     ).chat_id
     session_store.stop_session(root, chat)
     state = spawn_store.get_spawn(root, key)
-    session = session_store.get_session_record(root, chat)
+    session = session_store.chat_record(root, chat)
     assert state is not None and session is not None
     one = capture_record(
         root / "spawns" / key,
@@ -570,7 +570,7 @@ def test_restore_rejects_different_session_recovery_snapshot(tmp_path: Path) -> 
     ).chat_id
     session_store.stop_session(root, chat)
     state = spawn_store.get_spawn(root, key)
-    session = session_store.get_session_record(root, chat)
+    session = session_store.chat_record(root, chat)
     assert state is not None and session is not None and state.terminal is not None
     paths = []
     for work in ("one", "two"):
@@ -613,7 +613,7 @@ def test_restore_conflicts_with_changed_native_session_metadata(tmp_path: Path) 
     ).chat_id
     session_store.stop_session(root, chat)
     state = spawn_store.get_spawn(root, key)
-    session = session_store.get_session_record(root, chat)
+    session = session_store.chat_record(root, chat)
     assert state is not None and state.terminal is not None and session is not None
     record = capture_record(
         root / "spawns" / key,
@@ -831,7 +831,7 @@ def test_child_binding_preserves_cross_owner_fork_and_native_identity(tmp_path: 
     ).chat_id
     try:
         row = spawn_store.get_spawn(root, child_id)
-        session = session_store.get_session_record(root, chat)
+        session = session_store.chat_record(root, chat)
         assert row is not None and session is not None
         assert row.chat_id == chat and row.session_instance_id == session.session_instance_id
         assert row.forked_from_history_id == source.history_id

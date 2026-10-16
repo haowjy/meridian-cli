@@ -297,7 +297,7 @@ def test_preview_resolution_failure_is_row_local_and_has_no_transcript_text(
         model="pi",
         kind="primary",
     ).chat_id
-    record = session_store.get_session_record(runtime_root, chat_id)
+    record = session_store.chat_record(runtime_root, chat_id)
     assert record is not None
 
     preview = SessionPreview(project_root.as_posix()).refresh(

@@ -2,7 +2,8 @@
 
 Call install(emit) in sitecustomize before importing Meridian. The hook uses
 acquire/release, so lock_file's reentrant scopes are not counted as new holds.
-Names for per-chat/native locks and iter_chats also cover the B2 seam.
+Consumers count iter_jsonl_file once per physical pass, including filtered ones.
+Used by the opt-in tests.support.session_lookup_measurement runner.
 """
 
 import time
@@ -92,11 +93,3 @@ def install(emit):
     from meridian.lib.state import session_store
 
     session_store.read_events = read_probe
-    iterate_chats = getattr(session_store, "iter_chats", None)
-    if iterate_chats is not None:
-
-        def chats_probe(*args, **kwargs):
-            emit(dict(kind="iter_chats", caller=caller()))
-            yield from iterate_chats(*args, **kwargs)
-
-        session_store.iter_chats = chats_probe

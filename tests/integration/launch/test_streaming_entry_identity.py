@@ -135,7 +135,7 @@ async def test_streaming_initial_identity(
             ),
             timeout=15,
         )
-        record = session_store.get_session_record(runtime_root, managed.chat_id)
+        record = session_store.chat_record(runtime_root, managed.chat_id)
         assert record is not None
         assert record.harness_session_id == ((expected_id or None) if mismatch else observed_id)
         if not mismatch:
@@ -273,7 +273,7 @@ async def test_later_switch_does_not_rebind_or_fail_entry(
                 ),
                 timeout=15,
             )
-        record = session_store.get_session_record(runtime_root, managed.chat_id)
+        record = session_store.chat_record(runtime_root, managed.chat_id)
         assert record is not None
         assert record.harness_session_id == expected_id
     assert exit_code == 0

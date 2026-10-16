@@ -7,7 +7,6 @@ import multiprocessing
 import os
 import subprocess
 import sys
-from collections.abc import Iterable
 from pathlib import Path
 from uuid import uuid4
 
@@ -255,7 +254,7 @@ def test_late_session_id_is_imported_once_after_legacy_marker(
     marker.pop("late_retries")
     (root / legacy.MARKER).write_text(json.dumps(marker))
     session_id = "01a0d525-a4e8-7741-ad00-8cd251adfb11"
-    record = session_store.get_session_record(root, chat_id)
+    record = session_store.chat_record(root, chat_id)
     assert record is not None
     with (root / "sessions.jsonl").open("a") as events:
         events.write(
@@ -276,11 +275,11 @@ def test_late_session_id_is_imported_once_after_legacy_marker(
     # Ordinary command-time import is deliberately marker-only; late binding
     # belongs to the explicit/background repair path.
     assert legacy.import_legacy_native_sessions(root) is None
-    record = session_store.get_session_record(root, chat_id)
+    record = session_store.chat_record(root, chat_id)
     assert record is not None and record.native_store is None
     repair = legacy.bind_late_legacy_sessions(root)
     assert repair.bound == 1 and repair.attempted == 1
-    record = session_store.get_session_record(root, chat_id)
+    record = session_store.chat_record(root, chat_id)
     assert record is not None
     assert record.native_store == store.as_posix()
     assert record.harness_session_id == session_id
@@ -307,7 +306,7 @@ def test_late_binding_ignores_marker_with_wrong_shape(homes: tuple[Path, Path]) 
     marker_path.write_text(json.dumps(marker))
 
     session_id = "01a0d525-a4e8-7741-ad00-8cd251adfb12"
-    record = session_store.get_session_record(root, chat_id)
+    record = session_store.chat_record(root, chat_id)
     assert record is not None
     with (root / "sessions.jsonl").open("a") as events:
         events.write(
@@ -326,7 +325,7 @@ def test_late_binding_ignores_marker_with_wrong_shape(homes: tuple[Path, Path]) 
     )
 
     assert legacy.bind_late_legacy_sessions(root) == legacy.LateBinding()
-    record = session_store.get_session_record(root, chat_id)
+    record = session_store.chat_record(root, chat_id)
     assert record is not None and record.native_store is None
 
 
@@ -343,7 +342,7 @@ def test_existing_marker_import_does_not_fold_session_journal(
 
     monkeypatch.setattr(legacy, "read_events", unexpected)
     monkeypatch.setattr(legacy, "list_all_session_records", unexpected)
-    monkeypatch.setattr(session_store, "get_session_record", unexpected)
+    monkeypatch.setattr(session_store, "chat_record", unexpected)
     assert legacy.import_legacy_native_sessions(root) is None
 
 
@@ -415,7 +414,7 @@ def test_damaged_spawn_defers_import_without_blocking_runtime_resolution(
     assert resolve_runtime_authority_for_read(root).runtime_root == root
     assert "Native session import deferred" in capsys.readouterr().err
     assert not (root / legacy.MARKER).exists()
-    assert session_store.get_session_record(root, "c1").native_store is None  # type: ignore[union-attr]
+    assert session_store.chat_record(root, "c1").native_store is None  # type: ignore[union-attr]
 
 
 def test_null_old_id_array_and_crash_recovery_counts(homes: tuple[Path, Path]) -> None:
@@ -622,19 +621,21 @@ def test_torn_batch_recovers_only_uncommitted_bindings(
     for number in (1, 2):
         _chat(root, number, "claude", f"native-{number}")
         _claude(home, root, f"native-{number}")
-    append = session_binding.append_durable_jsonl_lines
+    append = session_binding.append_chat_rows
 
-    def torn_append(path: Path, lines: Iterable[str]) -> None:
-        first, second = lines
-        with path.open("ab") as handle:
-            handle.write((first + second[: len(second) // 2]).encode())
+    def torn_append(root, batches):
+        first, second = [event for rows in batches.values() for event in rows]
+        append(root, {first.chat_id: [first]})
+        tail = second.model_dump_json(exclude_none=True)
+        with (root / "sessions.jsonl").open("ab") as handle:
+            handle.write(tail[:len(tail) // 2].encode())
         raise OSError("interrupted append")
 
-    monkeypatch.setattr(session_binding, "append_durable_jsonl_lines", torn_append)
+    monkeypatch.setattr(session_binding, "append_chat_rows", torn_append)
     with pytest.raises(OSError, match="interrupted"):
         legacy.import_legacy_native_sessions(root)
     assert not (root / legacy.MARKER).exists()
-    monkeypatch.setattr(session_binding, "append_durable_jsonl_lines", append)
+    monkeypatch.setattr(session_binding, "append_chat_rows", append)
     report = legacy.import_legacy_native_sessions(root)
     assert report is not None and report.counts["claude"]["imported"] == 2
     events = [json.loads(line) for line in (root / "sessions.jsonl").read_text().splitlines()]

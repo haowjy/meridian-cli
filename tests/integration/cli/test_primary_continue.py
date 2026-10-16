@@ -269,7 +269,7 @@ def test_continue_to_different_harness_fails_without_changing_source_chat(
     )
     session_store.update_session_spawn_id(runtime_root, chat_id, source_spawn)
     session_store.stop_session(runtime_root, chat_id)
-    before_chat = session_store.get_session_record(runtime_root, chat_id)
+    before_chat = session_store.chat_record(runtime_root, chat_id)
     before_spawns = spawn_store.list_spawns(runtime_root)
 
     request = launch_context.SpawnRequest(
@@ -290,7 +290,7 @@ def test_continue_to_different_harness_fails_without_changing_source_chat(
             harness=get_default_harness_registry().get(HarnessId.CLAUDE),
         )
 
-    assert session_store.get_session_record(runtime_root, chat_id) == before_chat
+    assert session_store.chat_record(runtime_root, chat_id) == before_chat
     assert spawn_store.list_spawns(runtime_root) == before_spawns
 
 
@@ -661,7 +661,7 @@ def test_fork_old_harness_generation_preserves_selected_history(
         ),
         request=requests[0].session,
     ) as fork:
-        record = session_store.get_session_record(root, fork.chat_id)
+        record = session_store.chat_record(root, fork.chat_id)
         assert record is not None and record.forked_from_history_id == original.history_id
 
 

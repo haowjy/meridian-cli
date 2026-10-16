@@ -94,7 +94,7 @@ def _session_execution_context(
         spawn_id=spawn_id,
         startup_attempt_id=uuid.uuid4().hex,
     ) as managed:
-        attached_work_id = managed.record.active_work_id if managed.record is not None else None
+        attached_work_id = managed.record.active_work_id
         if attached_work_id is None:
             attached_work_id = (inherited_work_id or "").strip() or None
             if attached_work_id is not None:

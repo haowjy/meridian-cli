@@ -189,7 +189,7 @@ def _target_from_record(record: session_store.SessionRecord) -> SessionLogTarget
 
 
 def _resolve_from_chat_id(*, runtime_root: Path, chat_id: str) -> SessionLogTarget:
-    record = session_store.get_session_record(runtime_root, chat_id)
+    record = session_store.chat_record(runtime_root, chat_id)
     if record is None:
         raise ValueError(f"Chat '{chat_id}' not found")
     if record.record_mode == "historical" and record.spawn_id:
@@ -310,7 +310,7 @@ def _spawn_target(
 
 
 def _stored_record(runtime_root: Path) -> Callable[[str], session_store.SessionRecord | None]:
-    return lambda chat_id: session_store.get_session_record(runtime_root, chat_id)
+    return lambda chat_id: session_store.chat_record(runtime_root, chat_id)
 
 
 def resolve_run_sources(

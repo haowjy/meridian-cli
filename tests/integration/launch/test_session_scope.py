@@ -20,8 +20,8 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
+    chat_record,
     get_model_selection,
-    get_session_record,
     start_session,
 )
 
@@ -56,7 +56,7 @@ def _record(
         kind="primary",
         model_selection_protocol=1,
     ).chat_id
-    record = get_session_record(runtime_root, chat_id)
+    record = chat_record(runtime_root, chat_id)
     assert record is not None
     context = SimpleNamespace(
         resolved_request=SimpleNamespace(
@@ -79,7 +79,7 @@ def _record(
         harness=SimpleNamespace(id="opencode"),
     )
     attempt = SessionAttempt(
-        runtime_root, chat_id, record.session_instance_id, "attempt-1", SpawnId("p1")
+        runtime_root, chat_id, record.session_instance_id, "attempt-1", record, SpawnId("p1")
     )
     attempt.record_started(context, "ses_source")  # type: ignore[arg-type]
     selection = get_model_selection(runtime_root, "opencode", "ses_source")

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import pkgutil
 import threading
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -45,13 +46,19 @@ _CLOSE_PATH_MODULES = (
 
 def warm_close_imports() -> threading.Thread:
     """Pin close-path code before an in-place package upgrade can replace it."""
+
     def load() -> None:
-        for name in ("meridian.lib.state", "meridian.lib.ops"):
-            package = importlib.import_module(name)
-            for module in pkgutil.walk_packages(package.__path__, name + "."):
-                importlib.import_module(module.name)
-        for name in _CLOSE_PATH_MODULES:
-            importlib.import_module(name)
+        with suppress(Exception):
+            try:
+                for name in ("meridian.lib.state", "meridian.lib.ops"):
+                    package = importlib.import_module(name)
+                    for module in pkgutil.walk_packages(package.__path__, name + "."):
+                        importlib.import_module(module.name)
+                for name in _CLOSE_PATH_MODULES:
+                    importlib.import_module(name)
+            except Exception:
+                logging.getLogger(__name__).debug("Close-path warm import failed", exc_info=True)
+                raise
 
     thread = threading.Thread(target=load, name="meridian-close-imports", daemon=True)
     thread.start()
@@ -66,8 +73,8 @@ class SessionAttempt:
     chat_id: str
     session_instance_id: str
     startup_attempt_id: str | None
+    record: SessionRecord
     spawn_id: SpawnId | None = None
-    record: SessionRecord | None = None
 
     def bind(self, attempted: NativeKeyFields, source: BindSource) -> BindOutcome:
         outcome = update_session_harness_id(
@@ -93,7 +100,10 @@ class SessionAttempt:
     def own_policy(self, snapshot: LaunchPolicySnapshot) -> None:
         """Persist the final launch policy on this generation before native execution."""
         update_session_launch_policy(
-            self.runtime_root, self.chat_id, self.session_instance_id, snapshot,
+            self.runtime_root,
+            self.chat_id,
+            self.session_instance_id,
+            snapshot,
         )
 
     def record_started(
@@ -202,8 +212,8 @@ def session_scope(
             resolved_chat_id,
             generation,
             startup_attempt_id,
-            SpawnId(spawn_id) if spawn_id is not None else None,
-            started.record,
+            record=started.record,
+            spawn_id=SpawnId(spawn_id) if spawn_id is not None else None,
         )
     finally:
         try:

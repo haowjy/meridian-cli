@@ -42,7 +42,7 @@ def recover_recorded_chat_harness_session_id(
     runtime_root: Path, chat_id: str, *, session: session_store.SessionRecord | None = None,
 ) -> RecoveryResult | None:
     """Read only the immutable chat binding; mirrors cannot supply missing identity."""
-    record = session or session_store.get_session_record(runtime_root, chat_id)
+    record = session or session_store.chat_record(runtime_root, chat_id)
     return _recover_from_session_record(record) if record is not None else None
 
 

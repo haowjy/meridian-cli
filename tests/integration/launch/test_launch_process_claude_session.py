@@ -157,7 +157,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
     assert spawns.records[0].harness_session_id == seeded_id
-    session = session_store.get_session_record(launch_context.runtime_root, outcome.chat_id)
+    session = session_store.chat_record(launch_context.runtime_root, outcome.chat_id)
     assert session is not None
     assert session.spawn_id == spawns.records[0].id
     assert session.harness_session_id == seeded_id
@@ -405,7 +405,7 @@ def test_primary_claude_exec_receives_prebound_identity(
     # The entry generation owns its final policy before native execution.
     assert any(row.get("launch_policy_snapshot") for row in events)
     assert outcome.chat_id is not None
-    record = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    record = session_store.chat_record(context.runtime_root, outcome.chat_id)
     assert record is not None
     spawn_row = list_spawns(context.runtime_root).records[0]
     assert record.launch_policy_snapshot == spawn_row.launch_policy_snapshot is not None
@@ -537,7 +537,7 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     outcome = run_harness_process(context, registry, prepared=context.prepared)
     assert outcome.exit_code == 1
     row = list_spawns(context.runtime_root).records[0]
-    entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    entry = session_store.chat_record(context.runtime_root, outcome.chat_id)
     assert entry is not None and entry.harness_session_id != successor
     assert row.harness_session_id == entry.harness_session_id == outcome.resolved_harness_session_id
     assert row.run_boundary.trampoline_successor_id == successor
@@ -663,7 +663,7 @@ def test_owned_claude_observations_publish_current_chat_while_running(
             nonlocal publication_failures
             current_id = json.loads(text).get("current_chat_id")
             current = (
-                session_store.get_session_record(context.runtime_root, current_id)
+                session_store.chat_record(context.runtime_root, current_id)
                 if current_id
                 else None
             )
@@ -694,7 +694,7 @@ def test_owned_claude_observations_publish_current_chat_while_running(
             for record in session_store.list_all_session_records(context.runtime_root)
         )
         current = (
-            session_store.get_session_record(context.runtime_root, row.current_chat_id)
+            session_store.chat_record(context.runtime_root, row.current_chat_id)
             if row is not None and row.current_chat_id is not None
             else None
         )
@@ -714,7 +714,7 @@ def test_owned_claude_observations_publish_current_chat_while_running(
         if status == "unresolved":
             # Fork returns A -> B -> A; create switches without a startup hook.
             # Both publish while the native process remains alive.
-            current = session_store.get_session_record(context.runtime_root, row.current_chat_id)
+            current = session_store.chat_record(context.runtime_root, row.current_chat_id)
             assert current is not None and current.harness_session_id == final_id.replace(
                 ENTRY_SESSION_TOKEN, row.harness_session_id or ""
             )
@@ -732,7 +732,7 @@ def test_owned_claude_observations_publish_current_chat_while_running(
     if not fork and status == "unresolved":
         assert committed_switches == ["resumed", "cleared", "unpersisted"]
     assert row.run_boundary is not None
-    entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    entry = session_store.chat_record(context.runtime_root, outcome.chat_id)
     assert entry is not None
     assert row.harness_session_id == entry.harness_session_id
     assert row.chat_id == entry.chat_id
@@ -743,7 +743,7 @@ def test_owned_claude_observations_publish_current_chat_while_running(
         assert entry.harness_session_id not in {"cleared", "resumed", source_session_id}
         if fork:
             assert entry.harness_session_id == initial_id
-        current = session_store.get_session_record(context.runtime_root, row.continue_chat_id)
+        current = session_store.chat_record(context.runtime_root, row.continue_chat_id)
         assert current is not None
         if not fork:
             assert current.harness_session_id == "unpersisted"

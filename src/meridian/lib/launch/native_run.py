@@ -152,7 +152,7 @@ class NativeRun:
     def _warn_overlap(self, chat_id: str) -> None:
         """Native /resume already happened; record it rather than deny reality."""
         root = self.attempt.runtime_root
-        target = session_store.get_session_record(root, chat_id)
+        target = session_store.chat_record(root, chat_id)
         held = target is not None and session_store.is_session_lease_owner_alive(
             root, chat_id, session_instance_id=target.session_instance_id,
         )

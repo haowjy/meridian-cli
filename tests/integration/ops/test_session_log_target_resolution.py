@@ -284,5 +284,5 @@ def test_tracked_claude_hint_cannot_replace_missing_native_store(tmp_path: Path)
             runtime_root=runtime,
         )
     assert caught.value.reason == "unbound"
-    record = session_store.get_session_record(runtime, chat)
+    record = session_store.chat_record(runtime, chat)
     assert record is not None and record.native_store is None

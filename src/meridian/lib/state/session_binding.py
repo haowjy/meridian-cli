@@ -1,6 +1,5 @@
 """One locked native bind path, amortizing journal replay for bulk imports."""
 
-import json
 from collections.abc import Collection, Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,13 +8,12 @@ from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.types import ChatId, HarnessSessionId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_fold as sessions
-from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.jsonl import append_durable_jsonl_lines
+from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.native_binding import BindOutcome, Bound, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_store import (
-    chat_rows,
-    read_session_events,
+    append_chat_rows,
+    chats_rows,
     resolve_session_instance_id,
 )
 
@@ -46,11 +44,7 @@ class SessionBindings:
         self.runtime_root = runtime_root
         self.paths = RuntimePaths.from_root_dir(runtime_root)
         self.scope = None if scope is None else frozenset(scope)
-        self.events = (
-            chat_rows(runtime_root, next(iter(self.scope)))
-            if self.scope is not None and len(self.scope) == 1
-            else read_session_events(runtime_root, self.scope)
-        )
+        self.events = chats_rows(runtime_root, self.scope).ordered
         self._pending: list[sessions.SessionUpdateEvent] = []
         self.records: dict[str, sessions.SessionRecord] = {}
         for event in self.events:
@@ -116,18 +110,10 @@ class SessionBindings:
     def commit(self) -> None:
         if not self._pending:
             return
-        HistoryChanges(self.runtime_root).mark(HistorySource(kind="sessions"))
-        lines = (
-            json.dumps(
-                event.model_dump(mode="json", exclude_none=True),
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            + "\n"
-            for event in self._pending
-        )
-        # One fsync per lock-scoped batch; torn tails remain recoverable JSONL.
-        append_durable_jsonl_lines(self.paths.sessions_jsonl, lines)
+        batches: dict[str, list[sessions.SessionEvent]] = {}
+        for event in self._pending:
+            batches.setdefault(event.chat_id, []).append(event)
+        append_chat_rows(self.runtime_root, batches)
         self._pending.clear()
 
 
@@ -147,13 +133,21 @@ def session_bindings(
 
 
 def bind_native_key(
-    root: Path, chat: str, attempted: NativeKeyFields, *, source: BindSource,
-    session_instance_id: str | None = None, startup_attempt_id: str | None = None,
+    root: Path,
+    chat: str,
+    attempted: NativeKeyFields,
+    *,
+    source: BindSource,
+    session_instance_id: str | None = None,
+    startup_attempt_id: str | None = None,
 ) -> BindOutcome:
     """Bind one chat under the same lock and validation as the batched writers."""
     scope = None if source in {"user_repair", "legacy_pi_recovery"} else {chat}
     with session_bindings(root, scope=scope) as bindings:
         return bindings.bind(
-            chat, attempted, source=source, session_instance_id=session_instance_id,
+            chat,
+            attempted,
+            source=source,
+            session_instance_id=session_instance_id,
             startup_attempt_id=startup_attempt_id,
         )

@@ -526,7 +526,7 @@ async def _execute_with_context(
         chat_id = session_store.start_session(
             runtime_root, str(launch_context.harness.id), "", "", spawn_id=str(run.spawn_id)
         ).chat_id
-        record = session_store.get_session_record(runtime_root, chat_id)
+        record = session_store.chat_record(runtime_root, chat_id)
         assert record is not None
         spawn_store.update_spawn(runtime_root, run.spawn_id, chat_id=chat_id)
         kwargs["session_attempt"] = SessionAttempt(

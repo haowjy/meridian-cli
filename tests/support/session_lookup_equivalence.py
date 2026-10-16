@@ -2,9 +2,9 @@
 
 Run: uv run python -m tests.support.session_lookup_equivalence /tmp/copies /tmp/writer
 Copies must be private. Lookup data stays unchanged; decision locks use writer.
-Synthetic tests exercise disk seams. For large real corpora, capture I/O once:
-frozen functions retain global order; candidate functions receive chat/native
-partitions. Only already-evaluated pure full-fold/binding results are memoized.
+Both synthetic and real-corpus modes exercise the real candidate disk seams.
+Only the frozen oracle is memoized. --limit selects a deterministic sample for
+large logs; omit it for exhaustive (potentially hours-long) disk comparisons.
 """
 
 import json
@@ -36,10 +36,10 @@ def outcome(function, *args, **kwargs):
 def compare_reads(root: Path, chats: list[str], identities: set[tuple[str, str]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for chat in chats:
-        assert outcome(s.get_session_record, root, chat) == outcome(
-            old.get_session_record, root, chat
-        ), chat
-    counts["get_session_record"] = len(chats)
+        assert outcome(s.chat_record, root, chat) == outcome(old.get_session_record, root, chat), (
+            chat
+        )
+    counts["chat_record"] = len(chats)
     for name in ("get_model_selection", "get_initial_model_selection", "get_last_executed_model"):
         for harness, native in sorted(identities):
             actual = outcome(getattr(s, name), root, harness, native)
@@ -58,27 +58,17 @@ def compare_reads(root: Path, chats: list[str], identities: set[tuple[str, str]]
     return counts
 
 
-def compare_corpus(root: Path, writer: Path) -> dict[str, int]:
+def compare_corpus(root: Path, writer: Path, *, limit: int | None = None) -> dict[str, int]:
     raw = read_events(root / "sessions.jsonl", lambda row: row)
     events = [event for row in raw if (event := parse_event(row)) is not None]
     observations = [
         event for row in raw if (event := old._parse_model_observation(row)) is not None
     ]
     by_chat = defaultdict(list)
-    by_native = defaultdict(set)
-    obs = defaultdict(list)
     records = {}
     for event in events:
         by_chat[event.chat_id].append(event)
         project_session_event(records, event)
-    for row in raw:
-        record = row.get("record", {}) if row.get("event") == "historical_import" else row
-        chat = record.get("chat_id")
-        if isinstance(chat, str) and chat.strip():
-            for native in s.native_ids(row):
-                by_native[native].add(chat.strip())
-    for event in observations:
-        obs[event.harness_session_id].append(event)
     generations = fold_session_generations(events)
     spawns = spawn_store.list_spawns(root).records
     native_keys = {(r.harness, r.harness_session_id) for r in generations if r.harness_session_id}
@@ -94,12 +84,9 @@ def compare_corpus(root: Path, writer: Path) -> dict[str, int]:
             {record["harness"]} if record.get("harness") else chat_harnesses[record.get("chat_id")]
         )
         native_keys.update((harness, key) for harness in harnesses for key in s.native_ids(row))
-    bound_full = old._bound_model_selections(events)
-    original_bound = old._bound_model_selections
     counts = {}
     with pytest.MonkeyPatch.context() as mp:
-        # Freeze I/O once. Old algorithms keep global order; candidate seams
-        # receive independent partitions from raw claims. No lookup is rewritten.
+        # Only the oracle is captured. Every candidate read goes to disk.
         mp.setattr(
             old,
             "read_events",
@@ -109,21 +96,12 @@ def compare_corpus(root: Path, writer: Path) -> dict[str, int]:
         )
         mp.setattr(old, "_records_by_session", lambda *_args, **_kw: records)
         mp.setattr(old, "list_session_generations", lambda _root: generations)
-        mp.setattr(
-            old,
-            "_bound_model_selections",
-            lambda rows: bound_full if rows is events else original_bound(rows),
-        )
-        mp.setattr(s, "chat_rows", lambda _root, chat: list(by_chat[chat]))
-        mp.setattr(s, "native_chats", lambda _root, native: tuple(by_native[native]))
-        mp.setattr(s, "native_observations", lambda _root, native: obs[native])
         mp.setattr(s, "utc_now_iso", lambda: "2026-10-16T00:00:00Z")
         mp.setattr(old, "utc_now_iso", lambda: "2026-10-16T00:00:00Z")
-        counts = compare_reads(root, sorted(by_chat), native_keys)
-        for row in spawns:
-            actual = outcome(identity.session_records_for_spawns, root, [row])
-            expected = outcome(old.session_records_for_spawns, root, [row])
-            assert actual == expected, ("spawn", root.name, row.id, actual, expected)
+        counts = compare_reads(root, sorted(by_chat)[:limit], set(sorted(native_keys)[:limit]))
+        actual = outcome(identity.session_records_for_spawns, root, spawns)
+        expected = outcome(old.session_records_for_spawns, root, spawns)
+        assert actual == expected, ("spawns", root.name, actual, expected)
         counts["session_records_for_spawns"] = len(spawns)
         live = [r for r in records.values() if r.record_mode == "live"]
         keys = {
@@ -131,15 +109,16 @@ def compare_corpus(root: Path, writer: Path) -> dict[str, int]:
             for r in live
             if r.native_store and r.harness_session_id
         }
-        for harness, store, native in keys:
-            source = live[0].chat_id
+        keys = sorted(keys)[:limit]
+        for index, (harness, store, native) in enumerate(keys):
+            source = live[index % len(live)].chat_id
             kwargs = dict(harness=harness, native_store=store, session_id=native)
             actual = s._get_or_create_observed_chat_locked(root, source, **kwargs)
             expected = old._get_or_create_observed_chat_locked(root, source, **kwargs)
             assert actual == expected, ("observed", root.name, source, kwargs, actual, expected)
         counts["observed_chat"] = len(keys)
         writer.mkdir(parents=True, exist_ok=True)
-        selections = [e for e in events if isinstance(e, s.SessionModelSelectionEvent)]
+        selections = [e for e in events if isinstance(e, s.SessionModelSelectionEvent)][:limit]
         for event in selections:
             actual_rows = []
             expected_rows = []
@@ -151,10 +130,12 @@ def compare_corpus(root: Path, writer: Path) -> dict[str, int]:
                 )
                 writes.setattr(
                     s,
-                    "_append_session_event",
-                    lambda _p, event, output=actual_rows, **kw: output.append(event),
+                    "append_chat_rows",
+                    lambda _root, batches, output=actual_rows: output.extend(
+                        event for rows in batches.values() for event in rows
+                    ),
                 )
-                actual = outcome(s.record_model_selection, writer, event)
+                actual = outcome(s.record_model_selection, root, event)
                 expected = outcome(old.record_model_selection, writer, event)
             assert (actual, actual_rows) == (expected, expected_rows), (
                 "decision",
@@ -167,10 +148,59 @@ def compare_corpus(root: Path, writer: Path) -> dict[str, int]:
     return counts
 
 
-if __name__ == "__main__":
-    import sys
+def compare_selection_appends(root: Path, writer: Path) -> dict[str, int]:
+    """Real disk appends: first invocation, then same invocation on another alias."""
+    import shutil
 
-    copies, writer = map(Path, sys.argv[1:])
+    records = old._records_by_session(root)
+    groups = defaultdict(list)
+    for record in records.values():
+        if (
+            record.record_mode == "live"
+            and record.harness_session_id
+            and record.session_instance_id
+        ):
+            groups[(record.harness, record.harness_session_id)].append(record)
+    aliases = max(groups.values(), key=len)
+    assert len(aliases) >= 2
+    roots = [writer / "candidate", writer / "oracle"]
+    for path in roots:
+        path.mkdir(parents=True)
+        shutil.copyfile(root / "sessions.jsonl", path / "sessions.jsonl")
+    for index, record in enumerate(aliases[:2]):
+        event = s.SessionModelSelectionEvent(
+            kind="invocation_started",
+            harness=record.harness,
+            harness_session_id=record.harness_session_id,
+            chat_id=record.chat_id,
+            session_instance_id=record.session_instance_id,
+            spawn_id="p900001",
+            startup_attempt_id=f"review-first-{index}",
+            recorded_at="2026-10-16T00:00:00Z",
+            selection=s.ConversationModelSelection(
+                selection_source="unknown",
+                model_mode="harness_default",
+                requested_token="review-first-selection",
+            ),
+        )
+        actual = s.record_model_selection(roots[0], event)
+        expected = old.record_model_selection(roots[1], event)
+        assert actual == expected == (index == 0)
+        assert [
+            json.loads(line) for line in (roots[0] / "sessions.jsonl").read_text().splitlines()
+        ] == [json.loads(line) for line in (roots[1] / "sessions.jsonl").read_text().splitlines()]
+    return {"first_time_append": 1, "cross_chat_dedup": 1}
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("copies", type=Path)
+    parser.add_argument("writer", type=Path)
+    parser.add_argument("--limit", type=int)
+    args = parser.parse_args()
+    copies, writer = args.copies, args.writer
     for directory in (copies, writer):
         if not directory.resolve().is_relative_to("/tmp"):
             raise ValueError("Use private /tmp copies and writer directory")
@@ -178,7 +208,8 @@ if __name__ == "__main__":
         if not (root / "sessions.jsonl").is_file():
             continue
         started = time.monotonic()
-        counts = compare_corpus(root, writer)
+        counts = compare_corpus(root, writer, limit=args.limit)
+        counts.update(compare_selection_appends(root, writer / root.name))
         print(
             json.dumps(
                 dict(runtime=root.name, counts=counts, seconds=round(time.monotonic() - started, 2))

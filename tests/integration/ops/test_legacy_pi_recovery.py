@@ -141,7 +141,7 @@ def _old_marker(root: Path) -> None:
 
 
 def _key(root: Path, chat: str) -> tuple[str | None, str | None]:
-    record = session_store.get_session_record(root, chat)
+    record = session_store.chat_record(root, chat)
     assert record is not None
     return record.harness_session_id, record.native_store
 
