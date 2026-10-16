@@ -172,6 +172,7 @@ async def test_scope_termination_disarms_guardian_without_waiting_its_grace(tmp_
         await wait_until(ready.exists)
         start = time.monotonic()
         result = await handle.scope_handle.terminate(grace_seconds=grace)
+        await asyncio.wait_for(handle.process.wait(), timeout=5)
         assert time.monotonic() - start < grace / 2
         assert not result.kill_escalated
         assert handle.process.returncode is not None

@@ -489,7 +489,6 @@ def test_late_native_primary_metadata_does_not_recreate_deleted_spawn(
 @pytest.mark.asyncio
 async def test_process_adoption_does_not_recreate_deleted_spawn(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = tmp_path / "runtime"
     project_root = tmp_path / "repo"
@@ -525,6 +524,8 @@ async def test_process_adoption_does_not_recreate_deleted_spawn(
                 scope_id="backend",
                 role="harness_backend",
             )
+        # OS reaping can precede asyncio publishing its returncode callback.
+        await asyncio.wait_for(process.wait(), timeout=5)
         assert process.returncode is not None
         assert not spawn_dir.exists()
     finally:
