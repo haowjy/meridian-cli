@@ -126,8 +126,9 @@ state, primary metadata and the linked generation. Known active owners and
 unreleased live scopes block capture and are rechecked before publication.
 Those live-owner outcomes are retryable capture deferrals; archive passes report
 them separately from corrupt, quarantined or missing-source errors. Post-stop
-maintenance uses the guard's matching terminal bindings to retry every record
-whose capture that owner blocked; it does not rescan authority to discover work.
+maintenance takes the native key its own capture sealed, runs the guard's owner
+query for that key, and, once no owner is live, retries every terminal record
+bound to the same native session; it never sweeps unrelated history.
 A deferral during snapshot finalization aborts the caller-owned atomic stage.
 Only a complete provider observation seals `native-transcript.jsonl`; a valid
 seal is the idempotent no-op. Runner-stream existence is not capture evidence.
