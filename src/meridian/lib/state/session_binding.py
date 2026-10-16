@@ -13,7 +13,11 @@ from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.jsonl import append_durable_jsonl_lines
 from meridian.lib.state.native_binding import BindOutcome, Bound, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.session_store import read_session_events, resolve_session_instance_id
+from meridian.lib.state.session_store import (
+    chat_rows,
+    read_session_events,
+    resolve_session_instance_id,
+)
 
 
 class ChatOutsideBindingScope(RuntimeError):
@@ -42,7 +46,11 @@ class SessionBindings:
         self.runtime_root = runtime_root
         self.paths = RuntimePaths.from_root_dir(runtime_root)
         self.scope = None if scope is None else frozenset(scope)
-        self.events = read_session_events(runtime_root, self.scope)
+        self.events = (
+            chat_rows(runtime_root, next(iter(self.scope)))
+            if self.scope is not None and len(self.scope) == 1
+            else read_session_events(runtime_root, self.scope)
+        )
         self._pending: list[sessions.SessionUpdateEvent] = []
         self.records: dict[str, sessions.SessionRecord] = {}
         for event in self.events:
@@ -80,6 +88,17 @@ class SessionBindings:
         )
         if not sessions.generation_matches(existing.session_instance_id, event.session_instance_id):
             return Conflict(existing.key_fields(), attempted, "generation")
+        if source in {"user_repair", "legacy_pi_recovery"}:
+            if self.scope is not None:
+                raise ValueError("Repair binds require a full session_bindings snapshot")
+            for other_chat, other in self.records.items():
+                if (
+                    other_chat != chat_id
+                    and attempted.session_id
+                    and other.harness_session_id == attempted.session_id
+                    and (source == "legacy_pi_recovery" or other.harness == attempted.harness)
+                ):
+                    return Conflict(other.key_fields(), attempted, "session_id")
         outcome = bind(existing.key_fields(), attempted)
         if isinstance(outcome, Conflict):
             report_conflict(chat_id, outcome, source)
@@ -125,3 +144,16 @@ def session_bindings(
         bindings = SessionBindings(runtime_root, scope)
         yield bindings
         bindings.commit()
+
+
+def bind_native_key(
+    root: Path, chat: str, attempted: NativeKeyFields, *, source: BindSource,
+    session_instance_id: str | None = None, startup_attempt_id: str | None = None,
+) -> BindOutcome:
+    """Bind one chat under the same lock and validation as the batched writers."""
+    scope = None if source in {"user_repair", "legacy_pi_recovery"} else {chat}
+    with session_bindings(root, scope=scope) as bindings:
+        return bindings.bind(
+            chat, attempted, source=source, session_instance_id=session_instance_id,
+            startup_attempt_id=startup_attempt_id,
+        )

@@ -17,7 +17,7 @@ from meridian.lib.state import session_fold
 from meridian.lib.state import session_store as s
 
 
-def _events(seed: int) -> list[dict[str, object]]:
+def generated_session_events(seed: int) -> list[dict[str, object]]:
     rng = random.Random(seed)
     events: list[dict[str, object]] = []
     for i in range(35):
@@ -101,7 +101,7 @@ def test_generated_histories_match_pre_restructure_fold(
 ) -> None:
     results = []
     for seed in range(1000):
-        events = _events(seed)
+        events = generated_session_events(seed)
         (tmp_path / "sessions.jsonl").write_text(
             "".join(json.dumps(event) + "\n" for event in events)
         )
@@ -248,7 +248,7 @@ def test_single_chat_replay_matches_full_replay(tmp_path: Path) -> None:
     """The byte prefilter may only nominate rows; selected replay must equal full replay."""
     variants = _spelling_variant_rows()
     for seed in range(200):
-        lines = [json.dumps(event) for event in _events(seed)] + variants
+        lines = [json.dumps(event) for event in generated_session_events(seed)] + variants
         (tmp_path / "sessions.jsonl").write_text("".join(f"{line}\n" for line in lines))
         full = s._records_by_session(tmp_path)  # pyright: ignore[reportPrivateUsage]
         assert {"c4", "c5"} <= set(full)

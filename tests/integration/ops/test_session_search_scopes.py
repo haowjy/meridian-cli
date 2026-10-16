@@ -84,14 +84,14 @@ def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
         harness_session_id="11111111-1111-1111-1111-111111111111",
         native_store=(home_root / ".codex" / "sessions").as_posix(),
         model="gpt-5.4-mini",
-    )
+    ).chat_id
     workspace_chat_id = session_store.start_session(
         workspace_runtime,
         harness="codex",
         harness_session_id="22222222-2222-2222-2222-222222222222",
         native_store=(home_root / ".codex" / "sessions").as_posix(),
         model="gpt-5.4-mini",
-    )
+    ).chat_id
     try:
         _write_codex_rollout(
             home_root=home_root,
@@ -144,7 +144,7 @@ def test_session_search_global_scope_includes_runtime_root(tmp_path: Path, monke
         harness_session_id="33333333-3333-3333-3333-333333333333",
         native_store=((tmp_path / "home") / ".codex" / "sessions").as_posix(),
         model="gpt-5.4-mini",
-    )
+    ).chat_id
     try:
         _write_codex_rollout(
             home_root=tmp_path / "home",
@@ -208,7 +208,7 @@ def test_session_search_corpus_resolves_tracked_claude_canonical_transcript(
         model="claude-opus",
         claude_config_dir=(tmp_path / "recorded-overlay").as_posix(),
         native_store=str(project_dir),
-    )
+    ).chat_id
     try:
         output = session_search_sync(
             SessionSearchInput(
@@ -288,7 +288,7 @@ def test_browse_subset_search_keeps_unbound_legacy_history_loose(tmp_path, monke
     root = get_project_home("subset")
     chat = session_store.start_session(
         root, harness="codex", harness_session_id=None, model="test", kind="primary"
-    )
+    ).chat_id
     key = str(
         spawn_store.start_spawn(
             root,
@@ -347,7 +347,7 @@ def test_damaged_metadata_index_only_affects_work_scoped_search(
         harness_session_id="11111111-1111-1111-1111-111111111111" if recorded_harness_id else None,
         model="test",
         kind="primary",
-    )
+    ).chat_id
     if not recorded_harness_id:
         # Deliberately unlinked primary: recover native ID and launch metadata from files.
         key = str(

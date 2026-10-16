@@ -491,7 +491,7 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
             successor,
             "claude-sonnet-4-5",
             native_store=str(store),
-        )
+        ).chat_id
         session_store.stop_session(context.runtime_root, existing_chat)
     # Match Claude's native history shape; the actual child supplies the assigned entry ID.
     history = (

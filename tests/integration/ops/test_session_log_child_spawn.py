@@ -126,7 +126,7 @@ def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
         model="gpt-5.4",
         chat_id="c-parent",
         kind="primary",
-    )
+    ).chat_id
     try:
         spawn_store.start_spawn(
             runtime_root,
@@ -173,7 +173,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
         model="gpt-5.4",
         chat_id="c-child",
         spawn_id="p42",
-    )
+    ).chat_id
     try:
         spawn_store.start_spawn(
             runtime_root,
@@ -321,7 +321,7 @@ def test_session_log_chat_reads_file_authority_without_harness_session_id(
         harness_session_id="",
         model="gpt-5.4",
         chat_id="c42",
-    )
+    ).chat_id
     try:
         spawn_store.start_spawn(
             runtime_root,
@@ -428,7 +428,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
         model="gpt-5.4",
         chat_id="c-owner",
         kind="primary",
-    )
+    ).chat_id
     primary_spawn_id = str(
         spawn_store.start_spawn(
             runtime_root,

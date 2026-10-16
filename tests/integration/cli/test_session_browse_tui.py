@@ -211,7 +211,7 @@ def test_plain_browse_and_bare_continue_are_identical(tmp_path) -> None:
         model="gpt-5.4",
         agent="coder",
         kind="primary",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, chat_id)
 
     browse = _run_meridian(
@@ -253,14 +253,14 @@ def test_plain_browse_keeps_unbound_chat_visible(tmp_path) -> None:
         native_store=(meridian_home / ".codex" / "sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
-    )
+    ).chat_id
     unbound = session_store.start_session(
         runtime_root,
         harness="pi",
         harness_session_id="99999999-9999-4999-8999-999999999999",
         model="gpt-5.4",
         kind="primary",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, bound)
     session_store.stop_session(runtime_root, unbound)
 

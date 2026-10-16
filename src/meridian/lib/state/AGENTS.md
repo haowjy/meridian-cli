@@ -106,12 +106,17 @@ Use `history_index.py` for filtered discovery, not repeated broad authority scan
 Keep lifecycle/control decisions on direct authoritative reads. All new indexed
 writers must publish dirty intent before file mutation; SQLite is never a writer
 dependency. Restored `record_mode="historical"` aggregates are inert and immutable;
-their reserved `historical-` generation prefix makes the append guard O(1). The
-target is that no per-spawn path replays `sessions.jsonl` while holding
-`sessions.jsonl.flock`. Known violators are `SessionBindings.__init__`, the
-`start_session()` lookups, model-selection and model-observation dedup, and
-`get_or_create_observed_chat()`; [#591](https://github.com/haowjy/meridian-cli/issues/591)
-tracks their removal.
+their reserved `historical-` generation prefix makes the append guard O(1). Per-operation session reads use `chat_rows`/`chat_record`/`chat_generations` and
+`native_chats`/`native_observations`; they decode only selected rows. Their bodies
+still scan `sessions.jsonl` bytes. Bulk repair/import bindings keep one
+`SessionBindings` snapshot; cross-chat checks require its full (`scope=None`)
+view. Selection and observation dedup run inside the append seam's mutation
+(shared) → sessions-flock epoch, without nested lock re-entry. The append seam
+consumes lazy row iterators there, so validation and publication are atomic.
+[#418](https://github.com/haowjy/meridian-cli/issues/418) replaces these filtered
+passes with per-chat journals. `live_observer_for_chat` and capture's spawn-side
+ownership check still scan spawn rows: chat claims cannot find a spawn whose
+native key was recorded only in its own state.
 Indexed queries build a missing projection, then make one catch-up attempt bounded
 by the caller deadline (two seconds by default). Contention raises
 `HistoryIndexBusy`; incomplete coverage is never a negative result. Every caller

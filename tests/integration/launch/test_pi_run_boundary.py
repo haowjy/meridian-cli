@@ -616,7 +616,7 @@ async def test_identity_failure_payload_is_identical_at_every_boundary(
             return PostExit(entry_error=error)
 
         monkeypatch.setattr(ctx.harness, "observe_after_exit", verify)
-        chat_id = session_store.start_session(ctx.runtime_root, "pi", "", "")
+        chat_id = session_store.start_session(ctx.runtime_root, "pi", "", "").chat_id
         record = session_store.get_session_record(ctx.runtime_root, chat_id)
         assert record is not None
         spawn_store.update_spawn(ctx.runtime_root, run.spawn_id, chat_id=chat_id)

@@ -113,15 +113,19 @@ def session_records_for_spawns(
     Do not fill nullable identity fields here: capture fingerprints, historical
     provenance and publication witnesses must detect changes to those fields too.
     """
-    generations = session_store.list_session_generations(root)
-    linked: dict[str, list[SessionRecord]] = {}
+    records = tuple(records)
+    generations = tuple(
+        session for chat in dict.fromkeys(row.chat_id for row in records if row.chat_id)
+        for session in session_store.chat_generations(root, chat)
+    )
+    linked: dict[tuple[str, str], list[SessionRecord]] = {}
     for session in generations:
         if session.spawn_id:
-            linked.setdefault(session.spawn_id, []).append(session)
+            linked.setdefault((session.chat_id, session.spawn_id), []).append(session)
     exact = {(session.chat_id, session.session_instance_id): session for session in generations}
     result: dict[str, SessionRecord] = {}
     for record in records:
-        candidates = linked.get(record.id, [])
+        candidates = linked.get((record.chat_id, record.id), []) if record.chat_id else []
         if record.session_instance_id and record.chat_id is not None:
             session = exact.get((record.chat_id, record.session_instance_id))
             if session is None and candidates:
@@ -216,8 +220,10 @@ def get_session_record_for_spawn(
         return None
 
     row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-    generations = session_store.list_session_generations(runtime_root)
-    if row is not None and row.session_instance_id:
+    if row is None or row.chat_id is None:
+        return None
+    generations = session_store.chat_generations(runtime_root, row.chat_id)
+    if row.session_instance_id:
         return next((
             record for record in reversed(generations)
             if record.chat_id == row.chat_id
@@ -233,8 +239,6 @@ def get_session_record_for_spawn(
             continue
         return record
 
-    if row is None:
-        return None
     exact_chat_id = spawn_exact_chat_id(row)
     if exact_chat_id is None:
         return None

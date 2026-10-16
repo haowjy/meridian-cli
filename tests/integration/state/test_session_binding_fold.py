@@ -86,7 +86,7 @@ def test_replay_preserves_partial_keys_and_rejects_whole_conflicts(
 
 
 def test_same_binding_appends_startup_attempt_link(tmp_path: Path) -> None:
-    chat = store.start_session(tmp_path, "codex", "first", "test", native_store="/native")
+    chat = store.start_session(tmp_path, "codex", "first", "test", native_store="/native").chat_id
     try:
         before = store.get_session_record(tmp_path, chat)
         assert before is not None

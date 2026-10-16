@@ -1282,10 +1282,7 @@ class HistoryIndex:
         if not generation:
             return False
         row = db.execute(
-            select(SESSIONS.c.record_json)
-            .where(SESSIONS.c.chat == ref)
-            .order_by(SESSIONS.c.ordinal.desc())
-            .limit(1)
+            select(SESSION_CHATS.c.record_json).where(SESSION_CHATS.c.chat == ref)
         ).first()
         if row is None:
             return False
@@ -1519,7 +1516,11 @@ class HistoryIndex:
     def recent_sessions(
         self, *, limit: int, live_chat_ids: set[str]
     ) -> tuple[list[SessionRecord | SpawnRecord], int]:
-        newer = SESSIONS.alias("newer")
+        accepted_generation = func.coalesce(
+            func.nullif(func.json_extract(
+                SESSION_CHATS.c.record_json, "$.session_instance_id"
+            ), ""), SESSION_CHATS.c.latest_blank, "",
+        )
         live_expr = SESSIONS.c.chat.in_(sorted(live_chat_ids)) if live_chat_ids else literal(0)
         browse = union_all(
             select(
@@ -1528,11 +1529,12 @@ class HistoryIndex:
                 SESSIONS.c.activity,
                 live_expr.label("live"),
                 func.cast(func.substr(SESSIONS.c.chat, 2), Integer).label("tie"),
+            ).join(
+                SESSION_CHATS,
+                (SESSION_CHATS.c.chat == SESSIONS.c.chat)
+                & (SESSIONS.c.generation == accepted_generation),
             ).where(
                 SESSIONS.c.kind == "primary",
-                ~exists().where(
-                    newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal
-                ),
                 ~exists().where(
                     RECORDS.c.archive_id.is_not(None),
                     RECORDS.c.history_id == SESSIONS.c.history_id,

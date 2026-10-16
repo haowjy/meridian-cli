@@ -245,7 +245,7 @@ def test_late_session_id_is_imported_once_after_legacy_marker(
         harness_session_id="",
         model="test",
         kind="primary",
-    )
+    ).chat_id
     first = legacy.import_legacy_native_sessions(root)
     assert first is not None and first.unbound == {"no_session_id": [chat_id]}
 
@@ -299,7 +299,7 @@ def test_late_binding_ignores_marker_with_wrong_shape(homes: tuple[Path, Path]) 
         harness_session_id="",
         model="test",
         kind="primary",
-    )
+    ).chat_id
     assert legacy.import_legacy_native_sessions(root) is not None
     marker_path = root / legacy.MARKER
     marker = json.loads(marker_path.read_text())

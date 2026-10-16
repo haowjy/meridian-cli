@@ -69,7 +69,6 @@ def test_selection_order_and_dedup_do_not_rewrite_launch_history(tmp_path: Path)
         assert current(tmp_path, "other") == "sol"
         assert store.get_model_selection(tmp_path, "claude", "thread") is None
         assert store.get_session_record(tmp_path, "c1") == before
-        assert store.get_last_session(tmp_path) == before
     finally:
         store.stop_session(tmp_path, "c1")
 
@@ -119,7 +118,7 @@ def test_seed_cannot_replace_started_selection_and_write_failure_propagates(
             def fail(*args: object, **kwargs: object) -> None:
                 raise OSError("selection append failed")
 
-            patch.setattr(store, "append_event", fail)
+            patch.setattr(store, "_append_session_event", fail)
             with pytest.raises(OSError, match="selection append failed"):
                 selected(tmp_path, "c1", generation, "p3", "new")
         assert current(tmp_path) == "astra"

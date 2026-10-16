@@ -55,7 +55,7 @@ def _record(
         chat_id="c1",
         kind="primary",
         model_selection_protocol=1,
-    )
+    ).chat_id
     record = get_session_record(runtime_root, chat_id)
     assert record is not None
     context = SimpleNamespace(

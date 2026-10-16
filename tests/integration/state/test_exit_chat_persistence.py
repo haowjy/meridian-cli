@@ -17,7 +17,7 @@ def test_verified_exit_publishes_only_with_native_proof_on_creation_and_reuse(tm
     store = str(tmp_path / "native")
     entry = session_store.start_session(
         runtime, harness="claude", harness_session_id="entry", model="", native_store=store,
-    )
+    ).chat_id
     session_store.stop_session(runtime, entry)
     spawn_store.start_spawn(
         runtime, spawn_id="p1", chat_id=entry, harness="claude", kind="primary",
@@ -55,7 +55,7 @@ def test_spawn_ref_settings_follow_selected_chat_whether_or_not_observed(tmp_pat
     chat = session_store.start_session(
         runtime, harness="claude", harness_session_id="entry", model="",
         native_store=store, kind="primary",
-    )
+    ).chat_id
     session_store.update_session_work_id(runtime, chat, "original-work")
     session_store.stop_session(runtime, chat)
     spawn_store.start_spawn(
@@ -95,7 +95,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         native_store=str(tmp_path / "native"),
         claude_config_dir=str(tmp_path / "config"),
         kind="primary",
-    )
+    ).chat_id
     session_store.update_session_work_id(runtime, source, "work-a")
     snapshot = LaunchPolicySnapshot(model="model-a", harness="claude", agent="builder")
     generation = session_store.get_session_record(runtime, source)
@@ -186,7 +186,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         runtime, chat_id=other_id, spawn_id="p2", harness="claude",
         harness_session_id="existing", native_store=str(tmp_path / "other-native"),
         model="model-b", agent="reviewer", kind="primary",
-    )
+    ).chat_id
     session_store.update_session_work_id(runtime, other, "other-work")
     session_store.stop_session(runtime, other)
     before = session_store.get_session_record(runtime, other)

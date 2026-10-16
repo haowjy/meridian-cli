@@ -256,7 +256,7 @@ def test_continue_to_different_harness_fails_without_changing_source_chat(
         native_store=str(native_store),
         model="pi/coding-agent",
         kind="primary",
-    )
+    ).chat_id
     source_spawn = spawn_store.start_spawn(
         runtime_root,
         chat_id=chat_id,
@@ -358,7 +358,7 @@ def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
         skills=snapshot.skills,
         kind="spawn",
         spawn_id="p51",
-    )
+    ).chat_id
     requests = _record_primary_launch(monkeypatch)
 
     try:
@@ -616,7 +616,7 @@ def test_fork_old_harness_generation_preserves_selected_history(
         native_store=str(native_store),
         model="gpt-5.3-codex",
         kind="primary",
-    )
+    ).chat_id
     first = spawn_store.start_spawn(
         root,
         chat_id=source,
@@ -635,7 +635,7 @@ def test_fork_old_harness_generation_preserves_selected_history(
         harness_session_id="newer-native",
         model="gpt-5.3-codex",
         kind="primary",
-    )
+    ).chat_id
     second = spawn_store.start_spawn(
         root,
         chat_id=source,
@@ -757,7 +757,7 @@ def test_primary_continue_unbound_chat_refuses_to_guess(tmp_path: Path) -> None:
         harness="claude",
         harness_session_id="",
         model="sonnet",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, chat_id)
     with pytest.raises(
         NativeSessionUnavailable,
@@ -779,7 +779,7 @@ def test_tracked_chat_without_native_store_refuses_continue_and_fork(
         harness=harness,
         harness_session_id="native-id",
         model="test",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, chat_id)
     with pytest.raises(NativeSessionUnavailable) as exc:
         _run_primary_continue(
@@ -809,7 +809,7 @@ def test_complete_claude_key_projects_exact_resume_command(
         harness_session_id=native_id,
         native_store=str(native_store),
         model="sonnet",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, chat_id)
 
     output = _run_primary_continue(tmp_path, chat_id, dry_run=True)
@@ -842,7 +842,7 @@ def test_tracked_native_id_without_harness_never_infers_from_ambient_store(
         harness="",
         harness_session_id="native-known",
         model="sonnet",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, chat_id)
 
     resolved = reference.resolve_session_reference(tmp_path, chat_id)
