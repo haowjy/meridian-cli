@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Parent completion check no longer reports children unknown when history index builds cold; build first, then 2 s query budget. (#644)
+- `--continue` refuses a still-running spawn at once and kills a crashed spawn's leftover harness group before restarting; no more two harnesses on one session. Dry runs touch nothing. (#625)
 
 ## [0.10.16] - 2026-10-16
 
@@ -28,8 +29,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Primary-launch repair streams spawn rows one at a time and folds only pending legacy chats; launcher no longer holds full spawn scan, nor full `sessions.jsonl` replay unless late legacy bind has candidates.
 - Runner work-id lookup, native-id bind, and other single-chat session reads decode only that chat's `sessions.jsonl` rows; background runner holds ~100 MB, not ~230 MB, while harness runs. Corrupt historical row in one chat no longer blocks other chats' reads and binds.
-### Fixed
-- `--continue` refuses live runners and sweeps orphaned harness groups before restarting. (#625)
 
 ## [0.10.13] - 2026-10-16
 

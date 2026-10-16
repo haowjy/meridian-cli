@@ -14,6 +14,7 @@ from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.telemetry import SpawnEventCounter
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.retention import run_retention_cleanup
@@ -49,21 +50,23 @@ def write_segment(
 
 
 def start_spawn(service: SpawnLifecycleService, *, status: str = "running") -> str:
-    return service.start(
-        SpawnReservation(
-            chat_id="chat-1",
-            session_metadata=PrimarySessionMetadata(
-                harness="test-harness",
-                model="test-model",
-                agent="coder",
-                agent_path="",
-                skills=(),
-                skill_paths=(),
+    with LaunchSlot() as launch_lock:
+        return service.start(
+            SpawnReservation(
+                chat_id="chat-1",
+                session_metadata=PrimarySessionMetadata(
+                    harness="test-harness",
+                    model="test-model",
+                    agent="coder",
+                    agent_path="",
+                    skills=(),
+                    skill_paths=(),
+                ),
+                prompt="do the thing",
+                status=status,  # type: ignore[arg-type]
             ),
-            prompt="do the thing",
-            status=status,  # type: ignore[arg-type]
+            launch_lock=launch_lock,
         )
-    )
 
 
 def setup_spawn_projection(runtime_root: Path, monkeypatch) -> None:

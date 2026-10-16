@@ -37,7 +37,7 @@ from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
-from meridian.lib.state.launch_lock import LaunchHandle
+from meridian.lib.state.launch_lock import LaunchSlot
 
 
 async def streaming_serve(
@@ -98,7 +98,7 @@ async def streaming_serve(
     # Resolve-before-persist: prepare_spawn builds launch context first,
     # then atomically creates the row with real metadata (SEAM-1, SEAM-2)
     # ConnectionConfig projected from LaunchContext (DS-002)
-    with LaunchHandle() as launch_lock:
+    with LaunchSlot() as launch_lock:
         prepared = await spawn_service.prepare_spawn(
             request=spawn_req,
             runtime=launch_runtime,

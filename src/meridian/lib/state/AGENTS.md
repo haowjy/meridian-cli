@@ -74,6 +74,9 @@ from mutation locks: the background worker inherits the same open-file
 description via `dup`/`pass_fds`, then immediately restores close-on-exec and
 records its own identity. Release closes descriptors; never use `LOCK_UN`,
 which would unlock the worker too. Harnesses never inherit this descriptor.
+`LaunchSlot` owns creation before ID allocation; `bind_staged()` returns a frozen
+`LaunchHandle` capability with a concrete ID and fd. Lifecycle/service creation
+requires a slot; only low-level `start_spawn` permits lockless test seeding.
 
 Explicit continue takes the source lock and sweeps birth-verified scopes before
 creating another row. Lockless legacy rows retain their birth/grace guard and

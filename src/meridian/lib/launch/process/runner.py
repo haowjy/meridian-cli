@@ -65,7 +65,7 @@ from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
-from meridian.lib.state.launch_lock import LaunchHandle
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.primary_meta import (
     ActivityState,
@@ -715,7 +715,7 @@ def run_harness_process(
     child_env: dict[str, str] = {}
     startup_attempt_id = uuid.uuid4().hex
     try:
-        with LaunchHandle() as launch_lock, session_scope(
+        with LaunchSlot() as launch_lock, session_scope(
             runtime_root=runtime_root,
             metadata=session_metadata,
             request=preview_request.session,

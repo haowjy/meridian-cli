@@ -10,7 +10,6 @@ from pathlib import Path
 import psutil
 
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
-from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import birth_time_unverified
@@ -23,9 +22,8 @@ from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 
 def legacy_runner_alive(row: SpawnRecord) -> bool:
     """Old runners have no flock; preserve their pre-worker startup grace."""
-    if any(
-        pid is not None and is_process_alive_with_birth(pid, row.runner_created_at_epoch)
-        for pid in (row.runner_pid, row.worker_pid)
+    if row.runner_pid is not None and is_process_alive_with_birth(
+        row.runner_pid, row.runner_created_at_epoch
     ):
         return True
     return (
@@ -49,7 +47,7 @@ def _acquire_source(runtime_root: Path, spawn_id: str) -> LaunchHandle:
             raise NotFound(f"Spawn '{spawn_id}' not found")
         if not (spawn_dir / "launch.lock").exists():
             if legacy_runner_alive(row):
-                raise Busy(
+                raise ValueError(
                     f"{spawn_id} is running under an older meridian; wait, or --fork {spawn_id}"
                 )
             fd = os.open(
@@ -63,28 +61,36 @@ def _unknown_scope_gone(pid: int, pgid: int | None) -> bool:
     # Signal 0 only. Permission errors and zombies are not proof of absence.
     if psutil.pid_exists(pid):
         return False
-    if pgid is not None:
-        try:
-            os.killpg(pgid, 0)
-        except ProcessLookupError:
-            return True
-        except PermissionError:
-            return False
+    return pgid is None or _group_gone(pgid)
+
+
+def _group_gone(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
         return False
-    return True
+    return False
 
 
-def sweep_before_continue(runtime_root: Path, spawn_id: str) -> None:
+def sweep_before_continue(runtime_root: Path, spawn_id: str, *, dry_run: bool = False) -> None:
     """Refuse a live source; release only safely swept scopes, never status."""
-    with _acquire_source(runtime_root, spawn_id) as handle:
+    if dry_run:
+        return
+    try:
+        handle = _acquire_source(runtime_root, spawn_id)
+    except Busy as exc:
+        raise ValueError(
+            f"{spawn_id} is still running; use spawn inject {spawn_id} or --fork {spawn_id}"
+        ) from exc
+    with handle:
         sweep_scopes(runtime_root, handle)
 
 
 def sweep_scopes(runtime_root: Path, handle: LaunchHandle) -> None:
     """Containment requires an exclusive launch capability, not guessed liveness."""
-    if handle.spawn_id is None or handle.fd < 0:
-        raise ValueError("Sweep requires a held launch lock")
-    spawn_id = SpawnId(handle.spawn_id)
+    spawn_id = handle.spawn_id
     projection = read_scope_projection(runtime_root, spawn_id)
     for scope in projection.scopes:
         if scope.release_id in projection.released_ids:
@@ -97,7 +103,14 @@ def sweep_scopes(runtime_root: Path, handle: LaunchHandle) -> None:
                 )
         else:
             result = terminate_scope_sync(scope, grace_seconds=5.0, reason="continue_sweep")
-            if result.skip_reason is not None:
+            if result.skip_reason == "pid_reuse_detected":
+                # A PID cannot be reused while it is still a process-group ID.
+                # Other groups need their own absence proof; never signal them.
+                if scope.pgid not in (None, scope.root_pid) and not _group_gone(scope.pgid):
+                    raise ValueError(
+                        f"Cannot safely sweep live group {scope.pgid}; use --fork {spawn_id}"
+                    )
+            elif result.skip_reason == "termination_exception":
                 raise ValueError(
                     f"Cannot safely sweep PID {scope.root_pid}: {result.skip_reason}; "
                     f"use --fork {spawn_id}"

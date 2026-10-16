@@ -77,6 +77,7 @@ def main() -> None:
     patch.setattr(execute, "_build_background_worker_command", lambda **kw: (
         sys.executable, __file__, "worker", "--spawn-id", str(kw["spawn_id"]),
         "--project-root", str(kw["project_paths"].project_root),
+        "--runtime-root", str(kw["runtime_root"]),
     ))
     race = os.environ.get("FAKE_RACE")
     if race:
@@ -84,12 +85,12 @@ def main() -> None:
 
         original = api.sweep_before_continue
 
-        def scheduled_sweep(runtime_root: Path, spawn_id: str) -> None:
+        def scheduled_sweep(runtime_root: Path, spawn_id: str, *, dry_run: bool = False) -> None:
             root = Path(os.environ["FAKE_ROOT"])
             if race == "second":
                 while not (root / "first-swept").exists():
                     time.sleep(0.01)
-            original(runtime_root, spawn_id)
+            original(runtime_root, spawn_id, dry_run=dry_run)
             (root / f"{race}-swept").touch()
             while not (root / "second-swept").exists():
                 time.sleep(0.01)

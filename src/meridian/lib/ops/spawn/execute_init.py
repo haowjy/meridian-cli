@@ -25,7 +25,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.launch_lock import LaunchHandle
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import (
     resolve_project_paths,
     resolve_spawn_log_dir,
@@ -238,7 +238,7 @@ def build_spawn_reservation(
 def _reserve_spawn(
     *,
     reservation: SpawnReservation,
-    launch_lock: LaunchHandle | None = None,
+    launch_lock: LaunchSlot,
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
 ) -> _SpawnContext:

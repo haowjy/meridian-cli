@@ -23,6 +23,7 @@ from meridian.lib.state.launch_boundary import (
     EVENT_PARENT_LAUNCH_SPAWNED,
     EVENT_WORKER_TAKEOVER_STARTED,
 )
+from meridian.lib.state.launch_lock import LaunchSlot
 from tests.integration.state.conftest import (
     _OLD_STARTED_AT,
     _create_spawn,
@@ -611,13 +612,14 @@ def test_reserve_then_prepare_mid_prep_kill_leaves_queued_row_reconciled(
 
     monkeypatch.setattr(execute_module, "_prepare_spawn_execution", _prep_kill)
 
-    with pytest.raises(_MidPrepKillSimulation):
+    with pytest.raises(_MidPrepKillSimulation), LaunchSlot() as launch_lock:
         execute_module._reserve_then_prepare(
             payload=SpawnCreateInput(prompt="run", work="new-work-item"),
             request=SpawnRequest(prompt="run", model="gpt-5.4", harness="codex"),
             runtime=runtime,
             ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
             launch_mode=BACKGROUND_LAUNCH_MODE,
+            launch_lock=launch_lock,
         )
 
     spawn_ids = scan_spawn_ids(runtime_root / "spawns")

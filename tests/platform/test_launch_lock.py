@@ -73,6 +73,7 @@ class Runtime:
         }
         self.processes: list[subprocess.Popen[bytes]] = []
         self.logs: list[Any] = []
+        self.groups: set[int] = set()
 
     def cli(self, *args: str) -> subprocess.Popen[bytes]:
         log = (self.root / f"cli-{len(self.processes)}.log").open("wb")
@@ -82,12 +83,16 @@ class Runtime:
             stdout=log, stderr=log, start_new_session=True,
         )
         self.processes.append(process)
+        self.groups.add(process.pid)
         return process
 
     def pid(self, name: str) -> int:
         path = self.root / name
         until(lambda: path.exists() and path.read_text())
-        return int(path.read_text())
+        pid = int(path.read_text())
+        if name.endswith(".pid"):
+            self.groups.add(pid)
+        return pid
 
     def row(self, spawn: str = "p1") -> dict[str, Any]:
         return json.loads((self.root / "runtime" / "spawns" / spawn / "state.json").read_text())
@@ -125,9 +130,14 @@ class Runtime:
         return harness, worker
 
     def cleanup(self) -> None:
-        for path in self.root.glob("*.pid"):
+        self.groups.update(int(path.read_text()) for path in self.root.glob("*.pid"))
+        for state in (self.root / "runtime/spawns").glob("*/state.json"):
+            pid = json.loads(state.read_text()).get("runner_pid")
+            if pid:
+                self.groups.add(pid)
+        for pgid in self.groups:
             with suppress(ProcessLookupError):
-                os.killpg(int(path.read_text()), signal.SIGKILL)
+                os.killpg(pgid, signal.SIGKILL)
         for path in self.root.glob("*.detached"):
             with suppress(ProcessLookupError):
                 os.kill(int(path.read_text()), signal.SIGKILL)
@@ -153,11 +163,26 @@ def runtime(tmp_path: Path) -> Iterator[Runtime]:
         case.cleanup()
 
 
-def continue_orphan(runtime: Runtime, *, backend: bool) -> None:
+def continue_args(primary: bool, *, dry_run: bool = False) -> list[str]:
+    args = ["--continue", "p1", "-m", "haiku", "-p", "finish"]
+    if not primary:
+        args = ["spawn", *args, "--no-background"]
+    if dry_run:
+        args.append("--dry-run")
+    return args
+
+
+def continue_orphan(runtime: Runtime, *, backend: bool, primary: bool, dry_run: bool) -> None:
     _, worker = runtime.orphan(backend=backend)
-    process = runtime.cli(
-        "spawn", "--continue", "p1", "-m", "haiku", "-p", "finish", "--no-background"
-    )
+    projection = runtime.root / "runtime/spawns/p1/process_scopes.json"
+    before = projection.read_bytes()
+    process = runtime.cli(*continue_args(primary, dry_run=dry_run))
+    if dry_run:
+        assert process.wait(timeout=30) == 0
+        assert alive(worker), "dry run killed the orphan"
+        assert projection.read_bytes() == before, "dry run released scopes"
+        assert not (runtime.root / "runtime/spawns/p2").exists()
+        return
     runtime.pid("p2.pid")
     orphan_gone_before_start = not alive(worker)
     (runtime.root / "p2.exit").touch()
@@ -169,23 +194,71 @@ def continue_orphan(runtime: Runtime, *, backend: bool) -> None:
     assert not (runtime.root / "p2.writer-busy").exists()
 
 
-def test_continue_after_runner_sigkill_sweeps_orphan(runtime: Runtime) -> None:
-    continue_orphan(runtime, backend=True)
+@pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
+@pytest.mark.parametrize("dry_run", [False, True], ids=["execute", "dry-run"])
+@pytest.mark.parametrize("backend", [False, True], ids=["stdio", "backend"])
+def test_continue_after_runner_sigkill_sweeps_orphan(
+    runtime: Runtime, primary: bool, dry_run: bool, backend: bool,
+) -> None:
+    continue_orphan(runtime, backend=backend, primary=primary, dry_run=dry_run)
 
 
-def test_continue_after_runner_sigkill_sweeps_orphan_stdio(runtime: Runtime) -> None:
-    continue_orphan(runtime, backend=False)
-
-
-def test_continue_refuses_live_source(runtime: Runtime) -> None:
+@pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
+@pytest.mark.parametrize("dry_run", [False, True], ids=["execute", "dry-run"])
+def test_continue_refuses_live_source(runtime: Runtime, primary: bool, dry_run: bool) -> None:
     parent = runtime.cli("spawn", "-m", "haiku", "-p", "hold", "--bg")
     assert parent.wait(timeout=30) == 0
-    runtime.started()
-    process = runtime.cli("spawn", "--continue", "p1", "-m", "haiku", "-p", "hold", "--bg")
-    assert process.wait(timeout=15) != 0, "live source was not refused"
-    assert not (runtime.root / "runtime/spawns/p2").exists(), "refusal wrote a new row"
+    harness, worker = runtime.started()
+    process = runtime.cli(*continue_args(primary, dry_run=dry_run))
+    code = process.wait(timeout=30)
+    assert (code == 0) == dry_run
+    assert alive(harness) and alive(worker)
+    assert not (runtime.root / "runtime/spawns/p2").exists(), "preview/refusal wrote a new row"
     assert not (runtime.root / "p2.pid").exists()
-    assert "still running" in (runtime.root / "cli-1.log").read_text()
+    if not dry_run:
+        assert "still running" in (runtime.root / "cli-1.log").read_text()
+
+
+def test_continue_refuses_live_legacy_runner(runtime: Runtime) -> None:
+    from meridian.lib.state import spawn_store
+
+    sleeper = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    runtime.processes.append(sleeper)
+    runtime.groups.add(sleeper.pid)
+    root = runtime.root / "runtime"
+    parent = runtime.cli("spawn", "-m", "haiku", "-p", "hold", "--no-background")
+    runtime.started()
+    (runtime.root / "p1.exit").touch()
+    assert parent.wait(timeout=30) == 0
+    # A finished fixture supplies faithful native identity; remove its unlocked
+    # file to model an old-build row, then assign a live legacy runner.
+    (root / "spawns/p1/launch.lock").unlink()
+    spawn_store.update_spawn(root, "p1", runner_pid=sleeper.pid)
+    assert runtime.row()["runner_created_at_epoch"] == psutil.Process(sleeper.pid).create_time()
+    process = runtime.cli(*continue_args(False))
+    assert process.wait(timeout=30) != 0
+    assert "running under an older meridian" in (runtime.root / "cli-2.log").read_text()
+    assert not (root / "spawns/p1/launch.lock").exists()
+    assert alive(sleeper.pid)
+
+
+def test_continue_releases_reused_root_without_signalling(runtime: Runtime) -> None:
+    runtime.orphan()
+    sleeper = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    runtime.processes.append(sleeper)
+    runtime.groups.add(sleeper.pid)
+    projection = runtime.root / "runtime/spawns/p1/process_scopes.json"
+    data = json.loads(projection.read_text())
+    scope = data["scopes"][0]
+    scope["root_pid"] = scope["pgid"] = sleeper.pid
+    scope["root_created_at_epoch"] = psutil.Process(sleeper.pid).create_time() - 60
+    projection.write_text(json.dumps(data))
+    process = runtime.cli(*continue_args(False))
+    runtime.started("p2")
+    (runtime.root / "p2.exit").touch()
+    assert process.wait(timeout=30) == 0
+    assert alive(sleeper.pid), "reused PID was signalled"
+    assert json.loads(projection.read_text())["released"]
 
 
 def test_detached_session_descendant_survives_sweep(runtime: Runtime) -> None:
@@ -211,6 +284,10 @@ def test_concurrent_continue_of_dead_source(runtime: Runtime) -> None:
     runtime.env["FAKE_RACE"] = "second"
     second = runtime.cli("spawn", "--continue", "p1", "-m", "haiku", "-p", "hold", "--bg")
     codes = [process.wait(timeout=30) for process in (first, second)]
+    # Background CLI exit precedes worker adoption. Observe every successful
+    # launch before the expected failure so teardown owns all resulting groups.
+    for number in range(2, 2 + codes.count(0)):
+        runtime.started(f"p{number}")
     assert sorted(codes) == [0, 1]
 
 
@@ -263,27 +340,34 @@ def test_launch_lock_lifetime(runtime: Runtime, shape: str) -> None:
     assert not lock_held(path), "SIGKILL must release the lock without a grace period"
 
 
-def test_continue_io_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("legacy", [False, True], ids=["locked", "lockless"])
+def test_continue_io_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool,
+) -> None:
     from meridian.lib.launch.continue_sweep import sweep_before_continue
     from meridian.lib.state import spawn_store
-    from meridian.lib.state.launch_lock import LaunchHandle
+    from meridian.lib.state.launch_lock import LaunchSlot
     from meridian.lib.state.spawn import repository
     from tests.support.call_probe import IOProbe
 
     root = tmp_path / "runtime"
-    with LaunchHandle() as handle:
-        spawn_store.start_spawn(
-            root, spawn_id="p1", chat_id="c1", model="test", agent="", harness="claude",
-            prompt="test", launch_lock=handle,
-        )
-    # Measure just the new seam. Pre-existing session discovery is not a lock/sweep cost.
+    for number in range(1, 4):
+        with LaunchSlot() as slot:
+            spawn_store.start_spawn(
+                root, spawn_id=f"p{number}", chat_id=f"c{number}", model="test", agent="",
+                harness="claude", prompt="test", launch_lock=None if legacy else slot,
+                started_at="2020-01-01T00:00:00+00:00",
+            )
+    # Isolate added sweep I/O: full continue also reads source/session metadata
+    # for replay. CLI behavior is covered above, without faking that pipeline.
     probe = IOProbe(monkeypatch)
     probe.watch("scan", repository.scan_spawn_ids)
     probe.watch("read", repository.read_state)
-    for count in (240, 2400, 12000):
-        for number in range(2, count + 1):
+    for source, count in enumerate((240, 2400, 12000), start=1):
+        for number in range(4, count + 1):
             (root / "spawns" / f"p{number}").mkdir(exist_ok=True)
         before = probe.count("read")
-        sweep_before_continue(root, "p1")
+        sweep_before_continue(root, f"p{source}")
         assert probe.count("scan") == 0
-        assert probe.count("read") == before == 0
+        assert probe.count("read") - before == int(legacy)
+        assert all(call.args[1] == f"p{source}" for call in probe.calls("read")[before:])

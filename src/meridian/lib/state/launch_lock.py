@@ -10,6 +10,7 @@ import fcntl
 import os
 import time
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
@@ -58,16 +59,40 @@ def _validate(fd: int, spawn_dir: Path) -> None:
     raise NotFound(f"Spawn '{spawn_dir.name}' no longer exists")
 
 
+@dataclass(frozen=True)
 class LaunchHandle(AbstractContextManager["LaunchHandle"]):
-    """Lexical launch owner, bound once before the spawn's atomic publication."""
+    """Exclusive launch capability, valid for its owner's lexical lifetime."""
 
-    def __init__(self, spawn_id: SpawnId | None = None, fd: int = -1) -> None:
-        self.spawn_id = spawn_id
-        self.fd = fd
+    spawn_id: SpawnId
+    fd: int
 
-    def create_staged(self, spawn_id: SpawnId, stage: Path) -> None:
-        if self.spawn_id is not None:
-            raise RuntimeError("Launch handle already bound")
+    def close(self) -> None:
+        os.close(self.fd)
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+
+class LaunchSlot(AbstractContextManager["LaunchSlot"]):
+    """Own a staged capability before the spawn ID has been allocated."""
+
+    def __init__(self) -> None:
+        self._handle: LaunchHandle | None = None
+
+    @property
+    def handle(self) -> LaunchHandle:
+        if self._handle is None:
+            raise RuntimeError("Launch slot is not bound")
+        return self._handle
+
+    def bind_staged(self, spawn_id: SpawnId, stage: Path) -> LaunchHandle:
+        if self._handle is not None:
+            raise RuntimeError("Launch slot already bound")
         fd = os.open(
             stage / "launch.lock", os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600
         )
@@ -76,12 +101,13 @@ class LaunchHandle(AbstractContextManager["LaunchHandle"]):
         except BaseException:
             os.close(fd)
             raise
-        self.spawn_id, self.fd = spawn_id, fd
+        self._handle = LaunchHandle(spawn_id, fd)
+        return self._handle
 
     def close(self) -> None:
-        if self.fd >= 0:
-            os.close(self.fd)
-            self.fd = -1
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
 
     def __exit__(
         self,
@@ -110,10 +136,7 @@ def acquire(spawn_dir: Path) -> LaunchHandle:
                 if readers_only is None:
                     raise NotFound(f"Spawn '{spawn_dir.name}' no longer exists") from None
                 if not readers_only:
-                    raise Busy(
-                        f"{spawn_dir.name} is still running; "
-                        f"use spawn inject {spawn_dir.name} or --fork {spawn_dir.name}"
-                    ) from None
+                    raise Busy(SpawnId(spawn_dir.name)) from None
                 if time.monotonic() >= deadline:
                     raise Contended(f"{spawn_dir.name} launch lock is contended; retry") from None
                 time.sleep(0.01)

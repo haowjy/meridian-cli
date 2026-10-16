@@ -49,7 +49,7 @@ from meridian.lib.launch.resolve import (
 )
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
-from meridian.lib.state.launch_lock import LaunchHandle
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnKind, SpawnOrigin
@@ -372,7 +372,7 @@ class SpawnApplicationService:
     # ---- Spawn Preparation (SEAM-1, SEAM-2, SEAM-3) ----
 
     async def prepare(
-        self, payload: PrepareSpawnRequest, *, launch_lock: LaunchHandle | None = None
+        self, payload: PrepareSpawnRequest, *, launch_lock: LaunchSlot
     ) -> PreparedSpawn:
         """Resolve launch context, create spawn row, and project ConnectionConfig.
 
@@ -565,7 +565,7 @@ class SpawnApplicationService:
         runner_pid: int | None = None,
         initial_status: SpawnStatus = SpawnStatus.QUEUED,
         debug_tracer: DebugTracer | None = None,
-        launch_lock: LaunchHandle | None = None,
+        launch_lock: LaunchSlot,
     ) -> PreparedSpawn:
         """Compatibility wrapper over the typed ``prepare`` request API."""
 

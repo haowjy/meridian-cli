@@ -239,9 +239,10 @@ def run_primary_launch(
         )
         if resolved_continue.missing_harness_session_id:
             raise NativeSessionUnavailable(resume_target, "unbound")
-        if not dry_run and resolved_continue.source_spawn_id is not None:
+        if resolved_continue.source_spawn_id is not None:
             sweep_before_continue(
-                resolve_project_runtime_root(project_root), resolved_continue.source_spawn_id
+                resolve_project_runtime_root(project_root), resolved_continue.source_spawn_id,
+                dry_run=dry_run,
             )
         continue_contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(

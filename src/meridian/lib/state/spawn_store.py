@@ -32,7 +32,7 @@ from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.launch_lock import LaunchHandle
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 from meridian.lib.state.spawn.model import (
     AUTHORITATIVE_ORIGINS,
@@ -242,7 +242,7 @@ def start_spawn(
     status: SpawnStatus = SpawnStatus.RUNNING,
     started_at: str | None = None,
     clock: Clock | None = None,
-    launch_lock: LaunchHandle | None = None,
+    launch_lock: LaunchSlot | None = None,
 ) -> SpawnId:
     """Create a v2 spawn state directory and return the spawn ID."""
 
@@ -359,7 +359,7 @@ def start_spawn(
         with lock_file(source.lock_path(runtime_root)):
             changes.mark(source)
             if launch_lock is not None:
-                launch_lock.create_staged(resolved_spawn_id, stage_dir)
+                launch_lock.bind_staged(resolved_spawn_id, stage_dir)
             atomic_publish_dir(stage_dir, spawn_dir)
         return resolved_spawn_id
 

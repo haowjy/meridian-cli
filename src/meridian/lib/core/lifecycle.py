@@ -51,7 +51,7 @@ from meridian.lib.core.telemetry import (
 from meridian.lib.core.telemetry import (
     LifecycleEvent as TelemetryLifecycleEvent,
 )
-from meridian.lib.state.launch_lock import LaunchHandle
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
 
 if TYPE_CHECKING:
@@ -241,7 +241,7 @@ class SpawnLifecycleService:
         reservation: SpawnReservation,
         *,
         dispatch_events: bool = True,
-        launch_lock: LaunchHandle | None = None,
+        launch_lock: LaunchSlot,
     ) -> str:
         """Persist a spawn row from ``reservation`` and optionally dispatch spawn.created."""
         return self._start_from_reservation(
@@ -249,7 +249,7 @@ class SpawnLifecycleService:
         )
 
     def reserve(
-        self, reservation: SpawnReservation, *, launch_lock: LaunchHandle | None = None
+        self, reservation: SpawnReservation, *, launch_lock: LaunchSlot
     ) -> str:
         """Persist a spawn row without dispatching lifecycle events."""
         return self.start(reservation, dispatch_events=False, launch_lock=launch_lock)
@@ -270,7 +270,7 @@ class SpawnLifecycleService:
         reservation: SpawnReservation,
         *,
         dispatch_events: bool,
-        launch_lock: LaunchHandle | None,
+        launch_lock: LaunchSlot,
     ) -> str:
         with bind_lifecycle_correlation(
             self._correlation(operation="start", spawn_id=reservation.spawn_id)

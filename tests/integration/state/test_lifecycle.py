@@ -20,6 +20,7 @@ from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.repository import Applied, Declined
 
@@ -78,7 +79,8 @@ def _start_spawn(service: SpawnLifecycleService, **overrides: Any) -> str:
         "status": "running",
     }
     defaults.update(overrides)
-    return service.start(SpawnReservation(**defaults))
+    with LaunchSlot() as launch_lock:
+        return service.start(SpawnReservation(**defaults), launch_lock=launch_lock)
 
 
 def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:
@@ -183,25 +185,27 @@ def test_finalize_dispatches_hooks_after_terminal_state_is_persisted(tmp_path: P
 def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
     service = _make_service(tmp_path)
 
-    spawn_id = service.start(
-        SpawnReservation(
-            chat_id="c1",
-            session_metadata=PrimarySessionMetadata(
-                harness="codex",
-                model="gpt-5.4",
-                agent="coder",
-                agent_path="",
-                skills=(),
-                skill_paths=(),
+    with LaunchSlot() as launch_lock:
+        spawn_id = service.start(
+            SpawnReservation(
+                chat_id="c1",
+                session_metadata=PrimarySessionMetadata(
+                    harness="codex",
+                    model="gpt-5.4",
+                    agent="coder",
+                    agent_path="",
+                    skills=(),
+                    skill_paths=(),
+                ),
+                prompt="run it",
+                metadata=SpawnStartMetadata(
+                    desc="goal metadata",
+                    work_id="  w-lifecycle  ",
+                    goal="  finish migration  ",
+                ),
             ),
-            prompt="run it",
-            metadata=SpawnStartMetadata(
-                desc="goal metadata",
-                work_id="  w-lifecycle  ",
-                goal="  finish migration  ",
-            ),
+            launch_lock=launch_lock,
         )
-    )
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
@@ -214,21 +218,23 @@ def test_reserve_defers_hook_until_announce(tmp_path: Path) -> None:
     hook = EventTypeHook()
     service = _make_service(tmp_path, hooks=[hook])
 
-    spawn_id = service.reserve(
-        SpawnReservation(
-            chat_id="c1",
-            session_metadata=PrimarySessionMetadata(
-                harness="codex",
-                model="gpt-5.4",
-                agent="coder",
-                agent_path="",
-                skills=(),
-                skill_paths=(),
+    with LaunchSlot() as launch_lock:
+        spawn_id = service.reserve(
+            SpawnReservation(
+                chat_id="c1",
+                session_metadata=PrimarySessionMetadata(
+                    harness="codex",
+                    model="gpt-5.4",
+                    agent="coder",
+                    agent_path="",
+                    skills=(),
+                    skill_paths=(),
+                ),
+                prompt="run it",
+                status="queued",
             ),
-            prompt="run it",
-            status="queued",
+            launch_lock=launch_lock,
         )
-    )
 
     assert hook.event_types == []
 
@@ -241,22 +247,24 @@ def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path
     hook = EventTypeHook()
     service = _make_service(tmp_path, hooks=[hook])
 
-    spawn_id = service.start(
-        SpawnReservation(
-            chat_id="c1",
-            session_metadata=PrimarySessionMetadata(
-                harness="codex",
-                model="gpt-5.4",
-                agent="coder",
-                agent_path="",
-                skills=(),
-                skill_paths=(),
+    with LaunchSlot() as launch_lock:
+        spawn_id = service.start(
+            SpawnReservation(
+                chat_id="c1",
+                session_metadata=PrimarySessionMetadata(
+                    harness="codex",
+                    model="gpt-5.4",
+                    agent="coder",
+                    agent_path="",
+                    skills=(),
+                    skill_paths=(),
+                ),
+                prompt="run it",
+                status="queued",
             ),
-            prompt="run it",
-            status="queued",
-        ),
-        dispatch_events=False,
-    )
+            dispatch_events=False,
+            launch_lock=launch_lock,
+        )
 
     assert hook.event_types == []
 

@@ -25,7 +25,7 @@ from meridian.lib.state.launch_boundary import (
     EVENT_PARENT_LAUNCH_FAILED,
     EVENT_PARENT_LAUNCH_SPAWNED,
 )
-from meridian.lib.state.launch_lock import HANDOFF_ENV, LaunchHandle
+from meridian.lib.state.launch_lock import HANDOFF_ENV, LaunchSlot
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
@@ -229,7 +229,7 @@ def _reserve_then_prepare(
     ctx: RuntimeContext | None,
     launch_mode: LaunchMode,
     runner_pid: int | None = None,
-    launch_lock: LaunchHandle | None = None,
+    launch_lock: LaunchSlot,
 ) -> tuple[_SpawnContext, SpawnExecutionPreparation] | SpawnActionOutput:
     resolved_context = runtime_context(ctx)
     reservation = build_spawn_reservation(
@@ -291,7 +291,7 @@ def execute_spawn_background(
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
 ) -> SpawnActionOutput:
-    with LaunchHandle() as launch_lock:
+    with LaunchSlot() as launch_lock:
         reserved = _reserve_then_prepare(
             payload=payload,
             request=request,
@@ -337,6 +337,7 @@ def execute_spawn_background(
         warning = request.warning
         context_from_resolved = request.context_from
         launch_command = _build_background_worker_command(
+            runtime_root=context.runtime_root,
             spawn_id=context.spawn.spawn_id,
             project_paths=project_paths,
         )
@@ -417,7 +418,6 @@ def execute_spawn_background(
 
         # This launches Meridian's background worker, not a harness child.
         launch_env = dict(os.environ)
-        launch_env["_MERIDIAN_RUNTIME_DIR"] = str(context.runtime_root)
         launch_env.update(
             _spawn_background_worker_env(
                 project_root=execution_contract.control_root,
@@ -436,7 +436,7 @@ def execute_spawn_background(
                 stdout_path.open("ab") as stdout_handle,
                 stderr_path.open("ab") as stderr_handle,
             ):
-                handoff_fd = os.dup(launch_lock.fd)
+                handoff_fd = os.dup(launch_lock.handle.fd)
                 launch_env[HANDOFF_ENV] = str(handoff_fd)
                 try:
                     process = subprocess.Popen(
@@ -551,7 +551,7 @@ def execute_spawn_blocking(
     prepared: PreparedLaunchSurface | None = None,
     on_spawn_id: Callable[[str], None] | None = None,
 ) -> SpawnActionOutput:
-    with LaunchHandle() as launch_lock:
+    with LaunchSlot() as launch_lock:
         reserved = _reserve_then_prepare(
             payload=payload,
             request=request,
