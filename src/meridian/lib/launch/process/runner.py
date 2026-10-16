@@ -71,7 +71,6 @@ from meridian.lib.state.primary_meta import (
 )
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
-    get_session_record,
     update_session_claude_config_dir,
     update_session_work_id,
 )
@@ -792,21 +791,15 @@ def run_harness_process(
                     bind_reopened_run(
                         runtime_root,
                         primary_spawn_id,
-                        managed,
                         work_id=attached_work_id,
                     )
                 else:
-                    session_record = get_session_record(runtime_root, managed.chat_id)
-                    if session_record is None:
-                        raise RuntimeError(
-                            f"Started session {managed.chat_id} has no generation record"
-                        )
                     spawn_store.bind_run_generation(
                         runtime_root,
                         primary_spawn_id,
                         chat_id=managed.chat_id,
                         session_instance_id=managed.session_instance_id,
-                        forked_from_history_id=session_record.forked_from_history_id,
+                        forked_from_history_id=managed.forked_from_history_id,
                     )
                     if attached_work_id is not None:
                         spawn_store.update_spawn(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.refs import parse_ref
@@ -14,9 +13,6 @@ from meridian.lib.platform.locking import FileLockTimeout
 from meridian.lib.state import spawn_store
 from meridian.lib.state.session_store import ChatBusy
 from meridian.lib.state.spawn_scope import read_spawn_scope, write_spawn_scope_task_dir
-
-if TYPE_CHECKING:
-    from meridian.lib.launch.session_scope import SessionAttempt
 
 
 def _seed_continue_scope(project_root: Path, run_id: RunId, request: SessionRequest) -> None:
@@ -46,18 +42,10 @@ def reserve_reopened_run(
 def bind_reopened_run(
     runtime_root: Path,
     run_id: RunId,
-    managed: SessionAttempt,
     *,
     work_id: str | None,
 ) -> None:
-    """Bind a reopened run to its acquired chat, generation, lineage, and work."""
-    spawn_store.bind_run_generation(
-        runtime_root,
-        run_id,
-        chat_id=managed.chat_id,
-        session_instance_id=managed.session_instance_id,
-        forked_from_history_id=managed.forked_from_history_id,
-    )
+    """Attach the acquired chat's active work to a reopened run."""
     if work_id is not None:
         spawn_store.update_spawn(runtime_root, run_id, work_id=work_id)
 

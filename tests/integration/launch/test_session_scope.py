@@ -87,7 +87,7 @@ def test_fresh_session_scope_binds_the_run_generation(tmp_path: Path) -> None:
         )
 
 
-def test_reopen_helper_binds_chat_generation_lineage_and_work(tmp_path: Path) -> None:
+def test_reopen_scope_binds_generation_and_helper_updates_work(tmp_path: Path) -> None:
     source_chat = start_session(
         tmp_path,
         harness="codex",
@@ -120,7 +120,7 @@ def test_reopen_helper_binds_chat_generation_lineage_and_work(tmp_path: Path) ->
         chat_id=source_chat,
         spawn_id=run_id,
     ) as managed:
-        bind_reopened_run(tmp_path, run_id, managed, work_id="w1")
+        bind_reopened_run(tmp_path, run_id, work_id="w1")
         row = spawn_store.get_spawn(tmp_path, run_id)
         session = get_session_record(tmp_path, managed.chat_id)
         assert row is not None

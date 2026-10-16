@@ -171,7 +171,7 @@ def session_scope(
     try:
         record = get_session_record(runtime_root, resolved_chat_id)
         generation = record.session_instance_id if record is not None else ""
-        if spawn_id is not None and not is_exact_continue_session(request):
+        if spawn_id is not None:
             if record is None:
                 raise RuntimeError(
                     f"Started session {resolved_chat_id} has no generation record"

@@ -105,7 +105,6 @@ def _session_execution_context(
             bind_reopened_run(
                 runtime_root,
                 managed.spawn_id,
-                managed,
                 work_id=attached_work_id,
             )
         yield _SessionExecutionContext(
