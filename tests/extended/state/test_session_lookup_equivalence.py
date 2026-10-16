@@ -383,6 +383,8 @@ def test_recent_sessions_reused_generation_seed_42(tmp_path: Path) -> None:
         if row["event"] == "start":
             row.update(kind="primary", started_at=f"2026-10-15T00:00:{index:02}Z")
     (tmp_path / "sessions.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
-    expected = old._records_by_session(tmp_path)
-    actual, _ = HistoryIndex(tmp_path).recent_sessions(limit=100, live_chat_ids=set())
-    assert {r.chat_id for r in actual} == set(expected)
+    # Main selects the highest-ordinal bucket, not the accepted generation.
+    # Frozen fold order and main's seed-42 browse order pin complete payloads.
+    expected = {record.chat_id: record for record in old.list_session_generations(tmp_path)}
+    actual = HistoryIndex(tmp_path).recent_sessions(limit=100, live_chat_ids=set())
+    assert actual == ([expected["c1"], expected["c2"]], 2)

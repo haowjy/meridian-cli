@@ -25,8 +25,8 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 
-# Accepted chats retain their exact generation bucket key, independently of row ordinals.
-SCHEMA_VERSION = 11
+# A later chat start now projects every earlier unstopped generation as inactive.
+SCHEMA_VERSION = 10
 
 
 def versioned(stem: str) -> str:

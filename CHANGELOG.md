@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Read many chats in one pass. Keep log order when clocks tie or go back. Bulk binds use one durable append. Recent chats keep reused generations.
+- Read many chats in one pass. Keep log order when clocks tie or go back. Bulk binds use one durable append.
 - Runner asks for one chat, not whole history. Close checks only native-key chats; spawn ownership scan stays. Warm close imports before package files can change.
 
 ## [0.10.15] - 2026-10-16
@@ -15,7 +15,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   PTY: resize, Ctrl+C, shell Ctrl+Z/`fg` work natively. Claude/Pi keep the relay.
 - Native TUI never runs before its process scope is recorded; runner death sends it
   one TERM through the start gate.
-
 
 ## [0.10.14] - 2026-10-16
 
