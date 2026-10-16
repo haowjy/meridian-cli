@@ -1,3 +1,5 @@
+# TODO: delete this module. Nothing in src/ or tests/ imports it;
+# SpawnParams is the canonical type.
 """Run-input aggregation stage for launch composition — legacy re-exports."""
 
 from __future__ import annotations

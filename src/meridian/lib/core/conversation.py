@@ -1,3 +1,5 @@
+# TODO: delete this module. Nothing in src/ or tests/ imports it;
+# lib/harness/transcript.py superseded it.
 """Unified conversation model for cross-harness history representation."""
 
 from typing import Any, Literal
