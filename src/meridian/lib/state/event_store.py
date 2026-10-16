@@ -37,5 +37,11 @@ def append_event(
 def read_events(
     data_path: Path,
     parse_event: Callable[[dict[str, object]], T | None],
+    *,
+    raw_filter: Callable[[bytes], bool] | None = None,
 ) -> list[T]:
-    return [row for row, _offset in iter_jsonl(data_path, parse_event) if row is not None]
+    return [
+        row
+        for row, _offset in iter_jsonl(data_path, parse_event, raw_filter=raw_filter)
+        if row is not None
+    ]

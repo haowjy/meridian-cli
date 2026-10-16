@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.catalog.mars_roots import MarsRoots, mars_content_roots
 from meridian.lib.config.loader import load_user_config
 from meridian.lib.core.depth import is_root_side_effect_process
-from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
+from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chats
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.config_surface import build_config_surface
@@ -227,13 +227,12 @@ def _repair_stale_session_locks(
     if resolved_runtime_root is None:
         raise ValueError("Doctor lock repair requires a runtime root.")
     cleanup = cleanup_stale_sessions(resolved_runtime_root)
-    for chat_id in cleanup.cleaned_ids:
-        reclaim_session_owned_scopes_for_chat(
-            resolved_runtime_root,
-            chat_id,
-            grace_seconds=5.0,
-            require_live_root=True,
-        )
+    reclaim_session_owned_scopes_for_chats(
+        resolved_runtime_root,
+        cleanup.cleaned_ids,
+        grace_seconds=5.0,
+        require_live_root=True,
+    )
     return len(cleanup.cleaned_ids)
 
 
@@ -242,32 +241,33 @@ def _repair_orphan_runs(
     *,
     runtime_root: Path | None = None,
 ) -> tuple[int, tuple[str, ...]]:
-    from meridian.lib.state.reaper import reconcile_active_spawn
+    from meridian.lib.state.reaper import iter_repair_candidates, reconcile_active_spawn
 
     resolved_runtime_root = runtime_root
     if resolved_runtime_root is None:
         resolved_runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
     if resolved_runtime_root is None:
         raise ValueError("Doctor orphan-run repair requires a runtime root.")
-    spawns = spawn_store.list_spawns(resolved_runtime_root).records
-    running_before = {s.id for s in spawns if is_active_spawn_status(s.status)}
     # Terminal rows may carry a durable reaper cleanup claim left by a crash
     # after finalization. The reconciler is a no-op for other terminal rows.
-    reconciled = [
-        reconcile_active_spawn(project_root, resolved_runtime_root, spawn) for spawn in spawns
-    ]
-    running_after = {s.id for s in reconciled if is_active_spawn_status(s.status)}
-    reconciled_orphans = tuple(sorted(running_before - running_after))
-    if reconciled_orphans:
-        from meridian.lib.ops.session_archive import (
-            NativeCaptureDeferred,
-            materialize_native_history,
+    reconciled_orphans: list[str] = []
+    for spawn in iter_repair_candidates(resolved_runtime_root):
+        was_active = is_active_spawn_status(spawn.status)
+        reconciled = reconcile_active_spawn(
+            project_root,
+            resolved_runtime_root,
+            spawn,
         )
+        if not was_active or is_active_spawn_status(reconciled.status):
+            continue
+        reconciled_orphans.append(reconciled.id)
+        spawn_id = reconciled.id
+        if reconciled.kind == "primary":
+            from meridian.lib.ops.session_archive import (
+                NativeCaptureDeferred,
+                materialize_native_history,
+            )
 
-        by_id = {s.id: s for s in reconciled}
-        for spawn_id in reconciled_orphans:
-            if by_id[spawn_id].kind != "primary":
-                continue
             try:
                 materialize_native_history(project_root, resolved_runtime_root, spawn_id)
             except NativeCaptureDeferred as exc:
@@ -282,7 +282,8 @@ def _repair_orphan_runs(
                     spawn_id=spawn_id,
                     exc_info=True,
                 )
-    return len(reconciled_orphans), reconciled_orphans
+    reconciled_orphans.sort()
+    return len(reconciled_orphans), tuple(reconciled_orphans)
 
 
 def schedule_background_repairs(project_root: Path) -> None:

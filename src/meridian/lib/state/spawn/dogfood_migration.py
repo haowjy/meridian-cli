@@ -23,7 +23,7 @@ from meridian.lib.state.spawn.model import LegacyRunBoundaryOutcome, RunBoundary
 from meridian.lib.state.spawn.repository import (
     DOGFOOD_BOUNDARY_FIELDS,
     StoredSpawnState,
-    scan_spawn_ids,
+    iter_spawn_ids,
     spawn_lock_path,
 )
 
@@ -95,7 +95,7 @@ def migrate_dogfood_spawn_rows(runtime_root: Path) -> DogfoodMigration:
     changes = HistoryChanges(runtime_root)
     migrated: list[str] = []
     failed: list[tuple[str, str]] = []
-    for spawn_id in scan_spawn_ids(spawns_dir):
+    for spawn_id in iter_spawn_ids(spawns_dir):
         try:
             if _migrate_row(changes, spawns_dir, spawn_id):
                 migrated.append(spawn_id)
@@ -110,8 +110,8 @@ def migrate_dogfood_spawn_rows(runtime_root: Path) -> DogfoodMigration:
         except FileLockTimeout as exc:
             index_rearm_warning = f"Could not re-arm history index initialization: {exc}"
     return DogfoodMigration(
-        migrated=tuple(migrated),
-        failed=tuple(failed),
+        migrated=tuple(sorted(migrated)),
+        failed=tuple(sorted(failed)),
         index_rearm_warning=index_rearm_warning,
     )
 

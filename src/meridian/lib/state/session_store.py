@@ -1,6 +1,7 @@
 """File-backed session tracking for a Meridian state root's `sessions.jsonl`."""
 
 import os
+import re
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
@@ -76,6 +77,8 @@ from meridian.lib.state.session_fold import (
     project_session_event as project_session_event,
 )
 from meridian.lib.utils.json_shapes import float_or_none, int_or_none, string_or_empty
+
+_SESSION_CHAT_ID_FIELD = re.compile(rb'"chat_id"\s*:\s*"([^"\\]*)"')
 
 
 def _append_session_event(
@@ -224,8 +227,23 @@ def _records_by_session(
                 return None
         return parse_event(payload)
 
+    selected_ids = {chat_id.encode() for chat_id in chat_ids} if chat_ids is not None else None
+
+    def raw_event_selected(raw: bytes) -> bool:
+        if selected_ids is None:
+            return True
+        # Nominate only: decoded structure below still decides whether this is
+        # the event's chat ID, so legacy key ordering and nested fields stay safe.
+        return any(
+            match.group(1) in selected_ids for match in _SESSION_CHAT_ID_FIELD.finditer(raw)
+        )
+
     records: dict[str, SessionRecord] = {}
-    for event in read_events(paths.sessions_jsonl, selected_event):
+    for event in read_events(
+        paths.sessions_jsonl,
+        selected_event,
+        raw_filter=raw_event_selected,
+    ):
         project_session_event(records, event)
     return records
 
@@ -580,9 +598,11 @@ def list_all_session_records(runtime_root: Path) -> list[SessionRecord]:
     return list(_records_by_session(runtime_root).values())
 
 
-def get_session_record(runtime_root: Path, chat_id: str) -> SessionRecord | None:
+def get_session_record(runtime_root: Path, chat_id: str | None) -> SessionRecord | None:
     """Return a materialized record for one chat ID, if present."""
 
+    if chat_id is None:
+        return None
     return _records_by_session(runtime_root, chat_ids={chat_id}).get(chat_id)
 
 
@@ -944,7 +964,10 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
             lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
             lock_file(paths.sessions_flock),
         ):
-            records = _records_by_session(runtime_root)
+            records = _records_by_session(
+                runtime_root,
+                chat_ids={chat_id for chat_id, _lock_path, _handle in stale},
+            )
             stopped_at = utc_now_iso()
             for chat_id, _lock_path, _ in stale:
                 existing = records.get(chat_id)

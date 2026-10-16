@@ -188,7 +188,9 @@ background repair and fails closed outside root depth. It snapshots a cleanup cl
 under the spawn lock, persists the terminal outcome through the locked external-writer
 path, then terminates the claimed, birth-validated scopes. A separate stable cleanup
 lock prevents concurrent reapers from double-signalling; terminal rows retain failed
-claims for the next doctor pass.
+claims for the next doctor pass. Startup candidate discovery streams authoritative
+spawn rows directly, selecting active rows and rows with a cleanup claim; it does not
+trust the disposable history index or retain a corpus-sized scan.
 Both paths share decision rules in `reaper.py` and completion/cancel precedence in
 `reconciliation.py`. Primary scope termination additionally requires positive runner-death
 evidence against the recorded birth, with the same one-second clock tolerance as

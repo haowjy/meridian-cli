@@ -6,6 +6,7 @@ vs preserve, delegates to platform-specific backends, logs results.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 
 import psutil
@@ -401,11 +402,48 @@ def reclaim_session_owned_scopes_for_chat(
     stale lease has been declared terminal; this keeps repair fail-closed when
     the recorded root is gone or the PID has been reused.
     """
-    from meridian.lib.state.spawn_store import list_spawns
 
-    spawns = list_spawns(runtime_root, chat_id=chat_id).records
+    return reclaim_session_owned_scopes_for_chats(
+        runtime_root,
+        {chat_id},
+        grace_seconds=grace_seconds,
+        require_live_root=require_live_root,
+    )
+
+
+def reclaim_session_owned_scopes_for_chats(
+    runtime_root: Path,
+    chat_ids: Collection[str],
+    *,
+    grace_seconds: float = 5.0,
+    require_live_root: bool = False,
+) -> list[CleanupResult]:
+    """Reclaim session-owned scopes for selected chats in one streamed spawn pass."""
+
+    from meridian.lib.state.spawn.repository import (
+        SpawnStateQuarantined,
+        iter_spawn_ids,
+        read_state,
+    )
+    from meridian.lib.state.spawn_store import SpawnScan
+
+    selected = frozenset(chat_ids)
+    if not selected:
+        return []
+    spawns_dir = runtime_root / "spawns"
+    candidates: list[SpawnRecord] = []
+    for stored_spawn_id in iter_spawn_ids(spawns_dir):
+        try:
+            record = read_state(spawns_dir, stored_spawn_id, include_prompt=False)
+        except SpawnStateQuarantined:
+            continue
+        if record is None or record.chat_id not in selected:
+            continue
+        candidates.append(record)
+
     results: list[CleanupResult] = []
-    for record in spawns:
+    for record in SpawnScan.ordered(candidates, ()).records:
+        chat_id = str(record.chat_id)
         spawn_id = SpawnId(record.id)
         scopes = read_scopes_from_disk(runtime_root, spawn_id)
         for scope in scopes:
@@ -475,6 +513,7 @@ def _live_root_skip_reason(scope: ProcessScopeSnapshot) -> str | None:
 __all__ = [
     "cancel_managed_primary",
     "reclaim_session_owned_scopes_for_chat",
+    "reclaim_session_owned_scopes_for_chats",
     "should_skip_cleanup",
     "terminate_legacy_worker_fallback",
     "terminate_recorded_spawn_scopes",

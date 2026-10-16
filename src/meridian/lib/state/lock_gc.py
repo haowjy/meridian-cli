@@ -50,10 +50,16 @@ def gc_orphaned_locks(runtime_root: Path) -> LockGcStats:
         for lock_class in _LOCK_CLASSES:
             lock_dir = runtime_root / "locks" / lock_class
             try:
-                entries = tuple(lock_dir.iterdir())
+                entries = iter(lock_dir.iterdir())
             except OSError:
                 continue
-            for lock_path in entries:
+            while True:
+                try:
+                    lock_path = next(entries)
+                except StopIteration:
+                    break
+                except OSError:
+                    break
                 if lock_path.suffix != ".lock":
                     continue
                 spawn_id = lock_path.stem
