@@ -5,6 +5,20 @@ constantly refactoring. Unit tests protect pure functional cores that are hard
 to exercise through the CLI: policy and state transitions, concurrency
 decisions, security/env sanitization, algorithms, and parsing edges.
 
+Write few tests. Verify a change by running the CLI against a scratch runtime
+and running the existing tests that cover what you touched. A new test, a new
+parameterized case, or an extension of an existing test must guard one of:
+
+- a pure core whose edges the CLI can't reach cheaply (the list above);
+- a regression your brief names, at a seam that reproduces the real bug;
+- a contract an outside consumer relies on: a harness protocol, an on-disk
+  format, a published CLI output shape.
+
+Before adding one, extend or replace the test that already covers the same
+behavior, and delete a weaker duplicate in the same change. Every test runs
+in every full gate, and integration tests that spawn processes cost seconds
+each.
+
 ## Running
 
 ```bash
