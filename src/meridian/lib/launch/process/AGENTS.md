@@ -77,12 +77,12 @@ created and closes in the finally block. If `lifecycle_service.start()` fails, t
 session is still properly closed.
 
 **The TUI owns the terminal exclusively.** `terminal_ownership.py` duplicates the
-terminal descriptors, redirects launcher fds 1 and 2 to the run's `stderr.log`, and
-yields the duplicates before the TUI process starts. Both black-box and managed
-attach callers keep that window around start callbacks and the relay through child
-exit. New native-terminal drivers must enter the same window and explicitly attach
-the TUI to its yielded fds. Only the post-exit result renderer may point users at
-captured launcher output.
+terminal descriptors, redirects launcher fds 1 and 2 to the run's dedicated
+`launcher.log`, and yields the duplicates before the TUI process starts. Both
+black-box and managed attach callers keep that window around start callbacks and
+the relay through child exit. New native-terminal drivers must enter the same
+window and explicitly attach the TUI to its yielded fds. Only the post-exit result
+renderer may point users at captured launcher output.
 
 ## Key Rules
 

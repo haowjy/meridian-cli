@@ -35,7 +35,7 @@ from meridian.lib.harness.idle_types import IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.idle import sidecar as idle_sidecar
-from meridian.lib.launch.constants import STDERR_FILENAME
+from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
 from meridian.lib.platform import IS_WINDOWS
@@ -416,7 +416,7 @@ class PrimaryAttachLauncher:
                     running_callback(pid)
 
             telemetry.clear()
-            with tui_terminal_window(self._spawn_dir / STDERR_FILENAME) as window:
+            with tui_terminal_window(self._spawn_dir / LAUNCHER_LOG_FILENAME) as window:
                 try:
                     running_process = self._process_launcher.start(
                         command=command,

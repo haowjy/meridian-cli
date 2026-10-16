@@ -135,8 +135,8 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = cwd, env, launcher_diagnostics_path
         command = tuple(command)
@@ -215,8 +215,8 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = launcher_diagnostics_path
         _ = command, output_log_path
@@ -268,8 +268,8 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = command, cwd, env, launcher_diagnostics_path
         assert isinstance(output_log_path, Path)
@@ -344,8 +344,8 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = command, cwd, env, output_log_path, launcher_diagnostics_path
         nonlocal black_box_calls
@@ -420,8 +420,8 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
         cwd,
         env,
         output_log_path,
-        on_child_started=None,
-        launcher_diagnostics_path=None,
+        on_child_started,
+        launcher_diagnostics_path,
     ):
         _ = command, cwd, env, launcher_diagnostics_path
         output_log_path.write_bytes(

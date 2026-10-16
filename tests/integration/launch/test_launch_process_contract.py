@@ -20,6 +20,7 @@ from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun
 from meridian.lib.launch.process import runner as process_runner
@@ -114,7 +115,8 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         launcher_diagnostics_path: Path,
     ) -> tuple[int, int, None]:
         nonlocal black_box_calls
-        _ = (command, cwd, env, output_log_path, launcher_diagnostics_path)
+        _ = (command, cwd, env, output_log_path)
+        assert launcher_diagnostics_path == tmp_path / LAUNCHER_LOG_FILENAME
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(111)
@@ -173,7 +175,8 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         launcher_diagnostics_path: Path,
     ) -> tuple[int, int, None]:
         nonlocal black_box_calls
-        _ = (command, cwd, env, output_log_path, launcher_diagnostics_path)
+        _ = (command, cwd, env, output_log_path)
+        assert launcher_diagnostics_path == tmp_path / LAUNCHER_LOG_FILENAME
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(222)

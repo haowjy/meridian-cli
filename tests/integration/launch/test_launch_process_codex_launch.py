@@ -297,8 +297,8 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = (
             command,
@@ -462,8 +462,8 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = (
             command,

@@ -123,8 +123,8 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = launcher_diagnostics_path
         command = tuple(command)
@@ -178,8 +178,8 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = command, cwd, env, output_log_path, launcher_diagnostics_path
         assert callable(on_child_started)
@@ -235,8 +235,8 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = cwd, env, output_log_path, launcher_diagnostics_path
         command = tuple(command)

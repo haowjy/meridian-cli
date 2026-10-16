@@ -191,8 +191,8 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-        launcher_diagnostics_path: Any = None,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
         _ = command, env, launcher_diagnostics_path
         nonlocal black_box_calls

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.platform import IS_WINDOWS, pty
 
 
@@ -17,7 +18,7 @@ from meridian.lib.platform import IS_WINDOWS, pty
 def test_primary_tui_window_captures_launcher_threads_and_children(
     tmp_path: Path,
 ) -> None:
-    diagnostics_path = tmp_path / "stderr.log"
+    diagnostics_path = tmp_path / LAUNCHER_LOG_FILENAME
     script_path = tmp_path / "exercise_window.py"
     script_path.write_text(
         textwrap.dedent(
@@ -119,6 +120,7 @@ def test_primary_tui_window_captures_launcher_threads_and_children(
     assert terminal_text.index("To continue with meridian") < terminal_text.index(pointer)
 
     diagnostics = diagnostics_path.read_text()
+    assert diagnostics_path.name == LAUNCHER_LOG_FILENAME
     assert "thread diagnostic" in diagnostics
     assert "child stdout" in diagnostics
     assert "child stderr" in diagnostics

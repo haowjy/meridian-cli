@@ -54,6 +54,7 @@ from meridian.lib.launch.artifact_io import (
     write_projection_artifacts,
 )
 from meridian.lib.launch.constants import (
+    LAUNCHER_LOG_FILENAME,
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
     STDERR_FILENAME,
@@ -201,17 +202,13 @@ RunPrimaryAttach = Callable[
 ]
 
 
-def select_process_launcher(
-    output_log_path: Path | None,
-) -> ProcessLauncher:
+def select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
     """Choose the launch backend for one primary process invocation."""
 
     return select_process_backend(output_log_path).launcher
 
 
-def select_process_backend(
-    output_log_path: Path | None,
-) -> SelectedProcessLauncher:
+def select_process_backend(output_log_path: Path | None) -> SelectedProcessLauncher:
     """Choose the launch backend plus explicit process/platform contract."""
 
     if output_log_path is not None:
@@ -270,13 +267,11 @@ def run_primary_process_with_capture(
     cwd: Path,
     env: dict[str, str],
     output_log_path: Path | None,
-    on_child_started: Callable[[int], None] | None = None,
-    launcher_diagnostics_path: Path | None = None,
+    on_child_started: Callable[[int], None] | None,
+    launcher_diagnostics_path: Path,
     *,
     launcher_selector: ProcessLauncherSelector = select_process_launcher,
 ) -> tuple[int, int | None, Path | None]:
-    if launcher_diagnostics_path is None:
-        raise ValueError("Primary TUI launch requires a diagnostics path")
     launcher: ProcessLauncher = launcher_selector(output_log_path)
 
     with tui_terminal_window(launcher_diagnostics_path) as window:
@@ -311,7 +306,7 @@ def _cleanup_managed_primary_sidecars(spawn_dir: Path) -> None:
 
 
 def _managed_primary_stderr_excerpt(spawn_dir: Path, *, max_chars: int = 1200) -> str | None:
-    stderr_path = spawn_dir / "stderr.log"
+    stderr_path = spawn_dir / STDERR_FILENAME
     max_bytes = max(max_chars * 4, 4096)
     try:
         file_size = stderr_path.stat().st_size
@@ -448,13 +443,13 @@ def _execute_primary_process(
     )
     blackbox_env = dict(child_env)
     if harness_contract.primary_stderr_log:
-        blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
+        blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / STDERR_FILENAME)
     exit_code, launcher_diagnostics_path = _execute_via_blackbox(
         command=command,
         launch_cwd=launch_cwd,
         child_env=blackbox_env,
         output_log_path=output_log_path,
-        launcher_diagnostics_path=log_dir / STDERR_FILENAME,
+        launcher_diagnostics_path=log_dir / LAUNCHER_LOG_FILENAME,
         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
         on_running=on_running,
     )

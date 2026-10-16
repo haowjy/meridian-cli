@@ -185,10 +185,7 @@ class _RunningPtyProcess:
                 terminal_fds=self.terminal_fds,
                 wait_cancelled=self.wait_cancelled,
             )
-            return LaunchedProcess(
-                exit_code=exit_code,
-                pid=self.pid,
-            )
+            return LaunchedProcess(exit_code=exit_code, pid=self.pid)
         finally:
             with suppress(OSError):
                 os.close(self.master_fd)
@@ -224,11 +221,6 @@ class PtyProcessLauncher(ProcessLauncher):
 
         child_pid = os.fork()
         if child_pid == 0:
-            # The parent may have installed temporary teardown barriers. Do not
-            # carry them across login_tty, where an inherited handler traceback
-            # would otherwise be able to write onto the TUI terminal.
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
-            signal.signal(signal.SIGHUP, signal.SIG_DFL)
             try:
                 os.close(master_fd)
                 os.login_tty(slave_fd)
