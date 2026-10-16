@@ -7,6 +7,7 @@ from typing import get_args
 import pytest
 
 from meridian.lib.core.native_identity import NativeKeyFields
+from meridian.lib.core.types import HarnessSessionId
 from meridian.lib.state import session_binding, session_identity
 from meridian.lib.state import session_store as s
 from meridian.lib.state.native_binding import Bound, Conflict
@@ -175,9 +176,8 @@ def test_native_ids_covers_model_fields_and_raw_legacy_rows(tmp_path: Path) -> N
     models = (*get_args(s.SessionEvent.__value__), s.SessionModelObservationEvent, s.SessionRecord)
     fields = {
         model.__name__: {
-            name
-            for name in model.model_fields
-            if "session" in name and name not in {"session_instance_id", "parent_session_id"}
+            name for name, field in model.model_fields.items()
+            if HarnessSessionId in (field.annotation, *get_args(field.annotation))
         }
         for model in models
     }

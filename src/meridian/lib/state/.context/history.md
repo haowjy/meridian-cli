@@ -230,6 +230,21 @@ root gate and source lock, then rechecks POSIX inode/change-time and membership
 witnesses plus exact session metadata under the short exclusive gate. Witnesses
 only detect changes after checksum verification; they do not replace checksums.
 
+`chats_rows(root, chats)` is one selected pass. Its mapping retains each chat's row
+order; `.ordered` retains global interleaving for cross-chat decisions. Never sort
+these rows by timestamps. `SessionBindings` reads through this seam and publishes
+one grouped `append_chat_rows` batch (one durable append/fsync). B2 replaces these
+bodies, including the cross-chat stable merge, and owns consolidating lock epochs.
+Bulk reads still outside the seam: `list_all_session_records`,
+`list_session_generations`, and `legacy_native_import.py`'s raw reads.
+
+The projection stores the accepted generation's bucket key separately from both
+its last-start ordinal and its mutable record. Reusing a generation can retain
+an old bucket ordinal, and normalization can change the record's generation
+spelling. Neither is a reliable join key. Schema 11 rebuilds this disposable
+projection from unchanged authority; older namespaces remain untouched.
+
+
 ## Search and previews
 
 `native-search-v1.sqlite3` is a separate disposable projection. It stores native
@@ -247,17 +262,3 @@ previews with the shared normalizer. Source signatures invalidate stale content;
 there is no runner-stream cursor. Cache publication checks generation and the
 selected source/digest under the existing locks. Incomplete or rendering-partial
 snapshots do not count as compatible cached previews.
-
-`chats_rows(root, chats)` is one selected pass. Its mapping retains each chat's row
-order; `.ordered` retains global interleaving for cross-chat decisions. Never sort
-these rows by timestamps. `SessionBindings` reads through this seam and publishes
-one grouped `append_chat_rows` batch (one durable append/fsync). B2 replaces these
-bodies, including the cross-chat stable merge, and owns consolidating lock epochs.
-Bulk reads still outside the seam: `list_all_session_records`,
-`list_session_generations`, and `legacy_native_import.py`'s raw reads.
-
-The projection stores the accepted generation's bucket key separately from both
-its last-start ordinal and its mutable record. Reusing a generation can retain
-an old bucket ordinal, and normalization can change the record's generation
-spelling. Neither is a reliable join key. Schema 11 rebuilds this disposable
-projection from unchanged authority; older namespaces remain untouched.
