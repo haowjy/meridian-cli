@@ -502,35 +502,37 @@ class PrimaryAttachLauncher:
         finally:
             if sigint_receiver_registered:
                 signal_coordinator().unregister_receiver(sigint_receiver)
-            signal_coordinator().unregister_receiver(cancel_receiver)
-            self._running_process = None
-            if connection_started:
-                self._set_activity("finalizing")
-            consumer_task = self._event_consumer_task
-            if consumer_task is not None:
-                consumer_task.cancel()
-                try:
-                    await consumer_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    # An observer failure must not mask cancellation or skip
-                    # TUI/backend teardown.
-                    logger.warning(
-                        "primary_attach.observer_failed",
-                        spawn_id=str(self._spawn_id),
-                        exc_info=True,
-                    )
-                self._event_consumer_task = None
-            await self._stop_idle_task()
-            heartbeat_task = self._heartbeat_task
-            if heartbeat_task is not None:
-                heartbeat_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await heartbeat_task
-                self._heartbeat_task = None
-            if connection_started:
-                await self._connection.stop()
+            try:
+                self._running_process = None
+                if connection_started:
+                    self._set_activity("finalizing")
+                consumer_task = self._event_consumer_task
+                if consumer_task is not None:
+                    consumer_task.cancel()
+                    try:
+                        await consumer_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        # An observer failure must not mask cancellation or skip
+                        # TUI/backend teardown.
+                        logger.warning(
+                            "primary_attach.observer_failed",
+                            spawn_id=str(self._spawn_id),
+                            exc_info=True,
+                        )
+                    self._event_consumer_task = None
+                await self._stop_idle_task()
+                heartbeat_task = self._heartbeat_task
+                if heartbeat_task is not None:
+                    heartbeat_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await heartbeat_task
+                    self._heartbeat_task = None
+                if connection_started:
+                    await self._connection.stop()
+            finally:
+                signal_coordinator().unregister_receiver(cancel_receiver)
 
     async def _start_primary_observer_connection_with_retry(
         self,
