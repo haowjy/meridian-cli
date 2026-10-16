@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -105,10 +104,7 @@ from .session import (
     resolve_primary_session_mode,
 )
 from .subprocess_launcher import SubprocessProcessLauncher
-from .terminal_ownership import (
-    format_launcher_diagnostics_pointer,
-    tui_terminal_window,
-)
+from .terminal_ownership import tui_terminal_window
 from .windows_launcher import WindowsConsoleLauncher, can_use_windows_console_launcher
 
 logger = logging.getLogger(__name__)
@@ -321,20 +317,6 @@ def run_primary_process_with_capture(
     )
 
 
-def _written_launcher_diagnostics_path(path: Path) -> Path | None:
-    try:
-        return path.resolve() if path.stat().st_size > 0 else None
-    except OSError:
-        return None
-
-
-def _emit_launcher_diagnostics_pointer(path: Path) -> None:
-    """Show an error-path pointer after the terminal window has been restored."""
-
-    with suppress(BrokenPipeError, OSError, ValueError):
-        print(format_launcher_diagnostics_pointer(path), file=sys.stderr)
-
-
 def _cleanup_managed_primary_sidecars(spawn_dir: Path) -> None:
     """Delete managed sidecars when attach startup falls back to black-box launch."""
 
@@ -450,7 +432,6 @@ def _execute_primary_process(
 
     use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
     launcher_diagnostics_path = log_dir / LAUNCHER_LOG_FILENAME
-    managed_launcher_diagnostics_path: Path | None = None
     if use_managed_backend:
         try:
             return _execute_via_managed_attach(
@@ -468,9 +449,6 @@ def _execute_primary_process(
         except PrimaryAttachError as exc:
             if harness_contract.primary_attach_failure_policy == "raise":
                 raise
-            managed_launcher_diagnostics_path = _written_launcher_diagnostics_path(
-                launcher_diagnostics_path
-            )
             stderr_excerpt = _managed_primary_stderr_excerpt(log_dir)
             logger.warning(
                 "Managed backend failed, falling back to black-box TUI: %s%s",
@@ -506,10 +484,7 @@ def _execute_primary_process(
         managed_session_id=None,
         managed_cancelled=False,
         facts=fold.facts,
-        launcher_diagnostics_path=(
-            blackbox_result.launcher_diagnostics_path
-            or managed_launcher_diagnostics_path
-        ),
+        launcher_diagnostics_path=blackbox_result.launcher_diagnostics_path,
     )
 
 
@@ -1151,28 +1126,6 @@ def run_harness_process(
     except FileNotFoundError:
         logger.debug("Harness command not found", exc_info=True)
         exit_code = 2
-        if primary_spawn_id is not None:
-            launcher_diagnostics_path = _written_launcher_diagnostics_path(
-                resolve_spawn_log_dir(
-                    config_root,
-                    primary_spawn_id,
-                    runtime_root=runtime_root,
-                )
-                / LAUNCHER_LOG_FILENAME
-            )
-    except Exception:
-        if primary_spawn_id is not None:
-            diagnostics_path = _written_launcher_diagnostics_path(
-                resolve_spawn_log_dir(
-                    config_root,
-                    primary_spawn_id,
-                    runtime_root=runtime_root,
-                )
-                / LAUNCHER_LOG_FILENAME
-            )
-            if diagnostics_path is not None:
-                _emit_launcher_diagnostics_pointer(diagnostics_path)
-        raise
 
     return ProcessOutcome(
         command=command,

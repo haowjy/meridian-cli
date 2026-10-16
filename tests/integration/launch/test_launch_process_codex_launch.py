@@ -32,9 +32,6 @@ from meridian.lib.launch.process.primary_attach import (
 )
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
-from meridian.lib.launch.process.terminal_ownership import (
-    format_launcher_diagnostics_pointer,
-)
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -497,7 +494,6 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
 def test_run_harness_process_codex_managed_failure_raises_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Codex primary must use managed backend; failure raises error, no fallback."""
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
@@ -548,5 +544,3 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         )
 
     assert len(diagnostics_paths) == 1
-    pointer = format_launcher_diagnostics_pointer(diagnostics_paths[0])
-    assert capsys.readouterr().err.count(pointer) == 1

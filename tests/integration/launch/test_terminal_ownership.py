@@ -133,6 +133,77 @@ def test_primary_tui_window_captures_launcher_threads_and_children(
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="POSIX PTY contract")
+def test_tui_window_reports_new_diagnostics_when_exception_escapes(
+    tmp_path: Path,
+) -> None:
+    diagnostics_path = tmp_path / LAUNCHER_LOG_FILENAME
+    script_path = tmp_path / "exercise_exception_pointer.py"
+    script_path.write_text(
+        textwrap.dedent(
+            """
+            import os
+            import sys
+            from pathlib import Path
+
+            from meridian.lib.launch.process.terminal_ownership import tui_terminal_window
+
+            diagnostics_path = Path(sys.argv[1])
+            try:
+                with tui_terminal_window(diagnostics_path):
+                    os.write(2, b"new launcher diagnostic\\n")
+                    raise RuntimeError("launch failed")
+            except RuntimeError:
+                print("exception caught")
+            """
+        )
+    )
+
+    terminal_text = _run_script_in_pty(script_path, diagnostics_path)
+
+    pointer = f"Launcher output during the TUI was written to {diagnostics_path.resolve()}"
+    assert terminal_text.count(pointer) == 1
+    assert terminal_text.index(pointer) < terminal_text.index("exception caught")
+    assert "new launcher diagnostic" not in terminal_text
+    assert diagnostics_path.read_text(encoding="utf-8") == "new launcher diagnostic\n"
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="POSIX PTY contract")
+@pytest.mark.parametrize("prior_diagnostics", (None, "stale launcher diagnostic\n"))
+def test_tui_window_does_not_report_diagnostics_when_exception_adds_nothing(
+    tmp_path: Path,
+    prior_diagnostics: str | None,
+) -> None:
+    diagnostics_path = tmp_path / LAUNCHER_LOG_FILENAME
+    script_path = tmp_path / "exercise_exception_without_diagnostics.py"
+    script_path.write_text(
+        textwrap.dedent(
+            f"""
+            from pathlib import Path
+            import sys
+
+            from meridian.lib.launch.process.terminal_ownership import tui_terminal_window
+
+            diagnostics_path = Path(sys.argv[1])
+            prior_diagnostics = {prior_diagnostics!r}
+            if prior_diagnostics is not None:
+                diagnostics_path.write_text(prior_diagnostics, encoding="utf-8")
+            try:
+                with tui_terminal_window(diagnostics_path):
+                    raise RuntimeError("launch failed")
+            except RuntimeError:
+                print("exception caught")
+            """
+        )
+    )
+
+    terminal_text = _run_script_in_pty(script_path, diagnostics_path)
+
+    assert "exception caught" in terminal_text
+    assert "Launcher output during the TUI was written to" not in terminal_text
+    assert diagnostics_path.read_text(encoding="utf-8") == (prior_diagnostics or "")
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="POSIX PTY contract")
 def test_pty_relay_owns_terminal_fds_after_window_closes(tmp_path: Path) -> None:
     diagnostics_path = tmp_path / LAUNCHER_LOG_FILENAME
     gate_path = tmp_path / "release-child"

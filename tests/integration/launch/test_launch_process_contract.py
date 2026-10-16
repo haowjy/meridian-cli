@@ -193,7 +193,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     assert result.launcher_diagnostics_path is None
 
 
-def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness_id(
+def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
     tmp_path: Path,
 ) -> None:
     harness_registry = get_default_harness_registry()
@@ -205,7 +205,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
     )
     black_box_calls = 0
     launcher_diagnostics_path = tmp_path / LAUNCHER_LOG_FILENAME
-    launcher_diagnostics_path.write_text("managed relay failed\n", encoding="utf-8")
+    launcher_diagnostics_path.write_text("stale relay failure\n", encoding="utf-8")
 
     def _black_box(
         command: tuple[str, ...],
@@ -250,7 +250,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
     assert result.exit_code == 0
     assert result.managed_session_id is None
     assert result.managed_cancelled is False
-    assert result.launcher_diagnostics_path == launcher_diagnostics_path.resolve()
+    assert result.launcher_diagnostics_path is None
 
 
 @pytest.mark.parametrize("source", ["assigned", "observed"])

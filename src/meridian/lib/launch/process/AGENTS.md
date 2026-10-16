@@ -88,7 +88,8 @@ to its yielded fds. Terminal capability and `isatty` checks on fds 0/1/2 must ru
 before the window or use its saved fds. A background write racing restoration can
 split across the descriptor swap; this is accepted because the TUI has already
 exited. Only the post-exit result renderer may point users at captured launcher
-output; an escaping error emits the same pointer after restoration.
+output on a normal exit. On an escaping error, the ownership window emits the
+same pointer after restoration, and only when the current window grew the log.
 
 ## Key Rules
 

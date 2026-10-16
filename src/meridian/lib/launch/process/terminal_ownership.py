@@ -58,6 +58,7 @@ def tui_terminal_window(diagnostics_path: Path) -> Generator[TuiTerminalWindow, 
     log_fd = -1
     null_fd = -1
     start_size: int | None = None
+    exception_escaping = False
 
     try:
         diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,6 +88,9 @@ def tui_terminal_window(diagnostics_path: Path) -> Generator[TuiTerminalWindow, 
         log_fd = -1
         window.terminal_fds = saved_fds
         yield window
+    except BaseException:
+        exception_escaping = True
+        raise
     finally:
         if saved_fds is not None:
             _flush_standard_streams()
@@ -102,6 +106,13 @@ def tui_terminal_window(diagnostics_path: Path) -> Generator[TuiTerminalWindow, 
                     window.captured_path = window.diagnostics_path
             except OSError:
                 pass
+        if exception_escaping and window.captured_path is not None:
+            with suppress(BrokenPipeError, OSError, ValueError):
+                print(
+                    format_launcher_diagnostics_pointer(window.captured_path),
+                    file=sys.stderr,
+                    flush=True,
+                )
         for fd in saved_fd_values:
             with suppress(OSError):
                 os.close(fd)
