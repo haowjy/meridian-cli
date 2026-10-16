@@ -106,12 +106,9 @@ Use `history_index.py` for filtered discovery, not repeated broad authority scan
 Keep lifecycle/control decisions on direct authoritative reads. All new indexed
 writers must publish dirty intent before file mutation; SQLite is never a writer
 dependency. Restored `record_mode="historical"` aggregates are inert and immutable;
-their reserved `historical-` generation prefix makes the append guard O(1). The
-target is that no per-spawn path replays `sessions.jsonl` while holding
-`sessions.jsonl.flock`. Known violators are `SessionBindings.__init__`, the
-`start_session()` lookups, model-selection and model-observation dedup, and
-`get_or_create_observed_chat()`; [#591](https://github.com/haowjy/meridian-cli/issues/591)
-tracks their removal.
+their reserved `historical-` generation prefix makes the append guard O(1).
+Per-operation session reads and all appends use the keyed seam in `session_store.py`;
+multi-chat reads use one `chats_rows` pass, never a loop over single-chat reads.
 Indexed queries build a missing projection, then make one catch-up attempt bounded
 by the caller deadline (two seconds by default). Contention raises
 `HistoryIndexBusy`; incomplete coverage is never a negative result. Every caller

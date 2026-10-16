@@ -289,10 +289,10 @@ def test_binding_mirrors_only_the_first_identity(
 ) -> None:
     from structlog.testing import capture_logs
 
-    chat_id = session_store.start_session(tmp_path, "claude", "", "sonnet")
-    record = session_store.get_session_record(tmp_path, chat_id)
+    chat_id = session_store.start_session(tmp_path, "claude", "", "sonnet").chat_id
+    record = session_store.chat_record(tmp_path, chat_id)
     assert record is not None
-    attempt = SessionAttempt(tmp_path, chat_id, record.session_instance_id, None)
+    attempt = SessionAttempt(tmp_path, chat_id, record.session_instance_id, None, record)
     try:
         first = attempt.bind(NativeKeyFields(session_id="first"), source)
         assert isinstance(first, Bound)
@@ -307,10 +307,10 @@ def test_binding_mirrors_only_the_first_identity(
 
 
 def _native_run(root: Path) -> NativeRun:
-    chat_id = session_store.start_session(root, "codex", "", "")
-    record = session_store.get_session_record(root, chat_id)
+    chat_id = session_store.start_session(root, "codex", "", "").chat_id
+    record = session_store.chat_record(root, chat_id)
     assert record is not None
-    attempt = SessionAttempt(root, chat_id, record.session_instance_id, None)
+    attempt = SessionAttempt(root, chat_id, record.session_instance_id, None, record)
     return NativeRun(attempt, None, NativeKeyFields("codex"), None, None)
 
 
@@ -330,7 +330,7 @@ def test_native_observer_acks_each_publication_and_dies_with_its_block(
     def observers() -> list[threading.Thread]:
         return [t for t in threading.enumerate() if t.name.startswith("meridian-native-observer")]
 
-    chat = session_store.start_session(tmp_path, "claude", "entry", "", native_store="/s")
+    chat = session_store.start_session(tmp_path, "claude", "entry", "", native_store="/s").chat_id
     spawn_store.start_spawn(
         tmp_path,
         spawn_id="p1",
@@ -342,9 +342,11 @@ def test_native_observer_acks_each_publication_and_dies_with_its_block(
         agent="",
         prompt="",
     )
-    record = session_store.get_session_record(tmp_path, chat)
+    record = session_store.chat_record(tmp_path, chat)
     assert record is not None
-    attempt = SessionAttempt(tmp_path, chat, record.session_instance_id, None, SpawnId("p1"))
+    attempt = SessionAttempt(
+        tmp_path, chat, record.session_instance_id, None, record, SpawnId("p1")
+    )
     run = NativeRun(attempt, None, NativeKeyFields("claude", "/s", "entry"), None, None)
     with run.observing(
         cast("Any", SimpleNamespace(native_observation_reader=lambda **_: None)),
@@ -397,7 +399,7 @@ def test_native_observer_acks_each_publication_and_dies_with_its_block(
     assert reads[:2] == [0, 1]
     row = spawn_store.get_spawn(tmp_path, "p1")
     assert row is not None and row.current_chat_id is not None
-    current = session_store.get_session_record(tmp_path, row.current_chat_id)
+    current = session_store.chat_record(tmp_path, row.current_chat_id)
     assert current is not None and current.harness_session_id == "b"
     assert run.observation_error is None
     session_store.stop_session(tmp_path, chat)

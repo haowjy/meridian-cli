@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_id
 from meridian.lib.ops.runtime import resolve_roots_for_read
 from meridian.lib.state.session_store import (
-    get_session_record,
+    chat_record,
     is_session_lease_owner_alive,
 )
 
@@ -48,7 +48,7 @@ def resolve_session_reentry(project_root: str, chat_id: str) -> SessionReentryDe
     roots = resolve_roots_for_read(project_root)
     if roots is None:
         return Blocked("session is no longer available")
-    record = get_session_record(roots.runtime_root, chat_id)
+    record = chat_record(roots.runtime_root, chat_id)
     if record is None or record.kind != "primary":
         return Blocked("session is no longer available")
     if record.record_mode == "historical":

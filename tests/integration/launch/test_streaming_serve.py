@@ -127,7 +127,7 @@ async def test_serve_later_switch_has_one_conflict(tmp_path, monkeypatch):
     row = get_spawn(runtime_root, "p1")
     assert row.status == "succeeded"
     assert (
-        session_store.get_session_record(runtime_root, row.chat_id).harness_session_id
+        session_store.chat_record(runtime_root, row.chat_id).harness_session_id
         == "entry-thread"
     )
 

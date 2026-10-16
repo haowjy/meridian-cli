@@ -42,7 +42,7 @@ def test_refresh_rebuild_unbind_and_browse(tmp_path, monkeypatch):
     project, root, store = corpus(tmp_path, monkeypatch)
     chat = session_store.start_session(
         root, harness="claude", harness_session_id="one", native_store=str(store), model="test"
-    )
+    ).chat_id
     path = store / "one.jsonl"
 
     def search(query):
@@ -134,7 +134,7 @@ def test_opencode_in_place_update_and_shared_chat_owners(tmp_path, monkeypatch):
             harness_session_id="ses_one",
             native_store=str(db),
             model="test",
-        )
+        ).chat_id
         for _ in range(2)
     )
 
@@ -210,7 +210,7 @@ def test_work_filter_keeps_only_in_scope_owners_without_pruning_other_keys(tmp_p
                 harness_session_id=sid,
                 native_store=str(store),
                 model="test",
-            )
+            ).chat_id
         )
         write_native(store / f"{sid}.jsonl", "needle")
     session_store.update_session_work_id(root, chats[0], "work")
@@ -244,7 +244,7 @@ def test_corpus_preserves_ref_search_readiness_when_renderer_warns(tmp_path, mon
     )
     chat = session_store.start_session(
         root, harness="opencode", harness_session_id="ses_one", native_store=str(db), model="test"
-    )
+    ).chat_id
     direct = session_search_sync(
         SessionSearchInput(query="needle", ref=chat, project_root=str(project))
     )

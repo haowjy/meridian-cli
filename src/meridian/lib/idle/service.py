@@ -51,7 +51,7 @@ from meridian.lib.state.idle_store import (
     Stage,
 )
 from meridian.lib.state.paths import resolve_project_runtime_root_or_none
-from meridian.lib.state.session_store import get_session_record
+from meridian.lib.state.session_store import chat_record
 from meridian.lib.state.user_paths import get_user_home
 
 _COMPACT_GRACE_MS = 30_000
@@ -79,7 +79,7 @@ def _recorded_native_store(
         return None
     try:
         runtime_root = resolve_project_runtime_root_or_none(project_root)
-        record = get_session_record(runtime_root, chat_id) if runtime_root is not None else None
+        record = chat_record(runtime_root, chat_id) if runtime_root is not None else None
     except (OSError, ValueError):
         return None
     if record is None or record.harness != harness or not record.native_store:

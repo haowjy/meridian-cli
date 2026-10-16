@@ -663,14 +663,28 @@ def _native_session_owners(
             "Cannot establish native capture ownership with quarantined spawn records: "
             + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
         )
-    linked = session_records_for_spawns(root, scan.records)
+    chats = set(session_store.native_chats(root, session_id))
+    # A spawn/primary sidecar can name S before its chat binds S. Its exact
+    # generation may still hold a live lease; native chat claims alone miss it.
+    candidates = {row.id: native_identity_candidates(root, row, None) for row in scan.records}
+    linked = session_records_for_spawns(
+        root, (
+            row for row in scan.records
+            if row.chat_id in chats or session_id in candidates[row.id][1]
+        ),
+    )
     live_owner: str | None = None
     terminal_records: list[str] = []
     for row in scan.records:
         if row.record_mode == "historical":
             continue
         session = linked.get(row.id)
-        harnesses, native_ids = native_identity_candidates(root, row, session)
+        harnesses, native_ids = candidates[row.id]
+        if session is not None:
+            if session.harness.strip():
+                harnesses.add(session.harness.strip().lower())
+            if session.harness_session_id:
+                native_ids.add(session.harness_session_id.strip())
         if harness not in harnesses or session_id not in native_ids:
             continue
         scopes = read_scope_projection(root, SpawnId(row.id))
@@ -689,7 +703,7 @@ def _native_session_owners(
             if scope.release_id not in scopes.released_ids
         ):
             live_owner = live_owner or spawn_owner(row.id)
-    for session in session_store.list_all_session_records(root):
+    for session in session_store.get_session_records(root, chats):
         if (
             session.record_mode == "historical"
             or session.harness.strip().lower() != harness

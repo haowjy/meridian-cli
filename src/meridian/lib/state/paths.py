@@ -53,21 +53,10 @@ class RuntimePaths(BaseModel):
     spawns_dir: Path
 
     @property
-    def chats_dir(self) -> Path:
-        """Return chats directory under state root."""
-
-        return self.root_dir / "chats"
-
-    @property
     def project_lifetime_flock(self) -> Path:
         """Return the stable gate coordinating use and deletion of this root."""
 
         return project_lifetime_lock_path(self.root_dir)
-
-    def chat_lifecycle_path(self, c_id: str) -> Path:
-        """Return lifecycle.jsonl path for a chat."""
-
-        return self.chats_dir / c_id / "lifecycle.jsonl"
 
     @classmethod
     def from_root_dir(cls, root_dir: Path) -> Self:

@@ -12,7 +12,7 @@ from meridian.lib.state import session_store as store
 
 def start(root: Path, chat: str, native: str = "thread") -> str:
     store.start_session(root, "codex", native, "sol", chat_id=chat)
-    record = store.get_session_record(root, chat)
+    record = store.chat_record(root, chat)
     assert record is not None
     return record.session_instance_id
 
@@ -57,7 +57,7 @@ def current(root: Path, native: str = "thread") -> str | None:
 
 def test_selection_order_and_dedup_do_not_rewrite_launch_history(tmp_path: Path) -> None:
     generation = start(tmp_path, "c1")
-    before = store.get_session_record(tmp_path, "c1")
+    before = store.chat_record(tmp_path, "c1")
     try:
         assert selected(tmp_path, "c1", generation, "p1", "sol")
         assert selected(tmp_path, "c1", generation, "p2", "astra")
@@ -68,8 +68,7 @@ def test_selection_order_and_dedup_do_not_rewrite_launch_history(tmp_path: Path)
         )
         assert current(tmp_path, "other") == "sol"
         assert store.get_model_selection(tmp_path, "claude", "thread") is None
-        assert store.get_session_record(tmp_path, "c1") == before
-        assert store.get_last_session(tmp_path) == before
+        assert store.chat_record(tmp_path, "c1") == before
     finally:
         store.stop_session(tmp_path, "c1")
 
@@ -119,7 +118,7 @@ def test_seed_cannot_replace_started_selection_and_write_failure_propagates(
             def fail(*args: object, **kwargs: object) -> None:
                 raise OSError("selection append failed")
 
-            patch.setattr(store, "append_event", fail)
+            patch.setattr(store, "append_chat_rows", fail)
             with pytest.raises(OSError, match="selection append failed"):
                 selected(tmp_path, "c1", generation, "p3", "new")
         assert current(tmp_path) == "astra"
@@ -213,14 +212,14 @@ def test_duplicate_invocation_attempt_link_replays_as_same_native_key(tmp_path: 
     generation = start(tmp_path, "c1")
     try:
         assert selected(tmp_path, "c1", generation, "p1", "sol")
-        before = store.get_session_record(tmp_path, "c1")
+        before = store.chat_record(tmp_path, "c1")
         assert before is not None
         assert not selected(tmp_path, "c1", generation, "p1", "sol", attempt="retry")
         last = json.loads((tmp_path / "sessions.jsonl").read_text().splitlines()[-1])
         link = store.SessionUpdateEvent.model_validate(last)
         assert link.startup_attempt_id == "retry"
         assert bind(before.key_fields(), link.key_fields()) == Same(before.key_fields())
-        assert store.get_session_record(tmp_path, "c1") == before
+        assert store.chat_record(tmp_path, "c1") == before
         assert store.list_session_generations(tmp_path) == (before,)
     finally:
         store.stop_session(tmp_path, "c1")

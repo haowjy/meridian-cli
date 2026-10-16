@@ -114,7 +114,7 @@ def test_owned_event_pins_store(
     )
     assert outcome.exit_code == 0
     assert outcome.chat_id
-    record = session_store.get_session_record(root / ".meridian", outcome.chat_id)
+    record = session_store.chat_record(root / ".meridian", outcome.chat_id)
     assert record
     if signal != "owned":
         assert not record.harness_session_id

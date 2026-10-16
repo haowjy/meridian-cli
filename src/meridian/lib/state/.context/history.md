@@ -23,7 +23,9 @@ pending; active stream appends may coalesce them. Terminal writes and late event
 replace the token. Active activity is explicitly provisional.
 
 Incremental session projection loads only the accepted-chat row and generation
-rows for each chat touched after the cursor. A cursor reset still clears the
+rows for each chat touched after the cursor. Recency and preview freshness use
+the highest-ordinal generation bucket, which can differ from the accepted
+generation when a key is reused. A cursor reset still clears the
 session projection and replays the full committed log. One read may observe only
 a committed prefix of a multi-line `SessionBindings.commit()` batch. That is
 acceptable for this disposable discovery projection; lifecycle and control
@@ -209,11 +211,17 @@ unprefixed restore already appended by an older build bypasses the append guard 
 remains inoperable: operations refuse to continue or fork historical sessions. An unfinished older-build `RestorePlan`
 does not resume; backward compatibility is not supported.
 
-The target is that no per-spawn path replays `sessions.jsonl` while holding
-`sessions.jsonl.flock`; the source lock must cover only bounded work. Known
-violators are `SessionBindings.__init__`, the lookups in `start_session()`, model
-selection and model observation deduplication, and `get_or_create_observed_chat()`.
-[#591](https://github.com/haowjy/meridian-cli/issues/591) tracks their removal.
+Per-operation session reads use `chats_rows`/`chat_rows`/`chat_record`/`chat_generations` and
+`native_chats`/`native_observations`; they decode only selected rows. Their bodies
+still scan `sessions.jsonl` bytes. Bulk repair/import bindings keep one
+`SessionBindings` snapshot; cross-chat checks require its full (`scope=None`)
+view. Selection and observation dedup run inside the append seam's mutation
+(shared) → sessions-flock epoch, without nested lock re-entry. The append seam
+consumes lazy row iterators there, so validation and publication are atomic.
+[#418](https://github.com/haowjy/meridian-cli/issues/418) replaces these filtered
+passes with per-chat journals. `live_observer_for_chat` and capture's spawn-side
+ownership check still scan spawn rows: chat claims cannot find a spawn whose
+native key was recorded only in its own state.
 Exact session lookup returns raw authority, including nullable identity
 fields; only exported capsules enrich local linkage, after raw-authority validation. Restore provenance binds the exact local state and historical session;
 recapture validates those projections and all retained content before reusing
@@ -222,6 +230,17 @@ never become new portable metadata. Existing-copy restore hashes under the share
 root gate and source lock, then rechecks POSIX inode/change-time and membership
 witnesses plus exact session metadata under the short exclusive gate. Witnesses
 only detect changes after checksum verification; they do not replace checksums.
+
+`chats_rows(root, chats)` is one selected pass. Its mapping retains each chat's row
+order; `.ordered` retains global interleaving for cross-chat decisions. Never sort
+these rows by timestamps. `SessionBindings` reads through this seam and publishes
+one grouped `append_chat_rows` batch (one durable append/fsync).
+`SessionBindings.commit` groups rows by chat, so order across chats within one
+commit batch is not kept; bind rows are compared only within a chat.
+#418's per-chat journals replace these bodies, including the cross-chat stable
+merge, and consolidate lock epochs.
+Bulk reads still outside the seam: `list_all_session_records`,
+`list_session_generations`, and `legacy_native_import.py`'s raw reads.
 
 ## Search and previews
 

@@ -67,7 +67,7 @@ def get_owner_chat_for_session(
     normalized = normalize_optional_identity(chat_id)
     if normalized is None:
         return None
-    record = session_store.get_session_record(runtime_root, normalized)
+    record = session_store.chat_record(runtime_root, normalized)
     if record is None:
         return None
     return session_owner_chat_id(runtime_root, record)
@@ -102,7 +102,7 @@ def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
         return False
     if normalized[1:].isdigit():
         return True
-    return session_store.get_session_record(runtime_root, normalized) is not None
+    return session_store.chat_record(runtime_root, normalized) is not None
 
 
 def session_records_for_spawns(
@@ -113,7 +113,13 @@ def session_records_for_spawns(
     Do not fill nullable identity fields here: capture fingerprints, historical
     provenance and publication witnesses must detect changes to those fields too.
     """
-    generations = session_store.list_session_generations(root)
+    records = tuple(records)
+    chats = {row.chat_id for row in records if row.chat_id}
+    generations = session_store.fold_session_generations(
+        session_store.chats_rows(
+            root, None if any(not row.chat_id for row in records) else chats
+        ).ordered,
+    )
     linked: dict[str, list[SessionRecord]] = {}
     for session in generations:
         if session.spawn_id:
@@ -122,6 +128,8 @@ def session_records_for_spawns(
     result: dict[str, SessionRecord] = {}
     for record in records:
         candidates = linked.get(record.id, [])
+        if record.chat_id:
+            candidates = [session for session in candidates if session.chat_id == record.chat_id]
         if record.session_instance_id and record.chat_id is not None:
             session = exact.get((record.chat_id, record.session_instance_id))
             if session is None and candidates:
@@ -186,18 +194,22 @@ def live_observer_for_chat(
         records = scan.records
     for row in records:
         if (
-            row.record_mode != "live" or row.current_chat_id != chat_id
+            row.record_mode != "live"
+            or row.current_chat_id != chat_id
             or row.id == excluding_spawn_id
         ):
             continue
         if row.chat_id and session_store.is_session_lease_owner_alive(
-            runtime_root, row.chat_id, session_instance_id=row.session_instance_id,
+            runtime_root,
+            row.chat_id,
+            session_instance_id=row.session_instance_id,
         ):
             return row.id
         scopes = read_scope_projection(runtime_root, SpawnId(row.id))
         if any(
             scope_liveness(scope)["likely_serving"]
-            for scope in scopes.scopes if scope.release_id not in scopes.released_ids
+            for scope in scopes.scopes
+            if scope.release_id not in scopes.released_ids
         ):
             return row.id
     return None
@@ -216,15 +228,25 @@ def get_session_record_for_spawn(
         return None
 
     row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-    generations = session_store.list_session_generations(runtime_root)
+    generations = (
+        session_store.chat_generations(runtime_root, row.chat_id)
+        if row is not None and row.chat_id
+        else session_store.fold_session_generations(
+            session_store.chats_rows(runtime_root, None).ordered,
+        )
+    )
     if row is not None and row.session_instance_id:
-        return next((
-            record for record in reversed(generations)
-            if record.chat_id == row.chat_id
-            and record.session_instance_id == row.session_instance_id
-            and record.spawn_id in {None, normalized_spawn_id}
-            and (not require_harness_session_id or record.harness_session_id is not None)
-        ), None)
+        return next(
+            (
+                record
+                for record in reversed(generations)
+                if record.chat_id == row.chat_id
+                and record.session_instance_id == row.session_instance_id
+                and record.spawn_id in {None, normalized_spawn_id}
+                and (not require_harness_session_id or record.harness_session_id is not None)
+            ),
+            None,
+        )
 
     for record in reversed(generations):
         if record.spawn_id != normalized_spawn_id:
@@ -239,7 +261,7 @@ def get_session_record_for_spawn(
     if exact_chat_id is None:
         return None
 
-    record = session_store.get_session_record(runtime_root, exact_chat_id)
+    record = session_store.chat_record(runtime_root, exact_chat_id)
     if record is None:
         return None
     linked_spawn_id = normalize_optional_identity(record.spawn_id)

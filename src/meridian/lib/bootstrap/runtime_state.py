@@ -44,7 +44,6 @@ def ensure_runtime_dirs(runtime_root: Path) -> None:
         runtime_paths.root_dir,
         runtime_paths.spawns_dir,
         runtime_paths.sessions_dir,
-        runtime_paths.chats_dir,
         runtime_root / "telemetry",
     ):
         dir_path.mkdir(parents=True, exist_ok=True)

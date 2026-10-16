@@ -135,7 +135,7 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
             native_store=str(native_store),
             kind="spawn",
             spawn_id=spawn_id,
-        )
+        ).chat_id
         session_store.update_session_harness_id(
             runtime_root,
             chat_id,
@@ -647,7 +647,7 @@ def test_deleted_tracked_native_file_preserves_launch_failure_reason(
     chat = session_store.start_session(
         runtime.authority.runtime_root, harness="codex", harness_session_id=sid,
         model="gpt-5.4", native_store=str(store),
-    )
+    ).chat_id
     session_store.stop_session(runtime.authority.runtime_root, chat)
     native.unlink()
     result = execute_module.execute_spawn_blocking(
@@ -686,7 +686,7 @@ def test_tracked_pi_without_store_preserves_unbound_launch_failure(
     chat = session_store.start_session(
         runtime.authority.runtime_root, harness="pi", harness_session_id=sid,
         model="gpt-5.4",
-    )
+    ).chat_id
     session_store.stop_session(runtime.authority.runtime_root, chat)
     result = execute_module.execute_spawn_blocking(
         payload=SpawnCreateInput(prompt="continue"),
@@ -704,7 +704,7 @@ def test_tracked_pi_without_store_preserves_unbound_launch_failure(
     assert row.terminal.error == "unbound"
     assert result.status == "failed"
     assert result.exit_code == 1
-    source = session_store.get_session_record(runtime.authority.runtime_root, chat)
+    source = session_store.chat_record(runtime.authority.runtime_root, chat)
     assert source is not None and source.native_store is None
     assert source.harness_session_id == sid
     output = capsys.readouterr()

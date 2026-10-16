@@ -59,21 +59,16 @@ the v2 migration; published rows now use schema v3.
 
 ### Session State
 
-Sessions remain event-sourced JSONL (`sessions.jsonl`). Reads replay the
-truncation-tolerant journal into current records; session browse orders and limits
-those lightweight records before enriching the visible page. New primary launches
-also append their canonical `spawn_id` relationship. Current recovery and transcript
-target reads use it directly to avoid global spawn scans; the official SQLite index
-planned in 0.4.0 can reuse the same authority. Until that index becomes the shared
-state-layer read path, browse does not own a separate projection. See `.context/TODO` and
-[ops/.context/CONTEXT.md](../../ops/.context/CONTEXT.md).
-Single-chat reads and binds (`read_session_events(root, chat_ids)`: `get_session_record`,
-the work-, harness- and generation-ID lookups, `update_session_harness_id`'s
-`SessionBindings`) still scan the whole file, but decode only rows a byte prefilter
-nominates. One chat's projection reads no other chat's events, so the selected fold
-equals the full one; the prefilter may only nominate, never decide. A scoped
-`SessionBindings` (`scope` set) holds only its chats' events and raises
-`ChatOutsideBindingScope` for any other chat; cross-chat checks need `scope is None`.
+Sessions remain event-sourced JSONL (`sessions.jsonl`). Lifecycle and control
+reads use the keyed seam in `session_store.py`; multi-chat callers select all
+needed chats in one pass and project the accepted binding and generation.
+Discovery uses the disposable history index; its recency and preview reads
+select the highest-ordinal generation from the same authority.
+
+A scoped `SessionBindings` snapshot raises `ChatOutsideBindingScope` for chats
+outside its scope; cross-chat repair uniqueness requires `scope=None`.
+See [history.md](history.md) for read ordering, append epochs, projection and
+namespace contracts.
 
 ### One-time native identity import
 

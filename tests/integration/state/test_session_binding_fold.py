@@ -62,7 +62,7 @@ def test_replay_preserves_partial_keys_and_rejects_whole_conflicts(
     path = tmp_path / "sessions.jsonl"
     path.write_text("".join(json.dumps(event) + "\n" for event in events))
     with capture_logs() as logs:
-        record = store.get_session_record(tmp_path, "c1")
+        record = store.chat_record(tmp_path, "c1")
         generations = store.list_session_generations(tmp_path)
     assert not logs
     assert record is not None
@@ -86,9 +86,9 @@ def test_replay_preserves_partial_keys_and_rejects_whole_conflicts(
 
 
 def test_same_binding_appends_startup_attempt_link(tmp_path: Path) -> None:
-    chat = store.start_session(tmp_path, "codex", "first", "test", native_store="/native")
+    chat = store.start_session(tmp_path, "codex", "first", "test", native_store="/native").chat_id
     try:
-        before = store.get_session_record(tmp_path, chat)
+        before = store.chat_record(tmp_path, chat)
         assert before is not None
         path = tmp_path / "sessions.jsonl"
         count = len(path.read_text().splitlines())
@@ -104,7 +104,7 @@ def test_same_binding_appends_startup_attempt_link(tmp_path: Path) -> None:
         lines = path.read_text().splitlines()
         assert len(lines) == count + 1
         assert json.loads(lines[-1])["startup_attempt_id"] == "retry"
-        assert store.get_session_record(tmp_path, chat) == before
+        assert store.chat_record(tmp_path, chat) == before
     finally:
         store.stop_session(tmp_path, chat)
 
@@ -137,7 +137,7 @@ def test_equivalent_generation_spelling_keeps_chat_key_for_later_conflicts(tmp_p
         },
     ]
     (tmp_path / "sessions.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events))
-    record = store.get_session_record(tmp_path, "c1")
+    record = store.chat_record(tmp_path, "c1")
     assert record is not None
     assert record.harness_session_id == "first"
     generations = store.list_session_generations(tmp_path)

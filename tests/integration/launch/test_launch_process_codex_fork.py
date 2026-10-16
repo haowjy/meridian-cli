@@ -195,7 +195,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     # I-10: fork happens after the row exists; the parent is not the child identity.
     assert captured["env_chat_id"] == outcome.chat_id
     assert outcome.chat_id is not None and outcome.chat_id != "c7"
-    chat = session_store.get_session_record(launch_context.runtime_root, outcome.chat_id)
+    chat = session_store.chat_record(launch_context.runtime_root, outcome.chat_id)
     assert chat is not None and chat.forked_from_chat_id == "c7"
     starts = [
         json.loads(line)
@@ -431,7 +431,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
     )
     assert outcome.exit_code == 0
     assert len(observed) == 1
-    chat = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    chat = session_store.chat_record(context.runtime_root, outcome.chat_id)
     assert chat is not None and chat.harness_session_id == observed[0]
     assert chat.native_store == str(store)
     assert json.loads(source.read_text())["payload"]["id"] == sid

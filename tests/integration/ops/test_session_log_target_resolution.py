@@ -242,7 +242,7 @@ def test_chat_target_never_detects_a_replacement(
         harness="claude",
         harness_session_id=native_id,
         model="test",
-    )
+    ).chat_id
     try:
         with pytest.raises(NativeSessionUnavailable) as caught:
             resolve_transcript_source(
@@ -275,7 +275,7 @@ def test_tracked_claude_hint_cannot_replace_missing_native_store(tmp_path: Path)
         harness_session_id="native-id",
         model="test",
         claude_config_dir=str(config),
-    )
+    ).chat_id
     with pytest.raises(NativeSessionUnavailable) as caught:
         resolve_transcript_source(
             ref=chat,
@@ -284,5 +284,5 @@ def test_tracked_claude_hint_cannot_replace_missing_native_store(tmp_path: Path)
             runtime_root=runtime,
         )
     assert caught.value.reason == "unbound"
-    record = session_store.get_session_record(runtime, chat)
+    record = session_store.chat_record(runtime, chat)
     assert record is not None and record.native_store is None

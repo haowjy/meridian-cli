@@ -17,7 +17,7 @@ def test_verified_exit_publishes_only_with_native_proof_on_creation_and_reuse(tm
     store = str(tmp_path / "native")
     entry = session_store.start_session(
         runtime, harness="claude", harness_session_id="entry", model="", native_store=store,
-    )
+    ).chat_id
     session_store.stop_session(runtime, entry)
     spawn_store.start_spawn(
         runtime, spawn_id="p1", chat_id=entry, harness="claude", kind="primary",
@@ -39,7 +39,7 @@ def test_verified_exit_publishes_only_with_native_proof_on_creation_and_reuse(tm
     transcript.write_text('{"sessionId":"exit"}\n')
     exit_chat = publish("exit")
     assert exit_chat is not None and exit_chat != entry and current() == exit_chat
-    record = session_store.get_session_record(runtime, exit_chat)
+    record = session_store.chat_record(runtime, exit_chat)
     assert record is not None and record.stopped_at is not None
     assert publish("exit") == exit_chat
     transcript.unlink()
@@ -55,7 +55,7 @@ def test_spawn_ref_settings_follow_selected_chat_whether_or_not_observed(tmp_pat
     chat = session_store.start_session(
         runtime, harness="claude", harness_session_id="entry", model="",
         native_store=store, kind="primary",
-    )
+    ).chat_id
     session_store.update_session_work_id(runtime, chat, "original-work")
     session_store.stop_session(runtime, chat)
     spawn_store.start_spawn(
@@ -95,10 +95,10 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         native_store=str(tmp_path / "native"),
         claude_config_dir=str(tmp_path / "config"),
         kind="primary",
-    )
+    ).chat_id
     session_store.update_session_work_id(runtime, source, "work-a")
     snapshot = LaunchPolicySnapshot(model="model-a", harness="claude", agent="builder")
-    generation = session_store.get_session_record(runtime, source)
+    generation = session_store.chat_record(runtime, source)
     assert generation is not None  # Final binding gives the entry its own policy.
     session_store.update_session_launch_policy(
         runtime, source, generation.session_instance_id, snapshot,
@@ -109,7 +109,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         model="model-a", agent="builder", prompt="task", kind="primary",
         harness_session_id="entry", launch_policy_snapshot=snapshot,
     )
-    original = session_store.get_session_record(runtime, source)
+    original = session_store.chat_record(runtime, source)
     assert original is not None
 
     observed = session_store.get_or_create_observed_chat(
@@ -120,7 +120,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         "observed",
         spawn_id="p1",
     )
-    record = session_store.get_session_record(runtime, observed)
+    record = session_store.chat_record(runtime, observed)
     assert record is not None
     assert record.chat_id != source
     assert record.harness_session_id == "observed"
@@ -143,7 +143,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
     assert record.execution_cwd == original.execution_cwd
     assert record.claude_config_dir == original.claude_config_dir
     assert session_store.list_active_sessions(runtime) == []
-    assert session_store.get_session_record(runtime, source) == original
+    assert session_store.chat_record(runtime, source) == original
     row = spawn_store.get_spawn(runtime, "p1")
     assert row is not None and row.current_chat_id == observed
     assert row is not None and row.chat_id == source and row.harness_session_id == "entry"
@@ -186,14 +186,14 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         runtime, chat_id=other_id, spawn_id="p2", harness="claude",
         harness_session_id="existing", native_store=str(tmp_path / "other-native"),
         model="model-b", agent="reviewer", kind="primary",
-    )
+    ).chat_id
     session_store.update_session_work_id(runtime, other, "other-work")
     session_store.stop_session(runtime, other)
-    before = session_store.get_session_record(runtime, other)
+    before = session_store.chat_record(runtime, other)
     assert session_store.get_or_create_observed_chat(
         runtime, following, "claude", str(tmp_path / "other-native"), "existing", spawn_id="p1",
     ) == other
-    assert session_store.get_session_record(runtime, other) == before
+    assert session_store.chat_record(runtime, other) == before
     newest = session_store.get_or_create_observed_chat(
         runtime, source, "claude", str(tmp_path / "other-native"), "newest", spawn_id="p1",
     )  # The locked current pointer wins over this stale source argument.
@@ -203,7 +203,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
     assert resolve_session_reference(
         tmp_path, "p1", runtime_root=runtime,
     ).source_launch_policy_snapshot == other_policy
-    assert session_store.get_session_record(runtime, source) == original
+    assert session_store.chat_record(runtime, source) == original
     assert session_identity.get_session_record_for_spawn(runtime, "p1") == original
 
 

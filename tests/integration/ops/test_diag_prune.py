@@ -87,7 +87,7 @@ def _hold_session(
         harness_session_id="h1",
         model="test",
         kind="primary",
-    )
+    ).chat_id
     ready.set()
     release.wait(5)
     session_store.stop_session(runtime_root, chat_id)
@@ -404,7 +404,7 @@ def test_adhoc_scan_uses_session_record_activity_not_origin_mtime(
         harness_session_id="session-1",
         model="test",
         kind="primary",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, chat_id)
     origin_mtime = (runtime_root / "origin.json").stat().st_mtime_ns
     sessions_mtime = (runtime_root / "sessions.jsonl").stat().st_mtime_ns
@@ -679,7 +679,7 @@ def test_doctor_global_lists_non_quiescent_adhoc_state(
         harness_session_id="active-session",
         model="test",
         kind="primary",
-    )
+    ).chat_id
 
     try:
         report = doctor_sync(

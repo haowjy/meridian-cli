@@ -159,7 +159,7 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
     if _SESSION_REF_RE.fullmatch(normalized) or _is_tracked_session(project_root, normalized):
         runtime_root = resolve_runtime_root_for_read(project_root)
         session = (
-            session_store.get_session_record(runtime_root, normalized)
+            session_store.chat_record(runtime_root, normalized)
             if runtime_root is not None
             else None
         )

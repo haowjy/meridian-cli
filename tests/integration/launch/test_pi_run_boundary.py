@@ -171,7 +171,7 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
     runtime = root / ".meridian"
     row = spawn_store.get_spawn(runtime, outcome.primary_spawn_id)
     assert row is not None
-    entry = session_store.get_session_record(runtime, outcome.chat_id)
+    entry = session_store.chat_record(runtime, outcome.chat_id)
     assert entry is not None
     assert row.chat_id == outcome.chat_id
     assert entry.harness_session_id != "switched-id"
@@ -192,7 +192,7 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
         assert row.current_chat_id == row.chat_id
     if shape == "switch":
         assert row.current_chat_id != row.chat_id
-        exit_chat = session_store.get_session_record(runtime, row.current_chat_id or "")
+        exit_chat = session_store.chat_record(runtime, row.current_chat_id or "")
         assert exit_chat is not None and exit_chat.harness_session_id == "switched-id"
         spawn_reference = resolve_session_reference(
             root,
@@ -303,8 +303,8 @@ def test_primary_cli_spawn_refs_project_exit_or_entry_native_key(
     chat_continued = _primary_cli(root, continue_ref=row.chat_id, dry_run=True)
 
     target_chat_id = row.current_chat_id if shape == "switch" else row.chat_id
-    target_record = session_store.get_session_record(runtime, target_chat_id or "")
-    entry_record = session_store.get_session_record(runtime, row.chat_id)
+    target_record = session_store.chat_record(runtime, target_chat_id or "")
+    entry_record = session_store.chat_record(runtime, row.chat_id)
     assert target_record is not None and target_record.native_store is not None
     assert entry_record is not None and entry_record.native_store is not None
     target_file = Path(target_record.native_store) / (
@@ -372,7 +372,7 @@ def test_concurrent_exits_converge_on_one_stopped_chat(pi_runtime: Path) -> None
     )
     ids = run_spawn_race_or_skip(_allocate_test_exit_chat, [args, args])
     assert ids[0] == ids[1] != outcome.chat_id
-    record = session_store.get_session_record(root / ".meridian", ids[0])
+    record = session_store.chat_record(root / ".meridian", ids[0])
     assert record is not None and record.stopped_at is not None
 
 
@@ -507,7 +507,7 @@ async def test_rpc_post_attempt_boundary(
             20,
         )
         assert code == (0 if shape in {"switch", "late-quit", "connection-switch"} else 1)
-        entry = session_store.get_session_record(ctx.runtime_root, managed.chat_id)
+        entry = session_store.chat_record(ctx.runtime_root, managed.chat_id)
         assert entry is not None and entry.harness_session_id not in {"wrong-entry", "switched-id"}
         if shape == "mismatch":
             assert_entry_mismatch(ctx.runtime_root, "p42", entry)
@@ -616,8 +616,8 @@ async def test_identity_failure_payload_is_identical_at_every_boundary(
             return PostExit(entry_error=error)
 
         monkeypatch.setattr(ctx.harness, "observe_after_exit", verify)
-        chat_id = session_store.start_session(ctx.runtime_root, "pi", "", "")
-        record = session_store.get_session_record(ctx.runtime_root, chat_id)
+        chat_id = session_store.start_session(ctx.runtime_root, "pi", "", "").chat_id
+        record = session_store.chat_record(ctx.runtime_root, chat_id)
         assert record is not None
         spawn_store.update_spawn(ctx.runtime_root, run.spawn_id, chat_id=chat_id)
         code = await streaming_runner.execute_with_streaming(
@@ -628,7 +628,12 @@ async def test_identity_failure_payload_is_identical_at_every_boundary(
             runtime_root=ctx.runtime_root,
             artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
             session_attempt=SessionAttempt(
-                ctx.runtime_root, chat_id, record.session_instance_id, "attempt-1", run.spawn_id
+                ctx.runtime_root,
+                chat_id,
+                record.session_instance_id,
+                "attempt-1",
+                record,
+                run.spawn_id,
             ),
         )
         assert code == 1

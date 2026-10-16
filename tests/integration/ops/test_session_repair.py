@@ -120,7 +120,7 @@ def test_inspect_lists_evidence_then_bind_validates_and_refuses(
 
     bound = _repair(project, "c1", right)
     assert bound.action == "bound" and bound.forced == ()
-    record = session_store.get_session_record(runtime, "c1")
+    record = session_store.chat_record(runtime, "c1")
     assert record is not None and record.native_key() is not None
     assert record.native_store == str(shared.resolve())
     assert b'"source":"user_repair"' in (runtime / "sessions.jsonl").read_bytes()
@@ -147,6 +147,6 @@ def test_bind_works_for_other_harnesses(env: tuple[Path, Path, Path]) -> None:
     listing = _repair(project, "c1")
     assert [c.path for c in listing.candidates] == [str(path)]
     assert _repair(project, "c1", path).action == "bound"
-    record = session_store.get_session_record(runtime, "c1")
+    record = session_store.chat_record(runtime, "c1")
     assert record is not None
     assert (record.harness_session_id, record.native_store) == (session_id, str(store))

@@ -394,9 +394,12 @@ def run_primary_launch(
             continue_chat_id = row.continue_chat_id
     history_warning = None
     if not dry_run and launch_result.primary_spawn_id:
-        from meridian.lib.ops.session_archive import session_stop_maintenance
+        try:
+            from meridian.lib.ops.session_archive import session_stop_maintenance
 
-        history_warning = session_stop_maintenance(project_root, launch_result.primary_spawn_id)
+            history_warning = session_stop_maintenance(project_root, launch_result.primary_spawn_id)
+        except ImportError as exc:
+            history_warning = f"Session close maintenance failed: {exc}"
     return PrimaryLaunchOutput(
         boundary_summary=(run_boundary_summary(row, include_unverified=False)
                           if not dry_run and launch_result.primary_spawn_id and row else None),

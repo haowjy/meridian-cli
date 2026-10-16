@@ -68,7 +68,7 @@ def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> N
         model="gpt-stopped",
         agent="coder",
         kind="primary",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, stopped_chat)
     spawn_chat = session_store.start_session(
         runtime_root,
@@ -76,7 +76,7 @@ def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> N
         harness_session_id="22222222-2222-4222-8222-222222222222",
         model="gpt-spawn",
         kind="spawn",
-    )
+    ).chat_id
     live_chat = session_store.start_session(
         runtime_root,
         harness="codex",
@@ -86,7 +86,7 @@ def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> N
         agent="reviewer",
         kind="primary",
         task_cwd=(tmp_path / "task").as_posix(),
-    )
+    ).chat_id
     session_store.update_session_work_id(runtime_root, live_chat, "browse-feature")
     try:
         output = session_list_sync(SessionListInput(project_root=project_root.as_posix(), limit=1))
@@ -115,7 +115,7 @@ def test_session_list_breaks_equal_timestamp_ties_by_chat_id(tmp_path: Path, mon
             harness_session_id=f"{index:08d}-1111-4111-8111-111111111111",
             model="gpt-5.4",
             kind="primary",
-        )
+        ).chat_id
         for index in range(1, 4)
     ]
     try:
@@ -142,7 +142,7 @@ def test_session_reentry_rechecks_live_lease(tmp_path: Path) -> None:
         native_store=(tmp_path / "codex-sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
-    )
+    ).chat_id
 
     assert resolve_session_reentry(project_root.as_posix(), chat_id) == Fork(chat_id)
 
@@ -161,7 +161,7 @@ def test_list_and_reentry_refuse_primary_metadata_as_binding(tmp_path: Path) -> 
         model="gpt-5.4",
         kind="primary",
         spawn_id="p42",
-    )
+    ).chat_id
     spawn_store.start_spawn(
         runtime_root,
         spawn_id="p42",
@@ -205,7 +205,7 @@ def test_recorded_primary_spawn_id_avoids_global_spawn_recovery_scan(
         model="gpt-5.4",
         kind="primary",
         spawn_id="p42",
-    )
+    ).chat_id
     spawn_store.start_spawn(
         runtime_root,
         spawn_id="p42",
@@ -242,7 +242,7 @@ def test_recorded_primary_spawn_without_harness_id_does_not_scan_globally(
         model="gpt-5.4",
         kind="primary",
         spawn_id="p42",
-    )
+    ).chat_id
     spawn_store.start_spawn(
         runtime_root,
         spawn_id="p42",
@@ -274,7 +274,7 @@ def test_list_and_reentry_block_when_native_key_is_incomplete(tmp_path: Path) ->
         harness_session_id="77777777-7777-4777-8777-777777777777",
         model="gpt-5.4",
         kind="primary",
-    )
+    ).chat_id
     try:
         listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))
         row = next(row for row in listing.rows if row.chat_id == chat_id)
@@ -296,8 +296,8 @@ def test_preview_resolution_failure_is_row_local_and_has_no_transcript_text(
         harness_session_id="pi-missing-native-file",
         model="pi",
         kind="primary",
-    )
-    record = session_store.get_session_record(runtime_root, chat_id)
+    ).chat_id
+    record = session_store.chat_record(runtime_root, chat_id)
     assert record is not None
 
     preview = SessionPreview(project_root.as_posix()).refresh(
@@ -322,7 +322,7 @@ def test_session_list_uses_index_for_missing_ids(
             harness_session_id="",
             model="gpt-5.4",
             kind="primary",
-        )
+        ).chat_id
         for _ in range(3)
     ]
     real_list_spawns = spawn_store.list_spawns
@@ -360,7 +360,7 @@ def test_session_list_enriches_only_the_visible_limit(
             harness_session_id=f"{index + 1:08d}-1111-4111-8111-111111111111",
             model="gpt-5.4",
             kind="primary",
-        )
+        ).chat_id
         session_store.update_session_work_id(runtime_root, chat_id, work_id)
         if index < 2:
             session_store.stop_session(runtime_root, chat_id)
@@ -402,7 +402,7 @@ def test_subset_search_is_ordered_and_failure_isolated(tmp_path: Path, monkeypat
         native_store=(home / ".codex" / "sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
-    )
+    ).chat_id
     other_chat = session_store.start_session(
         runtime_root,
         harness="codex",
@@ -410,7 +410,7 @@ def test_subset_search_is_ordered_and_failure_isolated(tmp_path: Path, monkeypat
         native_store=(home / ".codex" / "sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, matching_chat)
     session_store.stop_session(runtime_root, other_chat)
     _write_codex_rollout(
@@ -475,7 +475,7 @@ def test_subset_search_uses_recorded_primary_spawn_without_global_scan(
         model="gpt-5.4",
         kind="primary",
         spawn_id="p42",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, chat_id)
     spawn_store.start_spawn(
         runtime_root,
@@ -528,7 +528,7 @@ def test_subset_search_does_not_borrow_sibling_history_when_primary_spawn_is_mis
         model="gpt-5.4",
         kind="primary",
         spawn_id="p404",
-    )
+    ).chat_id
     session_store.stop_session(runtime_root, chat_id)
     _write_codex_rollout(
         home=home,

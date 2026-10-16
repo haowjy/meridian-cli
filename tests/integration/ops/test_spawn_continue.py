@@ -244,7 +244,7 @@ def test_spawn_continue_cross_harness_refusal_names_both_harnesses_without_write
         chat_id="c1",
     )
     session_store.update_session_spawn_id(runtime_root, "c1", "p-cross")
-    before_chat = session_store.get_session_record(runtime_root, "c1")
+    before_chat = session_store.chat_record(runtime_root, "c1")
     before_spawns = spawn_store.list_spawns(runtime_root)
     reference = spawn_api.resolve_session_reference(
         project_root, "c1", runtime_root=runtime_root, harness_hint="codex"
@@ -272,7 +272,7 @@ def test_spawn_continue_cross_harness_refusal_names_both_harnesses_without_write
             )
         )
 
-    assert session_store.get_session_record(runtime_root, "c1") == before_chat
+    assert session_store.chat_record(runtime_root, "c1") == before_chat
     assert spawn_store.list_spawns(runtime_root) == before_spawns
 
 

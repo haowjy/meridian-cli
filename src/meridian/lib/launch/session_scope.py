@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import importlib
+import logging
+import pkgutil
+import threading
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -19,7 +23,8 @@ from meridian.lib.state.native_binding import BindOutcome, Conflict
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
     SessionModelSelectionEvent,
-    get_session_record,
+    SessionRecord,
+    StartedSession,
     record_model_selection,
     start_session,
     stop_session,
@@ -32,6 +37,34 @@ if TYPE_CHECKING:
     from meridian.lib.launch.context import LaunchContext
 
 
+# Outside the walked packages, but part of capture's lazy close-time closure.
+_CLOSE_PATH_MODULES = (
+    "meridian.lib.harness.capture_qualify",
+    "meridian.lib.harness.transcript_capture",
+)
+
+
+def warm_close_imports() -> threading.Thread:
+    """Pin close-path code before an in-place package upgrade can replace it."""
+
+    def load() -> None:
+        with suppress(Exception):
+            try:
+                for name in ("meridian.lib.state", "meridian.lib.ops"):
+                    package = importlib.import_module(name)
+                    for module in pkgutil.walk_packages(package.__path__, name + "."):
+                        importlib.import_module(module.name)
+                for name in _CLOSE_PATH_MODULES:
+                    importlib.import_module(name)
+            except Exception:
+                logging.getLogger(__name__).debug("Close-path warm import failed", exc_info=True)
+                raise
+
+    thread = threading.Thread(target=load, name="meridian-close-imports", daemon=True)
+    thread.start()
+    return thread
+
+
 @dataclass(frozen=True)
 class SessionAttempt:
     """Captured session generation and startup attempt, shared by both callbacks."""
@@ -40,6 +73,7 @@ class SessionAttempt:
     chat_id: str
     session_instance_id: str
     startup_attempt_id: str | None
+    record: SessionRecord
     spawn_id: SpawnId | None = None
 
     def bind(self, attempted: NativeKeyFields, source: BindSource) -> BindOutcome:
@@ -66,7 +100,10 @@ class SessionAttempt:
     def own_policy(self, snapshot: LaunchPolicySnapshot) -> None:
         """Persist the final launch policy on this generation before native execution."""
         update_session_launch_policy(
-            self.runtime_root, self.chat_id, self.session_instance_id, snapshot,
+            self.runtime_root,
+            self.chat_id,
+            self.session_instance_id,
+            snapshot,
         )
 
     def record_started(
@@ -140,13 +177,14 @@ def session_scope(
     kind: Literal["primary", "spawn"] = "spawn",
     spawn_id: str | None = None,
     startup_attempt_id: str | None = None,
-    _start_session: Callable[..., str] = start_session,
+    _start_session: Callable[..., StartedSession] = start_session,
     _stop_session: Callable[[Path, str], None] = stop_session,
     _reclaim_session_scopes: Callable[[Path, str], object] = reclaim_session_owned_scopes_for_chat,
 ) -> Generator[SessionAttempt, None, None]:
+    warm_close_imports()
     if request.initial_model_selection is not None:
         record_model_selection(runtime_root, request.initial_model_selection)
-    resolved_chat_id = _start_session(
+    started = _start_session(
         runtime_root,
         harness=metadata.harness,
         harness_session_id="",
@@ -166,15 +204,16 @@ def session_scope(
         spawn_id=spawn_id,
         model_selection_protocol=1 if startup_attempt_id is not None else None,
     )
-    record = get_session_record(runtime_root, resolved_chat_id)
-    generation = record.session_instance_id if record is not None else ""
+    resolved_chat_id = started.chat_id
+    generation = started.generation
     try:
         yield SessionAttempt(
             runtime_root,
             resolved_chat_id,
             generation,
             startup_attempt_id,
-            SpawnId(spawn_id) if spawn_id is not None else None,
+            record=started.record,
+            spawn_id=SpawnId(spawn_id) if spawn_id is not None else None,
         )
     finally:
         try:

@@ -22,7 +22,7 @@ def test_from_harness_session_uuid_resolves_primary_spawn(tmp_path: Path) -> Non
         harness_session_id=harness_session_id,
         model="gpt-5.4",
         kind="primary",
-    )
+    ).chat_id
     spawn_store.start_spawn(
         runtime_root,
         spawn_id="p1",
@@ -63,7 +63,7 @@ def test_from_harness_session_uuid_resolves_session_without_spawn_row(
         harness_session_id=harness_session_id,
         model="gpt-5.4",
         kind="primary",
-    )
+    ).chat_id
 
     resolved = resolve_context_ref(project_root, harness_session_id)
 
