@@ -17,6 +17,10 @@ if TYPE_CHECKING:
     import pytest
 
 
+def _warm_history_index(runtime_root: Path) -> None:
+    HistoryIndex(runtime_root).rebuild()
+
+
 def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -31,6 +35,7 @@ def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
         origin="runner",
     )
     descendant_evidence_module.spawn_store.mark_finalizing(tmp_path, SpawnId("p3"))
+    _warm_history_index(tmp_path)
 
     evidence = ReconciledDescendantEvidence(
         runtime_root=tmp_path,
@@ -178,6 +183,7 @@ def test_archived_intermediate_preserves_live_grandchild_membership(tmp_path: Pa
     )
     start_row(tmp_path, "p3", HarnessId.CODEX, "p2")
     descendant_evidence_module.spawn_store.mark_finalizing(tmp_path, SpawnId("p3"))
+    _warm_history_index(tmp_path)
     evidence = ReconciledDescendantEvidence(
         runtime_root=tmp_path,
         root_spawn_id=SpawnId("p1"),
@@ -195,6 +201,7 @@ def test_reopened_run_grandchild_blocks_only_the_new_parent_drain(tmp_path: Path
     start_row(tmp_path, "p9", HarnessId.PI, None)
     start_row(tmp_path, "p2.2", HarnessId.CODEX, "p9")
     start_row(tmp_path, "p10", HarnessId.CODEX, "p2.2")
+    _warm_history_index(tmp_path)
 
     original = ReconciledDescendantEvidence(
         runtime_root=tmp_path,
