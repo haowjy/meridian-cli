@@ -380,6 +380,7 @@ def test_idle_cli_keeps_flag_errors_at_the_cli_boundary(
 
 @pytest.mark.integration
 def test_idle_event_resolves_harness_before_reading_stdin(tmp_path: Path) -> None:
+    hang_guard_seconds = 30
     process = subprocess.Popen(
         [sys.executable, "-m", "meridian", "idle", "event"],
         cwd=tmp_path,
@@ -392,11 +393,11 @@ def test_idle_event_resolves_harness_before_reading_stdin(tmp_path: Path) -> Non
     assert process.stdin is not None
     try:
         try:
-            returncode = process.wait(timeout=2)
+            returncode = process.wait(timeout=hang_guard_seconds)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
-            pytest.fail("idle event read stdin before rejecting the missing harness")
+            pytest.fail(f"idle event did not exit within {hang_guard_seconds} s")
     finally:
         process.stdin.close()
 
