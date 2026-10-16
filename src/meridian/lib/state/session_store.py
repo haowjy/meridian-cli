@@ -1,8 +1,10 @@
 """File-backed session tracking for a Meridian state root's `sessions.jsonl`."""
 
+import json
 import os
+import re
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from contextlib import ExitStack
 from pathlib import Path
 from typing import IO, Annotated, Literal, NamedTuple, cast
@@ -76,6 +78,39 @@ from meridian.lib.state.session_fold import (
     project_session_event as project_session_event,
 )
 from meridian.lib.utils.json_shapes import float_or_none, int_or_none, string_or_empty
+
+# A ``"chat_id"`` key, any JSON whitespace, then one complete JSON string token
+# (escapes included). Matches end at that token's closing quote, so no match can
+# swallow a later key.
+_SESSION_CHAT_ID_FIELD = re.compile(rb'"chat_id"\s*:\s*"((?:[^"\\]|\\.)*)"')
+# Only ``\u00XX`` escapes can spell a letter of ``chat_id`` (c h a t _ i d).
+_ESCAPED_CHAT_ID_KEY_LETTER = re.compile(rb"\\u00(?:6[13489]|74|5[fF])")
+
+
+def _row_may_select_chat(raw: bytes, chat_ids: Collection[str]) -> bool:
+    """Byte prefilter for selected replay. It may only nominate, never decide.
+
+    A false positive costs one ``json.loads``; a false negative silently drops
+    history, so this must return True for every row the decoded check in
+    ``read_session_events`` would select. It applies the same predicate
+    (decoded value, ``strip()``, membership) to every ``chat_id`` string token
+    in the row, which covers a ``historical_import`` row's nested ``record``,
+    whitespace padding, escaped or raw non-ASCII values, key spacing, and
+    duplicate keys (the decoder keeps the last). Rows the regex cannot see
+    into are nominated unread: a NUL byte means ``json.loads`` may detect
+    UTF-16/32, and an escaped key letter could spell ``chat_id``.
+    """
+    if b"\x00" in raw or _ESCAPED_CHAT_ID_KEY_LETTER.search(raw) is not None:
+        return True
+    for match in _SESSION_CHAT_ID_FIELD.finditer(raw):
+        token = match.group(1)
+        try:
+            value: str = json.loads(b'"' + token + b'"') if b"\\" in token else token.decode()
+        except ValueError:  # Includes UnicodeDecodeError; let the decoder judge it.
+            return True
+        if value.strip() in chat_ids:
+            return True
+    return False
 
 
 def _append_session_event(
@@ -184,7 +219,7 @@ def resolve_session_instance_id(paths: RuntimePaths, runtime_root: Path, chat_id
     if held_generation is None:
         _, lease_generation = _read_session_lease(paths, chat_id)
         if not lease_generation.strip():
-            record = _records_by_session(runtime_root).get(chat_id)
+            record = get_session_record(runtime_root, chat_id)
     return session_instance_for_event(held_generation, lease_generation, record)
 
 
@@ -206,12 +241,22 @@ def reserve_chat_id(runtime_root: Path) -> str:
         return f"c{next_value}"
 
 
-def _records_by_session(
-    runtime_root: Path, *, chat_ids: set[str] | None = None
-) -> dict[str, SessionRecord]:
+def read_session_events(
+    runtime_root: Path, chat_ids: Collection[str] | None = None
+) -> list[SessionEvent]:
+    """Parse every session event in source order, or only those of ``chat_ids``.
+
+    One chat's projection reads no other chat's events, so folding the selected
+    events equals folding all of them for those chats. The one intended
+    difference: a full fold raises on any chat whose historical record is
+    followed by a mutation, while a selected fold raises only when that chat is
+    selected, so a poisoned chat no longer blocks other chats' reads and binds.
+    """
     paths = RuntimePaths.from_root_dir(runtime_root)
 
     def selected_event(payload: Mapping[str, object]) -> SessionEvent | None:
+        # This check decides selection; _row_may_select_chat must nominate
+        # every row it accepts, so change both together.
         if chat_ids is not None:
             record = (
                 payload.get("record") if payload.get("event") == "historical_import" else payload
@@ -224,8 +269,18 @@ def _records_by_session(
                 return None
         return parse_event(payload)
 
+    return read_events(
+        paths.sessions_jsonl,
+        selected_event,
+        raw_filter=None if chat_ids is None else lambda raw: _row_may_select_chat(raw, chat_ids),
+    )
+
+
+def _records_by_session(
+    runtime_root: Path, *, chat_ids: Collection[str] | None = None
+) -> dict[str, SessionRecord]:
     records: dict[str, SessionRecord] = {}
-    for event in read_events(paths.sessions_jsonl, selected_event):
+    for event in read_session_events(runtime_root, chat_ids):
         project_session_event(records, event)
     return records
 
@@ -427,7 +482,7 @@ def update_session_harness_id(
     """Atomically bind the first native key; conflicts never append a rebind."""
     from meridian.lib.state.session_binding import session_bindings
 
-    with session_bindings(runtime_root) as bindings:
+    with session_bindings(runtime_root, scope={chat_id}) as bindings:
         return bindings.bind(
             chat_id, attempted, source=source,
             session_instance_id=session_instance_id, startup_attempt_id=startup_attempt_id,
@@ -580,9 +635,11 @@ def list_all_session_records(runtime_root: Path) -> list[SessionRecord]:
     return list(_records_by_session(runtime_root).values())
 
 
-def get_session_record(runtime_root: Path, chat_id: str) -> SessionRecord | None:
+def get_session_record(runtime_root: Path, chat_id: str | None) -> SessionRecord | None:
     """Return a materialized record for one chat ID, if present."""
 
+    if chat_id is None:
+        return None
     return _records_by_session(runtime_root, chat_ids={chat_id}).get(chat_id)
 
 
@@ -842,9 +899,7 @@ def get_last_session(runtime_root: Path) -> SessionRecord | None:
             continue
         last_session_id = event.chat_id
 
-    if last_session_id is None:
-        return None
-    return _records_by_session(runtime_root).get(last_session_id)
+    return get_session_record(runtime_root, last_session_id)
 
 
 def resolve_session_ref(
@@ -878,7 +933,7 @@ def resolve_session_ref(
 def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
     """Return the active work item ID for a session, or None."""
 
-    record = _records_by_session(runtime_root).get(chat_id)
+    record = get_session_record(runtime_root, chat_id)
     if record is None:
         return None
     return record.active_work_id
@@ -887,7 +942,7 @@ def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
 def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
     """Return harness session ID for a Meridian session ID."""
 
-    record = _records_by_session(runtime_root).get(chat_id)
+    record = get_session_record(runtime_root, chat_id)
     if record is None:
         return None
     return record.harness_session_id
@@ -944,7 +999,10 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
             lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
             lock_file(paths.sessions_flock),
         ):
-            records = _records_by_session(runtime_root)
+            records = _records_by_session(
+                runtime_root,
+                chat_ids={chat_id for chat_id, _lock_path, _handle in stale},
+            )
             stopped_at = utc_now_iso()
             for chat_id, _lock_path, _ in stale:
                 existing = records.get(chat_id)
@@ -1027,7 +1085,7 @@ def append_historical_session(runtime_root: Path, record: SessionRecord) -> None
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        existing = _records_by_session(runtime_root).get(record.chat_id)
+        existing = get_session_record(runtime_root, record.chat_id)
         if existing is not None:
             if existing == record:
                 return

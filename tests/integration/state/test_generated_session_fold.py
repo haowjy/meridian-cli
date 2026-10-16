@@ -177,3 +177,84 @@ def test_later_start_only_closes_prior_generation(
             )
             assert after == expected
         assert projected_chats == baseline_chats
+
+
+def _spelling_variant_rows() -> list[str]:
+    """Rows whose chat ID only decodes to its selected value; writers vary in spelling."""
+    padded_history = s.SessionRecord(
+        chat_id="c5",
+        kind="spawn",
+        harness="codex",
+        harness_session_id="n5",
+        model="test",
+        agent="",
+        agent_path="",
+        skills=(),
+        skill_paths=(),
+        params=(),
+        started_at="0",
+        stopped_at="1",
+        session_instance_id="historical-c5",
+        record_mode="historical",
+    ).model_dump(mode="json")
+    padded_history["chat_id"] = " c5 "
+    return [
+        # Whitespace padding, default json.dumps spacing.
+        json.dumps(
+            {
+                "event": "start",
+                "chat_id": " c4 ",
+                "harness": "codex",
+                "harness_session_id": "n4",
+                "model": "test",
+                "started_at": "40",
+                "session_instance_id": "g4",
+            }
+        ),
+        # Escaped-control padding (\t), compact writer spacing.
+        json.dumps(
+            {"event": "update", "chat_id": "c4\t", "session_instance_id": "g4",
+             "active_work_id": "tab"},
+            separators=(",", ":"),
+        ),
+        # Spaced keys and an ensure_ascii \u-escaped no-break-space pad.
+        '{"chat_id" : "\\u00a0c4" , "event" : "update" , "session_instance_id" : "g4",'
+        ' "spawn_id" : "p4"}',
+        # Raw UTF-8 ideographic-space pad (ensure_ascii=False writer).
+        json.dumps(
+            {"event": "update", "chat_id": "c4\u3000", "session_instance_id": "g4",
+             "claude_config_dir": "/cfg"},
+            ensure_ascii=False,
+        ),
+        # Escapes spelling the value and the key itself.
+        '{"event":"update","chat_id":"c\\u0034","session_instance_id":"g4","native_store":"/n"}',
+        '{"event":"update","chat\\u005fid":"c4","session_instance_id":"g4","spawn_id":"p44"}',
+        # Duplicate key: the decoder keeps the last one.
+        '{"event":"update","chat_id":"c2","chat_id":" c4 ","session_instance_id":"g4",'
+        '"active_work_id":"dup"}',
+        json.dumps(
+            {"event": "update", "chat_id": " c1 ", "session_instance_id": "a",
+             "active_work_id": "padded"}
+        ),
+        json.dumps({"event": "historical_import", "record": padded_history}),
+        json.dumps(
+            {"event": "model_observation", "harness": "codex", "harness_session_id": "n4",
+             "observed_model_token": "m", "recorded_at": "0"}
+        ),
+    ]
+
+
+def test_single_chat_replay_matches_full_replay(tmp_path: Path) -> None:
+    """The byte prefilter may only nominate rows; selected replay must equal full replay."""
+    variants = _spelling_variant_rows()
+    for seed in range(200):
+        lines = [json.dumps(event) for event in _events(seed)] + variants
+        (tmp_path / "sessions.jsonl").write_text("".join(f"{line}\n" for line in lines))
+        full = s._records_by_session(tmp_path)  # pyright: ignore[reportPrivateUsage]
+        assert {"c4", "c5"} <= set(full)
+        for chat_id in (*full, "c-absent"):
+            selected = s._records_by_session(  # pyright: ignore[reportPrivateUsage]
+                tmp_path, chat_ids={chat_id}
+            )
+            assert set(selected) <= {chat_id}
+            assert selected.get(chat_id) == full.get(chat_id), (seed, chat_id)

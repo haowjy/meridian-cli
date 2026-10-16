@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Self, cast
@@ -310,20 +310,23 @@ def is_safe_spawn_dir_name(name: str) -> bool:
     )
 
 
-def scan_spawn_ids(spawns_dir: Path) -> list[str]:
-    """Return child directory names that contain a ``state.json`` file."""
-
+def iter_spawn_ids(spawns_dir: Path) -> Iterator[str]:
+    """Yield child directory names that contain a ``state.json`` file."""
     try:
         entries = os.scandir(spawns_dir)
     except FileNotFoundError:
-        return []
+        return
 
     with entries:
-        return sorted(
-            entry.name
-            for entry in entries
-            if entry.is_dir() and _state_path(spawns_dir, entry.name).is_file()
-        )
+        for entry in entries:
+            if entry.is_dir() and _state_path(spawns_dir, entry.name).is_file():
+                yield entry.name
+
+
+def scan_spawn_ids(spawns_dir: Path) -> list[str]:
+    """Return sorted child directory names that contain a ``state.json`` file."""
+
+    return sorted(iter_spawn_ids(spawns_dir))
 
 
 __all__ = [
@@ -337,6 +340,7 @@ __all__ = [
     "SpawnStateQuarantined",
     "StoredSpawnState",
     "is_safe_spawn_dir_name",
+    "iter_spawn_ids",
     "read_prompt",
     "read_state",
     "record_to_stored_state",

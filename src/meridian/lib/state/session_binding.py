@@ -1,7 +1,7 @@
 """One locked native bind path, amortizing journal replay for bulk imports."""
 
 import json
-from collections.abc import Generator
+from collections.abc import Collection, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -9,21 +9,40 @@ from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.types import ChatId, HarnessSessionId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_fold as sessions
-from meridian.lib.state.event_store import read_events
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.jsonl import append_durable_jsonl_lines
 from meridian.lib.state.native_binding import BindOutcome, Bound, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.session_store import resolve_session_instance_id
+from meridian.lib.state.session_store import read_session_events, resolve_session_instance_id
+
+
+class ChatOutsideBindingScope(RuntimeError):
+    """A scoped bind snapshot was asked to bind a chat it never read."""
+
+    def __init__(self, chat_id: str, scope: frozenset[str]) -> None:
+        super().__init__(
+            f"Chat {chat_id} is outside this session_bindings scope "
+            f"({', '.join(sorted(scope))}); open session_bindings with that chat "
+            "in scope, or without scope for a full snapshot."
+        )
+        self.chat_id = chat_id
+        self.scope = scope
 
 
 class SessionBindings:
-    """Lock-scoped authority snapshot; construct only through session_bindings."""
+    """Lock-scoped authority snapshot; construct only through session_bindings.
 
-    def __init__(self, runtime_root: Path) -> None:
+    ``scope`` is None for a full snapshot. Otherwise ``events`` and ``records``
+    hold only the scoped chats' history, so cross-chat checks must require
+    ``scope is None``, and binding any other chat raises
+    ``ChatOutsideBindingScope``.
+    """
+
+    def __init__(self, runtime_root: Path, scope: Collection[str] | None = None) -> None:
         self.runtime_root = runtime_root
         self.paths = RuntimePaths.from_root_dir(runtime_root)
-        self.events = read_events(self.paths.sessions_jsonl, sessions.parse_event)
+        self.scope = None if scope is None else frozenset(scope)
+        self.events = read_session_events(runtime_root, self.scope)
         self._pending: list[sessions.SessionUpdateEvent] = []
         self.records: dict[str, sessions.SessionRecord] = {}
         for event in self.events:
@@ -40,6 +59,8 @@ class SessionBindings:
     ) -> BindOutcome:
         if startup_attempt_id is not None and session_instance_id is None:
             raise ValueError("startup identity requires a captured session generation")
+        if self.scope is not None and chat_id not in self.scope:
+            raise ChatOutsideBindingScope(chat_id, self.scope)
         existing = self.records.get(chat_id)
         if existing is None:
             raise ValueError(f"Unknown chat: {chat_id}")
@@ -92,13 +113,15 @@ class SessionBindings:
 
 
 @contextmanager
-def session_bindings(runtime_root: Path) -> Generator[SessionBindings]:
+def session_bindings(
+    runtime_root: Path, *, scope: Collection[str] | None = None
+) -> Generator[SessionBindings]:
     """Keep reads and appends in one sessions-lock epoch, including bulk imports."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     with (
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        bindings = SessionBindings(runtime_root)
+        bindings = SessionBindings(runtime_root, scope)
         yield bindings
         bindings.commit()

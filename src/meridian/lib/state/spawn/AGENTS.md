@@ -71,6 +71,7 @@ Finalize decides authority and applicability inside its locked transition.
 
 - `read_state(spawns_dir, spawn_id)` → `SpawnRecord | None`
 - `write_state_locked(spawns_dir, spawn_id, mutator)` → `LockedMutationResult`
+- `iter_spawn_ids(spawns_dir)` — filesystem-order, bounded-memory row discovery
 - `scan_spawn_ids(spawns_dir)` — candidate directories containing `state.json`
 
 ## Depth

@@ -38,6 +38,7 @@ def iter_jsonl(
     *,
     offset: int = 0,
     on_malformed: MalformedPolicy = "skip",
+    raw_filter: Callable[[bytes], bool] | None = None,
 ) -> Generator[tuple[T | None, int], None, None]:
     """Yield newline-committed JSON object rows and their ending byte offsets."""
 
@@ -50,6 +51,7 @@ def iter_jsonl(
             path=path,
             offset=offset,
             on_malformed=on_malformed,
+            raw_filter=raw_filter,
         )
 
 
@@ -61,6 +63,7 @@ def iter_jsonl_file(
     offset: int = 0,
     extent: int | None = None,
     on_malformed: MalformedPolicy = "skip",
+    raw_filter: Callable[[bytes], bool] | None = None,
 ) -> Generator[tuple[T | None, int], None, None]:
     """Yield committed rows from one open inode, optionally bounded to an extent."""
 
@@ -72,6 +75,9 @@ def iter_jsonl_file(
             break
         end_offset = handle.tell()
         if not raw_line.strip():
+            yield None, end_offset
+            continue
+        if raw_filter is not None and not raw_filter(raw_line):
             yield None, end_offset
             continue
         try:

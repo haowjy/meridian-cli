@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +39,7 @@ from meridian.lib.state.managed_primary import (
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scopes_from_disk
 from meridian.lib.state.reaper_cleanup_claim import (
     claim_active_spawn_scopes,
+    cleanup_claim_path,
     cleanup_lock_path,
     read_cleanup_claim,
     replace_cleanup_claim,
@@ -54,6 +56,11 @@ from meridian.lib.state.spawn.model import (
     SpawnOrigin,
     SpawnRecord,
     TerminalFacts,
+)
+from meridian.lib.state.spawn.repository import (
+    SpawnStateQuarantined,
+    iter_spawn_ids,
+    read_state,
 )
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
@@ -795,6 +802,24 @@ def _cleanup_after_finalize(runtime_root: Path, record: SpawnRecord) -> SpawnRec
     if is_terminal_spawn_status(record.status):
         _cleanup_claimed_scopes(runtime_root, record)
     return record
+
+
+def iter_repair_candidates(runtime_root: Path) -> Iterator[SpawnRecord]:
+    """Stream active rows and terminal rows with unfinished cleanup claims."""
+
+    spawns_dir = runtime_root / "spawns"
+    for spawn_id in iter_spawn_ids(spawns_dir):
+        try:
+            record = read_state(spawns_dir, spawn_id, include_prompt=False)
+        except SpawnStateQuarantined:
+            continue
+        if record is None or record.record_mode == "historical":
+            continue
+        if (
+            is_active_spawn_status(record.status)
+            or cleanup_claim_path(runtime_root, spawn_id).is_file()
+        ):
+            yield record
 
 
 def reconcile_active_spawn(

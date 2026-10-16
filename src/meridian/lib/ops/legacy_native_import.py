@@ -43,7 +43,11 @@ from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.native_binding import Conflict
 from meridian.lib.state.retention_archive import read_archived_member, read_receipts
 from meridian.lib.state.session_binding import session_bindings
-from meridian.lib.state.session_store import SessionRecord, list_all_session_records
+from meridian.lib.state.session_store import (
+    SessionRecord,
+    get_session_records,
+    list_all_session_records,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
     SpawnStateQuarantined,
@@ -251,8 +255,10 @@ def bind_late_legacy_sessions(runtime_root: Path) -> LateBinding:
         except OSError:
             return LateBinding()
 
+        # Fold only the listed chats; each chat's projection is independent.
         records: dict[str, SessionRecord] = {
-            str(record.chat_id): record for record in list_all_session_records(runtime_root)
+            str(record.chat_id): record
+            for record in get_session_records(runtime_root, set(no_session_id) - attempted)
         }
         candidates: dict[str, SessionRecord] = {
             chat_id: records[chat_id]
@@ -265,11 +271,11 @@ def bind_late_legacy_sessions(runtime_root: Path) -> LateBinding:
         if not candidates:
             return LateBinding()
 
-        # One raw journal scan for every candidate; the all-record fold above is
+        # One raw journal scan for every candidate; the selected fold above is
         # also shared rather than replaying sessions.jsonl once per chat.
         report = report_legacy_native_import(runtime_root, records=list(candidates.values()))
         bound = 0
-        with session_bindings(runtime_root) as bindings:
+        with session_bindings(runtime_root, scope=candidates.keys()) as bindings:
             current_ids: dict[str, set[str]] = defaultdict(set)
             for event in bindings.events:
                 session_id = getattr(event, "harness_session_id", None)

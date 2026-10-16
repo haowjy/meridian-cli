@@ -67,6 +67,13 @@ target reads use it directly to avoid global spawn scans; the official SQLite in
 planned in 0.4.0 can reuse the same authority. Until that index becomes the shared
 state-layer read path, browse does not own a separate projection. See `.context/TODO` and
 [ops/.context/CONTEXT.md](../../ops/.context/CONTEXT.md).
+Single-chat reads and binds (`read_session_events(root, chat_ids)`: `get_session_record`,
+the work-, harness- and generation-ID lookups, `update_session_harness_id`'s
+`SessionBindings`) still scan the whole file, but decode only rows a byte prefilter
+nominates. One chat's projection reads no other chat's events, so the selected fold
+equals the full one; the prefilter may only nominate, never decide. A scoped
+`SessionBindings` (`scope` set) holds only its chats' events and raises
+`ChatOutsideBindingScope` for any other chat; cross-chat checks need `scope is None`.
 
 ### One-time native identity import
 
