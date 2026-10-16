@@ -13,7 +13,8 @@ from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
     SingleTurnDrainPolicy,
 )
-from tests.support.pi import PiDrainScenario, pi_event, warm_history_index
+from tests.support.history import warm_history_index
+from tests.support.pi import PiDrainScenario, pi_event
 
 
 def _retryable_error() -> object:
