@@ -35,6 +35,7 @@ from meridian.lib.harness.idle_types import IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.idle import sidecar as idle_sidecar
+from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
 from meridian.lib.platform import IS_WINDOWS
@@ -48,6 +49,7 @@ from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 
 from .ports import LaunchedProcess, ProcessLauncher, RunningProcess
+from .terminal_ownership import tui_terminal_window
 
 TuiCommandBuilder = Callable[[str], tuple[str, ...]]
 MAX_PORT_RETRY_ATTEMPTS = 3
@@ -183,6 +185,7 @@ class PrimaryAttachOutcome:
     tui_pid: int | None
     cancelled: bool = False
     facts: AttemptFacts = field(default_factory=AttemptFacts)
+    launcher_diagnostics_path: Path | None = None
 
 
 class _StartupTelemetry:
@@ -412,47 +415,64 @@ class PrimaryAttachLauncher:
                 if running_callback is not None:
                     running_callback(pid)
 
-            running_process = self._process_launcher.start(
-                command=command,
-                cwd=cwd,
-                env=self._tui_env(env),
-                output_log_path=None,
-            )
-            self._running_process = running_process
-            if self._signal_cancel_requested:
-                # A signal arrived during backend startup; honor it now that the
-                # TUI relay exists.
-                running_process.cancel_wait()
-            try:
-                _handle_running(running_process.pid)
-            except Exception:
-                running_process.terminate()
-                await _start_process_wait(running_process)
-                raise
-            launch_task = _start_process_wait(running_process)
-            self._start_idle_sensor(
-                session_id=session_id,
-                env=env,
-                launch_task=launch_task,
-            )
             telemetry.clear()
-
-            # The TUI owns the primary. Observer silence is not a quit.
-            launched = await asyncio.shield(launch_task)
-            # Cancellation is only asserted when the relay was actually
-            # interrupted by the signal: ``cancel_wait`` returns exit 130, while a
-            # clean TUI exit returns its own code. This avoids turning a session
-            # that exited normally just before a signal landed into a cancel.
-            cancelled = self._signal_cancel_requested and launched.exit_code == 130
-            if cancelled:
-                # The relay stopped on the signal, so the TUI child is still alive.
-                await self._stop_idle_task()
-                await self._stop_tui_launch_task(
-                    running_process,
-                    launch_task,
-                    reason="signal_cancelled",
-                )
-            tui_lifecycle_finished = True
+            with tui_terminal_window(self._spawn_dir / LAUNCHER_LOG_FILENAME) as window:
+                try:
+                    running_process = self._process_launcher.start(
+                        command=command,
+                        cwd=cwd,
+                        env=self._tui_env(env),
+                        output_log_path=None,
+                        terminal_fds=window.terminal_fds,
+                    )
+                    self._running_process = running_process
+                    if self._signal_cancel_requested:
+                        # A signal arrived during backend startup; honor it now that the
+                        # TUI relay exists.
+                        running_process.cancel_wait()
+                    try:
+                        _handle_running(running_process.pid)
+                    except Exception:
+                        running_process.terminate()
+                        await _start_process_wait(running_process)
+                        raise
+                    launch_task = _start_process_wait(running_process)
+                    self._start_idle_sensor(
+                        session_id=session_id,
+                        env=env,
+                        launch_task=launch_task,
+                    )
+                    # The TUI owns the primary. Observer silence is not a quit.
+                    launched = await asyncio.shield(launch_task)
+                    # Cancellation is only asserted when the relay was actually
+                    # interrupted by the signal: ``cancel_wait`` returns exit 130,
+                    # while a clean TUI exit returns its own code. This avoids
+                    # turning a session that exited normally just before a signal
+                    # landed into a cancel.
+                    cancelled = (
+                        self._signal_cancel_requested and launched.exit_code == 130
+                    )
+                    if cancelled:
+                        # The relay stopped on the signal, so the TUI is still alive.
+                        await self._stop_idle_task()
+                        await self._stop_tui_launch_task(
+                            running_process,
+                            launch_task,
+                            reason="signal_cancelled",
+                        )
+                    tui_lifecycle_finished = True
+                finally:
+                    if (
+                        running_process is not None
+                        and launch_task is not None
+                        and not tui_lifecycle_finished
+                    ):
+                        await self._stop_idle_task()
+                        await self._stop_tui_launch_task(
+                            running_process,
+                            launch_task,
+                            reason="primary_attach_shutdown",
+                        )
 
             return PrimaryAttachOutcome(
                 facts=self._facts,
@@ -460,6 +480,7 @@ class PrimaryAttachLauncher:
                 session_id=session_id,
                 tui_pid=launched.pid,
                 cancelled=cancelled,
+                launcher_diagnostics_path=window.captured_path,
             )
         except Exception:
             telemetry.fail()
@@ -507,17 +528,6 @@ class PrimaryAttachLauncher:
                 with suppress(asyncio.CancelledError):
                     await heartbeat_task
                 self._heartbeat_task = None
-            if (
-                running_process is not None
-                and launch_task is not None
-                and not tui_lifecycle_finished
-            ):
-                await self._stop_idle_task()
-                await self._stop_tui_launch_task(
-                    running_process,
-                    launch_task,
-                    reason="primary_attach_shutdown",
-                )
             if connection_started:
                 await self._connection.stop()
 

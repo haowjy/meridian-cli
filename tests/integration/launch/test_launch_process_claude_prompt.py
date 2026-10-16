@@ -20,7 +20,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
-from meridian.lib.launch.process.runner import run_harness_process
+from meridian.lib.launch.process.runner import PrimaryProcessResult, run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -135,8 +135,10 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> tuple[int, int, None]:
+        _ = cwd, env, launcher_diagnostics_path
         command = tuple(command)
         captured["command"] = command
         captured["output_log_path"] = output_log_path
@@ -149,7 +151,7 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         captured["log_dir"] = prompt_file_path.parent
         assert callable(on_child_started)
         on_child_started(222)
-        return (0, 222)
+        return PrimaryProcessResult(0, 222, None)
 
     outcome = run_harness_process(
         launch_context,
@@ -213,15 +215,17 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> tuple[int, int, None]:
+        _ = launcher_diagnostics_path
         _ = command, output_log_path
         captured["cwd"] = cwd
         captured["task_env"] = dict(env).get("MERIDIAN_TASK_DIR")
         captured["project_env"] = dict(env).get("MERIDIAN_PROJECT_DIR")
         assert callable(on_child_started)
         on_child_started(4445)
-        return (0, 4445)
+        return PrimaryProcessResult(0, 4445, None)
 
     outcome = run_harness_process(
         launch_context,
@@ -264,8 +268,10 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> tuple[int, int, None]:
+        _ = command, cwd, env, launcher_diagnostics_path
         assert isinstance(output_log_path, Path)
         captured["output_log_path"] = output_log_path
         output_log_path.write_text(
@@ -274,7 +280,7 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
         )
         assert callable(on_child_started)
         on_child_started(445)
-        return (0, 445)
+        return PrimaryProcessResult(0, 445, None)
 
     outcome = run_harness_process(
         launch_context,
@@ -338,13 +344,15 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> tuple[int, int, None]:
+        _ = command, cwd, env, output_log_path, launcher_diagnostics_path
         nonlocal black_box_calls
         black_box_calls += 1
         assert callable(on_child_started)
         on_child_started(7272)
-        return (0, 7272)
+        return PrimaryProcessResult(0, 7272, None)
 
     outcome = run_harness_process(
         launch_context,
@@ -407,13 +415,21 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
             raise ValueError("format drift")
         original_fold(self, kind, payload)
 
-    def captured_child(command, cwd, env, output_log_path, on_child_started=None):
+    def captured_child(
+        command,
+        cwd,
+        env,
+        output_log_path,
+        on_child_started,
+        launcher_diagnostics_path,
+    ):
+        _ = command, cwd, env, launcher_diagnostics_path
         output_log_path.write_bytes(
             b'\xff\n{"type":"broken"}\n'
             b'{"type":"result","result":"surviving report","usage":{"input_tokens":7}}\n'
         )
         on_child_started(445)
-        return 0, 445
+        return PrimaryProcessResult(0, 445, None)
 
     monkeypatch.setattr(ClaudeFold, "fold_event", drifting_fold)
     outcome = run_harness_process(

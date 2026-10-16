@@ -26,7 +26,11 @@ from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
-from meridian.lib.launch.process.ports import LaunchedProcess, ProcessLauncher
+from meridian.lib.launch.process.ports import (
+    LaunchedProcess,
+    ProcessLauncher,
+    TerminalFds,
+)
 from meridian.lib.launch.process.primary_attach import (
     PortBindError,
     PrimaryAttachError,
@@ -341,8 +345,9 @@ class FakeProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_fds: TerminalFds,
     ) -> FakeProcessLauncher:
-        _ = (cwd, output_log_path)
+        _ = (cwd, output_log_path, terminal_fds)
         self.launch_commands.append(command)
         self.launch_envs.append(dict(env))
         self.output_log_paths.append(output_log_path)
@@ -389,8 +394,9 @@ class BlockingProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_fds: TerminalFds,
     ) -> BlockingProcessLauncher:
-        _ = (cwd, env, output_log_path)
+        _ = (cwd, env, output_log_path, terminal_fds)
         self.launch_commands.append(command)
         metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
         assert metadata_path.exists()

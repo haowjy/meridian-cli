@@ -20,6 +20,7 @@ FINALIZE_EVIDENCE_FILENAME: Final[str] = "finalize-evidence.json"
 PRIMARY_META_FILENAME: Final[str] = "primary_meta.json"
 PI_RUNTIME_META_FILENAME: Final[str] = "pi_runtime_meta.json"
 STDERR_FILENAME: Final[str] = "stderr.log"
+LAUNCHER_LOG_FILENAME: Final[str] = "launcher.log"
 TOKENS_FILENAME: Final[str] = "tokens.json"
 REPORT_FILENAME: Final[str] = "report.md"
 SYSTEM_PROMPT_FILENAME: Final[str] = "system-prompt.md"
@@ -96,6 +97,7 @@ __all__ = [
     "DRY_RUN_REPORT_PATH",
     "FINALIZE_EVIDENCE_FILENAME",
     "HISTORY_FILENAME",
+    "LAUNCHER_LOG_FILENAME",
     "OUTPUT_FILENAME",
     "PI_RUNTIME_META_FILENAME",
     "POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS",

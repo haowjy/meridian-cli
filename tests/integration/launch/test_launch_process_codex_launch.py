@@ -22,6 +22,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
@@ -264,7 +265,9 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
     captured: dict[str, object] = {}
     selector_args: list[Path | None] = []
 
-    def fake_select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
+    def fake_select_process_launcher(
+        output_log_path: Path | None,
+    ) -> ProcessLauncher:
         selector_args.append(output_log_path)
         return SubprocessProcessLauncher()
 
@@ -295,8 +298,17 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> tuple[int, int, None]:
+        _ = (
+            command,
+            cwd,
+            env,
+            output_log_path,
+            on_child_started,
+            launcher_diagnostics_path,
+        )
         raise AssertionError("codex primary should use managed launcher path")
 
     monkeypatch.setattr(process_runner, "select_process_launcher", fake_select_process_launcher)
@@ -451,8 +463,17 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> tuple[int, int, None]:
+        _ = (
+            command,
+            cwd,
+            env,
+            output_log_path,
+            on_child_started,
+            launcher_diagnostics_path,
+        )
         raise AssertionError("codex primary should use managed launcher path")
 
     outcome = run_harness_process(
@@ -489,6 +510,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         ),
     )
     harness_registry.get_subprocess_harness(HarnessId.CODEX)
+    diagnostics_paths: list[Path] = []
 
     def failing_managed(
         harness_id: Any,
@@ -503,7 +525,11 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
-        Path(spawn_dir).mkdir(parents=True, exist_ok=True)
+        spawn_path = Path(spawn_dir)
+        spawn_path.mkdir(parents=True, exist_ok=True)
+        diagnostics_path = spawn_path / LAUNCHER_LOG_FILENAME
+        diagnostics_path.write_text("relay failed\n", encoding="utf-8")
+        diagnostics_paths.append(diagnostics_path.resolve())
         raise PrimaryAttachError("managed startup error")
 
     with pytest.raises(PrimaryAttachError, match="managed startup error"):
@@ -516,3 +542,5 @@ def test_run_harness_process_codex_managed_failure_raises_error(
                 AssertionError("codex should not fall back to black-box")
             ),
         )
+
+    assert len(diagnostics_paths) == 1

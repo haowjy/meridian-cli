@@ -12,6 +12,15 @@ PRIMARY_STDERR_LOG_PATH_ENV = "_MERIDIAN_PRIMARY_STDERR_LOG_PATH"
 
 
 @dataclass(frozen=True)
+class TerminalFds:
+    """Terminal descriptors a launched TUI must use for its stdio."""
+
+    stdin: int
+    stdout: int
+    stderr: int
+
+
+@dataclass(frozen=True)
 class LaunchedProcess:
     """Completed process launch result."""
 
@@ -70,6 +79,7 @@ class ProcessLauncher(Protocol):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_fds: TerminalFds,
     ) -> RunningProcess: ...
 
 
@@ -94,4 +104,5 @@ __all__ = [
     "ProcessSurfaceMode",
     "RunningProcess",
     "SelectedProcessLauncher",
+    "TerminalFds",
 ]

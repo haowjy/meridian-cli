@@ -24,7 +24,11 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.process.runner import run_harness_process
+from meridian.lib.launch.process.runner import (
+    PrimaryExecutionResult,
+    PrimaryProcessResult,
+    run_harness_process,
+)
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -123,8 +127,10 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> tuple[int, int, None]:
+        _ = launcher_diagnostics_path
         command = tuple(command)
         captured["command"] = command
         if "--session-id" in command:
@@ -132,7 +138,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
             captured["command_session_id"] = command[idx + 1]
         assert callable(on_child_started)
         on_child_started(555)
-        return (0, 555)
+        return PrimaryProcessResult(0, 555, None)
 
     outcome = run_harness_process(
         launch_context,
@@ -176,14 +182,22 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> tuple[int, int, None]:
+        _ = command, cwd, env, output_log_path, launcher_diagnostics_path
         assert callable(on_child_started)
         on_child_started(666)
-        return (0, 666)
+        return PrimaryProcessResult(0, 666, None)
 
     def capture_facts(*args: object, **kwargs: object):
-        return 0, None, False, AttemptFacts(first_session_id=observed_id)
+        return PrimaryExecutionResult(
+            exit_code=0,
+            managed_session_id=None,
+            managed_cancelled=False,
+            facts=AttemptFacts(first_session_id=observed_id),
+            launcher_diagnostics_path=None,
+        )
 
     monkeypatch.setattr(
         "meridian.lib.launch.process.runner._execute_primary_process", capture_facts
@@ -231,8 +245,10 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
         cwd: Any,
         env: Any,
         output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> tuple[int, int, None]:
+        _ = cwd, env, output_log_path, launcher_diagnostics_path
         command = tuple(command)
         recorded_session_id = command[command.index("--session-id") + 1]
         project_dir = fake_home / ".claude" / "projects" / project_slug(project_root)
@@ -280,7 +296,7 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
         )
         assert callable(on_child_started)
         on_child_started(667)
-        return (0, 667)
+        return PrimaryProcessResult(0, 667, None)
 
     outcome = run_harness_process(
         launch_context,
