@@ -146,7 +146,8 @@ class ChatRows(dict[str, list[SessionEvent]]):
     """Per-chat rows plus their shared source order, never reconstructed from clocks.
 
     Grouping alone loses interleaving across chats. ``ordered`` is the same rows
-    in global log order in B1; B2 must supply its stable per-stream merge here.
+    in global log order; #418's per-chat journals must supply their stable
+    per-stream merge here.
     """
 
     def __init__(self, ordered: list[SessionEvent]) -> None:

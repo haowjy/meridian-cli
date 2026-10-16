@@ -61,8 +61,9 @@ the v2 migration; published rows now use schema v3.
 
 Sessions remain event-sourced JSONL (`sessions.jsonl`). Lifecycle and control
 reads use the keyed seam in `session_store.py`; multi-chat callers select all
-needed chats in one pass. Discovery uses the disposable history index. Both
-project the accepted binding and generation from the same authority.
+needed chats in one pass and project the accepted binding and generation.
+Discovery uses the disposable history index; its recency and preview reads
+select the highest-ordinal generation from the same authority.
 
 A scoped `SessionBindings` snapshot raises `ChatOutsideBindingScope` for chats
 outside its scope; cross-chat repair uniqueness requires `scope=None`.

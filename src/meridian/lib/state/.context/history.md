@@ -234,8 +234,11 @@ only detect changes after checksum verification; they do not replace checksums.
 `chats_rows(root, chats)` is one selected pass. Its mapping retains each chat's row
 order; `.ordered` retains global interleaving for cross-chat decisions. Never sort
 these rows by timestamps. `SessionBindings` reads through this seam and publishes
-one grouped `append_chat_rows` batch (one durable append/fsync). B2 replaces these
-bodies, including the cross-chat stable merge, and owns consolidating lock epochs.
+one grouped `append_chat_rows` batch (one durable append/fsync).
+`SessionBindings.commit` groups rows by chat, so order across chats within one
+commit batch is not kept; bind rows are compared only within a chat.
+#418's per-chat journals replace these bodies, including the cross-chat stable
+merge, and consolidate lock epochs.
 Bulk reads still outside the seam: `list_all_session_records`,
 `list_session_generations`, and `legacy_native_import.py`'s raw reads.
 

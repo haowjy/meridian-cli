@@ -114,17 +114,22 @@ def session_records_for_spawns(
     provenance and publication witnesses must detect changes to those fields too.
     """
     records = tuple(records)
+    chats = {row.chat_id for row in records if row.chat_id}
     generations = session_store.fold_session_generations(
-        session_store.chats_rows(root, {row.chat_id for row in records if row.chat_id}).ordered,
+        session_store.chats_rows(
+            root, None if any(not row.chat_id for row in records) else chats
+        ).ordered,
     )
-    linked: dict[tuple[str, str], list[SessionRecord]] = {}
+    linked: dict[str, list[SessionRecord]] = {}
     for session in generations:
         if session.spawn_id:
-            linked.setdefault((session.chat_id, session.spawn_id), []).append(session)
+            linked.setdefault(session.spawn_id, []).append(session)
     exact = {(session.chat_id, session.session_instance_id): session for session in generations}
     result: dict[str, SessionRecord] = {}
     for record in records:
-        candidates = linked.get((record.chat_id, record.id), []) if record.chat_id else []
+        candidates = linked.get(record.id, [])
+        if record.chat_id:
+            candidates = [session for session in candidates if session.chat_id == record.chat_id]
         if record.session_instance_id and record.chat_id is not None:
             session = exact.get((record.chat_id, record.session_instance_id))
             if session is None and candidates:

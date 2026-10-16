@@ -1,7 +1,8 @@
-"""Frozen B1 lookup oracle from stacked base 9db5fbfb6. Do not update from B1.
+"""Frozen lookup oracle from stacked base 9db5fbfb6 for #418's keyed reads.
 
 Disk reads may be substituted with a captured corpus by the real-copy runner;
-lookup algorithms and their global event order remain the pre-B1 implementation.
+Do not update its lookup algorithms or global event order from the keyed-read
+implementation under test.
 """
 
 import json

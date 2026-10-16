@@ -1,4 +1,4 @@
-"""B1's read/write oracle. Real-copy runner uses the same comparisons."""
+"""#418's keyed-read oracle checks. Real-copy runner uses the same comparisons."""
 
 import json
 from pathlib import Path
@@ -23,7 +23,7 @@ def test_generated_lookup_equivalence(tmp_path: Path, monkeypatch: pytest.Monkey
     for seed in range(25):
         rows = generated_session_events(seed)
         # The fold generator deliberately poisons c3. Isolation of poisoned
-        # chats is MEM-1's explicit behavior change, not a B1 equivalence case.
+        # chats predates #418's keyed reads and is not an equivalence case.
         rows = [row for row in rows if row.get("chat_id") != "c3"]
         for index, row in enumerate(rows):
             if row.get("event") == "start":
@@ -256,14 +256,21 @@ def test_unbound_witness_stays_in_named_chat(tmp_path: Path) -> None:
             harness_session_id=chat,
             session_instance_id=chat,
             spawn_id="p1",
+            history_id="00000000-0000-0000-0000-000000000001",
             model="model",
             started_at=chat,
         )
         for chat in ("c1", "c2")
     ]
+    (tmp_path / "sessions.jsonl").write_text(rows[0].model_dump_json() + "\n")
+    unlinked = SpawnRecord(id="p1", history_id=rows[0].history_id)
+    expected = old.session_records_for_spawns(tmp_path, [unlinked])
+    assert expected["p1"].chat_id == "c1"
+    assert session_identity.session_records_for_spawns(tmp_path, [unlinked]) == expected
+
     (tmp_path / "sessions.jsonl").write_text("".join(row.model_dump_json() + "\n" for row in rows))
     for status in ("queued", "succeeded"):
-        row = SpawnRecord(id="p1", chat_id="c1", status=status)
+        row = SpawnRecord(id="p1", chat_id="c1", status=status, history_id=rows[0].history_id)
         assert session_identity.session_records_for_spawns(tmp_path, [row])["p1"].chat_id == "c1"
 
 
