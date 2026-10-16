@@ -1516,11 +1516,8 @@ class HistoryIndex:
     def recent_sessions(
         self, *, limit: int, live_chat_ids: set[str]
     ) -> tuple[list[SessionRecord | SpawnRecord], int]:
-        accepted_generation = func.coalesce(
-            func.nullif(func.json_extract(
-                SESSION_CHATS.c.record_json, "$.session_instance_id"
-            ), ""), SESSION_CHATS.c.latest_blank, "",
-        )
+        # This ordinal points to the accepted start, not MAX(bucket ordinal).
+        # Generation spelling can change on an update while bucket keys stay raw.
         live_expr = SESSIONS.c.chat.in_(sorted(live_chat_ids)) if live_chat_ids else literal(0)
         browse = union_all(
             select(
@@ -1532,7 +1529,7 @@ class HistoryIndex:
             ).join(
                 SESSION_CHATS,
                 (SESSION_CHATS.c.chat == SESSIONS.c.chat)
-                & (SESSIONS.c.generation == accepted_generation),
+                & (SESSIONS.c.ordinal == SESSION_CHATS.c.ordinal),
             ).where(
                 SESSIONS.c.kind == "primary",
                 ~exists().where(
