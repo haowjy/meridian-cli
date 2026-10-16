@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.14] - 2026-10-16
+
 ### Fixed
 - Primary-launch repair streams spawn rows one at a time and folds only pending legacy chats; launcher no longer holds full spawn scan, nor full `sessions.jsonl` replay unless late legacy bind has candidates.
 - Runner work-id lookup, native-id bind, and other single-chat session reads decode only that chat's `sessions.jsonl` rows; background runner holds ~100 MB, not ~230 MB, while harness runs. Corrupt historical row in one chat no longer blocks other chats' reads and binds.
