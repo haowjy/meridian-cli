@@ -12,6 +12,7 @@ from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.telemetry.query import query_events
 from meridian.lib.telemetry.reader import read_events, tail_events
 from meridian.lib.telemetry.status import compute_status
@@ -205,21 +206,23 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
     )
 
     service_a = SpawnLifecycleService(project_a_root)
-    spawn_a = service_a.start(
-        SpawnReservation(
-            chat_id="chat-a",
-            session_metadata=PrimarySessionMetadata(
-                harness="test-harness",
-                model="test-model",
-                agent="coder",
-                agent_path="",
-                skills=(),
-                skill_paths=(),
+    with LaunchSlot() as launch_lock:
+        spawn_a = service_a.start(
+            SpawnReservation(
+                chat_id="chat-a",
+                session_metadata=PrimarySessionMetadata(
+                    harness="test-harness",
+                    model="test-model",
+                    agent="coder",
+                    agent_path="",
+                    skills=(),
+                    skill_paths=(),
+                ),
+                prompt="do the thing",
+                status="running",
             ),
-            prompt="do the thing",
-            status="running",
+            launch_lock=launch_lock,
         )
-    )
     spawn_b = str(
         spawn_store.start_spawn(
             project_b_root,

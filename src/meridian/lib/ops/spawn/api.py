@@ -40,6 +40,7 @@ from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
 )
+from meridian.lib.launch.continue_sweep import sweep_before_continue
 from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
@@ -2376,6 +2377,7 @@ def spawn_continue_sync(
         raise NativeSessionUnavailable(resolved_spawn_id, "unbound")
 
     _reject_continue_policy_overrides(payload)
+    sweep_before_continue(runtime_root, resolved_spawn_id, dry_run=payload.dry_run)
     create_input = _build_continue_create_input(
         payload=payload,
         source_spawn=source_spawn,

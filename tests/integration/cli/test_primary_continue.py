@@ -84,6 +84,7 @@ def _seed_primary_spawn(
         harness=snapshot.harness if snapshot is not None else "codex",
         kind="primary",
         prompt="primary prompt",
+        started_at="2020-01-01T00:00:00+00:00",
         work_id=work_id,
         task_cwd=task_cwd,
         harness_session_id=harness_session_id,
@@ -339,6 +340,7 @@ def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
         harness=snapshot.harness,
         kind="child",
         prompt="child prompt",
+        started_at="2020-01-01T00:00:00+00:00",
         harness_session_id="session-spawn",
         launch_policy_snapshot=snapshot,
     )

@@ -32,6 +32,7 @@ bare path
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (schema v3)
+    launch.lock                     — runner-lifetime flock, acquired before publication
     history.jsonl                   — legacy runner event stream (no longer written), never read
     attempt-N/                      — legacy retry evidence; new runs do not create it
     runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
@@ -65,6 +66,24 @@ context-path resolution.
 Spawn state lives in individual `state.json` files (`spawns/<id>/state.json`),
 not a global event log, so status reads stay O(1) instead of replaying O(n) events.
 The layout originated in the v2 migration; published rows now use schema v3.
+
+## Launch ownership
+
+`launch_lock.py` owns the non-reentrant runner-lifetime flock. It is separate
+from mutation locks: the background worker inherits the same open-file
+description via `dup`/`pass_fds`, then immediately restores close-on-exec and
+records its own identity. Release closes descriptors; never use `LOCK_UN`,
+which would unlock the worker too. Harnesses never inherit this descriptor.
+`LaunchSlot` owns creation before ID allocation; `bind_staged()` returns a frozen
+`LaunchHandle` capability with a concrete ID and fd. Lifecycle/service creation
+requires a slot; only low-level `start_spawn` permits lockless test seeding.
+
+Explicit continue resolves the named spawn's current chat owner, takes that
+owner's lock before the named source lock, and sweeps their birth-verified scopes
+before creating another row. An exact-continue parent publishes the new row as
+the chat owner while its launch lock is still held; a background worker confirms
+that pointer after hand-off. Lockless legacy rows retain their birth/grace guard
+and convert under the mutation lock. This does not change v3 status authority.
 
 ## Spawn Mutation Seam
 

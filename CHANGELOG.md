@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `--continue` refuses a still-running spawn at once, publishes background successors before hand-off, ignores pruned successor pointers, and kills a crashed spawn's leftover harness group before restarting; no more two harnesses on one session. Dry runs touch nothing. (#625)
+
 ## [0.10.17] - 2026-10-17
 
 ### Fixed

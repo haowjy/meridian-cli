@@ -85,6 +85,7 @@ def _seed_spawn(
         skills=snapshot.skills if snapshot is not None else ("skill-c",),
         harness=snapshot.harness if snapshot is not None else "codex",
         prompt="seed prompt",
+        started_at="2020-01-01T00:00:00+00:00",
         work_id=work_id,
         harness_session_id=harness_session_id,
         task_cwd=task_cwd,
