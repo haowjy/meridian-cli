@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Spawn status can now be read consistently with its runner-lifetime lock, detecting a crashed runner on the next read without heartbeat or PID grace periods. (#663)
+
 ## [0.10.21] - 2026-10-17
 
 ### Fixed

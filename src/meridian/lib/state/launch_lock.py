@@ -9,7 +9,8 @@ from __future__ import annotations
 import fcntl
 import os
 import time
-from contextlib import AbstractContextManager
+from collections.abc import Generator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -31,20 +32,29 @@ class NotFound(ValueError):
     """The published spawn or its lock no longer exists."""
 
 
-def shared_try(path: Path) -> bool | None:
-    """True if free of writers, False if exclusively held, None if lockless."""
+@contextmanager
+def shared_hold(path: Path) -> Generator[bool | None]:
+    """Try a shared lock and keep it held across the caller's read."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
     except FileNotFoundError:
-        return None
+        yield None
+        return
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
         except BlockingIOError:
-            return False
-        return True
+            yield False
+            return
+        yield True
     finally:
         os.close(fd)
+
+
+def shared_try(path: Path) -> bool | None:
+    """True if free of writers, False if exclusively held, None if lockless."""
+    with shared_hold(path) as result:
+        return result
 
 
 def _validate(fd: int, spawn_dir: Path) -> None:
