@@ -74,6 +74,8 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 assert close.error == "stream_closed_while_awaiting_done"
                 return
             if scenario == "no_result":
+                # A stuck active native turn without done is bounded by the deadline.
+                yield frame("assistant", message={"content": []})
                 await asyncio.sleep(3600)
             if scenario.startswith("done"):
                 yield frame("assistant", message={"content": []})

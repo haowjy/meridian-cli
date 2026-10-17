@@ -9,8 +9,8 @@ Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
 candidate/deadline mechanics and the stabilization/validation phases live in
 `CompletionCoordinator`, behind
 the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
-`coordinator=None`; Claude and Codex/OpenCode share the resident completion profile,
-while Pi supplies its own profile. Keep Pi child-wave,
+`coordinator=None`; native-task holds, Codex/OpenCode resident completion, and Pi
+each supply their own profile. Keep Pi child-wave,
 disk-state, direct-follow-up gating, resident-done nudges, and descendant cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
@@ -22,9 +22,9 @@ resident policy. Drain collaborators must not construct application services.
 **Do not key resident behavior off harness ids.** The connection supplies completion
 evidence independently of backend control. Resident backend control selects
 Codex/OpenCode descendant evidence. Claude instead
-supplies native-task evidence and serialized stdin injection to the same coordinator;
-it does not claim backend liveness capabilities. Hold, done/rearm, deadline and nudge
-policy belong to the shared resident profile, not the evidence adapters.
+supplies native-task evidence and serialized stdin injection without backend liveness
+capabilities. Select the profile once from these capabilities; evidence reports facts,
+while profiles own hold, done/rearm, deadline and nudge policy.
 
 ## Completion and Absolute Timeout Models
 
@@ -40,25 +40,11 @@ wall-clock bound. Child-wave windows are anchored to each wave, not slid by ordi
 activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
-Claude children use the native `background_tasks_changed` snapshot to hold successful
-turn results while tasks run. The resident deadline bounds the wait from the first held
-result through the follow-up result; task activity never renews it. An empty snapshot
-alone cannot finalize the spawn. Rearm extends a native hold's deadline without
-blocking natural completion; Codex/OpenCode explicit holds still require done.
-Native nudges name pending tasks and offer done to stop them; only urgent nudges offer
-rearm. The shared cadence is 270 seconds, capped at half the
-configured deadline. In native mode the resident profile polls the exact done/rearm
-signal files;
-Claude evidence is event-driven, never scans task directories or descendant trees.
-Malformed snapshots warn and hold until a valid snapshot/result, done, or the deadline.
-A Claude Code version that stops emitting snapshots falls back to first-result finalize.
-Explicit `done` authorizes success with tasks left over; normal managed-scope teardown
-kills them. Native mode waits for the active turn's closing result only until the
-deadline, then succeeds with the latest report. Without done, expiry is a timeout.
-Codex/OpenCode done takes precedence over the deadline, including during validation.
-Claude subagent assistant frames do not count as parent activity.
+Native-task activity never renews the deadline. Explicit done authorizes completion
+with leftover native tasks; managed-scope teardown stops them. Keep native result-wait
+and nudge behavior in the native profile, not the shared coordinator or evidence adapter.
 
-For both profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
+For all three profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
 ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
 defaults to `None`; resident rearms and Pi waves cannot reset it.
 
@@ -167,6 +153,8 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `pi_work_ledger.py` — sole mutable owner of Pi-private disk blockers; exposes
   immutable categorized snapshots
 - `resident_drain.py` — resident evidence/profile/cleanup and drain-protocol adapter
+- `native_hold_profile.py` — native-task hold and closing-result policy
+- `rearm_window.py` — shared resident/native signal, deadline, and rearm budget
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — validated Pi-private task/receipt disk
   observation and exact public-message admission fencing; disk evidence feeds the ledger

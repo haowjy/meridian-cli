@@ -44,7 +44,7 @@ ProfileAction = Literal[
 class DiagnosticBlocker:
     """One opaque reason completion evidence is not ready."""
 
-    source: Literal["persisted_descendant", "profile"]
+    source: Literal["persisted_descendant", "profile", "native_task"]
     code: str
     identity: str | None = None
 
@@ -65,11 +65,6 @@ class WorkAssessment:
     blockers: tuple[DiagnosticBlocker, ...]
     generation: int
     failure: EvidenceFailure | None = None
-    # A live session may be held even when no descendant evidence blocks it.
-    completion_hold: bool = False
-    # Native holds may complete naturally after rearm; explicit holds require done.
-    native_hold: bool = False
-    pending_tasks: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.generation < 0:

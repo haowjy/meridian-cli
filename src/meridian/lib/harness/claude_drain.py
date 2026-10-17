@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from meridian.lib.streaming.completion_contracts import (
+    DiagnosticBlocker,
     EvidenceEventDecision,
     WorkAssessment,
 )
@@ -23,10 +24,9 @@ class ClaudeCompletionEvidence:
     """Hold through the empty snapshot until Claude supplies its follow-up result."""
 
     def __init__(self) -> None:
-        self._pending_tasks = False
         self._hold = False
         self._generation = 0
-        self._task_labels: tuple[str, ...] = ()
+        self._task_blockers: tuple[DiagnosticBlocker, ...] = ()
 
     async def start(self) -> None:
         pass
@@ -38,8 +38,6 @@ class ClaudeCompletionEvidence:
         self, event: RawHarnessEvent, transition: str | None
     ) -> EvidenceEventDecision:
         del transition
-        if event.harness_id != "claude":
-            return EvidenceEventDecision()
         if (
             event.event_type == "system"
             and event.payload.get("subtype") == "background_tasks_changed"
@@ -49,21 +47,27 @@ class ClaudeCompletionEvidence:
                 logger.warning(
                     "Claude background_tasks_changed missing tasks array; holding completion"
                 )
-                self._pending_tasks = True
-                self._task_labels = ("Unknown background tasks (malformed snapshot)",)
+                self._task_blockers = (DiagnosticBlocker(
+                    source="native_task", code="running",
+                    identity="Unknown background tasks (malformed snapshot)",
+                ),)
             else:
-                self._pending_tasks = bool(tasks)
-                self._task_labels = tuple(
-                    f"{task.get('description', 'Unnamed task')} "
-                    f"({task.get('task_type', 'unknown type')})"
-                    f"{' (subagent)' if task.get('parent_task_id') else ''}"
+                self._task_blockers = tuple(
+                    DiagnosticBlocker(
+                        source="native_task", code="running",
+                        identity=(
+                            f"{task.get('description', 'Unnamed task')} "
+                            f"({task.get('task_type', 'unknown type')})"
+                            f"{' (subagent)' if task.get('parent_task_id') else ''}"
+                        ),
+                    )
                     for raw in tasks
                     for task in [json_object(raw) or {}]
                 )
-            self._hold = self._hold or self._pending_tasks
+            self._hold = self._hold or bool(self._task_blockers)
             self._generation += 1
         elif event.event_type == "result":
-            self._hold = self._pending_tasks
+            self._hold = bool(self._task_blockers)
             self._generation += 1
         return EvidenceEventDecision()
 
@@ -73,9 +77,13 @@ class ClaudeCompletionEvidence:
         return EvidenceEventDecision()
 
     async def assess(self, trigger: AssessmentTrigger, state: CompletionState) -> WorkAssessment:
+        blockers = self._task_blockers
+        if self._hold and not blockers:
+            blockers = (DiagnosticBlocker(source="native_task", code="awaiting_followup_result"),)
         return WorkAssessment(
-            disposition="ready", blockers=(), generation=self._generation,
-            completion_hold=self._hold, native_hold=True, pending_tasks=self._task_labels,
+            disposition="blocked" if blockers else "ready",
+            blockers=blockers,
+            generation=self._generation,
         )
 
     def request_validation(self) -> int:

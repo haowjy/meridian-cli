@@ -49,12 +49,10 @@ def _coordinator(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_connection(
+    coordinator = ResidentDrainCoordinator.for_backend(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
-        receiver=connection,
         resident_backend=connection.resident_backend,
-        send_nudge=connection.resident_backend.begin_followup_turn,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,
         rearm_budget=rearm_budget,
@@ -543,50 +541,33 @@ async def test_intentional_stream_close_returns_pending_resident_outcome(
     assert connection.fake_resident_backend.awaiting_done_values == [True]
 
 
-def test_short_deadline_nudge_cadence_and_urgency(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_short_deadline_nudge_cadence_and_urgency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A due nudge is ordinary at half-window, urgent if delivery is delayed."""
-    from dataclasses import replace
-
-    from meridian.lib.streaming.completion_contracts import (
-        CompletionDirectives,
-        CompletionEvaluation,
-        CompletionState,
-        WorkAssessment,
+    from meridian.lib.streaming.completion_nudge import (
+        COMPLETION_NUDGE_MESSAGE,
+        TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE,
     )
 
-    clock = FakeClock(start=100.0)
-    connection = FakeResidentConnection(HarnessId.CODEX)
-    profile = resident_drain_module._ResidentCompletionProfile(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
-        resident_backend=connection.resident_backend,
-        deadline_seconds=20.0,
-        poll_seconds=1.0,
-        rearm_budget=None,
-        clock=clock.monotonic,
-        send_nudge=connection.resident_backend.begin_followup_turn,
-    )
-    assessment = WorkAssessment(disposition="ready", blockers=(), generation=0)
-    state = CompletionState(
-        phase="waiting", candidate=_SUCCESS, assessment=assessment,
-        deadline_at=120.0, stabilization_at=None, stabilization_generation=None,
-    )
-    context = CompletionEvaluation(
-        state=state, trigger="terminal_candidate", now=100.0,
-        directives=CompletionDirectives(rearm=True), assessment=assessment,
-        candidate=_SUCCESS, terminal_action=_TERMINATE, terminal_outcome=_SUCCESS,
-    )
-    assert profile.evaluate(context).action == "wait"
-    assert profile.next_nudge_at(state, assessment) == 110.0
-    due = replace(
-        context, trigger="timeout", now=110.0, directives=CompletionDirectives(),
-        terminal_action=None, terminal_outcome=None, profile_timer_due=True,
-    )
-    assert profile.evaluate(due).nudge == "normal"
-    assert profile.evaluate(replace(due, now=119.0)).nudge == "timeout_soon"
-    # A stuck active turn without done is bounded by the deadline.
-    expired = profile.evaluate(replace(
-        due, now=120.0, deadline_expired=True, active_turn=True,
-    ))
-    assert expired.outcome is not None
-    assert expired.outcome.status == "timed_out"
+    for delay, message in (
+        (10.0, COMPLETION_NUDGE_MESSAGE),
+        (19.0, TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE),
+    ):
+        root = tmp_path / str(delay)
+        coordinator, connection, clock = _coordinator(root, monkeypatch, deadline_seconds=20.0)
+        try:
+            write_spawn_signal(root, SpawnId("p1"), "rearm")
+            terminal = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+            assert terminal.emit_turn_boundary
+            await coordinator.wait_for_aux_wake()
+            await coordinator.handle_aux_wake()
+            clock.advance(9.0)
+            await coordinator.handle_timeout()
+            assert not connection.fake_resident_backend.injected_messages
+            clock.advance(delay - 9.0)
+            await coordinator.handle_timeout()
+            assert connection.fake_resident_backend.injected_messages == [message]
+        finally:
+            await coordinator.stop()
