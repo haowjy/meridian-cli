@@ -10,6 +10,7 @@ import pytest
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.drain_coordinator import DrainTerminalDecision
 from meridian.lib.streaming.drain_policy import DrainAction
@@ -126,7 +127,10 @@ async def test_pi_tree_authority_waits_for_finalizing_child_publication_and_cons
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     start_row(tmp_path, "p1", HarnessId.PI, None)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    # The finalizing child's runner is live: it holds the launch lock until it
+    # writes its outcome. A report alone publishes nothing.
+    child_runner = LaunchSlot()
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1", launch_lock=child_runner)
     spawn_store.mark_finalizing(tmp_path, SpawnId("p2"))
     started = await _start_pi(tmp_path, monkeypatch)
     try:
@@ -141,10 +145,11 @@ async def test_pi_tree_authority_waits_for_finalizing_child_publication_and_cons
         unpublished = await started.coordinator.handle_aux_wake()
         assert unpublished.recorded_outcome is None
         assert any(
-            blocker.code == "pi_result_publication_pending"
+            blocker.identity == "p2"
             for blocker in started.coordinator._coordinator.state.assessment.blockers
         )
         spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+        child_runner.close()
         write_json(
             tmp_path / "pi-bash" / "p1" / "observed-spawns.json",
             {
@@ -162,6 +167,7 @@ async def test_pi_tree_authority_waits_for_finalizing_child_publication_and_cons
         assert ready.recorded_outcome is None
         assert stabilized.recorded_outcome == _SUCCESS
     finally:
+        child_runner.close()
         await started.coordinator.stop()
 
 
