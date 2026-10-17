@@ -6,10 +6,13 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
+import psutil
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
@@ -18,7 +21,9 @@ from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.spawn_service import CancelOutcome, SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.spawn.models import SpawnCancelInput
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state import spawn_store, spawn_tree
+from meridian.lib.state.process_scope_projection import record_scope
 from tests.integration.state.conftest import (
     _OLD_STARTED_AT,
     _create_spawn,
@@ -166,6 +171,46 @@ async def test_cancel_descendants_reports_only_proven_terminal_descendants(
     assert terminal is not None
     assert terminal.status == "cancelled"
     assert reaped_ids == {"p3"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_descendants_sweeps_dead_child_scope(tmp_path: Path) -> None:
+    runtime_root = tmp_path / ".meridian"
+    _start_descendant(runtime_root, "p1")
+    _start_descendant(runtime_root, "p2", parent_id="p1")
+    (runtime_root / "spawns" / "p2" / "launch.lock").touch()
+    sleeper = subprocess.Popen(["sleep", "30"])
+    try:
+        record_scope(
+            runtime_root,
+            SpawnId("p2"),
+            ProcessScopeSnapshot(
+                scope_id="harness",
+                owner_policy="spawn_owned",
+                owner_id="p2",
+                role="harness_backend",
+                containment="pid_tree_fallback",
+                root_pid=sleeper.pid,
+                root_created_at_epoch=psutil.Process(sleeper.pid).create_time(),
+                pgid=None,
+                job_name=None,
+                degraded_reason=None,
+            ),
+        )
+
+        reaped_ids = await _spawn_service(runtime_root).cancel_descendants(SpawnId("p1"))
+
+        assert reaped_ids == {"p2"}
+        sleeper.wait(timeout=5)
+        assert sleeper.poll() is not None
+        stored = spawn_store.get_spawn(runtime_root, "p2")
+        assert stored is not None
+        assert stored.status == "cancelled"
+    finally:
+        if sleeper.poll() is None:
+            with suppress(ProcessLookupError):
+                sleeper.kill()
+        sleeper.wait(timeout=5)
 
 
 def test_spawn_cancel_managed_primary_signals_launcher_first(

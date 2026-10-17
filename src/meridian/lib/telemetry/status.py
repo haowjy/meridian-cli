@@ -6,10 +6,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.state.liveness import is_process_alive
-from meridian.lib.state.spawn_status import read_derived
+from meridian.lib.state.spawn_status import is_live
 from meridian.lib.telemetry.reader import discover_segments
 from meridian.lib.telemetry.retention import parse_segment_owner
 
@@ -120,8 +119,7 @@ def compute_status(
             # the runtime root from each segment so global status checks spawn
             # liveness against the owning project's runtime state.
             segment_runtime_root = segment.parent.parent
-            spawn = read_derived(segment_runtime_root, owner.logical_owner)
-            if spawn is not None and is_active_spawn_status(spawn.status):
+            if is_live(segment_runtime_root, owner.logical_owner):
                 writers.add(writer)
 
     legacy_count = 0

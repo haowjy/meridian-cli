@@ -166,6 +166,8 @@ def test_double_reconcile_does_not_double_kill_claimed_scope(
         first = first_future.result()
         second = second_future.result()
 
+    # The caller that loses the non-blocking launch claim may return its stale
+    # running input; persisted state and the one cleanup action are authoritative.
     assert "failed" in {first.status, second.status}
     assert _record(runtime_root, spawn_id).status == "failed"
     assert terminated == [scope.release_id]

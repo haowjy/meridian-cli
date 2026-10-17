@@ -7,8 +7,6 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
 
-import structlog
-
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.spawn_lifecycle import (
@@ -20,8 +18,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import is_pgid_reachable
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.launch_lock import Busy, Contended, NotFound, acquire
-from meridian.lib.state.liveness import is_process_alive, is_process_dead_with_birth
-from meridian.lib.state.managed_primary import is_managed_primary_candidate
+from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scopes_from_disk
 from meridian.lib.state.reaper_cleanup_claim import (
@@ -37,9 +34,7 @@ from meridian.lib.state.spawn.repository import (
     iter_spawn_ids,
     read_state,
 )
-from meridian.lib.state.spawn_status import claim_dead_launch
-
-logger = structlog.get_logger(__name__)
+from meridian.lib.state.spawn_status import legacy_runner_alive
 
 
 class ScopeLiveness(TypedDict):
@@ -132,10 +127,6 @@ def _claim_reaper_cleanup(
 
 def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
     """Resolve a durable claim once, retaining failed targets for a later pass."""
-    if record.kind == "primary" and not is_process_dead_with_birth(
-        record.runner_pid, record.runner_created_at_epoch
-    ):
-        return
     spawn_id = SpawnId(record.id)
     with lock_file(cleanup_lock_path(runtime_root, spawn_id), reentrant=False):
         claimed = read_cleanup_claim(runtime_root, spawn_id)
@@ -161,39 +152,6 @@ def _cleanup_after_finalize(runtime_root: Path, record: SpawnRecord) -> SpawnRec
     if is_terminal_spawn_status(record.status):
         _cleanup_claimed_scopes(runtime_root, record)
     return record
-
-
-def _finalize_derived(
-    project_root: Path,
-    runtime_root: Path,
-    stored: SpawnRecord,
-    derived: SpawnRecord,
-) -> SpawnRecord:
-    terminal = derived.terminal
-    if terminal is None or not is_terminal_spawn_status(derived.status):
-        return stored
-    managed_scopes_pending = is_managed_primary_candidate(stored)
-    outcome = asyncio.run(
-        build_spawn_application_service_from_roots(
-            project_root, runtime_root
-        ).complete_spawn(
-            SpawnId(stored.id),
-            derived.status,
-            terminal.exit_code,
-            origin="reconciler",
-            error=terminal.error,
-            managed_scopes_pending=managed_scopes_pending,
-        )
-    )
-    reconciled = outcome.snapshot or stored
-    if outcome.wrote:
-        logger.debug(
-            "Reconciled active spawn after acquiring its free launch lock.",
-            spawn_id=stored.id,
-            status=derived.status,
-            error=terminal.error,
-        )
-    return reconciled
 
 
 def iter_repair_candidates(runtime_root: Path) -> Iterator[SpawnRecord]:
@@ -226,7 +184,11 @@ def reconcile_active_spawn(
         spawn_dir = runtime_root / "spawns" / record.id
         try:
             launch_handle = acquire(spawn_dir)
-        except (Busy, Contended, NotFound):
+        except NotFound:
+            if legacy_runner_alive(record):
+                return record
+            return _cleanup_after_finalize(runtime_root, record)
+        except (Busy, Contended):
             return record
         with launch_handle:
             try:
@@ -239,15 +201,20 @@ def reconcile_active_spawn(
     if not is_active_spawn_status(record.status):
         return record
 
-    claimed = claim_dead_launch(runtime_root, record.id)
-    if claimed is None:
-        return record
-    launch_handle, derived = claimed
+    def claim_cleanup(stored: SpawnRecord) -> None:
+        primary_metadata = read_primary_metadata(runtime_root, stored.id)
+        _claim_reaper_cleanup(runtime_root, stored, primary_metadata)
 
-    with launch_handle:
-        primary_metadata = read_primary_metadata(runtime_root, derived.id)
-        _claim_reaper_cleanup(runtime_root, derived, primary_metadata)
-        return _cleanup_after_finalize(
+    reconciled = asyncio.run(
+        build_spawn_application_service_from_roots(
+            project_root,
             runtime_root,
-            _finalize_derived(project_root, runtime_root, record, derived),
+        ).finalize_dead_launch(
+            SpawnId(record.id),
+            origin="reconciler",
+            before_finalize=claim_cleanup,
         )
+    )
+    if not isinstance(reconciled, SpawnRecord):
+        return record
+    return _cleanup_after_finalize(runtime_root, reconciled)

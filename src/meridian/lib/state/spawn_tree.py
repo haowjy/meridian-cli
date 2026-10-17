@@ -10,7 +10,6 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_status import read_derived
 
 
 def iter_descendants_from_parent_map(
@@ -67,17 +66,14 @@ def active_descendants(
     runtime_root: Path,
     root_id: str | SpawnId,
 ) -> list[SpawnRecord]:
-    """Transitive descendants whose launch is still live."""
+    """Selection for convergence uses stored status; liveness questions use read_derived."""
 
     rows = spawn_store.list_spawns(runtime_root).records
-    live: list[SpawnRecord] = []
-    for child in iter_descendants_from_parent_map(str(root_id), _by_parent(rows)):
-        if not is_active_spawn_status(child.status):
-            continue
-        current = read_derived(runtime_root, child.id)
-        if current is not None and is_active_spawn_status(current.status):
-            live.append(current)
-    return live
+    return [
+        child
+        for child in iter_descendants_from_parent_map(str(root_id), _by_parent(rows))
+        if is_active_spawn_status(child.status)
+    ]
 
 
 def terminate_recorded_spawn_scope(

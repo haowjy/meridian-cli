@@ -25,6 +25,7 @@ from meridian.lib.state.spawn.legacy import (
     upgrade_legacy_spawn_state,
 )
 from meridian.lib.state.spawn.model import SpawnRecord, SpawnStateFields
+from meridian.lib.utils.json_shapes import json_object
 
 
 class StoredSpawnState(SpawnStateFields):
@@ -82,6 +83,19 @@ class SpawnStateQuarantined(ValueError):
         self.report = report
         hint = "; run `meridian doctor` to migrate it" if report.dogfood_row else ""
         super().__init__(f"Spawn state quarantined: {report.state_path}{hint}")
+
+
+def read_quarantined_chat_id(report: SpawnStateQuarantineReport) -> str | None:
+    """Leniently read a quarantined row's top-level current chat identity."""
+
+    try:
+        payload = json_object(json.loads(report.state_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
+    if payload is None:
+        return None
+    current_chat_id = payload.get("current_chat_id")
+    return current_chat_id if isinstance(current_chat_id, str) else None
 
 
 @dataclass(frozen=True)
@@ -342,6 +356,7 @@ __all__ = [
     "is_safe_spawn_dir_name",
     "iter_spawn_ids",
     "read_prompt",
+    "read_quarantined_chat_id",
     "read_state",
     "record_to_stored_state",
     "scan_spawn_ids",

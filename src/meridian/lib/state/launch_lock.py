@@ -44,9 +44,10 @@ def shared_hold(path: Path) -> Generator[bool | None]:
         try:
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
         except BlockingIOError:
-            yield False
-            return
-        yield True
+            result = False
+        else:
+            result = True
+        yield result
     finally:
         os.close(fd)
 

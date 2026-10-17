@@ -7,17 +7,15 @@ Two concepts:
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable
 from pathlib import Path
 
 from meridian.lib.core.types import SpawnId, normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.launch_lock import shared_try
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.utils.json_shapes import json_object
+from meridian.lib.state.spawn_status import quarantine_may_observe
 
 
 def spawn_exact_chat_id(row: SpawnRecord) -> str | None:
@@ -192,22 +190,10 @@ def live_observer_for_chat(
 
     if records is None:
         scan = spawn_store.list_spawns(runtime_root)
-        quarantine_may_observe = False
-        for report in scan.quarantines:
-            try:
-                raw: object = json.loads(report.state_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                quarantine_may_observe = True
-                break
-            payload = json_object(raw)
-            current_chat_id = payload.get("current_chat_id") if payload is not None else None
-            if isinstance(current_chat_id, str) and current_chat_id != chat_id:
-                continue
-            if shared_try(report.state_path.parent / "launch.lock") is True:
-                continue
-            quarantine_may_observe = True
-            break
-        if quarantine_may_observe:
+        if any(
+            quarantine_may_observe(runtime_root, report, chat_id)
+            for report in scan.quarantines
+        ):
             raise ValueError("Cannot establish current-chat ownership; run `meridian doctor`")
         records = scan.records
     for row in records:
