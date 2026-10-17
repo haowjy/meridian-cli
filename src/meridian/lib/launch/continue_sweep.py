@@ -82,7 +82,11 @@ def _owner_ids(runtime_root: Path, spawn_id: str) -> tuple[str, ...]:
         raise NotFound(f"Spawn '{spawn_id}' not found")
     chat = chat_record(runtime_root, source.chat_id)
     current_id = chat.spawn_id.strip() if chat and chat.spawn_id else ""
-    if current_id and current_id != spawn_id:
+    if (
+        current_id
+        and current_id != spawn_id
+        and read_state(runtime_root / "spawns", current_id, include_prompt=False) is not None
+    ):
         return current_id, spawn_id
     return (spawn_id,)
 

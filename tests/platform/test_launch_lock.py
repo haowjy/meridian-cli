@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from typing import Any
 import psutil
 import pytest
 
+from meridian.lib.state.session_store import chat_record
 from tests.conftest import posix_only
 
 pytestmark = posix_only
@@ -247,6 +249,47 @@ def test_continue_of_superseded_spawn_refuses_live_successor(
     assert alive(p2_harness) and alive(p2_worker)
     assert p2_scopes.read_bytes() == scopes_before_refusal, "refusal released live scopes"
     assert "p1 was continued as p2" in (runtime.root / "cli-2.log").read_text()
+
+
+def test_background_continue_publishes_successor_before_parent_returns(
+    runtime: Runtime,
+) -> None:
+    runtime.orphan()
+    runtime.env["FAKE_HOLD_WORKER"] = "1"
+    first = runtime.cli(*continue_args(False, background=True))
+    runtime.pid("p2.worker-gate.pid")
+    assert first.wait(timeout=30) == 0
+
+    chat_id = runtime.row("p1")["chat_id"]
+    chat = chat_record(runtime.root / "runtime", chat_id)
+    assert chat is not None
+    assert chat.spawn_id == "p2"
+
+    (runtime.root / "p2.worker-release").touch()
+    runtime.started("p2")
+
+
+def test_continue_ignores_pruned_successor(runtime: Runtime) -> None:
+    runtime.orphan()
+    first = runtime.cli(*continue_args(False, background=True))
+    assert first.wait(timeout=30) == 0
+    p2_harness, p2_worker = runtime.started("p2")
+    chat_id = runtime.row("p1")["chat_id"]
+    chat = chat_record(runtime.root / "runtime", chat_id)
+    assert chat is not None
+    assert chat.spawn_id == "p2"
+    (runtime.root / "p2.exit").touch()
+    until(lambda: not alive(p2_harness) and not alive(p2_worker))
+    shutil.rmtree(runtime.root / "runtime/spawns/p2")
+
+    process = runtime.cli(*continue_args(False))
+    p3_row = runtime.root / "runtime/spawns/p3/state.json"
+    until(lambda: process.poll() is not None or p3_row.exists())
+    if p3_row.exists():
+        runtime.pid("p3.pid")
+        (runtime.root / "p3.exit").touch()
+
+    assert process.wait(timeout=30) == 0
 
 
 def test_continue_of_superseded_spawn_sweeps_dead_successor(runtime: Runtime) -> None:

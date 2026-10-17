@@ -80,7 +80,9 @@ requires a slot; only low-level `start_spawn` permits lockless test seeding.
 
 Explicit continue resolves the named spawn's current chat owner, takes that
 owner's lock before the named source lock, and sweeps their birth-verified scopes
-before creating another row. Lockless legacy rows retain their birth/grace guard
+before creating another row. An exact-continue parent publishes the new row as
+the chat owner while its launch lock is still held; a background worker confirms
+that pointer after hand-off. Lockless legacy rows retain their birth/grace guard
 and convert under the mutation lock. This does not change v3 status authority.
 
 ## Spawn Mutation Seam

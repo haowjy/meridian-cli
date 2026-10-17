@@ -97,6 +97,14 @@ def main() -> None:
 
         patch.setattr(api, "sweep_before_continue", scheduled_sweep)
     if sys.argv[1:2] == ["worker"]:
+        if os.environ.get("FAKE_HOLD_WORKER") == "1":
+            root = Path(os.environ["FAKE_ROOT"])
+            spawn_id = next(
+                sys.argv[i + 1] for i, arg in enumerate(sys.argv) if arg == "--spawn-id"
+            )
+            (root / f"{spawn_id}.worker-gate.pid").write_text(str(os.getpid()))
+            while not (root / f"{spawn_id}.worker-release").exists():
+                time.sleep(0.01)
         from meridian.lib.ops.spawn.execute_bg import _background_worker_main
 
         raise SystemExit(_background_worker_main(sys.argv[2:]))
