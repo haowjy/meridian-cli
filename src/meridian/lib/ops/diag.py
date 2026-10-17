@@ -289,10 +289,13 @@ def _repair_orphan_runs(
     return len(reconciled_orphans), tuple(reconciled_orphans)
 
 
-def schedule_background_repairs(project_root: Path) -> None:
+def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = True) -> None:
     """Resolve runtime root and run stale-lock + orphan-run repairs in a daemon thread.
 
     Callers gate on startup class and side-effect eligibility before calling.
+    ``repair_orphans=False`` is for a launch that continues a spawn: its own
+    sweep acquires the source's launch lock, which the orphan repair would
+    otherwise contend for.
     """
 
     if not is_root_side_effect_process():
@@ -333,7 +336,8 @@ def schedule_background_repairs(project_root: Path) -> None:
         with suppress(Exception):
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
-            _repair_orphan_runs(project_root, runtime_root=runtime_root)
+            if repair_orphans:
+                _repair_orphan_runs(project_root, runtime_root=runtime_root)
 
     threading.Thread(
         target=_run_repairs,
