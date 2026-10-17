@@ -155,14 +155,11 @@ meridian spawn report search "keyword"   # search across all spawn reports
 
 If a spawn stays in `finalizing` for more than a minute or two, the runner may have crashed in the finalization window. In that case `meridian doctor` will reclassify it (see below).
 
-## Spawn shows as orphaned
+## Spawn shows as crashed
 
 Meridian classifies an active spawn as crashed as soon as its runner-lifetime launch lock is free. Status reads project that failure immediately, and `meridian doctor` can persist the terminal result and clean up recorded process scopes.
 
-- **`orphan_run`** — the spawn record was `status=running` (or `queued`) when reaped. The runner died before the finalization boundary. The spawn likely produced partial or no output.
-- **`orphan_finalization`** — the spawn record was `status=finalizing` when reaped, meaning the runner had left active execution and was in the drain/report/final-status window. If a durable report exists, reconciliation prefers it; otherwise the spawn is marked failed with this error.
-- **`launch_boundary_no_takeover`** — a background spawn's `launch-boundary.jsonl` shows that the parent launched the subprocess but the worker process never recorded a takeover event. The harness process died in the startup window before it could begin work. No output was produced.
-- **`orphan_primary`** — a managed Codex/OpenCode primary lost its Meridian launcher/wrapper. Passive reconciliation records the failed state. Use `meridian spawn cancel ID` to clean up tracked runtime processes — it terminates the launcher first (to let harness-driven shutdown propagate), then terminates backend and TUI processes if they are still running.
+- **`crashed`** — the runner's lifetime lock was freed before it wrote an outcome. A pending cancel request produces `cancelled` instead. Check `report.md`; the work may still be usable. Relaunch or use `meridian spawn --continue ID -p "continue"`.
 
 To detect and reconcile orphaned state, run:
 
@@ -237,7 +234,6 @@ to read them without navigating the path directly.
 | `history.jsonl` | Legacy runner events from older builds; no longer written or read as a transcript. Eligible files can be removed with `meridian session archive --prune-runner-history --apply` |
 | `output.jsonl` | Captured stdout of Claude `--print` runs only |
 | `stderr.log` | Harness stderr, warnings, errors |
-| `launch-boundary.jsonl` | Background spawn startup lifecycle — parent-side launch attempt/spawned/failed events and worker-side boot/takeover events. Used by the reaper to detect startup-phase failures. |
 | `system-prompt.md` | System instruction content as sent to the harness (Claude composed launches) |
 | `starting-prompt.md` | Full user-turn content (prompt + prepended context) |
 | `projection-manifest.json` | Harness ID and per-category channel routing decisions |
