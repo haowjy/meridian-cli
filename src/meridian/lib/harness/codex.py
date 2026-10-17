@@ -33,7 +33,6 @@ from meridian.lib.harness.bundle import (
 )
 from meridian.lib.harness.codex_idle import (
     CODEX_NATIVE_IDLE_HOOK,
-    compact_costs,
     primary_idle_sensor,
 )
 from meridian.lib.harness.codex_rollout import (
@@ -635,6 +634,5 @@ register_harness_bundle(
         semantics=CODEX_SEMANTICS,
         primary_idle_sensor=primary_idle_sensor,
         native_idle_hook=CODEX_NATIVE_IDLE_HOOK,
-        compact_costs=compact_costs,
     )
 )

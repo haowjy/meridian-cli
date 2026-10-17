@@ -131,7 +131,7 @@ Both roles load the stable bundles listed below where enabled; `meridian-idle` l
   verifies exit identity; a switch, reload, stale context, or corrupt record does
   not authorize a last-seen-session fallback.
 - **meridian-idle**, interactive primaries only: translates Pi idle/input events
-  and live context facts into core idle decisions. It never loads in spawned RPC
+  into core idle push and warning decisions. It never loads in spawned RPC
   sessions.
 
 Primary child notifications do not auto-stop the TUI. Spawned completion uses
@@ -150,8 +150,8 @@ Interactive primaries also default `PI_CACHE_RETENTION=long` when the variable i
 absent; spawned RPC sessions are untouched and an inherited or configured value
 always wins. Set `PI_CACHE_RETENTION=short` to retain Pi's short-cache default.
 This launch default is independent of `[idle]`: the idle extension reads the
-effective variable and Pi's reported provider to schedule cache warning and
-compaction for `anthropic` and `openai`. `openai` is scheduled against 30
+effective variable and Pi's reported provider to schedule the cache warning
+for `anthropic` and `openai`. `openai` is scheduled against 30
 minutes, because OpenAI's `24h` retention typically lasts about that long.
 Unknown provider IDs remain push-only.
 

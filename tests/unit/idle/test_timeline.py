@@ -2,7 +2,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from meridian.lib.idle.timeline import InFlight, Schedule, schedule, select_push_delay
+from meridian.lib.idle.timeline import Schedule, push_delay, schedule
+from meridian.lib.idle.wake import ExpectedWake
 
 
 @dataclass(frozen=True)
@@ -10,20 +11,17 @@ class Config:
     push_seconds: int = 60
     long_turn_seconds: int = 60
     quick_turn_push_seconds: int = 600
-    background_push_seconds: int = 900
     warn_minutes: int = 15
-    compact_minutes: int = 5
 
 
 @pytest.mark.parametrize(
     ("ttl_seconds", "expected"),
     [
-        (3600, Schedule(push_at=183_000, warn_at=2_823_000, compact_at=3_423_000)),
-        (1800, Schedule(push_at=183_000, warn_at=1_023_000, compact_at=1_623_000)),
+        (3600, Schedule(push_at=183_000, warn_at=2_823_000)),
         (300, Schedule(push_at=183_000)),
         (None, Schedule(push_at=183_000)),
     ],
-    ids=["one-hour", "thirty-minutes", "five-minutes", "unknown"],
+    ids=["one-hour", "five-minutes", "unknown"],
 )
 def test_schedule_places_only_windows_that_fit(
     ttl_seconds: int | None,
@@ -32,76 +30,44 @@ def test_schedule_places_only_windows_that_fit(
     assert schedule(123_000, ttl_seconds, Config(), push_delay_seconds=60) == expected
 
 
-def test_schedule_places_long_turn_push_after_push_delay() -> None:
-    assert schedule(123_000, None, Config(), push_delay_seconds=60).push_at == 183_000
-
-
-def test_schedule_places_quick_turn_push_after_quick_delay() -> None:
-    assert schedule(123_000, None, Config(), push_delay_seconds=600).push_at == 723_000
-
-
-def test_schedule_keeps_the_warning_without_a_push_and_the_push_without_a_warning() -> None:
-    assert schedule(123_000, 3600, Config(), push_delay_seconds=None) == Schedule(
-        push_at=None, warn_at=2_823_000, compact_at=3_423_000
-    )
-    assert schedule(123_000, 3600, Config(), push_delay_seconds=60, warn=False) == Schedule(
-        push_at=183_000, compact_at=3_423_000
-    )
-
-
 def test_schedule_drops_push_that_would_not_precede_a_valid_warning() -> None:
-    cfg = Config(warn_minutes=4, compact_minutes=4)
-
-    assert schedule(123_000, 300, cfg, push_delay_seconds=60) == Schedule(
+    assert schedule(123_000, 300, Config(warn_minutes=4), push_delay_seconds=60) == Schedule(
         push_at=None,
         warn_at=183_000,
     )
 
 
 @pytest.mark.parametrize(
-    ("now_ms", "returned_at_ms", "previous_idle_since_ms", "expected"),
+    ("wake", "expected"),
     [
-        (120_000, 60_000, None, 60),
-        (119_999, 60_000, None, 600),
-        (120_000, None, None, 600),
-        (120_000, 60_000, 60_000, 600),
+        (ExpectedWake(certain="1 agent(s) running"), Schedule(None, 2_823_000)),
+        (ExpectedWake(maybe=True), Schedule(723_000, 2_823_000)),
+        (ExpectedWake(certain="spawns", by_ms=3_723_000), Schedule(None, 2_823_000)),
+        (ExpectedWake(certain="spawns", by_ms=3_722_999), Schedule(None, None)),
     ],
-    ids=["long-turn", "quick-turn", "no-return", "stale-return"],
+    ids=["certain-holds-push", "maybe-delays-push", "late-wake-keeps-warning", "early-wake"],
 )
-def test_select_push_delay_uses_only_a_fresh_return_for_turn_length(
-    now_ms: int,
-    returned_at_ms: int | None,
-    previous_idle_since_ms: int | None,
-    expected: int,
+def test_schedule_reads_the_push_and_the_warning_from_the_expected_wake(
+    wake: ExpectedWake,
+    expected: Schedule,
 ) -> None:
-    assert (
-        select_push_delay(
-            now_ms,
-            returned_at_ms,
-            previous_idle_since_ms,
-            Config(),
-        )
-        == expected
-    )
-
-
-def test_select_push_delay_zero_threshold_always_uses_long_turn_delay() -> None:
-    assert select_push_delay(0, None, None, Config(long_turn_seconds=0)) == 60
+    assert schedule(123_000, 3600, Config(), push_delay_seconds=60, wake=wake) == expected
 
 
 @pytest.mark.parametrize(
-    ("work", "expected"),
+    ("now_ms", "owed_since_ms", "cfg", "expected"),
     [
-        (InFlight(agents=1, other_tasks=1), None),
-        (InFlight(spawn_shells=1, spawn_waiters=1), None),
-        (InFlight(child_spawns=True), None),
-        (InFlight(other_tasks=2), 900),
-        (InFlight(), 60),
+        (120_000, 60_000, Config(), 60),
+        (119_999, 60_000, Config(), 600),
+        (120_000, None, Config(), 600),
+        (0, None, Config(long_turn_seconds=0), 60),
     ],
-    ids=["agents", "spawn-shell", "child-spawn", "other-task", "nothing"],
+    ids=["long-wait", "quick-turn", "nothing-owed", "zero-threshold"],
 )
-def test_select_push_delay_holds_for_waking_work_and_stretches_for_other_tasks(
-    work: InFlight,
-    expected: int | None,
+def test_push_delay_follows_how_long_the_user_has_waited(
+    now_ms: int,
+    owed_since_ms: int | None,
+    cfg: Config,
+    expected: int,
 ) -> None:
-    assert select_push_delay(120_000, 60_000, None, Config(), work) == expected
+    assert push_delay(now_ms, owed_since_ms, cfg) == expected

@@ -7,48 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 
-COMPACT_SCREEN_NOT_RECOGNIZED = "screen-not-recognized"
 
-BaselineSource = Literal["observed", "compacted"]
+@dataclass(frozen=True)
+class BackgroundTask:
+    """One piece of work still running when a main-loop turn ended, as the host listed it."""
 
-
-class CompactCosts(BaseModel):
-    """One route's compaction economics in base input-token price units."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
-    w: float = Field(gt=0)
-    c: float = Field(ge=0)
-    u: int = Field(ge=0)
-    o: float = Field(gt=0)
-    summary_tokens: int = Field(ge=0)
-    residue_tokens: int = Field(ge=0)
-
-
-class CompactEval(BaseModel):
-    """Persisted inputs and verdict from the growth break-even guard."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
-    context_tokens: int | None = Field(default=None, ge=0)
-    baseline_tokens: int | None = Field(default=None, ge=0)
-    baseline_source: BaselineSource = "observed"
-    growth_tokens: int | None = None
-    need_tokens: int | None = Field(default=None, ge=0)
-    basis: Literal["break-even", "configured", "never"]
-    r: float = Field(ge=0, le=1)
-    costs: CompactCosts | None = None
-    verdict: Literal[
-        "worth-it",
-        "not-worth-it",
-        "context-unknown",
-        "baseline-unknown",
-    ]
+    # agent: a harness subagent or workflow. shell: a background shell (command set).
+    # watcher: a standing monitor that wakes the session only on events.
+    kind: Literal["agent", "shell", "watcher", "other"]
+    command: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,7 +34,7 @@ class IdleEvent:
     last_user_text: str | None = None
     last_assistant_text: str | None = None
     provider: str | None = None
-    context_tokens: int | None = None
+    background_tasks: tuple[BackgroundTask, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -86,24 +56,6 @@ class NativeIdleHook:
 
 
 @dataclass(frozen=True)
-class IdleFacts:
-    """Live facts used to decide whether compaction is safe."""
-
-    busy: bool
-    agents_running: int
-    context_tokens: int | None
-    harness_autocompact_off: bool
-
-
-@dataclass(frozen=True)
-class CompactResult:
-    """Result of asking the harness to compact its current session."""
-
-    result: Literal["ok", "failed", "vetoed"]
-    reason: str | None = None
-
-
-@dataclass(frozen=True)
 class IdleSensorContext:
     """Managed-primary resources available for one sensor's lifetime."""
 
@@ -118,15 +70,13 @@ class IdleSensorContext:
 
 
 class IdleSensor(Protocol):
-    """Harness-provided idle observations and actions."""
+    """Harness-provided idle observations."""
 
     def on_raw_event(self, event: RawHarnessEvent) -> None: ...
 
     def events(self) -> AsyncIterator[IdleEvent]: ...
 
-    async def facts(self) -> IdleFacts: ...
-
-    async def compact(self) -> CompactResult: ...
+    async def busy(self) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -150,29 +100,13 @@ class DetectIdleTtl(Protocol):
     ) -> CacheTtl | None: ...
 
 
-class ResolveCompactCosts(Protocol):
-    """Resolve economics for one harness and cache lifetime."""
-
-    def __call__(
-        self,
-        *,
-        ttl_seconds: int | None,
-    ) -> CompactCosts | None: ...
-
-
 __all__ = [
-    "COMPACT_SCREEN_NOT_RECOGNIZED",
-    "BaselineSource",
+    "BackgroundTask",
     "CacheTtl",
-    "CompactCosts",
-    "CompactEval",
-    "CompactResult",
     "DetectIdleTtl",
     "IdleEvent",
-    "IdleFacts",
     "IdleSensor",
     "IdleSensorContext",
     "NativeIdleHook",
     "PinnedIdleSession",
-    "ResolveCompactCosts",
 ]

@@ -33,7 +33,7 @@ pi_runtime/
     ├── session-boundary/
     │   └── src/index.ts      # native lifecycle observations, no journal writes
     └── meridian-idle/
-        └── src/index.ts      # primary idle/input sensor and compact actuator
+        └── src/index.ts      # primary idle/input sensor and push/warn timers
 ```
 
 ### Extension Responsibilities
@@ -56,7 +56,7 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 |---|---|---|
 | `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits and terminal output reads mark their record's notification as consumed |
 | `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, boundary/idle completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
-| `meridian-idle` | native idle and interactive-return sensing in primary TUIs | shells out to the hidden `meridian idle` API; owns only in-memory timers and calls `ctx.compact` after an `act` decision |
+| `meridian-idle` | native idle and interactive-return sensing in primary TUIs | shells out to the hidden `meridian idle` API; owns only in-memory push/warn timers; the core decides and delivers every notification |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
@@ -183,7 +183,7 @@ restart/crash behavior. Scan, report, and receipt failures remain supervised in
 2. `build:extensions:managed-bash` — `tsup` bundles `managed-bash/src/index.ts` → ESM, Node 20, single-file output
 3. `build:extensions:meridian-spawn-watch` — bundles `meridian-spawn-watch/src/index.ts` the same way
 4. `build:extensions:session-boundary` — bundles the native session observer
-5. `build:extensions:meridian-idle` — bundles the primary idle sensor/actuator
+5. `build:extensions:meridian-idle` — bundles the primary idle sensor
 
 `pnpm run verify:extensions` rebuilds and runs Vitest coverage for the extension sources.
 
@@ -200,8 +200,7 @@ spawn-watch when their `[harness.pi]` toggles are enabled. Session-boundary is
 always loaded by the adapter and has no config toggle. Meridian-idle is selected
 only when the launch profile is interactive. It passes `--interactive` on every
 `meridian idle` call, serializes arm/return transitions without making user input
-wait for the CLI, and re-checks live idle and pending-message state after a
-compact claim before calling Pi's aborting `ctx.compact()`.
+wait for the CLI, and fires each due push/warn stage back to the core.
 
 - **Spawned RPC**: suppress ambient extensions by default (`--no-extensions`),
   skills, context files, and prompt templates. `load_all_pi_extensions = true`

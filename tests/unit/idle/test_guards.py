@@ -8,8 +8,6 @@ from meridian.lib.state.idle_store import IdleSchedule, IdleState, Stage
 
 @dataclass(frozen=True)
 class Config:
-    compact: bool = True
-    compact_min_growth_tokens: int | None = 0
     late_fire_tolerance_seconds: int = 120
 
 
@@ -22,12 +20,7 @@ def state(**updates: object) -> IdleState:
         "anchor": 1,
         "idle_since_ms": 0,
         "ttl_seconds": 3600,
-        "context": {"context_tokens": 50_000, "baseline_tokens": 50_000},
-        "schedule": IdleSchedule(
-            push_at=60_000,
-            warn_at=2_700_000,
-            compact_at=3_300_000,
-        ),
+        "schedule": IdleSchedule(push_at=60_000, warn_at=2_700_000),
         "updated_at_ms": 0,
     }
     base.update(updates)
@@ -72,62 +65,6 @@ def state(**updates: object) -> IdleState:
         ("push", GuardFacts(1, 2), state(), Config(), 60_000, "stale-anchor"),
         ("push", GuardFacts(1, 1), state(), Config(), 58_999, "early-fire"),
         ("push", GuardFacts(1, 1), state(), Config(), 181_001, "late-fire"),
-        (
-            "compact",
-            GuardFacts(1, 1),
-            state(),
-            Config(compact=False),
-            3_300_000,
-            "compaction-disabled",
-        ),
-        (
-            "compact",
-            GuardFacts(1, 1),
-            state(),
-            Config(late_fire_tolerance_seconds=1000),
-            3_600_000,
-            "cache-cold",
-        ),
-        (
-            "compact",
-            GuardFacts(1, 1, busy=True),
-            state(),
-            Config(),
-            3_300_000,
-            "busy",
-        ),
-        (
-            "compact",
-            GuardFacts(1, 1, agents_running=1),
-            state(),
-            Config(),
-            3_300_000,
-            "agents-running",
-        ),
-        (
-            "compact",
-            GuardFacts(1, 1, child_spawns_active=True),
-            state(),
-            Config(),
-            3_300_000,
-            "child-spawns-running",
-        ),
-        (
-            "compact",
-            GuardFacts(1, 1, context_tokens=89_999),
-            state(),
-            Config(compact_min_growth_tokens=40_000),
-            3_300_000,
-            "not-worth-it",
-        ),
-        (
-            "compact",
-            GuardFacts(1, 1, context_tokens=50_000, harness_autocompact_off=True),
-            state(),
-            Config(),
-            3_300_000,
-            "harness-autocompact-off",
-        ),
     ],
 )
 def test_guard_order_first_match(
@@ -140,16 +77,3 @@ def test_guard_order_first_match(
 ) -> None:
     assert decide(stage, facts, current, cfg, now_ms).reason == reason
 
-
-def test_guard_order_does_not_evaluate_compaction_guards_for_push() -> None:
-    facts = GuardFacts(
-        1,
-        1,
-        busy=True,
-        agents_running=1,
-        child_spawns_active=True,
-        context_tokens=1,
-        harness_autocompact_off=True,
-    )
-
-    assert decide("push", facts, state(), Config(compact=False), 60_000).decision == "act"

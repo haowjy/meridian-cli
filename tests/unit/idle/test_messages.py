@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from meridian.lib.idle.excerpts import trim_turn_excerpts
-from meridian.lib.idle.messages import compaction_notice, stage_notice
+from meridian.lib.idle.messages import stage_notice
 from meridian.lib.notify import SessionLabel
 from meridian.lib.state.idle_store import IdleSchedule, IdleState
 
@@ -72,31 +72,6 @@ def test_push_warn_and_missing_message_rendering() -> None:
         email=False,
         kind="idle",
     )
-
-
-@pytest.mark.parametrize(
-    ("result", "detail", "reason", "event"),
-    [
-        ("ok", "ignored detail", "compacted", "Compacted"),
-        ("failed", "timeout", "compaction failed", "Compaction failed: timeout"),
-    ],
-)
-def test_compaction_rendering(
-    result: str,
-    detail: str | None,
-    reason: str,
-    event: str,
-) -> None:
-    notice = compaction_notice(
-        result,  # type: ignore[arg-type]
-        detail,
-        SessionLabel(harness="claude", project="meridian-cli", tmux_session="dev"),
-    )
-
-    assert notice.title == f'[{reason}] dev: claude in project: "meridian-cli"'
-    assert notice.body == event
-    assert "You:" not in notice.body
-    assert "Assistant:" not in notice.body
 
 
 def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:

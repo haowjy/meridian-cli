@@ -6,16 +6,15 @@ import json
 import os
 import sys
 from collections.abc import Callable
-from typing import Annotated, Literal, Never, Protocol, cast
+from typing import Annotated, Never, Protocol, cast
 
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import idle_app
 from meridian.cli.invocation import get_global_options
-from meridian.lib.harness.idle_types import IdleFacts
+from meridian.lib.harness.idle_types import BackgroundTask
 from meridian.lib.idle.service import IdleService
-from meridian.lib.idle.timeline import InFlight
-from meridian.lib.state.idle_store import CompactResultValue, Stage
+from meridian.lib.state.idle_store import Stage
 
 
 def _option(name: str, help_text: str) -> Parameter:
@@ -28,8 +27,7 @@ StretchOption = Annotated[int, _option("--stretch", "Stretch number.")]
 AnchorOption = Annotated[int, _option("--anchor", "Anchor version.")]
 TtlOption = Annotated[int | None, _option("--ttl", "Detected cache TTL in seconds.")]
 ProviderOption = Annotated[str | None, _option("--provider", "Harness model provider.")]
-StageOption = Annotated[str, Parameter(help="Stage: push, warn, or compact.")]
-DoneStage = Annotated[str, Parameter(help="Completed stage (compact).")]
+StageOption = Annotated[str, Parameter(help="Stage: push or warn.")]
 ImpliesReturnOption = Annotated[
     bool, _option("--implies-return", "This turn proves a user return.")
 ]
@@ -42,25 +40,14 @@ AssistantTextOption = Annotated[
     _option("--assistant-text", "Last assistant message for notification excerpts."),
 ]
 UserPromptOption = Annotated[bool, _option("--user-prompt", "Confirm a user prompt.")]
-BusyOption = Annotated[bool, _option("--busy", "The harness is currently busy.")]
-AgentsRunningOption = Annotated[int, _option("--agents-running", "Number of running agents.")]
-ContextTokensOption = Annotated[int | None, _option("--context-tokens", "Current token count.")]
-InFlightAgentsOption = Annotated[
-    int | None,
-    _option("--agents-running", "Running agents; any in-flight count marks the work as sensed."),
+BackgroundTasksOption = Annotated[
+    str | None,
+    _option(
+        "--background-tasks",
+        'Work the turn left running, as JSON: [{"kind": "agent|shell|watcher|other", '
+        '"command": "..."}].',
+    ),
 ]
-SpawnShellsOption = Annotated[
-    int | None, _option("--spawn-shells", "Background shells running `meridian spawn`.")
-]
-SpawnWaitersOption = Annotated[
-    int | None, _option("--spawn-waiters", "Of those, shells running `meridian spawn wait`.")
-]
-OtherTasksOption = Annotated[int | None, _option("--other-tasks", "Other background tasks.")]
-AutocompactOffOption = Annotated[
-    bool, _option("--harness-autocompact-off", "Harness autocompact is off.")
-]
-ResultOption = Annotated[str, _option("--result", "Result: ok, failed, or vetoed.")]
-ReasonOption = Annotated[str | None, _option("--reason", "Optional result detail.")]
 PayloadArgument = Annotated[str | None, Parameter(help="Native event payload; stdin if omitted.")]
 JsonOption = Annotated[bool, _option("--json", "Print open stretches as JSON.")]
 InteractiveOption = Annotated[bool, _option("--interactive", "Assert adapter TUI ownership.")]
@@ -103,6 +90,14 @@ def _json(
     _emit_json({} if result is None else result.to_wire())
 
 
+def _background_tasks(raw: str | None) -> tuple[BackgroundTask, ...]:
+    if raw is None:
+        return ()
+    from pydantic import TypeAdapter
+
+    return TypeAdapter(tuple[BackgroundTask, ...]).validate_json(raw)
+
+
 def _event_payload(payload: str | None) -> str:
     return payload if payload is not None else sys.stdin.read()
 
@@ -132,9 +127,7 @@ def _service(harness: str | None = None, *, interactive: bool = False) -> IdleSe
     return IdleService(
         env=os.environ,
         interactive=interactive,
-        autocompact_off=bundle.autocompact_off,
         detect_ttl=bundle.detect_ttl,
-        compact_costs=bundle.compact_costs,
         native_idle_hook=bundle.native_idle_hook,
     )
 
@@ -162,27 +155,10 @@ def cmd_idle_arm(
     turn_id: TurnIdOption = None,
     user_text: UserTextOption = None,
     assistant_text: AssistantTextOption = None,
-    context_tokens: ContextTokensOption = None,
-    agents_running: InFlightAgentsOption = None,
-    spawn_shells: SpawnShellsOption = None,
-    spawn_waiters: SpawnWaitersOption = None,
-    other_tasks: OtherTasksOption = None,
+    background_tasks: BackgroundTasksOption = None,
     interactive: InteractiveOption = False,
 ) -> None:
     """Open or re-anchor; same stretch and anchor means keep your timers."""
-
-    counts = (agents_running, spawn_shells, spawn_waiters, other_tasks)
-    # No count at all: this adapter does not sense in-flight work, and core keeps its old push.
-    in_flight = (
-        None
-        if all(count is None for count in counts)
-        else InFlight(
-            agents=agents_running or 0,
-            spawn_shells=spawn_shells or 0,
-            spawn_waiters=spawn_waiters or 0,
-            other_tasks=other_tasks or 0,
-        )
-    )
 
     _json(
         harness,
@@ -196,22 +172,7 @@ def cmd_idle_arm(
             turn_id=turn_id,
             last_user_text=user_text,
             last_assistant_text=assistant_text,
-            context_tokens=context_tokens,
-            in_flight=in_flight,
-        ),
-        checks=(
-            (
-                context_tokens is None or context_tokens >= 0,
-                "--context-tokens must not be negative",
-            ),
-            (
-                all(count is None or count >= 0 for count in counts),
-                "in-flight counts must not be negative",
-            ),
-            (
-                (spawn_waiters or 0) <= (spawn_shells or 0),
-                "--spawn-waiters must not exceed --spawn-shells",
-            ),
+            background_tasks=_background_tasks(background_tasks),
         ),
     )
 
@@ -242,20 +203,10 @@ def cmd_idle_fire(
     session: SessionOption,
     stretch: StretchOption,
     anchor: AnchorOption,
-    busy: BusyOption = False,
-    agents_running: AgentsRunningOption = 0,
-    context_tokens: ContextTokensOption = None,
-    harness_autocompact_off: AutocompactOffOption = False,
     interactive: InteractiveOption = False,
 ) -> None:
     """Evaluate guards and claim one due stage."""
 
-    facts = IdleFacts(
-        busy=busy,
-        agents_running=agents_running,
-        context_tokens=context_tokens,
-        harness_autocompact_off=harness_autocompact_off,
-    )
     _json(
         harness,
         interactive,
@@ -265,52 +216,11 @@ def cmd_idle_fire(
             session=session,
             stretch=stretch,
             anchor=anchor,
-            facts=facts,
         ),
         checks=(
-            (stage in {"push", "warn", "compact"}, f"unknown idle stage: {stage}"),
+            (stage in {"push", "warn"}, f"unknown idle stage: {stage}"),
             (stretch >= 1, "--stretch must be greater than zero"),
             (anchor >= 1, "--anchor must be greater than zero"),
-            (agents_running >= 0, "--agents-running must not be negative"),
-            (
-                context_tokens is None or context_tokens >= 0,
-                "--context-tokens must not be negative",
-            ),
-        ),
-    )
-
-
-@idle_app.command(name="done")
-def cmd_idle_done(
-    stage: DoneStage,
-    *,
-    harness: HarnessOption = None,
-    session: SessionOption,
-    stretch: StretchOption,
-    result: ResultOption,
-    reason: ReasonOption = None,
-    interactive: InteractiveOption = False,
-) -> None:
-    """Record the result of a compaction attempt."""
-
-    _json(
-        harness,
-        interactive,
-        lambda service, normalized: service.done(
-            cast("Literal['compact']", stage),
-            harness=normalized,
-            session=session,
-            stretch=stretch,
-            result=cast("CompactResultValue", result),
-            detail=reason,
-        ),
-        checks=(
-            (stage == "compact", f"unknown idle completion stage: {stage}"),
-            (stretch >= 1, "--stretch must be greater than zero"),
-            (
-                result in {"ok", "failed", "vetoed"},
-                "--result must be one of: ok, failed, vetoed",
-            ),
         ),
     )
 
@@ -338,30 +248,18 @@ def _print_status_table(rows: list[dict[str, object]]) -> None:
     if not rows:
         print("No open idle stretches.")
         return
-    print(
-        f"{'HARNESS':<10} {'SESSION':<24} {'STRETCH':>7} {'ANCHOR':>6} "
-        f"{'COMPACT':<38} SCHEDULE"
-    )
+    print(f"{'HARNESS':<10} {'SESSION':<24} {'STRETCH':>7} {'ANCHOR':>6} SCHEDULE")
     for row in rows:
         schedule = cast("dict[str, object]", row["schedule"])
         deadlines = ", ".join(
             f"{stage}={schedule[f'{stage}_at']}"
-            for stage in ("push", "warn", "compact")
+            for stage in ("push", "warn")
             if schedule.get(f"{stage}_at") is not None
         )
-        done = cast("dict[str, object]", row["done"])
-        compact = str(done.get("compact", "-"))
-        evaluation = row.get("compact_eval")
-        if compact == "skipped:not-worth-it" and isinstance(evaluation, dict):
-            evaluation_dict = cast("dict[str, object]", evaluation)
-            growth = evaluation_dict.get("growth_tokens")
-            need = evaluation_dict.get("need_tokens")
-            if isinstance(growth, int) and isinstance(need, int):
-                compact += f" ({round(growth / 1000)}k/{round(need / 1000)}k)"
         print(
             f"{row['harness']!s:<10} {row['session']!s:<24} "
             f"{int(cast('int', row['stretch'])):>7} "
-            f"{int(cast('int', row['anchor'])):>6} {compact:<38} {deadlines}"
+            f"{int(cast('int', row['anchor'])):>6} {deadlines}"
         )
 
 

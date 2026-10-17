@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from meridian.lib.notify import Notice, SessionLabel
-from meridian.lib.state.idle_store import CompactResultValue, IdleState
+from meridian.lib.state.idle_store import IdleState
 
 
 def _body(lines: list[str | None], *, fallback: str | None = None) -> str:
@@ -71,53 +71,4 @@ def stage_notice(
     )
 
 
-def compaction_notice(
-    result: CompactResultValue,
-    detail: str | None,
-    label: SessionLabel,
-) -> Notice:
-    """Build a compaction result notice without turn excerpts."""
-
-    event = {
-        "ok": "Compacted",
-        "failed": "Compaction failed",
-        "vetoed": "Compaction skipped",
-    }[result]
-    title = f"[{event.lower()}] {label.headline}"
-    normalized_detail = detail.strip() if detail else ""
-    if normalized_detail and result != "ok":
-        event = f"{event}: {normalized_detail}"
-    return Notice(
-        title=title,
-        body=event,
-        priority=3 if result == "ok" else 4,
-        email=False,
-        kind="idle",
-    )
-
-
-def unreadable_compaction_notice(
-    harness: str,
-    state: IdleState,
-    label: SessionLabel,
-    *,
-    now_ms: int,
-) -> Notice:
-    """Build the push-only notice for a compaction Meridian could not verify."""
-
-    message = f"{harness.title()} not compacted: Meridian couldn't read its screen."
-    if state.ttl_seconds is not None and state.idle_since_ms is not None:
-        remaining_ms = state.idle_since_ms + state.ttl_seconds * 1000 - now_ms
-        if remaining_ms > 0:
-            minutes = (remaining_ms + 59_999) // 60_000
-            message += f" Cache expires in ~{minutes} min."
-    return Notice(
-        title=f"[compaction skipped] {label.headline}",
-        body=message,
-        priority=4,
-        email=False,
-        kind="idle",
-    )
-
-
-__all__ = ["compaction_notice", "stage_notice", "unreadable_compaction_notice"]
+__all__ = ["stage_notice"]

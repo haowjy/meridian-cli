@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -24,14 +24,6 @@ class FakeConnection:
 
     def __init__(self, resolved_version: str | None = None) -> None:
         self.resolved_version = resolved_version
-
-
-class FakeClock:
-    def __init__(self, now: float) -> None:
-        self.value = now
-
-    def __call__(self) -> float:
-        return self.value
 
 
 def _context(
@@ -118,28 +110,17 @@ async def _assert_quiet(iterator: AsyncIterator[IdleEvent]) -> None:
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
 
-def _v2_request_stub(
-    *,
-    provider: str,
-    model_id: str,
-    compaction_id: str,
-    on_compact: Callable[[], None],
-) -> opencode_idle.BackendRequest:
+def _v2_request_stub(*, provider: str, model_id: str) -> opencode_idle.BackendRequest:
     async def request(
-        method: str, path: str, payload: Mapping[str, object] | None
+        method: str, path: str, _payload: Mapping[str, object] | None
     ) -> tuple[int, str]:
         session_path = f"/api/session/{V2_SESSION_ID}"
         if (method, path) == ("GET", session_path):
             return 200, json.dumps(
                 {"data": {"id": V2_SESSION_ID, "model": {"providerID": provider, "id": model_id}}}
             )
-        if (method, path) == ("GET", f"{session_path}/message?limit=20&order=desc"):
-            return 200, '{"data":[]}'
-        assert (method, path, payload) == ("POST", f"{session_path}/compact", {})
-        on_compact()
-        return 200, json.dumps(
-            {"data": {"id": compaction_id, "sessionID": V2_SESSION_ID, "type": "compaction"}}
-        )
+        assert (method, path) == ("GET", f"{session_path}/message?limit=20&order=desc")
+        return 200, '{"data":[]}'
 
     return request
 
@@ -222,87 +203,6 @@ async def test_recorded_summarize_never_emits_user_return(tmp_path: Path) -> Non
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
 
-async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
-    tmp_path: Path,
-) -> None:
-    post_started = asyncio.Event()
-    release_post = asyncio.Event()
-
-    async def request(
-        method: str,
-        _path: str,
-        _payload: Mapping[str, object] | None,
-    ) -> tuple[int, str]:
-        if method == "GET":
-            return 200, '{"model":{"providerID":"opencode","id":"big-pickle"}}'
-        post_started.set()
-        await release_post.wait()
-        return 200, "true"
-
-    sensor = opencode_idle.OpenCodeIdleSensor(
-        _context(tmp_path),
-        now=FakeClock(1_791_502_764.0),
-        request=request,
-    )
-    iterator = sensor.events()
-    events = _recorded_events("events-summarize.sse")
-    user_message = next(event for event in events if event.event_type == "message.updated")
-    compaction_part = next(
-        event
-        for event in events
-        if event.event_type == "message.part.updated"
-        and cast("Mapping[str, object]", event.payload["properties"])["part"]
-        and cast(
-            "Mapping[str, object]",
-            cast("Mapping[str, object]", event.payload["properties"])["part"],
-        )["type"]
-        == "compaction"
-    )
-    first_busy = next(
-        event
-        for event in events
-        if event.event_type == "session.status"
-        and cast(
-            "Mapping[str, object]",
-            cast("Mapping[str, object]", event.payload["properties"])["status"],
-        )["type"]
-        == "busy"
-    )
-    final_idle = next(
-        event
-        for event in events
-        if event.event_type == "session.status"
-        and cast(
-            "Mapping[str, object]",
-            cast("Mapping[str, object]", event.payload["properties"])["status"],
-        )["type"]
-        == "idle"
-    )
-    session_idle = next(event for event in events if event.event_type == "session.idle")
-
-    compact = asyncio.create_task(sensor.compact())
-    await post_started.wait()
-    for event in (user_message, first_busy, compaction_part):
-        sensor.on_raw_event(event)
-    sensor.on_raw_event(final_idle)
-    sensor.on_raw_event(session_idle)
-    release_post.set()
-    assert (await compact).result == "ok"
-
-    real_user = next(
-        event
-        for event in _recorded_events("events-normal.sse")
-        if event.event_type == "message.updated"
-    )
-    sensor.on_raw_event(real_user)
-    sensor.on_raw_event(first_busy)
-
-    observed = await asyncio.wait_for(_take(iterator, 2), timeout=0.1)
-    assert [event.kind for event in observed] == ["turn_end", "user_prompt"]
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
-
-
 @pytest.mark.parametrize(
     "terminal_type",
     [
@@ -317,8 +217,6 @@ async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
     request = _v2_request_stub(
         provider="openai",
         model_id="gpt-6-astra",
-        compaction_id="unused",
-        on_compact=lambda: None,
     )
     sensor, iterator = _v2_sensor(tmp_path, request=request)
     events = _recorded_v2_events("events-v2-normal.sse")
@@ -337,13 +235,7 @@ def test_v2_turn_end_parses_wrapped_descending_message_facts() -> None:
     payload = {
         "data": [
             {
-                "info": {
-                    "role": "assistant",
-                    "tokens": {
-                        "input": 10_000,
-                        "cache": {"read": 20_000, "write": 3_000},
-                    },
-                },
+                "info": {"role": "assistant"},
                 "content": "latest answer",
             },
             {"type": "user", "text": "latest"},
@@ -352,23 +244,6 @@ def test_v2_turn_end_parses_wrapped_descending_message_facts() -> None:
         ]
     }
     assert opencode_idle._v2_message_excerpts(payload) == ("latest", "latest answer")
-    assert opencode_idle.v2_message_context_tokens(payload) == 33_000
-
-    compaction = {
-        "data": [
-            {
-                "info": {
-                    "role": "assistant",
-                    "mode": "compaction",
-                    "tokens": {"input": 80_000, "cache": {"read": 0, "write": 0}},
-                }
-            },
-            *payload["data"],
-        ]
-    }
-    assert opencode_idle.v2_message_context_tokens(compaction) is None
-    compaction["data"][0]["info"]["tokens"]["input"] = 0
-    assert opencode_idle.v2_message_context_tokens(compaction) is None
 
 
 async def test_v2_steered_prompt_returns_before_terminal_and_does_not_leak_to_compaction(
@@ -395,10 +270,12 @@ async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
     delivered_id = "msg_v2_user_queued"
     cancelled_id = "msg_v2_user_cancelled"
     sensor.on_raw_event(_v2_raw("session.execution.started"))
+    assert await sensor.busy() is True
     sensor.on_raw_event(_v2_user_enqueued(delivered_id, "follow up after this turn"))
     sensor.on_raw_event(_v2_user_enqueued(cancelled_id, "never mind"))
     sensor.on_raw_event(_v2_raw("session.inbox.cancelled", inboxID=cancelled_id))
     sensor.on_raw_event(_v2_raw("session.execution.succeeded"))
+    assert await sensor.busy() is False
     assert [event.kind for event in await _take(iterator, 3)] == ["user_prompt"] * 2 + ["turn_end"]
     sensor.on_raw_event(_v2_raw("session.execution.started"))
     sensor.on_raw_event(_v2_raw("session.inbox.delivered", inboxID=cancelled_id))
@@ -406,102 +283,6 @@ async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
     sensor.on_raw_event(_v2_raw("session.execution.succeeded"))
     assert [event.kind for event in await _take(iterator, 2)] == ["user_prompt", "turn_end"]
     await _assert_quiet(iterator)
-
-
-@pytest.mark.parametrize(
-    ("terminal_type", "expected_result"),
-    [
-        ("session.execution.succeeded", "ok"),
-        ("session.execution.failed", "failed"),
-        ("session.execution.interrupted", "failed"),
-    ],
-)
-async def test_v2_compact_waits_for_matching_recorded_completion(
-    tmp_path: Path, terminal_type: str, expected_result: str
-) -> None:
-    sensor: opencode_idle.OpenCodeV2IdleSensor
-
-    def on_compact() -> None:
-        events = _recorded_v2_events("events-v2-compact.sse")
-        if terminal_type != "session.execution.succeeded":
-            events[-1] = _v2_raw(terminal_type, id=events[-1].payload["id"])
-        for event in events:
-            sensor.on_raw_event(event)
-
-    request = _v2_request_stub(
-        provider="opencode-go",
-        model_id="deepseek-v4.1-flash",
-        compaction_id="msg_v2_compaction",
-        on_compact=on_compact,
-    )
-    sensor, iterator = _v2_sensor(tmp_path, request=request, compact_timeout_seconds=0.1)
-    result = await sensor.compact()
-    assert result.result == expected_result
-    assert result.reason == (None if expected_result == "ok" else terminal_type)
-    assert [event.kind for event in await _take(iterator, 1)] == ["turn_end"]
-    await _assert_quiet(iterator)
-
-
-@pytest.mark.parametrize(
-    ("compaction_status", "expected_result"),
-    [("completed", "ok"), ("failed", "failed")],
-)
-async def test_v2_compact_confirms_durable_completion_after_stream_gap(
-    tmp_path: Path,
-    compaction_status: str,
-    expected_result: str,
-) -> None:
-    compact_posted = False
-    session_path = f"/api/session/{V2_SESSION_ID}"
-
-    async def request(
-        method: str, path: str, payload: Mapping[str, object] | None
-    ) -> tuple[int, str]:
-        nonlocal compact_posted
-        if (method, path) == ("GET", session_path):
-            return 200, json.dumps(
-                {
-                    "data": {
-                        "id": V2_SESSION_ID,
-                        "model": {"providerID": "opencode-go", "id": "deepseek-v4.1-flash"},
-                        "outcome": "succeeded" if compact_posted else None,
-                        "time": {"idle": 1_700_000_001_000} if compact_posted else {},
-                    }
-                }
-            )
-        if method == "GET" and path == (
-            f"{session_path}/message?limit=20&order=desc&type=compaction"
-        ):
-            return 200, json.dumps(
-                {
-                    "data": [
-                        {
-                            "id": "msg_v2_compaction",
-                            "type": "compaction",
-                            "status": compaction_status,
-                        }
-                    ]
-                }
-            )
-        assert (method, path, payload) == ("POST", f"{session_path}/compact", {})
-        compact_posted = True
-        return 200, json.dumps(
-            {
-                "data": {
-                    "id": "msg_v2_compaction",
-                    "sessionID": V2_SESSION_ID,
-                    "time": {"created": 1_700_000_000_000},
-                    "type": "compaction",
-                }
-            }
-        )
-
-    sensor, _ = _v2_sensor(tmp_path, request=request, compact_timeout_seconds=0.01)
-
-    result = await sensor.compact()
-
-    assert result.result == expected_result
-    assert result.reason == (None if expected_result == "ok" else "timeout")
 
 
 @pytest.mark.parametrize(

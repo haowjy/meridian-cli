@@ -450,7 +450,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_rootless(("idle", "arm"), "Arm an idle schedule.", default_output_mode="json"),
     _write_rootless(("idle", "return"), "Close an idle stretch.", default_output_mode="json"),
     _write_rootless(("idle", "fire"), "Claim an idle stage.", default_output_mode="json"),
-    _write_rootless(("idle", "done"), "Record an idle action result.", default_output_mode="json"),
     _write_rootless(("idle", "event"), "Handle a harness idle event.", default_output_mode="json"),
     _read_rootless(("idle", "status"), "Show open idle stretches."),
     _read_rootless(("idle", "mod-path"), "Print the bundled Claude idle mod path."),

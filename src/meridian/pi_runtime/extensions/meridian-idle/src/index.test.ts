@@ -7,10 +7,6 @@ import {
 } from "./index";
 
 type Handler = (event: any, ctx: ExtensionContext) => Promise<unknown> | unknown;
-type CompactCallbacks = {
-  onComplete?: () => void;
-  onError?: (error: Error) => void;
-};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -36,17 +32,12 @@ function host(run: MeridianRunner) {
 function context() {
   const state = {
     idle: true,
-    pending: false,
-    compact: vi.fn<(options?: CompactCallbacks) => void>(),
   };
   const ctx = {
     cwd: "/work/project",
     model: { provider: "anthropic" },
     sessionManager: { getSessionId: () => "pi-session" },
     isIdle: () => state.idle,
-    hasPendingMessages: () => state.pending,
-    getContextUsage: () => ({ tokens: 42_000, contextWindow: 200_000, percent: 21 }),
-    compact: state.compact,
   } as unknown as ExtensionContext;
   return { ctx, state };
 }
@@ -67,7 +58,7 @@ function flag(args: string[], name: string): string | undefined {
 
 function expectCliContract(calls: string[][]): void {
   expect(calls.every((args) => args.at(-1) === "--interactive")).toBe(true);
-  for (const args of calls.filter((args) => ["arm", "return", "fire", "done"].includes(args[1] ?? ""))) {
+  for (const args of calls.filter((args) => ["arm", "return", "fire"].includes(args[1] ?? ""))) {
     expect(flag(args, "--harness")).toBe("pi");
     expect(flag(args, "--session")).toBe("pi-session");
   }
@@ -98,7 +89,7 @@ describe("meridian idle event mapping", () => {
     ]);
   });
 
-  it("arms every returned deadline and reports a successful compaction", async () => {
+  it("arms every returned deadline and fires push then warn", async () => {
     const run = vi.fn<MeridianRunner>(async (args) => {
       if (args[1] === "config") return commandResult({ enabled: true });
       if (args[1] === "status") return commandResult([]);
@@ -108,44 +99,33 @@ describe("meridian idle event mapping", () => {
           anchor: 8,
           push_at: Date.now() + 10,
           warn_at: Date.now() + 20,
-          compact_at: Date.now() + 30,
         });
       }
-      if (args[1] === "fire") {
-        return commandResult({ decision: args[2] === "compact" ? "act" : "skip" });
-      }
-      return commandResult({});
+      return commandResult({ decision: "act" });
     });
-    const { ctx, state } = context();
+    const { ctx } = context();
     const { handlers } = host(run);
 
     await event(handlers, "session_start", {}, ctx);
     await event(handlers, "agent_end", {}, ctx);
-    await vi.advanceTimersByTimeAsync(30);
+    await vi.advanceTimersByTimeAsync(20);
 
     const calls = run.mock.calls.map(([args]) => args);
     expect(calls.filter((args) => args[1] === "arm")).toEqual([[
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
-      "--provider", "anthropic", "--context-tokens", "42000", "--interactive",
+      "--provider", "anthropic", "--interactive",
     ]]);
-    expect(calls.filter((args) => args[1] === "fire").map((args) => args[2])).toEqual([
-      "push", "warn", "compact",
+    expect(calls.filter((args) => args[1] === "fire")).toEqual([
+      [
+        "idle", "fire", "push", "--harness", "pi", "--session", "pi-session",
+        "--stretch", "7", "--anchor", "8", "--interactive",
+      ],
+      [
+        "idle", "fire", "warn", "--harness", "pi", "--session", "pi-session",
+        "--stretch", "7", "--anchor", "8", "--interactive",
+      ],
     ]);
-    expect(calls.filter((args) => args[1] === "fire" && args[2] === "compact")).toEqual([[
-      "idle", "fire", "compact", "--harness", "pi", "--session", "pi-session",
-      "--stretch", "7", "--anchor", "8",
-      "--context-tokens", "42000", "--interactive",
-    ]]);
-    expect(state.compact).toHaveBeenCalledOnce();
-
-    state.compact.mock.calls[0]![0]?.onComplete?.();
-    await vi.waitFor(() => {
-      expect(run).toHaveBeenCalledWith([
-        "idle", "done", "compact", "--harness", "pi", "--session", "pi-session",
-        "--stretch", "7", "--result", "ok", "--interactive",
-      ]);
-    });
-    expectCliContract(run.mock.calls.map(([args]) => args));
+    expectCliContract(calls);
   });
 
   it("extracts excerpts and passes dash-leading text in equals-form argv", async () => {
@@ -179,7 +159,6 @@ describe("meridian idle event mapping", () => {
     expect(arm).toEqual([
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
       "--provider", "anthropic",
-      "--context-tokens", "42000",
       "--user-text=latest\n prompt", "--assistant-text=- latest answer",
       "--interactive",
     ]);
@@ -294,7 +273,7 @@ describe("meridian idle event mapping", () => {
         }]);
       }
       if (args[1] === "arm") {
-        return commandResult({ stretch: 11, anchor: 12, reason: "compaction-window" });
+        return commandResult({ stretch: 11, anchor: 12, reason: "duplicate-turn" });
       }
       return commandResult({ decision: "skip", reason: "late" });
     });
@@ -311,13 +290,12 @@ describe("meridian idle event mapping", () => {
     ]);
     expect(calls.filter((args) => args[1] === "arm")).toEqual([[
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
-      "--provider", "anthropic", "--context-tokens", "42000", "--interactive",
+      "--provider", "anthropic", "--interactive",
     ]]);
     expect(calls.filter((args) => args[1] === "fire").map((args) => args[2])).toEqual(["warn"]);
     expect(calls.filter((args) => args[1] === "fire")[0]).toEqual([
       "idle", "fire", "warn", "--harness", "pi", "--session", "pi-session",
-      "--stretch", "11", "--anchor", "12",
-      "--context-tokens", "42000", "--interactive",
+      "--stretch", "11", "--anchor", "12", "--interactive",
     ]);
     expectCliContract(calls);
   });

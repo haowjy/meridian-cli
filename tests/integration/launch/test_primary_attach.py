@@ -20,7 +20,7 @@ from meridian.lib.harness.connections.base import (
     ObserverEndpoint,
     RawHarnessEvent,
 )
-from meridian.lib.harness.idle_types import CompactResult, IdleEvent, IdleFacts, IdleSensorContext
+from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -72,11 +72,8 @@ class RecordingIdleSensor:
         finally:
             self.cancelled.set()
 
-    async def facts(self) -> IdleFacts:
-        return IdleFacts(False, 0, None, False)
-
-    async def compact(self) -> CompactResult:
-        return CompactResult("vetoed", "test")
+    async def busy(self) -> bool:
+        return False
 
 
 def _install_idle_sensor_bundle(
@@ -508,12 +505,11 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
 
 
 @pytest.mark.asyncio
-async def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard(
+async def test_opencode_bundle_registers_idle_sensor_and_ttl_detection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bundle = get_harness_bundle(HarnessId.OPENCODE)
-    autocompact_off = bundle.autocompact_off
     sensor = RecordingIdleSensor()
     spawn_dir = tmp_path / "spawns" / "p-opencode-idle"
     connection = FakeManagedConnection(
@@ -527,7 +523,7 @@ async def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard(
         sensor=sensor,
         connection=connection,
     )
-    sidecar_hooks: list[tuple[object, object]] = []
+    sidecar_hooks: list[object] = []
     real_sidecar_run = primary_attach_module.idle_sidecar.run
 
     async def _record_sidecar_hooks(
@@ -535,7 +531,7 @@ async def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard(
         ctx: IdleSensorContext,
         **kwargs: Any,
     ) -> None:
-        sidecar_hooks.append((kwargs.get("autocompact_off"), kwargs.get("detect_ttl")))
+        sidecar_hooks.append(kwargs.get("detect_ttl"))
         await real_sidecar_run(sidecar_sensor, ctx, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(primary_attach_module.idle_sidecar, "run", _record_sidecar_hooks)
@@ -560,12 +556,8 @@ async def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard(
 
     assert bundle.primary_idle_sensor is opencode_idle.primary_idle_sensor
     assert bundle.detect_ttl is opencode_idle.detect_ttl
-    assert autocompact_off is opencode_idle.autocompact_off
-    assert autocompact_off is not None
-    assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": "set"}) is True
-    assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": ""}) is False
     assert outcome.exit_code == 0
-    assert sidecar_hooks == [(autocompact_off, opencode_idle.detect_ttl)]
+    assert sidecar_hooks == [opencode_idle.detect_ttl]
 
 
 @pytest.mark.asyncio

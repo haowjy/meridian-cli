@@ -4,11 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- Meridian idle compaction, end to end. Idle now sends only the "your turn" push and the cache warning. Gone: `idle.compact`, `idle.compact_minutes`, `idle.compact_min_growth_tokens`, `[harness.<h>.idle] compact`/`compact_min_growth_tokens`, their `MERIDIAN_*IDLE_COMPACT*` env vars, `meridian idle done`, `idle fire` fact flags, `idle arm --context-tokens`, `[compacted]`/`[compaction failed]`/`[compaction skipped]` notices, status COMPACT column. Harness-native compaction (Claude Code 2.1.299+, Codex, OpenCode, Pi) untouched. Old idle state files are dropped; open stretches start fresh. See [upgrade note](docs/upgrading.md#idle-compaction-removed).
+
 ### Changed
-- Idle compaction is off by default (`idle.compact = false`). Push and cache warning stay. Turn it back on with `compact = true`; Claude Code's own idle compaction is untouched. Cache warning now says "reply to keep it warm".
+- `idle arm` takes `--background-tasks JSON` (`[{"kind": "agent|shell|watcher|other", "command": ...}]`); core decides what running work means. Claude mod forwards the `Stop` hook's background tasks. Codex/OpenCode/Pi report none yet (#669).
+- Cache warning says "reply to keep it warm".
 
 ### Fixed
-- Claude primary no longer pushes "waiting on you" while subagents, workflows, `meridian spawn` shells or child spawns still run; the turn they wake pushes instead, timed from your last prompt. Other background tasks stretch the push to `idle.background_push_seconds` (900). The cache warning arms every turn, even with a subagent running, except under a `spawn wait` that wakes the session before the cache goes cold.
+- Claude primary no longer pushes "waiting on you" while subagents, workflows or `meridian spawn` shells run; the turn they wake pushes instead, timed from your last prompt. Other background shells delay the push to `quick_turn_push_seconds`; monitors ignored. Cache warning arms every turn, even with the push held, except under a `spawn wait` that yields before the cache goes cold.
 - Managed-bash ping retry coverage waits for the failed notification claim to be durably released, eliminating a timing-dependent CI failure. (#662)
 
 ## [0.10.21] - 2026-10-17

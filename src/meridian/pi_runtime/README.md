@@ -10,7 +10,7 @@ Meridian does not bundle or control Pi itself.
 | `managed-bash` | `bash` / `bash_manage`, owned shell tasks, logs, `/ps*` |
 | `meridian-spawn-watch` | Canonical child-spawn observation, result notifications, `/spawn*` |
 | `session-boundary` | Bounded launch-correlated native entry/exit observations |
-| `meridian-idle` | Primary TUI idle sensing and core-directed compaction |
+| `meridian-idle` | Primary TUI idle sensing and push/warn notification timers |
 
 Both launch roles load managed-bash and spawn-watch when enabled in `[harness.pi]`.
 Session-boundary is always loaded. Meridian-idle loads only for interactive primary
@@ -20,9 +20,8 @@ See the [integration contract](../lib/harness/.context/pi-integration.md).
 
 Meridian-idle marks every core call `--interactive`. User input cancels timers
 synchronously and queues its return behind any in-flight arm without awaiting the
-CLI. A compact claim is acted on only after a second check confirms that the user
-has not returned and Pi remains idle with no pending messages. Unsent composer
-text does not veto compaction.
+CLI. Due push/warn timers call `meridian idle fire`; the core decides whether to
+notify.
 
 ## Build and verify
 

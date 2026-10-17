@@ -15,14 +15,8 @@ def _state(*, updated_at_ms: int = 0) -> IdleState:
         anchor=3,
         idle_since_ms=1_760_000_000_000,
         ttl_seconds=3600,
-        schedule=IdleSchedule(
-            push_at=1_760_000_060_000,
-            warn_at=1_760_002_700_000,
-            compact_at=1_760_003_300_000,
-        ),
-        done={"push": "sent", "compact": "claimed"},
-        compact_window_until_ms=1_760_003_330_000,
-        expect_compaction_turn=True,
+        schedule=IdleSchedule(push_at=1_760_000_060_000, warn_at=1_760_002_700_000),
+        done={"push": "sent"},
         updated_at_ms=updated_at_ms,
     )
 

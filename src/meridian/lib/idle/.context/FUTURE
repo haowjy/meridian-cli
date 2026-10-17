@@ -10,15 +10,15 @@
   arm). Declare it on `IdleSensor` (or a `returns_observable` capability) so a
   new adapter cannot get OpenCode semantics silently, and add the missing
   scope test that a busy non-external sensor still pushes (G2-X N3).
-  The cleaner end state splits `IdleSensor` into an actuator (`facts`,
-  `compact`) plus an optional event source: the sidecar polls the store when
-  no event source exists, and Codex stops implementing `on_raw_event` /
-  `events()` as no-ops (thermo p7493).
+  The cleaner end state splits `IdleSensor` into a `busy()` probe plus an
+  optional event source: the sidecar polls the store when no event source
+  exists, and Codex stops implementing `on_raw_event` / `events()` as no-ops
+  (thermo p7493).
 - `service.py`: every transition is already a pure closure
   `IdleState | None -> (IdleState, Result)` handed to `store.mutate`, nested in
   methods that also resolve config, read env and send notices. Lift them into
   `machine.py` as top-level pure functions (`arm`, `close`, `claim`,
-  `record_done`, `mark_failed`) so `IdleService` becomes resolve policy →
+  `mark_failed`) so `IdleService` becomes resolve policy →
   `store.mutate(partial(machine.x, …))` → notify. Preserve arm's shared input-count
   carry; move `fire`'s inline `transient`
   reason set onto `Decision.skip(reason, terminal=…)` so the classification
