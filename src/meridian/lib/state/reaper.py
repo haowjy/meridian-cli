@@ -38,7 +38,7 @@ from meridian.lib.state.spawn.repository import (
     iter_spawn_ids,
     read_state,
 )
-from meridian.lib.state.spawn_status import derive, overlay_derived, read_derived
+from meridian.lib.state.spawn_status import claim_dead_launch, overlay_derived, read_derived
 
 if TYPE_CHECKING:
     from meridian.lib.state.spawn_store import SpawnScan
@@ -226,33 +226,34 @@ def reconcile_active_spawn(
     """Finalize an abandoned active row only while owning its launch lock."""
     if record.record_mode == "historical" or not is_root_side_effect_process():
         return record
+    if is_terminal_spawn_status(record.status):
+        spawn_dir = runtime_root / "spawns" / record.id
+        try:
+            launch_handle = acquire(spawn_dir)
+        except (Busy, Contended, NotFound):
+            return record
+        with launch_handle:
+            try:
+                current = read_state(spawn_dir.parent, record.id, include_prompt=False)
+            except SpawnStateQuarantined:
+                return record
+            if current is None or current.record_mode == "historical":
+                return record
+            return _cleanup_after_finalize(runtime_root, current)
+    if not is_active_spawn_status(record.status):
+        return record
 
-    spawn_dir = runtime_root / "spawns" / record.id
-    if not (spawn_dir / "launch.lock").is_file():
+    claimed = claim_dead_launch(runtime_root, record.id)
+    if claimed is None:
         return record
-    try:
-        launch_handle = acquire(spawn_dir)
-    except (Busy, Contended, NotFound):
-        return record
+    launch_handle, derived = claimed
 
     with launch_handle:
-        try:
-            current = read_state(runtime_root / "spawns", record.id, include_prompt=False)
-        except SpawnStateQuarantined:
-            return record
-        if current is None or current.record_mode == "historical":
-            return record
-        if not is_active_spawn_status(current.status):
-            return _cleanup_after_finalize(runtime_root, current)
-
-        derived = derive(current, lock_free=True)
-        if not is_terminal_spawn_status(derived.status):
-            return current
-        primary_metadata = read_primary_metadata(runtime_root, current.id)
-        _claim_reaper_cleanup(runtime_root, current, primary_metadata)
+        primary_metadata = read_primary_metadata(runtime_root, derived.id)
+        _claim_reaper_cleanup(runtime_root, derived, primary_metadata)
         return _cleanup_after_finalize(
             runtime_root,
-            _finalize_derived(project_root, runtime_root, current, derived),
+            _finalize_derived(project_root, runtime_root, record, derived),
         )
 
 
