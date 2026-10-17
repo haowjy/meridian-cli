@@ -39,7 +39,7 @@ bare path
       finalize-evidence.json        — orphan-time liveness snapshot
       process_scopes.json           — durable process identities
       reaper_cleanup_claim.json     — pending finalize-first cleanup targets
-      heartbeat · report.md · stderr.log · params.json · tokens.json
+      report.md · stderr.log · params.json · tokens.json
   artifacts/<spawn-id>/             — auxiliary artifact storage
 
 <context.work root>/<slug>/         ← context-resolved, not repo-local

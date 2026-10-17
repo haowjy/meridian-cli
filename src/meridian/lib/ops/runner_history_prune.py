@@ -35,6 +35,7 @@ from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
+from meridian.lib.state.spawn_status import overlay_derived, read_derived
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 
 PRUNE_AFTER_DAYS = 14
@@ -168,7 +169,10 @@ def prune_runner_history(
 def _prune(root: Path, *, apply: bool, after_days: int) -> RunnerHistoryPrune:
     cutoff = time.time() - after_days * 86400
     scan = spawn_store.list_spawns(root)
-    rows = sorted(scan.records, key=lambda row: (len(row.id), row.id))
+    rows = sorted(
+        overlay_derived(root, scan.records),
+        key=lambda row: (len(row.id), row.id),
+    )
     sessions = {
         str(record.chat_id): record for record in session_store.list_all_session_records(root)
     }
@@ -221,14 +225,19 @@ def _unlink_if_unchanged(
         for path in files:
             path.unlink(missing_ok=True)
 
+    def unchanged(current: SpawnRecord) -> bool:
+        derived = read_derived(root, current.id)
+        return (
+            derived is not None
+            and derived.model_dump(exclude={"prompt"}) == planned
+            and _native_sources(current, sessions).skip is None
+        )
+
     mutate_published_spawn_artifact(
         root,
         SpawnId(row.id),
         unlink,
-        can_mutate=lambda current: (
-            current.model_dump(exclude={"prompt"}) == planned
-            and _native_sources(current, sessions).skip is None
-        ),
+        can_mutate=unchanged,
     )
     return result
 

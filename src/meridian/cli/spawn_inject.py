@@ -9,12 +9,12 @@ import sys
 import time
 from typing import cast
 
-from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
+from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
 )
-from meridian.lib.state import spawn_store
+from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.control_socket import control_socket_path
 
 _INJECT_RESPONSE_TIMEOUT_SECONDS = 30.0
@@ -68,8 +68,8 @@ async def inject_message(
 
     discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
     while True:
-        record = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-        if record is None or record.status not in ACTIVE_SPAWN_STATUSES:
+        record = read_derived(runtime_root, normalized_spawn_id)
+        if record is None or not is_active_spawn_status(record.status):
             _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
         if socket_path.exists():
             break

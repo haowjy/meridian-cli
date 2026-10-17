@@ -18,8 +18,8 @@ from meridian.lib.state.history_index import (
     HistoryIndex,
     HistoryIndexBusy,
 )
-from meridian.lib.state.reaper import peek_reconciled_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.completion_contracts import (
     DiagnosticBlocker,
     EvidenceFailure,
@@ -68,9 +68,7 @@ class ReconciledDescendantEvidence:
                         identity=row.id,
                     )
                     for row in records
-                    if is_active_spawn_status(
-                        peek_reconciled_active_spawn(self._runtime_root, row).status
-                    )
+                    if is_active_spawn_status(row.status)
                 )
             else:
                 records = ()
@@ -123,6 +121,8 @@ class ReconciledDescendantEvidence:
             row = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if row is None:
                 raise RuntimeError(f"indexed descendant state is missing: {spawn_id}")
+            if is_active_spawn_status(row.status):
+                row = read_derived(self._runtime_root, spawn_id) or row
             descendants.append(row)
         return tuple(descendants)
 

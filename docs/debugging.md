@@ -27,7 +27,6 @@ Each spawn writes artifacts under `~/.meridian/projects/<project-id>/spawns/<spa
 | `stderr.log` | Harness stderr, warnings, and errors |
 | `prompt.md` | Prompt materialized for the harness |
 | `harness.pid` | Foreground harness PID file |
-| `heartbeat` | Liveness touch file while spawn is active |
 
 ## First Checks
 

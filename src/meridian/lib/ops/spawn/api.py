@@ -66,6 +66,7 @@ from meridian.lib.state.primary_meta import (
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_signals import SpawnSignalKind, write_spawn_signal
+from meridian.lib.state.spawn_status import overlay_derived
 from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
@@ -535,18 +536,14 @@ def spawn_list_sync(
     _ = (ctx, sink)
     if prepared is not None and prepared.runtime_root is None:
         return SpawnListOutput(spawns=())
-    project_root, runtime_root = _resolve_spawn_read_authority(
+    _project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
     )
     if runtime_root is None:
         return SpawnListOutput(spawns=())
-    from meridian.lib.state.reaper import reconcile_spawns
-
     spawns = list(
-        reversed(
-            reconcile_spawns(project_root, runtime_root, indexed_spawn_scan(runtime_root)).records
-        )
+        reversed(overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records))
     )
 
     # When statuses is empty tuple, show all statuses but cap intelligently:
@@ -654,18 +651,15 @@ def spawn_children_sync(
         runtime_root=runtime_root,
     )
 
-    from meridian.lib.state.reaper import reconcile_spawns
-
     children = list(
         reversed(
-            reconcile_spawns(
-                project_root,
+            overlay_derived(
                 runtime_root,
                 indexed_spawn_scan(
                     runtime_root,
                     parent_id=spawn_id,
-                ),
-            ).records
+                ).records,
+            )
         )
     )
     entries = tuple(
@@ -707,18 +701,14 @@ def spawn_stats_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnStatsOutput:
     _ = (ctx, sink)
-    project_root, runtime_root = _resolve_spawn_read_authority(
+    _project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
     )
-    from meridian.lib.state.reaper import reconcile_spawns
-
     all_spawns = (
         []
         if runtime_root is None
-        else list(
-            reconcile_spawns(project_root, runtime_root, indexed_spawn_scan(runtime_root)).records
-        )
+        else overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)
     )
 
     if payload.session is not None and payload.session.strip():
@@ -1318,13 +1308,10 @@ def spawn_cancel_all_sync(
             "Use --include-others to cancel all non-primary running spawns."
         )
 
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    active_rows = reconcile_spawns(
-        project_root,
+    active_rows = overlay_derived(
         runtime_root,
-        indexed_spawn_scan(runtime_root),
-    ).records
+        indexed_spawn_scan(runtime_root).records,
+    )
     if work_id is not None:
         active_session_work_ids: dict[str, str] | None = {
             str(record.chat_id): record.active_work_id
@@ -1503,7 +1490,6 @@ def _discover_pending_spawns(
     The index selects membership; lifecycle decisions re-read authority. Recursive
     traversal retains terminal and archived ancestry so it cannot lose grandchildren.
     """
-    from meridian.lib.state.reaper import peek_reconciled_active_spawn
     from meridian.lib.state.session_identity import spawn_matches_owner_chat
 
     index = history_index.HistoryIndex(runtime_root)
@@ -1526,7 +1512,7 @@ def _discover_pending_spawns(
             )
         }
 
-    pending: list[SpawnRecord] = []
+    candidates: list[SpawnRecord] = []
     for spawn_id in selected_ids:
         if spawn_id == exclude_spawn_id:
             continue
@@ -1537,7 +1523,10 @@ def _discover_pending_spawns(
         # Nested callers are scoped by subtree, not owner, matching main.
         if only_descendants_of is None and not spawn_matches_owner_chat(row, chat_id):
             continue
-        row = peek_reconciled_active_spawn(runtime_root, row)
+        candidates.append(row)
+
+    pending: list[SpawnRecord] = []
+    for row in overlay_derived(runtime_root, candidates):
         if row.status in ACTIVE_SPAWN_STATUSES:
             pending.append(row)
     pending.sort(key=lambda row: row.id)

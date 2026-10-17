@@ -22,7 +22,7 @@ from tests.integration.launch.streaming_runner_support import (
     _pi_extension_projection_fixture,
     _ReportThenHangConnection,
 )
-from tests.support.fakes import FakeClock, FakeHeartbeat
+from tests.support.fakes import FakeClock
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
@@ -48,8 +48,6 @@ async def test_setup_failure_produces_terminal_event(
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
 
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _ControlSocketStartFails)
     monkeypatch.setattr(
@@ -84,7 +82,6 @@ async def test_setup_failure_produces_terminal_event(
         artifacts=artifacts,
         registry=registry,
         clock=fake_clock,
-        heartbeat_touch=fake_heartbeat.touch,
     )
 
     assert exit_code == launch_constants.DEFAULT_INFRA_EXIT_CODE

@@ -11,7 +11,6 @@ from pathlib import Path
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.launch.types import PrimarySessionMetadata
-from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.telemetry.query import query_events
 from meridian.lib.telemetry.reader import read_events, tail_events
@@ -196,7 +195,7 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
     )
     _write_segment(
         telemetry_b,
-        "p2.333-0001.jsonl",
+        "p1.333-0001.jsonl",
         [_event(datetime.now(UTC), "spawn.failed", domain="spawn")],
     )
     _write_segment(
@@ -206,7 +205,8 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
     )
 
     service_a = SpawnLifecycleService(project_a_root)
-    with LaunchSlot() as launch_lock:
+    service_b = SpawnLifecycleService(project_b_root)
+    with LaunchSlot() as launch_lock_a, LaunchSlot() as launch_lock_b:
         spawn_a = service_a.start(
             SpawnReservation(
                 chat_id="chat-a",
@@ -221,39 +221,37 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
                 prompt="do the thing",
                 status="running",
             ),
-            launch_lock=launch_lock,
+            launch_lock=launch_lock_a,
         )
-    spawn_b = str(
-        spawn_store.start_spawn(
-            project_b_root,
-            spawn_id="p2",
-            chat_id="chat-b",
-            model="test-model",
-            agent="coder",
-            harness="test-harness",
-            prompt="do the thing",
-            status="running",
+        spawn_b = service_b.start(
+            SpawnReservation(
+                chat_id="chat-b",
+                session_metadata=PrimarySessionMetadata(
+                    harness="test-harness",
+                    model="test-model",
+                    agent="coder",
+                    agent_path="",
+                    skills=(),
+                    skill_paths=(),
+                ),
+                prompt="do the thing",
+                status="running",
+            ),
+            launch_lock=launch_lock_b,
         )
-    )
-    assert spawn_a == "p1"
-    assert spawn_b == "p2"
-    heartbeat_a = project_a_root / "spawns" / spawn_a / "heartbeat"
-    heartbeat_b = project_b_root / "spawns" / spawn_b / "heartbeat"
-    heartbeat_a.parent.mkdir(parents=True, exist_ok=True)
-    heartbeat_b.parent.mkdir(parents=True, exist_ok=True)
-    heartbeat_a.touch()
-    heartbeat_b.touch()
-    monkeypatch.setattr("meridian.lib.telemetry.status.is_process_alive", lambda pid: False)
+        assert spawn_a == "p1"
+        assert spawn_b == "p1"
+        monkeypatch.setattr("meridian.lib.telemetry.status.is_process_alive", lambda pid: False)
 
-    status = compute_status(
-        project_a_root,
-        telemetry_dirs=[telemetry_a, telemetry_b],
-        legacy_dir=legacy_dir,
-    )
+        status = compute_status(
+            project_a_root,
+            telemetry_dirs=[telemetry_a, telemetry_b],
+            legacy_dir=legacy_dir,
+        )
 
     assert status.telemetry_dir == [telemetry_a, telemetry_b]
     assert status.segment_count == 3
-    assert status.active_writers == ["p1.222", "p2.333"]
+    assert status.active_writers == ["p1.222", "p1.333"]
     assert status.legacy_segments == 1
 
 

@@ -49,6 +49,7 @@ from meridian.lib.state.session_identity import (
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, write_state_locked
 from meridian.lib.state.spawn_aggregate import cleanup_retired_spawn, retire_published_spawn
+from meridian.lib.state.spawn_status import overlay_derived, read_derived
 
 
 class SessionArchiveInput(BaseModel):
@@ -169,7 +170,7 @@ def _protected(
             "Cannot establish retention safety while spawn records are quarantined: "
             + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
         )
-    records = {record.id: record for record in scan.records}
+    records = {record.id: record for record in overlay_derived(root, scan.records)}
     sessions = session_store.list_all_session_records(root)
     active_chats = {
         record.chat_id
@@ -289,7 +290,7 @@ def archive_history(
     with lock_file(root / "history-archives/archive.lock"):
         recovery_errors = recover_archives(root, destination) if apply else ()
         # No omission-sensitive policy may start from an incomplete candidate set.
-        candidates = HistoryIndex(root).spawns(oldest_first=True)
+        candidates = overlay_derived(root, HistoryIndex(root).spawns(oldest_first=True))
         with lock_file(changes.mutation_lock, mode="shared"):
             _, protected, edges = _protected(root)
             sessions = session_records_for_spawns(root, candidates)
@@ -666,16 +667,17 @@ def _native_session_owners(
     chats = set(session_store.native_chats(root, session_id))
     # A spawn/primary sidecar can name S before its chat binds S. Its exact
     # generation may still hold a live lease; native chat claims alone miss it.
-    candidates = {row.id: native_identity_candidates(root, row, None) for row in scan.records}
+    rows = overlay_derived(root, scan.records)
+    candidates = {row.id: native_identity_candidates(root, row, None) for row in rows}
     linked = session_records_for_spawns(
         root, (
-            row for row in scan.records
+            row for row in rows
             if row.chat_id in chats or session_id in candidates[row.id][1]
         ),
     )
     live_owner: str | None = None
     terminal_records: list[str] = []
-    for row in scan.records:
+    for row in rows:
         if row.record_mode == "historical":
             continue
         session = linked.get(row.id)
@@ -718,7 +720,7 @@ def _native_session_owners(
                 f"chat {session.chat_id}, generation {generation}"
             )
             continue
-        observer = live_observer_for_chat(root, session.chat_id, records=scan.records)
+        observer = live_observer_for_chat(root, session.chat_id, records=rows)
         if observer is not None:
             live_owner = live_owner or spawn_owner(observer)
     return _NativeSessionOwners(
@@ -758,7 +760,7 @@ def materialize_native_history(
     )
 
     def capture() -> tuple[str, str]:
-        state = read_state(root / "spawns", spawn_id, include_prompt=False)
+        state = read_derived(root, spawn_id)
         if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
             raise ValueError("Native transcript capture requires an identified terminal record")
         snapshot = root / "spawns" / spawn_id / NATIVE_SNAPSHOT_FILENAME

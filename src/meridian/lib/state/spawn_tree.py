@@ -10,6 +10,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import read_derived
 
 
 def iter_descendants_from_parent_map(
@@ -62,18 +63,27 @@ def descendant_id_set(root_id: str, rows: Sequence[SpawnRecord]) -> set[str]:
     return {row.id for row in iter_descendants_from_parent_map(root_id, _by_parent(rows))}
 
 
-def has_outstanding_descendant_work(root_id: str, rows: Sequence[SpawnRecord]) -> bool:
-    """Return whether any transitive child spawn is still non-terminal.
+def _derived_active_descendants(
+    runtime_root: Path,
+    root_id: str,
+    rows: Sequence[SpawnRecord],
+) -> Iterator[SpawnRecord]:
+    for child in iter_descendants_from_parent_map(root_id, _by_parent(rows)):
+        if not is_active_spawn_status(child.status):
+            continue
+        current = read_derived(runtime_root, child.id)
+        if current is not None and is_active_spawn_status(current.status):
+            yield current
 
-    This is intentionally a pure spawn-row check. It does not reconcile,
-    terminate, or mutate child rows; resident harness drains use it as their
-    zero-cooperation tracked-work signal.
-    """
 
-    return any(
-        is_active_spawn_status(child.status)
-        for child in iter_descendants_from_parent_map(root_id, _by_parent(rows))
-    )
+def has_outstanding_descendant_work(
+    runtime_root: Path,
+    root_id: str,
+    rows: Sequence[SpawnRecord],
+) -> bool:
+    """Return whether any transitive child spawn has a live launch owner."""
+
+    return next(_derived_active_descendants(runtime_root, root_id, rows), None) is not None
 
 
 def active_descendants(
@@ -83,11 +93,7 @@ def active_descendants(
     """Active (non-terminal) transitive descendants of one spawn."""
 
     rows = spawn_store.list_spawns(runtime_root).records
-    return [
-        record
-        for record in iter_descendants_from_parent_map(str(root_id), _by_parent(rows))
-        if is_active_spawn_status(record.status)
-    ]
+    return list(_derived_active_descendants(runtime_root, str(root_id), rows))
 
 
 def terminate_recorded_spawn_scope(
