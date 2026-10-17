@@ -3,37 +3,19 @@
 from __future__ import annotations
 
 import os
-import time
 from contextlib import ExitStack
-from datetime import datetime
 from pathlib import Path
 
 import psutil
 
-from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import birth_time_unverified
 from meridian.lib.state.launch_lock import Busy, LaunchHandle, NotFound, acquire
-from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scope_projection
 from meridian.lib.state.session_store import chat_record
-from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
-
-
-def legacy_runner_alive(row: SpawnRecord) -> bool:
-    """Old runners have no flock; preserve their pre-worker startup grace."""
-    if row.runner_pid is not None and is_process_alive_with_birth(
-        row.runner_pid, row.runner_created_at_epoch
-    ):
-        return True
-    return (
-        not is_terminal_spawn_status(row.status)
-        and not row.runner_pid
-        and row.started_at is not None
-        and time.time() - datetime.fromisoformat(row.started_at).timestamp() < 15.0
-    )
+from meridian.lib.state.spawn_status import legacy_runner_alive
 
 
 def _acquire_source(runtime_root: Path, spawn_id: str) -> LaunchHandle:
