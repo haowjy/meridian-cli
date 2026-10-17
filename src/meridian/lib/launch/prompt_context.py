@@ -18,13 +18,30 @@ CONTEXT_PROMPT_HEADER = "# Meridian Context"
 CONTEXT_PROMPT_FOOTER = "Inspect or configure: meridian context -h"
 
 
+def _render_skill_block(skill: SkillContent, content: str) -> str:
+    """Head a loaded skill so the agent knows `/<name>` is already in context.
+
+    Skills loaded this way are often not model-invocable, so the harness's own
+    skill list omits them; without the name, an agent told to follow `/<name>`
+    concludes the skill is unavailable.
+    """
+
+    skill_dir = Path(skill.path).parent.as_posix()
+    return (
+        f"# Skill: /{skill.name}\n\n"
+        f"Loaded: its full text follows, so `/{skill.name}` in your instructions "
+        f"means this text. Its files are in `{skill_dir}/`; open the resources it "
+        f"names from there.\n\n{content}"
+    )
+
+
 def _render_skill_blocks(skills: Sequence[SkillContent]) -> tuple[str, ...]:
     blocks: list[str] = []
     for skill in skills:
         content = skill.content.strip()
         if not content:
             continue
-        blocks.append(f"# Skill: {Path(skill.path).as_posix()}\n\n{content}")
+        blocks.append(_render_skill_block(skill, content))
     return tuple(blocks)
 
 
@@ -47,7 +64,7 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
                 kind="skill",
                 logical_name=skill.name,
                 path=path,
-                content=f"# Skill: {path}\n\n{content}",
+                content=_render_skill_block(skill, content),
                 skill_type=skill.skill_type,
             )
         )
@@ -57,7 +74,7 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
 def compose_skill_injections(skills: Sequence[SkillContent]) -> str | None:
     """Format skill content for --append-system-prompt injection.
 
-    Includes full skill filepath and content (not frontmatter).
+    Includes each skill's name, directory, and content (not frontmatter).
     Returns None when there are no skills (caller omits the flag entirely).
     """
 

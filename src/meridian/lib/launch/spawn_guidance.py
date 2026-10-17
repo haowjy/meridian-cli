@@ -16,11 +16,14 @@ _SPAWN_PROMPTING = """\
 Every spawn starts with fresh context. Lead with the task, then give it what
 you know and it doesn't: the decisions already made and why, the files and
 artifacts that matter by path, the constraints, and what done looks like.
+Pass a directory to show the shape of a tree, and name the few files whose
+content matters most.
 
-Leave open what the spawn should judge for itself: where to look, how to
-work, and what else might be wrong. A brief that lists the bugs to hunt or a
-range to stay inside gets back only what you already suspected; name your
-suspicions as risks to check, beside the open question.
+Point to where the work starts, and leave open what the spawn should judge
+for itself: how far to look, how to work, and what else might be wrong. A
+brief that lists the bugs to hunt or a range to stay inside gets back only
+what you already suspected; name your suspicions as risks to check, beside
+the open question. State what the spawn may edit.
 
 Compose the lane at spawn time:
 - `--skills skill1,skill2` attaches shared instructions for the task.
