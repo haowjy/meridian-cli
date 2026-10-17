@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from meridian.lib.platform.process_scope.base import birth_time_unverified
 from meridian.lib.state.launch_lock import Busy, LaunchHandle, NotFound, acquire
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scope_projection
+from meridian.lib.state.session_store import chat_record
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 
@@ -74,18 +76,40 @@ def _group_gone(pgid: int) -> bool:
     return False
 
 
+def _owner_ids(runtime_root: Path, spawn_id: str) -> tuple[str, ...]:
+    source = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
+    if source is None:
+        raise NotFound(f"Spawn '{spawn_id}' not found")
+    chat = chat_record(runtime_root, source.chat_id)
+    current_id = chat.spawn_id.strip() if chat and chat.spawn_id else ""
+    if current_id and current_id != spawn_id:
+        return current_id, spawn_id
+    return (spawn_id,)
+
+
 def sweep_before_continue(runtime_root: Path, spawn_id: str, *, dry_run: bool = False) -> None:
-    """Refuse a live source; release only safely swept scopes, never status."""
+    """Refuse a live chat owner; release only safely swept scopes, never status."""
     if dry_run:
         return
-    try:
-        handle = _acquire_source(runtime_root, spawn_id)
-    except Busy as exc:
-        raise ValueError(
-            f"{spawn_id} is still running; use spawn inject {spawn_id} or --fork {spawn_id}"
-        ) from exc
-    with handle:
-        sweep_scopes(runtime_root, handle)
+    owner_ids = _owner_ids(runtime_root, spawn_id)
+    with ExitStack() as stack:
+        handles: list[LaunchHandle] = []
+        for owner_id in owner_ids:
+            try:
+                handles.append(stack.enter_context(_acquire_source(runtime_root, owner_id)))
+            except Busy as exc:
+                if owner_id != spawn_id:
+                    raise ValueError(
+                        f"{spawn_id} was continued as {owner_id}, which is still running; "
+                        f"use spawn inject {owner_id}, --fork {owner_id}, or "
+                        f"spawn cancel {owner_id}"
+                    ) from exc
+                raise ValueError(
+                    f"{spawn_id} is still running; "
+                    f"use spawn inject {spawn_id} or --fork {spawn_id}"
+                ) from exc
+        for handle in handles:
+            sweep_scopes(runtime_root, handle)
 
 
 def sweep_scopes(runtime_root: Path, handle: LaunchHandle) -> None:

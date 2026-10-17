@@ -78,9 +78,10 @@ which would unlock the worker too. Harnesses never inherit this descriptor.
 `LaunchHandle` capability with a concrete ID and fd. Lifecycle/service creation
 requires a slot; only low-level `start_spawn` permits lockless test seeding.
 
-Explicit continue takes the source lock and sweeps birth-verified scopes before
-creating another row. Lockless legacy rows retain their birth/grace guard and
-convert under the mutation lock. This does not change v3 status authority.
+Explicit continue resolves the named spawn's current chat owner, takes that
+owner's lock before the named source lock, and sweeps their birth-verified scopes
+before creating another row. Lockless legacy rows retain their birth/grace guard
+and convert under the mutation lock. This does not change v3 status authority.
 
 ## Spawn Mutation Seam
 

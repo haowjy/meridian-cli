@@ -105,9 +105,12 @@ class Runtime:
             self.env["FAKE_SHAPE"] = "backend"
         parent = self.cli("spawn", "-m", "haiku", "-p", "hold", "--bg")
         assert parent.wait(timeout=30) == 0
-        harness, worker = self.started()
+        return self.orphan_spawn("p1", backend=backend)
+
+    def orphan_spawn(self, spawn: str, *, backend: bool = False) -> tuple[int, int]:
+        harness, worker = self.started(spawn)
         scope = json.loads(
-            (self.root / "runtime/spawns/p1/process_scopes.json").read_text()
+            (self.root / f"runtime/spawns/{spawn}/process_scopes.json").read_text()
         )["scopes"][0]
         pgid = scope["pgid"]
         guardians = []
@@ -120,7 +123,7 @@ class Runtime:
         assert guardians, "must kill the guardian first: otherwise PR 1 already cleans the group"
         for pid in guardians:
             os.kill(pid, signal.SIGKILL)
-        runner = self.row()["runner_pid"]
+        runner = self.row(spawn)["runner_pid"]
         os.kill(runner, signal.SIGKILL)
         until(lambda: exited(runner))
         if backend:
@@ -163,10 +166,12 @@ def runtime(tmp_path: Path) -> Iterator[Runtime]:
         case.cleanup()
 
 
-def continue_args(primary: bool, *, dry_run: bool = False) -> list[str]:
+def continue_args(
+    primary: bool, *, dry_run: bool = False, background: bool = False,
+) -> list[str]:
     args = ["--continue", "p1", "-m", "haiku", "-p", "finish"]
     if not primary:
-        args = ["spawn", *args, "--no-background"]
+        args = ["spawn", *args, "--bg" if background else "--no-background"]
     if dry_run:
         args.append("--dry-run")
     return args
@@ -217,6 +222,46 @@ def test_continue_refuses_live_source(runtime: Runtime, primary: bool, dry_run: 
     assert not (runtime.root / "p2.pid").exists()
     if not dry_run:
         assert "still running" in (runtime.root / "cli-1.log").read_text()
+
+
+@pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
+def test_continue_of_superseded_spawn_refuses_live_successor(
+    runtime: Runtime, primary: bool,
+) -> None:
+    runtime.orphan()
+    first = runtime.cli(*continue_args(False, background=True))
+    assert first.wait(timeout=30) == 0
+    p2_harness, p2_worker = runtime.started("p2")
+    p2_scopes = runtime.root / "runtime/spawns/p2/process_scopes.json"
+    scopes_before_refusal = p2_scopes.read_bytes()
+
+    process = runtime.cli(*continue_args(primary, background=True))
+    p3_row = runtime.root / "runtime/spawns/p3/state.json"
+    until(lambda: process.poll() is not None or p3_row.exists())
+    if p3_row.exists() and process.poll() is None:
+        process.kill()
+    code = process.wait(timeout=30)
+
+    assert code != 0
+    assert not p3_row.exists(), "refusal wrote a new row"
+    assert alive(p2_harness) and alive(p2_worker)
+    assert p2_scopes.read_bytes() == scopes_before_refusal, "refusal released live scopes"
+    assert "p1 was continued as p2" in (runtime.root / "cli-2.log").read_text()
+
+
+def test_continue_of_superseded_spawn_sweeps_dead_successor(runtime: Runtime) -> None:
+    runtime.orphan()
+    first = runtime.cli(*continue_args(False, background=True))
+    assert first.wait(timeout=30) == 0
+    p2_harness, p2_worker = runtime.orphan_spawn("p2")
+
+    process = runtime.cli(*continue_args(False))
+    runtime.pid("p3.pid")
+    successor_gone_before_start = not alive(p2_harness) and not alive(p2_worker)
+    (runtime.root / "p3.exit").touch()
+
+    assert process.wait(timeout=30) == 0
+    assert successor_gone_before_start, "successor group survived until the new harness started"
 
 
 def test_continue_refuses_live_legacy_runner(runtime: Runtime) -> None:
@@ -369,5 +414,5 @@ def test_continue_io_bound(
         before = probe.count("read")
         sweep_before_continue(root, f"p{source}")
         assert probe.count("scan") == 0
-        assert probe.count("read") - before == int(legacy)
+        assert probe.count("read") - before == 1 + int(legacy)
         assert all(call.args[1] == f"p{source}" for call in probe.calls("read")[before:])
