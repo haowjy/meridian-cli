@@ -216,11 +216,10 @@ origin.
 
 ### Reconciliation Behavior
 
-`reaper.py:reconcile_spawns()` is a read-only batch projection used by list, stats,
-reference-discovery, and dashboard callers. It delegates to `overlay_derived()` and
-may return an in-memory terminal view, but does not persist state, terminate process
-scopes, or check process depth. `peek_reconciled_active_spawn()` is the equivalent
-single-row compatibility wrapper.
+List, stats, reference-discovery, and dashboard callers call
+`spawn_status.overlay_derived()` directly; single-row readers call `read_derived()`.
+Both may return an in-memory terminal view, but never persist state, terminate process
+scopes, or check process depth.
 
 `reconcile_active_spawn()` is the mutating repair operation used by doctor orphan-run
 repair. It fails closed unless `is_root_side_effect_process()` is true. For a

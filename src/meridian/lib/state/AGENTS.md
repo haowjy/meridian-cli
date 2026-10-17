@@ -192,10 +192,10 @@ historical records and imported archive refs read a sealed `snapshot` source ins
 
 ## Reconciliation Behavior
 
-`reaper.py:reconcile_spawns()` accepts and returns an immutable `SpawnScan`, preserving
-its quarantine partition while projecting stale active records for list, stats, reference,
-and dashboard callers. It may return an in-memory terminal status but never persists
-state or terminates processes, and it is safe at any depth.
+Readers get status only from `spawn_status.py`: `read_derived()` for one spawn and
+`overlay_derived()` for rows from a scan or the index. Both hold the shared launch lock
+across the authority read, may return an in-memory terminal status, never persist state
+or terminate processes, and are safe at any depth.
 
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
 background repair and fails closed outside root depth. A lock-backed active row is
@@ -243,8 +243,9 @@ Historical multi-ID arrays are ignored on read.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.
-- `reaper.py` — read-only `reconcile_spawns()` projection and root-only
-  `reconcile_active_spawn()` repair.
+- `spawn_status.py` — `read_derived()`/`overlay_derived()` (lock-consistent status for
+  every reader) and `claim_dead_launch()` (the one writer-side claim on a dead launch).
+- `reaper.py` — root-only `reconcile_active_spawn()` repair through `claim_dead_launch()`.
 
 ## Spawn Subpackage
 

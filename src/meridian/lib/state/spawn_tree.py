@@ -63,37 +63,21 @@ def descendant_id_set(root_id: str, rows: Sequence[SpawnRecord]) -> set[str]:
     return {row.id for row in iter_descendants_from_parent_map(root_id, _by_parent(rows))}
 
 
-def _derived_active_descendants(
-    runtime_root: Path,
-    root_id: str,
-    rows: Sequence[SpawnRecord],
-) -> Iterator[SpawnRecord]:
-    for child in iter_descendants_from_parent_map(root_id, _by_parent(rows)):
-        if not is_active_spawn_status(child.status):
-            continue
-        current = read_derived(runtime_root, child.id)
-        if current is not None and is_active_spawn_status(current.status):
-            yield current
-
-
-def has_outstanding_descendant_work(
-    runtime_root: Path,
-    root_id: str,
-    rows: Sequence[SpawnRecord],
-) -> bool:
-    """Return whether any transitive child spawn has a live launch owner."""
-
-    return next(_derived_active_descendants(runtime_root, root_id, rows), None) is not None
-
-
 def active_descendants(
     runtime_root: Path,
     root_id: str | SpawnId,
 ) -> list[SpawnRecord]:
-    """Active (non-terminal) transitive descendants of one spawn."""
+    """Transitive descendants whose launch is still live."""
 
     rows = spawn_store.list_spawns(runtime_root).records
-    return list(_derived_active_descendants(runtime_root, str(root_id), rows))
+    live: list[SpawnRecord] = []
+    for child in iter_descendants_from_parent_map(str(root_id), _by_parent(rows)):
+        if not is_active_spawn_status(child.status):
+            continue
+        current = read_derived(runtime_root, child.id)
+        if current is not None and is_active_spawn_status(current.status):
+            live.append(current)
+    return live
 
 
 def terminate_recorded_spawn_scope(
@@ -119,7 +103,6 @@ __all__ = [
     "active_descendants",
     "collect_descendants",
     "descendant_id_set",
-    "has_outstanding_descendant_work",
     "iter_descendants_from_parent_map",
     "terminate_recorded_spawn_scope",
 ]
