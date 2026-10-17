@@ -7,9 +7,10 @@ import errno
 import json
 import sys
 import time
-from typing import cast
+from typing import Never, cast
 
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
@@ -22,7 +23,7 @@ _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> Never:
     print(f"Error: {message}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -65,6 +66,39 @@ async def inject_message(
     normalized_message = message.strip()
     if not normalized_message:
         _fail("message is required")
+
+    record = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+    if record is not None and record.kind == "primary":
+        if record.status not in ACTIVE_SPAWN_STATUSES:
+            _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
+
+        harness_name = record.harness or "unknown"
+        try:
+            harness_id = HarnessId(harness_name)
+        except ValueError:
+            _fail(f"{harness_name} primaries have no inject route yet (see #498)")
+
+        # Keep harness bootstrap and its adapter imports off non-primary inject paths.
+        from meridian.lib.harness import ensure_bootstrap
+        from meridian.lib.harness.bundle import PrimaryInboxError, get_harness_bundle
+
+        ensure_bootstrap()
+        primary_inbox = get_harness_bundle(harness_id).primary_inbox
+        if primary_inbox is None:
+            _fail(f"{harness_name} primaries have no inject route yet (see #498)")
+        try:
+            receipt = primary_inbox(
+                runtime_root=runtime_root,
+                spawn_id=SpawnId(normalized_spawn_id),
+                worker_pid=record.worker_pid,
+                message=normalized_message,
+            )
+        except PrimaryInboxError as exc:
+            _fail(str(exc))
+        print(receipt.confirmation)
+        if receipt.advisory is not None:
+            print(receipt.advisory)
+        return
 
     discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
     while True:

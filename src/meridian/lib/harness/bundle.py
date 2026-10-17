@@ -78,6 +78,31 @@ PrimaryIdleSensor = Callable[[IdleSensorContext], IdleSensor | None]
 AutocompactOffReader = Callable[[Mapping[str, str]], bool | None]
 
 
+class PrimaryInboxError(RuntimeError):
+    """A user-facing failure to post a message to a primary harness inbox."""
+
+
+@dataclass(frozen=True)
+class PrimaryInboxReceipt:
+    """User-facing lines describing a successful primary inbox post."""
+
+    confirmation: str
+    advisory: str | None = None
+
+
+class PrimaryInbox(Protocol):
+    """Post one message through a harness-owned primary inbox."""
+
+    def __call__(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        worker_pid: int | None,
+        message: str,
+    ) -> PrimaryInboxReceipt: ...
+
+
 def _no_event_sinks(
     runtime_root: Path, spawn_id: SpawnId
 ) -> tuple[Callable[[RawHarnessEvent], None], ...]:
@@ -96,6 +121,7 @@ class HarnessBundle(Generic[SpecT]):
     projections: HarnessProjectionPorts[SpecT]
     semantics: HarnessSemantics
     event_sinks: EventSinks = _no_event_sinks
+    primary_inbox: PrimaryInbox | None = None
     primary_idle_sensor: PrimaryIdleSensor | None = None
     native_idle_hook: NativeIdleHook | None = None
     autocompact_off: AutocompactOffReader | None = None
@@ -186,6 +212,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         projections=bundle.projections,
         semantics=bundle.semantics,
         event_sinks=bundle.event_sinks,
+        primary_inbox=bundle.primary_inbox,
         primary_idle_sensor=bundle.primary_idle_sensor,
         native_idle_hook=bundle.native_idle_hook,
         autocompact_off=bundle.autocompact_off,
@@ -341,6 +368,9 @@ __all__ = [
     "HarnessBundle",
     "HarnessProjectionPorts",
     "ManagedPrimaryProjectionPorts",
+    "PrimaryInbox",
+    "PrimaryInboxError",
+    "PrimaryInboxReceipt",
     "get_bundle_registry",
     "get_connection_cls",
     "get_harness_bundle",

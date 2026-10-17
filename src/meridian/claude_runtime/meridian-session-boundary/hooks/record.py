@@ -15,6 +15,18 @@ _JOURNAL_LIMIT = 1024 * 1024
 _SOURCES = frozenset({"startup", "resume", "fork", "clear", "compact"})
 
 
+def _messaging_socket() -> str | None:
+    value = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
+    if (
+        not value
+        or len(value) > 4096
+        or not Path(value).is_absolute()
+        or any(ord(character) < 32 for character in value)
+    ):
+        return None
+    return value
+
+
 def record() -> None:
     destination = os.environ.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH")
     nonce = os.environ.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE")
@@ -46,16 +58,20 @@ def record() -> None:
         return
 
     # A leading separator isolates a prior short/torn append from this record.
+    record_payload: dict[str, object] = {
+        "v": 2,
+        "launch_nonce": nonce,
+        # The hook command execs this interpreter; its parent is Claude.
+        "pid": os.getppid(),
+        "source": source,
+        "session_id": session_id,
+        "transcript_path": transcript,
+    }
+    messaging_socket = _messaging_socket()
+    if messaging_socket is not None:
+        record_payload["messaging_socket"] = messaging_socket
     line = b"\n" + json.dumps(
-        {
-            "v": 2,
-            "launch_nonce": nonce,
-            # The hook command execs this interpreter; its parent is Claude.
-            "pid": os.getppid(),
-            "source": source,
-            "session_id": session_id,
-            "transcript_path": transcript,
-        },
+        record_payload,
         separators=(",", ":"),
     ).encode() + b"\n"
     if len(line) > _RECORD_LIMIT:
