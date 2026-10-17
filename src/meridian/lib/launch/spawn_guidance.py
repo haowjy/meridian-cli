@@ -13,14 +13,24 @@ from meridian.lib.launch.composition import (
 _SPAWN_PROMPTING = """\
 # Prompting subagents
 
-Every spawn starts with fresh context. Lead with the task, then provide the \
-context the subagent needs.
+Every spawn starts with fresh context. Lead with the task, then give it what
+you know and it doesn't: the decisions already made and why, the files and
+artifacts that matter by path, the constraints, and what done looks like.
+Pass a directory to show the shape of a tree, and name the few files whose
+content matters most.
+
+Point to where the work starts, and leave open what the spawn should judge
+for itself: how far to look, how to work, and what else might be wrong. A
+brief that lists the bugs to hunt or a range to stay inside gets back only
+what you already suspected; name your suspicions as risks to check, beside
+the open question. State what the spawn may edit.
 
 Compose the lane at spawn time:
 - `--skills skill1,skill2` attaches shared instructions for the task.
-- With `-a <agent>`, omit `-m` and use the profile's default model or fallbacks.
-  Override with `-m` only for an explicit caller model request or a requirement those
-  choices cannot meet. Explain any override you choose before spawning.
+- With `-a <agent>`, the profile's default model and fallbacks fit most work.
+  Override with `-m` when the caller asks for a model, or when the work needs
+  more depth or a capability the defaults lack, and say why before spawning.
+  To get more depth, change the model, not the agent.
 - `--from <spawn-or-chat id>` provides prior-run references and, for spawns,
   any available report. Use it when earlier decisions or reasoning matter.
 - `--task-dir <path>` points the spawn's source edits at another

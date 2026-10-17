@@ -9,6 +9,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Primaries killed by SIGTERM/SIGHUP (pane kill, terminal close, systemd stop) now record cancelled and stop their session. (#623)
 
+### Changed
+- Injected skill header names the skill (`# Skill: /<name>`), says its text is already loaded, and gives its directory for resources. Was a bare file path: agents told to follow a non-invocable skill missed it in the harness skill list and skipped it.
+- Spawn prompting guidance tells agents what a brief carries (decisions and why, artifact paths, constraints, done; a directory for a tree's shape plus the few files that matter) and to point to where the work starts and leave open how far the spawn looks; state what it may edit; suspicions go in as risks, not fences. `-m` override allowed when work needs more depth; change model, not agent.
+
 ## [0.10.18] - 2026-10-17
 
 ### Fixed
