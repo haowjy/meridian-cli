@@ -5,14 +5,15 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import psutil
 
+import meridian.lib.state.spawn_status as spawn_status
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
@@ -21,6 +22,9 @@ from meridian.lib.state.spawn.repository import read_state, record_to_stored_sta
 from meridian.lib.state.spawn.transitions import apply_finalize
 from meridian.lib.state.spawn_status import CRASHED, overlay_derived, read_derived
 from tests.conftest import posix_only
+
+if TYPE_CHECKING:
+    import pytest
 
 pytestmark = posix_only
 
@@ -55,7 +59,18 @@ def publish(payload):
     os.replace(temporary, state_path)
 
 for command in sys.stdin:
-    if command.strip() == "acquire_active":
+    if command.strip() == "try_active":
+        candidate = os.open(lock_path, os.O_RDWR | os.O_CLOEXEC)
+        try:
+            fcntl.flock(candidate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(candidate)
+            print("blocked", flush=True)
+        else:
+            publish(active)
+            os.close(candidate)
+            print("published", flush=True)
+    elif command.strip() == "acquire_active":
         fd = os.open(lock_path, os.O_RDWR | os.O_CLOEXEC)
         fcntl.flock(fd, fcntl.LOCK_EX)
         publish(active)
@@ -132,12 +147,7 @@ def _race_reply(process: subprocess.Popen[str], expected: str) -> None:
     assert process.stdout.readline().strip() == expected
 
 
-def _assert_live_or_succeeded(row: SpawnRecord | None) -> None:
-    assert row is not None
-    assert row.status in {"running", "succeeded"}
-
-
-def test_read_derived_races(tmp_path: Path) -> None:
+def test_read_derived_races(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_root = tmp_path / "runtime"
     active = _seed(runtime_root, "p1")
     terminal = apply_finalize(
@@ -171,33 +181,54 @@ def test_read_derived_races(tmp_path: Path) -> None:
         stdout=subprocess.PIPE,
         text=True,
     )
+    original_read_state = spawn_status.read_state
+    phase: str | None = "free_to_active"
+
+    def interleaving_read_state(
+        spawns_dir: Path,
+        spawn_id: str,
+        *,
+        include_prompt: bool = True,
+    ) -> SpawnRecord | None:
+        if phase == "free_to_active":
+            _race_command(process, "try_active")
+            _race_reply(process, "blocked")
+        row = original_read_state(
+            spawns_dir,
+            spawn_id,
+            include_prompt=include_prompt,
+        )
+        if phase == "active_to_terminal":
+            _race_command(process, "terminal_release")
+            _race_reply(process, "released")
+        return row
+
+    monkeypatch.setattr(spawn_status, "read_state", interleaving_read_state)
     try:
         # The lock is free with a terminal row, then a new holder acquires it
-        # and publishes active state. A split lock/read observation can invent
-        # a crash between those facts.
-        for attempt in range(64):
-            _race_command(process, "acquire_active")
-            if attempt % 2:
-                time.sleep(0.0001)
-            _assert_live_or_succeeded(read_derived(runtime_root, "p1"))
-            _race_reply(process, "held")
+        # and publishes active state inside the read seam. The real shared hold
+        # blocks that writer, while a lock-then-read split invents a crash.
+        first = spawn_status.read_derived(runtime_root, "p1")
+        assert first is not None and first.status == "succeeded"
 
-            # The holder publishes its terminal outcome before releasing. A
-            # reader may see either the live active row or the outcome.
-            _race_command(process, "terminal_release")
-            if not attempt % 2:
-                time.sleep(0.0001)
-            _assert_live_or_succeeded(read_derived(runtime_root, "p1"))
-            _race_reply(process, "released")
+        phase = None
+        _race_command(process, "acquire_active")
+        _race_reply(process, "held")
+
+        # The holder publishes its terminal outcome and releases just after
+        # the row read. A read-then-lock split invents a crash from those facts.
+        phase = "active_to_terminal"
+        second = spawn_status.read_derived(runtime_root, "p1")
+        assert second is not None and second.status == "running"
     finally:
         if process.stdin is not None:
             process.stdin.close()
         process.wait(timeout=5)
 
 
-def test_read_derived_tracks_holder_without_delay(tmp_path: Path) -> None:
+def test_read_derived_tracks_held_and_released_lock(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
-    stored = _seed(runtime_root, "p1", status=SpawnStatus.FINALIZING)
+    _seed(runtime_root, "p1", status=SpawnStatus.FINALIZING)
     lock_path = runtime_root / "spawns" / "p1" / "launch.lock"
     lock_path.touch()
 
@@ -214,6 +245,12 @@ def test_read_derived_tracks_holder_without_delay(tmp_path: Path) -> None:
         assert crashed.terminal is not None
         assert crashed.terminal.error == CRASHED
 
+
+def test_read_derived_uses_cancel_intent(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    _seed(runtime_root, "p1", status=SpawnStatus.FINALIZING)
+    (runtime_root / "spawns" / "p1" / "launch.lock").touch()
+
     spawn_store.record_cancel_intent(
         runtime_root,
         "p1",
@@ -227,18 +264,12 @@ def test_read_derived_tracks_holder_without_delay(tmp_path: Path) -> None:
     assert cancelled.terminal is not None
     assert cancelled.terminal.error == "cancelled by user"
 
-    # List overlays do not re-read terminal rows, and preserve an active scan
-    # row if it vanishes before the authoritative follow-up read.
-    terminal = apply_finalize(
-        stored,
-        "succeeded",
-        0,
-        origin="runner",
-        finished_at=_iso_now(),
-        published_at=_iso_now(),
-    )
+
+def test_overlay_derived_preserves_vanished_active_row(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    stored = _seed(runtime_root, "p1", status=SpawnStatus.FINALIZING)
     vanished = stored.model_copy(update={"id": "p2"})
-    assert overlay_derived(runtime_root, [terminal, vanished]) == [terminal, vanished]
+    assert overlay_derived(runtime_root, [vanished]) == [vanished]
 
 
 def test_read_derived_legacy_runner_rules(tmp_path: Path) -> None:
@@ -270,6 +301,7 @@ def test_read_derived_legacy_runner_rules(tmp_path: Path) -> None:
 
         sleeper.kill()
         sleeper.wait(timeout=5)
+
         dead_runner = read_derived(runtime_root, "p1")
         assert dead_runner is not None and dead_runner.status == "failed"
         assert dead_runner.terminal is not None
@@ -278,3 +310,16 @@ def test_read_derived_legacy_runner_rules(tmp_path: Path) -> None:
         if sleeper.poll() is None:
             sleeper.kill()
         sleeper.wait(timeout=5)
+
+
+def test_read_derived_tolerates_legacy_started_at(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    naive_utc = (datetime.now(UTC) - timedelta(seconds=30)).replace(tzinfo=None).isoformat()
+    _seed(runtime_root, "p1", started_at=naive_utc)
+    _seed(runtime_root, "p2", started_at="not-a-timestamp")
+
+    naive = read_derived(runtime_root, "p1")
+    malformed = read_derived(runtime_root, "p2")
+
+    assert naive is not None and naive.status == "failed"
+    assert malformed is not None and malformed.status == "failed"

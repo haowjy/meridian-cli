@@ -29,7 +29,7 @@ from meridian.lib.state.project_identity import (
     AdHocOrigin,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_status import overlay_derived, read_derived
+from meridian.lib.state.spawn_status import is_live, overlay_derived
 from meridian.lib.state.user_paths import get_context_home
 
 _SECONDS_PER_DAY = 24 * 60 * 60
@@ -422,8 +422,7 @@ def _prune_dir(path: Path) -> bool:
 def _can_delete_derived(runtime_root: Path, record: SpawnRecord | None) -> bool:
     if record is None:
         return True
-    current = read_derived(runtime_root, record.id) or record
-    return not is_active_spawn_status(current.status)
+    return not is_live(runtime_root, record.id)
 
 
 def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:

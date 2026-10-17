@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable
-from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
-from meridian.lib.core.spawn_lifecycle import (
-    is_active_spawn_status,
-    is_terminal_spawn_status,
-)
+from meridian.lib.core.domain import TerminalSpawnStatus
+from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.state.launch_lock import (
     Busy,
     Contended,
@@ -21,7 +20,13 @@ from meridian.lib.state.launch_lock import (
 )
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
-from meridian.lib.state.spawn.repository import SpawnStateQuarantined, read_state
+from meridian.lib.state.spawn.repository import (
+    SpawnStateQuarantined,
+    SpawnStateQuarantineReport,
+    read_quarantined_chat_id,
+    read_state,
+)
+from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 
 CRASHED = "crashed"
 
@@ -32,11 +37,11 @@ def legacy_runner_alive(row: SpawnRecord) -> bool:
         row.runner_pid, row.runner_created_at_epoch
     ):
         return True
-    return (
-        not is_terminal_spawn_status(row.status)
-        and not row.runner_pid
-        and row.started_at is not None
-        and time.time() - datetime.fromisoformat(row.started_at).timestamp() < 15.0
+    started_at = iso_timestamp_to_epoch(row.started_at)
+    return bool(
+        not row.runner_pid
+        and started_at is not None
+        and time.time() - started_at < 15.0
     )
 
 
@@ -59,7 +64,7 @@ def _derived_terminal(row: SpawnRecord, *, cancelled: bool) -> TerminalFacts:
 
 def derive(row: SpawnRecord, lock_free: bool) -> SpawnRecord:
     """Overlay status from one row and its simultaneous lock observation."""
-    if is_terminal_spawn_status(row.status) or not is_active_spawn_status(row.status):
+    if not is_active_spawn_status(row.status):
         return row
     if not lock_free:
         return row
@@ -72,29 +77,59 @@ def derive(row: SpawnRecord, lock_free: bool) -> SpawnRecord:
     )
 
 
-def claim_dead_launch(
-    runtime_root: Path,
-    spawn_id: str,
-) -> tuple[LaunchHandle, SpawnRecord] | None:
-    """Claim a lock-backed dead launch and return its derived terminal row."""
+@dataclass(frozen=True)
+class Claimed:
+    """Exclusive capability plus the authoritative stored and derived rows."""
+
+    handle: LaunchHandle
+    stored: SpawnRecord
+    derived: SpawnRecord
+
+    @property
+    def status(self) -> TerminalSpawnStatus:
+        """Return the terminal status guaranteed by a successful claim."""
+
+        return cast("TerminalSpawnStatus", self.derived.status)
+
+    @property
+    def terminal(self) -> TerminalFacts:
+        """Return the terminal facts guaranteed by a successful claim."""
+
+        return cast("TerminalFacts", self.derived.terminal)
+
+
+@dataclass(frozen=True)
+class Live:
+    """The launch could not be claimed as dead."""
+
+
+@dataclass(frozen=True)
+class Lockless:
+    """The row predates runner-lifetime launch locks."""
+
+
+type DeadLaunchClaim = Claimed | Live | Lockless
+
+
+def claim_dead_launch(runtime_root: Path, spawn_id: str) -> DeadLaunchClaim:
+    """Claim a lock-backed dead launch and return its lock-consistent rows."""
     spawn_dir = runtime_root / "spawns" / spawn_id
     try:
         handle = acquire(spawn_dir)
-    except (Busy, Contended, NotFound):
-        return None
+    except NotFound:
+        return Lockless()
+    except (Busy, Contended):
+        return Live()
     try:
         row = read_state(spawn_dir.parent, spawn_id, include_prompt=False)
-        if row is None or not is_active_spawn_status(row.status):
+        if row is None:
             handle.close()
-            return None
+            return Live()
         derived = derive(row, lock_free=True)
-        if not is_terminal_spawn_status(derived.status):
-            handle.close()
-            return None
-        return handle, derived
+        return Claimed(handle=handle, stored=row, derived=derived)
     except SpawnStateQuarantined:
         handle.close()
-        return None
+        return Live()
     except BaseException:
         handle.close()
         raise
@@ -112,7 +147,7 @@ def read_derived(runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
             return derive(row, lock_free=True)
         if lock_free is False:
             return row
-    if is_terminal_spawn_status(row.status) or not is_active_spawn_status(row.status):
+    if not is_active_spawn_status(row.status):
         return row
     if legacy_runner_alive(row):
         return row
@@ -131,11 +166,41 @@ def overlay_derived(runtime_root: Path, rows: Iterable[SpawnRecord]) -> list[Spa
     return overlaid
 
 
+def is_live(runtime_root: Path, spawn_id: str) -> bool:
+    """Return whether the lock-consistent status is active."""
+
+    row = read_derived(runtime_root, spawn_id)
+    return row is not None and is_active_spawn_status(row.status)
+
+
+def quarantine_may_observe(
+    runtime_root: Path,
+    report: SpawnStateQuarantineReport,
+    chat_id: str,
+) -> bool:
+    """Conservatively decide whether a quarantined row may observe one chat."""
+
+    lock_path = runtime_root / "spawns" / report.spawn_id / "launch.lock"
+    with shared_hold(lock_path) as lock_free:
+        current_chat_id = read_quarantined_chat_id(report)
+        if current_chat_id is None:
+            return True
+        if current_chat_id != chat_id:
+            return False
+        return lock_free is not True
+
+
 __all__ = [
     "CRASHED",
+    "Claimed",
+    "DeadLaunchClaim",
+    "Live",
+    "Lockless",
     "claim_dead_launch",
     "derive",
+    "is_live",
     "legacy_runner_alive",
     "overlay_derived",
+    "quarantine_may_observe",
     "read_derived",
 ]

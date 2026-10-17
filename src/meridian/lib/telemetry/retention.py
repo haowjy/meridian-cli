@@ -202,41 +202,19 @@ def _list_segments(
 ) -> list[SegmentInfo]:
     # Lazy imports — telemetry initializes early; these modules depend on
     # state/core layers that aren't always available at import time.
-    from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
     from meridian.lib.state.liveness import is_process_alive
-    from meridian.lib.state.spawn_status import read_derived
+    from meridian.lib.state.spawn.repository import SpawnStateQuarantined
+    from meridian.lib.state.spawn_status import is_live
 
     current_pid = os.getpid()
 
-    # Pre-load spawn identities once so unknown and quarantined owners stay O(1)
-    # per segment; known rows still need a lock-consistent authority read.
-    known_spawn_ids: frozenset[str] | None = None
-    quarantined_spawn_ids: frozenset[str] = frozenset()
-    spawn_state_unreadable = False
-    if runtime_root is not None:
-        try:
-            from meridian.lib.state import spawn_store
-
-            records = spawn_store.list_spawns(runtime_root)
-            known_spawn_ids = frozenset(record.id for record in records.records)
-            quarantined_spawn_ids = frozenset(report.spawn_id for report in records.quarantines)
-        except Exception:
-            spawn_state_unreadable = True
-
     def _is_spawn_live(spawn_id: str) -> bool:
         """Check spawn liveness while quarantines remain fail-closed."""
-        if spawn_state_unreadable or spawn_id in quarantined_spawn_ids:
-            return True
-        if known_spawn_ids is None:
-            return True
-        if spawn_id not in known_spawn_ids:
-            return False
         assert runtime_root is not None
         try:
-            record = read_derived(runtime_root, spawn_id)
-        except Exception:
+            return is_live(runtime_root, spawn_id)
+        except SpawnStateQuarantined:
             return True
-        return record is not None and is_active_spawn_status(record.status)
 
     segments: list[SegmentInfo] = []
     for path in telemetry_dir.glob("*.jsonl"):
