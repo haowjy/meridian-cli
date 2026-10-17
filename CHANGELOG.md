@@ -7,6 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Primaries killed by SIGTERM/SIGHUP (pane kill, terminal close, systemd stop) now record cancelled and stop their session. (#623)
 
+### Changed
+- Spawn prompting guidance tells agents what a brief carries (decisions and why, artifact paths, constraints, done) and to leave open where the spawn looks; suspicions go in as risks, not fences. `-m` override allowed when work needs more depth; change model, not agent.
+
 ## [0.10.18] - 2026-10-17
 
 ### Fixed
