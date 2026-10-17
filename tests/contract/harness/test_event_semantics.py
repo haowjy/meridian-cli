@@ -49,3 +49,12 @@ def test_every_bundle_reserves_meridian_connection_close_semantics() -> None:
             _event(bundle.harness_id, MERIDIAN_CONNECTION_CLOSED_EVENT)
         )
         assert normalized.semantics.terminal is not None
+
+
+def test_claude_subagent_assistant_is_not_parent_activity() -> None:
+    event = _event(HarnessId.CLAUDE, "assistant")
+    assert normalize_event(event).semantics.activity == "turn_active"
+    event.payload["parent_tool_use_id"] = None
+    assert normalize_event(event).semantics.activity == "turn_active"
+    event.payload["parent_tool_use_id"] = "toolu-background-agent"
+    assert normalize_event(event).semantics.activity is None

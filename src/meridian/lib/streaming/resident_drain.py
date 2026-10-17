@@ -146,7 +146,8 @@ class _ResidentCompletionProfile:
         self._spawn_id = spawn_id
         self._poll_seconds = poll_seconds
         self._next_directive_poll_at = clock() + poll_seconds
-        self._pending_tasks: tuple[str, ...] | None = None
+        self._pending_tasks: tuple[str, ...] = ()
+        self._native_hold = False
         self._resident_backend = resident_backend
         self._send_nudge = send_nudge
         # Short configured windows must offer a rearm opportunity before expiry.
@@ -180,12 +181,15 @@ class _ResidentCompletionProfile:
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
         self._pending_tasks = context.assessment.pending_tasks
+        self._native_hold = context.assessment.native_hold
         if context.terminal_action is not None:
             return self._evaluate_terminal(context)
         return self._evaluate_wait(context)
 
     def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
-        if decision.action not in {"wait", "stabilize", "complete"}:
+        if decision.action not in {"wait", "stabilize"} and not (
+            self._native_hold and decision.action == "complete"
+        ):
             return None
         return now + self._deadline_seconds
 
@@ -199,7 +203,9 @@ class _ResidentCompletionProfile:
             return None
         # Native work cannot prove completion on stop; explicit holds retain their candidate.
         if intentional_stop and (
-            state.assessment is None or not state.assessment.completion_hold
+            state.assessment is None
+            or not state.assessment.native_hold
+            or not state.assessment.completion_hold
         ):
             return state.candidate
         if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
@@ -214,12 +220,14 @@ class _ResidentCompletionProfile:
         self, state: CompletionState, assessment: WorkAssessment
     ) -> float | None:
         del state
-        if self._awaiting_done and (self._explicit_hold or assessment.completion_hold):
+        if self._explicit_hold or (
+            self._native_hold and self._awaiting_done and assessment.completion_hold
+        ):
             return self._next_nudge_at
         return None
 
-    def next_directive_poll_at(self) -> float:
-        return self._next_directive_poll_at
+    def next_directive_poll_at(self) -> float | None:
+        return self._next_directive_poll_at if self._native_hold else None
 
     async def send_nudge(self, urgency: NudgeUrgency) -> None:
         self._next_nudge_at = self._clock() + self._nudge_interval
@@ -230,13 +238,19 @@ class _ResidentCompletionProfile:
             if urgency == "timeout_soon"
             else COMPLETION_NUDGE_MESSAGE
         )
-        if self._pending_tasks is not None:
-            tasks = "; ".join(self._pending_tasks) or "awaiting the background-task follow-up"
-            message = (
-                f"Your turn ended while background tasks are still running: {tasks}. "
-                "To keep waiting, just end your turn; you'll be resumed when they finish. "
-                "If you don't need them, run `meridian spawn done` (this stops them)."
-            )
+        if self._native_hold:
+            if self._pending_tasks:
+                tasks = "; ".join(self._pending_tasks)
+                message = (
+                    f"Your turn ended while background tasks are still running: {tasks}. "
+                    "To keep waiting, just end your turn; you'll be resumed when they finish. "
+                    "If you don't need them, run `meridian spawn done` (this stops them)."
+                )
+            else:
+                message = (
+                    "Your background tasks have finished; their follow-up result is still pending. "
+                    "Finish your report, or run `meridian spawn done` to complete now."
+                )
             if urgency == "timeout_soon":
                 message += " This spawn times out soon; run `meridian spawn rearm` to extend it."
         await self._send_nudge(message)
@@ -289,12 +303,13 @@ class _ResidentCompletionProfile:
                     outcome=_BACKEND_DEAD_WHILE_AWAITING_DONE,
                 )
             return ProfileDecision(action="fail", outcome=outcome)
-        if context.deadline_expired and not context.directives.rearm:
+        if self._native_hold and context.deadline_expired and not context.directives.rearm:
             return self._evaluate_wait(context)
         if context.directives.rearm:
             self._mark_rearmed(context.now)
-            self._enter_wait(context.now)
-            return ProfileDecision(action="wait", emit_turn_boundary=True, reset_deadline=True)
+            if self._native_hold and not context.directives.done:
+                self._enter_wait(context.now)
+                return ProfileDecision(action="wait", emit_turn_boundary=True, reset_deadline=True)
         if context.directives.done:
             if context.assessment.disposition == "unknown":
                 self._enter_wait(context.now)
@@ -303,33 +318,48 @@ class _ResidentCompletionProfile:
         if (
             context.assessment.disposition != "ready"
             or self._explicit_hold
-            or context.assessment.completion_hold
+            or (self._native_hold and context.assessment.completion_hold)
         ):
             self._enter_wait(context.now)
             return ProfileDecision(
                 action="wait",
                 emit_turn_boundary=True,
+                reset_deadline=context.directives.rearm,
             )
         return self._propose_success(outcome, context.now)
 
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
         candidate = context.candidate
         assert candidate is not None
-        if context.directives.rearm:
+        rearmed = context.directives.rearm
+        if rearmed:
             self._mark_rearmed(context.now)
+        if context.directives.done:
+            if context.assessment.disposition == "unknown":
+                if context.deadline_expired:
+                    self.clear()
+                    return ProfileDecision(
+                        action="fail",
+                        outcome=TerminalEventOutcome(
+                            status=SpawnStatus.FAILED,
+                            exit_code=1,
+                            error="resident_evidence_unreadable",
+                        ),
+                    )
+                return ProfileDecision(action="wait")
+            # Keep the native closing report when possible; done remains completion
+            # authority if the deadline ends that wait before the result arrives.
+            if (
+                self._native_hold
+                and context.active_turn
+                and (not context.deadline_expired or context.directives.rearm)
+            ):
+                return ProfileDecision(action="wait", reset_deadline=context.directives.rearm)
+            return self._propose_success(candidate, context.now)
+        if self._native_hold and rearmed:
             # Install the new window before proposing success and its validation.
             return ProfileDecision(action="wait", reset_deadline=True)
-        if context.deadline_expired:
-            if context.directives.done and context.assessment.disposition == "unknown":
-                self.clear()
-                return ProfileDecision(
-                    action="fail",
-                    outcome=TerminalEventOutcome(
-                        status=SpawnStatus.FAILED,
-                        exit_code=1,
-                        error="resident_evidence_unreadable",
-                    ),
-                )
+        if context.deadline_expired and not rearmed:
             error = (
                 "resident_rearm_budget_exhausted"
                 if self._rearm_budget is not None
@@ -346,28 +376,21 @@ class _ResidentCompletionProfile:
                 ),
                 cleanup_reason=error,
             )
-        # Native done must retain the closing report, even if polled between frames.
-        if context.active_turn and context.assessment.pending_tasks is not None:
-            return ProfileDecision(action="wait")
-        if context.directives.done:
-            if context.assessment.disposition == "unknown":
-                return ProfileDecision(action="wait")
-            return self._propose_success(candidate, context.now)
         if context.active_turn:
-            return ProfileDecision(action="wait")
+            return ProfileDecision(action="wait", reset_deadline=rearmed)
         if context.assessment.disposition != "ready":
-            return ProfileDecision(action="wait")
-        if self._explicit_hold or context.assessment.completion_hold:
+            return ProfileDecision(action="wait", reset_deadline=rearmed)
+        if self._explicit_hold or (self._native_hold and context.assessment.completion_hold):
             nudge = (
                 self._nudge_urgency(context)
-                if context.profile_timer_due
+                if context.profile_timer_due and not rearmed
                 else None
             )
-            return ProfileDecision(action="wait", nudge=nudge)
+            return ProfileDecision(action="wait", nudge=nudge, reset_deadline=rearmed)
         return self._propose_success(candidate, context.now)
 
     def _mark_rearmed(self, now: float) -> None:
-        if self._pending_tasks is None:
+        if not self._native_hold:
             self._explicit_hold = True
         self._next_nudge_at = now + self._nudge_interval
 
@@ -385,7 +408,7 @@ class _ResidentCompletionProfile:
         return True
 
     def _enter_wait(self, now: float) -> None:
-        if not self._awaiting_done:
+        if self._explicit_hold or (self._native_hold and not self._awaiting_done):
             self._next_nudge_at = now + self._nudge_interval
         self.set_awaiting_done(True)
 

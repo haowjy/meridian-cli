@@ -364,7 +364,7 @@ async def test_expired_deadline_beats_freshly_ready_tree(
 
 
 @pytest.mark.asyncio
-async def test_wait_expired_deadline_bounds_done_validation(
+async def test_wait_done_signal_beats_already_expired_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -379,12 +379,12 @@ async def test_wait_expired_deadline_bounds_done_validation(
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
     write_spawn_signal(tmp_path, "p1", "done")
-    decision = await coordinator.handle_timeout()
+    requested = await coordinator.handle_timeout()
+    decision = await _after_refresh(coordinator)
 
-    assert decision.recorded_outcome is not None
-    assert decision.recorded_outcome.status == "timed_out"
-    assert decision.recorded_outcome.error == "resident_deadline_expired"
-    assert cleanup_calls == []  # Cleanup remains post-publication.
+    assert requested.recorded_outcome is None
+    assert decision.recorded_outcome == _SUCCESS
+    assert cleanup_calls == []
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
 
@@ -584,10 +584,9 @@ def test_short_deadline_nudge_cadence_and_urgency(tmp_path: Path) -> None:
     )
     assert profile.evaluate(due).nudge == "normal"
     assert profile.evaluate(replace(due, now=119.0)).nudge == "timeout_soon"
-    # Neither a stuck active turn nor a latched done may bypass the deadline.
+    # A stuck active turn without done is bounded by the deadline.
     expired = profile.evaluate(replace(
         due, now=120.0, deadline_expired=True, active_turn=True,
-        directives=CompletionDirectives(done=True),
     ))
     assert expired.outcome is not None
     assert expired.outcome.status == "timed_out"

@@ -45,13 +45,18 @@ turn results while tasks run. The resident deadline bounds the wait from the fir
 result through the follow-up result; task activity never renews it. An empty snapshot
 alone cannot finalize the spawn. Rearm extends a native hold's deadline without
 blocking natural completion; Codex/OpenCode explicit holds still require done.
-Native nudges name pending tasks and offer done to stop them; only urgent nudges offer rearm. The shared cadence is 270 seconds, capped at half the
-configured deadline. The resident profile polls the exact done/rearm signal files;
+Native nudges name pending tasks and offer done to stop them; only urgent nudges offer
+rearm. The shared cadence is 270 seconds, capped at half the
+configured deadline. In native mode the resident profile polls the exact done/rearm
+signal files;
 Claude evidence is event-driven, never scans task directories or descendant trees.
 Malformed snapshots warn and hold until a valid snapshot/result, done, or the deadline.
 A Claude Code version that stops emitting snapshots falls back to first-result finalize.
-Explicit `done` authorizes success with tasks left over after the active turn's closing
-result; normal managed-scope teardown kills them.
+Explicit `done` authorizes success with tasks left over; normal managed-scope teardown
+kills them. Native mode waits for the active turn's closing result only until the
+deadline, then succeeds with the latest report. Without done, expiry is a timeout.
+Codex/OpenCode done takes precedence over the deadline, including during validation.
+Claude subagent assistant frames do not count as parent activity.
 
 For both profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
 ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and

@@ -27,7 +27,9 @@ from meridian.lib.streaming.types import InjectResult
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scenario", ["natural", "done_midturn", "done_poll", "stop"])
+@pytest.mark.parametrize(
+    "scenario", ["natural", "done_midturn", "done_poll", "done_no_result", "no_result", "stop"],
+)
 async def test_claude_waits_for_background_snapshot_and_followup_result(
     tmp_path: Path, scenario: str,
 ) -> None:
@@ -71,12 +73,16 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 assert close is not None
                 assert close.error == "stream_closed_while_awaiting_done"
                 return
+            if scenario == "no_result":
+                await asyncio.sleep(3600)
             if scenario.startswith("done"):
                 yield frame("assistant", message={"content": []})
                 signal = spawn_signal_path(tmp_path, spawn_id, "done")
                 signal.parent.mkdir(parents=True, exist_ok=True)
                 signal.touch()
                 yield frame("assistant", message={"content": []})
+                if scenario == "done_no_result":
+                    await asyncio.sleep(3600)
                 if scenario == "done_poll":
                     await asyncio.sleep(0.05)  # Several directive polls between frames.
                     assert not outcomes
@@ -135,6 +141,14 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
     if scenario == "stop":
         assert len(outcomes) == 1
         assert outcomes[0].error == "stream_closed_while_awaiting_done"
+        return
+    if scenario in {"done_no_result", "no_result"}:
+        assert len(outcomes) == 1
+        assert outcomes[0].status == ("succeeded" if scenario == "done_no_result" else "timed_out")
+        reports = [
+            event.raw.payload["result"] for event in delivered if event.raw.event_type == "result"
+        ]
+        assert reports == ["Still running"]
         return
     assert delivered[-1].raw.payload["result"] == (
         "Final done report" if scenario.startswith("done") else "Marker read: done"

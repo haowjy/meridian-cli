@@ -56,6 +56,7 @@ class ClaudeCompletionEvidence:
                 self._task_labels = tuple(
                     f"{task.get('description', 'Unnamed task')} "
                     f"({task.get('task_type', 'unknown type')})"
+                    f"{' (subagent)' if task.get('parent_task_id') else ''}"
                     for raw in tasks
                     for task in [json_object(raw) or {}]
                 )
@@ -74,14 +75,14 @@ class ClaudeCompletionEvidence:
     async def assess(self, trigger: AssessmentTrigger, state: CompletionState) -> WorkAssessment:
         return WorkAssessment(
             disposition="ready", blockers=(), generation=self._generation,
-            completion_hold=self._hold, pending_tasks=self._task_labels,
+            completion_hold=self._hold, native_hold=True, pending_tasks=self._task_labels,
         )
 
     def request_validation(self) -> int:
         return self._generation
 
     def validation_complete(self, request: int) -> bool:
-        return request <= self._generation
+        return True  # Native evidence updates synchronously as stream events arrive.
 
     def next_due_at(self) -> None:
         return None

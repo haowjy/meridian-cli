@@ -276,7 +276,11 @@ class CompletionCoordinator:
     ) -> DrainTerminalDecision:
         assessment = await self._fresh_assessment("terminal_candidate") if assess else None
         now = self._clock()
-        if self._is_due(self._deadline_at, now):
+        if (
+            assessment is not None
+            and assessment.native_hold
+            and self._is_due(self._deadline_at, now)
+        ):
             self._deadline_latched = True
         evidence_activity = self._pending_evidence_activity
         evidence_failure = self._pending_evidence_failure
