@@ -2,25 +2,17 @@
 
 import json
 import re
-import time
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple, cast
 
-from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import pi_lifecycle, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
-from meridian.lib.state.liveness import is_process_alive
-from meridian.lib.state.reaper import (
-    SPAWN_HEARTBEAT_WINDOW_SECS,
-    SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS,
-    SPAWN_STARTUP_GRACE_SECS,
-)
-from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
+from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import overlay_derived, read_derived
 
 from .models import SpawnDetailOutput
 
@@ -32,126 +24,11 @@ _SPAWN_REFERENCE_STATUS_FILTERS: dict[str, tuple[str, ...] | None] = {
 _RUNNING_LOG_MESSAGE_LIMIT = 120
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
-_NESTED_READ_ACTIVITY_ARTIFACTS: tuple[str, ...] = (
-    "heartbeat",
-    "bash-records.json",
-    "stderr.log",
-    "report.md",
-)
-_NESTED_READ_HEARTBEAT_WINDOW_SECS = SPAWN_HEARTBEAT_WINDOW_SECS
-_NESTED_READ_STARTUP_GRACE_SECS = SPAWN_STARTUP_GRACE_SECS
-_NESTED_READ_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS = (
-    SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
-)
-
-
 class _PiCleanupTelemetry(NamedTuple):
     status: str | None
     phase: str | None
     reason: str | None
     error: str | None
-
-
-def _iso_to_epoch(raw_value: str | None) -> float | None:
-    normalized = (raw_value or "").strip()
-    if not normalized:
-        return None
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.timestamp()
-
-
-def _has_recent_spawn_activity(runtime_root: Path, spawn_id: str, now: float) -> bool:
-    spawn_dir = runtime_root / "spawns" / spawn_id
-    for artifact_name in _NESTED_READ_ACTIVITY_ARTIFACTS:
-        artifact_path = spawn_dir / artifact_name
-        try:
-            mtime_epoch = artifact_path.stat().st_mtime
-        except OSError:
-            continue
-        if now - mtime_epoch <= _NESTED_READ_HEARTBEAT_WINDOW_SECS:
-            return True
-    return False
-
-
-def _runner_exit_terminal_update(record: SpawnRecord) -> dict[str, object]:
-    facts = record.runner_exit
-    assert facts is not None
-    return {
-        "status": facts.status,
-        "terminal": TerminalFacts(
-            exit_code=facts.exit_code,
-            finished_at=facts.exited_at,
-            published_at=facts.exited_at,
-            error=facts.error,
-            origin="runner",
-        ),
-    }
-
-
-def _synthetic_stale_terminal_update(*, error: str, now: float) -> dict[str, object]:
-    observed_at = datetime.fromtimestamp(now, tz=UTC).isoformat().replace("+00:00", "Z")
-    return {
-        "status": "failed",
-        "terminal": TerminalFacts(
-            exit_code=1,
-            finished_at=observed_at,
-            published_at=observed_at,
-            error=error,
-            origin="reconciler",
-        ),
-    }
-
-
-def _read_only_nested_staleness_view(
-    *,
-    runtime_root: Path,
-    record: SpawnRecord,
-) -> SpawnRecord:
-    now = time.time()
-    started_epoch = _iso_to_epoch(record.started_at)
-    in_startup_grace = (
-        started_epoch is not None and now - started_epoch < _NESTED_READ_STARTUP_GRACE_SECS
-    )
-
-    if record.runner_exit is not None:
-        exited_epoch = _iso_to_epoch(record.runner_exit.exited_at)
-        if (
-            exited_epoch is not None
-            and now - exited_epoch < _NESTED_READ_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
-        ):
-            return record
-        return record.model_copy(update=_runner_exit_terminal_update(record))
-
-    if _has_recent_spawn_activity(runtime_root, record.id, now):
-        return record
-
-    runner_pid = record.runner_pid
-    if runner_pid is not None and runner_pid > 0:
-        if in_startup_grace:
-            return record
-        runner_created_at_epoch = (
-            record.runner_created_at_epoch
-            if record.runner_created_at_epoch is not None
-            else started_epoch
-        )
-        if is_process_alive(runner_pid, created_after_epoch=runner_created_at_epoch):
-            return record
-        return record.model_copy(
-            update=_synthetic_stale_terminal_update(error="stale_nested_read", now=now)
-        )
-
-    if in_startup_grace:
-        return record
-    return record.model_copy(
-        update=_synthetic_stale_terminal_update(error="stale_nested_read_no_pid", now=now)
-    )
 
 
 def _select_latest_spawn_id(
@@ -160,16 +37,13 @@ def _select_latest_spawn_id(
     statuses: tuple[str, ...] | None,
     runtime_root: Path | None = None,
 ) -> str | None:
-    from meridian.lib.state.reaper import reconcile_spawns
-
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return None
-    spawns = reconcile_spawns(
-        project_root,
+    spawns = overlay_derived(
         resolved_runtime_root,
-        indexed_spawn_scan(resolved_runtime_root),
-    ).records
+        indexed_spawn_scan(resolved_runtime_root).records,
+    )
     if statuses is not None:
         wanted = set(statuses)
         spawns = [item for item in spawns if item.status in wanted]
@@ -233,18 +107,7 @@ def read_spawn_row(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return None
-    record = spawn_store.get_spawn(resolved_runtime_root, spawn_id)
-    if record is not None and is_active_spawn_status(record.status):
-        if is_root_side_effect_process():
-            from meridian.lib.state.reaper import peek_reconciled_active_spawn
-
-            record = peek_reconciled_active_spawn(resolved_runtime_root, record)
-        else:
-            record = _read_only_nested_staleness_view(
-                runtime_root=resolved_runtime_root,
-                record=record,
-            )
-    return record
+    return read_derived(resolved_runtime_root, spawn_id)
 
 
 def read_spawn_row_read_only(
