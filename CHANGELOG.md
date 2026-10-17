@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Primaries killed by SIGTERM/SIGHUP (pane kill, terminal close, systemd stop) now record cancelled and stop their session. (#623)
+
 ## [0.10.18] - 2026-10-17
 
 ### Fixed

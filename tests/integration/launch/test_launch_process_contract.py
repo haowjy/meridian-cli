@@ -204,7 +204,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     assert black_box_calls == 1
     assert result.exit_code == 0
     assert result.managed_session_id is None
-    assert result.managed_cancelled is False
+    assert result.cancelled is False
     assert result.launcher_diagnostics_path is None
 
 
@@ -278,7 +278,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
     assert black_box_calls == 1
     assert result.exit_code == 0
     assert result.managed_session_id is None
-    assert result.managed_cancelled is False
+    assert result.cancelled is False
     assert result.launcher_diagnostics_path is None
 
 

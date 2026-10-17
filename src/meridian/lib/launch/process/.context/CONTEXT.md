@@ -63,27 +63,62 @@ enter the same pipeline through `conclude_native_run` after exit.
 
 ### Signal cancellation
 
-`PrimaryAttachLauncher` registers a `SignalCallbackReceiver` (targets `SIGTERM`/`SIGHUP`)
-with the process-global `SignalCoordinator` (`lib/launch/signals.py`) for the duration of
-`run()`. A closed terminal sends SIGHUP and a killed process sends SIGTERM; catching them
-lets the launcher stop the TUI relay through `RunningProcess.cancel_wait()` and finalize
-normally, instead of dying and leaving an active record for orphan reconciliation. The
-receiver is unregistered in `run()`'s `finally`, which restores the previous handlers.
+Both primary paths register a `SignalCallbackReceiver` for `SIGTERM`/`SIGHUP` with the
+process-global `SignalCoordinator` (`lib/launch/signals.py`): `PrimaryAttachLauncher` for
+all of `run()`, and black-box `run_primary_process_with_capture()` from before child
+start through the wait. A closed terminal sends SIGHUP and a killed launcher (pane kill,
+`systemctl stop` of its scope) sends SIGTERM. Catching them lets the launcher stop the
+TUI and finalize normally instead of dying at the default disposition with no runner
+exit and no session stop (#623). Both paths report the latch as
+`PrimaryExecutionResult.cancelled`, which feeds `cancellation_observed`, and exit 130.
+
+**Receivers run in handler context.** Python runs the callback on the main thread
+between bytecodes. A callback that takes a non-reentrant lock the main thread already
+holds deadlocks the launcher against itself. `LaunchGate` (`terminate()`/`close()`) and
+`threading.Event.set()` both take one, and PTY `cancel_wait()` is an `Event.set()`. So
+the black-box callback only latches a bool: `running.wait()` runs on a daemon thread,
+and the main thread polls it every 100 ms and calls `terminate()` then `cancel_wait()`
+once, outside handler context. Managed attach calls `cancel_wait()` straight from its
+handler; that is safe only because its launcher is native, whose `cancel_wait()` sets a
+plain attribute. A new receiver that needs the gate or an Event uses the latch + poll
+shape.
 
 - `SignalCoordinator` installs handlers for the union of its active receivers' target
   signals (main thread only) and restores any signal no longer targeted; it is the single
-  seam for both the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and this
-  launcher receiver.
-- A SIGTERM/SIGHUP latched when the main task resumes from the TUI wait yields
-  cancelled/130 even if the TUI exits zero. Later signals do not change that
-  result. A signal concurrent with exit may be classified either way.
+  seam for the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and both
+  launcher receivers.
+- Managed attach: a SIGTERM/SIGHUP latched when the main task resumes from the TUI
+  wait yields cancelled/130 even if the TUI exits zero. Black-box: a signal latched
+  before the wait thread reports completion does the same. Later signals do not change
+  the result; a signal concurrent with exit may be classified either way (accepted).
+- Both receivers use `escalate_on_repeat` with a grace window: the first signal requests
+  cancellation; a repeat restores `SIG_DFL` and re-raises only when it arrives at least
+  `escalate_repeat_grace_secs` (default 1s) after the first signal of that number. A
+  terminal close delivers SIGHUP **twice** (~1 ms apart), often with a TERM; escalating
+  inside that burst would kill the launcher before finalize, so a burst routes to the
+  (idempotent) callback while a deliberate later repeat still force-quits a wedged wait.
+- Both receivers are unregistered **before** `_finalize_lifecycle()`. A TERM/HUP during
+  finalize still kills the launcher at the default disposition, and the run stays
+  active (the #623 bug in a smaller window). Both paths also replace the child's raw
+  exit code with 130 at the process layer. Identity-v2 PR 4 owns both seams: hold a
+  latch-only receiver across the sole outcome write, and carry raw code + `cancelled`
+  to the writer, mapping to 130 there.
 - Both TUI drivers enter `native_sigint_shield()` on the main thread alongside
   `tui_terminal_window()`. Only native launchers register the SIGINT receiver;
   interception ends before backend teardown. Backend-startup Ctrl+C propagates.
   The receiver is a Python handler, not SIG_IGN, so the child exec resets SIGINT.
-- Native `cancel_wait()` only sets a signal-safe flag to unblock the waiter; it
-  neither terminates the child nor releases the gate. On cancel the lifecycle
-  owner sends the single TERM via the recorded, birth-checked tree teardown,
+- Black-box poll loop: any `BaseException` on the main thread (a `KeyboardInterrupt`
+  from an unshielded SIGINT in PTY mode) also terminates and cancels once, joins the
+  wait thread with a bound, and re-raises. Without that, the daemon relay keeps the
+  outer tty raw, the spawn records failed, and the harness outlives finalize.
+- Black-box stops the child only through the gate, never `os.kill`. PTY
+  (`LaunchGate(group=True)`): the guardian TERMs the group, then KILLs after the grace.
+  Native (`LaunchGate(group=False)`): `terminate()` releases the root-only gate, so the
+  guardian sends one TERM and nothing escalates (#657). A signal before `start()` still
+  launches the harness and cancels it within one poll (accepted).
+- Managed attach, native `cancel_wait()` only sets a signal-safe flag to unblock the
+  waiter; it neither terminates the child nor releases the gate. On cancel the
+  lifecycle owner sends the single TERM via the recorded, birth-checked tree teardown,
   escalating to birth-checked KILL after its grace if needed. `terminate()` then
   reaps/disarms the guardian; normal reaped exit also disarms it. This owner
   teardown is distinct from the root-only guardian's runner-death behavior.
@@ -93,16 +128,21 @@ receiver is unregistered in `run()`'s `finally`, which restores the previous han
   honored once the TUI starts. If startup then fails, `run()` returns a cancelled outcome
   rather than raising, so `_execute_primary_process()` does not fall back to a black-box
   TUI that would ignore the termination request.
-- The receiver uses `escalate_on_repeat` with a grace window: the first signal requests
-  cancellation; a repeat restores `SIG_DFL` and re-raises only when it arrives at least
-  `escalate_repeat_grace_secs` (default 1s) after the first signal of that number. A
-  terminal close delivers SIGHUP **twice** (~1 ms apart); escalating on the second would
-  kill the launcher before finalize, so a burst inside the grace routes to the (idempotent)
-  callback while a deliberate later repeat still force-quits a wedged teardown.
-- `_copy_primary_pty_output` treats a lost pane as a clean stop: `OSError` (EIO) on the
-  stdout write, the stdin read, or the master write ends forwarding rather than escaping
-  the relay thread, and a set `wait_cancelled` returns 130 before the blocking `waitpid`
-  so a closed terminal cannot wedge the relay on a TUI in its own pty session.
+- `_copy_primary_pty_output` treats a lost pane as a clean stop. After SIGHUP the outer
+  tty may already be gone, so raw-mode setup, termios restore, and the cleanup escape
+  writes suppress both `OSError` and `termios.error`: **`termios.error` is not an
+  `OSError` subclass**, and catching `OSError` alone left a traceback on pane kill.
+  `OSError` (EIO) on the stdout write, the stdin read, or the master write ends
+  forwarding rather than escaping the relay thread. A `select` `OSError` drops stdin
+  and keeps draining the master; breaking out would leave the child blocked on a full
+  pty while `waitpid` waits for it. A set `wait_cancelled` returns 130 before the
+  blocking `waitpid` so a closed terminal cannot wedge the relay.
+
+**Live-probe reach.** The CLI cannot select native black-box: Claude is always PTY,
+Codex raises on attach failure, and OpenCode reaches it only through the managed-attach
+fallback. Live TERM/HUP/pane-kill/scope-stop probes therefore cover PTY black-box and
+native managed attach; native black-box is covered only by the fake-launcher seam test
+(`tests/integration/launch/test_blackbox_primary_signals.py`).
 
 ## Session ID Observation — Invariant I-4
 

@@ -197,7 +197,7 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
         return PrimaryExecutionResult(
             exit_code=0,
             managed_session_id=None,
-            managed_cancelled=False,
+            cancelled=False,
             facts=AttemptFacts(first_session_id=observed_id),
             launcher_diagnostics_path=None,
         )

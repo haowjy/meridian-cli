@@ -102,9 +102,12 @@ def _copy_primary_pty_output(
     alternate_screen = _AlternateScreenState()
 
     try:
-        if os.isatty(stdin_fd):
-            saved_tty_attrs = termios.tcgetattr(stdin_fd)
-            tty.setraw(stdin_fd)
+        try:
+            if os.isatty(stdin_fd):
+                saved_tty_attrs = termios.tcgetattr(stdin_fd)
+                tty.setraw(stdin_fd)
+        except (OSError, termios.error):
+            stdin_open = False
         with ExitStack() as stack:
             output_handle: BinaryIO | None = None
             if output_log_path is not None:
@@ -125,7 +128,13 @@ def _copy_primary_pty_output(
                 fds = [master_fd]
                 if stdin_open:
                     fds.append(stdin_fd)
-                ready, _, _ = select.select(fds, [], [], 0.1)
+                try:
+                    ready, _, _ = select.select(fds, [], [], 0.1)
+                except OSError:
+                    if stdin_open:
+                        stdin_open = False
+                        continue
+                    break
 
                 if master_fd in ready:
                     try:
@@ -159,9 +168,10 @@ def _copy_primary_pty_output(
                             continue
     finally:
         if saved_tty_attrs is not None:
-            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_tty_attrs)
-        if os.isatty(stdout_fd):
-            with suppress(OSError):
+            with suppress(OSError, termios.error):
+                termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_tty_attrs)
+        with suppress(OSError):
+            if os.isatty(stdout_fd):
                 os.write(
                     stdout_fd,
                     _MOUSE_MODE_RESET_SEQUENCE

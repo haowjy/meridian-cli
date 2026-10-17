@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -61,6 +63,7 @@ from meridian.lib.launch.constants import (
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
+from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity
 from meridian.lib.state import spawn_store
@@ -94,6 +97,7 @@ from ..types import SessionMode
 from .native_launcher import native_sigint_shield
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
+    LaunchedProcess,
     ProcessLauncher,
 )
 from .primary_attach import PrimaryAttachError, PrimaryAttachLauncher, PrimaryAttachOutcome
@@ -178,6 +182,7 @@ class PrimaryProcessResult:
     exit_code: int
     pid: int | None
     launcher_diagnostics_path: Path | None
+    cancelled: bool = False
 
 
 @dataclass(frozen=True)
@@ -186,7 +191,7 @@ class PrimaryExecutionResult:
 
     exit_code: int
     managed_session_id: str | None
-    managed_cancelled: bool
+    cancelled: bool
     facts: AttemptFacts
     launcher_diagnostics_path: Path | None
 
@@ -229,29 +234,95 @@ def run_primary_process_with_capture(
     on_child_started: Callable[[ProcessIdentity], None],
     launcher_diagnostics_path: Path,
 ) -> PrimaryProcessResult:
-    with (
-        native_sigint_shield(process_launcher),
-        tui_terminal_window(launcher_diagnostics_path) as window,
-    ):
-        running = process_launcher.start(
-            command=command,
-            cwd=cwd,
-            env=env,
-            output_log_path=output_log_path,
-            terminal_fds=window.terminal_fds,
-        )
-        try:
-            on_child_started(running.identity)
-        except BaseException:
-            running.terminate()
-            running.wait()
-            raise
-        launched = running.wait()
+    cancelled = False
+    wait_completed = False
+
+    def request_cancel(_signum: signal.Signals) -> None:
+        nonlocal cancelled
+        if not wait_completed:
+            cancelled = True
+
+    cancel_receiver = SignalCallbackReceiver(
+        target_signals=(signal.SIGTERM, signal.SIGHUP),
+        callback=request_cancel,
+        escalate_on_repeat=True,
+    )
+    coordinator = signal_coordinator()
+    coordinator.register_receiver(cancel_receiver)
+    try:
+        with (
+            native_sigint_shield(process_launcher),
+            tui_terminal_window(launcher_diagnostics_path) as window,
+        ):
+            running = process_launcher.start(
+                command=command,
+                cwd=cwd,
+                env=env,
+                output_log_path=output_log_path,
+                terminal_fds=window.terminal_fds,
+            )
+            try:
+                on_child_started(running.identity)
+            except BaseException:
+                running.terminate()
+                running.wait()
+                raise
+
+            wait_finished = threading.Event()
+            launched: LaunchedProcess | None = None
+            wait_error: BaseException | None = None
+
+            def wait_for_child() -> None:
+                nonlocal launched, wait_completed, wait_error
+                try:
+                    launched = running.wait()
+                except BaseException as exc:
+                    wait_error = exc
+                finally:
+                    wait_completed = True
+                    wait_finished.set()
+
+            wait_thread = threading.Thread(
+                target=wait_for_child,
+                name=f"meridian-primary-wait-{running.identity.pid}",
+                daemon=True,
+            )
+            wait_thread.start()
+            terminate_requested = False
+            cancel_wait_requested = False
+            try:
+                while not wait_finished.wait(0.1):
+                    if cancelled and not terminate_requested:
+                        terminate_requested = True
+                        running.terminate()
+                    if cancelled and not cancel_wait_requested:
+                        cancel_wait_requested = True
+                        running.cancel_wait()
+            except BaseException:
+                if not terminate_requested:
+                    terminate_requested = True
+                    with suppress(BaseException):
+                        running.terminate()
+                if not cancel_wait_requested:
+                    cancel_wait_requested = True
+                    with suppress(BaseException):
+                        running.cancel_wait()
+                with suppress(BaseException):
+                    wait_thread.join(timeout=3.0)
+                raise
+            wait_thread.join()
+            if wait_error is not None:
+                raise wait_error
+            if launched is None:
+                raise RuntimeError("Primary process wait completed without a result")
+    finally:
+        coordinator.unregister_receiver(cancel_receiver)
 
     return PrimaryProcessResult(
-        exit_code=launched.exit_code,
+        exit_code=130 if cancelled else launched.exit_code,
         pid=launched.pid,
         launcher_diagnostics_path=window.captured_path,
+        cancelled=cancelled,
     )
 
 
@@ -322,7 +393,7 @@ def _execute_via_managed_attach(
     return PrimaryExecutionResult(
         exit_code=managed_outcome.exit_code,
         managed_session_id=native_run.entry.session_id,
-        managed_cancelled=managed_outcome.cancelled,
+        cancelled=managed_outcome.cancelled,
         facts=managed_outcome.facts,
         launcher_diagnostics_path=managed_outcome.launcher_diagnostics_path,
     )
@@ -447,7 +518,7 @@ def _execute_primary_process(
     return PrimaryExecutionResult(
         exit_code=blackbox_result.exit_code,
         managed_session_id=None,
-        managed_cancelled=False,
+        cancelled=blackbox_result.cancelled,
         facts=fold.facts,
         launcher_diagnostics_path=blackbox_result.launcher_diagnostics_path,
     )
@@ -705,7 +776,7 @@ def run_harness_process(
         preview_request.session.continue_chat_id if session_mode == SessionMode.RESUME else None
     )
     exit_code = 2
-    managed_cancelled = False
+    cancelled = False
     facts = AttemptFacts()
     native_primary_tui_pid: int | None = None
     launcher_diagnostics_path: Path | None = None
@@ -995,7 +1066,7 @@ def run_harness_process(
                         on_running=_record_primary_started,
                     )
                     exit_code = execution_result.exit_code
-                    managed_cancelled = execution_result.managed_cancelled
+                    cancelled = execution_result.cancelled
                     facts = execution_result.facts
                     launcher_diagnostics_path = execution_result.launcher_diagnostics_path
                 if execution_result.managed_session_id is not None:
@@ -1050,7 +1121,7 @@ def run_harness_process(
                         spawn_service=spawn_service,
                         facts=facts,
                         native_key=native_run.entry.complete() if native_run else None,
-                        cancellation_observed=managed_cancelled,
+                        cancellation_observed=cancelled,
                         native_identity_error=identity_error.failure_code
                         if identity_error
                         else None,
