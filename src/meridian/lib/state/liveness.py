@@ -1,8 +1,5 @@
 """Process liveness probes."""
 
-import time
-from pathlib import Path
-
 import psutil
 
 from meridian.lib.platform.process_scope.base import birth_time_unverified
@@ -61,37 +58,3 @@ def is_process_alive_with_birth(pid: int, birth_epoch: float | None) -> bool:
 def is_process_dead_with_birth(pid: int | None, birth_epoch: float | None) -> bool:
     """Inverse of known birth-matched liveness; inaccessible/unknown is not dead."""
     return _process_alive_with_birth(pid, birth_epoch) is False
-
-
-def is_spawn_genuinely_active(runtime_root: Path, spawn_id: str) -> bool:
-    """Read-only check: is this spawn genuinely active?
-
-    Uses spawn store status + heartbeat freshness + runner PID liveness. Does not
-    mutate spawn state; stale-active repair is left to the reaper.
-    """
-    from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-    from meridian.lib.state.spawn_store import get_spawn
-
-    record = get_spawn(runtime_root, spawn_id)
-    if record is None:
-        return False
-
-    if not is_active_spawn_status(record.status):
-        return False
-
-    if (
-        record.runner_pid is not None
-        and record.runner_pid > 0
-        and is_process_alive(record.runner_pid)
-    ):
-        return True
-
-    heartbeat_path = runtime_root / "spawns" / spawn_id / "heartbeat"
-    try:
-        mtime = heartbeat_path.stat().st_mtime
-        if time.time() - mtime < 120:
-            return True
-    except OSError:
-        pass
-
-    return False

@@ -15,6 +15,7 @@ from meridian.lib.ops.work_sessions import work_session_chat_ids
 from meridian.lib.state import session_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import overlay_derived
 
 
 def _display_path(project_root: Path, path: Path) -> str:
@@ -476,13 +477,10 @@ def work_dashboard_sync(
     grouped: dict[str, list[WorkDashboardSpawn]] = {}
     ungrouped: list[WorkDashboardSpawn] = []
 
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    for spawn in reconcile_spawns(
-        project_root,
+    for spawn in overlay_derived(
         runtime_state_root,
-        indexed_spawn_scan(runtime_state_root),
-    ).records:
+        indexed_spawn_scan(runtime_state_root).records,
+    ):
         if not is_active_spawn_status(spawn.status):
             continue
         row = _dashboard_spawn(spawn)
@@ -574,8 +572,6 @@ def work_show_sync(
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
 
-    from meridian.lib.state.reaper import reconcile_spawns
-
     item = work_store.get_work_item(project_state_dir, payload.work_id)
     if item is None:
         raise ValueError(f"Work item '{payload.work_id}' not found")
@@ -583,11 +579,10 @@ def work_show_sync(
     active_session_work_ids = _active_session_work_ids(runtime_state_root)
     associated_spawns = [
         _dashboard_spawn(spawn)
-        for spawn in reconcile_spawns(
-            project_root,
+        for spawn in overlay_derived(
             runtime_state_root,
-            indexed_spawn_scan(runtime_state_root),
-        ).records
+            indexed_spawn_scan(runtime_state_root).records,
+        )
         if _associated_with_work_item(
             spawn,
             work_id=item.name,
