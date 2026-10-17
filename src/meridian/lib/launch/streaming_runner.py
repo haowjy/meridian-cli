@@ -831,7 +831,6 @@ async def execute_with_streaming(
     space_spent_usd: float = 0.0,
     guardrails: tuple[Path, ...] = (),
     guardrail_timeout_seconds: float = DEFAULT_GUARDRAIL_TIMEOUT_SECONDS,
-    harness_session_id_observer: Callable[[str], None] | None = None,
     session_attempt: SessionAttempt,
     event_observer: Callable[[StreamEvent], None] | None = None,
     stream_stdout_to_terminal: bool = False,
@@ -961,7 +960,6 @@ async def execute_with_streaming(
             spec,
             harness=str(resolved_harness_id),
             policy=launch_context.resolved_request.launch_policy_snapshot,
-            on_accepted=harness_session_id_observer,
         )
         config = ConnectionConfig(
             spawn_id=run.spawn_id,

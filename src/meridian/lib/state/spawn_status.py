@@ -21,6 +21,7 @@ from meridian.lib.state.launch_lock import (
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
+    QuarantinedChatIdStatus,
     SpawnStateQuarantined,
     SpawnStateQuarantineReport,
     read_quarantined_chat_id,
@@ -99,6 +100,14 @@ class Claimed:
 
 
 @dataclass(frozen=True)
+class Settled:
+    """Exclusive capability plus an authoritative stored non-active row."""
+
+    handle: LaunchHandle
+    stored: SpawnRecord
+
+
+@dataclass(frozen=True)
 class Live:
     """The launch could not be claimed as dead."""
 
@@ -108,7 +117,7 @@ class Lockless:
     """The row predates runner-lifetime launch locks."""
 
 
-type DeadLaunchClaim = Claimed | Live | Lockless
+type DeadLaunchClaim = Claimed | Settled | Live | Lockless
 
 
 def claim_dead_launch(runtime_root: Path, spawn_id: str) -> DeadLaunchClaim:
@@ -125,6 +134,8 @@ def claim_dead_launch(runtime_root: Path, spawn_id: str) -> DeadLaunchClaim:
         if row is None:
             handle.close()
             return Live()
+        if not is_active_spawn_status(row.status):
+            return Settled(handle=handle, stored=row)
         derived = derive(row, lock_free=True)
         return Claimed(handle=handle, stored=row, derived=derived)
     except SpawnStateQuarantined:
@@ -183,9 +194,9 @@ def quarantine_may_observe(
     lock_path = runtime_root / "spawns" / report.spawn_id / "launch.lock"
     with shared_hold(lock_path) as lock_free:
         current_chat_id = read_quarantined_chat_id(report)
-        if current_chat_id is None:
+        if current_chat_id is QuarantinedChatIdStatus.UNREADABLE:
             return True
-        if current_chat_id != chat_id:
+        if isinstance(current_chat_id, str) and current_chat_id != chat_id:
             return False
         return lock_free is not True
 
@@ -196,6 +207,7 @@ __all__ = [
     "DeadLaunchClaim",
     "Live",
     "Lockless",
+    "Settled",
     "claim_dead_launch",
     "derive",
     "is_live",

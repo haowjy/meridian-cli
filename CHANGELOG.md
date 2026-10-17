@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Spawn status now follows the runner-lifetime lock. Runner or managed-primary loss, including during finalization, reads `failed`/`crashed` immediately; a cancel request reads `cancelled`, even when a report exists without an outcome. Obsolete heartbeat and launch-boundary journals are no longer written. (#663)
+- Spawn status now follows the runner-lifetime lock. Runner or managed-primary loss, including during finalization, reads `failed`/`crashed` immediately; a cancel request reads `cancelled`, even when a report exists without an outcome. Dead future-version rows without chat identity no longer block resume. Obsolete heartbeat and launch-boundary journals are no longer written or archived. (#663)
 
 ## [0.10.21] - 2026-10-17
 

@@ -310,26 +310,19 @@ def test_continue_of_superseded_spawn_sweeps_dead_successor(runtime: Runtime) ->
 
 
 def test_continue_refuses_live_legacy_runner(runtime: Runtime) -> None:
-    from meridian.lib.state import spawn_store
-
-    sleeper = subprocess.Popen(["sleep", "120"], start_new_session=True)
-    runtime.processes.append(sleeper)
-    runtime.groups.add(sleeper.pid)
     root = runtime.root / "runtime"
     parent = runtime.cli("spawn", "-m", "haiku", "-p", "hold", "--no-background")
     runtime.started()
-    (runtime.root / "p1.exit").touch()
-    assert parent.wait(timeout=30) == 0
-    # A finished fixture supplies faithful native identity; remove its unlocked
-    # file to model an old-build row, then assign a live legacy runner.
+    # Remove the held lock's path to model an old-build active row. The runner
+    # still holds the unlinked inode and supplies exact live-runner evidence.
     (root / "spawns/p1/launch.lock").unlink()
-    spawn_store.update_spawn(root, "p1", runner_pid=sleeper.pid)
-    assert runtime.row()["runner_created_at_epoch"] == psutil.Process(sleeper.pid).create_time()
     process = runtime.cli(*continue_args(False))
     assert process.wait(timeout=30) != 0
-    assert "running under an older meridian" in (runtime.root / "cli-2.log").read_text()
+    assert "running under an older meridian" in (runtime.root / "cli-1.log").read_text()
     assert not (root / "spawns/p1/launch.lock").exists()
-    assert alive(sleeper.pid)
+    assert parent.poll() is None
+    (runtime.root / "p1.exit").touch()
+    assert parent.wait(timeout=30) == 0
 
 
 def test_continue_releases_reused_root_without_signalling(runtime: Runtime) -> None:

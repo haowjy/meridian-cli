@@ -28,13 +28,13 @@ def _write_v4_row(
     runtime_root: Path,
     spawn_id: str,
     *,
-    current_chat_id: str,
+    current_chat_id: str | None,
     launch_lock: LaunchSlot,
 ) -> None:
     spawn_store.start_spawn(
         runtime_root,
         spawn_id=spawn_id,
-        chat_id=current_chat_id,
+        chat_id=current_chat_id or "c-seed",
         model="test",
         agent="",
         harness="codex",
@@ -43,9 +43,12 @@ def _write_v4_row(
         launch_lock=launch_lock,
     )
     state_path = runtime_root / "spawns" / spawn_id / "state.json"
+    payload: dict[str, object] = {"v": 4, "id": spawn_id}
+    if current_chat_id is not None:
+        payload["current_chat_id"] = current_chat_id
     atomic_write_text(
         state_path,
-        json.dumps({"v": 4, "id": spawn_id, "current_chat_id": current_chat_id}) + "\n",
+        json.dumps(payload) + "\n",
     )
 
 
@@ -111,3 +114,32 @@ def test_quarantined_row_for_same_chat_with_free_lock_allows_resume(tmp_path: Pa
         )
 
     _resume(runtime_root, chat_id)
+
+
+def test_quarantined_chatless_row_with_free_lock_allows_resume(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    chat_id = _stopped_chat(runtime_root)
+    with LaunchSlot() as launch_lock:
+        _write_v4_row(
+            runtime_root,
+            "p1",
+            current_chat_id=None,
+            launch_lock=launch_lock,
+        )
+
+    _resume(runtime_root, chat_id)
+
+
+def test_quarantined_chatless_row_with_held_lock_blocks_resume(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    chat_id = _stopped_chat(runtime_root)
+    with LaunchSlot() as launch_lock:
+        _write_v4_row(
+            runtime_root,
+            "p1",
+            current_chat_id=None,
+            launch_lock=launch_lock,
+        )
+
+        with pytest.raises(ValueError, match="Cannot establish current-chat ownership"):
+            _resume(runtime_root, chat_id)
