@@ -103,6 +103,14 @@ SIGTSTP is left alone. The native gate records no pgid and sends one root TERM o
 runner death, never a shared-group signal or delayed KILL. The managed backend
 uses its existing separate group gate.
 
+**Signal receivers only latch.** Every primary path registers a SIGTERM/SIGHUP
+`SignalCallbackReceiver` with `escalate_on_repeat`, reports `cancelled`, and exits 130.
+The callback runs on the main thread between bytecodes, so it must not take a
+non-reentrant lock: no `LaunchGate` call, no `Event.set()` (PTY `cancel_wait()` is one).
+Latch a bool and act from a main-thread poll. Dead-tty cleanup catches `OSError` **and**
+`termios.error`, which is not an `OSError`. Details and open seams:
+[.context/CONTEXT.md](.context/CONTEXT.md#signal-cancellation).
+
 ## Entry Points
 
 - `runner.py` — `run_harness_process()`. The sole external entry point.
