@@ -178,7 +178,9 @@ def policy(
     return (
         IdleService(
             store=store,
-            config=MeridianConfig.model_validate({"idle": {"compact_min_growth_tokens": 0}}),
+            config=MeridianConfig.model_validate(
+                {"idle": {"compact": True, "compact_min_growth_tokens": 0}}
+            ),
             env={"MERIDIAN_SESSION_ROLE": "primary"},
             now_ms=clock.now_ms,
             notify_sender=sender,
@@ -223,7 +225,7 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
     state = store.read("codex", "session-1")
     assert [notice.body for notice in sender.notices] == [
         "Your turn",
-        "est. 15 min until cold",
+        "est. 15 min until cold: reply to keep it warm",
         "Compacted",
     ]
     assert sensor.compact_calls == 1
@@ -433,7 +435,7 @@ async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path
     assert sensor.compact_calls == 1
     assert [notice.body for notice in sender.notices] == [
         "Your turn",
-        "est. 15 min until cold",
+        "est. 15 min until cold: reply to keep it warm",
         "Compacted",
     ]
 

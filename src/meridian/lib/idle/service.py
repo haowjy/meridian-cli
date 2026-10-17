@@ -7,7 +7,7 @@ import os
 import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -37,7 +37,13 @@ from meridian.lib.idle.messages import (
     stage_notice,
     unreadable_compaction_notice,
 )
-from meridian.lib.idle.timeline import Schedule, schedule, select_push_delay
+from meridian.lib.idle.timeline import (
+    InFlight,
+    Schedule,
+    response_hold,
+    schedule,
+    select_push_delay,
+)
 from meridian.lib.idle.worth import compact_eval_detail
 from meridian.lib.notify import Notice, SendReport, send
 from meridian.lib.notify.label import build_session_label
@@ -97,6 +103,7 @@ class IdlePolicyConfig(BaseModel):
     push_seconds: int
     long_turn_seconds: int
     quick_turn_push_seconds: int
+    background_push_seconds: int
     warn_minutes: int
     warn_email: bool
     compact_minutes: int
@@ -136,10 +143,11 @@ class ArmResult:
     warn_at: int | None = None
     compact_at: int | None = None
     reason: str | None = None
+    push_held: str | None = None
 
     def to_wire(self) -> dict[str, object]:
         payload: dict[str, object] = {"stretch": self.stretch, "anchor": self.anchor}
-        for field in ("push_at", "warn_at", "compact_at"):
+        for field in ("push_at", "warn_at", "compact_at", "push_held"):
             value = getattr(self, field)
             if value is not None:
                 payload[field] = value
@@ -271,6 +279,7 @@ def _result_for_state(state: IdleState, *, reason: str | None = None) -> ArmResu
         warn_at=None if reason is not None or "warn" in done else state.schedule.warn_at,
         compact_at=None if reason is not None or "compact" in done else state.schedule.compact_at,
         reason=reason,
+        push_held=None if reason is not None else state.push_held,
     )
 
 
@@ -348,6 +357,7 @@ class IdleService:
         last_assistant_text: str | None = None,
         provider: str | None = None,
         context_tokens: int | None = None,
+        in_flight: InFlight | None = None,
     ) -> ArmResult:
         config_result = self.config_for(harness)
         if not config_result.enabled:
@@ -378,6 +388,22 @@ class IdleService:
             )
         else:
             user_excerpt, assistant_excerpt = None, None
+        # Only an adapter that senses in-flight work gets the spawn-store check: one
+        # that does not cannot tell whether anything will wake the session to re-arm.
+        work = in_flight or InFlight()
+        if (
+            in_flight is not None
+            and response_hold(work) is None
+            and self._children_active(fail_closed=False)
+        ):
+            work = replace(work, child_spawns=True)
+        # A `spawn wait` that yields before the cache goes cold wakes the session
+        # and re-warms the cache itself, so a warning would be a false alarm.
+        warn = not (
+            work.spawn_waiters > 0
+            and resolved_ttl is not None
+            and self.config.wait_yield_seconds_for_harness(harness) < resolved_ttl
+        )
         now_ms = self._now_ms()
 
         def transition(current: IdleState | None) -> tuple[IdleState, ArmResult]:
@@ -457,6 +483,10 @@ class IdleService:
                 else (current.returned_at_ms if current is not None else None)
             )
             previous_anchor_ms = current.idle_since_ms if current is not None else None
+            if not opens_new and current is not None and current.push_held is not None:
+                # The user has waited since their return through the held work: time
+                # the push from that return, not from the anchor the work interrupted.
+                previous_anchor_ms = None
             placed = schedule(
                 now_ms,
                 resolved_ttl,
@@ -466,7 +496,9 @@ class IdleService:
                     returned_at_ms,
                     previous_anchor_ms,
                     policy,
+                    work,
                 ),
+                warn=warn,
             )
             next_state = IdleState(
                 harness=harness,
@@ -491,6 +523,7 @@ class IdleService:
                     current.compact_eval if current is not None and not opens_new else None
                 ),
                 schedule=_persisted_schedule(placed),
+                push_held=response_hold(work),
                 done=done,
                 compact_window_until_ms=None,
                 expect_compaction_turn=False,
@@ -535,14 +568,14 @@ class IdleService:
 
         return self.store.mutate(harness, session, transition)
 
-    def _children_active(self) -> bool:
+    def _children_active(self, *, fail_closed: bool = True) -> bool:
         spawn_id = self.env.get("MERIDIAN_SPAWN_ID")
         if not spawn_id:
             return False
         try:
             return active_child_count(spawn_id, self._spawn_reader()) > 0
         except Exception:
-            return True
+            return fail_closed
 
     def fire(
         self,

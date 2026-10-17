@@ -72,6 +72,7 @@ function install(on: On, h: Host) {
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.start', () => ({ turnId: 't1' }))
   on('turn.complete', () => ({ text: '' }))
+  on('classic.Stop', () => ({}))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('command.run', () => ({ text: '' }))
   return clock
@@ -119,7 +120,7 @@ test('a completed turn arms every returned deadline and reports a successful com
   expect(calls(h, 'arm')).toEqual([
     [
       'arm', '--harness', 'claude', '--session', 'sess-1',
-      '--context-tokens', '120000', '--assistant-text=done', '--interactive',
+      '--context-tokens', '120000', '--agents-running', '0', '--assistant-text=done', '--interactive',
     ],
   ])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['push', 'warn', 'compact'])
@@ -190,7 +191,7 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
   expect(calls(h, 'status')).toEqual([['status', '--json', '--interactive']])
   expect(calls(h, 'arm')).toEqual([[
     'arm', '--harness', 'claude', '--session', 'sess-1',
-    '--context-tokens', '120000', '--assistant-text=done', '--interactive',
+    '--context-tokens', '120000', '--agents-running', '0', '--assistant-text=done', '--interactive',
   ]])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
   expect(calls(h, 'fire')[0]).toEqual([
@@ -220,4 +221,35 @@ test('arm excerpts use equals-form argv and only apply a safety length cap', asy
   const assistant = arm.find(arg => arg.startsWith('--assistant-text='))
   expect(assistant?.slice('--assistant-text='.length)).toBe(answer.slice(0, 4000))
   expect(assistant).toContain('--assistant-text=- ')
+})
+
+test('arm reports the work the main loop left running, sorted from its Stop list', async ($, on) => {
+  const h = host()
+  h.agents = [{ status: 'running' } as AgentInfo]
+  h.reply.arm = { stretch: 1, anchor: 1, warn_at: START + 20_000, push_held: '1 agent(s) running' }
+  const clock = install(on, h)
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.turn.start({ turnId: 't1' } as never)
+  await $.classic.Stop({
+    stop_hook_active: false,
+    background_tasks: [
+      { id: 'a', type: 'subagent', status: 'running', description: 'review' },
+      { id: 'b', type: 'shell', status: 'running', description: 'wait', command: 'cd x && uv run meridian -C . spawn wait p3' },
+      { id: 'c', type: 'shell', status: 'running', description: 'spawn', command: 'meridian spawn -a coder -p "fix it"' },
+      { id: 'd', type: 'shell', status: 'running', description: 'dev', command: 'npm run dev' },
+      { id: 'e', type: 'monitor', status: 'running', description: 'logs' },
+    ],
+    session_crons: [],
+  } as never)
+  await $.turn.complete(MAIN_TURN)
+  await clock.advance(0)
+
+  expect(calls(h, 'arm')).toEqual([[
+    'arm', '--harness', 'claude', '--session', 'sess-1', '--context-tokens', '120000',
+    '--agents-running', '1', '--spawn-shells', '2', '--spawn-waiters', '1', '--other-tasks', '1',
+    '--assistant-text=done', '--interactive',
+  ]])
+  expectCliContract(h)
 })

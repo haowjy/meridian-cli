@@ -84,6 +84,8 @@ class IdleState(BaseModel):
     context: ContextBaseline = ContextBaseline()
     compact_eval: CompactEval | None = None
     schedule: IdleSchedule
+    # Why this anchor scheduled no push: work still running will wake the session.
+    push_held: str | None = None
     done: dict[Stage, str] = Field(default_factory=_empty_done)
     compact_window_until_ms: int | None = None
     expect_compaction_turn: bool = False

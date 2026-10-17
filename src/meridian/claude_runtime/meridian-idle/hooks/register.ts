@@ -1,9 +1,9 @@
-import type { EngineInterface, Register, Timer } from 'claude-code'
+import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude-code'
 
 // Meridian's Claude idle sensor.
 //
 // This module senses two things and hands every decision to `meridian idle`:
-//   idle    a main-loop turn finished        -> `idle arm`, then one timer per stage
+//   idle    a main-loop turn finished        -> `idle arm` with the work still running, then one timer per stage
 //   return  the user typed or sent something -> `idle return`, timers cancelled
 // It acts on exactly one answer: `{decision: "act"}` from `idle fire compact`,
 // and then only from a timer callback, because `$.session.compact()` is
@@ -23,6 +23,7 @@ const LOG_LIMIT = 100
 const EXCERPT_CHAR_CAP = 4_000
 
 type Json = Record<string, unknown>
+type BackgroundTask = NonNullable<ClassicHookInputs['Stop']['background_tasks']>[number]
 
 /** One open stretch as the mod knows it: the ids `fire` and `done` need, and the absolute stage times. */
 type Armed = {
@@ -54,6 +55,8 @@ type State = {
   log: string[]
   /** Last prompt typed by the human; tool results and injected hook turns never enter here. */
   lastUserText: string | undefined
+  /** The main loop's in-flight background work, from the `Stop` that precedes its `turn.complete`. */
+  stopTasks: BackgroundTask[] | undefined
 }
 
 function newState(): State {
@@ -69,6 +72,7 @@ function newState(): State {
     queue: Promise.resolve(),
     log: [],
     lastUserText: undefined,
+    stopTasks: undefined,
   }
 }
 
@@ -251,19 +255,54 @@ async function runningAgents($: EngineInterface): Promise<number | undefined> {
   }
 }
 
-async function armTask($: EngineInterface, s: State, epoch: number, assistantText?: string): Promise<void> {
+// A `meridian spawn` command line, through any wrapper (`uv run`, `meridian -C dir`), up to the next pipe or list operator.
+const SPAWN_COMMAND = /\bmeridian\b[^\n|;&]*?\bspawn\b/
+const SPAWN_WAIT_COMMAND = /\bmeridian\b[^\n|;&]*?\bspawn\s+wait\b/
+
+/**
+ * `idle arm` flags for the work still running when the main loop stopped. Core decides what they
+ * mean for the push; the mod only sorts what it sees. Monitors are watchers and never count.
+ */
+function inFlightArgs(running: number | undefined, tasks: BackgroundTask[] | undefined): string[] {
+  let subagents = 0
+  let workflows = 0
+  let spawnShells = 0
+  let spawnWaiters = 0
+  let other = 0
+  for (const task of tasks ?? []) {
+    if (task.type === 'subagent') subagents += 1
+    else if (task.type === 'workflow') workflows += 1
+    else if (task.type === 'monitor') continue
+    else if (task.type === 'shell' && SPAWN_COMMAND.test(task.command ?? '')) {
+      spawnShells += 1
+      if (SPAWN_WAIT_COMMAND.test(task.command ?? '')) spawnWaiters += 1
+    } else other += 1
+  }
+  // A subagent shows in both `$.agent.list()` and the Stop list; a workflow's agents only in the latter.
+  const agents = Math.max(running ?? 0, subagents) + workflows
+  // Always sent, zero included: it tells core this sensor reports in-flight work.
+  const args = ['--agents-running', String(agents)]
+  if (spawnShells > 0) args.push('--spawn-shells', String(spawnShells))
+  if (spawnWaiters > 0) args.push('--spawn-waiters', String(spawnWaiters))
+  if (other > 0) args.push('--other-tasks', String(other))
+  return args
+}
+
+async function armTask(
+  $: EngineInterface,
+  s: State,
+  epoch: number,
+  assistantText: string | undefined,
+  tasks: BackgroundTask[] | undefined,
+): Promise<void> {
   if (!(await gate($, s))) return
   try {
-    // The main loop can finish while a subagent still runs; the hand-back turn ends the main loop again, and arms then.
-    const running = await runningAgents($)
-    if (running !== undefined && running > 0) {
-      note($, s, `arm skipped: ${running} subagent(s) still running`)
-      return
-    }
+    // Work still running does not stop the arm: core holds or delays the push and keeps the cache warning.
     const session = await $.session.id()
     const args = ['arm', '--harness', HARNESS, '--session', session]
     const tokens = await contextTokens($)
     if (tokens !== undefined) args.push('--context-tokens', String(tokens))
+    args.push(...inFlightArgs(await runningAgents($), tasks))
     const userExcerpt = capExcerpt(s.lastUserText)
     const assistantExcerpt = capExcerpt(assistantText)
     if (userExcerpt !== undefined) args.push(`--user-text=${userExcerpt}`)
@@ -289,6 +328,7 @@ async function armTask($: EngineInterface, s: State, epoch: number, assistantTex
     if (current !== undefined && current.session === session && current.stretch === stretch && current.anchor === anchor) {
       return // same stretch and anchor: core absorbed this arm (compaction window, already compacted); keep our timers
     }
+    if (typeof reply.push_held === 'string') note($, s, `push held: ${reply.push_held}`)
     const at = readSchedule(reply)
     if (Object.keys(at).length === 0 && typeof reply.reason === 'string') {
       // An absorbed arm for a stretch we do not know yet carries no deadlines: take them from the store.
@@ -474,6 +514,13 @@ export const register: Register = on => {
   // A subagent's run raises no turn.start, so this is always the main loop.
   on('turn.start', async ($, e, next) => {
     s.busy = true
+    s.stopTasks = undefined
+    return next(e)
+  })
+
+  // The main loop's Stop fires just before its turn.complete and is the only place the host lists background work.
+  on('classic.Stop', async ($, e, next) => {
+    s.stopTasks = e.background_tasks
     return next(e)
   })
 
@@ -482,7 +529,9 @@ export const register: Register = on => {
     if (e.agentId === undefined && !s.inert) {
       s.busy = false
       const epoch = s.epoch
-      void enqueue(s, () => armTask($, s, epoch, e.answer))
+      const tasks = s.stopTasks
+      s.stopTasks = undefined
+      void enqueue(s, () => armTask($, s, epoch, e.answer, tasks))
     }
     return next(e)
   })

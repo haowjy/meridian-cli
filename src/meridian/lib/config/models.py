@@ -180,6 +180,16 @@ class IdleConfig(ConfigModel):
         ),
         Field(gt=0),
     ] = 600
+    background_push_seconds: Annotated[
+        int,
+        config_field(
+            "idle.background_push_seconds",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "background_push_seconds"),),
+            env_vars=("MERIDIAN_IDLE_BACKGROUND_PUSH_SECONDS",),
+        ),
+        Field(ge=0),
+    ] = 900
     warn_minutes: Annotated[
         int,
         config_field(
@@ -217,7 +227,7 @@ class IdleConfig(ConfigModel):
             file_aliases=(file_alias("idle", "compact"),),
             env_vars=("MERIDIAN_IDLE_COMPACT",),
         ),
-    ] = True
+    ] = False
     compact_min_growth_tokens: Annotated[
         int | None,
         config_field(

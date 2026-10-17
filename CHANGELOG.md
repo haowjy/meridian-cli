@@ -4,7 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Idle compaction is off by default (`idle.compact = false`). Push and cache warning stay. Turn it back on with `compact = true`; Claude Code's own idle compaction is untouched. Cache warning now says "reply to keep it warm".
+
 ### Fixed
+- Claude primary no longer pushes "waiting on you" while subagents, workflows, `meridian spawn` shells or child spawns still run; the turn they wake pushes instead, timed from your last prompt. Other background tasks stretch the push to `idle.background_push_seconds` (900). The cache warning arms every turn, even with a subagent running, except under a `spawn wait` that wakes the session before the cache goes cold.
 - Managed-bash ping retry coverage waits for the failed notification claim to be durably released, eliminating a timing-dependent CI failure. (#662)
 
 ## [0.10.21] - 2026-10-17

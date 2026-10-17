@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from meridian.lib.idle.timeline import Schedule, schedule, select_push_delay
+from meridian.lib.idle.timeline import InFlight, Schedule, schedule, select_push_delay
 
 
 @dataclass(frozen=True)
@@ -10,6 +10,7 @@ class Config:
     push_seconds: int = 60
     long_turn_seconds: int = 60
     quick_turn_push_seconds: int = 600
+    background_push_seconds: int = 900
     warn_minutes: int = 15
     compact_minutes: int = 5
 
@@ -37,6 +38,15 @@ def test_schedule_places_long_turn_push_after_push_delay() -> None:
 
 def test_schedule_places_quick_turn_push_after_quick_delay() -> None:
     assert schedule(123_000, None, Config(), push_delay_seconds=600).push_at == 723_000
+
+
+def test_schedule_keeps_the_warning_without_a_push_and_the_push_without_a_warning() -> None:
+    assert schedule(123_000, 3600, Config(), push_delay_seconds=None) == Schedule(
+        push_at=None, warn_at=2_823_000, compact_at=3_423_000
+    )
+    assert schedule(123_000, 3600, Config(), push_delay_seconds=60, warn=False) == Schedule(
+        push_at=183_000, compact_at=3_423_000
+    )
 
 
 def test_schedule_drops_push_that_would_not_precede_a_valid_warning() -> None:
@@ -77,3 +87,21 @@ def test_select_push_delay_uses_only_a_fresh_return_for_turn_length(
 
 def test_select_push_delay_zero_threshold_always_uses_long_turn_delay() -> None:
     assert select_push_delay(0, None, None, Config(long_turn_seconds=0)) == 60
+
+
+@pytest.mark.parametrize(
+    ("work", "expected"),
+    [
+        (InFlight(agents=1, other_tasks=1), None),
+        (InFlight(spawn_shells=1, spawn_waiters=1), None),
+        (InFlight(child_spawns=True), None),
+        (InFlight(other_tasks=2), 900),
+        (InFlight(), 60),
+    ],
+    ids=["agents", "spawn-shell", "child-spawn", "other-task", "nothing"],
+)
+def test_select_push_delay_holds_for_waking_work_and_stretches_for_other_tasks(
+    work: InFlight,
+    expected: int | None,
+) -> None:
+    assert select_push_delay(120_000, 60_000, None, Config(), work) == expected

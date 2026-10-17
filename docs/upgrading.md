@@ -12,6 +12,25 @@ take longer. Older `history-v7.sqlite3`, `history-v8.sqlite3`, and
 `history-v9.sqlite3` files are left untouched and can be removed after rollback
 is no longer needed.
 
+## Idle compaction off by default
+
+Meridian no longer compacts idle sessions unless you ask it to. The waiting push
+and the cache warning are unchanged. To keep compacting, set it back on:
+
+```toml
+[idle]
+compact = true
+```
+
+or `MERIDIAN_IDLE_COMPACT=1`, or `[harness.<harness>.idle] compact = true` for
+one harness. Claude Code 2.1.299+ compacts large idle sessions on its own; turn
+that off in Claude's `/config` (Idle compaction) if you want no compaction at
+all.
+
+Idle files under `MERIDIAN_HOME/idle/` gain a `push_held` field. An older build
+cannot read files this build wrote; stop active primaries before switching
+versions either way.
+
 ## Idle compaction growth floor
 
 Replace `idle.min_compact_tokens` (and per-harness equivalents) with

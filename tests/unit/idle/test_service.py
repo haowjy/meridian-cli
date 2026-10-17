@@ -21,6 +21,7 @@ from meridian.lib.idle.service import (
     close_on_launch,
     effective,
 )
+from meridian.lib.idle.timeline import InFlight
 from meridian.lib.notify import Notice, SendReport
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.state.idle_store import ContextBaseline, IdleSchedule, IdleState, IdleStore
@@ -100,7 +101,9 @@ def service(
         IdleService(
             store=resolved_store,
             config=config
-            or MeridianConfig.model_validate({"idle": {"compact_min_growth_tokens": 0}}),
+            or MeridianConfig.model_validate(
+                {"idle": {"compact": True, "compact_min_growth_tokens": 0}}
+            ),
             env=resolved_env,
             now_ms=resolved_clock.now_ms,
             notify_sender=resolved_sender,
@@ -722,3 +725,26 @@ def test_return_during_compaction_does_not_observe_compaction_turn(completion: s
     after = store.states[("example", "s1")]
     assert after.context == before.context
     assert after.stretch == 2 and after.compact_eval is None
+
+
+def test_held_push_rearms_from_the_users_return_and_a_spawn_waiter_drops_the_warning() -> None:
+    idle, clock, _store, _sender = service()
+    clock.value = 10_000
+    idle.return_(harness="example", session="s1")
+    clock.value = 20_000
+    held = idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        in_flight=InFlight(spawn_shells=1, spawn_waiters=1),
+    )
+    assert (held.push_at, held.warn_at, held.push_held) == (None, None, "meridian spawns running")
+
+    # The wake turn after the work ended: a quick hop from the held anchor, but the user
+    # has been away since their return, so the long-turn push delay applies.
+    clock.value = 3_000_000
+    woken = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    assert (woken.stretch, woken.anchor) == (held.stretch, held.anchor + 1)
+    assert woken.push_at == 3_000_000 + 60_000
+    assert woken.warn_at == 3_000_000 + 45 * 60_000
+    assert woken.push_held is None

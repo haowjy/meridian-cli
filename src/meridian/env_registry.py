@@ -175,6 +175,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS", "History inactivity threshold in days."),
     _public_config("MERIDIAN_HISTORY_ARCHIVE_DESTINATION", "History ZIP destination directory."),
     _public_config("MERIDIAN_IDLE_ENABLED", "Cross-harness idle behavior toggle."),
+    _public_config(
+        "MERIDIAN_IDLE_BACKGROUND_PUSH_SECONDS",
+        "Idle push delay while other background tasks run.",
+    ),
     _public_config("MERIDIAN_IDLE_COMPACT", "Cross-harness idle compaction toggle."),
     _public_config("MERIDIAN_IDLE_COMPACT_MINUTES", "Idle compaction lead time."),
     _public_config("MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS", "Idle timer late-fire tolerance."),

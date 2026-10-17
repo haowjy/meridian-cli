@@ -257,10 +257,11 @@ or 2-Step Verification is off.
 | `push_seconds` | `60` | `MERIDIAN_IDLE_PUSH_SECONDS` | Seconds after a long turn before the waiting push |
 | `long_turn_seconds` | `120` | `MERIDIAN_IDLE_LONG_TURN_SECONDS` | Minimum turn length that uses `push_seconds` |
 | `quick_turn_push_seconds` | `600` | `MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS` | Seconds after a quick or unknown-length turn before the waiting push |
+| `background_push_seconds` | `900` | `MERIDIAN_IDLE_BACKGROUND_PUSH_SECONDS` | Minimum push delay while other background tasks (a dev server, a build) still run |
 | `warn_minutes` | `15` | `MERIDIAN_IDLE_WARN_MINUTES` | Minutes before cache expiry to warn |
 | `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Include the configured email backend in the warning |
 | `compact_minutes` | `5` | `MERIDIAN_IDLE_COMPACT_MINUTES` | Minutes before cache expiry to try compaction |
-| `compact` | `true` | `MERIDIAN_IDLE_COMPACT` | Permit idle compaction |
+| `compact` | `false` | `MERIDIAN_IDLE_COMPACT` | Permit idle compaction |
 | `compact_min_growth_tokens` | break-even | `MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS` | Override the calculated break-even with a fixed growth floor; `0` permits any known growth |
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
 
@@ -274,6 +275,18 @@ before a valid warning, and other stages are omitted when they do not fit
 strictly after their predecessor. An unknown TTL therefore produces only the
 push.
 
+The waiting push and the cache warning are independent. The push means the
+agent is done and waiting on you, so a Claude primary skips it while work that
+will wake the session is still running: native subagents and workflows,
+background shells running `meridian spawn`, and active child spawns. The turn
+that work wakes arms again, timed from your last prompt, so a push follows a
+minute after it if nothing else is running. Other background tasks only stretch
+the push to at least `background_push_seconds`, since a dev server may never
+end; Claude's Monitor tasks are ignored. The cache warning is armed after every
+turn regardless, except while a `meridian spawn wait` that yields before the
+cache goes cold is running: that wait wakes the session and re-warms the cache
+itself.
+
 ### `[harness.<harness>.idle]`
 
 Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
@@ -281,7 +294,7 @@ Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
 | Key | Default | Environment variable |
 |---|---|---|
 | `enabled` | `true` | `MERIDIAN_HARNESS_IDLE_ENABLED_<H>` |
-| `compact` | `true` | `MERIDIAN_HARNESS_IDLE_COMPACT_<H>` |
+| `compact` | `false` | `MERIDIAN_HARNESS_IDLE_COMPACT_<H>` |
 | `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
 | `compact_min_growth_tokens` | global setting | `MERIDIAN_HARNESS_IDLE_COMPACT_MIN_GROWTH_TOKENS_<H>` |
 
@@ -302,6 +315,11 @@ local config. Environment always beats every file, so a per-tmux
 `[harness.<harness>.idle] compact` file setting.
 
 ### Default behavior and compaction guards
+
+Idle compaction is off by default; set `compact = true` (globally or per
+harness) to use it. The table describes behavior with it on. Claude Code
+2.1.299+ has its own idle compaction for large sessions (`/config` → Idle
+compaction); Meridian leaves that setting alone.
 
 | Harness | Default behavior |
 |---|---|

@@ -26,7 +26,7 @@ class HarnessIdleConfig(ConfigModel):
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     enabled: bool = True
-    compact: bool = True
+    compact: bool = False
     ttl_seconds: Annotated[int | None, Field(gt=0)] = None
     compact_min_growth_tokens: Annotated[int | None, Field(ge=0)] = None
 

@@ -14,6 +14,7 @@ from meridian.cli.app_tree import idle_app
 from meridian.cli.invocation import get_global_options
 from meridian.lib.harness.idle_types import IdleFacts
 from meridian.lib.idle.service import IdleService
+from meridian.lib.idle.timeline import InFlight
 from meridian.lib.state.idle_store import CompactResultValue, Stage
 
 
@@ -44,6 +45,17 @@ UserPromptOption = Annotated[bool, _option("--user-prompt", "Confirm a user prom
 BusyOption = Annotated[bool, _option("--busy", "The harness is currently busy.")]
 AgentsRunningOption = Annotated[int, _option("--agents-running", "Number of running agents.")]
 ContextTokensOption = Annotated[int | None, _option("--context-tokens", "Current token count.")]
+InFlightAgentsOption = Annotated[
+    int | None,
+    _option("--agents-running", "Running agents; any in-flight count marks the work as sensed."),
+]
+SpawnShellsOption = Annotated[
+    int | None, _option("--spawn-shells", "Background shells running `meridian spawn`.")
+]
+SpawnWaitersOption = Annotated[
+    int | None, _option("--spawn-waiters", "Of those, shells running `meridian spawn wait`.")
+]
+OtherTasksOption = Annotated[int | None, _option("--other-tasks", "Other background tasks.")]
 AutocompactOffOption = Annotated[
     bool, _option("--harness-autocompact-off", "Harness autocompact is off.")
 ]
@@ -151,9 +163,26 @@ def cmd_idle_arm(
     user_text: UserTextOption = None,
     assistant_text: AssistantTextOption = None,
     context_tokens: ContextTokensOption = None,
+    agents_running: InFlightAgentsOption = None,
+    spawn_shells: SpawnShellsOption = None,
+    spawn_waiters: SpawnWaitersOption = None,
+    other_tasks: OtherTasksOption = None,
     interactive: InteractiveOption = False,
 ) -> None:
     """Open or re-anchor; same stretch and anchor means keep your timers."""
+
+    counts = (agents_running, spawn_shells, spawn_waiters, other_tasks)
+    # No count at all: this adapter does not sense in-flight work, and core keeps its old push.
+    in_flight = (
+        None
+        if all(count is None for count in counts)
+        else InFlight(
+            agents=agents_running or 0,
+            spawn_shells=spawn_shells or 0,
+            spawn_waiters=spawn_waiters or 0,
+            other_tasks=other_tasks or 0,
+        )
+    )
 
     _json(
         harness,
@@ -168,11 +197,20 @@ def cmd_idle_arm(
             last_user_text=user_text,
             last_assistant_text=assistant_text,
             context_tokens=context_tokens,
+            in_flight=in_flight,
         ),
         checks=(
             (
                 context_tokens is None or context_tokens >= 0,
                 "--context-tokens must not be negative",
+            ),
+            (
+                all(count is None or count >= 0 for count in counts),
+                "in-flight counts must not be negative",
+            ),
+            (
+                (spawn_waiters or 0) <= (spawn_shells or 0),
+                "--spawn-waiters must not exceed --spawn-shells",
             ),
         ),
     )

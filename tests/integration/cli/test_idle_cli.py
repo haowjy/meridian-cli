@@ -28,6 +28,7 @@ def _idle_env(tmp_path: Path, *, role: str | None = "primary") -> dict[str, str]
         MERIDIAN_NOTIFY_EMAIL_BACKEND="none",
         MERIDIAN_IDLE_PUSH_SECONDS="0",
         MERIDIAN_IDLE_LONG_TURN_SECONDS="0",
+        MERIDIAN_IDLE_COMPACT="true",
         MERIDIAN_IDLE_COMPACT_MINUTES="1",
         _MERIDIAN_HARNESS="claude",
     )
@@ -135,6 +136,7 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
             "warn_at": None,
             "compact_at": armed["compact_at"],
         },
+        "push_held": None,
         "done": {},
         "compact_window_until_ms": None,
         "expect_compaction_turn": False,
@@ -204,6 +206,23 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "stretch_closed": True,
         "was_open": True,
     }
+
+    held = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        *identity,
+        "--ttl",
+        "61",
+        "--agents-running",
+        "1",
+        "--other-tasks",
+        "1",
+    )
+    assert isinstance(held, dict)
+    assert set(held) == {"stretch", "anchor", "compact_at", "push_held"}
+    assert held["push_held"] == "1 agent(s) running"
 
 
 @pytest.mark.integration

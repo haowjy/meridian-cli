@@ -13,7 +13,7 @@ def test_two_compaction_claims_racing_have_one_winner(tmp_path: Path) -> None:
     service = IdleService(
         store=store,
         config=MeridianConfig.model_validate(
-            {"idle": {"compact_min_growth_tokens": 0}}
+            {"idle": {"compact": True, "compact_min_growth_tokens": 0}}
         ),
         env={"MERIDIAN_SESSION_ROLE": "primary"},
         now_ms=lambda: now[0],
