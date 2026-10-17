@@ -87,7 +87,8 @@ def test_guardian_grace_ignores_hostile_path(tmp_path: Path) -> None:
 
 def test_live_runner_with_only_stale_files_survives_reconciliation(tmp_path: Path) -> None:
     from meridian.lib.state import spawn_store
-    from meridian.lib.state.reaper import peek_reconciled_active_spawn, reconcile_active_spawn
+    from meridian.lib.state.reaper import reconcile_active_spawn
+    from meridian.lib.state.spawn_status import read_derived
 
     runtime = tmp_path / "runtime"
     spawn_id = spawn_store.start_spawn(
@@ -135,10 +136,10 @@ def test_live_runner_with_only_stale_files_survives_reconciliation(tmp_path: Pat
                 os.utime(path, (1, 1))
         record = spawn_store.get_spawn(runtime, spawn_id)
         assert record is not None
-        projected = peek_reconciled_active_spawn(runtime, record)
+        projected = read_derived(runtime, spawn_id)
         reconciled = reconcile_active_spawn(tmp_path, runtime, record)
 
-        assert projected.status == "running"
+        assert projected is not None and projected.status == "running"
         assert reconciled.status == "running"
         persisted = spawn_store.get_spawn(runtime, spawn_id)
         assert persisted is not None and persisted.status == "running"

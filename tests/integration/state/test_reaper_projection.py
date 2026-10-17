@@ -56,17 +56,12 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
         "meridian.lib.core.process_cleanup.terminate_scope_sync",
     )
 
-    from meridian.lib.state.reaper import reconcile_spawns
-    from meridian.lib.state.spawn_store import SpawnScan
+    from meridian.lib.state.spawn_status import overlay_derived
 
-    projected = reconcile_spawns(
-        tmp_path,
-        runtime_root,
-        SpawnScan(records=(record,), quarantines=()),
-    )
-    assert projected.records[0].status == "failed"
-    assert projected.records[0].terminal is not None
-    assert projected.records[0].terminal.error == "crashed"
+    (projected,) = overlay_derived(runtime_root, [record])
+    assert projected.status == "failed"
+    assert projected.terminal is not None
+    assert projected.terminal.error == "crashed"
     assert _get_spawn(runtime_root, spawn_id).status == "running"
     assert terminated_scopes == []
 

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
-from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TypedDict
 
 import structlog
 
@@ -38,10 +37,7 @@ from meridian.lib.state.spawn.repository import (
     iter_spawn_ids,
     read_state,
 )
-from meridian.lib.state.spawn_status import claim_dead_launch, overlay_derived, read_derived
-
-if TYPE_CHECKING:
-    from meridian.lib.state.spawn_store import SpawnScan
+from meridian.lib.state.spawn_status import claim_dead_launch
 
 logger = structlog.get_logger(__name__)
 
@@ -255,22 +251,3 @@ def reconcile_active_spawn(
             runtime_root,
             _finalize_derived(project_root, runtime_root, record, derived),
         )
-
-
-def peek_reconciled_active_spawn(
-    runtime_root: Path,
-    record: SpawnRecord,
-) -> SpawnRecord:
-    # Temporary compatibility wrapper; lane E migrates its remaining callers.
-    current = read_derived(runtime_root, record.id)
-    return record if current is None else current
-
-
-def reconcile_spawns(
-    project_root: Path,
-    runtime_root: Path,
-    scan: SpawnScan,
-) -> SpawnScan:
-    # Temporary compatibility wrapper; lane E migrates its remaining callers.
-    _ = project_root
-    return replace(scan, records=tuple(overlay_derived(runtime_root, scan.records)))
