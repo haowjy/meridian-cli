@@ -60,6 +60,7 @@ _EXCLUDED = frozenset(
         # lockless rows remain.
         "heartbeat",
         "finalize-evidence.json",
+        "launch-boundary.jsonl",
         "process_scopes.json",
         "reaper_cleanup_claim.json",
         "restored-from.json",

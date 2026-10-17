@@ -63,7 +63,14 @@ from meridian.lib.state.spawn.model import (
 )
 from meridian.lib.state.spawn.repository import Applied, Declined
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
-from meridian.lib.state.spawn_status import Claimed, Live, Lockless, claim_dead_launch
+from meridian.lib.state.spawn_status import (
+    Claimed,
+    Live,
+    Lockless,
+    Settled,
+    claim_dead_launch,
+    overlay_derived,
+)
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
@@ -716,8 +723,6 @@ class SpawnApplicationService:
                 if self.is_terminal(result.status):
                     reaped_ids.add(descendant.id)
         remaining = active_descendants(self._runtime_root, root_id)
-        from meridian.lib.state.spawn_status import overlay_derived
-
         remaining = [
             row
             for row in overlay_derived(self._runtime_root, remaining)
@@ -803,12 +808,13 @@ class SpawnApplicationService:
             self._runtime_root,
             str(spawn_id),
         )
+        if isinstance(claimed, Settled):
+            claimed.handle.close()
+            return claimed.stored
         if not isinstance(claimed, Claimed):
             return claimed
 
         with claimed.handle:
-            if not is_active_spawn_status(claimed.stored.status):
-                return claimed.stored
             if before_finalize is not None:
                 await asyncio.to_thread(before_finalize, claimed.stored)
 

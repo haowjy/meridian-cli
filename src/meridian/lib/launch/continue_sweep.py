@@ -8,6 +8,7 @@ from pathlib import Path
 
 import psutil
 
+from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import birth_time_unverified
@@ -30,7 +31,7 @@ def _acquire_source(runtime_root: Path, spawn_id: str) -> LaunchHandle:
         if row is None:
             raise NotFound(f"Spawn '{spawn_id}' not found")
         if not (spawn_dir / "launch.lock").exists():
-            if legacy_runner_alive(row):
+            if not is_terminal_spawn_status(row.status) and legacy_runner_alive(row):
                 raise ValueError(
                     f"{spawn_id} is running under an older meridian; wait, or --fork {spawn_id}"
                 )
