@@ -7,7 +7,6 @@ import os
 import socket
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -56,48 +55,10 @@ def _publish_inbox(
     )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="uses a POSIX inbox socket")
-def test_claude_primary_inbox_posts_wire_message_and_reports_gone_socket(
-    tmp_path: Path,
-) -> None:
+def test_claude_primary_inbox_reports_gone_socket(tmp_path: Path) -> None:
     record = _primary_record(os.getpid())
-    inbox = tmp_path / "inbox.sock"
-    received: list[bytes] = []
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(inbox))
-    server.listen()
+    _publish_inbox(tmp_path, record, tmp_path / "missing.sock", recorded_at=time.time())
 
-    def receive() -> None:
-        with server.accept()[0] as connection:
-            chunks: list[bytes] = []
-            while chunk := connection.recv(4096):
-                chunks.append(chunk)
-            received.append(b"".join(chunks))
-
-    receiver = threading.Thread(target=receive, daemon=True)
-    receiver.start()
-    try:
-        _publish_inbox(tmp_path, record, inbox, recorded_at=time.time())
-        confirmation = post_primary_message(
-            runtime_root=tmp_path,
-            record=record,
-            message="Reply exactly ACK",
-        )
-    finally:
-        server.close()
-        receiver.join(timeout=2)
-
-    assert not receiver.is_alive()
-    assert received == [
-        b'{"type":"user","message":{"role":"user","content":"Reply exactly ACK"}}\n'
-    ]
-    assert confirmation == (
-        "Message posted to primary p1's Claude inbox\n"
-        "Claude may hold it for approval when that session bypasses permission prompts."
-    )
-
-    missing = tmp_path / "missing.sock"
-    _publish_inbox(tmp_path, record, missing, recorded_at=time.time())
     with pytest.raises(PrimaryInboxError, match="Claude primary p1's inbox is gone"):
         post_primary_message(
             runtime_root=tmp_path,

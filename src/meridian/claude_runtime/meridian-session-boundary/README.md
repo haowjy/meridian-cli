@@ -6,7 +6,7 @@ does nothing outside a prepared Meridian launch.
 
 The hook records the launch nonce, parent PID, record epoch (`recorded_at`),
 SessionStart source, native session ID, exact transcript path, and (when Claude
-publishes it) an absolute `messaging_socket` path of at most 107 UTF-8 bytes.
+publishes it) an absolute `messaging_socket` path that fits a Unix socket address (107 bytes, 103 on macOS).
 Each record is one bounded JSONL line
 written with one `O_APPEND` write to a mode-0600 file. The stdlib-only writer
 never imports Meridian, starts a subprocess, creates a missing parent directory,

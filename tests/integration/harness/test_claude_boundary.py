@@ -88,22 +88,6 @@ def test_decoder_rejects_foreign_nonce_pid_and_torn_tail(tmp_path, monkeypatch):
         path, nonce="nonce", pid=os.getppid(), cursor=batch.next_cursor,
     ).observations] == ["next"]
 
-    without_socket = tmp_path / "without-socket.jsonl"
-    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "relative.sock")
-    _record(
-        monkeypatch,
-        without_socket,
-        hook_event_name="SessionStart",
-        session_id="entry",
-        transcript_path=str(tmp_path / "entry.jsonl"),
-        source="startup",
-    )
-    record_without_socket = json.loads(
-        next(line for line in without_socket.read_text().splitlines() if line)
-    )
-    assert "messaging_socket" not in record_without_socket
-    assert isinstance(record_without_socket["recorded_at"], float)
-
 
 def test_writer_records_messaging_socket_without_token(tmp_path, monkeypatch):
     path = tmp_path / "observations.jsonl"
@@ -128,6 +112,20 @@ def test_writer_records_messaging_socket_without_token(tmp_path, monkeypatch):
     assert "CLAUDE_CODE_MESSAGING_TOKEN" not in saved
     batch = read_observations(path, nonce="nonce", pid=os.getppid(), cursor=0)
     assert [item.key.session_id for item in batch.observations] == ["entry"]
+
+    relative = tmp_path / "relative-socket.jsonl"
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "relative.sock")
+    _record(
+        monkeypatch,
+        relative,
+        hook_event_name="SessionStart",
+        session_id="entry",
+        transcript_path=str(tmp_path / "entry.jsonl"),
+        source="startup",
+    )
+    unusable = json.loads(next(line for line in relative.read_text().splitlines() if line))
+    assert "messaging_socket" not in unusable
+    assert isinstance(unusable["recorded_at"], float)
 
 
 def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):

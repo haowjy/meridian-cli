@@ -14,6 +14,9 @@ _INPUT_LIMIT = 1024 * 1024
 _RECORD_LIMIT = 8 * 1024
 _JOURNAL_LIMIT = 1024 * 1024
 _SOURCES = frozenset({"startup", "resume", "fork", "clear", "compact"})
+# Mirrors meridian.lib.streaming.control_socket.UNIX_SOCKET_PATH_MAX_BYTES;
+# this hook is stdlib-only and cannot import it.
+_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
 
 
 def _messaging_socket() -> str | None:
@@ -24,7 +27,7 @@ def _messaging_socket() -> str | None:
         return None
     if (
         not value
-        or encoded_length > 107
+        or encoded_length > _SOCKET_PATH_MAX_BYTES
         or not Path(value).is_absolute()
         or any(ord(character) < 32 for character in value)
     ):

@@ -17,6 +17,7 @@ from meridian.lib.core.native_identity import (
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.streaming.control_socket import UNIX_SOCKET_PATH_MAX_BYTES
 
 _READ_LIMIT = 64 * 1024
 _RECORD_LIMIT = 8 * 1024
@@ -83,7 +84,7 @@ def _usable_messaging_socket(value: str | None) -> Path | None:
     if not value or not Path(value).is_absolute():
         return None
     try:
-        if len(value.encode()) > 107:
+        if len(value.encode()) > UNIX_SOCKET_PATH_MAX_BYTES:
             return None
     except UnicodeEncodeError:
         return None
