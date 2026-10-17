@@ -35,7 +35,6 @@ from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainPolicy,
 )
-from meridian.lib.streaming.heartbeat import heartbeat_loop
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
 from meridian.lib.streaming.spawn_drain_loop import (
     SpawnDrainLoop,
@@ -95,22 +94,17 @@ class SpawnManager:
         project_root: Path,
         *,
         debug: bool = False,
-        heartbeat_interval_secs: float = 30.0,
-        heartbeat_touch: Callable[[Path, SpawnId], None] | None = None,
         start_connection: StartConnectionPort | None = None,
         control_server_factory: ControlServerFactory | None = None,
     ):
         self._runtime_root = runtime_root
         self._project_root = project_root
         self._debug = debug
-        self._heartbeat_interval_secs = heartbeat_interval_secs
-        self._heartbeat_touch = heartbeat_touch
         self._start_connection = start_connection or dispatch_start
         self._control_server_factory = control_server_factory or _default_control_server_factory
         self._sessions: dict[SpawnId, SpawnSession] = {}
         self._completion_futures: dict[SpawnId, asyncio.Future[DrainOutcome]] = {}
         self._cleanup_tasks: dict[SpawnId, asyncio.Task[None]] = {}
-        self._heartbeat_tasks: dict[SpawnId, asyncio.Task[None]] = {}
         self._event_hooks: dict[SpawnId, list[EventHook]] = {}
 
     @property
@@ -124,53 +118,6 @@ class SpawnManager:
         """Return the repository root used for managed spawns."""
 
         return self._project_root
-
-    async def _start_heartbeat(self, spawn_id: SpawnId) -> None:
-        """Start heartbeat ownership for one spawn; idempotent."""
-
-        current_task = self._heartbeat_tasks.get(spawn_id)
-        if current_task is not None and not current_task.done():
-            return
-
-        task = asyncio.create_task(
-            heartbeat_loop(
-                self._runtime_root,
-                spawn_id,
-                interval=self._heartbeat_interval_secs,
-                touch=self._heartbeat_touch,
-            )
-        )
-        self._heartbeat_tasks[spawn_id] = task
-
-        def _drop_heartbeat(done_task: asyncio.Task[None]) -> None:
-            tracked = self._heartbeat_tasks.get(spawn_id)
-            if tracked is done_task:
-                self._heartbeat_tasks.pop(spawn_id, None)
-            with suppress(asyncio.CancelledError):
-                if done_task.exception() is not None:
-                    logger.warning(
-                        "Heartbeat loop exited unexpectedly for spawn %s: %s",
-                        spawn_id,
-                        done_task.exception(),
-                    )
-
-        task.add_done_callback(_drop_heartbeat)
-
-    async def start_heartbeat(self, spawn_id: SpawnId) -> None:
-        """Start heartbeat ownership for one spawn; public observer-safe seam."""
-
-        await self._start_heartbeat(spawn_id)
-
-    async def _stop_heartbeat(self, spawn_id: SpawnId) -> None:
-        """Stop heartbeat ownership for one spawn; idempotent."""
-
-        task = self._heartbeat_tasks.pop(spawn_id, None)
-        if task is None:
-            return
-        if not task.done():
-            task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
 
     async def start_spawn(
         self,
@@ -572,7 +519,6 @@ class SpawnManager:
 
         session = self._sessions.get(spawn_id)
         if session is None:
-            await self._stop_heartbeat(spawn_id)
             self._event_hooks.pop(spawn_id, None)
             return None
         if session.terminal_published:
@@ -647,7 +593,6 @@ class SpawnManager:
         with suppress(Exception):
             await session.control_server.stop()
 
-        await self._stop_heartbeat(spawn_id)
         self._fan_out_event(spawn_id, None)
         self._sessions.pop(spawn_id, None)
         self._completion_futures.pop(spawn_id, None)
@@ -818,8 +763,6 @@ class SpawnManager:
                 exit_code=exit_code,
                 error=error,
             )
-        for spawn_id in list(self._heartbeat_tasks):
-            await self._stop_heartbeat(spawn_id)
         if self._cleanup_tasks:
             await asyncio.gather(
                 *tuple(self._cleanup_tasks.values()),
@@ -896,7 +839,6 @@ class SpawnManager:
     ) -> None:
         """Clean up resources after a receiver drain loop exits naturally."""
 
-        await self._stop_heartbeat(spawn_id)
         if session.debug_tracer is not None:
             session.debug_tracer.close()
         if not session.drain_task.done():

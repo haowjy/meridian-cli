@@ -20,11 +20,6 @@ from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest, is_exact_continue_session
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
-from meridian.lib.state.launch_boundary import (
-    EVENT_PARENT_LAUNCH_ATTEMPT,
-    EVENT_PARENT_LAUNCH_FAILED,
-    EVENT_PARENT_LAUNCH_SPAWNED,
-)
 from meridian.lib.state.launch_lock import HANDOFF_ENV, LaunchSlot
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
 from meridian.lib.state.session_store import update_session_spawn_id
@@ -43,7 +38,6 @@ from .execute_bg import (
     _build_background_worker_command,
     _cleanup_background_runtime_artifacts,
     _persist_bg_worker_request,
-    _record_launch_boundary_observation,
 )
 from .execute_init import (
     _announce_reserved_spawn,
@@ -356,15 +350,6 @@ def execute_spawn_background(
             spawn_id=context.spawn.spawn_id,
             project_paths=project_paths,
         )
-        _record_launch_boundary_observation(
-            context.runtime_root,
-            context.spawn.spawn_id,
-            event=EVENT_PARENT_LAUNCH_ATTEMPT,
-            stage="parent_prepare",
-            parent_pid=os.getpid(),
-            command=launch_command,
-            cwd=parent_launch_cwd_str,
-        )
         try:
             persisted_request = request.model_copy(update={"work_id_hint": context.work_id})
             launch_runtime = build_spawn_mars_runtime(
@@ -384,17 +369,6 @@ def execute_spawn_background(
                 ),
             )
         except Exception as exc:
-            _record_launch_boundary_observation(
-                context.runtime_root,
-                context.spawn.spawn_id,
-                event=EVENT_PARENT_LAUNCH_FAILED,
-                stage="persist_worker_request",
-                parent_pid=os.getpid(),
-                command=launch_command,
-                cwd=parent_launch_cwd_str,
-                error=str(exc),
-                exception=exc,
-            )
             finalize_launch_failure_sync(
                 context.runtime_root,
                 project_paths.project_root,
@@ -475,17 +449,6 @@ def execute_spawn_background(
                 worker_pid=process.pid,
             )
         except OSError as exc:
-            _record_launch_boundary_observation(
-                context.runtime_root,
-                context.spawn.spawn_id,
-                event=EVENT_PARENT_LAUNCH_FAILED,
-                stage="popen",
-                parent_pid=os.getpid(),
-                command=launch_command,
-                cwd=parent_launch_cwd_str,
-                error=str(exc),
-                exception=exc,
-            )
             finalize_launch_failure_sync(
                 context.runtime_root,
                 project_paths.project_root,
@@ -520,16 +483,6 @@ def execute_spawn_background(
                 session_log_available=False,
             )
 
-        _record_launch_boundary_observation(
-            context.runtime_root,
-            context.spawn.spawn_id,
-            event=EVENT_PARENT_LAUNCH_SPAWNED,
-            stage="popen",
-            parent_pid=os.getpid(),
-            launcher_pid=process.pid,
-            command=launch_command,
-            cwd=parent_launch_cwd_str,
-        )
         build_spawn_lifecycle_service_from_roots(
             project_paths.project_root, context.runtime_root
         ).mark_running(context.spawn.spawn_id, launch_mode=BACKGROUND_LAUNCH_MODE)
@@ -742,7 +695,6 @@ def execute_spawn_blocking(
                 ),
             ),
         )
-
 
     # Backward-compat __main__ entry: forwards to the background worker main
     # (which now lives in execute_bg.py). Queued spawns launched with the old

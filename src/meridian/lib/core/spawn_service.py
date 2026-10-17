@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalOutcome,
     SpawnReservation,
     coerce_spawn_status,
+    is_active_spawn_status,
     is_terminal_spawn_status,
     resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
@@ -52,9 +54,23 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnKind, SpawnOrigin
+from meridian.lib.state.spawn.model import (
+    APP_LAUNCH_MODE,
+    LaunchMode,
+    SpawnKind,
+    SpawnOrigin,
+    SpawnRecord,
+)
 from meridian.lib.state.spawn.repository import Applied, Declined
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
+from meridian.lib.state.spawn_status import (
+    Claimed,
+    Live,
+    Lockless,
+    Settled,
+    claim_dead_launch,
+    overlay_derived,
+)
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
@@ -62,7 +78,6 @@ if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.state.primary_meta import PrimaryMetadata
-    from meridian.lib.state.spawn.model import SpawnRecord
     from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
@@ -708,6 +723,11 @@ class SpawnApplicationService:
                 if self.is_terminal(result.status):
                     reaped_ids.add(descendant.id)
         remaining = active_descendants(self._runtime_root, root_id)
+        remaining = [
+            row
+            for row in overlay_derived(self._runtime_root, remaining)
+            if is_active_spawn_status(row.status)
+        ]
         if remaining:
             logger.warning(
                 "Descendant reap did not converge; descendants still active.",
@@ -723,6 +743,14 @@ class SpawnApplicationService:
     ) -> SpawnRecord | None:
         if self.is_terminal(record.status):
             return record
+
+        finalized = await self._finalize_dead_launch_unlocked(spawn_id, origin="cancel")
+        if isinstance(finalized, SpawnRecord):
+            return finalized
+        if isinstance(finalized, Live):
+            latest = self.get_spawn(spawn_id)
+            return latest if latest is not None and self.is_terminal(latest.status) else None
+
         intent = record.cancel_intent
         runner_exit = record.runner_exit
         resolved = resolve_completion_cancel_precedence(
@@ -750,6 +778,66 @@ class SpawnApplicationService:
             error=resolved.error,
         )
         return outcome.snapshot
+
+    async def finalize_dead_launch(
+        self,
+        spawn_id: SpawnId,
+        *,
+        origin: SpawnOrigin,
+        before_finalize: Callable[[SpawnRecord], None] | None = None,
+    ) -> SpawnRecord | Live | Lockless:
+        """Claim and persist one dead lock-backed launch under both service locks."""
+
+        lock = await self._locks.acquire(str(spawn_id))
+        async with lock:
+            return await self._finalize_dead_launch_unlocked(
+                spawn_id,
+                origin=origin,
+                before_finalize=before_finalize,
+            )
+
+    async def _finalize_dead_launch_unlocked(
+        self,
+        spawn_id: SpawnId,
+        *,
+        origin: SpawnOrigin,
+        before_finalize: Callable[[SpawnRecord], None] | None = None,
+    ) -> SpawnRecord | Live | Lockless:
+        claimed = await asyncio.to_thread(
+            claim_dead_launch,
+            self._runtime_root,
+            str(spawn_id),
+        )
+        if isinstance(claimed, Settled):
+            claimed.handle.close()
+            return claimed.stored
+        if not isinstance(claimed, Claimed):
+            return claimed
+
+        with claimed.handle:
+            if before_finalize is not None:
+                await asyncio.to_thread(before_finalize, claimed.stored)
+
+            from meridian.lib.state.managed_primary import is_managed_primary_candidate
+
+            outcome = await self._complete_spawn_unlocked(
+                spawn_id,
+                claimed.status,
+                claimed.terminal.exit_code,
+                origin=origin,
+                error=claimed.terminal.error,
+                managed_scopes_pending=is_managed_primary_candidate(claimed.stored),
+            )
+            snapshot = outcome.snapshot or claimed.stored
+            if outcome.wrote:
+                logger.debug(
+                    "Finalized active spawn after acquiring its free launch lock.",
+                    spawn_id=str(spawn_id),
+                    status=claimed.status,
+                    error=claimed.terminal.error,
+                    origin=origin,
+                )
+            return snapshot
 
     def _cleanup_orphan_managed_primary(
         self,

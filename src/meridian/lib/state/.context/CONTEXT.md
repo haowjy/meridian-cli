@@ -25,7 +25,6 @@ bare path
   locks/spawns/<id>.lock            — stable per-spawn mutation lock
   locks/process-scopes/<id>.lock    — stable process-scope projection lock
   locks/reaper-cleanup/<id>.lock    — stable reaper cleanup lock
-  locks/launch-boundary/<id>.lock   — stable launch-boundary append lock
   locks/gc.lock                     — lock-GC pass serialization
   spawns/
     .staging/<unique>/              — complete unpublished spawn row
@@ -36,10 +35,9 @@ bare path
       attempt-N/                    — legacy retry evidence; new runs do not create it
       last-observed-event.json      — legacy checkpoint; no longer written, removed by session archive prune
       runner-lifecycle.jsonl        — runner lifecycle breadcrumbs
-      finalize-evidence.json        — orphan-time liveness snapshot
       process_scopes.json           — durable process identities
       reaper_cleanup_claim.json     — pending finalize-first cleanup targets
-      heartbeat · report.md · stderr.log · params.json · tokens.json
+      report.md · stderr.log · params.json · tokens.json
   artifacts/<spawn-id>/             — auxiliary artifact storage
 
 <context.work root>/<slug>/         ← context-resolved, not repo-local
@@ -217,34 +215,28 @@ origin.
 
 ### Reconciliation Behavior
 
-`reaper.py:reconcile_spawns()` is a read-only batch projection used by list, stats,
-reference-discovery, and dashboard callers. For each active row it calls
-`peek_reconciled_active_spawn()`, which may return an in-memory terminal view but
-does not persist state, terminate process scopes, or check process depth.
+List, stats, reference-discovery, and dashboard callers call
+`spawn_status.overlay_derived()` directly; single-row readers call `read_derived()`.
+Both may return an in-memory terminal view, but never persist state, terminate process
+scopes, or check process depth.
 
 `reconcile_active_spawn()` is the mutating repair operation used by doctor orphan-run
-repair. It fails closed unless `is_root_side_effect_process()` is true and applies the
-same reconciliation decision rules. Under the spawn lock it first snapshots exact
-cleanup targets into `reaper_cleanup_claim.json`, then persists the terminal result,
-then terminates the claimed scopes. This finalize-first order makes state convergence
-independent of slow cleanup; a crash leaves a durable claim for the next doctor pass.
+repair. It fails closed unless `is_root_side_effect_process()` is true and delegates to
+`SpawnApplicationService.finalize_dead_launch()`, the only dead-launch outcome writer.
+That method writes only after `claim_dead_launch()` returns `Claimed`, retaining the
+free runner-lifetime `launch.lock`, and persists the same status, exit code, and error
+that `read_derived()` projects: cancel intent yields `cancelled`, otherwise runner
+disappearance yields `failed`/`crashed`. Origin and timestamps may differ. It never
+finalizes a lockless legacy row.
+Before finalization it snapshots exact cleanup targets into
+`reaper_cleanup_claim.json`; after finalization it terminates the claimed scopes. This
+finalize-first order makes state convergence independent of slow cleanup; a crash
+leaves a durable claim for the next doctor pass.
 
-Shared liveness decisions skip recent activity and live runner PIDs; prefer durable
-report completion, cancel precedence, and recorded runner terminal tuples; and
-otherwise classify stale active rows as orphan failures after startup/finalization
-grace periods. PID checks use the recorded creation time to guard against reuse.
-
-`spawn_report_has_durable_completion(runtime_root, spawn_id)` reads `report.md` and returns True
-for non-empty report content that is not a terminal control frame (`cancelled`/`error`
-JSON) and is not a `# Spawn failed` generated markdown wrapper. Used by both reaper
-and cancel convergence paths.
-
-`reconciliation.py:completion_or_cancel_decision()` centralizes
-durable-completion-vs-cancel precedence for reconciliation callers: if a durable
-report exists, the spawn resolves `succeeded` regardless of cancel intent; otherwise
-pending cancel intent resolves `cancelled` with the intent's exit code and error.
-Call this helper rather than branching on completion and cancel independently; a
-late cancel must not downgrade a completed spawn.
+Cancel convergence uses the same launch-lock claim for lock-backed rows. A report or
+runner-exit breadcrumb is not an outcome: when the runner is gone, cancel intent still
+yields `cancelled`. Lockless legacy rows retain the old report/cancel precedence until
+their explicit-command compatibility path is removed.
 
 **Managed-primary orphan cleanup:**
 

@@ -9,6 +9,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -27,6 +28,8 @@ from meridian.lib.state.project_identity import (
     ADHOC_TOUCH_INTERVAL_SECONDS,
     AdHocOrigin,
 )
+from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import is_live, overlay_derived
 from meridian.lib.state.user_paths import get_context_home
 
 _SECONDS_PER_DAY = 24 * 60 * 60
@@ -164,7 +167,10 @@ def _is_quiescent(runtime_root: Path) -> bool:
     spawn_scan = spawn_store.list_spawns(runtime_root)
     if spawn_scan.quarantines:
         return False
-    if any(is_active_spawn_status(spawn.status) for spawn in spawn_scan.records):
+    if any(
+        is_active_spawn_status(spawn.status)
+        for spawn in overlay_derived(runtime_root, spawn_scan.records)
+    ):
         return False
     return not (
         session_store.list_active_sessions(runtime_root)
@@ -413,6 +419,12 @@ def _prune_dir(path: Path) -> bool:
     return True
 
 
+def _can_delete_derived(runtime_root: Path, record: SpawnRecord | None) -> bool:
+    if record is None:
+        return True
+    return not is_live(runtime_root, record.id)
+
+
 def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
     """Delete stale project-state directories. Returns the number removed."""
 
@@ -504,11 +516,11 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
             legacy_artifact_dir = runtime_root / "artifacts" / artifact.spawn_id
             if legacy_artifact_dir.exists() and not _prune_dir(legacy_artifact_dir):
                 continue
+
             if spawn_store.delete_published_spawn(
                 runtime_root,
                 artifact.spawn_id,
-                can_delete=lambda record: record is None
-                or not is_active_spawn_status(record.status),
+                can_delete=partial(_can_delete_derived, runtime_root),
             ):
                 removed += 1
     lock_gc = LockGcStats()

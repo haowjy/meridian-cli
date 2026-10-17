@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import overlay_derived
 
 from .query import (
     read_report_text,
@@ -91,18 +92,15 @@ type ContextRef = SpawnContextRef | SessionContextRef
 
 
 def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> SpawnRecord | None:
-    from meridian.lib.state.reaper import reconcile_spawns
-
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
         return None
     owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, chat_id) or chat_id
-    spawns = reconcile_spawns(
-        project_root,
+    spawns = overlay_derived(
         runtime_root,
-        session_identity.list_spawns_for_owner_chat(runtime_root, owner_chat_id),
+        session_identity.list_spawns_for_owner_chat(runtime_root, owner_chat_id).records,
     )
-    primary_spawns = [row for row in spawns.records if row.kind == "primary"]
+    primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:
         return None
 

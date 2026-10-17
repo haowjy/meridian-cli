@@ -18,8 +18,8 @@ from meridian.lib.state.history_index import (
     HistoryIndex,
     HistoryIndexBusy,
 )
-from meridian.lib.state.reaper import peek_reconciled_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import overlay_derived
 from meridian.lib.streaming.completion_contracts import (
     DiagnosticBlocker,
     EvidenceFailure,
@@ -68,9 +68,7 @@ class ReconciledDescendantEvidence:
                         identity=row.id,
                     )
                     for row in records
-                    if is_active_spawn_status(
-                        peek_reconciled_active_spawn(self._runtime_root, row).status
-                    )
+                    if is_active_spawn_status(row.status)
                 )
             else:
                 records = ()
@@ -116,15 +114,15 @@ class ReconciledDescendantEvidence:
             str(self._root_spawn_id),
             deadline=time.monotonic() + QUERY_TIMEOUT,
         )
-        descendants: list[SpawnRecord] = []
+        stored_descendants: list[SpawnRecord] = []
         for spawn_id, _parent_id, archived in selected:
             if archived:
                 continue
             row = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if row is None:
                 raise RuntimeError(f"indexed descendant state is missing: {spawn_id}")
-            descendants.append(row)
-        return tuple(descendants)
+            stored_descendants.append(row)
+        return tuple(overlay_derived(self._runtime_root, stored_descendants))
 
 
 @dataclass(frozen=True)

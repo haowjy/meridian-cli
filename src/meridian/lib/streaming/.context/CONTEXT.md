@@ -11,8 +11,7 @@ Pi/resident modules rather than entering the generic loop or `SpawnManager`.
 ```
 SpawnManager
   ├─ _sessions: dict[SpawnId, SpawnSession]   ← live resources per spawn
-  ├─ _event_hooks: dict[SpawnId, list[EventHook]]
-  └─ _heartbeat_tasks: dict[SpawnId, Task]
+  └─ _event_hooks: dict[SpawnId, list[EventHook]]
 
 DrainPlan
   ├─ coordinator: DrainCoordinator | None
@@ -204,7 +203,6 @@ start_spawn()
   → dispatch_start()           — creates HarnessConnection, calls connection.start()
   → SpawnDrainLoop.run()       — asyncio.Task, until terminal or error
   → ControlSocketServer.start() — binds per-spawn control endpoint
-  → _start_heartbeat()         — asyncio.Task, touches sentinel every 30s
 ```
 
 Teardown paths:
@@ -238,18 +236,6 @@ POSIX-only; the server's legacy native-Windows branch has no supported client.
 All control actions (inject, interrupt, permission reply, user input reply) are
 serialized through `ControlActionCoordinator`. Concurrent actions queue behind it —
 do not call `connection.send_user_message()` directly.
-
-## Heartbeat/Reaper Contract
-
-`heartbeat_loop` touches `spawns/<id>/heartbeat` every 30 seconds. The reaper
-(`lib/state/reaper.py`) identifies orphaned spawns by checking heartbeat staleness
-during doctor runs. The loop stops without recreating its parent when the published
-spawn directory is deleted. Unexpected cessation while a spawn should remain active
-means the spawn is orphaned or the manager died; normal completion, cancellation,
-and manager shutdown also stop the task intentionally.
-
-The `touch` callable is injectable for tests. The `heartbeat_interval_secs` parameter
-is configurable on `SpawnManager`.
 
 ## DrainPolicy
 

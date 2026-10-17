@@ -35,7 +35,7 @@ from tests.integration.launch.streaming_runner_support import (
     _ReportThenHangConnection,
     streaming_runner_module,
 )
-from tests.support.fakes import FakeClock, FakeHeartbeat
+from tests.support.fakes import FakeClock
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
@@ -316,9 +316,6 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
         def raw_terminal_frames_are_authoritative(self, _spawn_id: SpawnId) -> bool:
             return False
 
-        async def start_heartbeat(self, _spawn_id: SpawnId) -> None:
-            return None
-
         def subscribe(
             self,
             _spawn_id: SpawnId,
@@ -397,8 +394,6 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
 
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
@@ -437,8 +432,6 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
             artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
         ),
         timeout=15.0,
     )
@@ -449,7 +442,6 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     assert row.status == "succeeded"
     assert row.terminal.exit_code == 0
     assert row.terminal.error is None
-    assert fake_heartbeat.touches
     report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text(encoding="utf-8")
     assert "Watchdog fallback completed." in report
 
@@ -463,8 +455,6 @@ async def test_execute_with_streaming_finalizes_when_duration_clock_read_fails(
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     failing_clock = _EndMonotonicFailsClock(start=2_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(failing_clock)
 
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
@@ -503,8 +493,6 @@ async def test_execute_with_streaming_finalizes_when_duration_clock_read_fails(
             artifacts=artifacts,
             registry=registry,
             clock=failing_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
         ),
         timeout=15.0,
     )
@@ -516,4 +504,3 @@ async def test_execute_with_streaming_finalizes_when_duration_clock_read_fails(
     assert row.terminal.exit_code == 0
     assert row.terminal.error is None
     assert row.terminal.duration_secs == 0.0
-    assert fake_heartbeat.touches

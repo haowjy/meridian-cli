@@ -10,6 +10,7 @@ import json
 import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Literal, Self, cast
 from uuid import uuid4
@@ -25,6 +26,7 @@ from meridian.lib.state.spawn.legacy import (
     upgrade_legacy_spawn_state,
 )
 from meridian.lib.state.spawn.model import SpawnRecord, SpawnStateFields
+from meridian.lib.utils.json_shapes import json_object
 
 
 class StoredSpawnState(SpawnStateFields):
@@ -82,6 +84,33 @@ class SpawnStateQuarantined(ValueError):
         self.report = report
         hint = "; run `meridian doctor` to migrate it" if report.dogfood_row else ""
         super().__init__(f"Spawn state quarantined: {report.state_path}{hint}")
+
+
+class QuarantinedChatIdStatus(Enum):
+    """Non-value outcomes from a quarantined row's lenient chat-id read."""
+
+    UNREADABLE = auto()
+    NO_CHAT_ID = auto()
+
+
+type QuarantinedChatIdRead = str | QuarantinedChatIdStatus
+
+
+def read_quarantined_chat_id(report: SpawnStateQuarantineReport) -> QuarantinedChatIdRead:
+    """Leniently read a quarantined row's top-level current chat identity."""
+
+    try:
+        payload = json_object(json.loads(report.state_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return QuarantinedChatIdStatus.UNREADABLE
+    if payload is None:
+        return QuarantinedChatIdStatus.UNREADABLE
+    current_chat_id = payload.get("current_chat_id")
+    return (
+        current_chat_id
+        if isinstance(current_chat_id, str)
+        else QuarantinedChatIdStatus.NO_CHAT_ID
+    )
 
 
 @dataclass(frozen=True)
@@ -336,12 +365,15 @@ __all__ = [
     "Declined",
     "LockedMutationResult",
     "Missing",
+    "QuarantinedChatIdRead",
+    "QuarantinedChatIdStatus",
     "SpawnStateQuarantineReport",
     "SpawnStateQuarantined",
     "StoredSpawnState",
     "is_safe_spawn_dir_name",
     "iter_spawn_ids",
     "read_prompt",
+    "read_quarantined_chat_id",
     "read_state",
     "record_to_stored_state",
     "scan_spawn_ids",
