@@ -13,7 +13,7 @@ from meridian.lib.platform.locking import (
 )
 from meridian.lib.state.spawn.repository import is_safe_spawn_dir_name
 
-_LOCK_CLASSES = ("spawns", "process-scopes", "reaper-cleanup", "launch-boundary")
+_LOCK_CLASSES = ("spawns", "process-scopes", "reaper-cleanup")
 
 
 @dataclass(frozen=True)

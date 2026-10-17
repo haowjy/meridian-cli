@@ -136,7 +136,7 @@ def test_doctor_kill_orphans_repairs_orphan_runs_when_depth_is_clearly_root(
     assert result.killed_orphan_spawns == (spawn_id,)
 
 
-def test_doctor_does_not_reconcile_orphans_without_kill_flag(
+def test_doctor_does_not_report_dead_launch_live_without_kill_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -154,8 +154,7 @@ def test_doctor_does_not_reconcile_orphans_without_kill_flag(
 
     assert "orphan_runs" not in result.repaired
     assert result.killed_orphan_spawns == ()
-    warning = _warning_by_code(result, "live_active_spawns_remain")
-    assert warning.payload == {"spawn_ids": [spawn_id]}
+    assert all(warning.code != "live_active_spawns_remain" for warning in result.warnings)
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     assert spawn_store.get_spawn(runtime_root, spawn_id).status == "running"
 

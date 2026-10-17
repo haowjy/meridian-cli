@@ -110,13 +110,17 @@ def read_spawn_row(
     return read_derived(resolved_runtime_root, spawn_id)
 
 
-def read_spawn_row_read_only(
+def read_stored_spawn_row(
     project_root: Path,
     spawn_id: str,
     *,
     runtime_root: Path | None = None,
 ) -> SpawnRecord | None:
-    """Return one spawn row without lifecycle reconciliation side effects."""
+    """Return persisted status without deriving liveness.
+
+    Transcript capture needs a stored terminal outcome; a derived crash cannot be
+    archived before doctor or cancel persists it.
+    """
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:

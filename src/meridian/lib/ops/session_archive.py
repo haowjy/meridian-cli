@@ -49,7 +49,7 @@ from meridian.lib.state.session_identity import (
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, write_state_locked
 from meridian.lib.state.spawn_aggregate import cleanup_retired_spawn, retire_published_spawn
-from meridian.lib.state.spawn_status import overlay_derived, read_derived
+from meridian.lib.state.spawn_status import overlay_derived
 
 
 class SessionArchiveInput(BaseModel):
@@ -170,7 +170,9 @@ def _protected(
             "Cannot establish retention safety while spawn records are quarantined: "
             + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
         )
-    records = {record.id: record for record in overlay_derived(root, scan.records)}
+    # Destructive selection uses stored status; liveness questions use derived status.
+    # A stored-active row remains protected until doctor or cancel persists an outcome.
+    records = {record.id: record for record in scan.records}
     sessions = session_store.list_all_session_records(root)
     active_chats = {
         record.chat_id
@@ -290,7 +292,7 @@ def archive_history(
     with lock_file(root / "history-archives/archive.lock"):
         recovery_errors = recover_archives(root, destination) if apply else ()
         # No omission-sensitive policy may start from an incomplete candidate set.
-        candidates = overlay_derived(root, HistoryIndex(root).spawns(oldest_first=True))
+        candidates = HistoryIndex(root).spawns(oldest_first=True)
         with lock_file(changes.mutation_lock, mode="shared"):
             _, protected, edges = _protected(root)
             sessions = session_records_for_spawns(root, candidates)
@@ -448,9 +450,7 @@ def archive_history(
             return SessionArchiveOutput(
                 selected=tuple(str(row.history_id) for row in selected),
                 protected=tuple(sorted(protected)),
-                deferred=tuple(
-                    f"{key}: {message}" for key, message in capture_deferred.items()
-                ),
+                deferred=tuple(f"{key}: {message}" for key, message in capture_deferred.items()),
                 errors=tuple(errors),
                 preparation_required=tuple(preparation_required),
                 limited=limited,
@@ -503,7 +503,9 @@ def archive_history(
                         root,
                         current.id,
                         can_delete=lambda row, captured=captured: (
-                            row is not None and row.history_id == captured.history_id
+                            row is not None
+                            and row.status in TERMINAL_SPAWN_STATUSES
+                            and row.history_id == captured.history_id
                         ),
                     )
             # No root, spawn or process-scope locks span recursive cleanup.
@@ -667,13 +669,14 @@ def _native_session_owners(
     chats = set(session_store.native_chats(root, session_id))
     # A spawn/primary sidecar can name S before its chat binds S. Its exact
     # generation may still hold a live lease; native chat claims alone miss it.
+    # Ownership is a liveness question, but the returned capture candidates must
+    # already have a persisted outcome.
+    stored_status = {row.id: row.status for row in scan.records}
     rows = overlay_derived(root, scan.records)
     candidates = {row.id: native_identity_candidates(root, row, None) for row in rows}
     linked = session_records_for_spawns(
-        root, (
-            row for row in rows
-            if row.chat_id in chats or session_id in candidates[row.id][1]
-        ),
+        root,
+        (row for row in rows if row.chat_id in chats or session_id in candidates[row.id][1]),
     )
     live_owner: str | None = None
     terminal_records: list[str] = []
@@ -693,7 +696,8 @@ def _native_session_owners(
         if row.status not in TERMINAL_SPAWN_STATUSES:
             live_owner = live_owner or spawn_owner(row.id)
             continue
-        terminal_records.append(row.id)
+        if stored_status[row.id] in TERMINAL_SPAWN_STATUSES:
+            terminal_records.append(row.id)
         if (
             session is not None
             and session_store.is_session_lease_owner_alive(
@@ -716,9 +720,7 @@ def _native_session_owners(
             root, session.chat_id, session_instance_id=session.session_instance_id
         ):
             generation = session.session_instance_id or "legacy"
-            live_owner = live_owner or (
-                f"chat {session.chat_id}, generation {generation}"
-            )
+            live_owner = live_owner or (f"chat {session.chat_id}, generation {generation}")
             continue
         observer = live_observer_for_chat(root, session.chat_id, records=rows)
         if observer is not None:
@@ -729,9 +731,7 @@ def _native_session_owners(
     )
 
 
-def _require_inactive_native_session(
-    root: Path, harness: str | None, session_id: str
-) -> None:
+def _require_inactive_native_session(root: Path, harness: str | None, session_id: str) -> None:
     owners = _native_session_owners(root, harness, session_id)
     if owners.live_owner is not None:
         raise NativeCaptureDeferred(owners.live_owner)
@@ -760,7 +760,7 @@ def materialize_native_history(
     )
 
     def capture() -> tuple[str, str]:
-        state = read_derived(root, spawn_id)
+        state = read_state(root / "spawns", spawn_id, include_prompt=False)
         if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
             raise ValueError("Native transcript capture requires an identified terminal record")
         snapshot = root / "spawns" / spawn_id / NATIVE_SNAPSHOT_FILENAME
@@ -814,9 +814,7 @@ def materialize_native_history(
         with published_artifact_lock(root, SpawnId(spawn_id)):
             return capture()
     except PublishedArtifactUnavailable:
-        raise ValueError(
-            f"Native capture target is missing or historical: {spawn_id}"
-        ) from None
+        raise ValueError(f"Native capture target is missing or historical: {spawn_id}") from None
 
 
 def session_stop_maintenance(project_root: Path, primary_spawn_id: str) -> str | None:

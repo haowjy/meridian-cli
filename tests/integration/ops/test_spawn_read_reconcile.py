@@ -17,7 +17,12 @@ import psutil
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.spawn.models import SpawnListInput, SpawnShowInput, SpawnWaitInput
+from meridian.lib.ops.spawn.models import (
+    SpawnListInput,
+    SpawnShowInput,
+    SpawnStatsInput,
+    SpawnWaitInput,
+)
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.repository import Applied
@@ -140,6 +145,8 @@ def test_dead_runner_with_reused_pid_is_not_running(tmp_path: Path) -> None:
             SpawnListInput(statuses=(), project_root=project_root.as_posix())
         )
         assert [(row.spawn_id, row.status) for row in listed.spawns] == [("p1", "failed")]
+        stats = spawn_api.spawn_stats_sync(SpawnStatsInput(project_root=project_root.as_posix()))
+        assert stats.failed == 1
         waited = spawn_api.spawn_wait_sync(
             SpawnWaitInput(spawn_ids=("p1",), project_root=project_root.as_posix())
         )
@@ -159,8 +166,7 @@ def test_sigkilled_runner_shows_failed_immediately(
     runtime_root = tmp_path / "runtime"
     fake_claude = tmp_path / "claude"
     fake_claude.write_text(
-        f"#!/bin/sh\nexec {shlex.quote(sys.executable)} "
-        f"{shlex.quote(str(_DRIVER))} harness \"$@\"\n"
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(_DRIVER))} harness "$@"\n'
     )
     fake_claude.chmod(0o755)
     package_root = Path(__file__).parents[3]
@@ -210,9 +216,19 @@ def test_sigkilled_runner_shows_failed_immediately(
         assert output.status == "failed"
         assert output.failure_reason == "crashed"
     finally:
+        (tmp_path / "p1.exit").touch()
+        cleanup_pids: set[int] = set()
+        for pid_path in (tmp_path / "p1.pid", tmp_path / "p1.worker"):
+            with suppress(OSError, ValueError):
+                cleanup_pids.add(int(pid_path.read_text()))
+        state_path = runtime_root / "spawns" / "p1" / "state.json"
+        with suppress(OSError, TypeError, ValueError, KeyError):
+            cleanup_pids.add(int(json.loads(state_path.read_text())["runner_pid"]))
         if runner_pid is not None:
+            cleanup_pids.add(runner_pid)
+        for pid in cleanup_pids:
             with suppress(ProcessLookupError):
-                os.kill(runner_pid, signal.SIGKILL)
+                os.kill(pid, signal.SIGKILL)
         if harness_pgid is not None:
             _kill_process_group(harness_pgid)
         if parent.poll() is None:
