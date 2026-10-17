@@ -31,7 +31,6 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
-from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
@@ -77,7 +76,6 @@ from .composition import (
     ComposedLaunchContent,
     CompositionBlock,
     ProjectedContent,
-    PromptDocument,
     build_inline_file_contributions,
     build_reference_routing,
     composed_content_for_bind_refresh,
@@ -111,7 +109,6 @@ from .prompt import (
 )
 from .prompt_context import (
     build_context_prompt,
-    compose_skill_injections,
     compose_skill_prompt_documents,
 )
 from .reference import (
@@ -914,7 +911,6 @@ def _reproject_context_env_at_bind(
     harness: SubprocessHarness,
     project_root: Path,
     bound_work_dir: Path | None,
-    loaded_skills: tuple[SkillContent, ...] = (),
     primary_prompt_is_synthetic: bool = False,
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
     """Re-render the typed context-env block and re-project prompt channels at bind."""
@@ -939,12 +935,6 @@ def _reproject_context_env_at_bind(
         adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
         projected_content=updated_projected,
     )
-    if harness.capabilities.supports_native_skills and loaded_skills:
-        skill_content = compose_skill_injections(loaded_skills)
-        if skill_content:
-            base = updated_payload.appended_system_prompt or ""
-            merged = f"{base}\n\n{skill_content}" if base else skill_content
-            updated_payload = replace(updated_payload, appended_system_prompt=merged)
     if primary_prompt_is_synthetic:
         updated_payload = replace(updated_payload, user_turn_content=None)
 
@@ -1144,10 +1134,7 @@ def _build_spawn_composed_launch_content(
         resolved_template_variables,
     )
 
-    if harness.capabilities.supports_native_skills:
-        supplemental_documents: tuple[PromptDocument, ...] = ()
-    else:
-        supplemental_documents = compose_skill_prompt_documents(resolved_skills.loaded_skills)
+    supplemental_documents = compose_skill_prompt_documents(resolved_skills.loaded_skills)
 
     agent_profile_body = ""
     if (
@@ -1247,13 +1234,10 @@ def _resolve_primary_projection(
         frag.strip() for frag in passthrough_prompt_fragments if frag.strip()
     )
 
-    if harness.capabilities.supports_native_skills:
-        supplemental_documents = tuple(request.supplemental_prompt_documents)
-    else:
-        supplemental_documents = (
-            *compose_skill_prompt_documents(resolved_skills.loaded_skills),
-            *request.supplemental_prompt_documents,
-        )
+    supplemental_documents = (
+        *compose_skill_prompt_documents(resolved_skills.loaded_skills),
+        *request.supplemental_prompt_documents,
+    )
     agent_profile_body = ""
     if (
         profile is not None
@@ -1342,37 +1326,6 @@ def _prepare_spawn_surface(
                 prompt_payload=content.prompt_payload,
                 projected_content=content.projected_content,
                 composed_content=stored_composed,
-            )
-
-    prompt_policy = policy.adapter.run_prompt_policy()
-    if prompt_policy.skill_injection_mode == "append-system-prompt":
-        existing_appended = content.prompt_payload.appended_system_prompt
-        # When skills were suppressed from supplemental_documents (native-skill
-        # harness), compose_skill_injections() delivers them via the append
-        # channel instead.  When no projection produced system content, this is
-        # the sole source of appended content.
-        needs_skill_injection = (
-            existing_appended is None or policy.adapter.capabilities.supports_native_skills
-        )
-        if needs_skill_injection:
-            skill_content = compose_skill_injections(policy.resolved_skills.loaded_skills)
-            if existing_appended is None:
-                merged_appended = skill_content or None
-            elif skill_content:
-                merged_appended = f"{existing_appended}\n\n{skill_content}"
-            else:
-                merged_appended = existing_appended
-            content = PreparedLaunchContent(
-                final_prompt=content.final_prompt,
-                resolved_context_from=content.resolved_context_from,
-                loaded_references=content.loaded_references,
-                prompt_payload=PreparedPromptPayload(
-                    adhoc_agent_payload=content.prompt_payload.adhoc_agent_payload,
-                    appended_system_prompt=merged_appended,
-                    user_turn_content=content.prompt_payload.user_turn_content,
-                ),
-                projected_content=content.projected_content,
-                composed_content=content.composed_content,
             )
 
     return (
@@ -1915,8 +1868,6 @@ def bind_launch_context(
         child_spawn_id=bindings.spawn_id,
         runtime_root=runtime_root,
     )
-    policy_snapshot = resolved_request.launch_policy_snapshot
-    loaded_skills = policy_snapshot.loaded_skills if policy_snapshot is not None else ()
     refreshed_prompt, prompt_payload, projected_content = _reproject_context_env_at_bind(
         composed_prompt=resolved_request.prompt,
         prompt_payload=prompt_payload,
@@ -1925,7 +1876,6 @@ def bind_launch_context(
         harness=harness,
         project_root=project_paths.project_root,
         bound_work_dir=bound_active_work_dir,
-        loaded_skills=loaded_skills,
         primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
     )
     conversation_intent = resolved_request.session.conversation_intent

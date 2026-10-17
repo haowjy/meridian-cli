@@ -22,7 +22,6 @@ from meridian.lib.harness.adapter import (
     HarnessContract,
     McpConfig,
     PermissionResolver,
-    RunPromptPolicy,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -351,7 +350,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             # only to fail at the connection. The policy layer downgrades an
             # unsupported fork to in-place resume with a warning.
             supports_session_fork=False,
-            supports_native_skills=True,
             supports_primary_launch=True,
             # V2 applies an explicit model on resume via ``POST /api/session/{id}/model``.
             # V1 cannot switch the model on resume: the streaming transport fails
@@ -362,9 +360,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_native_file_injection=False,
             terminal_surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
         )
-
-    def run_prompt_policy(self) -> RunPromptPolicy:
-        return RunPromptPolicy()
 
     def pin_native_store(self, child_env: dict[str, str], store: str) -> None:
         child_env["OPENCODE_DB"] = store
