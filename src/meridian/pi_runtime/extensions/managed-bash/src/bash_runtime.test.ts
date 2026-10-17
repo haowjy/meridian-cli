@@ -50,13 +50,18 @@ describe("BashRuntime task pings", () => {
     try {
       const started = await runtime.execute({ command: "sleep 5", background: true }, undefined) as { bash_id: string };
       await waitFor(() => failedAttempts === 1);
+      const recordsPath = path.join(runtimeRoot, "pi-bash", "p-test-ping-failure", "bash-records.json");
+      await waitFor(async () => {
+        const file = parseBashRecordsFile(JSON.parse(await readFile(recordsPath, "utf8")));
+        return file?.records[started.bash_id]?.ping_sent_at_ms === null;
+      });
       await new Promise((resolve) => setTimeout(resolve, 60));
       const row = runtime.list(true)[0]!;
       expect(row.status).toBe("running");
       expect(row.execution_error).toBeUndefined();
       expect(() => process.kill(-row.pid!, 0)).not.toThrow();
       expect(failedAttempts).toBe(1);
-      const file = parseBashRecordsFile(JSON.parse(await readFile(path.join(runtimeRoot, "pi-bash", "p-test-ping-failure", "bash-records.json"), "utf8")));
+      const file = parseBashRecordsFile(JSON.parse(await readFile(recordsPath, "utf8")));
       expect(file?.records[started.bash_id]?.ping_sent_at_ms).toBeNull();
       expect(file?.runtime_error).toBeUndefined();
       const pings: string[] = [];
