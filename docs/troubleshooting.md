@@ -157,7 +157,7 @@ If a spawn stays in `finalizing` for more than a minute or two, the runner may h
 
 ## Spawn shows as orphaned
 
-Meridian classifies a spawn as orphaned when its runner process is gone and there has been no recent activity on the spawn's artifacts (heartbeat, output, stderr, or report) for 120 seconds. There are two distinct orphan errors:
+Meridian classifies an active spawn as crashed as soon as its runner-lifetime launch lock is free. Status reads project that failure immediately, and `meridian doctor` can persist the terminal result and clean up recorded process scopes.
 
 - **`orphan_run`** — the spawn record was `status=running` (or `queued`) when reaped. The runner died before the finalization boundary. The spawn likely produced partial or no output.
 - **`orphan_finalization`** — the spawn record was `status=finalizing` when reaped, meaning the runner had left active execution and was in the drain/report/final-status window. If a durable report exists, reconciliation prefers it; otherwise the spawn is marked failed with this error.
@@ -178,10 +178,6 @@ meridian spawn show ID --verbose # include internal diagnostics (error field, li
 ```
 
 If `report.md` exists and looks complete, the work product is likely usable even though the spawn is marked `failed`. Relaunch only if the work wasn't done.
-
-### A spawn briefly showed orphaned but now shows `succeeded`
-
-This is expected, not a bug. Meridian's read-path reconciler makes a best-effort assessment based on heartbeat and artifact recency. If the runner was slow (not dead) and later completed normally, its terminal status overwrites the reconciler's orphan stamp — the process that actually ran the work has final say. You can confirm by checking `meridian spawn show ID`.
 
 ## Spawn exited with code 143 or 137
 

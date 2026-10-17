@@ -27,7 +27,7 @@ from tests.integration.launch.streaming_runner_support import (
     _OpenCodeTerminalWithScopeConnection,
     _pi_extension_projection_fixture,
 )
-from tests.support.fakes import FakeClock, FakeHeartbeat
+from tests.support.fakes import FakeClock
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
@@ -51,8 +51,6 @@ async def test_execute_with_streaming_routes_backend_cleanup_through_stop_spawn(
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
     cleanup_calls: list[dict[str, object]] = []
 
     def _fake_terminate_tree_sync(
@@ -116,8 +114,6 @@ async def test_execute_with_streaming_routes_backend_cleanup_through_stop_spawn(
             artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
         ),
         timeout=15.0,
     )

@@ -39,7 +39,7 @@ bare path
     finalize-evidence.json          — orphan-time liveness snapshot before reaper cleanup
     process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
-    heartbeat · report.md · stderr.log · params.json · tokens.json
+    report.md · stderr.log · params.json · tokens.json
   artifacts/<spawn_id>/             — auxiliary artifact store, not a transcript source
 
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
@@ -102,7 +102,6 @@ not recreate its owner. Parent-creating mutations take the spawn-state lock and 
 a missing published row through `published_artifact_lock()`; callback-only writers use
 `mutate_published_spawn_artifact()` on the same seam. Signals, scope, history,
 launch/reaper diagnostics, failure sentinels, and harness journals all use it.
-Heartbeats never create a missing parent directory and stop after deletion.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
 the repository never imports the projection. Cross-leaf operations belong in
@@ -212,7 +211,7 @@ same native session is active, and crashed `--continue` generations share one.
 Both paths share decision rules in `reaper.py` and completion/cancel precedence in
 `reconciliation.py`. Primary scope termination additionally requires positive runner-death
 evidence against the recorded birth, with the same one-second clock tolerance as
-the liveness check. Unknown identity, access errors and stale heartbeats never
+the liveness check. Unknown identity and access errors never
 authorize primary scope termination, including replayed terminal claims; they do
 not block status finalization.
 Read-only projected status is not authorization to terminate a scope.

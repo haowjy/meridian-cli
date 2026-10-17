@@ -1,4 +1,4 @@
-# streaming — Terminal Arbitration and Heartbeat
+# streaming — Terminal Arbitration
 
 ## Terminal Arbitration
 
@@ -28,14 +28,6 @@ When it finishes alongside normal completion, arbitration falls through to the c
 `timeout_task`, `budget_task`, `watchdog_task`, and `inactivity_task` are optional
 (pass `None` to exclude from the race). Their absence does not affect the priority
 ordering of the remaining triggers.
-
-## FileHeartbeat
-
-`FileHeartbeat.touch()` updates a file's mtime to the current time. The reaper reads this
-file to detect live streaming spawns. Touch it periodically from the streaming loop — the
-reaper's liveness window is configured separately in the state system. It never creates
-missing parent directories; once the published spawn directory is deleted, later touches
-are no-ops.
 
 ## Lateral Links
 
