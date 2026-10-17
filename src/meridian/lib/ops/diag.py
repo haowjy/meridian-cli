@@ -522,11 +522,27 @@ def _doctor_local(
             )
         )
 
-    running = [
+    derived = overlay_derived(runtime_root, spawns)
+    running = [row.id for row in derived if is_active_spawn_status(row.status)]
+    # Stored-active but derived-terminal: the runner is gone and no outcome is
+    # persisted yet. Readers already show the crash; --kill-orphans writes it.
+    unpersisted = [
         row.id
-        for row in overlay_derived(runtime_root, spawns)
-        if is_active_spawn_status(row.status)
+        for row, stored in zip(derived, spawns, strict=True)
+        if is_active_spawn_status(stored.status) and not is_active_spawn_status(row.status)
     ]
+    if unpersisted:
+        warnings.append(
+            DoctorWarning(
+                code="dead_spawns_unfinalized",
+                message=(
+                    "Spawns whose runner is gone have no persisted outcome; "
+                    "`meridian doctor --kill-orphans` records it and reaps their processes: "
+                    + ", ".join(unpersisted)
+                ),
+                payload={"spawn_ids": unpersisted},
+            )
+        )
     if running:
         reconciliation_mode = (
             "after orphan-kill reconciliation"
