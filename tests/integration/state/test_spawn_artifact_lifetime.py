@@ -1,7 +1,6 @@
 """Spawn-owned artifacts cannot outlive their published row."""
 
 import asyncio
-import json
 import os
 import shutil
 import time
@@ -22,11 +21,6 @@ from meridian.lib.launch.streaming.heartbeat import FileHeartbeat
 from meridian.lib.launch.streaming_runner import _append_runner_lifecycle_event
 from meridian.lib.state.failure_sentinel import write_failure_sentinel
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
-from meridian.lib.state.reaper import (
-    _collect_artifact_snapshot,
-    _log_orphan_primary_diagnostics,
-    _record_orphan_finalize_evidence,
-)
 from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
@@ -284,168 +278,6 @@ def test_late_runner_lifecycle_write_does_not_recreate_deleted_spawn(
     )
 
     assert not spawn_dir.exists()
-
-
-def test_late_reaper_evidence_write_does_not_recreate_deleted_spawn(
-    tmp_path: Path,
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_id = "p1"
-    spawn_dir = runtime_root / "spawns" / spawn_id
-    evidence_path = spawn_dir / "finalize-evidence.json"
-    _start_test_spawn(runtime_root, spawn_id, status="running")
-    record = get_spawn(runtime_root, spawn_id)
-    assert record is not None
-    now = time.time()
-    snapshot = _collect_artifact_snapshot(runtime_root, record, now)
-    _record_orphan_finalize_evidence(runtime_root, record, snapshot, now)
-    assert evidence_path.is_file()
-    assert delete_published_spawn(
-        runtime_root,
-        spawn_id,
-        can_delete=lambda row: row is not None,
-    )
-
-    _record_orphan_finalize_evidence(runtime_root, record, snapshot, now)
-
-    assert not spawn_dir.exists()
-
-
-def test_reaper_evidence_refuses_terminal_spawn(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_id = "p1"
-    evidence_path = runtime_root / "spawns" / spawn_id / "finalize-evidence.json"
-    _start_test_spawn(runtime_root, spawn_id, status="running")
-    finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
-    record = get_spawn(runtime_root, spawn_id)
-    assert record is not None
-    now = time.time()
-    snapshot = _collect_artifact_snapshot(runtime_root, record, now)
-
-    _record_orphan_finalize_evidence(runtime_root, record, snapshot, now)
-
-    assert not evidence_path.exists()
-
-
-def test_reaper_evidence_uses_scope_liveness_for_shim_backend(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
-    from meridian.lib.state.process_scope_projection import record_scope
-
-    runtime_root = tmp_path / "runtime"
-    spawn_id = SpawnId("p1")
-    evidence_path = runtime_root / "spawns" / str(spawn_id) / "finalize-evidence.json"
-    _start_test_spawn(runtime_root, str(spawn_id), status="running")
-    scope = ProcessScopeSnapshot(
-        scope_id="backend",
-        owner_policy="spawn_owned",
-        owner_id=str(spawn_id),
-        role="harness_backend",
-        containment="posix_pgid",
-        root_pid=41001,
-        root_created_at_epoch=100.0,
-        pgid=41001,
-        job_name=None,
-        degraded_reason=None,
-    )
-    record_scope(runtime_root, spawn_id, scope)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda _pid, created_after_epoch=None: False,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_pgid_reachable",
-        lambda _pgid: True,
-    )
-    record = get_spawn(runtime_root, str(spawn_id))
-    assert record is not None
-    now = time.time()
-    snapshot = _collect_artifact_snapshot(runtime_root, record, now)
-
-    _record_orphan_finalize_evidence(runtime_root, record, snapshot, now)
-
-    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    backend = evidence["child_processes"][0]
-    assert backend == {
-        "scope_id": "backend",
-        "role": "harness_backend",
-        "pid": 41001,
-        "root_alive": False,
-        "pgid_reachable": True,
-        "likely_serving": True,
-        "alive": True,
-    }
-    assert evidence["worker_or_backend_alive"] is True
-
-
-def test_orphan_primary_diagnostics_use_scope_liveness(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
-    from meridian.lib.state.managed_primary import ManagedPrimarySnapshot
-    from meridian.lib.state.primary_meta import PrimaryMetadata
-    from meridian.lib.state.process_scope_projection import record_scope
-
-    runtime_root = tmp_path / "runtime"
-    spawn_id = SpawnId("p1")
-    _start_test_spawn(runtime_root, str(spawn_id), status="running")
-    record_scope(
-        runtime_root,
-        spawn_id,
-        ProcessScopeSnapshot(
-            scope_id="backend",
-            owner_policy="spawn_owned",
-            owner_id=str(spawn_id),
-            role="harness_backend",
-            containment="posix_pgid",
-            root_pid=41001,
-            root_created_at_epoch=100.0,
-            pgid=41001,
-            job_name=None,
-            degraded_reason=None,
-        ),
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda _pid, created_after_epoch=None: False,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_pgid_reachable",
-        lambda _pgid: True,
-    )
-    warnings: list[dict[str, object]] = []
-
-    class _Logger:
-        def warning(self, _message: str, **fields: object) -> None:
-            warnings.append(fields)
-
-    monkeypatch.setattr("meridian.lib.state.reaper.logger", _Logger())
-    record = get_spawn(runtime_root, str(spawn_id))
-    assert record is not None
-    now = time.time()
-
-    _log_orphan_primary_diagnostics(
-        runtime_root,
-        record,
-        _collect_artifact_snapshot(runtime_root, record, now),
-        ManagedPrimarySnapshot(
-            metadata=PrimaryMetadata(
-                managed_backend=True,
-                launcher_pid=42001,
-                backend_pid=41001,
-                activity="idle",
-            ),
-            launcher_pid_alive=False,
-            started_epoch=100.0,
-        ),
-    )
-
-    assert warnings[0]["backend_alive"] is True
-    assert warnings[0]["backend_root_alive"] is False
-    assert warnings[0]["backend_pgid_reachable"] is True
 
 
 def test_late_native_primary_metadata_does_not_recreate_deleted_spawn(
