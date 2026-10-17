@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.claude_drain import ClaudeCompletionEvidence
 from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.streaming.drain_coordinator import DrainPlan
@@ -91,11 +90,7 @@ def build_drain_plan(
         return await service.cancel_descendants(root_id)
 
     resident_backend = receiver.resident_backend
-    native_evidence = (
-        ClaudeCompletionEvidence(poll_seconds=config.resident_poll_seconds or 5.0)
-        if receiver.harness_id is HarnessId.CLAUDE
-        else None
-    )
+    native_evidence = receiver.completion_evidence()
     if resident_backend is not None or native_evidence is not None:
         coordinator = ResidentDrainCoordinator.for_connection(
             runtime_root=runtime_root,
@@ -107,7 +102,11 @@ def build_drain_plan(
             rearm_budget=config.resident_rearm_budget,
             cancel_descendants=_cancel_descendants,
             evidence=native_evidence,
-            send_nudge=_send_completion_nudge if native_evidence is not None else None,
+            send_nudge=(
+                resident_backend.begin_followup_turn
+                if resident_backend is not None
+                else _send_completion_nudge
+            ),
         )
         return DrainPlan(
             coordinator=coordinator,

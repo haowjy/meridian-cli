@@ -40,6 +40,7 @@ def _select_plan(
         SimpleNamespace(
             harness_id=harness_id,
             resident_backend=resident_backend,
+            completion_evidence=lambda: None,
         ),
     )
     return manager._select_drain_plan(

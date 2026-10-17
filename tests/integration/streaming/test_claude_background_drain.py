@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +17,9 @@ from meridian.lib.harness.connections.base import (
     HarnessConnection,
     RawHarnessEvent,
 )
+from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.semantics import NormalizedHarnessEvent
+from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming.drain_plan_factory import build_drain_plan
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
@@ -24,7 +27,10 @@ from meridian.lib.streaming.types import InjectResult
 
 
 @pytest.mark.asyncio
-async def test_claude_waits_for_background_snapshot_and_followup_result(tmp_path: Path) -> None:
+@pytest.mark.parametrize("scenario", ["natural", "done_midturn", "done_poll", "stop"])
+async def test_claude_waits_for_background_snapshot_and_followup_result(
+    tmp_path: Path, scenario: str,
+) -> None:
     delivered: list[NormalizedHarnessEvent] = []
     outcomes: list[DrainOutcome] = []
     spawn_id = SpawnId("p-claude-bg")
@@ -42,6 +48,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(tmp_path
     class Receiver:
         harness_id = HarnessId.CLAUDE
         resident_backend = None
+        completion_evidence = ClaudeConnection.completion_evidence
         primary_event_scope = None
 
         def observe_event_semantics(self, semantics: object) -> None:
@@ -58,6 +65,24 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(tmp_path
             # Neither the first result nor task completion may publish success:
             # Claude's automatic follow-up turn still owes its own result.
             assert not outcomes
+            if scenario == "stop":
+                assert plan.coordinator is not None
+                close = plan.coordinator.handle_close(intentional_stop=True)
+                assert close is not None
+                assert close.error == "stream_closed_while_awaiting_done"
+                return
+            if scenario.startswith("done"):
+                yield frame("assistant", message={"content": []})
+                signal = spawn_signal_path(tmp_path, spawn_id, "done")
+                signal.parent.mkdir(parents=True, exist_ok=True)
+                signal.touch()
+                yield frame("assistant", message={"content": []})
+                if scenario == "done_poll":
+                    await asyncio.sleep(0.05)  # Several directive polls between frames.
+                    assert not outcomes
+                yield frame("result", subtype="success", result="Final done report")
+                await asyncio.sleep(3600)  # Native connection stays open after result.
+                return
             yield frame("system", subtype="task_notification", task_id="bg", status="completed")
             yield frame("system", subtype="background_tasks_changed", tasks=[])
             assert not outcomes
@@ -78,6 +103,8 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(tmp_path
             prompt="probe",
             control_root=tmp_path,
             child_env={},
+            resident_poll_seconds=0.01,
+            resident_deadline_seconds=0.2,
         ),
     )
     session = cast("SpawnSession", SimpleNamespace(cancel_sent=False, started_monotonic=0.0))
@@ -98,8 +125,20 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(tmp_path
         fan_out_event=lambda _, event: delivered.append(event),
         fan_out_turn_boundary=AsyncMock(),
     )
-    await loop.run(spawn_id=spawn_id, receiver=receiver, drain_plan=plan, tracer=None)
-    assert delivered[-1].raw.payload["result"] == "Marker read: done"
+    try:
+        await asyncio.wait_for(
+            loop.run(spawn_id=spawn_id, receiver=receiver, drain_plan=plan, tracer=None),
+            timeout=1.0,
+        )
+    except TimeoutError:
+        pytest.fail("drain hung past the resident deadline")
+    if scenario == "stop":
+        assert len(outcomes) == 1
+        assert outcomes[0].error == "stream_closed_while_awaiting_done"
+        return
+    assert delivered[-1].raw.payload["result"] == (
+        "Final done report" if scenario.startswith("done") else "Marker read: done"
+    )
     assert not messages
     assert len(outcomes) == 1
     assert outcomes[0].status == "succeeded"

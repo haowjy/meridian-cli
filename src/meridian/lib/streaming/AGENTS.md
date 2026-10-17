@@ -15,11 +15,13 @@ disk-state, direct-follow-up gating, resident-done nudges, and descendant cleanu
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
 `drain_plan_factory.py` is the composition root for plan selection. It owns the
-plain/Claude/resident/Pi choice and injects manager capabilities for event emission,
+plain/resident/Pi choice and injects manager capabilities for event emission,
 serialized injection, and application-service descendant cleanup into both Pi and
 resident policy. Drain collaborators must not construct application services.
 
-Resident backend control selects Codex/OpenCode descendant evidence. Claude instead
+**Do not key resident behavior off harness ids.** The connection supplies completion
+evidence independently of backend control. Resident backend control selects
+Codex/OpenCode descendant evidence. Claude instead
 supplies native-task evidence and serialized stdin injection to the same coordinator;
 it does not claim backend liveness capabilities. Hold, done/rearm, deadline and nudge
 policy belong to the shared resident profile, not the evidence adapters.
@@ -41,13 +43,17 @@ unbounded-while-descendants-live behavior is by design.
 Claude children use the native `background_tasks_changed` snapshot to hold successful
 turn results while tasks run. The resident deadline bounds the wait from the first held
 result through the follow-up result; task activity never renews it. An empty snapshot
-alone cannot finalize the spawn. Evidence holds use the same periodic done/rearm
-nudges as explicit holds. The shared cadence is 270 seconds, capped at half the
-configured deadline so short windows still offer a rearm opportunity. Claude polls
-only the exact signal files, never task directories or descendant trees. Explicit
-`done` authorizes success with tasks left over; normal managed-scope teardown kills them.
+alone cannot finalize the spawn. Rearm extends a native hold's deadline without
+blocking natural completion; Codex/OpenCode explicit holds still require done.
+Native nudges name pending tasks and offer done to stop them; only urgent nudges offer rearm. The shared cadence is 270 seconds, capped at half the
+configured deadline. The resident profile polls the exact done/rearm signal files;
+Claude evidence is event-driven, never scans task directories or descendant trees.
+Malformed snapshots warn and hold until a valid snapshot/result, done, or the deadline.
+A Claude Code version that stops emitting snapshots falls back to first-result finalize.
+Explicit `done` authorizes success with tasks left over after the active turn's closing
+result; normal managed-scope teardown kills them.
 
-For all three profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
+For both profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
 ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
 defaults to `None`; resident rearms and Pi waves cannot reset it.
 
@@ -142,7 +148,7 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome classification, `resolve_terminal_outcome` priority resolver
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
-- `drain_plan_factory.py` — plain/Claude/resident/Pi plan selection and capability wiring
+- `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
 - `drain_teardown.py` — harness-neutral plan-owned connection-stop contract and default
 - `pi_drain_teardown.py` — Pi connection-stop cleanup-phase policy
 - `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts

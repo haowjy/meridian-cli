@@ -54,6 +54,7 @@ def _coordinator(
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
+        send_nudge=connection.resident_backend.begin_followup_turn,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,
         rearm_budget=rearm_budget,
@@ -363,7 +364,7 @@ async def test_expired_deadline_beats_freshly_ready_tree(
 
 
 @pytest.mark.asyncio
-async def test_wait_done_signal_beats_already_expired_deadline(
+async def test_wait_expired_deadline_bounds_done_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -378,12 +379,12 @@ async def test_wait_done_signal_beats_already_expired_deadline(
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
     write_spawn_signal(tmp_path, "p1", "done")
-    requested = await coordinator.handle_timeout()
-    decision = await _after_refresh(coordinator)
+    decision = await coordinator.handle_timeout()
 
-    assert requested.recorded_outcome is None
-    assert decision.recorded_outcome == _SUCCESS
-    assert cleanup_calls == []
+    assert decision.recorded_outcome is not None
+    assert decision.recorded_outcome.status == "timed_out"
+    assert decision.recorded_outcome.error == "resident_deadline_expired"
+    assert cleanup_calls == []  # Cleanup remains post-publication.
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
 
@@ -540,3 +541,53 @@ async def test_intentional_stream_close_returns_pending_resident_outcome(
 
     assert close_outcome == _SUCCESS
     assert connection.fake_resident_backend.awaiting_done_values == [True]
+
+
+def test_short_deadline_nudge_cadence_and_urgency(tmp_path: Path) -> None:
+    """A due nudge is ordinary at half-window, urgent if delivery is delayed."""
+    from dataclasses import replace
+
+    from meridian.lib.streaming.completion_contracts import (
+        CompletionDirectives,
+        CompletionEvaluation,
+        CompletionState,
+        WorkAssessment,
+    )
+
+    clock = FakeClock(start=100.0)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    profile = resident_drain_module._ResidentCompletionProfile(
+        runtime_root=tmp_path,
+        spawn_id=SpawnId("p1"),
+        resident_backend=connection.resident_backend,
+        deadline_seconds=20.0,
+        poll_seconds=1.0,
+        rearm_budget=None,
+        clock=clock.monotonic,
+        send_nudge=connection.resident_backend.begin_followup_turn,
+    )
+    assessment = WorkAssessment(disposition="ready", blockers=(), generation=0)
+    state = CompletionState(
+        phase="waiting", candidate=_SUCCESS, assessment=assessment,
+        deadline_at=120.0, stabilization_at=None, stabilization_generation=None,
+    )
+    context = CompletionEvaluation(
+        state=state, trigger="terminal_candidate", now=100.0,
+        directives=CompletionDirectives(rearm=True), assessment=assessment,
+        candidate=_SUCCESS, terminal_action=_TERMINATE, terminal_outcome=_SUCCESS,
+    )
+    assert profile.evaluate(context).action == "wait"
+    assert profile.next_nudge_at(state, assessment) == 110.0
+    due = replace(
+        context, trigger="timeout", now=110.0, directives=CompletionDirectives(),
+        terminal_action=None, terminal_outcome=None, profile_timer_due=True,
+    )
+    assert profile.evaluate(due).nudge == "normal"
+    assert profile.evaluate(replace(due, now=119.0)).nudge == "timeout_soon"
+    # Neither a stuck active turn nor a latched done may bypass the deadline.
+    expired = profile.evaluate(replace(
+        due, now=120.0, deadline_expired=True, active_turn=True,
+        directives=CompletionDirectives(done=True),
+    ))
+    assert expired.outcome is not None
+    assert expired.outcome.status == "timed_out"

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from meridian.lib.harness.semantics import EventSemantics, PrimaryEventScope
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+    from meridian.lib.streaming.completion_contracts import CompletionEvidence
 
 # Uniform transport message cap across harness adapters.
 MAX_HARNESS_MESSAGE_BYTES: Final[int] = 10 * 1024 * 1024
@@ -358,6 +359,10 @@ class HarnessConnection(Generic[SpecT], ABC):
     @property
     def resident_backend(self) -> ResidentBackendControl | None:
         """Resident backend control seam, when this transport supports resident turns."""
+        return None
+
+    def completion_evidence(self) -> CompletionEvidence | None:
+        """Native completion evidence, independent of resident backend control."""
         return None
 
     @property

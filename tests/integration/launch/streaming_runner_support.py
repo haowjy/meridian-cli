@@ -111,6 +111,9 @@ class _ReportThenHangConnection:
     def observe_event_semantics(self, semantics: object) -> None:
         _ = semantics
 
+    def completion_evidence(self) -> None:
+        return None
+
     @property
     def resident_backend(self) -> object:
         return self._resident_backend
@@ -225,6 +228,9 @@ class _OpenCodeTerminalWithScopeConnection:
 
     def observe_event_semantics(self, semantics: object) -> None:
         _ = semantics
+
+    def completion_evidence(self) -> None:
+        return None
 
     @property
     def resident_backend(self) -> object:
@@ -349,6 +355,9 @@ class _ResidentDeadlineConnection:
 
     def observe_event_semantics(self, semantics: object) -> None:
         _ = semantics
+
+    def completion_evidence(self) -> None:
+        return None
 
     @property
     def resident_backend(self) -> object:

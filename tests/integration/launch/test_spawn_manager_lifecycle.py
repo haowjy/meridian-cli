@@ -76,6 +76,9 @@ async def test_start_spawn_cancellation_during_registration_stops_connection(
         def harness_id(self) -> HarnessId:
             return HarnessId.CODEX
 
+        def completion_evidence(self) -> None:
+            return None
+
         @property
         def resident_backend(self) -> None:
             return None
@@ -187,6 +190,9 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         def observe_event_semantics(self, semantics: object) -> None:
             _ = semantics
 
+        def completion_evidence(self) -> None:
+            return None
+
         @property
         def resident_backend(self) -> None:
             return None
@@ -292,6 +298,9 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         def harness_id(self) -> HarnessId:
             return HarnessId.CODEX
 
+        def completion_evidence(self) -> None:
+            return None
+
         @property
         def resident_backend(self) -> None:
             return None
@@ -378,6 +387,9 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
         @property
         def harness_id(self) -> HarnessId:
             return HarnessId.CODEX
+
+        def completion_evidence(self) -> None:
+            return None
 
         @property
         def resident_backend(self) -> None:
@@ -517,6 +529,9 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
         def observe_event_semantics(self, semantics: object) -> None:
             _ = semantics
+
+        def completion_evidence(self) -> None:
+            return None
 
         @property
         def resident_backend(self) -> None:

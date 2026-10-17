@@ -121,6 +121,9 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         subprocess_pid = None
         session_id = "delayed-background"
 
+        def completion_evidence(self) -> None:
+            return None
+
         def __init__(self) -> None:
             self._events: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
 

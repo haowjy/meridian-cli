@@ -523,6 +523,7 @@ def _resolve_claude_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | N
 
 CLAUDE_SEMANTICS = HarnessSemantics(
     events={
+        # Load-bearing: clears awaiting-done and resets the resident nudge timer.
         "assistant": EventSemantics(activity="turn_active"),
         "result": EventSemantics(clears_signal=True),
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),

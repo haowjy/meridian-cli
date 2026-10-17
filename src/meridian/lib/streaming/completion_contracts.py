@@ -67,6 +67,8 @@ class WorkAssessment:
     failure: EvidenceFailure | None = None
     # A live session may be held even when no descendant evidence blocks it.
     completion_hold: bool = False
+    # Native task labels; None means evidence has no native-task completion authority.
+    pending_tasks: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.generation < 0:
@@ -247,6 +249,8 @@ class CompletionProfile(Protocol):
     def next_nudge_at(
         self, state: CompletionState, assessment: WorkAssessment
     ) -> float | None: ...
+
+    def next_directive_poll_at(self) -> float | None: ...
 
     async def send_nudge(self, urgency: NudgeUrgency) -> None: ...
 

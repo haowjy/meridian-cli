@@ -249,6 +249,9 @@ class PiCompletionProfile:
         del intentional_stop
         return state.candidate if state.phase in {"stabilizing", "validating"} else None
 
+    def next_directive_poll_at(self) -> None:
+        return None
+
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
         del state, assessment
         self._refresh_done_nudge_state()
