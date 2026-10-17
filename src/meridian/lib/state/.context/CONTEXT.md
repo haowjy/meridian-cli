@@ -221,12 +221,13 @@ Both may return an in-memory terminal view, but never persist state, terminate p
 scopes, or check process depth.
 
 `reconcile_active_spawn()` is the mutating repair operation used by doctor orphan-run
-repair. It fails closed unless `is_root_side_effect_process()` is true. For a
-lock-backed active row it non-blockingly acquires the free runner-lifetime
-`launch.lock`, re-reads state while holding it, and persists the same status, exit code,
-and error that `read_derived()` projects: cancel intent yields `cancelled`, otherwise
-runner disappearance yields `failed`/`crashed`. Origin and timestamps may differ. It
-never finalizes a lockless legacy row.
+repair. It fails closed unless `is_root_side_effect_process()` is true and delegates to
+`SpawnApplicationService.finalize_dead_launch()`, the only dead-launch outcome writer.
+That method writes only after `claim_dead_launch()` returns `Claimed`, retaining the
+free runner-lifetime `launch.lock`, and persists the same status, exit code, and error
+that `read_derived()` projects: cancel intent yields `cancelled`, otherwise runner
+disappearance yields `failed`/`crashed`. Origin and timestamps may differ. It never
+finalizes a lockless legacy row.
 Before finalization it snapshots exact cleanup targets into
 `reaper_cleanup_claim.json`; after finalization it terminates the claimed scopes. This
 finalize-first order makes state convergence independent of slow cleanup; a crash

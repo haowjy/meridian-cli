@@ -1308,10 +1308,7 @@ def spawn_cancel_all_sync(
             "Use --include-others to cancel all non-primary running spawns."
         )
 
-    active_rows = overlay_derived(
-        runtime_root,
-        indexed_spawn_scan(runtime_root).records,
-    )
+    stored_rows = indexed_spawn_scan(runtime_root).records
     if work_id is not None:
         active_session_work_ids: dict[str, str] | None = {
             str(record.chat_id): record.active_work_id
@@ -1324,14 +1321,14 @@ def spawn_cancel_all_sync(
     # When called from a nested spawn, scope to that spawn's descendants only.
     # When called from a primary/root context, scope to the full chat.
     if caller_spawn_id is not None and not payload.include_others:
-        descendant_ids: set[str] | None = descendant_id_set(caller_spawn_id, active_rows)
+        descendant_ids: set[str] | None = descendant_id_set(caller_spawn_id, stored_rows)
     else:
         descendant_ids = None
 
     target_rows = [
         row
-        for row in active_rows
-        if row.status == "running"
+        for row in stored_rows
+        if row.status in ACTIVE_SPAWN_STATUSES
         and (
             work_id is None
             or _spawn_matches_work_item(

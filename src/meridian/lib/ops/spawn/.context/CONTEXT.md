@@ -54,7 +54,10 @@ spawn), `spawn_cancel_all_sync()` uses `state.spawn_tree.descendant_id_set()` to
 spawn's subtree. Siblings, ancestors, and the primary session are not touched. When called from
 a root/primary context (no `MERIDIAN_SPAWN_ID`), the full chat scope applies.
 
-`--include-others` bypasses the subtree scope and cancels across all non-primary running spawns.
+Cancel-all selects stored-active rows, not derived-running rows. Its cancel pipeline
+claims and finalizes a dead lock-backed target under the launch lock.
+
+`--include-others` bypasses the subtree scope and cancels across all non-primary stored-active spawns.
 `--include-primaries` is separately required to cancel primary sessions.
 
 **Early-exit guard:** `spawn_cancel_all_sync()` exits immediately with no side effects when

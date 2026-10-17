@@ -79,8 +79,10 @@ Explicit continue resolves the named spawn's current chat owner, takes that
 owner's lock before the named source lock, and sweeps their birth-verified scopes
 before creating another row. An exact-continue parent publishes the new row as
 the chat owner while its launch lock is still held; a background worker confirms
-that pointer after hand-off. Lockless legacy rows retain their birth/grace guard
-and convert under the mutation lock. This does not change v3 status authority.
+that pointer after hand-off. Lockless legacy rows alone use
+`legacy_runner_alive()`'s 15-second pre-worker PID-less window and convert under
+the mutation lock. Lock-backed rows have no grace: a free lock derives terminal.
+This does not change v3 status authority.
 
 ## Spawn Mutation Seam
 
@@ -196,12 +198,18 @@ the shared launch lock across the authority read. Lockless legacy rows use the b
 legacy liveness rule instead. Both may return an in-memory terminal status, never
 persist state or terminate processes, and are safe at any depth.
 
+Use derived status for liveness, display, wait, and idle questions. Selection for
+cancel/archive/destruction uses stored status until dead-launch finalization persists
+an outcome. `claim_dead_launch()` returns `Claimed`, `Settled`, `Live`, or `Lockless`;
+only `Claimed` authorizes `SpawnApplicationService.finalize_dead_launch()`, the sole
+writer of a dead lock-backed launch's outcome.
+
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
-background repair and fails closed outside root depth. A lock-backed active row is
-terminal only after the repairer acquires its free runner-lifetime `launch.lock` and
-re-reads it under that lock; lockless legacy rows are never finalized here. The
-repairer snapshots a cleanup claim, persists the derived outcome while retaining the
-launch lock, then terminates the claimed, birth-validated scopes. A separate stable
+background repair and fails closed outside root depth. It delegates persistence to
+`finalize_dead_launch()`, which retains the claimed runner-lifetime `launch.lock`;
+lockless legacy rows are never finalized here. The repairer snapshots a cleanup claim,
+persists the derived outcome while retaining the launch lock, then terminates the
+claimed, birth-validated scopes. A separate stable
 cleanup lock prevents concurrent repairers from double-signalling; terminal rows
 retain failed claims for the next doctor pass. Startup candidate discovery streams
 authoritative spawn rows directly, selecting active rows and rows with a cleanup
@@ -242,8 +250,8 @@ Historical multi-ID arrays are ignored on read.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.
-- `spawn_status.py` — lock-consistent status for every reader and the typed writer-side
-  claim on a dead launch.
+- `spawn_status.py` — lock-consistent status for every reader and
+  `claim_dead_launch()`'s typed writer-side claim.
 - `reaper.py` — root-only repair that claims dead launches, persists their projected
   outcome through the application service, then cleans claimed process scopes.
 

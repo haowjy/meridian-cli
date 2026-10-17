@@ -23,6 +23,13 @@ deliberate exception that wires policy surfaces to launch and persistence.
 - **`LifecycleHook.on_event()` exceptions are logged but never block transitions.** Hooks must tolerate partial data.
 - **`spawn_store` is imported at the bottom of `lifecycle.py`** to break a circular import with `state/__init__`. Do not move it to the top.
 
+**Dead-launch finalization has one writer.**
+`SpawnApplicationService.finalize_dead_launch()` alone persists the outcome of a
+dead lock-backed launch, and only after `state.spawn_status.claim_dead_launch()`
+returns `Claimed`; `Live` is a no-op and `Lockless` stays on the explicit legacy
+compatibility path. `cancel_descendants()` selects stored-active rows so this writer
+can converge dead children instead of skipping their derived terminal views.
+
 ## Entry Points
 
 - `types.py` — typed IDs and persisted identity normalization
@@ -30,7 +37,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 - `resolved_context.py` — `ResolvedContext.from_environment()` (authoritative runtime env for one process)
 - `child_env.py` — `ALLOWED_CHILD_ENV_KEYS`, `validate_child_env_keys()`
 - `lifecycle.py` — `SpawnLifecycleService` (state machine: created → running → finalizing → finalized)
-- `spawn_service.py` — `SpawnApplicationService` (create/list/cancel spawns)
+- `spawn_service.py` — `SpawnApplicationService` (create/list/cancel/finalize dead spawns)
 - `sink.py` — `OutputSink` protocol, `NullSink` (output routing abstraction)
 - `depth.py` — `is_root_side_effect_process()`, `child_meridian_depth()`
 - `clock.py` — `Clock` protocol, `RealClock` (injectable time for tests)

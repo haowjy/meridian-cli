@@ -316,6 +316,38 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
         )
 
 
+def test_spawn_cancel_all_finalizes_dead_stored_active_spawn(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    runtime_root = prepared.runtime_root
+    assert runtime_root is not None
+
+    with LaunchSlot() as launch:
+        spawn_id = spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p12",
+            chat_id="c12",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="running",
+            launch_lock=launch,
+        )
+
+    output = spawn_api.spawn_cancel_all_sync(
+        SpawnCancelAllInput(project_root=project_root.as_posix(), include_others=True),
+        prepared=prepared,
+    )
+
+    assert output.total_running == 1
+    assert output.cancelled_count == 1
+    stored = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert stored is not None
+    assert stored.status == "cancelled"
+    assert stored.terminal is not None
+
+
 def test_spawn_list_does_not_infer_running_star_from_last_attempt_exit(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()

@@ -38,8 +38,8 @@ a harness adapter: **adapters report facts; core decides**.
 
 - CLI argument parsing and human rendering belong in `cli/`; adapter result shapes
   and their wire serialization stay with the service result types.
-- Spawn-store reads for the child guard go through `children.py` and stay
-  read-only.
+- Spawn-store reads for the child guard go through `children.py`, stay read-only,
+  and use derived status so a dead unfinalized child does not block idle.
 - TTL detection reads the chat's launch-recorded native store through the
   session store using `MERIDIAN_CHAT_ID`. Never pass or derive a cwd for
   transcript lookup: agents can `cd`, while the transcript remains filed under

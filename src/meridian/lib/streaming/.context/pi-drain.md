@@ -76,9 +76,9 @@ finalization decisions.
 
 Pi and resident use the shared reconciled transitive persisted tree as descendant
 authority. A live grandchild beneath a terminal direct child therefore blocks Pi, while a
-`finalizing` direct child with a durable report is reconciled terminal for liveness.
-The same projection retains its raw canonical row: Pi still blocks on result publication
-until a terminal row appears, then on result consumption/admission. Resident semantics remain unchanged.
+`finalizing` direct child stays live while its launch lock is held and reads derived
+terminal when that lock is free. A durable report does not make the child terminal.
+Resident semantics remain unchanged.
 Only valid, parent-linked rows enter the tree; incomplete and wrong-parent directories
 are not descendant evidence. Both profiles consume the same immutable cached assessment;
 streamed events never trigger a descendant read. Meridian's `start_spawn()` publishes

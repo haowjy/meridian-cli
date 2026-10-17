@@ -35,7 +35,7 @@ nested processes also read it to skip reaping side effects.
 
 No-arg candidate membership is scoped in the history index: owner-filtered SQL for a
 primary, recursive subtree SQL for a nested spawn. Discovery then re-reads only those
-selected `state.json` files before trusting lifecycle status. Recursive traversal keeps
+selected `state.json` files with derived status before answering liveness. Recursive traversal keeps
 archived ancestors as edges so active descendants beneath them remain visible.
 
 `--fail-fast` exits as soon as any spawn reaches `failed` or `timed_out`, reporting
@@ -52,6 +52,13 @@ claiming the session has no pending spawns.
 Result fetchers that do not consume a parent's completion notification must use
 `SpawnWaitInput(observe=False)` (`spawn wait --no-observe`). Normal waits observe
 by default; formatting a notification is not delivery.
+
+## Stored vs Derived Status
+
+Use `read_derived()` / `overlay_derived()` for liveness, display, wait, and idle.
+Selection for cancel convergence, archive, and destruction uses stored status;
+cancel targets remain stored-active until `finalize_dead_launch()` persists the
+outcome. Overlay-first selection skips dead launches that still need convergence.
 
 ## The Exception to SPEC_ONLY
 
