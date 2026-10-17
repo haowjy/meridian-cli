@@ -55,6 +55,7 @@ from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnKind, SpawnOrigin
 from meridian.lib.state.spawn.repository import Applied, Declined
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
+from meridian.lib.state.spawn_status import claim_dead_launch
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
@@ -723,6 +724,28 @@ class SpawnApplicationService:
     ) -> SpawnRecord | None:
         if self.is_terminal(record.status):
             return record
+
+        launch_lock_path = self._runtime_root / "spawns" / str(spawn_id) / "launch.lock"
+        if launch_lock_path.is_file():
+            claimed = claim_dead_launch(self._runtime_root, str(spawn_id))
+            if claimed is None:
+                latest = self.get_spawn(spawn_id)
+                return latest if latest is not None and self.is_terminal(latest.status) else None
+            launch_handle, derived = claimed
+            terminal = derived.terminal
+            if terminal is None or not is_terminal_spawn_status(derived.status):
+                launch_handle.close()
+                return None
+            with launch_handle:
+                outcome = await self._complete_spawn_unlocked(
+                    spawn_id,
+                    derived.status,
+                    terminal.exit_code,
+                    origin="cancel",
+                    error=terminal.error,
+                )
+            return outcome.snapshot
+
         intent = record.cancel_intent
         runner_exit = record.runner_exit
         resolved = resolve_completion_cancel_precedence(

@@ -55,10 +55,8 @@ _MAX_METADATA = 32 * 1024 * 1024
 _MAX_CONTENT = 1024**4  # ZIP64, including a single oversized record.
 _EXCLUDED = frozenset(
     {
-        "heartbeat",
         "process_scopes.json",
         "reaper_cleanup_claim.json",
-        "finalize-evidence.json",
         "restored-from.json",
     }
 )

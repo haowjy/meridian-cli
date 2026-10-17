@@ -11,10 +11,17 @@ from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
     is_terminal_spawn_status,
 )
-from meridian.lib.state.launch_lock import shared_hold
+from meridian.lib.state.launch_lock import (
+    Busy,
+    Contended,
+    LaunchHandle,
+    NotFound,
+    acquire,
+    shared_hold,
+)
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
-from meridian.lib.state.spawn.repository import read_state
+from meridian.lib.state.spawn.repository import SpawnStateQuarantined, read_state
 
 CRASHED = "crashed"
 
@@ -65,6 +72,34 @@ def derive(row: SpawnRecord, lock_free: bool) -> SpawnRecord:
     )
 
 
+def claim_dead_launch(
+    runtime_root: Path,
+    spawn_id: str,
+) -> tuple[LaunchHandle, SpawnRecord] | None:
+    """Claim a lock-backed dead launch and return its derived terminal row."""
+    spawn_dir = runtime_root / "spawns" / spawn_id
+    try:
+        handle = acquire(spawn_dir)
+    except (Busy, Contended, NotFound):
+        return None
+    try:
+        row = read_state(spawn_dir.parent, spawn_id, include_prompt=False)
+        if row is None or not is_active_spawn_status(row.status):
+            handle.close()
+            return None
+        derived = derive(row, lock_free=True)
+        if not is_terminal_spawn_status(derived.status):
+            handle.close()
+            return None
+        return handle, derived
+    except SpawnStateQuarantined:
+        handle.close()
+        return None
+    except BaseException:
+        handle.close()
+        raise
+
+
 def read_derived(runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
     """Read one row with liveness consistent with its runner-lifetime lock."""
     spawns_dir = runtime_root / "spawns"
@@ -96,4 +131,11 @@ def overlay_derived(runtime_root: Path, rows: Iterable[SpawnRecord]) -> list[Spa
     return overlaid
 
 
-__all__ = ["CRASHED", "derive", "legacy_runner_alive", "overlay_derived", "read_derived"]
+__all__ = [
+    "CRASHED",
+    "claim_dead_launch",
+    "derive",
+    "legacy_runner_alive",
+    "overlay_derived",
+    "read_derived",
+]

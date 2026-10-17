@@ -480,6 +480,7 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    (runtime_root / "spawns" / spawn_id / "launch.lock").touch()
     # A reused PID proves the recorded runner (birth 1.0) is gone.
     spawn_store.update_spawn(runtime_root, spawn_id, runner_created_at_epoch=1.0)
     session_id = "session-1"
@@ -549,7 +550,7 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
     assert terminated_scope_ids == ["launcher"]
     assert reconciled.status == "failed"
     assert reconciled.terminal is not None
-    assert reconciled.terminal.error == "orphan_primary"
+    assert reconciled.terminal.error == "crashed"
     assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[0].release_id) is True
     assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[1].release_id) is False
     assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[2].release_id) is False

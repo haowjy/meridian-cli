@@ -22,7 +22,7 @@ from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
-from meridian.lib.state.spawn_store import finalize_spawn, get_spawn, start_spawn
+from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
 
 
 def _start_test_spawn(

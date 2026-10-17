@@ -36,7 +36,6 @@ bare path
     history.jsonl                   — legacy runner event stream (no longer written), never read
     attempt-N/                      — legacy retry evidence; new runs do not create it
     runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
-    finalize-evidence.json          — orphan-time liveness snapshot before reaper cleanup
     process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
     report.md · stderr.log · params.json · tokens.json
@@ -199,21 +198,22 @@ and dashboard callers. It may return an in-memory terminal status but never pers
 state or terminates processes, and it is safe at any depth.
 
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
-background repair and fails closed outside root depth. It snapshots a cleanup claim
-under the spawn lock, persists the terminal outcome through the locked external-writer
-path, then terminates the claimed, birth-validated scopes. A separate stable cleanup
-lock prevents concurrent reapers from double-signalling; terminal rows retain failed
-claims for the next doctor pass. Startup candidate discovery streams authoritative
-spawn rows directly, selecting active rows and rows with a cleanup claim; it does not
-trust the disposable history index or retain a corpus-sized scan. Orphan primaries are
-captured only after the whole pass: the capture guard defers while any row bound to the
-same native session is active, and crashed `--continue` generations share one.
-Both paths share decision rules in `reaper.py` and completion/cancel precedence in
-`reconciliation.py`. Primary scope termination additionally requires positive runner-death
-evidence against the recorded birth, with the same one-second clock tolerance as
-the liveness check. Unknown identity and access errors never
-authorize primary scope termination, including replayed terminal claims; they do
-not block status finalization.
+background repair and fails closed outside root depth. A lock-backed active row is
+terminal only after the repairer acquires its free runner-lifetime `launch.lock` and
+re-reads it under that lock; lockless legacy rows are never finalized here. The
+repairer snapshots a cleanup claim, persists the derived outcome while retaining the
+launch lock, then terminates the claimed, birth-validated scopes. A separate stable
+cleanup lock prevents concurrent repairers from double-signalling; terminal rows
+retain failed claims for the next doctor pass. Startup candidate discovery streams
+authoritative spawn rows directly, selecting active rows and rows with a cleanup
+claim; it does not trust the disposable history index or retain a corpus-sized scan.
+Orphan primaries are captured only after the whole pass: the capture guard defers
+while any row bound to the same native session is active, and crashed `--continue`
+generations share one. Primary scope termination additionally requires positive
+runner-death evidence against the recorded birth, with the same one-second clock
+tolerance as the liveness check. Unknown identity and access errors never authorize
+primary scope termination, including replayed terminal claims; they do not block
+status finalization.
 Read-only projected status is not authorization to terminate a scope.
 
 ## Native Chat Identity
@@ -245,7 +245,6 @@ Historical multi-ID arrays are ignored on read.
 - `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.
-- `reconciliation.py` — shared reconciliation decisions and completion/cancel precedence.
 
 ## Spawn Subpackage
 
