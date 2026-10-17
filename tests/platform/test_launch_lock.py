@@ -278,8 +278,10 @@ def test_continue_ignores_pruned_successor(runtime: Runtime) -> None:
     chat = chat_record(runtime.root / "runtime", chat_id)
     assert chat is not None
     assert chat.spawn_id == "p2"
+    p2_runner = runtime.row("p2")["runner_pid"]
     (runtime.root / "p2.exit").touch()
-    until(lambda: not alive(p2_harness) and not alive(p2_worker))
+    # Prune only after p2's runner has finished writing its finalization.
+    until(lambda: not alive(p2_harness) and not alive(p2_worker) and exited(p2_runner))
     shutil.rmtree(runtime.root / "runtime/spawns/p2")
 
     process = runtime.cli(*continue_args(False))
