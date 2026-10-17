@@ -218,18 +218,18 @@ def test_continue_after_runner_sigkill_sweeps_orphan(
 
 
 @pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
-def test_continue_waits_out_non_runner_holder_of_dead_source(
+def test_continue_names_non_runner_holder_of_dead_source(
     runtime: Runtime, primary: bool,
 ) -> None:
-    # Doctor or the primary-launch background repair may hold a dead source's
-    # lock while it persists the crash. That is not a live runner.
+    # Doctor (or another continue's sweep) may hold a dead source's lock while
+    # it persists the crash. The refusal must not claim the dead source runs.
     runtime.orphan()
     lock = runtime.root / "runtime/spawns/p1/launch.lock"
     holder = subprocess.Popen(
         [
             sys.executable, "-c",
             "import fcntl,os,sys,time; fd=os.open(sys.argv[1],os.O_RDWR); "
-            "fcntl.flock(fd,fcntl.LOCK_EX); print('held',flush=True); time.sleep(1.5)",
+            "fcntl.flock(fd,fcntl.LOCK_EX); print('held',flush=True); time.sleep(60)",
             str(lock),
         ],
         stdout=subprocess.PIPE,
@@ -237,9 +237,11 @@ def test_continue_waits_out_non_runner_holder_of_dead_source(
     try:
         assert holder.stdout is not None and holder.stdout.readline() == b"held\n"
         process = runtime.cli(*continue_args(primary))
-        runtime.pid("p2.pid")
-        (runtime.root / "p2.exit").touch()
-        assert process.wait(timeout=30) == 0
+        assert process.wait(timeout=30) != 0
+        log = (runtime.root / f"cli-{runtime.processes.index(process)}.log").read_text()
+        assert "held by a repair or another continue" in log
+        assert "still running" not in log
+        assert not (runtime.root / "runtime/spawns/p2").exists()
     finally:
         holder.kill()
         holder.wait()

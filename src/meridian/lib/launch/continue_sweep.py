@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import time
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -20,42 +19,12 @@ from meridian.lib.state.session_store import chat_record
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined, read_state, spawn_lock_path
 from meridian.lib.state.spawn_status import legacy_runner_alive
 
-# A non-runner holder (doctor or background repair finalizing a dead launch,
-# or cancel convergence) writes the outcome right after acquiring, then
-# releases. This bounds the wait for one.
-_NON_RUNNER_HOLD_SECS = 5.0
-
-
-def _acquire_published(spawn_dir: Path) -> LaunchHandle:
-    """Acquire, waiting out a brief non-runner holder; refuse a live runner at once."""
-    try:
-        return acquire(spawn_dir)
-    except Busy:
-        # The lock alone decides liveness; the recorded runner only chooses
-        # between refusing now and waiting for a holder that is not the runner.
-        try:
-            row = read_state(spawn_dir.parent, spawn_dir.name, include_prompt=False)
-        except SpawnStateQuarantined:
-            row = None
-        if row is None or not is_process_dead_with_birth(
-            row.runner_pid, row.runner_created_at_epoch
-        ):
-            raise
-    deadline = time.monotonic() + _NON_RUNNER_HOLD_SECS
-    while True:
-        time.sleep(0.05)
-        try:
-            return acquire(spawn_dir)
-        except Busy:
-            if time.monotonic() >= deadline:
-                raise
-
 
 def _acquire_source(runtime_root: Path, spawn_id: str) -> LaunchHandle:
     spawns_dir = runtime_root / "spawns"
     spawn_dir = spawns_dir / spawn_id
     if (spawn_dir / "launch.lock").exists():
-        return _acquire_published(spawn_dir)
+        return acquire(spawn_dir)
     # Old runners use this same mutation lock. Re-read before converting;
     # another continue may have created the lifetime lock while we waited.
     with lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False):
@@ -71,7 +40,7 @@ def _acquire_source(runtime_root: Path, spawn_id: str) -> LaunchHandle:
                 spawn_dir / "launch.lock", os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600
             )
             os.close(fd)
-        return _acquire_published(spawn_dir)
+        return acquire(spawn_dir)
 
 
 def _unknown_scope_gone(pid: int, pgid: int | None) -> bool:
@@ -106,6 +75,17 @@ def _owner_ids(runtime_root: Path, spawn_id: str) -> tuple[str, ...]:
     return (spawn_id,)
 
 
+def _recorded_runner_dead(runtime_root: Path, spawn_id: str) -> bool:
+    """Whether a lock holder can't be the recorded runner (it is provably gone)."""
+    try:
+        row = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
+    except SpawnStateQuarantined:
+        return False
+    return row is not None and is_process_dead_with_birth(
+        row.runner_pid, row.runner_created_at_epoch
+    )
+
+
 def sweep_before_continue(runtime_root: Path, spawn_id: str, *, dry_run: bool = False) -> None:
     """Refuse a live chat owner; release only safely swept scopes, never status."""
     if dry_run:
@@ -117,6 +97,11 @@ def sweep_before_continue(runtime_root: Path, spawn_id: str, *, dry_run: bool = 
             try:
                 handles.append(stack.enter_context(_acquire_source(runtime_root, owner_id)))
             except Busy as exc:
+                if _recorded_runner_dead(runtime_root, owner_id):
+                    raise ValueError(
+                        f"{owner_id}'s launch lock is held by a repair or another continue; "
+                        "retry in a moment"
+                    ) from exc
                 if owner_id != spawn_id:
                     raise ValueError(
                         f"{spawn_id} was continued as {owner_id}, which is still running; "
