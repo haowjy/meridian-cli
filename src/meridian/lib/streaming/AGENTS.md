@@ -156,9 +156,10 @@ session drains that keep the harness alive across turns.
 - `types.py` — `InjectResult`, `ControlMessage`
 
 Codex/OpenCode and Pi completion use the shared reconciled transitive spawn-tree assessment as
-their sole persisted-descendant authority. One reconciled projection also retains raw
-canonical rows for Pi result obligations: a read-only terminal inference cannot replace
-terminal publication. Pi's disk watcher observes private task, consumption, receipt,
+their sole persisted-descendant authority. The derived rows also decide Pi result
+publication: a dead child with no written outcome reads terminal and waits on result
+delivery. `pi_result_publication_pending` remains only for a row that vanishes between
+the index read and the authority read. Pi's disk watcher observes private task, consumption, receipt,
 public-observation and fault files; incomplete or wrong-parent spawn directories are not descendant
 evidence. Accessors read one immutable cached assessment; a single-flight worker catches
 up the history index, selects the transitive subtree (including archived ancestry), and

@@ -31,6 +31,7 @@ This package owns foreground and background child-spawn paths (not primary sessi
   No row created on resolution failure (SEAM-1).
 - `cancel()` — surface-neutral cancel pipeline: managed-primary, signal, finalizing races.
 - `complete_spawn()` — idempotent terminal seam; acquires per-spawn lock internally.
+- `finalize_dead_launch()` — the sole dead lock-backed outcome writer; see `core/AGENTS.md`.
 - `archive()` — hides terminal spawns; distinct from verified ZIP retention.
 
 **Depth guard:** `api.py` checks `max_depth_reached()` before executing spawns. A
@@ -94,6 +95,10 @@ split matters for `capture_library_diagnostics()` at the launch boundary.
 **Session references go through `ops/reference.py`.** `resolve_session_reference()`
 → `ResolvedSessionReference` handles spawn IDs (`p123`), chat IDs, and bare
 references. All `--from` / `-f` operations route through this.
+
+**Choose spawn status by the operation's intent.** Follow
+`spawn/AGENTS.md#stored-vs-derived-status`; archive and destruction select stored
+status, while display and liveness use the derived view.
 
 Raw native references retain the supplied ID, not a matching chat's later ID.
 Their harness namespace must be unambiguous or explicit. Tracked chat/spawn
