@@ -131,6 +131,9 @@ def _copy_primary_pty_output(
                 try:
                     ready, _, _ = select.select(fds, [], [], 0.1)
                 except OSError:
+                    if stdin_open:
+                        stdin_open = False
+                        continue
                     break
 
                 if master_fd in ready:

@@ -245,6 +245,7 @@ def run_primary_process_with_capture(
     cancel_receiver = SignalCallbackReceiver(
         target_signals=(signal.SIGTERM, signal.SIGHUP),
         callback=request_cancel,
+        escalate_on_repeat=True,
     )
     coordinator = signal_coordinator()
     coordinator.register_receiver(cancel_receiver)
@@ -287,12 +288,28 @@ def run_primary_process_with_capture(
                 daemon=True,
             )
             wait_thread.start()
-            stop_requested = False
-            while not wait_finished.wait(0.1):
-                if cancelled and not stop_requested:
-                    running.terminate()
-                    running.cancel_wait()
-                    stop_requested = True
+            terminate_requested = False
+            cancel_wait_requested = False
+            try:
+                while not wait_finished.wait(0.1):
+                    if cancelled and not terminate_requested:
+                        terminate_requested = True
+                        running.terminate()
+                    if cancelled and not cancel_wait_requested:
+                        cancel_wait_requested = True
+                        running.cancel_wait()
+            except BaseException:
+                if not terminate_requested:
+                    terminate_requested = True
+                    with suppress(BaseException):
+                        running.terminate()
+                if not cancel_wait_requested:
+                    cancel_wait_requested = True
+                    with suppress(BaseException):
+                        running.cancel_wait()
+                with suppress(BaseException):
+                    wait_thread.join(timeout=3.0)
+                raise
             wait_thread.join()
             if wait_error is not None:
                 raise wait_error
