@@ -23,6 +23,7 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
+from meridian.lib.state.spawn_status import overlay_derived
 from meridian.lib.state.work_scope import WorkScope
 from meridian.lib.state.work_state import WorkItem, slugify
 from meridian.lib.telemetry import emit_telemetry
@@ -113,7 +114,10 @@ def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | N
     attached_session_ids = session_store.list_active_sessions_for_work_id(runtime_root, work_id)
     active_spawn_ids = [
         spawn.id
-        for spawn in spawn_store.list_spawns(runtime_root, work_id=work_id).records
+        for spawn in overlay_derived(
+            runtime_root,
+            spawn_store.list_spawns(runtime_root, work_id=work_id).records,
+        )
         if spawn.kind != "primary" and is_active_spawn_status(spawn.status)
     ]
     warnings: list[str] = []
