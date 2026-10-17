@@ -69,7 +69,7 @@ stream. Terminal classification follows successful delivery. See the delivery
 contract in `.context/CONTEXT.md`.
 
 `SpawnManager` is the integration point for everything that touches a live spawn:
-starting, stopping, injecting messages, subscribing to events, and tracking heartbeats.
+starting, stopping, injecting messages, and subscribing to events.
 Do not bypass it to reach a connection or subscriber directly.
 
 `connection.primary_event_scope` is part of terminal classification for multiplexed
@@ -125,14 +125,6 @@ session teardown for one active spawn. Its `coordinator=None` value is the plain
 Pass `PersistentDrainPolicy` to `start_spawn(drain_policy=...)` for long-lived
 session drains that keep the harness alive across turns.
 
-## Heartbeat / Reaper Contract
-
-`heartbeat_loop` touches `spawns/<id>/heartbeat` every 30 seconds. It never creates the
-spawn directory and stops if the directory has been deleted. The reaper
-(`lib/state/reaper.py`) identifies orphaned spawns by staleness. Unexpected heartbeat
-cessation while a spawn should remain active means the manager died or the spawn is
-orphaned; deletion, normal completion, cancellation, and shutdown stop it intentionally.
-
 ## Entry Points
 
 - `spawn_manager.py` — `SpawnManager`: public live-spawn registry/control API
@@ -185,4 +177,3 @@ freshness check is not an atomic child-admission barrier.
 ## Related
 
 - `../harness/connections/` — `HarnessConnection` protocol (event source)
-- `../state/reaper.py` — uses heartbeat sentinel to detect orphaned spawns

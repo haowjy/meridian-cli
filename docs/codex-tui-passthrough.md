@@ -18,7 +18,7 @@ This gives Meridian a real Codex thread ID, managed startup telemetry, and hidde
 Codex and OpenCode managed primaries attach their TUI directly to the user's
 stdin, stdout, and stderr. Meridian does not put another PTY or byte relay
 between these TUIs and the terminal. The managed backend connection, events,
-idle sensing, metadata, heartbeat, and teardown continue independently of the
+idle sensing, metadata, and teardown continue independently of the
 terminal path. Claude and Pi primaries continue to use Meridian's PTY relay.
 
 The Meridian launcher and a native TUI remain in the shell's foreground process

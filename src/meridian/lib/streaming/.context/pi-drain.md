@@ -60,8 +60,8 @@ The Pi completion composition owns:
 `SpawnManager` should not grow new Pi-specific state-machine branches. Add Pi evidence
 or cleanup to the corresponding collaborator in `pi_drain.py`; add precedence, phase,
 deadline, nudge, or exit behavior to `pi_completion_profile.py`. The exception is
-purely generic event persistence, observer dispatch, subscriber fan-out, heartbeat,
-or control-socket handling.
+purely generic event persistence, observer dispatch, subscriber fan-out, or
+control-socket handling.
 
 `PiPrivateWorkLedger` owns validated managed-bash facts, causal receipts, and
 private-file read failures. It exposes categorized immutable blocker snapshots.
