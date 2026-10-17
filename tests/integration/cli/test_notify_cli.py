@@ -45,3 +45,28 @@ def test_notify_exit_codes(
         assert "every selected backend is none" in captured.err
     else:
         assert [result["status"] for result in payload["results"]] == ["none", "failed"]
+
+
+def test_notify_refuses_a_missing_attachment_before_any_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for key in list(os.environ):
+        if key.upper().startswith("MERIDIAN"):
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "meridian.toml").write_text(
+        '[[hooks]]\nname = "desk"\nevent = "notify.manual"\ncommand = "touch ran"\n',
+        encoding="utf-8",
+    )
+
+    from meridian.cli.main import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["notify", "Pick auth storage", "--attach", "missing.md"])
+
+    assert exc_info.value.code == 2
+    assert "attachment is not a readable file" in capsys.readouterr().err
+    assert not (tmp_path / "ran").exists()

@@ -1,5 +1,34 @@
 # Upgrade notes
 
+## Notifications are hook events
+
+Idle pushes, cache warnings and `meridian notify` now fire the hook events
+`session.responded`, `session.cache_expiring` and `notify.manual`. A built-in
+`notify` hook delivers them through the `[notify]` backends, so routing,
+silencing and extra channels are `[[hooks]]` rows; see
+[Routing and extending notifications](configuration.md#routing-and-extending-notifications).
+With no hook config, delivery is unchanged.
+
+- **CLI.** `meridian notify "<title>" ["<body>"]`: the title is positional and
+  required, the body optional, and the session headline always ends the body.
+  `--title` is gone; replace `meridian notify "msg" --title T` with
+  `meridian notify T "msg"`. `--no-email`, `--priority` and `--json` are
+  unchanged. Extension command hooks appear in results as `hook:<name>`.
+- **Hooks switch.** `MERIDIAN_HOOKS_ENABLED=false` now also turns off every
+  notification. Hooks, notification routes included, now run in a directory
+  with no Meridian runtime state; only `interval`-throttled hooks skip there.
+- **`command` backend.** The stdin JSON replaces `kind` with `event` (the hook
+  event name) and adds `label` (`tmux_session`, `project`, `work_id`, `agent`,
+  `harness`, `headline`). ntfy's `Tags` header is now the event name. Update
+  scripts or ntfy filters that matched the old `kind` values.
+- **Plugin API 2.0.0.** `HookContext.runtime_root` may be `None`;
+  `HookContext.notification` is new; the hook payload `schema_version` is `2`
+  and carries a `notification` object on notification events.
+  `meridian.plugin_api.notify.deliver()` sends through Meridian's transports.
+  See [plugin-api.md](plugin-api.md).
+
+No state migration is needed.
+
 ## History index schema 10
 
 No authority migration is needed. The rebuildable history index moves from

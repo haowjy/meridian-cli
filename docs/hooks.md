@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks let you run commands or builtins automatically when Meridian events fire — syncing a remote repo, running checks after a spawn finishes, or any custom script you want wired to the agent lifecycle.
+Hooks let you run commands or builtins automatically when Meridian events fire — syncing a remote repo, running checks after a spawn finishes, delivering notifications, or any custom script you want wired to the agent lifecycle.
 
 ## Commands
 
@@ -38,6 +38,14 @@ meridian hooks run sync-notes --event work.done
 | `work.start` | observe | A work item is switched to (becomes active) |
 | `work.started` | observe | Alias for `work.start` |
 | `work.done` | post | A work item is completed |
+| `session.responded` | observe | An idle primary sends its "your turn" push |
+| `session.cache_expiring` | observe | An idle primary warns that its prompt cache is about to go cold |
+| `notify.manual` | observe | `meridian notify` runs |
+
+The last three are notification events: their context carries a
+`notification` (title, body, priority, email, session label, attachment paths). Meridian routes
+each one to the built-in `notify` hook unless config routes it; see
+[Builtin: `notify`](#builtin-notify).
 
 Event class affects default timeout and failure policy: `observe` events default to 30s / `warn`; `post` events default to 60s / `warn`.
 
@@ -77,9 +85,11 @@ event   = "spawn.finalized"
 | `interval` | str | no | builtin default | Minimum time between runs, e.g. `30s`, `5m`, `2h` |
 | `require_serial` | bool | no | `false` | Block concurrent hook executions |
 | `when.status` | array[str] | no | — | Only fire when spawn exits with one of these statuses |
-| `when.agent` | str | no | — | Only fire for this agent profile |
+| `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
 | `exclude` | array[str] | no | — | Skip for these agent profiles |
 | `options.conflict_policy` | str | no | `"leave"` | `git-autosync` only: `"leave"` keeps rebase conflicts for review; `"abort"` restores old abort behavior |
+| `options.channels` | array[str] | no | `["push", "email"]` | `notify` only: transports to deliver to |
+| `options.priority` | int | no | notice's | `notify` only: 1–5 priority override |
 
 `command` and `builtin` are mutually exclusive.
 
@@ -98,6 +108,38 @@ event   = "spawn.finalized"
 ```
 
 Inline commands are fine when they remain short and readable.
+
+Command hooks receive the event context as JSON on stdin (`schema_version` 2)
+and as `MERIDIAN_HOOK_*` and related environment variables. Hooks run even in a
+directory with no Meridian runtime state; only `interval`-throttled hooks skip
+there. `MERIDIAN_HOOKS_ENABLED=false` turns off all hook dispatch, including
+notification delivery.
+
+## Builtin: `notify`
+
+`notify` delivers a notification event through the transports configured in
+`[notify]`. Options `channels` (default `["push", "email"]`, or backend names
+such as `ntfy`) and `priority` (1–5) pick where and how loud.
+
+**Default events:** `session.responded`, `session.cache_expiring`, `notify.manual`
+
+Meridian adds a default `notify` route (source `default` in `hooks list`) for
+each notification event no `builtin = "notify"` row covers. A row for an event,
+even with `enabled = false`, replaces only that event's default.
+
+```toml
+# Silence the "your turn" push
+[[hooks]]
+builtin = "notify"
+event   = "session.responded"
+enabled = false
+```
+
+A `command` hook on a notification event is an extra channel: it gets the
+`notification` object on stdin and `MERIDIAN_NOTIFICATION_TITLE`, `_BODY`, and
+`_PRIORITY` in its environment. See
+[Routing and extending notifications](configuration.md#routing-and-extending-notifications)
+for channel semantics and examples.
 
 ## Builtin: `git-autosync`
 

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from email.charset import BASE64, Charset
 from email.header import Header
+from pathlib import Path
 from typing import cast
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -44,28 +45,36 @@ class NtfyChannel:
                 warning="ntfy_topic is unset; ntfy delivery disabled",
             )
 
-        try:
-            url = f"{cfg.ntfy_server.rstrip('/')}/{quote(topic.strip(), safe='')}"
-            request = Request(
-                url,
-                data=notice.body.encode("utf-8"),
-                headers={
-                    "Title": _title_header(notice.title),
-                    "Priority": str(notice.priority),
-                    "Tags": notice.kind,
-                },
-                method="POST",
-            )
-            status = self.transport(request)
-        except Exception as exc:  # external transport boundary
-            return SendResult(channel=self.name, status="failed", error=str(exc))
-
-        if not 200 <= status < 300:
-            return SendResult(
-                channel=self.name,
-                status="failed",
-                error=f"ntfy returned HTTP {status}",
-            )
+        url = f"{cfg.ntfy_server.rstrip('/')}/{quote(topic.strip(), safe='')}"
+        headers = {
+            "Title": _title_header(notice.title),
+            "Priority": str(notice.priority),
+            "Tags": notice.event,
+        }
+        # ntfy carries one file per message: the text first, then each file on its own.
+        messages: list[tuple[str, bytes | Path, dict[str, str]]] = [
+            ("message", notice.body.encode("utf-8"), headers)
+        ]
+        messages.extend(
+            (path.name, path, {**headers, "Filename": _title_header(path.name)})
+            for path in notice.attachments
+        )
+        for what, data, message_headers in messages:
+            try:
+                is_file = isinstance(data, Path)
+                body = data.read_bytes() if isinstance(data, Path) else data
+                request = Request(
+                    url, data=body, headers=message_headers, method="PUT" if is_file else "POST"
+                )
+                status = self.transport(request)
+            except Exception as exc:  # external transport boundary
+                return SendResult(channel=self.name, status="failed", error=f"{what}: {exc}")
+            if not 200 <= status < 300:
+                return SendResult(
+                    channel=self.name,
+                    status="failed",
+                    error=f"{what}: ntfy returned HTTP {status}",
+                )
         return SendResult(channel=self.name, status="sent")
 
 

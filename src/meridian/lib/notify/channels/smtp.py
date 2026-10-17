@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import os
 import smtplib
 import ssl
@@ -77,6 +78,14 @@ def _resolve_password(cfg: NotifyConfig, environ: Mapping[str, str]) -> str:
     return password
 
 
+def _content_type(path: Path) -> tuple[str, str]:
+    guessed, encoding = mimetypes.guess_type(path.name)
+    if guessed is None or encoding is not None:
+        return "application", "octet-stream"
+    maintype, _, subtype = guessed.partition("/")
+    return maintype, subtype
+
+
 def _required(value: str | None, name: str) -> str:
     normalized = value.strip() if value is not None else ""
     if not normalized:
@@ -112,6 +121,11 @@ class SMTPChannel:
             message["To"] = recipient
             message["Subject"] = notice.title
             message.set_content(notice.body)
+            for path in notice.attachments:
+                maintype, subtype = _content_type(path)
+                message.add_attachment(
+                    path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name
+                )
 
             with self.transport(host, port, _SMTP_TIMEOUT_SECONDS) as client:
                 client.starttls(context=ssl.create_default_context())

@@ -19,7 +19,7 @@ class _ResultChannel:
         return self.result
 
 
-_NOTICE = Notice(title="Meridian", body="done", priority=3, email=True, kind="manual")
+_NOTICE = Notice(title="Meridian", body="done", priority=3, email=True, event="notify.manual")
 
 
 def test_send_succeeds_when_one_channel_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:

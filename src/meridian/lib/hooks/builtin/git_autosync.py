@@ -37,6 +37,13 @@ from meridian.plugin_api.git import normalize_repo_url, resolve_clone_path
 
 logger = structlog.get_logger(__name__)
 
+
+def _runtime_root(context: HookContext) -> Path:
+    # execute() skips a context without one before any sync runs.
+    if context.runtime_root is None:
+        raise ValueError("git-autosync needs a runtime root")
+    return Path(context.runtime_root)
+
 _REQUIREMENTS_TIMEOUT_SECS = 5
 _CLONE_TIMEOUT_SECS = 300
 _REMOTE_TIMEOUT_SECS = 10
@@ -151,6 +158,18 @@ class GitAutosync:
         """Execute git autosync for one hook invocation."""
 
         start = time.monotonic()
+        if context.runtime_root is None:
+            return self._result(
+                config,
+                context,
+                _SyncOutcome(
+                    outcome="skipped",
+                    success=True,
+                    skipped=True,
+                    skip_reason="no_runtime_root",
+                ),
+                start=start,
+            )
         remote_url = self._resolve_remote_url(config)
 
         # No remote → local-only mode (git init + add + commit, no push)
@@ -163,7 +182,7 @@ class GitAutosync:
         try:
             with transaction(
                 clone_path,
-                runtime_root=Path(context.runtime_root),
+                runtime_root=_runtime_root(context),
                 timeout=_LOCK_TIMEOUT_SECS,
             ) as autosync_tx:
                 return self._execute_with_lock(
@@ -320,7 +339,7 @@ class GitAutosync:
         try:
             with transaction(
                 local_path,
-                runtime_root=Path(context.runtime_root),
+                runtime_root=_runtime_root(context),
                 timeout=_LOCK_TIMEOUT_SECS,
             ) as autosync_tx:
                 ok, error = self._ensure_local_repo(local_path)
@@ -1009,7 +1028,7 @@ class GitAutosync:
                         )
 
                     if context is not None and has_unresolved_conflict(
-                        Path(clone_path), runtime_root=Path(context.runtime_root)
+                        Path(clone_path), runtime_root=_runtime_root(context)
                     ):
                         if stashed_excludes:
                             self._unstash_excluded_files(clone_path)

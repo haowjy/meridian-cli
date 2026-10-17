@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from meridian.lib.config.models import NotifyConfig
@@ -10,6 +11,8 @@ from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.notice import Notice, SessionLabel
 
 _ALL_NONE_WARNING = "notification disabled: every selected backend is none"
+# The configured push backend, and the email backend when the notice wants email.
+DEFAULT_CHANNELS: tuple[str, ...] = ("push", "email")
 
 
 @dataclass(frozen=True)
@@ -26,7 +29,13 @@ class SendReport:
 
     @property
     def ok(self) -> bool:
-        return any(result.ok for result in self.results) or self.all_none
+        """Something delivered, or nothing was meant to (every route off or none)."""
+
+        return (
+            not self.results
+            or any(result.ok for result in self.results)
+            or self.all_none
+        )
 
     @property
     def exit_code(self) -> int:
@@ -45,11 +54,31 @@ class SendReport:
         }
 
 
-def send(notice: Notice, cfg: NotifyConfig) -> SendReport:
-    """Fan out once to each selected backend; never retry in-process."""
-    backends = [cfg.push_backend]
-    if notice.email:
-        backends.append(cfg.email_backend)
+def _backends(notice: Notice, cfg: NotifyConfig, channels: Sequence[str]) -> list[str]:
+    backends: list[str] = []
+    for channel in channels:
+        name = channel.strip().lower()
+        if name == "push":
+            backends.append(cfg.push_backend)
+        elif name == "email":
+            if notice.email:
+                backends.append(cfg.email_backend)
+        else:
+            backends.append(name)
+    return backends
+
+
+def send(
+    notice: Notice,
+    cfg: NotifyConfig,
+    channels: Sequence[str] = DEFAULT_CHANNELS,
+) -> SendReport:
+    """Fan out once to each selected backend; never retry in-process.
+
+    `push` and `email` name the configured backends; any other entry names a
+    backend directly (`ntfy`, `smtp`, `gmail`, `command`, `none`).
+    """
+    backends = _backends(notice, cfg, channels)
 
     results: list[SendResult] = []
     for backend in dict.fromkeys(backends):
@@ -67,4 +96,4 @@ def send(notice: Notice, cfg: NotifyConfig) -> SendReport:
     return report
 
 
-__all__ = ["SendReport", "send"]
+__all__ = ["DEFAULT_CHANNELS", "SendReport", "send"]

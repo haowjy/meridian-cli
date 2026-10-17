@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 class _FakeSMTP:
     def __init__(self) -> None:
         self.login_args: tuple[str, str] | None = None
+        self.messages: list[EmailMessage] = []
 
     def __enter__(self) -> _FakeSMTP:
         return self
@@ -36,7 +37,7 @@ class _FakeSMTP:
         self.login_args = (user, password)
 
     def send_message(self, message: EmailMessage) -> None:
-        _ = message
+        self.messages.append(message)
 
 
 class _FakeSMTPTransport:
@@ -55,7 +56,7 @@ _NOTICE = Notice(
     body="SMTP body",
     priority=3,
     email=True,
-    kind="manual",
+    event="notify.manual",
 )
 
 
@@ -118,3 +119,33 @@ def test_smtp_refuses_group_or_world_readable_password_file(
 
     assert result.status == "failed"
     assert transport.calls == 0
+
+
+def test_smtp_attaches_every_file_with_a_guessed_type(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_NOTIFY_SMTP_PASSWORD", "from-env")
+    (tmp_path / "decisions.md").write_text("# Options\n", encoding="utf-8")
+    (tmp_path / "trace.bin").write_bytes(b"\x00\x01")
+    transport = _FakeSMTPTransport()
+    notice = Notice(
+        title="Pick auth storage",
+        body="Tradeoffs attached",
+        priority=3,
+        email=True,
+        event="notify.manual",
+        attachments=(tmp_path / "decisions.md", tmp_path / "trace.bin"),
+    )
+
+    result = SMTPChannel(transport=transport).send(notice, _smtp_config())
+
+    attached = [
+        (part.get_filename(), part.get_content_type(), part.get_content())
+        for part in transport.client.messages[0].iter_attachments()
+    ]
+    assert result.ok is True
+    assert attached == [
+        ("decisions.md", "text/markdown", "# Options\n"),
+        ("trace.bin", "application/octet-stream", b"\x00\x01"),
+    ]

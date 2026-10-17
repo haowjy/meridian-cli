@@ -58,8 +58,7 @@ class Sender:
         self.ok = ok
         self.notices: list[Notice] = []
 
-    def __call__(self, notice: Notice, cfg: object) -> SendReport:
-        _ = cfg
+    def __call__(self, notice: Notice) -> SendReport:
         self.notices.append(notice)
         status = "sent" if self.ok else "failed"
         return SendReport(results=(SendResult(channel="test", status=status),))

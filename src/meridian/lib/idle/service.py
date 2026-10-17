@@ -27,7 +27,8 @@ from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
 from meridian.lib.idle.messages import stage_notice
 from meridian.lib.idle.timeline import Schedule, push_delay, schedule
 from meridian.lib.idle.wake import expected_wake
-from meridian.lib.notify import Notice, SendReport, send
+from meridian.lib.notify import Notice, SendReport
+from meridian.lib.notify.emit import emit
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.state.idle_store import (
     IdleSchedule,
@@ -44,9 +45,9 @@ logger = logging.getLogger(__name__)
 
 
 class NotifySender(Protocol):
-    """Notification delivery seam for tests."""
+    """Emits a notice as its hook event; a seam for tests."""
 
-    def __call__(self, notice: Notice, cfg: NotifyConfig) -> SendReport: ...
+    def __call__(self, notice: Notice) -> SendReport: ...
 
 
 def _recorded_native_store(
@@ -279,7 +280,7 @@ class IdleService:
         self.config = config if config is not None else load_config(self.project_root)
         self._now_ms = now_ms
         self.store = store if store is not None else IdleStore(now_ms=now_ms)
-        self._notify_sender = notify_sender if notify_sender is not None else send
+        self._notify_sender = notify_sender or self._emit
         self._detect_ttl = detect_ttl
         self._native_idle_hook = native_idle_hook
 
@@ -519,11 +520,14 @@ class IdleService:
                 now_ms=self._now_ms(),
                 warn_email=policy.warn_email,
             )
-            ok = self._notify_sender(notice, self._notify_config()).ok
+            ok = self._notify_sender(notice).ok
         except Exception:
             ok = False
         if not ok:
             self._mark_notification_failed(harness, session, stretch, stage)
+
+    def _emit(self, notice: Notice) -> SendReport:
+        return emit(notice, project_root=self.project_root, env=self.env)
 
     def _notify_config(self) -> NotifyConfig:
         return self.config.notify

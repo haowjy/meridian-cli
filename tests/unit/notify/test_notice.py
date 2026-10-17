@@ -4,31 +4,16 @@ from meridian.lib.notify import SessionLabel, manual_notice
 from meridian.lib.notify.label import build_session_label
 
 
-def test_manual_notice_uses_label_headline_with_tmux_and_work() -> None:
-    notice = manual_notice(
-        "build passed",
-        SessionLabel(
-            agent="coder",
-            project="meridian-cli",
-            work_id="idle-cache-notify",
-            tmux_session="main",
-        ),
-    )
+def test_manual_notice_keeps_the_title_and_ends_the_body_with_its_source() -> None:
+    label = SessionLabel(harness="codex", project="meridian-cli", tmux_session="main")
 
-    assert notice.title == 'main: coder on work: "idle-cache-notify"'
-    assert notice.body == "build passed"
+    detailed = manual_notice("Done", "build passed", label)
+    bare = manual_notice("Done", None, label)
 
-
-def test_manual_title_moves_terminal_and_project_context_into_body() -> None:
-    notice = manual_notice(
-        "build passed",
-        SessionLabel(harness="codex", project="meridian-cli", tmux_session="main"),
-        title="Done",
-    )
-
-    assert notice.title == "Done"
-    assert notice.body == 'build passed\nmain: codex in project: "meridian-cli"'
-    assert "·" not in notice.title + notice.body
+    assert (detailed.title, detailed.event) == ("Done", "notify.manual")
+    assert detailed.body == 'build passed\nmain: codex in project: "meridian-cli"'
+    assert bare.body == 'main: codex in project: "meridian-cli"'
+    assert "·" not in detailed.title + detailed.body
 
 
 def test_session_label_resolves_agent_harness_work_and_tmux_from_launch_env() -> None:

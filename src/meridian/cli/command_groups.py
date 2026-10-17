@@ -142,9 +142,12 @@ _GROUP_HELP: dict[str, GroupHelp] = {
     ),
     "notify": GroupHelp(
         summary='Send a push and optional email notification.',
-        long_help='Send one notification through the configured push and email backends. Delivery is attempted once per backend and is never retried in-process.',
-        examples=(("meridian notify \"waiting on your decision\"", ''),),
-        agent_notes='Use for a blocking decision, requested long-running completion, or failure that needs attention — not routine progress.',
+        long_help='Send one notification as the `notify.manual` hook event: a one-line title and an optional body. Its routes deliver it, by default once to the configured push and email backends, never retried in-process; `[[hooks]]` rows can reroute it or add command channels.',
+        examples=(
+            ("meridian notify \"Pick auth storage\" \"Tradeoffs in decisions.md\"", ''),
+            ("meridian notify \"PR #412 ready for review\" --no-email", ''),
+        ),
+        agent_notes='Use for a blocking decision, requested long-running completion, or failure that needs attention — not routine progress. The title is the one line they read first: what to decide or see; put detail in the body.',
     ),
     "idle": GroupHelp(
         summary="Manage harness idle schedules.",

@@ -184,9 +184,12 @@ again can reintroduce those values.
 
 ## Notifications and idle sessions
 
-`meridian notify` sends a one-shot message through the selected push and email
-backends. The idle service uses the same delivery settings for its push and
-cache warning.
+Every notification is a hook event: `session.responded` (the idle "your turn"
+push), `session.cache_expiring` (the idle cache warning), and `notify.manual`
+(`meridian notify`). The built-in `notify` hook delivers them through the
+transports configured in `[notify]`; see
+[Routing and extending notifications](#routing-and-extending-notifications) to
+change where each one goes or add your own channel.
 
 ### `[notify]`
 
@@ -207,9 +210,11 @@ cache warning.
 | `email_command` | unset | `MERIDIAN_NOTIFY_EMAIL_COMMAND` | Command used by the email `command` backend |
 
 The command backends split their configured command with `shlex`, append the
-notice title and body as arguments, and pass the complete notice as JSON on
-stdin. Delivery is attempted once per selected backend; one backend failing does
-not prevent the other from running.
+notice title and body as arguments, and pass the notice as JSON on stdin:
+`title`, `body`, `priority`, `email`, `event` (the hook event name) and `label`
+(`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`). The ntfy
+backend tags each message with the event name. Delivery is attempted once per
+selected backend; one backend failing does not prevent the other from running.
 
 Idle notification titles put the reason first, followed by the tmux session
 when available, the agent (or harness), and an explicitly labelled work item:
@@ -228,9 +233,9 @@ Bodies retain the warning details and message excerpts labelled
 
 Excerpts are plain text, whitespace-collapsed, and shortened before storage.
 Because they leave the machine through ntfy or email, set
-`include_messages = false` to omit both. For `meridian notify`, `--title`
-replaces the headline and moves the terminal/agent/work description into the
-body so the context remains visible.
+`include_messages = false` to omit both. `meridian notify` uses its first
+argument as the title and always ends the body with the session headline, so
+the terminal/agent/work description stays visible.
 
 Put SMTP credentials in `smtp_password_file` and set its mode to `0600`.
 Meridian refuses a password file readable by the group or other users. The
@@ -248,6 +253,64 @@ setup with `meridian notify "test" --json`: `"channel": "gmail", "status":
 "sent"` means it went out, and a `535` error means the app password is wrong
 or 2-Step Verification is off.
 
+### Routing and extending notifications
+
+Notification events go through the normal [hooks](hooks.md) system: `[[hooks]]`
+rows layer user < project < local, `when.agent` matches the notifying
+session's agent, `interval` throttles, and `enabled = false` turns a row off.
+`MERIDIAN_HOOKS_ENABLED=false` therefore turns off every notification.
+
+**Default routes.** For each notification event that no config row routes,
+Meridian adds a `notify` route (source `default` in `meridian hooks list`). A
+`[[hooks]] builtin = "notify"` row for an event, even with `enabled = false`,
+replaces the default for that event only. A `notify` row without `event`
+covers all three events.
+
+The `notify` builtin takes two options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `channels` | `["push", "email"]` | `"push"` is `push_backend`; `"email"` is `email_backend`, used only when the notice wants email. A backend name (`ntfy`, `smtp`, `gmail`, `command`, `none`) sends there directly. |
+| `priority` | the notice's | 1–5; overrides the notice's priority |
+
+`meridian notify --no-email` and the idle push never want email; the cache
+warning follows `[idle] warn_email`.
+
+```toml
+# Cache warnings go only to ntfy, at top priority
+[[hooks]]
+builtin = "notify"
+event   = "session.cache_expiring"
+options = { channels = ["ntfy"], priority = 5 }
+
+# No "your turn" push
+[[hooks]]
+builtin = "notify"
+event   = "session.responded"
+enabled = false
+```
+
+**Extension channels.** Any `[[hooks]] command = "..."` row on a notification
+event receives the notification, so a Slack or desktop channel is one row and
+one script. Stdin carries the hook payload (`schema_version` 2) with a
+`notification` object: `title`, `body`, `priority`, `email`, and `label`
+(`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), and
+`attachments` (absolute paths from `meridian notify --attach`). The
+environment adds `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`
+and `MERIDIAN_NOTIFICATION_PRIORITY` to the usual `MERIDIAN_HOOK_*` variables.
+
+```toml
+[[hooks]]
+name    = "desktop"
+command = "./scripts/desktop-notify.sh"   # e.g. notify-send "$MERIDIAN_NOTIFICATION_TITLE" "$MERIDIAN_NOTIFICATION_BODY"
+event   = "notify.manual"
+```
+
+Notification routes run even in a directory with no Meridian runtime state;
+only `interval`-throttled hooks skip there. Python hooks can send through the
+configured transports with `meridian.plugin_api.notify.deliver()`; see
+[plugin-api.md](plugin-api.md#notification-delivery).
+
 ### `[idle]`
 
 Idle handling sends two notices, independently: the waiting push ("your turn")
@@ -262,7 +325,7 @@ so, and Meridian leaves those settings alone.
 | `long_turn_seconds` | `120` | `MERIDIAN_IDLE_LONG_TURN_SECONDS` | Minimum wait that uses `push_seconds` |
 | `quick_turn_push_seconds` | `600` | `MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS` | Seconds after a quick or unknown-length turn before the waiting push |
 | `warn_minutes` | `15` | `MERIDIAN_IDLE_WARN_MINUTES` | Minutes before cache expiry to warn |
-| `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Include the configured email backend in the warning |
+| `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Let the warning reach email channels |
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
 
 When you have waited at least two minutes since your last prompt, the waiting

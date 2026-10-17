@@ -67,7 +67,8 @@ def stage_notice(
         ),
         priority=3 if stage == "push" else 4,
         email=warn_email if stage == "warn" else False,
-        kind="idle",
+        event="session.cache_expiring" if stage == "warn" else "session.responded",
+        label=label,
     )
 
 

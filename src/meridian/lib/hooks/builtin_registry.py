@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from meridian.lib.hooks.types import HookEventName
+from meridian.lib.hooks.types import NOTIFICATION_EVENTS, HookEventName
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,25 @@ def _validate_git_autosync_options(options: Mapping[str, object]) -> None:
         raise ValueError("git-autosync requires either 'remote' or 'path'")
 
 
+def _validate_notify_options(options: Mapping[str, object]) -> None:
+    """Validate a notification route: which channels, and an optional priority."""
+
+    channels = options.get("channels")
+    if channels is not None and (
+        not isinstance(channels, list | tuple)
+        or not all(
+            isinstance(channel, str) and channel.strip()
+            for channel in cast("Sequence[object]", channels)
+        )
+    ):
+        raise ValueError("'channels' must be a list of channel names")
+    priority = options.get("priority")
+    if priority is not None and (
+        isinstance(priority, bool) or not isinstance(priority, int) or not 1 <= priority <= 5
+    ):
+        raise ValueError("'priority' must be an integer from 1 to 5")
+
+
 BUILTIN_HOOK_REGISTRY: dict[str, BuiltinHookMeta] = {
     "git-autosync": BuiltinHookMeta(
         name="git-autosync",
@@ -50,6 +69,13 @@ BUILTIN_HOOK_REGISTRY: dict[str, BuiltinHookMeta] = {
         interval=None,
         required_options=(),
         validate=_validate_git_autosync_options,
+    ),
+    "notify": BuiltinHookMeta(
+        name="notify",
+        default_events=NOTIFICATION_EVENTS,
+        interval=None,
+        required_options=(),
+        validate=_validate_notify_options,
     ),
 }
 

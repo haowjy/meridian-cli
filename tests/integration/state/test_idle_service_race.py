@@ -15,7 +15,7 @@ def test_two_push_claims_racing_have_one_winner(tmp_path: Path) -> None:
         config=MeridianConfig(),
         env={"MERIDIAN_SESSION_ROLE": "primary"},
         now_ms=lambda: now[0],
-        notify_sender=lambda _notice, _cfg: SendReport(results=()),
+        notify_sender=lambda _notice: SendReport(results=()),
     )
     armed = service.arm(harness="example", session="s1", ttl_seconds=3600)
     now[0] = armed.push_at or 0

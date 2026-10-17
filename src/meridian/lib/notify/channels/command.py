@@ -51,7 +51,9 @@ def _notice_json(notice: Notice) -> str:
             "body": notice.body,
             "priority": notice.priority,
             "email": notice.email,
-            "kind": notice.kind,
+            "event": notice.event,
+            "label": notice.label.to_dict() if notice.label is not None else None,
+            "attachments": [path.as_posix() for path in notice.attachments],
         },
         ensure_ascii=False,
     )

@@ -29,7 +29,7 @@ _NOTICE = Notice(
     body="$(touch x); rm -rf /",
     priority=4,
     email=True,
-    kind="manual",
+    event="notify.manual",
 )
 
 
@@ -63,5 +63,7 @@ def test_command_sends_notice_json_on_stdin_and_text_on_argv() -> None:
         "body": _NOTICE.body,
         "priority": 4,
         "email": True,
-        "kind": "manual",
+        "event": "notify.manual",
+        "label": None,
+        "attachments": [],
     }

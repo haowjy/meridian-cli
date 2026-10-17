@@ -1,6 +1,6 @@
 # plugin_api/ — Stable External Plugin Surface
 
-The only surface external plugins (and built-in hooks) may import from. Versioned at `1.0.0` — breaking changes require a version bump and migration path. Internal `meridian.lib.*` is not stable; this is.
+The only surface external plugins (and built-in hooks) may import from. Versioned at `2.0.0` — breaking changes require a version bump and migration path. Internal `meridian.lib.*` is not stable; this is.
 
 ## Mental Model
 
@@ -10,7 +10,8 @@ External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `
 
 ## What's Stable Here
 
-- `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `FailurePolicy` — the hook contract types
+- `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `FailurePolicy`, `Notification`, `NOTIFICATION_EVENTS` — the hook contract types. `lib/hooks` uses these exact classes, so the payload a hook sees is the one the dispatcher built.
+- `notify.py` — `deliver()` — send a `Notification` through the transports the project configures (`push`, `email`, or a backend name)
 - `state.py` — `get_project_home()`, `get_user_home()` — state root access
 - `fs.py` — `file_lock()`, `atomic_write_text()` — cross-platform locking and atomic
   replacement for plugins
@@ -38,4 +39,4 @@ Submodule utilities (`fs`, `git`, `config`) are NOT re-exported from `__init__.p
 ## Related
 
 - `../lib/hooks/builtin/` — built-in hooks that use this API as their only import surface
-- `../lib/hooks/` — internal hook dispatch that bridges `HookContext` to `PluginHookContext`
+- `../lib/hooks/` — internal hook dispatch, built on these types

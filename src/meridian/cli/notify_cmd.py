@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -9,11 +10,11 @@ from cyclopts import Parameter
 
 from meridian.cli.app_tree import notify_app
 from meridian.cli.invocation import current_output_sink, get_global_options
-from meridian.lib.config.loader import load_config
 from meridian.lib.config.project_root import resolve_project_root_resolution
+from meridian.lib.notify.emit import emit
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.notify.notice import manual_notice
-from meridian.lib.notify.service import SendReport, send
+from meridian.lib.notify.service import SendReport
 
 
 def _render_report(report: SendReport, *, json_mode: bool = False) -> None:
@@ -32,7 +33,7 @@ def _render_report(report: SendReport, *, json_mode: bool = False) -> None:
     if json_mode or get_global_options().output.format == "json":
         sink.result(report.to_dict())
         return
-    if report.all_none:
+    if report.all_none or not report.results:
         sink.result("Notification delivery is disabled.")
         return
     sent = ", ".join(result.channel for result in report.results if result.ok)
@@ -42,29 +43,33 @@ def _render_report(report: SendReport, *, json_mode: bool = False) -> None:
 
 @notify_app.default
 def cmd_notify(
-    message: Annotated[str, Parameter(help="Message body to send.")],
-    *,
-    title: Annotated[
+    title: Annotated[str, Parameter(help="One line: what the human needs to decide or see.")],
+    body: Annotated[
         str | None,
-        Parameter(
-            name="--title",
-            help="Override the headline; the session description moves into the body.",
-        ),
+        Parameter(help='Optional detail; `"$(cat <file>)"` for longer text.'),
     ] = None,
+    *,
     no_email: Annotated[
         bool,
-        Parameter(name="--no-email", help="Send only to the push backend."),
+        Parameter(name="--no-email", help="Keep it off email channels."),
     ] = False,
     priority: Annotated[
         int,
         Parameter(name="--priority", help="Notification priority from 1 to 5."),
     ] = 3,
+    attach: Annotated[
+        tuple[Path, ...],
+        Parameter(
+            name="--attach",
+            help="A file to send with it; repeat for more (ntfy sends one per message).",
+        ),
+    ] = (),
     json_mode: Annotated[
         bool,
         Parameter(name="--json", help="Print the delivery report as JSON."),
     ] = False,
 ) -> None:
-    """Send one manual notification."""
+    """Send one notification as the `notify.manual` hook event."""
     sink = current_output_sink()
     if not 1 <= priority <= 5:
         sink.error("--priority must be between 1 and 5", exit_code=2)
@@ -74,16 +79,15 @@ def cmd_notify(
     project_root = resolve_project_root_resolution(
         Path(explicit_root) if explicit_root is not None else None
     ).project_root
-    config = load_config(project_root).notify
     label = build_session_label()
-    notice = manual_notice(
-        message,
-        label,
-        title=title,
-        priority=priority,
-        email=not no_email,
-    )
-    report = send(notice, config).with_label(label)
+    try:
+        notice = manual_notice(
+            title, body, label, priority=priority, email=not no_email, attachments=attach
+        )
+    except ValueError as exc:
+        sink.error(str(exc), exit_code=2)
+        raise SystemExit(2) from None
+    report = emit(notice, project_root=project_root, env=os.environ).with_label(label)
     _render_report(report, json_mode=json_mode)
     raise SystemExit(report.exit_code)
 

@@ -51,8 +51,7 @@ class Sender:
     def __init__(self) -> None:
         self.notices: list[Notice] = []
 
-    def __call__(self, notice: Notice, cfg: object) -> SendReport:
-        _ = cfg
+    def __call__(self, notice: Notice) -> SendReport:
         self.notices.append(notice)
         return SendReport(results=(SendResult(channel="test", status="sent"),))
 

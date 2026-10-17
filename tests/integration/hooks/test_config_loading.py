@@ -11,7 +11,8 @@ from meridian.lib.hooks.config import load_hooks_config
         (
             "event",
             'event = "bogus"',
-            "expected one of [spawn.created, spawn.finalized, spawn.running, spawn.start, "
+            "expected one of [notify.manual, session.cache_expiring, session.responded, "
+            "spawn.created, spawn.finalized, spawn.running, spawn.start, "
             "work.done, work.start, work.started], got 'bogus'",
         ),
         (
@@ -93,3 +94,25 @@ def test_hook_config_model_normalizes_closed_values(tmp_path: Path) -> None:
     assert hook.timeout_secs == 1
     assert hook.when is not None
     assert hook.when.status == ("success", "failure")
+
+
+def test_a_notify_row_replaces_only_its_events_default_route(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'builtin = "notify"\n'
+        'event = "session.cache_expiring"\n'
+        "enabled = false\n",
+        encoding="utf-8",
+    )
+
+    routes = {
+        (hook.event, hook.source, hook.enabled)
+        for hook in load_hooks_config(tmp_path).hooks
+        if hook.builtin == "notify"
+    }
+
+    assert routes == {
+        ("session.cache_expiring", "project", False),
+        ("session.responded", "default", True),
+        ("notify.manual", "default", True),
+    }

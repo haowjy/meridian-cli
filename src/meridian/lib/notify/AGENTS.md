@@ -1,15 +1,26 @@
 # lib/notify/ — Notification Delivery
 
-Harness-agnostic leaf service for labels and one-shot notification delivery.
-Callers construct a `Notice`; `service.send(notice, NotifyConfig)` fans out to
-the selected push and email backends and returns a `SendReport`. It never retries
-or reads notification config directly from environment variables.
+Harness-agnostic labels, notices and one-shot delivery transports.
+Callers construct a `Notice` (its `event` is a hook event: `session.responded`,
+`session.cache_expiring`, `notify.manual`) and call `emit.emit()`, which fires
+that event through `lib/hooks`; the routes on it deliver it. The built-in
+`notify` hook reaches `service.send(notice, cfg, channels)` through
+`plugin_api.notify.deliver()`, and `emit` folds every route's result back into
+one `SendReport`. Never call `send()` from a caller: that skips routing and
+every extension. Nothing here retries or reads notification config from
+environment variables directly.
+
+`emit.py` is the only module that imports `lib/hooks`, lazily; the rest of the
+package stays a leaf so `plugin_api` can wrap it.
 
 ## Channel seam
 
 Each backend is one module under `channels/` exposing a `CHANNEL` that satisfies
 `Channel.send(notice, cfg) -> SendResult`. Add its lazy entry to
-`channels.REGISTRY`; that dict is the only registration point. A backend failure
+`channels.REGISTRY`; that dict is the only registration point. A route's
+`channels` option names backends directly or through `push` / `email` (the
+configured backends). User-defined channels are command hooks on the
+notification events, not backends. A backend failure
 is data in its result and must not stop another selected backend.
 
 ## Output and logging

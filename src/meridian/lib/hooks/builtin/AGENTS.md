@@ -4,12 +4,13 @@ Built-ins run inside the Meridian process with no subprocess overhead. They use 
 
 ## Mental Model
 
-The dispatcher calls `_run_builtin(hook, context)` when it encounters a hook with a name matching a registered `BuiltinHook`. Built-ins receive a `PluginHookContext` (plugin API surface), not the internal `HookContext`. The bridge happens in `dispatch.py` via `_to_plugin_context()`.
+The dispatcher calls `_run_builtin(hook, context)` when it encounters a hook with a name matching a registered `BuiltinHook`. Built-ins receive the plugin API's `HookContext` (the dispatcher uses that type itself) and a plugin `Hook` built by `_to_plugin_hook()`.
 
 ## What Lives Here
 
 - `base.py` — `BuiltinHook` protocol: `name`, `requirements`, `default_events`, `default_interval`, `check_requirements()`, `execute(hook, context, config)`
 - `git_autosync.py` — `GIT_AUTOSYNC` singleton: commit-first merge-based sync (add → commit → fetch → merge → push)
+- `notify.py` — `NOTIFY`: delivers a notification event's `HookContext.notification` through `plugin_api.notify.deliver()` to the channels its row's `options.channels` names (default `push`, `email`), with an optional `options.priority`; puts the per-transport report in its result's stdout for `lib/notify/emit.py`.
 - `autosync_store.py` — sole owner of the `.meridian/autosync/` file layout and its sync-root transaction lock: conflict metadata JSON and sync state JSON.
 
 ## GitAutosync Behavior

@@ -9,12 +9,14 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.config.layers import iter_config_layers
 from meridian.lib.hooks.schema import hooks_from_spec, normalize_hooks_array
-from meridian.lib.hooks.types import Hook, HookEventName
+from meridian.lib.hooks.types import NOTIFICATION_EVENTS, Hook, HookEventName
 
 if TYPE_CHECKING:
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
 HOOK_SOURCE_PRECEDENCE: tuple[str, ...] = ("user", "project", "local")
+# Source of the routes Meridian supplies itself.
+DEFAULT_SOURCE = "default"
 
 
 @dataclass(frozen=True)
@@ -87,4 +89,26 @@ def load_hooks_config(
     ):
         hooks.extend(_hooks_from_payload(layer.payload, source=layer.name))
 
-    return HooksConfig(hooks=_apply_name_overrides(tuple(hooks)))
+    return HooksConfig(hooks=_with_default_notify_routes(_apply_name_overrides(tuple(hooks))))
+
+
+def _with_default_notify_routes(hooks: tuple[Hook, ...]) -> tuple[Hook, ...]:
+    """Deliver every notification event that no `notify` row routes yet.
+
+    A row naming `builtin = "notify"` for an event, enabled or not, replaces the
+    default route for that event only.
+    """
+
+    routed = {hook.event for hook in hooks if hook.builtin == "notify"}
+    defaults = tuple(
+        Hook(
+            name="notify",
+            event=event,
+            source=DEFAULT_SOURCE,
+            builtin="notify",
+            auto_registered=True,
+        )
+        for event in NOTIFICATION_EVENTS
+        if event not in routed
+    )
+    return (*hooks, *defaults)

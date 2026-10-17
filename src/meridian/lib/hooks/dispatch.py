@@ -27,7 +27,6 @@ from meridian.lib.hooks.types import (
     SpawnStatus,
 )
 from meridian.plugin_api import Hook as PluginHook
-from meridian.plugin_api import HookContext as PluginHookContext
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -96,9 +95,7 @@ class HookDispatcher(LifecycleHook):
         self._interval_tracker = interval_tracker or (
             IntervalTracker(self._runtime_root) if self._runtime_root is not None else None
         )
-        self._external_runner = external_runner or (
-            ExternalHookRunner(self._project_root) if self._runtime_root is not None else None
-        )
+        self._external_runner = external_runner or ExternalHookRunner(self._project_root)
         self._builtin_hooks = builtin_hooks or BUILTIN_HOOKS
 
     @classmethod
@@ -140,10 +137,11 @@ class HookDispatcher(LifecycleHook):
         self.fire(self._build_context(event))
 
     def fire(self, context: HookContext) -> list[HookResult]:
-        """Execute hooks registered for one event and return per-hook results."""
+        """Execute hooks registered for one event and return per-hook results.
 
-        if self._runtime_root is None:
-            return []
+        Without a runtime root (an ad-hoc directory nothing has initialized), hooks
+        still run; only interval-throttled ones skip, having nowhere to keep state.
+        """
 
         if not hooks_dispatch_enabled():
             logger.info(
@@ -299,15 +297,6 @@ class HookDispatcher(LifecycleHook):
             if hook.builtin:
                 result = self._run_builtin(hook, context)
             else:
-                if self._external_runner is None:
-                    return HookResult(
-                        hook_name=hook.name,
-                        event=context.event_name,
-                        outcome="skipped",
-                        success=True,
-                        skipped=True,
-                        skip_reason="no_state",
-                    )
                 result = self._external_runner.run(hook, context, timeout_secs=timeout_secs)
         except Exception as exc:
             result = HookResult(
@@ -352,7 +341,7 @@ class HookDispatcher(LifecycleHook):
                 error=requirements_error,
             )
 
-        result = builtin.execute(_to_plugin_context(context), _to_plugin_hook(hook))
+        result = builtin.execute(context, _to_plugin_hook(hook))
         return HookResult(
             hook_name=hook.name,
             event=context.event_name,
@@ -447,24 +436,4 @@ def _to_plugin_hook(hook: Hook) -> PluginHook:
         options=hook.options,
         failure_policy=hook.failure_policy,
         remote=hook.remote,
-    )
-
-
-def _to_plugin_context(context: HookContext) -> PluginHookContext:
-    return PluginHookContext(
-        event_name=context.event_name,
-        event_id=context.event_id,
-        timestamp=context.timestamp,
-        project_root=context.project_root,
-        runtime_root=context.runtime_root,
-        schema_version=context.schema_version,
-        spawn_id=context.spawn_id,
-        spawn_status=context.spawn_status,
-        spawn_agent=context.spawn_agent,
-        spawn_model=context.spawn_model,
-        spawn_duration_secs=context.spawn_duration_secs,
-        spawn_cost_usd=context.spawn_cost_usd,
-        spawn_error=context.spawn_error,
-        work_id=context.work_id,
-        work_dir=context.work_dir,
     )
