@@ -807,7 +807,7 @@ class SpawnApplicationService:
             return claimed
 
         with claimed.handle:
-            if self.is_terminal(claimed.stored.status):
+            if not is_active_spawn_status(claimed.stored.status):
                 return claimed.stored
             if before_finalize is not None:
                 await asyncio.to_thread(before_finalize, claimed.stored)
