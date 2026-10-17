@@ -65,6 +65,8 @@ class WorkAssessment:
     blockers: tuple[DiagnosticBlocker, ...]
     generation: int
     failure: EvidenceFailure | None = None
+    # A live session may be held even when no descendant evidence blocks it.
+    completion_hold: bool = False
 
     def __post_init__(self) -> None:
         if self.generation < 0:

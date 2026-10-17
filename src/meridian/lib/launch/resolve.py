@@ -447,7 +447,7 @@ def resolve_resident_deadline_seconds(
     *,
     config_snapshot: dict[str, object] | None,
 ) -> float:
-    """Resolve Codex/OpenCode resident hard-cap deadline in seconds."""
+    """Resolve the resident hard-cap deadline in seconds."""
 
     if config_snapshot:
         timeout_from_config = _resolve_timeout_field_from_config_snapshot(

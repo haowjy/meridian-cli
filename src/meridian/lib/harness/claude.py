@@ -523,6 +523,7 @@ def _resolve_claude_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | N
 
 CLAUDE_SEMANTICS = HarnessSemantics(
     events={
+        "assistant": EventSemantics(activity="turn_active"),
         "result": EventSemantics(clears_signal=True),
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },

@@ -9,8 +9,8 @@ Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
 candidate/deadline mechanics and the stabilization/validation phases live in
 `CompletionCoordinator`, behind
 the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
-`coordinator=None`; Claude native tasks, Pi, and resident Codex/OpenCode paths get
-narrow coordinators at their harness seams. Keep Pi child-wave,
+`coordinator=None`; Claude and Codex/OpenCode share the resident completion profile,
+while Pi supplies its own profile. Keep Pi child-wave,
 disk-state, direct-follow-up gating, resident-done nudges, and descendant cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
@@ -19,13 +19,14 @@ plain/Claude/resident/Pi choice and injects manager capabilities for event emiss
 serialized injection, and application-service descendant cleanup into both Pi and
 resident policy. Drain collaborators must not construct application services.
 
-Resident drain selection is capability-driven: a connection participates in the
-resident descendant-wait path only when `connection.resident_backend` is present.
-Do not key resident behavior off harness ids.
+Resident backend control selects Codex/OpenCode descendant evidence. Claude instead
+supplies native-task evidence and serialized stdin injection to the same coordinator;
+it does not claim backend liveness capabilities. Hold, done/rearm, deadline and nudge
+policy belong to the shared resident profile, not the evidence adapters.
 
 ## Completion and Absolute Timeout Models
 
-Resident Codex/OpenCode completion uses an absolute deadline per arm. Only an explicit
+Resident completion uses an absolute deadline per arm. Only an explicit
 `rearm.signal` can grant a new window; ordinary harness or descendant activity cannot.
 Rearm grants are unlimited by default. `--resident-rearm-budget`,
 `MERIDIAN_RESIDENT_REARM_BUDGET`, profile `resident-rearm-budget`, or
@@ -40,7 +41,11 @@ unbounded-while-descendants-live behavior is by design.
 Claude children use the native `background_tasks_changed` snapshot to hold successful
 turn results while tasks run. The resident deadline bounds the wait from the first held
 result through the follow-up result; task activity never renews it. An empty snapshot
-alone cannot finalize the spawn. No polling or descendant-store reads are needed.
+alone cannot finalize the spawn. Evidence holds use the same periodic done/rearm
+nudges as explicit holds. The shared cadence is 270 seconds, capped at half the
+configured deadline so short windows still offer a rearm opportunity. Claude polls
+only the exact signal files, never task directories or descendant trees. Explicit
+`done` authorizes success with tasks left over; normal managed-scope teardown kills them.
 
 For all three profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
 ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
@@ -159,7 +164,7 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `control_socket.py` — per-spawn inject endpoint
 - `types.py` — `InjectResult`, `ControlMessage`
 
-Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as
+Codex/OpenCode and Pi completion use the shared reconciled transitive spawn-tree assessment as
 their sole persisted-descendant authority. One reconciled projection also retains raw
 canonical rows for Pi result obligations: a read-only terminal inference cannot replace
 terminal publication. Pi's disk watcher observes private task, consumption, receipt,

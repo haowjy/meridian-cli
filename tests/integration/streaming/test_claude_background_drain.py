@@ -17,9 +17,10 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
 )
 from meridian.lib.harness.semantics import NormalizedHarnessEvent
+from meridian.lib.streaming.drain_plan_factory import build_drain_plan
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
-from meridian.lib.streaming.spawn_manager import SpawnManager
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
+from meridian.lib.streaming.types import InjectResult
 
 
 @pytest.mark.asyncio
@@ -27,6 +28,13 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(tmp_path
     delivered: list[NormalizedHarnessEvent] = []
     outcomes: list[DrainOutcome] = []
     spawn_id = SpawnId("p-claude-bg")
+    messages: list[str] = []
+
+    async def inject(
+        _id: SpawnId, message: str, source: str = "control_socket", **_: object
+    ) -> InjectResult:
+        messages.append(message)
+        return InjectResult(success=True)
 
     def frame(kind: str, **payload: object) -> RawHarnessEvent:
         return RawHarnessEvent(event_type=kind, harness_id="claude", payload=payload)
@@ -40,8 +48,13 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(tmp_path
             pass
 
         async def events(self) -> AsyncIterator[RawHarnessEvent]:
-            yield frame("system", subtype="background_tasks_changed", tasks=[{"task_id": "bg"}])
+            yield frame(
+                "system",
+                subtype="background_tasks_changed",
+                tasks=[{"task_id": "bg", "description": "Write marker", "task_type": "local_bash"}],
+            )
             yield frame("result", subtype="success", result="Still running")
+            assert not messages
             # Neither the first result nor task completion may publish success:
             # Claude's automatic follow-up turn still owes its own result.
             assert not outcomes
@@ -51,8 +64,12 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(tmp_path
             yield frame("result", subtype="success", result="Marker read: done")
 
     receiver = cast("HarnessConnection[Any]", Receiver())
-    manager = SpawnManager(runtime_root=tmp_path, project_root=tmp_path)
-    plan = manager._select_drain_plan(
+    plan = build_drain_plan(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        emit_event=lambda *_: None,
+        inject=inject,
+        build_spawn_application_service=cast("Any", None),
         spawn_id=spawn_id,
         receiver=receiver,
         config=ConnectionConfig(
@@ -83,7 +100,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(tmp_path
     )
     await loop.run(spawn_id=spawn_id, receiver=receiver, drain_plan=plan, tracer=None)
     assert delivered[-1].raw.payload["result"] == "Marker read: done"
-    assert delivered[1].semantics.terminal is None
+    assert not messages
     assert len(outcomes) == 1
     assert outcomes[0].status == "succeeded"
     assert outcomes[0].authoritative

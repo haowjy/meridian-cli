@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.claude_drain import ClaudeDrainCoordinator
+from meridian.lib.harness.claude_drain import ClaudeCompletionEvidence
 from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.streaming.drain_coordinator import DrainPlan
@@ -83,12 +83,20 @@ def build_drain_plan(
     async def _send_pi_done_nudge(message: str) -> None:
         await inject(spawn_id, message, source="pi_done_nudge")
 
+    async def _send_completion_nudge(message: str) -> None:
+        await inject(spawn_id, message, source="completion_nudge")
+
     async def _cancel_descendants(root_id: SpawnId) -> set[str]:
         service = build_spawn_application_service(project_root, runtime_root)
         return await service.cancel_descendants(root_id)
 
     resident_backend = receiver.resident_backend
-    if resident_backend is not None:
+    native_evidence = (
+        ClaudeCompletionEvidence(poll_seconds=config.resident_poll_seconds or 5.0)
+        if receiver.harness_id is HarnessId.CLAUDE
+        else None
+    )
+    if resident_backend is not None or native_evidence is not None:
         coordinator = ResidentDrainCoordinator.for_connection(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
@@ -98,6 +106,8 @@ def build_drain_plan(
             poll_seconds=config.resident_poll_seconds,
             rearm_budget=config.resident_rearm_budget,
             cancel_descendants=_cancel_descendants,
+            evidence=native_evidence,
+            send_nudge=_send_completion_nudge if native_evidence is not None else None,
         )
         return DrainPlan(
             coordinator=coordinator,
@@ -132,12 +142,6 @@ def build_drain_plan(
                 spawn_id=spawn_id,
                 emit_event=emit_event,
             ),
-        )
-
-    if receiver.harness_id is HarnessId.CLAUDE:
-        return DrainPlan(
-            coordinator=ClaudeDrainCoordinator(deadline_seconds=config.resident_deadline_seconds),
-            raw_terminal_frames_authoritative=False,
         )
 
     # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline.
