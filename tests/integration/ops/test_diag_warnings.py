@@ -1,7 +1,9 @@
 # qa-validated: test-suite-redesign
 """Doctor warning regression tests for high-risk repair and diagnostic paths."""
 
+import fcntl
 import os
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,6 +12,7 @@ import pytest
 from meridian.lib.ops import diag
 from meridian.lib.ops import mars as mars_ops
 from meridian.lib.ops.diag import DoctorInput, doctor_sync
+from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.conftest import posix_only
@@ -41,10 +44,16 @@ def _write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _seed_active_spawn(project_root: Path, *, started_at: str | None = None) -> str:
+def _seed_active_spawn(
+    project_root: Path,
+    *,
+    started_at: str | None = None,
+    status: str = "running",
+    with_launch_lock: bool = True,
+) -> str:
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
-    return spawn_store.start_spawn(
+    spawn_id = spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
         model="gpt-5.4",
@@ -52,7 +61,21 @@ def _seed_active_spawn(project_root: Path, *, started_at: str | None = None) -> 
         harness="codex",
         prompt="running",
         started_at=started_at,
+        status=status,
     )
+    if with_launch_lock:
+        (runtime_root / "spawns" / str(spawn_id) / "launch.lock").touch()
+    return str(spawn_id)
+
+
+@contextmanager
+def _hold_launch_lock(runtime_root: Path, spawn_id: str):
+    fd = os.open(runtime_root / "spawns" / spawn_id / "launch.lock", os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        os.close(fd)
 
 
 def _run_doctor_without_upgrade_noise(
@@ -137,6 +160,47 @@ def test_doctor_does_not_reconcile_orphans_without_kill_flag(
     assert spawn_store.get_spawn(runtime_root, spawn_id).status == "running"
 
 
+def test_lockless_v3_queued_row_not_finalized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _create_project_root(tmp_path)
+    _create_agent_skill_dirs(project_root)
+    started_at = datetime.fromtimestamp(datetime.now(UTC).timestamp() - 2, UTC).isoformat()
+    spawn_id = _seed_active_spawn(
+        project_root,
+        started_at=started_at,
+        status="queued",
+        with_launch_lock=False,
+    )
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None and row.runner_pid is None
+
+    from meridian.lib.ops.spawn.api import spawn_show_sync
+    from meridian.lib.ops.spawn.models import SpawnShowInput
+
+    shown = spawn_show_sync(
+        SpawnShowInput(spawn_id=spawn_id, project_root=project_root.as_posix())
+    )
+    assert is_active_spawn_status(shown.status)
+
+    from meridian.lib.state.reaper import reconcile_active_spawn
+
+    reconciled = reconcile_active_spawn(project_root, runtime_root, row)
+    assert reconciled == row
+    monkeypatch.setattr(
+        diag,
+        "check_upgrade_availability",
+        lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
+    )
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), kill_orphans=True))
+
+    assert "orphan_runs" not in result.repaired
+    persisted = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert persisted == row
+
+
 def test_doctor_live_active_warning_uses_post_repair_spawns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -152,12 +216,13 @@ def test_doctor_live_active_warning_uses_post_repair_spawns(
         lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
     )
 
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), kill_orphans=True))
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    with _hold_launch_lock(runtime_root, live_spawn_id):
+        result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), kill_orphans=True))
 
     assert "orphan_runs" in result.repaired
     warning = _warning_by_code(result, "live_active_spawns_remain")
     assert warning.payload == {"spawn_ids": [live_spawn_id]}
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
     assert spawn_store.get_spawn(runtime_root, stale_spawn_id).status == "failed"
 
 

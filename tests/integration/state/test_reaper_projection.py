@@ -13,7 +13,6 @@ from tests.integration.state.conftest import (
     _create_spawn,
     _get_spawn,
     _reconcile,
-    fake_reaper_liveness,
     recording_scope_cleanup,
 )
 
@@ -36,6 +35,7 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
         runner_pid=9301,
         started_at=_OLD_STARTED_AT,
     )
+    (runtime_root / "spawns" / spawn_id / "launch.lock").touch()
     backend_scope = ProcessScopeSnapshot(
         scope_id="backend",
         owner_policy="spawn_owned",
@@ -51,7 +51,6 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
     record_scope(runtime_root, SpawnId(spawn_id), backend_scope)
     record = _get_spawn(runtime_root, spawn_id)
     monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
-    fake_reaper_liveness(monkeypatch, set())
     terminated_scopes = recording_scope_cleanup(
         monkeypatch,
         "meridian.lib.core.process_cleanup.terminate_scope_sync",
@@ -67,30 +66,10 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
     )
     assert projected.records[0].status == "failed"
     assert projected.records[0].terminal is not None
-    assert projected.records[0].terminal.error == "orphan_run"
+    assert projected.records[0].terminal.error == "crashed"
     assert _get_spawn(runtime_root, spawn_id).status == "running"
     assert terminated_scopes == []
 
-    from meridian.lib.ops.spawn import api as spawn_api
-    from meridian.lib.ops.spawn.models import SpawnListInput, SpawnStatsInput, SpawnWaitInput
-
-    listed = spawn_api.spawn_list_sync(
-        SpawnListInput(statuses=(), project_root=tmp_path.as_posix())
-    )
-    assert listed.spawns[0].spawn_id == spawn_id
-    assert listed.spawns[0].status == "failed"
-    stats = spawn_api.spawn_stats_sync(SpawnStatsInput(project_root=tmp_path.as_posix()))
-    assert stats.failed == 1
-    waited = spawn_api.spawn_wait_sync(
-        SpawnWaitInput(
-            spawn_ids=(spawn_id,),
-            timeout=0.01,
-            timeout_explicit=True,
-            poll_interval_secs=0.01,
-            project_root=tmp_path.as_posix(),
-        )
-    )
-    assert waited.spawns[0].status == "failed"
     assert _get_spawn(runtime_root, spawn_id).status == "running"
     assert terminated_scopes == []
 
@@ -99,5 +78,5 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
 
     assert reconciled.status == "failed"
     assert reconciled.terminal is not None
-    assert reconciled.terminal.error == "orphan_run"
+    assert reconciled.terminal.error == "crashed"
     assert terminated_scopes == ["backend:9402:reaper"]

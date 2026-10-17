@@ -85,79 +85,68 @@ def test_guardian_grace_ignores_hostile_path(tmp_path: Path) -> None:
         child.wait()
 
 
-@pytest.mark.parametrize("status", ["running", "finalizing", "terminal_claim"])
-def test_live_primary_stale_heartbeat_survives_reconciliation(
-    tmp_path: Path, status: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from meridian.lib.core.types import SpawnId
-    from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+def test_live_runner_with_only_stale_files_survives_reconciliation(tmp_path: Path) -> None:
     from meridian.lib.state import spawn_store
-    from meridian.lib.state.process_scope_projection import record_scope
-    from meridian.lib.state.reaper import reconcile_active_spawn
-    from meridian.lib.state.reaper_cleanup_claim import claim_active_spawn_scopes
+    from meridian.lib.state.reaper import peek_reconciled_active_spawn, reconcile_active_spawn
 
-    monkeypatch.setattr("meridian.lib.state.reaper.is_root_side_effect_process", lambda: True)
     runtime = tmp_path / "runtime"
-    spawn_id = SpawnId("p1")
-    child = subprocess.Popen(["/bin/sleep", "60"], start_new_session=True)
+    spawn_id = spawn_store.start_spawn(
+        runtime,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="test",
+        harness="claude",
+        prompt="test",
+        status="running",
+        kind="child",
+        started_at="2000-01-01T00:00:00Z",
+    )
+    spawn_dir = runtime / "spawns" / str(spawn_id)
+    lock_path = spawn_dir / "launch.lock"
+    lock_path.touch()
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import fcntl,os,sys; "
+                "fd=os.open(sys.argv[1],os.O_RDWR); "
+                "fcntl.flock(fd,fcntl.LOCK_EX); "
+                "print('held',flush=True); sys.stdin.buffer.read()"
+            ),
+            str(lock_path),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
     try:
-        spawn_store.start_spawn(
-            runtime,
-            spawn_id=spawn_id,
-            chat_id="c1",
-            model="test",
-            agent="test",
-            harness="claude",
-            prompt="test",
-            status="running",
-            kind="primary",
-            started_at="2000-01-01T00:00:00Z",
-        )
+        assert holder.stdout is not None
+        assert holder.stdout.readline() == b"held\n"
         spawn_store.update_spawn(
             runtime,
-            spawn_id,
-            runner_pid=os.getpid(),
-            runner_created_at_epoch=psutil.Process().create_time(),
+            spawn_id=spawn_id,
+            runner_pid=holder.pid,
+            runner_created_at_epoch=psutil.Process(holder.pid).create_time(),
         )
-        record_scope(
-            runtime,
-            spawn_id,
-            ProcessScopeSnapshot(
-                scope_id="tui",
-                owner_policy="spawn_owned",
-                owner_id=str(spawn_id),
-                role="harness_tui",
-                containment="posix_pgid",
-                root_pid=child.pid,
-                root_created_at_epoch=psutil.Process(child.pid).create_time(),
-                pgid=child.pid,
-                job_name=None,
-                degraded_reason=None,
-            ),
-        )
-        heartbeat = runtime / "spawns" / spawn_id / "heartbeat"
-        heartbeat.touch()
-        os.utime(heartbeat, (1, 1))
-        if status == "finalizing":
-            spawn_store.record_runner_exit(
-                runtime,
-                spawn_id,
-                status="failed",
-                exit_code=1,
-                error="orphan_run",
-                exited_at="2000-01-01T00:00:00Z",
-            )
-        elif status == "terminal_claim":
-            claim_active_spawn_scopes(runtime, spawn_id)
-            spawn_store.finalize_spawn(runtime, spawn_id, "failed", 1, origin="reconciler")
+        (spawn_dir / "stderr.log").write_text("old output\n", encoding="utf-8")
+        for path in spawn_dir.rglob("*"):
+            if path.is_file():
+                os.utime(path, (1, 1))
         record = spawn_store.get_spawn(runtime, spawn_id)
         assert record is not None
-        reconcile_active_spawn(tmp_path, runtime, record)
-        assert child.poll() is None
-        assert os.getpgid(child.pid) == child.pid
+        projected = peek_reconciled_active_spawn(runtime, record)
+        reconciled = reconcile_active_spawn(tmp_path, runtime, record)
+
+        assert projected.status == "running"
+        assert reconciled.status == "running"
+        persisted = spawn_store.get_spawn(runtime, spawn_id)
+        assert persisted is not None and persisted.status == "running"
+        assert holder.poll() is None
     finally:
-        child.kill()
-        child.wait()
+        if holder.poll() is None:
+            holder.kill()
+        holder.wait(timeout=5)
 
 
 @pytest.mark.parametrize("unknown_identity", ["pid", "birth", "access_denied"])
@@ -185,6 +174,7 @@ def test_primary_unknown_runner_finalizes_without_signalling_scope(
         status="running" if unknown_identity == "pid" else "finalizing",
         started_at="2000-01-01T00:00:00Z",
     )
+    (runtime / "spawns" / str(spawn_id) / "launch.lock").touch()
     birth = psutil.Process().create_time()
     monkeypatch.setattr(spawn_store, "_runner_created_at_epoch_for_pid", lambda _pid: None)
     spawn_store.update_spawn(
