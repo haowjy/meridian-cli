@@ -5,7 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Spawn status now follows the runner-lifetime lock. Runner or managed-primary loss, including during finalization, reads `failed`/`crashed` immediately; a cancel request reads `cancelled`, even when a report exists without an outcome. Dead future-version rows without chat identity no longer block resume. Obsolete heartbeat and launch-boundary journals are no longer written or archived. (#663)
+- Managed-bash ping retry coverage waits for the failed notification claim to be durably released, eliminating a timing-dependent CI failure. (#662)
+- Spawn status follows runner-lifetime lock. Dead runner reads `failed`/`crashed` on next read: no 120 s heartbeat window, no 30 s PID-reuse slack. Cancel requested → `cancelled`. Behaviour change: runner killed mid-finalize, or managed primary SIGKILLed, now `crashed` (was `succeeded` / `cancelled` 130); cancel of dead spawn with report but no outcome → `cancelled` (was `succeeded`). Unloadable spawn row for another chat, or with free lock, no longer blocks resume. `doctor` warns `dead_spawns_unfinalized`; `--kill-orphans` persists outcome. Heartbeat and launch-boundary files gone. (#663)
 
 ## [0.10.21] - 2026-10-17
 
