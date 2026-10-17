@@ -132,8 +132,11 @@ filesystem-discovery fallback.
 live primary TUI that has no `SpawnManager` connection. The CLI selects it only
 for `kind == "primary"`; spawned sessions continue through their serialized
 control socket. Claude resolves the latest SessionStart-published inbox socket
-for the primary's recorded worker PID and owns the native wire protocol. A post
-has no delivery acknowledgement and must not be described as delivered.
+and record epoch for the primary's recorded worker PID, then refuses the post
+unless that PID is still a live, non-zombie process born by the recorded epoch.
+This prevents a stale primary row from posting to an unrelated Claude process
+that reused the PID. Claude owns the native wire protocol. A post has no delivery
+acknowledgement and must not be described as delivered.
 
 ### `HarnessContract` as Inspectable Surface
 

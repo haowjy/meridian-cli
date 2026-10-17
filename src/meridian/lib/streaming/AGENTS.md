@@ -72,11 +72,6 @@ contract in `.context/CONTEXT.md`.
 starting, stopping, injecting messages, subscribing to events, and tracking heartbeats.
 Do not bypass it to reach a connection or subscriber directly.
 
-Primary TUI inboxes are the deliberate exception: they have no live
-`SpawnManager` connection. `spawn inject` selects the harness bundle's optional
-`primary_inbox` port from the persisted primary record. This does not change the
-rule for spawned sessions or permit direct connection access.
-
 `connection.primary_event_scope` is part of terminal classification for multiplexed
 streams. The drain loop still persists and broadcasts child Codex/OpenCode events,
 but semantic helpers must receive the scope so child terminal frames cannot finish,

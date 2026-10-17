@@ -7,7 +7,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - `meridian spawn inject` can post to a live Claude primary through Claude Code's
   session inbox socket; unsupported primary harnesses now fail immediately instead
-  of waiting for a child control endpoint. (#665)
+  of waiting for a child control endpoint. Stale records cannot post to a process
+  that reused the Claude PID. (#665)
 
 ### Fixed
 - Managed-bash ping retry coverage waits for the failed notification claim to be durably released, eliminating a timing-dependent CI failure. (#662)
