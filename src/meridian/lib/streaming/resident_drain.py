@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -47,7 +47,7 @@ from meridian.lib.streaming.rearm_window import RearmWindow
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from meridian.lib.harness.connections.base import RawHarnessEvent
+    from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
     from meridian.lib.harness.semantics import NormalizedHarnessEvent
     from meridian.lib.streaming.drain_policy import DrainAction
@@ -379,17 +379,19 @@ class ResidentDrainCoordinator:
         self.poll_seconds = poll_seconds
 
     @classmethod
-    def for_backend(
+    def for_connection(
         cls,
         *,
         runtime_root: Path,
         spawn_id: SpawnId,
+        receiver: HarnessConnection[Any],
         resident_backend: ResidentBackendControl,
         deadline_seconds: float | None,
         poll_seconds: float | None,
         rearm_budget: int | None,
         cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
     ) -> ResidentDrainCoordinator:
+        del receiver
         resolved_deadline = (
             deadline_seconds if deadline_seconds and deadline_seconds > 0 else 3300.0
         )

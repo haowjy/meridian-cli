@@ -103,9 +103,10 @@ def build_drain_plan(
             cancel_descendants=_cancel_descendants,
         )
     elif resident_backend is not None:
-        coordinator = ResidentDrainCoordinator.for_backend(
+        coordinator = ResidentDrainCoordinator.for_connection(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
+            receiver=receiver,
             resident_backend=resident_backend,
             deadline_seconds=config.resident_deadline_seconds,
             poll_seconds=config.resident_poll_seconds,

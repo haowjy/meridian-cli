@@ -192,9 +192,10 @@ async def awaiting_done_coordinator(
 ) -> ResidentDrainCoordinator:
     resident_backend = connection.resident_backend
     assert resident_backend is not None
-    coordinator = ResidentDrainCoordinator.for_backend(
+    coordinator = ResidentDrainCoordinator.for_connection(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
+        receiver=connection,
         resident_backend=resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -306,9 +307,10 @@ async def coordinator_with_clock(
     deadline_seconds: float = 3300.0,
     poll_seconds: float = 5.0,
 ) -> ResidentDrainCoordinator:
-    coordinator = ResidentDrainCoordinator.for_backend(
+    coordinator = ResidentDrainCoordinator.for_connection(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
+        receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,

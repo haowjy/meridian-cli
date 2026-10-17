@@ -56,9 +56,10 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_backend(
+    coordinator = ResidentDrainCoordinator.for_connection(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
+        receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -107,9 +108,10 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_backend(
+    coordinator = ResidentDrainCoordinator.for_connection(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
+        receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -159,9 +161,10 @@ async def test_rejected_success_validation_preserves_resident_wait_protection(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_backend(
+    coordinator = ResidentDrainCoordinator.for_connection(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
+        receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -208,9 +211,10 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_backend(
+    coordinator = ResidentDrainCoordinator.for_connection(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
+        receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=3300.0,
         poll_seconds=5.0,
