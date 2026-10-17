@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.17] - 2026-10-17
+
 ### Fixed
 - Parent completion check no longer reports children unknown when history index builds cold; build first, then 2 s query budget. (#644)
 
