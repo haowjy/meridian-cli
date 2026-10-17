@@ -16,7 +16,6 @@ from meridian.lib.harness.adapter import (
     HarnessContract,
     McpConfig,
     PermissionResolver,
-    RunPromptPolicy,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -107,15 +106,11 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stdin_prompt=False,
             supports_session_resume=True,
             supports_session_fork=False,
-            supports_native_skills=False,
             supports_native_agents=False,
             supports_primary_launch=False,
             supports_native_file_injection=False,
             terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
-
-    def run_prompt_policy(self) -> RunPromptPolicy:
-        return RunPromptPolicy(skill_injection_mode="append-system-prompt")
 
     def resolve_launch_spec(
         self,

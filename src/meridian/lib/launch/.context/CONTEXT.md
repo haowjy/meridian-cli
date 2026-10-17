@@ -481,42 +481,21 @@ downstream heading rendering and snapshot persistence. The parser reads the
 `loaded_skills` field is empty (pre-bundle snapshots), it falls back to disk
 loading. New snapshots always persist `loaded_skills`, so this path is legacy compat.
 
-### Skill Injection Channels
+### Loaded Skills Are Composition Documents
 
-Two distinct channels deliver loaded skill content to agents. They are controlled
-by separate capability flags and must not be conflated:
+Loaded skills reach the agent one way on every harness, primary and spawn:
+`compose_skill_prompt_documents()` turns them into supplemental documents in
+`_build_spawn_composed_launch_content()` and `_resolve_primary_projection()`, and
+harness projection places them in the system prompt after the agent profile.
+Bind-time re-projection rebuilds from the same composed content, so the skills
+survive it without special handling.
 
-**Channel 1 — `supplemental_documents`** (prompt-embedded):
-Populated by `compose_skill_prompt_documents()` in `_resolve_spawn_prepare_projection()`
-and `_resolve_primary_projection()`. **Gated on `not harness.capabilities.supports_native_skills`.**
-When the harness supports native skills (currently Claude, Codex, and OpenCode), this
-channel is suppressed — `supplemental_documents` is set to an empty tuple.
-
-**Channel 2 — `append-system-prompt`** (Claude spawns only):
-Populated by `compose_skill_injections()` in `_prepare_spawn_surface()` when
-`harness.run_prompt_policy().skill_injection_mode == "append-system-prompt"`.
-This channel is **not** gated on `supports_native_skills` — it is preserved for
-Claude spawn skill injection via `--append-system-prompt`.
-
-### `prepare_prompt_payload` or-chain Pitfall
-
-`prepare_prompt_payload(projected_content=X, appended_system_prompt=Y)` silently drops
-`Y` when `X` is present — the implementation prefers projected content and the
-or-chain short-circuits. Callers that need both (projected user-turn content from
-`project_content()` **and** an appended system prompt for Claude skill injection) must
-construct `PreparedPromptPayload` directly:
-
-```python
-PreparedPromptPayload(
-    adhoc_agent_payload=...,
-    appended_system_prompt=appended_system_prompt,  # not dropped
-    user_turn_content=content.prompt_payload.user_turn_content,
-)
-```
-
-`_prepare_spawn_surface()` uses direct construction for this reason. Avoid calling
-`prepare_prompt_payload()` in any path where both projected content and an appended
-system prompt must coexist.
+Don't add a second channel keyed on a harness capability. A native skill list
+shows only model-invocable skills, so a loaded skill that isn't model-invocable
+reaches the agent only through composition. Claude reads the appended prompt from
+`system-prompt.md` (`--append-system-prompt-file`), which `write_projection_artifacts()`
+writes from the full appended prompt, not `projected.system_prompt`: post-projection
+additions such as the source-edit-directory instruction live only there.
 
 ## Patterns
 
