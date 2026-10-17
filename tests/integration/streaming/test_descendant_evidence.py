@@ -17,9 +17,9 @@ from tests.support.resident_drain import start_row
 
 if TYPE_CHECKING:
     import pytest
-    from sqlalchemy.engine import Connection
 
-    from meridian.lib.state.history_changes import HistorySource
+    from meridian.lib.state.history_changes import DirtySource
+    from meridian.lib.state.history_index import IndexCoverage
 
 
 def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
@@ -82,24 +82,25 @@ def test_cold_build_gets_a_separate_descendant_query_deadline(
     assert not index.path.exists()
 
     monkeypatch.setattr(descendant_evidence_module, "QUERY_TIMEOUT", 0.2)
-    original_project = HistoryIndex._project
+    original_rebuild = HistoryIndex._rebuild_locked
+    slowed: list[float] = []
 
-    def slow_sessions(
-        self: HistoryIndex,
-        db: Connection,
-        source: HistorySource,
-    ) -> bool:
-        if source.kind == "sessions":
-            time.sleep(0.4)
-        return original_project(self, db, source)
+    def slow_rebuild(
+        self: HistoryIndex, *, reset: bool, deadline: float
+    ) -> tuple[IndexCoverage, list[DirtySource]]:
+        # Cold build outlasts the query budget, independent of machine load.
+        slowed.append(0.4)
+        time.sleep(0.4)
+        return original_rebuild(self, reset=reset, deadline=deadline)
 
-    monkeypatch.setattr(HistoryIndex, "_project", slow_sessions)
+    monkeypatch.setattr(HistoryIndex, "_rebuild_locked", slow_rebuild)
 
     projection = ReconciledDescendantEvidence(
         runtime_root=tmp_path,
         root_spawn_id=SpawnId("p1"),
     ).project()
 
+    assert slowed, "cold build path was not exercised"
     assert index.path.exists()
     assert projection.assessment.disposition == "blocked", projection.assessment
     assert [blocker.identity for blocker in projection.assessment.blockers] == ["p2"]
