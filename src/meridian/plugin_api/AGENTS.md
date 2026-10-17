@@ -4,14 +4,13 @@ The only surface external plugins (and built-in hooks) may import from. Versione
 
 ## Mental Model
 
-Built-in hooks in `lib/hooks/builtin/` must import only from here — not from `meridian.lib.*`. This constraint enforces the plugin API as a real boundary. If a built-in needs something not in this package, extend the API rather than breaking the boundary.
+Built-in hooks in `lib/hooks/builtin/` take general capabilities from here, not from `meridian.lib.*`; if one needs a general capability this package lacks, extend the API. Only a built-in's tightly coupled companion (see `lib/hooks/builtin/AGENTS.md`) may be imported directly, and such companions never belong here: nothing in this package imports Meridian's policy or state internals.
 
 External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `meridian.plugin_api`, not from internal modules that may change without notice.
 
 ## What's Stable Here
 
 - `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `FailurePolicy`, `Notification`, `NOTIFICATION_EVENTS` — the hook contract types. `lib/hooks` uses these exact classes, so the payload a hook sees is the one the dispatcher built.
-- `notify.py` — `deliver()` — send a `Notification` through the transports the project configures (`push`, `email`, or a backend name)
 - `state.py` — `get_project_home()`, `get_user_home()` — state root access
 - `fs.py` — `file_lock()`, `atomic_write_text()` — cross-platform locking and atomic
   replacement for plugins

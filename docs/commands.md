@@ -294,21 +294,22 @@ Fires the `notify.manual` hook event, which the built-in `notify` hook delivers
 through the configured push and email backends unless config routes it
 elsewhere. The title is one line: what the human needs to decide or see. The
 body is optional (`"$(cat file)"` for longer text); the session headline
-(tmux session, agent, work item) always ends it. `--no-email` keeps the notice
-off email channels.
+(tmux session, agent, work item) always ends it. `--no-email` keeps it off the
+email backends (`smtp`, `gmail`), however a route names them.
 
 `--attach <path>` (repeatable) sends a file with it: email attaches every file
 to the one message; ntfy, which carries one file per message, sends the text
-and then each file as its own message (the server must allow attachments, and
-sets the size limit). Command hooks get the absolute paths in
+and then each file as its own lower-priority message (the server must allow
+attachments, and sets the size limit). Command hooks get the absolute paths in
 `notification.attachments`. A missing or unreadable path fails with exit 2
 before any route runs. A backend that rejects a file fails only that backend.
 
-Results list each transport, and each extension command hook as
-`hook:<name>`. Exit 0 when something delivered, when every route is off or
-`none`, or when no route ran (with the warning "no notification route ran for
-notify.manual"); exit 1 when every attempted delivery failed. No in-process
-retry.
+Results list one entry per route, named by its hook (`notify` for the default
+route); a failed route's error names the transports that failed. `--json` adds
+the session `label`. Exit 0 when something delivered, when every route
+delivered nothing (backends `none`), or when no route ran (with the warning "no
+notification route ran for notify.manual"); exit 1 when a route failed and none
+delivered. No in-process retry.
 
 ### `meridian idle`
 

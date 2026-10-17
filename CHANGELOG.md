@@ -5,20 +5,25 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Notifications are hook events: `session.responded` (idle push), `session.cache_expiring` (cache warning), `notify.manual` (`meridian notify`). Built-in `notify` hook delivers; options `channels` (`push`, `email`, or backend name) and `priority`. Default route per unrouted event (source `default`); a `builtin = "notify"` row replaces it for its event. Any `command` hook on these events is an extra channel: `notification` object on stdin, `MERIDIAN_NOTIFICATION_TITLE`/`_BODY`/`_PRIORITY` env. `meridian.plugin_api.notify.deliver()`. See [routing](docs/configuration.md#routing-and-extending-notifications) (#670).
-- `meridian notify --attach <path>` (repeatable): email attaches all files; ntfy sends the text, then one message per file; command hooks get the paths in `notification.attachments`. Missing/unreadable path = exit 2 before any route. (#666)
+- Notifications are hook events: `session.responded` (idle push), `session.cache_expiring` (cache warning), `notify.manual` (`meridian notify`). Built-in `notify` hook delivers; options `channels` (`push`, `email`, or backend name) and `priority`. Default `notify` route per event (source `default`, lowest layer); a same-name row replaces it, and an unnamed `builtin = "notify"` row is named `notify`. Any `command` hook on these events is an extra channel: `notification` object on stdin, `MERIDIAN_NOTIFICATION_TITLE`/`_BODY`/`_PRIORITY` env. See [routing](docs/configuration.md#routing-and-extending-notifications) (#670).
+- `meridian notify --attach <path>` (repeatable): email attaches all files; ntfy sends the text, then one message per file; file messages at priority ≤2; command hooks get the paths in `notification.attachments`. Missing/unreadable path = exit 2 before any route. (#666)
 
 ### Removed
+- `command` notify backend, `push_command`/`email_command`, `MERIDIAN_NOTIFY_PUSH_COMMAND`/`_EMAIL_COMMAND`: use a command hook on the notification events. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
 - Meridian idle compaction, end to end. Idle now sends only the "your turn" push and the cache warning. Gone: `idle.compact`, `idle.compact_minutes`, `idle.compact_min_growth_tokens`, `[harness.<h>.idle] compact`/`compact_min_growth_tokens`, their `MERIDIAN_*IDLE_COMPACT*` env vars, `meridian idle done`, `idle fire` fact flags, `idle arm --context-tokens`, `[compacted]`/`[compaction failed]`/`[compaction skipped]` notices, status COMPACT column. Harness-native compaction (Claude Code 2.1.299+, Codex, OpenCode, Pi) untouched. Old idle state files are dropped; open stretches start fresh. See [upgrade note](docs/upgrading.md#idle-compaction-removed).
 
 ### Changed
 - `idle arm` takes `--background-tasks JSON` (`[{"kind": "agent|shell|watcher|other", "command": ...}]`); core decides what running work means. Claude mod forwards the `Stop` hook's background tasks. Codex/OpenCode/Pi report none yet (#669).
 - Cache warning says "reply to keep it warm".
-- `meridian notify "<title>" ["<body>"]`: title positional, body optional, session headline always ends body. `--title` gone. Reports command hooks as `hook:<name>`; no route ran = warning, exit 0. (#670)
-- `MERIDIAN_HOOKS_ENABLED=false` also silences notifications. Hooks run without project runtime state; only `interval` hooks skip there. (#670)
-- `command` backend stdin JSON: `kind` → `event`, adds `label`. ntfy `Tags` = event name. Plugin API 2.0.0: `HookContext.runtime_root` may be `None`, `HookContext.notification`, payload `schema_version` 2. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
+- `meridian notify "<title>" ["<body>"]`: title positional, body optional, session headline always ends body. `--title` gone. Results: one per route (`notify` = default route), failed route's error names failed transports; `label` top-level in `--json`. No route ran = warning, exit 0. (#670)
+- `MERIDIAN_HOOKS_ENABLED=false` also silences notifications. Hooks (and `hooks run`) run without project runtime state; only `interval` hooks skip there. (#670)
+- Builtin hook rows validate `options` against the builtin's own model; unknown keys error. `hooks list` drops `registration` column. Unnamed `git-autosync` rows named from `remote`/`path` only. (#670)
+- ntfy `Tags` = event name. Plugin API 2.0.0: `HookContext.runtime_root` may be `None`, `HookContext.notification`, payload `schema_version` 2. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
 
 ### Fixed
+- `--no-email` (and idle push / `warn_email = false`) now skips `smtp`/`gmail` even when a route names them. (#670)
+- A failing notification route is reported once, not also as a hook warning log. (#670)
+- Logging no longer caches each module logger's first configuration.
 - Claude primary no longer pushes "waiting on you" while subagents, workflows or `meridian spawn` shells run; the turn they wake pushes instead, timed from your last prompt. Other background shells delay the push to `quick_turn_push_seconds`; monitors ignored. Cache warning arms every turn, even with the push held, except under a `spawn wait` that yields before the cache goes cold.
 - Managed-bash ping retry coverage waits for the failed notification claim to be durably released, eliminating a timing-dependent CI failure. (#662)
 

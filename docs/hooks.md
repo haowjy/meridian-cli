@@ -12,7 +12,7 @@ Hooks let you run commands or builtins automatically when Meridian events fire â
 | `meridian hooks run NAME --event EVENT` | Execute with a specific event context |
 
 ```bash
-# See all hooks, including builtins and per-source registration
+# See all hooks, including builtins and Meridian's default routes, with their sources
 meridian hooks list
 
 # Validate config before committing changes
@@ -53,7 +53,7 @@ A single hook row can register for multiple events. When a builtin supplies defa
 
 ## Configuring Hooks
 
-Hooks live in any Meridian config file. Precedence is: `user < project < local`.
+Hooks live in any Meridian config file. Precedence is: `default < user < project < local`, where `default` is Meridian's own `notify` routes. A row with the same name and event as a lower layer's replaces it.
 
 ```toml
 # meridian.toml (project) or ~/.meridian/config.toml (user)
@@ -93,7 +93,7 @@ event   = "spawn.finalized"
 
 `command` and `builtin` are mutually exclusive.
 
-If you omit `name` for a builtin hook, Meridian may synthesize a stable name from the builtin identity (for example remote/options). That keeps distinct unnamed builtin rows from overriding each other. For predictable `hooks run NAME` usage, set `name` explicitly.
+If you omit `name` for a builtin hook, Meridian names it from the options that pick its target: `git-autosync` rows from `remote` or `path`, so rows for different repos don't override each other; `notify` rows are all `notify`. For predictable `hooks run NAME` usage, set `name` explicitly.
 
 ### Shell Behavior
 
@@ -123,9 +123,10 @@ such as `ntfy`) and `priority` (1â€“5) pick where and how loud.
 
 **Default events:** `session.responded`, `session.cache_expiring`, `notify.manual`
 
-Meridian adds a default `notify` route (source `default` in `hooks list`) for
-each notification event no `builtin = "notify"` row covers. A row for an event,
-even with `enabled = false`, replaces only that event's default.
+Meridian supplies a hook named `notify` on each of these events (source
+`default` in `hooks list`). An unnamed `builtin = "notify"` row is named
+`notify` too, so a row for an event, even with `enabled = false`, replaces only
+that event's default; give the row another `name` to add a route instead.
 
 ```toml
 # Silence the "your turn" push

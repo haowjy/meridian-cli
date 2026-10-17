@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import SendResult
-from meridian.lib.notify.notice import Notice
+from meridian.plugin_api.types import Notification
 
 type NtfyTransport = Callable[[Request], int]
 
@@ -36,7 +36,7 @@ class NtfyChannel:
     name = "ntfy"
     transport: NtfyTransport = _urlopen_transport
 
-    def send(self, notice: Notice, cfg: NotifyConfig) -> SendResult:
+    def send(self, notification: Notification, cfg: NotifyConfig, *, event: str) -> SendResult:
         topic = cfg.ntfy_topic
         if topic is None:
             return SendResult(
@@ -47,36 +47,45 @@ class NtfyChannel:
 
         url = f"{cfg.ntfy_server.rstrip('/')}/{quote(topic.strip(), safe='')}"
         headers = {
-            "Title": _title_header(notice.title),
-            "Priority": str(notice.priority),
-            "Tags": notice.event,
+            "Title": _title_header(notification.title),
+            "Priority": str(notification.priority),
+            "Tags": event,
         }
-        # ntfy carries one file per message: the text first, then each file on its own.
-        messages: list[tuple[str, bytes | Path, dict[str, str]]] = [
-            ("message", notice.body.encode("utf-8"), headers)
-        ]
-        messages.extend(
-            (path.name, path, {**headers, "Filename": _title_header(path.name)})
-            for path in notice.attachments
+        error = self._deliver(
+            "message",
+            Request(url, data=notification.body.encode("utf-8"), headers=headers, method="POST"),
         )
-        for what, data, message_headers in messages:
+        # ntfy carries one file per message: each follows the text quietly, at low priority.
+        file_headers = {**headers, "Priority": str(min(notification.priority, 2))}
+        for path in map(Path, notification.attachments):
+            if error is not None:
+                break
             try:
-                is_file = isinstance(data, Path)
-                body = data.read_bytes() if isinstance(data, Path) else data
-                request = Request(
-                    url, data=body, headers=message_headers, method="PUT" if is_file else "POST"
-                )
-                status = self.transport(request)
-            except Exception as exc:  # external transport boundary
-                return SendResult(channel=self.name, status="failed", error=f"{what}: {exc}")
-            if not 200 <= status < 300:
-                return SendResult(
-                    channel=self.name,
-                    status="failed",
-                    error=f"{what}: ntfy returned HTTP {status}",
-                )
+                data = path.read_bytes()
+            except OSError as exc:
+                error = f"{path.name}: {exc}"
+                break
+            error = self._deliver(
+                path.name,
+                Request(
+                    url,
+                    data=data,
+                    headers={**file_headers, "Filename": _title_header(path.name)},
+                    method="PUT",
+                ),
+            )
+        if error is not None:
+            return SendResult(channel=self.name, status="failed", error=error)
         return SendResult(channel=self.name, status="sent")
 
+    def _deliver(self, what: str, request: Request) -> str | None:
+        try:
+            status = self.transport(request)
+        except Exception as exc:  # external transport boundary
+            return f"{what}: {exc}"
+        if not 200 <= status < 300:
+            return f"{what}: ntfy returned HTTP {status}"
+        return None
 
 CHANNEL = NtfyChannel()
 

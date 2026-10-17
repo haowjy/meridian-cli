@@ -6,7 +6,7 @@ from meridian.lib.ops.hooks import HookRunInput, hooks_run_sync
 from meridian.server.main import extension_invoke
 
 
-def test_hooks_run_is_noop_in_unmaterialized_adhoc_place(
+def test_hooks_run_creates_no_state_in_unmaterialized_adhoc_place(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -18,7 +18,7 @@ def test_hooks_run_is_noop_in_unmaterialized_adhoc_place(
         "[[hooks]]\n"
         'name = "manual-test"\n'
         'event = "spawn.finalized"\n'
-        'command = "printf should-not-run"\n',
+        'command = "true"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
@@ -27,8 +27,7 @@ def test_hooks_run_is_noop_in_unmaterialized_adhoc_place(
         HookRunInput(name="manual-test", project_root=project_root.as_posix())
     )
 
-    assert result.result.skipped
-    assert result.result.skip_reason == "no_state"
+    assert result.result.success
     assert "identity_created" not in result.model_dump()
     assert not (home / "projects").exists()
     assert list(project_root.iterdir()) == []
@@ -47,7 +46,7 @@ async def test_mcp_hooks_run_is_read_only_and_omits_identity_created(
         "[[hooks]]\n"
         'name = "manual-test"\n'
         'event = "spawn.finalized"\n'
-        'command = "printf should-not-run"\n',
+        'command = "true"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
@@ -60,6 +59,6 @@ async def test_mcp_hooks_run_is_read_only_and_omits_identity_created(
 
     assert response["status"] == "ok"
     result = response["result"]
-    assert result["result"]["skip_reason"] == "no_state"
+    assert result["result"]["success"]
     assert "identity_created" not in result
     assert not (home / "projects").exists()

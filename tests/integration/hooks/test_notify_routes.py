@@ -3,8 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.config.models import MeridianConfig
+from meridian.lib.idle.service import IdleService
 from meridian.lib.notify.emit import emit
-from meridian.lib.notify.notice import SessionLabel, manual_notice
+from meridian.lib.notify.notice import SessionLabel, manual_notification
+from meridian.lib.state.idle_store import IdleStore
 
 
 def test_a_notification_reaches_command_hooks_and_its_route(
@@ -28,7 +31,8 @@ def test_a_notification_reaches_command_hooks_and_its_route(
     label = SessionLabel(agent="coder", project="demo")
 
     report = emit(
-        manual_notice("Pick a store", "Tradeoffs in decisions.md", label),
+        "notify.manual",
+        manual_notification("Pick a store", "Tradeoffs in decisions.md", label),
         project_root=tmp_path,
         env={"MERIDIAN_SPAWN_ID": "p7"},
     )
@@ -45,9 +49,43 @@ def test_a_notification_reaches_command_hooks_and_its_route(
         "attachments": [],
     }
     assert (tmp_path / "title.txt").read_text(encoding="utf-8") == "Pick a store\n"
-    # The route sent only to push (the none backend), never to the smtp email backend.
+    # The row replaced the default route and sent only to push (the none backend),
+    # never to the smtp email backend.
     assert [(result.channel, result.status) for result in report.results] == [
-        ("hook:desk", "sent"),
-        ("none", "none"),
+        ("desk", "sent"),
+        ("notify", "none"),
     ]
     assert report.ok
+
+
+@pytest.mark.parametrize(("exit_code", "recorded"), [(0, "sent"), (3, "failed")])
+def test_idle_records_the_push_as_its_routes_delivered_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int, recorded: str
+) -> None:
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "none")
+    monkeypatch.delenv("MERIDIAN_HOOKS_ENABLED", raising=False)
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "desk"\n'
+        'event = "session.responded"\n'
+        f'command = "exit {exit_code}"\n',
+        encoding="utf-8",
+    )
+    now = [0]
+    store = IdleStore(now_ms=lambda: now[0])
+    idle = IdleService(
+        store=store,
+        config=MeridianConfig(),
+        env={"MERIDIAN_SESSION_ROLE": "primary"},
+        now_ms=lambda: now[0],
+        project_root=tmp_path,
+    )
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    now[0] = armed.push_at or 0
+
+    idle.fire("push", harness="example", session="s1", stretch=1, anchor=1)
+
+    # The default route delivered nothing (push is `none`), so `desk` decides.
+    state = store.read("example", "s1")
+    assert state is not None and state.done["push"] == recorded

@@ -157,7 +157,7 @@ def test_doctor_observes_bare_directory_without_writing(
 
 
 @pytest.mark.integration
-def test_hooks_run_is_noop_without_materialized_state(
+def test_hooks_run_creates_no_state_without_materialized_state(
     cwd_without_project_id: Path,
     meridian_home: Path,
 ) -> None:
@@ -165,7 +165,7 @@ def test_hooks_run_is_noop_without_materialized_state(
         "[[hooks]]\n"
         'name = "manual-test"\n'
         'event = "spawn.finalized"\n'
-        'command = "printf should-not-run"\n',
+        'command = "true"\n',
         encoding="utf-8",
     )
 
@@ -176,7 +176,7 @@ def test_hooks_run_is_noop_without_materialized_state(
     )
 
     assert result.returncode == 0, result.stderr
-    assert "skip_reason: no_state" in result.stdout
+    assert "exit_code: 0" in result.stdout
     assert not (meridian_home / "projects").exists()
     _assert_project_not_initialized(cwd_without_project_id)
 

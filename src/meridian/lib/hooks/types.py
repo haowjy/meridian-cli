@@ -78,7 +78,6 @@ class Hook:
     when: HookWhen | None = None
     exclude: tuple[str, ...] = ()
     options: Mapping[str, object] = field(default_factory=_default_options)
-    auto_registered: bool = False
     # Legacy field kept for backward compatibility.
     # Builtins should prefer config.options.
     remote: str | None = None

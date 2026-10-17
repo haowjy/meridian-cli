@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.channels.smtp import SMTPChannel, SMTPTransport, open_smtp
-from meridian.lib.notify.notice import Notice
+from meridian.plugin_api.types import Notification
 
 
 @dataclass(frozen=True)
@@ -17,13 +17,13 @@ class GmailChannel:
     name = "gmail"
     transport: SMTPTransport = open_smtp
 
-    def send(self, notice: Notice, cfg: NotifyConfig) -> SendResult:
+    def send(self, notification: Notification, cfg: NotifyConfig, *, event: str) -> SendResult:
         return SMTPChannel(
             name=self.name,
             transport=self.transport,
             host="smtp.gmail.com",
             port=587,
-        ).send(notice, cfg)
+        ).send(notification, cfg, event=event)
 
 
 CHANNEL = GmailChannel()

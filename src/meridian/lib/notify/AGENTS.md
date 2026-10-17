@@ -1,27 +1,29 @@
 # lib/notify/ — Notification Delivery
 
-Harness-agnostic labels, notices and one-shot delivery transports.
-Callers construct a `Notice` (its `event` is a hook event: `session.responded`,
-`session.cache_expiring`, `notify.manual`) and call `emit.emit()`, which fires
-that event through `lib/hooks`; the routes on it deliver it. The built-in
-`notify` hook reaches `service.send(notice, cfg, channels)` through
-`plugin_api.notify.deliver()`, and `emit` folds every route's result back into
-one `SendReport`. Never call `send()` from a caller: that skips routing and
-every extension. Nothing here retries or reads notification config from
-environment variables directly.
+Harness-agnostic labels and one-shot delivery transports. The message is
+`plugin_api.Notification` (title, body, priority, email, label dict,
+attachment paths); nothing here defines another. Callers build one
+(`notice.manual_notification`, `lib/idle/messages.stage_notice`) and call
+`emit.emit(event, notification, ...)`, which fires that hook event through
+`lib/hooks`; the routes on it deliver it. The built-in `notify` hook calls
+`service.send(notification, cfg, event=..., channels=...)`, and `emit` turns
+each route's `HookResult` into one `SendResult` named by the hook. Never call
+`send()` from a caller: that skips routing and every extension. Nothing here
+retries or reads notification config from environment variables directly.
 
-`emit.py` is the only module that imports `lib/hooks`, lazily; the rest of the
-package stays a leaf so `plugin_api` can wrap it.
+`emit.py` is the only module that imports `lib/hooks`, lazily.
 
 ## Channel seam
 
-Each backend is one module under `channels/` exposing a `CHANNEL` that satisfies
-`Channel.send(notice, cfg) -> SendResult`. Add its lazy entry to
-`channels.REGISTRY`; that dict is the only registration point. A route's
-`channels` option names backends directly or through `push` / `email` (the
-configured backends). User-defined channels are command hooks on the
-notification events, not backends. A backend failure
-is data in its result and must not stop another selected backend.
+Each backend is one module under `channels/` exposing a `CHANNEL` with
+`send(notification, cfg, *, event) -> SendResult`. Add its entry to
+`channels.REGISTRY`, the only registration point; mark email transports
+`email=True`, and `send()` skips them for a notification with `email=False`
+however a route named them. A route's `channels` option names backends
+directly or through `push` / `email` (the configured backends). User-defined
+channels are command hooks on the notification events, not backends. A
+backend failure is data in its result and must not stop another selected
+backend.
 
 ## Output and logging
 

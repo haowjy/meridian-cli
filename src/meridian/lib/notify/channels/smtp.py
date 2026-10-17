@@ -16,8 +16,8 @@ from typing import Protocol, cast
 
 from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import SendResult
-from meridian.lib.notify.notice import Notice
 from meridian.lib.platform import get_home_path
+from meridian.plugin_api.types import Notification
 
 _PASSWORD_ENV = "MERIDIAN_NOTIFY_SMTP_PASSWORD"
 _SMTP_TIMEOUT_SECONDS = 10.0
@@ -95,14 +95,15 @@ def _required(value: str | None, name: str) -> str:
 
 @dataclass(frozen=True)
 class SMTPChannel:
-    """Deliver a notice through an authenticated STARTTLS SMTP server."""
+    """Deliver a notification through an authenticated STARTTLS SMTP server."""
 
     name: str = "smtp"
     transport: SMTPTransport = open_smtp
     host: str | None = None
     port: int | None = None
 
-    def send(self, notice: Notice, cfg: NotifyConfig) -> SendResult:
+    def send(self, notification: Notification, cfg: NotifyConfig, *, event: str) -> SendResult:
+        _ = event
         if not (cfg.smtp_user or "").strip() or not (cfg.email_to or "").strip():
             return SendResult(
                 channel=self.name,
@@ -119,9 +120,9 @@ class SMTPChannel:
             message = EmailMessage()
             message["From"] = _required(cfg.email_from, "email_from") if cfg.email_from else user
             message["To"] = recipient
-            message["Subject"] = notice.title
-            message.set_content(notice.body)
-            for path in notice.attachments:
+            message["Subject"] = notification.title
+            message.set_content(notification.body)
+            for path in map(Path, notification.attachments):
                 maintype, subtype = _content_type(path)
                 message.add_attachment(
                     path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name

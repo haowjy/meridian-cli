@@ -44,7 +44,12 @@ def test_notify_exit_codes(
     if email_backend == "none":
         assert "every selected backend is none" in captured.err
     else:
-        assert [result["status"] for result in payload["results"]] == ["none", "failed"]
+        # One route, whose error names the failed transport, reported once.
+        assert [(row["channel"], row["status"]) for row in payload["results"]] == [
+            ("notify", "failed")
+        ]
+        assert payload["results"][0]["error"].startswith("smtp: ")
+        assert captured.err.count("smtp: ") == 1
 
 
 def test_notify_refuses_a_missing_attachment_before_any_delivery(

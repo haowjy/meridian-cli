@@ -89,25 +89,6 @@ config = get_user_config()          # parsed user config dict
 overrides = get_git_overrides()     # config values from git config
 ```
 
-### Notification Delivery
-
-```python
-from meridian.plugin_api.notify import deliver
-
-delivery = deliver(
-    ctx.notification,
-    event=ctx.event_name,
-    project_root=ctx.project_root,
-    channels=("push", "email"),   # or backend names: "ntfy", "smtp", "gmail", "command", "none"
-    priority=None,                # 1-5 overrides the notification's
-)
-delivery.ok, delivery.errors      # bool, ("channel: error", ...)
-```
-
-Sends through the transports the project configures in `[notify]`; the built-in
-`notify` hook uses it. See
-[Routing and extending notifications](configuration.md#routing-and-extending-notifications).
-
 ### File Locking
 
 ```python

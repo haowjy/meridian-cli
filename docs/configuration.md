@@ -195,8 +195,8 @@ change where each one goes or add your own channel.
 
 | Key | Default | Environment variable | Meaning |
 |---|---|---|---|
-| `push_backend` | `"ntfy"` | `MERIDIAN_NOTIFY_PUSH_BACKEND` | `ntfy`, `command`, or `none` |
-| `email_backend` | `"gmail"` | `MERIDIAN_NOTIFY_EMAIL_BACKEND` | `gmail`, `smtp`, `ntfy`, `command`, or `none` |
+| `push_backend` | `"ntfy"` | `MERIDIAN_NOTIFY_PUSH_BACKEND` | `ntfy` or `none` |
+| `email_backend` | `"gmail"` | `MERIDIAN_NOTIFY_EMAIL_BACKEND` | `gmail`, `smtp`, `ntfy`, or `none` |
 | `include_messages` | `true` | `MERIDIAN_NOTIFY_INCLUDE_MESSAGES` | Include the last user and assistant excerpts in idle push and warning notifications |
 | `ntfy_server` | `"https://ntfy.sh"` | `MERIDIAN_NOTIFY_NTFY_SERVER` | Base URL for the ntfy server |
 | `ntfy_topic` | unset | `MERIDIAN_NOTIFY_NTFY_TOPIC` | ntfy topic; an unset topic disables ntfy delivery with a warning |
@@ -206,15 +206,12 @@ change where each one goes or add your own channel.
 | `smtp_host` | `"smtp.gmail.com"` | `MERIDIAN_NOTIFY_SMTP_HOST` | SMTP STARTTLS host; the `gmail` backend always uses Gmail's host |
 | `smtp_port` | `587` | `MERIDIAN_NOTIFY_SMTP_PORT` | SMTP STARTTLS port; the `gmail` backend always uses port 587 |
 | `smtp_password_file` | unset | `MERIDIAN_NOTIFY_SMTP_PASSWORD_FILE` | File containing the SMTP password |
-| `push_command` | unset | `MERIDIAN_NOTIFY_PUSH_COMMAND` | Command used by the push `command` backend |
-| `email_command` | unset | `MERIDIAN_NOTIFY_EMAIL_COMMAND` | Command used by the email `command` backend |
 
-The command backends split their configured command with `shlex`, append the
-notice title and body as arguments, and pass the notice as JSON on stdin:
-`title`, `body`, `priority`, `email`, `event` (the hook event name) and `label`
-(`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`). The ntfy
-backend tags each message with the event name. Delivery is attempted once per
-selected backend; one backend failing does not prevent the other from running.
+To run your own program on a notification, add a command hook; see
+[Routing and extending notifications](#routing-and-extending-notifications).
+The ntfy backend tags each message with the event name. Delivery is attempted
+once per selected backend; one backend failing does not prevent the other from
+running.
 
 Idle notification titles put the reason first, followed by the tmux session
 when available, the agent (or harness), and an explicitly labelled work item:
@@ -249,9 +246,9 @@ account password: turn on 2-Step Verification for the account, create an app
 password at <https://myaccount.google.com/apppasswords>, and store it in
 `smtp_password_file`. `smtp_user` is the Gmail address that owns the app
 password and is the default sender; `email_to` can be any address. Check the
-setup with `meridian notify "test" --json`: `"channel": "gmail", "status":
-"sent"` means it went out, and a `535` error means the app password is wrong
-or 2-Step Verification is off.
+setup with `meridian notify "test" --json`: `"channel": "notify", "status":
+"sent"` means the default route delivered, and an error starting `gmail:` with
+`535` means the app password is wrong or 2-Step Verification is off.
 
 ### Routing and extending notifications
 
@@ -260,21 +257,25 @@ rows layer user < project < local, `when.agent` matches the notifying
 session's agent, `interval` throttles, and `enabled = false` turns a row off.
 `MERIDIAN_HOOKS_ENABLED=false` therefore turns off every notification.
 
-**Default routes.** For each notification event that no config row routes,
-Meridian adds a `notify` route (source `default` in `meridian hooks list`). A
-`[[hooks]] builtin = "notify"` row for an event, even with `enabled = false`,
-replaces the default for that event only. A `notify` row without `event`
-covers all three events.
+**Default routes.** Meridian supplies a hook named `notify` on each notification
+event (source `default` in `meridian hooks list`), below every config layer. As
+with any hook, a config row with the same name and event replaces it. An
+unnamed `builtin = "notify"` row is named `notify`, so such a row for an event,
+even with `enabled = false`, replaces the default for that event only; one
+without `event` covers all three. A row with another `name` is an additional
+route alongside the default.
 
 The `notify` builtin takes two options:
 
 | Option | Default | Meaning |
 |---|---|---|
-| `channels` | `["push", "email"]` | `"push"` is `push_backend`; `"email"` is `email_backend`, used only when the notice wants email. A backend name (`ntfy`, `smtp`, `gmail`, `command`, `none`) sends there directly. |
-| `priority` | the notice's | 1–5; overrides the notice's priority |
+| `channels` | `["push", "email"]` | `"push"` is `push_backend` and `"email"` is `email_backend`; a backend name (`ntfy`, `smtp`, `gmail`, `none`) sends there directly. |
+| `priority` | the notification's | 1–5; overrides the notification's priority |
 
-`meridian notify --no-email` and the idle push never want email; the cache
-warning follows `[idle] warn_email`.
+Unknown options are config errors. `meridian notify --no-email` and the idle
+push never want email, and the cache warning follows `[idle] warn_email`: such
+a notification skips the email backends (`smtp`, `gmail`) however a route
+names them.
 
 ```toml
 # Cache warnings go only to ntfy, at top priority
@@ -307,9 +308,10 @@ event   = "notify.manual"
 ```
 
 Notification routes run even in a directory with no Meridian runtime state;
-only `interval`-throttled hooks skip there. Python hooks can send through the
-configured transports with `meridian.plugin_api.notify.deliver()`; see
-[plugin-api.md](plugin-api.md#notification-delivery).
+only `interval`-throttled hooks skip there. `meridian notify --json` reports one
+result per route, named by the hook: a route that delivered nothing (every
+backend `none`, or skipped by `when`) is `none`, and a failed `notify` route's
+error names each transport that failed.
 
 ### `[idle]`
 

@@ -148,27 +148,8 @@ def _reset_structlog_state() -> None:
     """
 
     structlog.reset_defaults()
-    _fresh_module_loggers()
     yield
     structlog.reset_defaults()
-
-
-def _fresh_module_loggers() -> None:
-    """Replace module-level loggers a cached first use bound to an old stream.
-
-    ``reset_defaults`` does not reach a lazy proxy that already cached its
-    logger, and that logger keeps the stream of the test that configured it.
-    """
-
-    from structlog._config import (
-        BoundLoggerLazyProxy,  # pyright: ignore[reportPrivateUsage]  # no public uncache
-    )
-
-    for name, module in list(sys.modules.items()):
-        if name.startswith("meridian.") and isinstance(
-            getattr(module, "logger", None), BoundLoggerLazyProxy
-        ):
-            module.logger = structlog.get_logger(name)
 
 
 @pytest.fixture(autouse=True)

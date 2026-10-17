@@ -13,28 +13,30 @@ from meridian.cli.invocation import current_output_sink, get_global_options
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.notify.emit import emit
 from meridian.lib.notify.label import build_session_label
-from meridian.lib.notify.notice import manual_notice
+from meridian.lib.notify.notice import SessionLabel, manual_notification
 from meridian.lib.notify.service import SendReport
 
 
-def _render_report(report: SendReport, *, json_mode: bool = False) -> None:
+def _render_report(
+    report: SendReport, label: SessionLabel, *, json_mode: bool = False
+) -> None:
     sink = current_output_sink()
     for warning in report.warnings:
         sink.warning(warning)
 
-    failures = tuple(result for result in report.results if result.status == "failed")
-    for result in failures:
-        message = f"{result.channel}: {result.error or 'delivery failed'}"
-        if report.ok:
-            sink.warning(message)
-        else:
-            sink.error(message)
+    for result in report.results:
+        if result.status == "failed":
+            message = f"{result.channel}: {result.error or 'delivery failed'}"
+            if report.ok:
+                sink.warning(message)
+            else:
+                sink.error(message)
 
     if json_mode or get_global_options().output.format == "json":
-        sink.result(report.to_dict())
+        sink.result({**report.to_dict(), "label": label.to_dict()})
         return
-    if report.all_none or not report.results:
-        sink.result("Notification delivery is disabled.")
+    if report.all_none:
+        sink.result("Nothing delivered.")
         return
     sent = ", ".join(result.channel for result in report.results if result.ok)
     if sent:
@@ -51,7 +53,7 @@ def cmd_notify(
     *,
     no_email: Annotated[
         bool,
-        Parameter(name="--no-email", help="Keep it off email channels."),
+        Parameter(name="--no-email", help="Keep it off email backends."),
     ] = False,
     priority: Annotated[
         int,
@@ -71,24 +73,20 @@ def cmd_notify(
 ) -> None:
     """Send one notification as the `notify.manual` hook event."""
     sink = current_output_sink()
-    if not 1 <= priority <= 5:
-        sink.error("--priority must be between 1 and 5", exit_code=2)
-        raise SystemExit(2)
-
     explicit_root = get_global_options().project_root
     project_root = resolve_project_root_resolution(
         Path(explicit_root) if explicit_root is not None else None
     ).project_root
     label = build_session_label()
     try:
-        notice = manual_notice(
+        notification = manual_notification(
             title, body, label, priority=priority, email=not no_email, attachments=attach
         )
     except ValueError as exc:
         sink.error(str(exc), exit_code=2)
         raise SystemExit(2) from None
-    report = emit(notice, project_root=project_root, env=os.environ).with_label(label)
-    _render_report(report, json_mode=json_mode)
+    report = emit("notify.manual", notification, project_root=project_root, env=os.environ)
+    _render_report(report, label, json_mode=json_mode)
     raise SystemExit(report.exit_code)
 
 

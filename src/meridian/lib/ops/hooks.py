@@ -37,8 +37,6 @@ class HookListItem(BaseModel):
     hook_type: str
     source: str
     status: str
-    auto_registered: bool = False
-    registration: str = "config"
 
 
 class HookListOutput(BaseModel):
@@ -53,14 +51,13 @@ class HookListOutput(BaseModel):
 
         from meridian.lib.core.formatting import tabular
 
-        rows = [["name", "event", "type", "source", "registration", "status"]]
+        rows = [["name", "event", "type", "source", "status"]]
         rows.extend(
             [
                 item.name,
                 item.event,
                 item.hook_type,
                 item.source,
-                item.registration,
                 item.status,
             ]
             for item in self.hooks
@@ -287,8 +284,6 @@ def hooks_list_sync(payload: HookListInput) -> HookListOutput:
             event=hook.event,
             hook_type=_hook_type(hook),
             source=hook.source,
-            auto_registered=hook.auto_registered,
-            registration="auto" if hook.auto_registered else "config",
             status=_hook_status(hook),
         )
         for hook in registry.get_all_hooks()
@@ -321,7 +316,7 @@ def _manual_context(
     hook: Hook,
     event: HookEventName,
     project_root: Path,
-    runtime_root: Path,
+    runtime_root: Path | None,
 ) -> HookContext:
     when = hook.when
     spawn_status = when.status[0] if when and when.status else "success"
@@ -332,7 +327,7 @@ def _manual_context(
         event_id=uuid4(),
         timestamp=datetime.now(UTC).isoformat(),
         project_root=project_root.as_posix(),
-        runtime_root=runtime_root.as_posix(),
+        runtime_root=runtime_root.as_posix() if runtime_root is not None else None,
         spawn_id="manual",
         spawn_status=spawn_status,
         spawn_agent=spawn_agent,
@@ -380,25 +375,16 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
     if run_event != effective_hook.event:
         effective_hook = replace(effective_hook, event=run_event)
 
-    if authority.runtime_root is None:
-        return HookRunOutput(
-            hook=effective_hook.name,
-            event=effective_hook.event,
-            result=HookRunResult(
-                outcome="skipped",
-                success=True,
-                skipped=True,
-                skip_reason="no_state",
-                duration_ms=0,
-            ),
-        )
-
     dispatcher = HookDispatcher(
         authority.project_root,
         authority.runtime_root,
         authority=authority,
         registry=_SingleHookRegistry(effective_hook),
-        interval_tracker=_BypassIntervalTracker(IntervalTracker(authority.runtime_root)),
+        interval_tracker=(
+            _BypassIntervalTracker(IntervalTracker(authority.runtime_root))
+            if authority.runtime_root is not None
+            else None
+        ),
     )
     context = _manual_context(
         hook=effective_hook,

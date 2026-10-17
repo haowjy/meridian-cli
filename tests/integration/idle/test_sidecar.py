@@ -19,9 +19,10 @@ from meridian.lib.harness.idle_types import (
 )
 from meridian.lib.idle.service import IdleService
 from meridian.lib.idle.sidecar import SidecarClock, run
-from meridian.lib.notify import Notice, SendReport
+from meridian.lib.notify import SendReport
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.state.idle_store import IdleStore
+from meridian.plugin_api.types import HookEventName, Notification
 from tests.support.async_determinism import wait_until
 
 
@@ -49,9 +50,10 @@ class PendingClock(Clock):
 
 class Sender:
     def __init__(self) -> None:
-        self.notices: list[Notice] = []
+        self.notices: list[Notification] = []
 
-    def __call__(self, notice: Notice) -> SendReport:
+    def __call__(self, event: HookEventName, notice: Notification) -> SendReport:
+        _ = event
         self.notices.append(notice)
         return SendReport(results=(SendResult(channel="test", status="sent"),))
 
@@ -306,6 +308,8 @@ async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path
             (state := store.read("codex", "session-1")) is not None
             and state.stretch == 2
             and state.done.get("warn") == "sent"
+            # The stage is claimed before its notice is sent.
+            and len(sender.notices) == 2
         ),
         description="externally written arm completion",
     )

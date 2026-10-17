@@ -65,14 +65,12 @@ def test_push_warn_and_missing_message_rendering() -> None:
     )
     assert warn.title == '[cache warning] main: tech-lead on work: "idle-cache-notify"'
     assert warn.body.startswith("Cache expiry warning: reply to keep it warm\nYou: ")
-    assert (hidden.title, hidden.body, hidden.priority, hidden.email, hidden.event) == (
+    assert (hidden.title, hidden.body, hidden.priority, hidden.email) == (
         '[idle] coder in project: "meridian-cli"',
         "Your turn",
         3,
         False,
-        "session.responded",
     )
-    assert warn.event == "session.cache_expiring"
 
 
 def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:

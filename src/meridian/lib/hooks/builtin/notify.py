@@ -3,68 +3,97 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
-from typing import cast
+from pathlib import Path
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints
 
 from meridian.plugin_api import (
     NOTIFICATION_EVENTS,
     Hook,
     HookContext,
+    HookEventName,
     HookResult,
 )
-from meridian.plugin_api.notify import deliver
+
+type _ChannelName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class NotifyOptions(BaseModel):
+    """A route's `options`: where it delivers, and at what priority."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # `push`, `email` (the configured backends) or backend names; unset means both aliases.
+    channels: tuple[_ChannelName, ...] | None = None
+    priority: Annotated[StrictInt, Field(ge=1, le=5)] | None = None
 
 
 class NotifyHook:
-    """Deliver the event's notification to the channels its route names."""
+    """Deliver the event's notification to the channels its route names.
+
+    The transports are `lib/notify`'s, a companion this built-in wraps directly.
+    """
 
     name = "notify"
     requirements: tuple[str, ...] = ()
-
-    @property
-    def default_events(self) -> tuple[str, ...]:
-        return NOTIFICATION_EVENTS
-
-    @property
-    def default_interval(self) -> str | None:
-        return None
+    default_events: tuple[HookEventName, ...] = NOTIFICATION_EVENTS
+    default_interval: str | None = None
+    options_model: type[BaseModel] = NotifyOptions
+    # Unnamed rows are all `notify`, so a row on an event replaces its default route.
+    identity_options: tuple[str, ...] = ()
 
     def check_requirements(self) -> tuple[bool, str | None]:
         return True, None
 
     def execute(self, context: HookContext, config: Hook) -> HookResult:
+        from dataclasses import replace
+
+        from meridian.lib.config.loader import load_config
+        from meridian.lib.notify.service import send
+
         start = time.monotonic()
         notification = context.notification
         if notification is None:
-            return HookResult(
-                hook_name=config.name,
-                event=context.event_name,
-                outcome="skipped",
-                success=True,
-                skipped=True,
-                skip_reason="no_notification",
-            )
-        channels = config.options.get("channels")
-        priority = config.options.get("priority")
-        delivery = deliver(
+            return self._skipped(context, config, "no_notification")
+        options = NotifyOptions.model_validate(config.options)
+        if options.priority is not None:
+            notification = replace(notification, priority=options.priority)
+        report = send(
             notification,
+            load_config(Path(context.project_root)).notify,
             event=context.event_name,
-            project_root=context.project_root,
-            # Option shapes are checked when the hook row loads.
-            channels=cast("Sequence[str]", channels) if channels is not None else ("push", "email"),
-            priority=cast("int", priority) if priority is not None else None,
+            channels=options.channels,
         )
+        if report.all_none:
+            skipped = self._skipped(context, config, "disabled")
+            return replace(skipped, error="; ".join(report.warnings) or None)
+        errors = [
+            f"{result.channel}: {result.error or 'delivery failed'}"
+            for result in report.results
+            if result.status == "failed"
+        ]
         return HookResult(
             hook_name=config.name,
             event=context.event_name,
-            outcome="success" if delivery.ok else "failure",
-            success=delivery.ok,
-            error="; ".join(delivery.errors) or None,
+            outcome="success" if report.ok else "failure",
+            success=report.ok,
+            error="; ".join(errors) or None,
             duration_ms=int((time.monotonic() - start) * 1000),
-            stdout=delivery.report_json,
+            stdout=", ".join(result.channel for result in report.results if result.ok) or None,
+        )
+
+    def _skipped(self, context: HookContext, config: Hook, reason: str) -> HookResult:
+        return HookResult(
+            hook_name=config.name,
+            event=context.event_name,
+            outcome="skipped",
+            success=True,
+            skipped=True,
+            skip_reason=reason,
         )
 
 
 NOTIFY = NotifyHook()
 
-__all__ = ["NOTIFY", "NotifyHook"]
+__all__ = ["NOTIFY", "NotifyHook", "NotifyOptions"]

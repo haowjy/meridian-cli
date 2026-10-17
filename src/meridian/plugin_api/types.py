@@ -58,6 +58,12 @@ class Notification:
     # Absolute paths of files to send with it, checked readable when it was made.
     attachments: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        if not self.title.strip():
+            raise ValueError("title must not be empty")
+        if not 1 <= self.priority <= 5:
+            raise ValueError(f"priority must be between 1 and 5, got {self.priority}")
+
     def to_dict(self) -> dict[str, object]:
         return {
             "title": self.title,
@@ -171,8 +177,6 @@ class HookContext:
         runtime_root = getattr(authority, "runtime_root", None)
         if project_root is None:
             raise ValueError("Hook authority is missing project_root.")
-        if runtime_root is None:
-            raise ValueError("Hook authority is missing runtime_root.")
         return cls.from_roots(
             project_root=project_root,
             runtime_root=runtime_root,

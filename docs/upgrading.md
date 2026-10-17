@@ -13,19 +13,32 @@ With no hook config, delivery is unchanged.
   required, the body optional, and the session headline always ends the body.
   `--title` is gone; replace `meridian notify "msg" --title T` with
   `meridian notify T "msg"`. `--no-email`, `--priority` and `--json` are
-  unchanged. Extension command hooks appear in results as `hook:<name>`.
+  unchanged, but the results list one entry per route (the default route is
+  `notify`) rather than one per transport; a failed route's error still names
+  each failed transport. The session label moves from the report to the
+  top-level `label` key.
+- **`command` backend removed.** `push_backend = "command"` and
+  `email_backend = "command"`, with `push_command`, `email_command` and their
+  `MERIDIAN_NOTIFY_*_COMMAND` variables, are gone. Move the script to a command
+  hook on the notification events: it gets the notification as JSON on stdin
+  (`notification.title`, `body`, `priority`, `label`, `attachments`) and in
+  `MERIDIAN_NOTIFICATION_*` variables, rather than title and body as arguments.
+- **`--no-email` covers every email backend.** A notification that does not
+  want email now skips `smtp` and `gmail` even when a route names them.
 - **Hooks switch.** `MERIDIAN_HOOKS_ENABLED=false` now also turns off every
   notification. Hooks, notification routes included, now run in a directory
-  with no Meridian runtime state; only `interval`-throttled hooks skip there.
-- **`command` backend.** The stdin JSON replaces `kind` with `event` (the hook
-  event name) and adds `label` (`tmux_session`, `project`, `work_id`, `agent`,
-  `harness`, `headline`). ntfy's `Tags` header is now the event name. Update
-  scripts or ntfy filters that matched the old `kind` values.
+  with no Meridian runtime state (`meridian hooks run` too); only
+  `interval`-throttled hooks skip there.
+- **Hook rows.** `meridian hooks list` drops the `registration` column; the
+  `default` source marks Meridian's own routes. Unnamed `git-autosync` rows are
+  named from `remote`/`path` only, so a row that also sets `conflict_policy`
+  gets a new name. Unknown `options` keys on a builtin row are config errors.
+- **ntfy.** The `Tags` header is now the event name; update filters that
+  matched the old `kind` values.
 - **Plugin API 2.0.0.** `HookContext.runtime_root` may be `None`;
   `HookContext.notification` is new; the hook payload `schema_version` is `2`
-  and carries a `notification` object on notification events.
-  `meridian.plugin_api.notify.deliver()` sends through Meridian's transports.
-  See [plugin-api.md](plugin-api.md).
+  and carries a `notification` object on notification events. See
+  [plugin-api.md](plugin-api.md).
 
 No state migration is needed.
 

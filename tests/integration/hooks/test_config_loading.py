@@ -86,7 +86,7 @@ def test_hook_config_model_normalizes_closed_values(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    hook = load_hooks_config(tmp_path).hooks[0]
+    hook = next(hook for hook in load_hooks_config(tmp_path).hooks if hook.name == "normalized")
 
     assert hook.event == "spawn.finalized"
     assert hook.interval == "5m"

@@ -1,11 +1,13 @@
-"""Notification values shared by callers and delivery channels."""
+"""Session labels and the `meridian notify` message."""
 
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from meridian.plugin_api.types import Notification
 
 
 @dataclass(frozen=True)
@@ -42,37 +44,8 @@ class SessionLabel:
             "headline": self.headline,
         }
 
-    @classmethod
-    def from_dict(cls, values: Mapping[str, str | None]) -> SessionLabel:
-        return cls(
-            tmux_session=values.get("tmux_session"),
-            project=values.get("project"),
-            work_id=values.get("work_id"),
-            agent=values.get("agent"),
-            harness=values.get("harness"),
-        )
 
-
-@dataclass(frozen=True)
-class Notice:
-    """One message, the hook event it travels as, and its delivery policy."""
-
-    title: str
-    body: str
-    priority: int
-    email: bool
-    # The hook event that carries it: session.responded, session.cache_expiring, notify.manual.
-    event: str
-    label: SessionLabel | None = None
-    # Files each transport sends as it can: email attaches them all, ntfy one per message.
-    attachments: tuple[Path, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not 1 <= self.priority <= 5:
-            raise ValueError(f"priority must be between 1 and 5, got {self.priority}")
-
-
-def manual_notice(
+def manual_notification(
     title: str,
     body: str | None,
     label: SessionLabel,
@@ -80,29 +53,25 @@ def manual_notice(
     priority: int = 3,
     email: bool = True,
     attachments: Sequence[Path] = (),
-) -> Notice:
-    """Build a manual notice; its body always ends with where it came from.
+) -> Notification:
+    """Build a `meridian notify` message; its body always ends with where it came from.
 
-    Every attachment must be a readable file now, before any transport runs.
+    Every attachment must be a readable file now, before any route runs.
     """
 
-    normalized_title = title.strip()
-    if not normalized_title:
-        raise ValueError("title must not be empty")
     files = tuple(path.expanduser().resolve() for path in attachments)
     for path in files:
         if not path.is_file() or not os.access(path, os.R_OK):
             raise ValueError(f"attachment is not a readable file: {path}")
     lines = [body.strip() if body else "", label.headline]
-    return Notice(
-        title=normalized_title,
+    return Notification(
+        title=title.strip(),
         body="\n".join(line for line in lines if line),
         priority=priority,
         email=email,
-        event="notify.manual",
-        label=label,
-        attachments=files,
+        label=label.to_dict(),
+        attachments=tuple(path.as_posix() for path in files),
     )
 
 
-__all__ = ["Notice", "SessionLabel", "manual_notice"]
+__all__ = ["SessionLabel", "manual_notification"]
