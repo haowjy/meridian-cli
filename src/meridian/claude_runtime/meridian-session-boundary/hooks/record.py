@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
@@ -17,9 +18,13 @@ _SOURCES = frozenset({"startup", "resume", "fork", "clear", "compact"})
 
 def _messaging_socket() -> str | None:
     value = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
+    try:
+        encoded_length = len(value.encode()) if value else 0
+    except UnicodeEncodeError:
+        return None
     if (
         not value
-        or len(value) > 4096
+        or encoded_length > 107
         or not Path(value).is_absolute()
         or any(ord(character) < 32 for character in value)
     ):
@@ -63,6 +68,7 @@ def record() -> None:
         "launch_nonce": nonce,
         # The hook command execs this interpreter; its parent is Claude.
         "pid": os.getppid(),
+        "recorded_at": time.time(),
         "source": source,
         "session_id": session_id,
         "transcript_path": transcript,

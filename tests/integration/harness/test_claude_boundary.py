@@ -5,6 +5,7 @@ import json
 import os
 import runpy
 import sys
+import time
 from pathlib import Path
 
 from meridian.lib.harness.claude_boundary import (
@@ -80,6 +81,12 @@ def test_decoder_rejects_foreign_nonce_pid_and_torn_tail(tmp_path, monkeypatch):
     assert read_observations(path, nonce="nonce", pid=os.getppid() + 1, cursor=0).observations == ()
     batch = read_observations(path, nonce="nonce", pid=os.getppid(), cursor=0)
     assert [item.key.session_id for item in batch.observations] == ["entry"]
+    assert batch.next_cursor < path.stat().st_size
+    _record(monkeypatch, path, hook_event_name="SessionStart", source="clear",
+            session_id="next", transcript_path=str(tmp_path / "next.jsonl"))
+    assert [item.key.session_id for item in read_observations(
+        path, nonce="nonce", pid=os.getppid(), cursor=batch.next_cursor,
+    ).observations] == ["next"]
 
     without_socket = tmp_path / "without-socket.jsonl"
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "relative.sock")
@@ -95,12 +102,7 @@ def test_decoder_rejects_foreign_nonce_pid_and_torn_tail(tmp_path, monkeypatch):
         next(line for line in without_socket.read_text().splitlines() if line)
     )
     assert "messaging_socket" not in record_without_socket
-    assert batch.next_cursor < path.stat().st_size
-    _record(monkeypatch, path, hook_event_name="SessionStart", source="clear",
-            session_id="next", transcript_path=str(tmp_path / "next.jsonl"))
-    assert [item.key.session_id for item in read_observations(
-        path, nonce="nonce", pid=os.getppid(), cursor=batch.next_cursor,
-    ).observations] == ["next"]
+    assert isinstance(record_without_socket["recorded_at"], float)
 
 
 def test_writer_records_messaging_socket_without_token(tmp_path, monkeypatch):
@@ -121,6 +123,7 @@ def test_writer_records_messaging_socket_without_token(tmp_path, monkeypatch):
     saved = path.read_text(encoding="utf-8")
     record = json.loads(next(line for line in saved.splitlines() if line))
     assert record["messaging_socket"] == str(inbox)
+    assert record["recorded_at"] <= time.time()
     assert "must-not-be-recorded" not in saved
     assert "CLAUDE_CODE_MESSAGING_TOKEN" not in saved
     batch = read_observations(path, nonce="nonce", pid=os.getppid(), cursor=0)
@@ -136,6 +139,7 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
         *,
         record_pid: int = pid,
         socket_path: Path | None = None,
+        recorded_at: float | None = None,
         version: int = 2,
     ) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -148,6 +152,8 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
         }
         if socket_path is not None:
             payload["messaging_socket"] = str(socket_path)
+        if recorded_at is not None:
+            payload["recorded_at"] = recorded_at
         return payload
 
     first = tmp_path / "first.sock"
@@ -155,10 +161,11 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
     latest = tmp_path / "latest.sock"
     ignored_version = tmp_path / "ignored-version.sock"
     lines = [
-        record("first", socket_path=first),
+        record("first", socket_path=first, recorded_at=1.0),
         record("foreign", record_pid=pid + 1, socket_path=foreign),
         record("without-socket"),
-        record("latest", socket_path=latest),
+        record("latest", socket_path=latest, recorded_at=2.0),
+        record("invalid-socket", socket_path=Path("relative.sock"), recorded_at=3.0),
         record("future", socket_path=ignored_version, version=3),
     ]
     path.write_bytes(
@@ -166,8 +173,12 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
         + b'\n{"v":2'
     )
 
-    assert latest_messaging_socket(path, pid=pid) == latest
+    assert latest_messaging_socket(path, pid=pid) == (latest, 2.0)
     assert latest_messaging_socket(path, pid=pid + 2) is None
+    assert [
+        item.key.session_id
+        for item in read_observations(path, nonce="nonce", pid=pid, cursor=0).observations
+    ] == ["first", "without-socket", "latest", "invalid-socket"]
 
 
 def test_hook_does_not_recreate_deleted_spawn_parent(tmp_path, monkeypatch):

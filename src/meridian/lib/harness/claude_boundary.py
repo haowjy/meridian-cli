@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from meridian.lib.core.native_identity import (
     NativeKey,
@@ -18,7 +19,9 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.state.paths import spawn_log_subpath
 
 _READ_LIMIT = 64 * 1024
+_RECORD_LIMIT = 8 * 1024
 _JOURNAL_LIMIT = 1024 * 1024
+_JOURNAL_READ_LIMIT = _JOURNAL_LIMIT + _RECORD_LIMIT
 _JOURNAL_FILENAME = "claude-session-boundary.jsonl"
 _ENTRY_OPERATIONS: dict[str, Operation] = {"startup": "create", "resume": "resume", "fork": "fork"}
 
@@ -26,25 +29,14 @@ _ENTRY_OPERATIONS: dict[str, Operation] = {"startup": "create", "resume": "resum
 class _Record(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    v: int
+    v: Literal[2]
     launch_nonce: str = Field(min_length=1, max_length=256)
     pid: int = Field(gt=0)
     source: Literal["startup", "resume", "fork", "clear", "compact"]
     session_id: str = Field(min_length=1, max_length=256, pattern=r"^[a-zA-Z0-9_-]+$")
     transcript_path: str = Field(min_length=1, max_length=4096, pattern=r"^[^\x00-\x1f]+$")
-    messaging_socket: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=4096,
-        pattern=r"^[^\x00-\x1f]+$",
-    )
-
-    @field_validator("messaging_socket")
-    @classmethod
-    def _messaging_socket_is_absolute(cls, value: str | None) -> str | None:
-        if value is not None and not Path(value).is_absolute():
-            raise ValueError("messaging socket path is not absolute")
-        return value
+    messaging_socket: str | None = None
+    recorded_at: float | None = None
 
     def observation(self, next_cursor: int) -> NativeObservation:
         path = Path(self.transcript_path)
@@ -70,6 +62,36 @@ def _parse_record(line: bytes) -> _Record | None:
         return None
 
 
+def _iter_complete_records(
+    raw: bytes,
+    *,
+    cursor: int = 0,
+) -> Iterator[tuple[int, _Record | None]]:
+    """Yield the ending cursor and decoded value for each complete journal line."""
+
+    final_newline = raw.rfind(b"\n")
+    if final_newline < 0:
+        return
+
+    next_cursor = cursor
+    for line in raw[: final_newline + 1].splitlines(keepends=True):
+        next_cursor += len(line)
+        yield next_cursor, _parse_record(line)
+
+
+def _usable_messaging_socket(value: str | None) -> Path | None:
+    if not value or not Path(value).is_absolute():
+        return None
+    try:
+        if len(value.encode()) > 107:
+            return None
+    except UnicodeEncodeError:
+        return None
+    if any(ord(character) < 32 for character in value):
+        return None
+    return Path(value)
+
+
 def read_observations(
     path: Path,
     *,
@@ -88,48 +110,33 @@ def read_observations(
     if not raw:
         return NativeObservationBatch(next_cursor=cursor)
 
-    bounded = raw[:_READ_LIMIT]
-    final_newline = bounded.rfind(b"\n")
-    if final_newline < 0:
-        return NativeObservationBatch(next_cursor=cursor)
-
-    consumed = bounded[: final_newline + 1]
     observations: list[NativeObservation] = []
     next_cursor = cursor
-    for line in consumed.splitlines(keepends=True):
-        next_cursor += len(line)
-        record = _parse_record(line)
+    for next_cursor, record in _iter_complete_records(raw[:_READ_LIMIT], cursor=cursor):
         if record is None:
             continue
         try:
-            if record.v == 2 and record.launch_nonce == nonce and record.pid == pid:
+            if record.launch_nonce == nonce and record.pid == pid:
                 observations.append(record.observation(next_cursor))
         except ValueError:
             continue
-    return NativeObservationBatch(tuple(observations), cursor + len(consumed))
+    return NativeObservationBatch(tuple(observations), next_cursor)
 
 
-def latest_messaging_socket(path: Path, *, pid: int) -> Path | None:
-    """Return the last valid inbox socket published by one Claude process."""
+def latest_messaging_socket(path: Path, *, pid: int) -> tuple[Path, float | None] | None:
+    """Return the last usable inbox socket published by one Claude process."""
 
     try:
         with path.open("rb") as handle:
-            raw = handle.read(_JOURNAL_LIMIT)
+            raw = handle.read(_JOURNAL_READ_LIMIT)
     except OSError:
         return None
 
-    final_newline = raw.rfind(b"\n")
-    if final_newline < 0:
-        return None
-
-    latest: Path | None = None
-    for line in raw[: final_newline + 1].splitlines(keepends=True):
-        record = _parse_record(line)
-        if (
-            record is not None
-            and record.v == 2
-            and record.pid == pid
-            and record.messaging_socket is not None
-        ):
-            latest = Path(record.messaging_socket)
+    latest: tuple[Path, float | None] | None = None
+    for _, record in _iter_complete_records(raw):
+        if record is None or record.pid != pid:
+            continue
+        socket_path = _usable_messaging_socket(record.messaging_socket)
+        if socket_path is not None:
+            latest = socket_path, record.recorded_at
     return latest
