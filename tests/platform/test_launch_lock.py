@@ -190,7 +190,14 @@ def continue_orphan(runtime: Runtime, *, backend: bool, primary: bool, dry_run: 
         assert projection.read_bytes() == before, "dry run released scopes"
         assert not (runtime.root / "runtime/spawns/p2").exists()
         return
-    runtime.pid("p2.pid")
+    try:
+        runtime.pid("p2.pid")
+    except AssertionError as exc:
+        log = runtime.root / f"cli-{runtime.processes.index(process)}.log"
+        raise AssertionError(
+            f"continue never started its harness; exit={process.poll()}\n"
+            + log.read_text(errors="replace")[-4000:]
+        ) from exc
     orphan_gone_before_start = not alive(worker)
     (runtime.root / "p2.exit").touch()
     code = process.wait(timeout=30)
