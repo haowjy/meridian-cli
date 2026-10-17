@@ -7,6 +7,7 @@ has a `release:*` label.
 
 1. Create/select your code directory (for example `git worktree add ../meridian-cli.worktrees/my-feature -b my-feature`), then start the work item with `meridian work start "my-feature" --task-dir ../meridian-cli.worktrees/my-feature` (or run `meridian work task-dir ../meridian-cli.worktrees/my-feature` after `work start`)
 2. Add changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
+   - `scripts/check-changelog-placement.py` enforces this in CI and the push hook; use the `changelog:edit-released` label or `MERIDIAN_CHANGELOG_ALLOW_RELEASED=1` for an intentional released-section edit.
 3. Open a PR using the PR template
 4. Set one release label. The bump tracks breakage, not size: a change that
    does not break existing behaviour is a patch, however much it adds.

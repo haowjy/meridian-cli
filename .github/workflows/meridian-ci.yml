@@ -40,6 +40,16 @@ jobs:
             echo "::warning::No release:* label set. Merge to main will skip auto-release."
           fi
 
+      - name: Check CHANGELOG.md placement
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          changelog_args=(--base HEAD^1 --head HEAD)
+          if jq -e 'index("changelog:edit-released") != null' <<<"${LABELS_JSON}" >/dev/null; then
+            changelog_args+=(--allow-released)
+          fi
+          python3 scripts/check-changelog-placement.py "${changelog_args[@]}"
+
       - name: Note CHANGELOG.md coverage
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
