@@ -37,6 +37,7 @@ from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.session_store import cleanup_stale_sessions
 from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import overlay_derived
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry.retention import (
     DEFAULT_MAX_TOTAL_BYTES,
@@ -434,6 +435,7 @@ def _doctor_local(
 
     spawn_scan = spawn_store.list_spawns(runtime_root)
     spawns = spawn_scan.records
+    # Destructive pruning stays conservative: stored-active rows remain protected.
     active_spawn_ids = {spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)}
     protected_spawn_ids = active_spawn_ids | {
         quarantine.spawn_id for quarantine in spawn_scan.quarantines
@@ -520,7 +522,11 @@ def _doctor_local(
             )
         )
 
-    running = [row.id for row in spawns if is_active_spawn_status(row.status)]
+    running = [
+        row.id
+        for row in overlay_derived(runtime_root, spawns)
+        if is_active_spawn_status(row.status)
+    ]
     if running:
         reconciliation_mode = (
             "after orphan-kill reconciliation"
@@ -590,16 +596,11 @@ def _doctor_global(
                         "with --prune --global."
                     ),
                     payload={
-                        "project_ids": [
-                            item.project_id for item in prunable_adhoc_project_dirs
-                        ],
+                        "project_ids": [item.project_id for item in prunable_adhoc_project_dirs],
                         "paths": [
-                            item.path or item.runtime_root
-                            for item in prunable_adhoc_project_dirs
+                            item.path or item.runtime_root for item in prunable_adhoc_project_dirs
                         ],
-                        "reasons": [
-                            item.reason for item in prunable_adhoc_project_dirs
-                        ],
+                        "reasons": [item.reason for item in prunable_adhoc_project_dirs],
                     },
                 )
             )

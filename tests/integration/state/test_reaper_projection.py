@@ -51,17 +51,23 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
     record_scope(runtime_root, SpawnId(spawn_id), backend_scope)
     record = _get_spawn(runtime_root, spawn_id)
     monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", str(runtime_root))
     terminated_scopes = recording_scope_cleanup(
         monkeypatch,
         "meridian.lib.core.process_cleanup.terminate_scope_sync",
     )
 
-    from meridian.lib.state.spawn_status import overlay_derived
+    from meridian.lib.ops.spawn.api import spawn_list_sync, spawn_stats_sync, spawn_wait_sync
+    from meridian.lib.ops.spawn.models import SpawnListInput, SpawnStatsInput, SpawnWaitInput
 
-    (projected,) = overlay_derived(runtime_root, [record])
-    assert projected.status == "failed"
-    assert projected.terminal is not None
-    assert projected.terminal.error == "crashed"
+    listed = spawn_list_sync(SpawnListInput(project_root=str(tmp_path), statuses=()))
+    assert [(row.spawn_id, row.status) for row in listed.spawns] == [(spawn_id, "failed")]
+    stats = spawn_stats_sync(SpawnStatsInput(project_root=str(tmp_path)))
+    assert stats.failed == 1
+    waited = spawn_wait_sync(SpawnWaitInput(project_root=str(tmp_path), spawn_ids=(spawn_id,)))
+    assert [(row.spawn_id, row.status, row.failure_reason) for row in waited.spawns] == [
+        (spawn_id, "failed", "crashed")
+    ]
     assert _get_spawn(runtime_root, spawn_id).status == "running"
     assert terminated_scopes == []
 

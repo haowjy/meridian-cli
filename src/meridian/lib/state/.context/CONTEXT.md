@@ -25,7 +25,6 @@ bare path
   locks/spawns/<id>.lock            — stable per-spawn mutation lock
   locks/process-scopes/<id>.lock    — stable process-scope projection lock
   locks/reaper-cleanup/<id>.lock    — stable reaper cleanup lock
-  locks/launch-boundary/<id>.lock   — stable launch-boundary append lock
   locks/gc.lock                     — lock-GC pass serialization
   spawns/
     .staging/<unique>/              — complete unpublished spawn row
@@ -224,9 +223,10 @@ scopes, or check process depth.
 `reconcile_active_spawn()` is the mutating repair operation used by doctor orphan-run
 repair. It fails closed unless `is_root_side_effect_process()` is true. For a
 lock-backed active row it non-blockingly acquires the free runner-lifetime
-`launch.lock`, re-reads state while holding it, and persists the same terminal tuple
-that `read_derived()` projects: cancel intent yields `cancelled`, otherwise runner
-disappearance yields `failed`/`crashed`. It never finalizes a lockless legacy row.
+`launch.lock`, re-reads state while holding it, and persists the same status, exit code,
+and error that `read_derived()` projects: cancel intent yields `cancelled`, otherwise
+runner disappearance yields `failed`/`crashed`. Origin and timestamps may differ. It
+never finalizes a lockless legacy row.
 Before finalization it snapshots exact cleanup targets into
 `reaper_cleanup_claim.json`; after finalization it terminates the claimed scopes. This
 finalize-first order makes state convergence independent of slow cleanup; a crash

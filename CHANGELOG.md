@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Spawn status can now be read consistently with its runner-lifetime lock, detecting a crashed runner on the next read without heartbeat or PID grace periods. Cancelling a dead runner honors cancel intent even when it left a report but no outcome. Obsolete per-spawn heartbeat files are no longer written. (#663)
+- Spawn status now follows the runner-lifetime lock. Runner or managed-primary loss, including during finalization, reads `failed`/`crashed` immediately; a cancel request reads `cancelled`, even when a report exists without an outcome. Obsolete heartbeat and launch-boundary journals are no longer written. (#663)
 
 ## [0.10.21] - 2026-10-17
 

@@ -26,8 +26,6 @@ bare path
                                     — stable process-scope sidecar mutation lock
   locks/reaper-cleanup/<spawn_id>.lock
                                     — stable reaper cleanup lock
-  locks/launch-boundary/<spawn_id>.lock
-                                    — stable launch-boundary append lock
   locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
   spawns/<spawn_id>/
@@ -100,7 +98,7 @@ Any writer into a destructible `spawns/<id>/` directory that can outlive deletio
 not recreate its owner. Parent-creating mutations take the spawn-state lock and refuse
 a missing published row through `published_artifact_lock()`; callback-only writers use
 `mutate_published_spawn_artifact()` on the same seam. Signals, scope, history,
-launch/reaper diagnostics, failure sentinels, and harness journals all use it.
+reaper diagnostics, failure sentinels, and harness journals all use it.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
 the repository never imports the projection. Cross-leaf operations belong in
@@ -193,9 +191,10 @@ historical records and imported archive refs read a sealed `snapshot` source ins
 ## Reconciliation Behavior
 
 Readers get status only from `spawn_status.py`: `read_derived()` for one spawn and
-`overlay_derived()` for rows from a scan or the index. Both hold the shared launch lock
-across the authority read, may return an in-memory terminal status, never persist state
-or terminate processes, and are safe at any depth.
+`overlay_derived()` for rows from a scan or the index. For lock-backed rows, they hold
+the shared launch lock across the authority read. Lockless legacy rows use the bounded
+legacy liveness rule instead. Both may return an in-memory terminal status, never
+persist state or terminate processes, and are safe at any depth.
 
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
 background repair and fails closed outside root depth. A lock-backed active row is
@@ -243,9 +242,10 @@ Historical multi-ID arrays are ignored on read.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.
-- `spawn_status.py` — `read_derived()`/`overlay_derived()` (lock-consistent status for
-  every reader) and `claim_dead_launch()` (the one writer-side claim on a dead launch).
-- `reaper.py` — root-only `reconcile_active_spawn()` repair through `claim_dead_launch()`.
+- `spawn_status.py` — lock-consistent status for every reader and the typed writer-side
+  claim on a dead launch.
+- `reaper.py` — root-only repair that claims dead launches, persists their projected
+  outcome through the application service, then cleans claimed process scopes.
 
 ## Spawn Subpackage
 

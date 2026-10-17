@@ -214,7 +214,7 @@ def test_repair_jsonl_tail_preserves_existing_permissions(tmp_path: Path) -> Non
 
 
 def test_repair_jsonl_tail_does_not_create_parent_dir(tmp_path: Path) -> None:
-    path = tmp_path / "spawn" / "launch-boundary.jsonl"
+    path = tmp_path / "spawn" / "journal.jsonl"
 
     repair_jsonl_tail(path)
 
