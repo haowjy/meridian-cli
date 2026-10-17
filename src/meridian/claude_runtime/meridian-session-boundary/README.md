@@ -4,11 +4,18 @@ This classic command-hook plugin appends Claude `SessionStart` identity facts to
 a launcher-owned journal. It loads for primary and spawned Claude launches and
 does nothing outside a prepared Meridian launch.
 
-The hook records only the launch nonce, parent PID, SessionStart source, native
-session ID, and exact transcript path. Each record is one bounded JSONL line
+The hook records the launch nonce, parent PID, SessionStart source, native
+session ID, exact transcript path, and (when Claude publishes it) the absolute
+`messaging_socket` path. Each record is one bounded JSONL line
 written with one `O_APPEND` write to a mode-0600 file. The stdlib-only writer
 never imports Meridian, starts a subprocess, creates a missing parent directory,
 or emits conversation output.
+
+The hook deliberately does not read or record Claude's messaging token. Meridian
+is not Claude's child process, so presenting that token would incorrectly attest
+child ownership and could bypass Claude's inbound-message controls. Inbox posts
+use the socket without authentication and remain subject to Claude's own
+`crossSessionInbound` policy.
 
 The launcher starts a per-run drainer after it knows the actual Claude PID. The
 Claude adapter rejects records with a foreign nonce or PID and decodes only exact

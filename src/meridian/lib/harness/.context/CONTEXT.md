@@ -126,6 +126,15 @@ evidence only.
 The facts hook observes owned live session IDs. There is no artifact-identity or
 filesystem-discovery fallback.
 
+### Primary inbox injection
+
+`HarnessBundle.primary_inbox` is the optional mechanism port for posting to a
+live primary TUI that has no `SpawnManager` connection. The CLI selects it only
+for `kind == "primary"`; spawned sessions continue through their serialized
+control socket. Claude resolves the latest SessionStart-published inbox socket
+for the primary's recorded worker PID and owns the native wire protocol. A post
+has no delivery acknowledgement and must not be described as delivered.
+
 ### `HarnessContract` as Inspectable Surface
 
 Every adapter declares a `HarnessContract` — a frozen Pydantic model that makes
