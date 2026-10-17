@@ -155,6 +155,9 @@ def test_doctor_does_not_report_dead_launch_live_without_kill_flag(
     assert "orphan_runs" not in result.repaired
     assert result.killed_orphan_spawns == ()
     assert all(warning.code != "live_active_spawns_remain" for warning in result.warnings)
+    assert _warning_by_code(result, "dead_spawns_unfinalized").payload == {
+        "spawn_ids": [spawn_id]
+    }
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     assert spawn_store.get_spawn(runtime_root, spawn_id).status == "running"
 

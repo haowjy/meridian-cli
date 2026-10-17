@@ -153,11 +153,11 @@ meridian spawn report search "keyword"   # search across all spawn reports
 
 `finalizing` is a normal, short-lived active status. It means the runner has finished its post-exit work (output drain, report extraction) and is committing the terminal state. You may briefly see it in `spawn list` or the `work` dashboard between harness exit and terminal persistence. No action needed — the spawn will move to `succeeded` or `failed` momentarily.
 
-If a spawn stays in `finalizing` for more than a minute or two, the runner may have crashed in the finalization window. In that case `meridian doctor` will reclassify it (see below).
+If a spawn stays in `finalizing` for more than a minute or two, the runner may have crashed in the finalization window. If so, status reads already show it as crashed (see below).
 
 ## Spawn shows as crashed
 
-Meridian classifies an active spawn as crashed as soon as its runner-lifetime launch lock is free. Status reads project that failure immediately, and `meridian doctor` can persist the terminal result and clean up recorded process scopes.
+Meridian classifies an active spawn as crashed as soon as its runner-lifetime launch lock is free. Status reads project that failure immediately. Plain `meridian doctor` lists such spawns under `dead_spawns_unfinalized`; `meridian doctor --kill-orphans` persists the terminal result and cleans up recorded process scopes.
 
 - **`crashed`** — the runner's lifetime lock was freed before it wrote an outcome. A pending cancel request produces `cancelled` instead. Check `report.md`; the work may still be usable. Relaunch or use `meridian spawn --continue ID -p "continue"`.
 

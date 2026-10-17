@@ -17,7 +17,6 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import is_pgid_reachable
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
-from meridian.lib.state.launch_lock import Busy, Contended, NotFound, acquire
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scopes_from_disk
@@ -34,7 +33,13 @@ from meridian.lib.state.spawn.repository import (
     iter_spawn_ids,
     read_state,
 )
-from meridian.lib.state.spawn_status import legacy_runner_alive
+from meridian.lib.state.spawn_status import (
+    Claimed,
+    Live,
+    Lockless,
+    claim_dead_launch,
+    legacy_runner_alive,
+)
 
 
 class ScopeLiveness(TypedDict):
@@ -181,23 +186,22 @@ def reconcile_active_spawn(
     if record.record_mode == "historical" or not is_root_side_effect_process():
         return record
     if is_terminal_spawn_status(record.status):
-        spawn_dir = runtime_root / "spawns" / record.id
-        try:
-            launch_handle = acquire(spawn_dir)
-        except NotFound:
+        # Cleanup of a finished row, never finalization: lockless rows qualify
+        # once their old runner is gone.
+        claim = claim_dead_launch(runtime_root, record.id)
+        if isinstance(claim, Lockless):
             if legacy_runner_alive(record):
                 return record
             return _cleanup_after_finalize(runtime_root, record)
-        except (Busy, Contended):
+        if isinstance(claim, Claimed):
+            claim.handle.close()
             return record
-        with launch_handle:
-            try:
-                current = read_state(spawn_dir.parent, record.id, include_prompt=False)
-            except SpawnStateQuarantined:
+        if isinstance(claim, Live):
+            return record
+        with claim.handle:
+            if claim.stored.record_mode == "historical":
                 return record
-            if current is None or current.record_mode == "historical":
-                return record
-            return _cleanup_after_finalize(runtime_root, current)
+            return _cleanup_after_finalize(runtime_root, claim.stored)
     if not is_active_spawn_status(record.status):
         return record
 
