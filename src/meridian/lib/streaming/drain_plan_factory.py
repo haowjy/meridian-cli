@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.claude_drain import ClaudeDrainCoordinator
 from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.streaming.drain_coordinator import DrainPlan
@@ -131,6 +132,12 @@ def build_drain_plan(
                 spawn_id=spawn_id,
                 emit_event=emit_event,
             ),
+        )
+
+    if receiver.harness_id is HarnessId.CLAUDE:
+        return DrainPlan(
+            coordinator=ClaudeDrainCoordinator(deadline_seconds=config.resident_deadline_seconds),
+            raw_terminal_frames_authoritative=False,
         )
 
     # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline.

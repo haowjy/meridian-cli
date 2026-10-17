@@ -9,13 +9,13 @@ Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
 candidate/deadline mechanics and the stabilization/validation phases live in
 `CompletionCoordinator`, behind
 the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
-`coordinator=None`; Pi and resident Codex/OpenCode paths get narrow coordinators only
-when their connection exposes the needed seam. Keep Pi child-wave,
+`coordinator=None`; Claude native tasks, Pi, and resident Codex/OpenCode paths get
+narrow coordinators at their harness seams. Keep Pi child-wave,
 disk-state, direct-follow-up gating, resident-done nudges, and descendant cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
 `drain_plan_factory.py` is the composition root for plan selection. It owns the
-plain/resident/Pi choice and injects manager capabilities for event emission,
+plain/Claude/resident/Pi choice and injects manager capabilities for event emission,
 serialized injection, and application-service descendant cleanup into both Pi and
 resident policy. Drain collaborators must not construct application services.
 
@@ -37,7 +37,12 @@ wall-clock bound. Child-wave windows are anchored to each wave, not slid by ordi
 activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
-For either profile, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
+Claude children use the native `background_tasks_changed` snapshot to hold successful
+turn results while tasks run. The resident deadline bounds the wait from the first held
+result through the follow-up result; task activity never renews it. An empty snapshot
+alone cannot finalize the spawn. No polling or descendant-store reads are needed.
+
+For all three profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
 ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
 defaults to `None`; resident rearms and Pi waves cannot reset it.
 
@@ -132,7 +137,7 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome classification, `resolve_terminal_outcome` priority resolver
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
-- `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
+- `drain_plan_factory.py` — plain/Claude/resident/Pi plan selection and capability wiring
 - `drain_teardown.py` — harness-neutral plan-owned connection-stop contract and default
 - `pi_drain_teardown.py` — Pi connection-stop cleanup-phase policy
 - `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
