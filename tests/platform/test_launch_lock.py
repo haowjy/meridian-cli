@@ -218,6 +218,34 @@ def test_continue_after_runner_sigkill_sweeps_orphan(
 
 
 @pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
+def test_continue_waits_out_non_runner_holder_of_dead_source(
+    runtime: Runtime, primary: bool,
+) -> None:
+    # Doctor or the primary-launch background repair may hold a dead source's
+    # lock while it persists the crash. That is not a live runner.
+    runtime.orphan()
+    lock = runtime.root / "runtime/spawns/p1/launch.lock"
+    holder = subprocess.Popen(
+        [
+            sys.executable, "-c",
+            "import fcntl,os,sys,time; fd=os.open(sys.argv[1],os.O_RDWR); "
+            "fcntl.flock(fd,fcntl.LOCK_EX); print('held',flush=True); time.sleep(1.5)",
+            str(lock),
+        ],
+        stdout=subprocess.PIPE,
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline() == b"held\n"
+        process = runtime.cli(*continue_args(primary))
+        runtime.pid("p2.pid")
+        (runtime.root / "p2.exit").touch()
+        assert process.wait(timeout=30) == 0
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+@pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
 @pytest.mark.parametrize("dry_run", [False, True], ids=["execute", "dry-run"])
 def test_continue_refuses_live_source(runtime: Runtime, primary: bool, dry_run: bool) -> None:
     parent = runtime.cli("spawn", "-m", "haiku", "-p", "hold", "--bg")
