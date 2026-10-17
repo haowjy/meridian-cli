@@ -540,3 +540,35 @@ async def test_intentional_stream_close_returns_pending_resident_outcome(
 
     assert close_outcome == _SUCCESS
     assert connection.fake_resident_backend.awaiting_done_values == [True]
+
+
+@pytest.mark.asyncio
+async def test_short_deadline_nudge_cadence_and_urgency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A due nudge is ordinary at half-window, urgent if delivery is delayed."""
+    from meridian.lib.streaming.completion_nudge import (
+        COMPLETION_NUDGE_MESSAGE,
+        TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE,
+    )
+
+    for delay, message in (
+        (10.0, COMPLETION_NUDGE_MESSAGE),
+        (19.0, TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE),
+    ):
+        root = tmp_path / str(delay)
+        coordinator, connection, clock = _coordinator(root, monkeypatch, deadline_seconds=20.0)
+        try:
+            write_spawn_signal(root, SpawnId("p1"), "rearm")
+            terminal = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+            assert terminal.emit_turn_boundary
+            await coordinator.wait_for_aux_wake()
+            await coordinator.handle_aux_wake()
+            clock.advance(9.0)
+            await coordinator.handle_timeout()
+            assert not connection.fake_resident_backend.injected_messages
+            clock.advance(delay - 9.0)
+            await coordinator.handle_timeout()
+            assert connection.fake_resident_backend.injected_messages == [message]
+        finally:
+            await coordinator.stop()

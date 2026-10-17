@@ -9,8 +9,8 @@ Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
 candidate/deadline mechanics and the stabilization/validation phases live in
 `CompletionCoordinator`, behind
 the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
-`coordinator=None`; Pi and resident Codex/OpenCode paths get narrow coordinators only
-when their connection exposes the needed seam. Keep Pi child-wave,
+`coordinator=None`; native-task holds, Codex/OpenCode resident completion, and Pi
+each supply their own profile. Keep Pi child-wave,
 disk-state, direct-follow-up gating, resident-done nudges, and descendant cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
@@ -19,13 +19,16 @@ plain/resident/Pi choice and injects manager capabilities for event emission,
 serialized injection, and application-service descendant cleanup into both Pi and
 resident policy. Drain collaborators must not construct application services.
 
-Resident drain selection is capability-driven: a connection participates in the
-resident descendant-wait path only when `connection.resident_backend` is present.
-Do not key resident behavior off harness ids.
+**Do not key resident behavior off harness ids.** The connection supplies completion
+evidence independently of backend control. Resident backend control selects
+Codex/OpenCode descendant evidence. Claude instead
+supplies native-task evidence and serialized stdin injection without backend liveness
+capabilities. Select the profile once from these capabilities; evidence reports facts,
+while profiles own hold, done/rearm, deadline and nudge policy.
 
 ## Completion and Absolute Timeout Models
 
-Resident Codex/OpenCode completion uses an absolute deadline per arm. Only an explicit
+Resident completion uses an absolute deadline per arm. Only an explicit
 `rearm.signal` can grant a new window; ordinary harness or descendant activity cannot.
 Rearm grants are unlimited by default. `--resident-rearm-budget`,
 `MERIDIAN_RESIDENT_REARM_BUDGET`, profile `resident-rearm-budget`, or
@@ -37,7 +40,11 @@ wall-clock bound. Child-wave windows are anchored to each wave, not slid by ordi
 activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
-For either profile, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
+Native-task activity never renews the deadline. Explicit done authorizes completion
+with leftover native tasks; managed-scope teardown stops them. Keep native result-wait
+and nudge behavior in the native profile, not the shared coordinator or evidence adapter.
+
+For all three profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
 ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
 defaults to `None`; resident rearms and Pi waves cannot reset it.
 
@@ -146,6 +153,8 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `pi_work_ledger.py` — sole mutable owner of Pi-private disk blockers; exposes
   immutable categorized snapshots
 - `resident_drain.py` — resident evidence/profile/cleanup and drain-protocol adapter
+- `native_hold_profile.py` — native-task hold and closing-result policy
+- `rearm_window.py` — shared resident/native signal, deadline, and rearm budget
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — validated Pi-private task/receipt disk
   observation and exact public-message admission fencing; disk evidence feeds the ledger
@@ -154,7 +163,7 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `control_socket.py` — per-spawn inject endpoint
 - `types.py` — `InjectResult`, `ControlMessage`
 
-Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as
+Codex/OpenCode and Pi completion use the shared reconciled transitive spawn-tree assessment as
 their sole persisted-descendant authority. One reconciled projection also retains raw
 canonical rows for Pi result obligations: a read-only terminal inference cannot replace
 terminal publication. Pi's disk watcher observes private task, consumption, receipt,

@@ -82,12 +82,27 @@ def build_drain_plan(
     async def _send_pi_done_nudge(message: str) -> None:
         await inject(spawn_id, message, source="pi_done_nudge")
 
+    async def _send_completion_nudge(message: str) -> None:
+        await inject(spawn_id, message, source="completion_nudge")
+
     async def _cancel_descendants(root_id: SpawnId) -> set[str]:
         service = build_spawn_application_service(project_root, runtime_root)
         return await service.cancel_descendants(root_id)
 
     resident_backend = receiver.resident_backend
-    if resident_backend is not None:
+    native_evidence = receiver.completion_evidence()
+    if native_evidence is not None:
+        coordinator = ResidentDrainCoordinator.for_native_evidence(
+            runtime_root=runtime_root,
+            spawn_id=spawn_id,
+            evidence=native_evidence,
+            send_nudge=_send_completion_nudge,
+            deadline_seconds=config.resident_deadline_seconds,
+            poll_seconds=config.resident_poll_seconds,
+            rearm_budget=config.resident_rearm_budget,
+            cancel_descendants=_cancel_descendants,
+        )
+    elif resident_backend is not None:
         coordinator = ResidentDrainCoordinator.for_connection(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
@@ -98,6 +113,9 @@ def build_drain_plan(
             rearm_budget=config.resident_rearm_budget,
             cancel_descendants=_cancel_descendants,
         )
+    else:
+        coordinator = None
+    if coordinator is not None:
         return DrainPlan(
             coordinator=coordinator,
             policy=SingleTurnDrainPolicy(),

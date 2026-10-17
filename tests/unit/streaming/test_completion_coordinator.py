@@ -193,6 +193,9 @@ class _Profile:
     ) -> TerminalEventOutcome | None:
         return state.candidate if intentional_stop else None
 
+    def next_directive_poll_at(self) -> None:
+        return None
+
     def next_nudge_at(
         self, state: CompletionState, assessment: WorkAssessment
     ) -> float | None:

@@ -63,6 +63,7 @@ from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     EventSemantics,
     HarnessSemantics,
+    PrimaryEventScope,
     TerminalEventOutcome,
     connection_closed_outcome,
     stringify_terminal_error,
@@ -521,8 +522,23 @@ def _resolve_claude_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | N
     return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error)
 
 
-CLAUDE_SEMANTICS = HarnessSemantics(
+class _ClaudeSemantics(HarnessSemantics):
+    def normalize(
+        self,
+        event: RawHarnessEvent,
+        *,
+        primary_event_scope: PrimaryEventScope | None = None,
+    ) -> EventSemantics:
+        # Background Agent frames share stdout, but cannot reset the parent's wait.
+        if event.event_type == "assistant" and event.payload.get("parent_tool_use_id"):
+            return EventSemantics()
+        return super().normalize(event, primary_event_scope=primary_event_scope)
+
+
+CLAUDE_SEMANTICS = _ClaudeSemantics(
     events={
+        # Load-bearing: clears awaiting-done and resets the resident nudge timer.
+        "assistant": EventSemantics(activity="turn_active"),
         "result": EventSemantics(clears_signal=True),
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },

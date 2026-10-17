@@ -153,6 +153,7 @@ class CompletionCoordinator:
                 self._deadline_at,
                 self._stabilization_at,
                 self._evidence.next_due_at(),
+                self._profile.next_directive_poll_at(),
                 self._profile.next_nudge_at(self.state, assessment),
             )
             if due is not None
@@ -199,6 +200,7 @@ class CompletionCoordinator:
             return DrainTerminalDecision()
         if outcome.status == "succeeded":
             self._candidate = outcome
+            self._success_validation = None
             self._active_turn = False
             if action.terminate:
                 self._phase = "assessing"
@@ -400,6 +402,8 @@ class CompletionCoordinator:
                     self._phase = "validating"
                     self._stabilization_at = None
                     self._stabilization_generation = None
+                    if self._deadline_at is None:
+                        self._deadline_at = self._profile.deadline_for(decision, now)
                     return DrainLoopDecision()
                 if not self._evidence.validation_complete(self._success_validation):
                     return DrainLoopDecision()

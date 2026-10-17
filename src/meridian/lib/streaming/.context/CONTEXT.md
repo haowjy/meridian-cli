@@ -83,9 +83,16 @@ parent, clear its signals, or drive its activity transitions.
 
 `drain_plan_factory.build_drain_plan()` returns the whole drain-loop configuration
 for one active spawn. `SpawnManager._select_drain_plan()` only supplies manager-owned
-capabilities and delegates to it. Codex/OpenCode resident backends get a
-`ResidentDrainCoordinator`; Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux
-wakes; plain streaming harnesses intentionally run with
+capabilities and delegates to it. There are three completion profiles: resident,
+native-task hold, and Pi. Native completion evidence selects the native-task profile;
+otherwise resident backend control selects the resident profile. Both use
+`ResidentDrainCoordinator` and compose `RearmWindow` for signals, absolute deadlines,
+and budgeted rearm. Pi keeps its separate child-wave windows. Claude's connection
+supplies `harness/claude_drain.py` evidence; it owns snapshot parsing, not policy.
+Native tasks and the pending follow-up result are diagnostic blockers, not policy
+flags carried through assessments.
+Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux wakes. Plain streaming harnesses
+intentionally run with
 `DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence
 of a coordinator is the plain path.
 

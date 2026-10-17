@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Claude child waits for its background shells and subagents, then the follow-up turn. Nudges name pending tasks; rearm extends the wait without blocking natural completion. `meridian spawn done` mid-turn waits for the closing report until the deadline, then succeeds. Resident nudges come at least once per half deadline. No false success when work gets cut off. (#655)
+
 ## [0.10.20] - 2026-10-17
 
 ## [0.10.19] - 2026-10-17

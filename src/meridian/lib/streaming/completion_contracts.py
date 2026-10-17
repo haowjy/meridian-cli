@@ -44,7 +44,7 @@ ProfileAction = Literal[
 class DiagnosticBlocker:
     """One opaque reason completion evidence is not ready."""
 
-    source: Literal["persisted_descendant", "profile"]
+    source: Literal["persisted_descendant", "profile", "native_task"]
     code: str
     identity: str | None = None
 
@@ -245,6 +245,8 @@ class CompletionProfile(Protocol):
     def next_nudge_at(
         self, state: CompletionState, assessment: WorkAssessment
     ) -> float | None: ...
+
+    def next_directive_poll_at(self) -> float | None: ...
 
     async def send_nudge(self, urgency: NudgeUrgency) -> None: ...
 
