@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,9 @@ from tests.support.resident_drain import start_row
 
 if TYPE_CHECKING:
     import pytest
+
+    from meridian.lib.state.history_changes import DirtySource
+    from meridian.lib.state.history_index import IndexCoverage
 
 
 def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
@@ -66,6 +70,40 @@ def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
     assert warm.disposition == "blocked"
     assert [blocker.identity for blocker in warm.blockers] == ["p3"]
     assert reads == ["p2", "p3"]
+
+
+def test_cold_build_gets_a_separate_descendant_query_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    index = HistoryIndex(tmp_path)
+    assert not index.path.exists()
+
+    monkeypatch.setattr(descendant_evidence_module, "QUERY_TIMEOUT", 0.2)
+    original_rebuild = HistoryIndex._rebuild_locked
+    slowed: list[float] = []
+
+    def slow_rebuild(
+        self: HistoryIndex, *, reset: bool, deadline: float
+    ) -> tuple[IndexCoverage, list[DirtySource]]:
+        # Cold build outlasts the query budget, independent of machine load.
+        slowed.append(0.4)
+        time.sleep(0.4)
+        return original_rebuild(self, reset=reset, deadline=deadline)
+
+    monkeypatch.setattr(HistoryIndex, "_rebuild_locked", slow_rebuild)
+
+    projection = ReconciledDescendantEvidence(
+        runtime_root=tmp_path,
+        root_spawn_id=SpawnId("p1"),
+    ).project()
+
+    assert slowed, "cold build path was not exercised"
+    assert index.path.exists()
+    assert projection.assessment.disposition == "blocked", projection.assessment
+    assert [blocker.identity for blocker in projection.assessment.blockers] == ["p2"]
 
 
 def test_reconciled_descendant_evidence_reports_invalid_rows_as_unknown(

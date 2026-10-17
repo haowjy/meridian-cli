@@ -12,7 +12,12 @@ from pathlib import Path
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import spawn_store
-from meridian.lib.state.history_index import QUERY_TIMEOUT, HistoryIndex, HistoryIndexBusy
+from meridian.lib.state.history_index import (
+    INITIALIZATION_TIMEOUT,
+    QUERY_TIMEOUT,
+    HistoryIndex,
+    HistoryIndexBusy,
+)
 from meridian.lib.state.reaper import peek_reconciled_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.streaming.completion_contracts import (
@@ -103,7 +108,11 @@ class ReconciledDescendantEvidence:
     def _read_records(
         self,
     ) -> tuple[SpawnRecord, ...]:
-        selected = HistoryIndex(self._runtime_root).descendant_projection(
+        index = HistoryIndex(self._runtime_root)
+        cold_deadline = time.monotonic() + INITIALIZATION_TIMEOUT
+        if index.classify(deadline=cold_deadline).baseline == "absent":
+            index.initialize(deadline=cold_deadline)
+        selected = index.descendant_projection(
             str(self._root_spawn_id),
             deadline=time.monotonic() + QUERY_TIMEOUT,
         )

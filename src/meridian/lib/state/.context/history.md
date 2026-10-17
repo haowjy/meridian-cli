@@ -98,8 +98,9 @@ The ordinary read deadline does not cancel the separately owned cold build, but 
 same absolute caller deadline still bounds the catch-up attempted afterward. Corpus
 search still enumerates roots without index access, initializes explicitly, shares
 one cold budget across roots, and starts its ordinary deadline after actual
-initialization; an all-warm pass never resets it. Status and cache counts inspect
-only; peeks keep their five-millisecond cache path.
+initialization; an all-warm pass never resets it. Descendant evidence likewise
+initializes before starting its two-second caller deadline. Status and cache counts
+inspect only; peeks keep their five-millisecond cache path.
 
 `descendant_projection()` uses the ordinary indexed-query path with one two-second
 caller deadline: one bounded catch-up, then one recursive parent-index query.
