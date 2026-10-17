@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.core.domain import TerminalSpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.state.launch_lock import (
     Busy,
@@ -71,7 +71,7 @@ def derive(row: SpawnRecord, lock_free: bool) -> SpawnRecord:
     cancelled = row.cancel_intent is not None
     return row.model_copy(
         update={
-            "status": "cancelled" if cancelled else "failed",
+            "status": SpawnStatus.CANCELLED if cancelled else SpawnStatus.FAILED,
             "terminal": _derived_terminal(row, cancelled=cancelled),
         }
     )
