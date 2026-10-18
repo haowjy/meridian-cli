@@ -107,9 +107,10 @@ Resolves Meridian-owned Pi extension entrypoints for each launch (see `pi_paths.
   `MERIDIAN_PI_EXTENSION_SOURCE_ROOT` and `MERIDIAN_PI_EXTENSION_INSTALL_ROOT`
   override those roots respectively.
 - **Default RPC**: `--no-extensions` plus explicit `-e` for enabled Meridian bundles.
-- **Primary native TUI**: explicit `-e` for the same enabled bundles, without
-  suppressing native ambient discovery; also adds the primary-only
-  `meridian-idle` bundle.
+- **Native content discovery**: both roles retain Pi's skill, context-file, and
+  prompt-template discovery.
+- **Primary native TUI**: explicit `-e` for the same enabled bundles, retaining
+  ambient extension discovery; also adds the primary-only `meridian-idle` bundle.
 - **`load_all_pi_extensions = true`**: RPC omits `--no-extensions`; both roles scan
   `extra_extension_paths` (default Pi agent extension dir) for additional `-e` paths.
 
