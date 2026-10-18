@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.28] - 2026-10-18
+
 ### Added
 - Notifications are hook events: `session.responded` (idle push), `session.cache_expiring` (cache warning), `notify.manual` (`meridian notify`). Built-in `notify` hook delivers; options `channels` (`push`, `email`, or backend name) and `priority`. Default `notify` route per event (source `default`, lowest layer); a same-name row replaces it, and an unnamed `builtin = "notify"` row is named `notify`. Any `command` hook on these events is an extra channel: `notification` object on stdin, `MERIDIAN_NOTIFICATION_TITLE`/`_BODY`/`_PRIORITY` env. See [routing](docs/configuration.md#routing-and-extending-notifications) (#670).
 - `meridian notify --attach <path>` (repeatable): email attaches all files; ntfy sends the text, then one message per file; file messages at priority ≤2; command hooks get the paths in `notification.attachments`. Missing/unreadable path = exit 2 before any route. (#666)
