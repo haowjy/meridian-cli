@@ -1,6 +1,6 @@
 # plugin_api/ — Stable External Plugin Surface
 
-The only surface external plugins (and built-in hooks) may import from. Versioned at `2.0.0` — breaking changes require a version bump and migration path. Internal `meridian.lib.*` is not stable; this is.
+The only surface external plugins (and built-in hooks) may import from. Versioned at `3.0.0` — breaking changes require a version bump and migration path. Internal `meridian.lib.*` is not stable; this is.
 
 ## Mental Model
 

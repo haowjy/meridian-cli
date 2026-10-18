@@ -12,22 +12,32 @@ from meridian.lib.hooks.config import load_hooks_config
             "event",
             'event = "bogus"',
             "expected one of [notify.manual, session.cache_expiring, session.responded, "
-            "spawn.created, spawn.finalized, spawn.running, spawn.start, "
-            "work.done, work.start, work.started], got 'bogus'",
+            "spawn.created, spawn.finalized, spawn.running, work.done, work.started], "
+            "got 'bogus'",
+        ),
+        (
+            "event",
+            'event = "spawn.start"',
+            "'spawn.start' was removed; use 'spawn.running'",
+        ),
+        (
+            "event",
+            'event = "work.start"',
+            "'work.start' was removed; use 'work.started'",
         ),
         (
             "interval",
-            'event = "spawn.start"\ninterval = "soon"',
+            'event = "spawn.running"\ninterval = "soon"',
             "expected interval format '\\d+[smhd]', got 'soon'",
         ),
         (
             "failure_policy",
-            'event = "spawn.start"\nfailure_policy = "bogus"',
+            'event = "spawn.running"\nfailure_policy = "bogus"',
             "expected one of [fail, ignore, warn], got 'bogus'",
         ),
         (
             "timeout_secs",
-            'event = "spawn.start"\ntimeout_secs = 0',
+            'event = "spawn.running"\ntimeout_secs = 0',
             "expected int > 0, got 0",
         ),
     ],

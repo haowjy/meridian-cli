@@ -49,7 +49,7 @@ Override key is `(name, event)`. A higher-priority source row with the same key 
 
 | Class | Events | Default failure policy | Fail-open? |
 |-------|--------|----------------------|-----------|
-| `observe` | `spawn.created`, `spawn.running`, `spawn.start`, `work.start`, `work.started`, `session.responded`, `session.cache_expiring`, `notify.manual` | `warn` | Yes |
+| `observe` | `spawn.created`, `spawn.running`, `work.started`, `session.responded`, `session.cache_expiring`, `notify.manual` | `warn` | Yes |
 | `post` | `spawn.finalized`, `work.done` | `warn` | Yes |
 | `gate` | (none currently registered) | `fail` | No |
 

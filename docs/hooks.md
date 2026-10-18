@@ -33,16 +33,14 @@ manually because it has no notification payload; use `meridian notify` instead.
 
 | Event | Class | Fires when |
 | ----- | ----- | ---------- |
-| `spawn.created` | observe | A spawn is registered in the database |
-| `spawn.running` | observe | A spawn's harness process starts |
-| `spawn.start` | observe | Alias for `spawn.running` |
-| `spawn.finalized` | post | A spawn reaches a terminal state (`succeeded`, `failed`, or `cancelled`) |
-| `work.start` | observe | A work item is switched to (becomes active) |
-| `work.started` | observe | Alias for `work.start` |
-| `work.done` | post | A work item is completed |
-| `session.responded` | observe | An idle primary sends its "your turn" push |
-| `session.cache_expiring` | observe | An idle primary warns that its prompt cache is about to go cold |
-| `notify.manual` | observe | `meridian notify` runs |
+| `spawn.created` | observe | A persisted spawn is announced to lifecycle observers |
+| `spawn.running` | observe | A spawn's persisted lifecycle state changes to `running` |
+| `spawn.finalized` | post | A terminal spawn state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted |
+| `work.started` | observe | `meridian work start` creates, reopens, or attaches to a work item |
+| `work.done` | post | `meridian work done`, or an update to `done`, archives a work item |
+| `session.responded` | observe | The idle service sends its scheduled "your turn" notification |
+| `session.cache_expiring` | observe | The idle service sends its scheduled prompt-cache warning |
+| `notify.manual` | observe | `meridian notify` emits its notification |
 
 The last three are notification events: their context carries a
 `notification` (title, body, priority, email, session label, attachment paths). Meridian routes
@@ -55,7 +53,7 @@ A single hook row can register for multiple events. When a builtin supplies defa
 
 ## Configuring Hooks
 
-Hooks live in any Meridian config file. Precedence is: `default < user < project < local`, where `default` is Meridian's own `notify` routes. A row with the same name and event as a lower layer's replaces it.
+Hooks live in any Meridian config file. Precedence is: `default < user < project < local`, where `default` is Meridian's own `notify` routes. A row with the same name and event as a lower layer's replaces it. Execution is ordered by source first (`default`, then `user`, `project`, and `local`), then by descending priority within that source, then by declaration order. A priority value never moves a hook ahead of a hook from an earlier source.
 
 ```toml
 # meridian.toml (project) or ~/.meridian/config.toml (user)
@@ -79,17 +77,19 @@ event   = "spawn.finalized"
 | `builtin` | str | one of `builtin`/`command` | — | Use a builtin hook |
 | `command` | str | one of `builtin`/`command` | — | Shell command to run |
 | `event` | str | yes (unless builtin supplies defaults) | builtin default | Event that triggers the hook |
-| `remote` | str | required by `git-autosync` | — | Git remote URL for hooks that operate on a remote repo |
+| `remote` | str | no | — | `git-autosync` shorthand for `options.remote`; ignored when `options.remote` is set |
 | `enabled` | bool | no | `true` | Set to `false` to disable without removing |
-| `priority` | int | no | `0` | Lower values run first |
+| `priority` | int | no | `0` | Higher values run first within the same source |
 | `failure_policy` | str | no | builtin default | `fail` \| `warn` \| `ignore` |
 | `timeout_secs` | int | no | builtin default | Max seconds before hook is killed |
 | `interval` | str | no | builtin default | Minimum time between runs, e.g. `30s`, `5m`, `2h` |
 | `require_serial` | bool | no | `false` | Block concurrent hook executions |
 | `when.status` | array[str] | no | — | Only fire when spawn exits with one of these statuses |
 | `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
-| `exclude` | array[str] | no | — | Skip for these agent profiles |
-| `options.conflict_policy` | str | no | `"abort"` | `git-autosync` only: `"abort"` aborts a conflicted sync; `"leave"` keeps conflicts for review |
+| `exclude` | array[str] | no | — | `git-autosync` file path patterns to leave out of commits and stash around merges |
+| `options.remote` | str | no | — | Git remote URL for `git-autosync` to clone and sync |
+| `options.path` | str | no | — | Local repository for `git-autosync` to initialize and commit without remote sync |
+| `options.conflict_policy` | str | no | `"abort"` | `git-autosync` only: handling for a merge or rebase already in progress; `"abort"` clears it and continues, `"leave"` skips the sync |
 | `options.channels` | array[str] | no | `["push", "email"]` | `notify` only: transports to deliver to |
 | `options.priority` | int | no | notice's | `notify` only: 1–5 priority override |
 
@@ -164,20 +164,27 @@ row.
 
 ## Builtin: `git-autosync`
 
-`git-autosync` keeps a remote Git repo in sync with local changes. On each trigger it:
+`git-autosync` commits changes in a local repository and can keep it in sync
+with a remote. In remote mode, each trigger:
 
-1. Stages and commits any uncommitted changes in the target repo
+1. Stages and commits uncommitted changes except paths matching `exclude`
 2. Fetches upstream
-3. Rebases when behind remote
+3. Merges `origin/<current-branch>` when behind remote
 4. Pushes when ahead or after a local commit
 
-By default, a conflicted sync is aborted, returning the repository to its
-pre-sync state. Set `conflict_policy = "leave"` to keep the merge or rebase in
-place so agents or humans can inspect and resolve it. Future autosync runs skip
-all git operations until that conflict is resolved.
+If the merge conflicts, autosync records the conflict and aborts the merge,
+returning the repository to its pre-merge state. A later trigger retries the
+commit/fetch/merge workflow. If that merge conflicts while any unresolved
+conflict record already exists for the sync root, autosync aborts it without
+writing another record.
+
+At the start of a run, autosync also detects a merge or rebase already in
+progress. The default `conflict_policy = "abort"` aborts that operation and
+continues the sync. Set it to `"leave"` to keep the pre-existing operation in
+place and skip that sync. Autosync itself never rebases.
 
 ```toml
-# Leave conflict markers for manual resolution
+# Leave a pre-existing merge or rebase in place for manual resolution
 [[hooks]]
 builtin = "git-autosync"
 remote  = "git@github.com:team/docs.git"
@@ -185,9 +192,12 @@ remote  = "git@github.com:team/docs.git"
 conflict_policy = "leave"
 ```
 
-**Required:** `remote` — the Git remote URL of the repo to sync.
+**Target:** configure at least one of top-level `remote`, `options.remote`, or
+`options.path`. A remote selects clone/fetch/merge/push mode; otherwise
+`options.path` selects local commit-only mode. `options.remote` overrides the
+top-level shorthand, and remote mode wins when a path is also present.
 
-**Default events:** `spawn.start`, `spawn.finalized`, `work.started`, `work.done`
+**Default events:** `spawn.running`, `spawn.finalized`, `work.started`, `work.done`
 
 ```toml
 [[hooks]]

@@ -1,5 +1,17 @@
 # Upgrade notes
 
+## Hook start event names
+
+The hook events `spawn.start` and `work.start` never had producers and are no
+longer accepted. Replace them with `spawn.running` and `work.started`,
+respectively. Hook config containing either removed name now fails to load and
+names its replacement. The `git-autosync` builtin now defaults to
+`spawn.running`, so it syncs when a spawn enters the running state.
+
+Plugin API 3.0.0 removes the two dead literals from `HookEventName`. No state
+migration is needed; update hook configuration and plugin type assumptions
+before upgrading.
+
 ## Notifications are hook events
 
 Idle pushes, cache warnings and `meridian notify` now fire the hook events

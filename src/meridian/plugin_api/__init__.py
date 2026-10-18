@@ -28,7 +28,7 @@ from meridian.plugin_api.types import (
     Notification,
 )
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 __all__ = [
     "NOTIFICATION_EVENTS",

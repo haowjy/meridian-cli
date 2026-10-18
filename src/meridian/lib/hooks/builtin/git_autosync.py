@@ -133,7 +133,7 @@ class GitAutosync:
 
     # Default events - runs on all four lifecycle events
     default_events: tuple[HookEventName, ...] = (
-        "spawn.start",
+        "spawn.running",
         "spawn.finalized",
         "work.started",
         "work.done",

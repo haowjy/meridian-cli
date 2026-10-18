@@ -26,9 +26,7 @@ HookEventClass = Literal["observe", "post", "gate"]
 EVENT_CLASS: dict[HookEventName, HookEventClass] = {
     "spawn.created": "observe",
     "spawn.running": "observe",
-    "spawn.start": "observe",
     "spawn.finalized": "post",
-    "work.start": "observe",
     "work.started": "observe",
     "work.done": "post",
     "session.responded": "observe",

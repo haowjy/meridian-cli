@@ -124,7 +124,7 @@ def test_hooks_run_uses_one_same_spec_registration_but_requires_event_for_differ
     (project_root / "meridian.toml").write_text(
         "[[hooks]]\n"
         'name = "different"\n'
-        'event = "spawn.start"\n'
+        'event = "spawn.running"\n'
         'command = "true"\n'
         "[[hooks]]\n"
         'name = "different"\n'

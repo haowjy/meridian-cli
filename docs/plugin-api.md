@@ -1,6 +1,6 @@
 # Plugin API
 
-`meridian.plugin_api` is the stable public contract for hook and plugin authors. It version-pins at `2.0.0` and exposes only the symbols intended for external use.
+`meridian.plugin_api` is the stable public contract for hook and plugin authors. It version-pins at `3.0.0` and exposes only the symbols intended for external use.
 
 Install meridian-cli and import from this package directly — do not import from internal submodules.
 
@@ -12,7 +12,7 @@ from meridian.plugin_api import Hook, HookContext, HookResult, HookOutcome
 
 ```python
 import meridian.plugin_api as api
-print(api.__version__)  # "2.0.0"
+print(api.__version__)  # "3.0.0"
 ```
 
 ## Hook Types
@@ -23,7 +23,7 @@ print(api.__version__)  # "2.0.0"
 | `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name |
 | `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `details` |
 | `HookOutcome` | `"success"` \| `"failure"` \| `"timeout"` \| `"skipped"` |
-| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.running`, `spawn.start`, `spawn.finalized`, `work.start`, `work.started`, `work.done`, `session.responded`, `session.cache_expiring`, `notify.manual` |
+| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.running`, `spawn.finalized`, `work.started`, `work.done`, `session.responded`, `session.cache_expiring`, `notify.manual` |
 | `NOTIFICATION_EVENTS` | The three notification events, which carry `HookContext.notification` |
 | `Notification` | One notice — `title`, `body`, `priority` (1–5), `email`, `label` (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), `attachments` (absolute file paths) |
 | `FailurePolicy` | `"fail"` \| `"warn"` \| `"ignore"` |
@@ -126,11 +126,16 @@ shell logic, point `command` at a script file rather than embedding it inline.
 A Python builtin-style hook using the plugin API (for hooks distributed as packages):
 
 ```python
-from meridian.plugin_api import HookContext, HookResult, HookOutcome
+from meridian.plugin_api import HookContext, HookResult
 
 def run(ctx: HookContext) -> HookResult:
-    print(f"Hook fired for event: {ctx.event}")
-    return HookResult(outcome=HookOutcome.SUCCESS)
+    print(f"Hook fired for event: {ctx.event_name}")
+    return HookResult(
+        hook_name="example",
+        event=ctx.event_name,
+        outcome="success",
+        success=True,
+    )
 ```
 
 See [hooks.md](hooks.md) for hook configuration schema and available builtins.

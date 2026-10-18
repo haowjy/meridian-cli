@@ -20,12 +20,12 @@ The dispatcher calls `_run_builtin(hook, context)` for a hook whose `builtin` fi
 - **Commit-first**: local changes are committed before fetch/merge, so local work is never at risk from the incoming merge
 - **Merge strategy**: fetches `origin`, then runs `git merge origin/<branch>` — not `pull --rebase`. Local commits are preserved as-is; remote changes are merged in on top.
 - **Local-only mode**: when no remote is configured, stops after commit (skips fetch/merge/push)
-- **Conflict policy**: `"abort"` (default) — on merge conflict, runs `git merge --abort` (local-wins) and records durable conflict metadata via `autosync_store`
-- **Cannot push after conflict**: once a conflict is recorded, the clone stays behind `origin` until the conflict is manually resolved and marked resolved. Subsequent syncs skip with `skip_reason="conflict_detected"`.
+- **Conflict policy**: a merge conflict created by autosync is recorded through `autosync_store` and aborted. `"abort"` (default) and `"leave"` govern only a merge or rebase already in progress when the run starts: abort and continue, or leave it in place and skip.
+- **Conflict retries**: a later event retries the commit/fetch/merge workflow. If that merge conflicts while any unresolved conflict record exists for the sync root, it aborts and returns `skip_reason="conflict_detected"` without adding another record.
 - **Excluded file stashing**: files matching `exclude` patterns are stashed before merge and popped after, preventing dirty working-tree state from blocking the merge
 - **Divergence fallback**: `rev-list --left-right --count` is tried first; falls back to `git log --oneline` pair if that fails; returns `skip_reason="divergence_check_failed"` if both fail
 - **Pre-existing conflict/rebase recovery**: if `MERGE_HEAD` or a rebase directory is detected at sync start, the hook aborts the in-progress operation (when `conflict_policy="abort"`) before proceeding
-- **Default ignores**: `.git`, `**/.git`, `.meridian/autosync/` are written into `.git/info/exclude` on each run so autosync artifacts are never staged
+- **Default ignores**: `.git` and `**/.git` are written into `.git/info/exclude` on each run
 - **Always returns `HookResult`**: never raises. Failures emit `outcome="skipped"`, not exceptions — the dispatcher is fail-open for `observe` and `post` events
 
 ## Import Boundaries

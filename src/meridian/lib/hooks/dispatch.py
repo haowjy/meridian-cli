@@ -164,7 +164,7 @@ class HookDispatcher(LifecycleHook):
             hook_count=len(hooks),
         )
 
-        event_class = EVENT_CLASS.get(context.event_name, "observe")
+        event_class = EVENT_CLASS[context.event_name]
         results: list[HookResult] = []
         for hook in hooks:
             logger.info(

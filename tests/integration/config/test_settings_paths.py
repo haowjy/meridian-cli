@@ -263,7 +263,7 @@ def test_hook_loader_owns_unknown_hook_key_warning(
     (project_root / "meridian.toml").write_text(
         "[[hooks]]\n"
         'name = "project-hook"\n'
-        'event = "spawn.start"\n'
+        'event = "spawn.running"\n'
         'command = "echo project"\n'
         'bogus = "warn once"\n',
         encoding="utf-8",

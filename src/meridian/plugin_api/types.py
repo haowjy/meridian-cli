@@ -13,9 +13,7 @@ from uuid import UUID
 HookEventName = Literal[
     "spawn.created",
     "spawn.running",
-    "spawn.start",
     "spawn.finalized",
-    "work.start",
     "work.started",
     "work.done",
     "session.responded",

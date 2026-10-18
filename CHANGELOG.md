@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- Dead hook event names `spawn.start` and `work.start`; config rows using them are rejected at load and point to `spawn.running` and `work.started`. See [upgrade note](docs/upgrading.md#hook-start-event-names). (#687)
+
+### Changed
+- Plugin API 3.0.0 removes `spawn.start` and `work.start` from `HookEventName`. (#687)
+
+### Fixed
+- `git-autosync` now syncs when a spawn starts running by default. (#687)
+
 ## [0.10.28] - 2026-10-18
 
 ### Added

@@ -33,6 +33,10 @@ _INTERVAL_PATTERN = re.compile(r"^\d+[smhd]$")
 _HOOK_NAME_COMPONENT_PATTERN = re.compile(r"[^a-z0-9._-]+")
 _HOOK_NAME_REPEATED_DASH_PATTERN = re.compile(r"-+")
 _KNOWN_HOOK_EVENTS = frozenset(get_args(HookEventName))
+_REPLACED_HOOK_EVENTS = {
+    "spawn.start": "spawn.running",
+    "work.start": "work.started",
+}
 _KNOWN_FAILURE_POLICIES = frozenset(get_args(FailurePolicy))
 _KNOWN_SPAWN_STATUSES = frozenset(get_args(SpawnStatus))
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -48,6 +52,9 @@ def _hook_event(value: object) -> str | object:
         return normalized
     if not normalized:
         raise ValueError("expected non-empty string")
+    replacement = _REPLACED_HOOK_EVENTS.get(normalized)
+    if replacement is not None:
+        raise ValueError(f"{normalized!r} was removed; use {replacement!r}")
     if normalized not in _KNOWN_HOOK_EVENTS:
         valid = ", ".join(sorted(_KNOWN_HOOK_EVENTS))
         raise ValueError(f"expected one of [{valid}], got {normalized!r}")
