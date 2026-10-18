@@ -100,6 +100,15 @@ Do not add `model_invocable` checks to catalog scanning or loading functions —
 consumers that need all profiles (CLI listing, explicit `-a <name>` resolution)
 must not be affected by this flag.
 
+### AgentProfile.skills
+
+`AgentProfile.skills` parses only a flat `skills:` list. A `{load, available}`
+mapping parses to `()`. The skills an agent gets don't depend on this property:
+Mars reads the profile file itself when building the launch bundle, and Meridian passes `profile.skills` only as
+extra `--skill` names, which Mars dedupes against the profile's own `load`. Don't
+read `AgentProfile.skills` as "the skills this agent gets"; the bundle's
+`skills.loaded` is the answer.
+
 ## Fallback to `.mars/models-merged.json`
 
 When the mars binary is unavailable, `load_mars_aliases()` falls back to reading
