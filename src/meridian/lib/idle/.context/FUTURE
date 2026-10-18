@@ -33,3 +33,4 @@
   Replace with `sidecar.start(factory, ctx) -> IdleHandle | None`
   (`on_raw_event`, `async stop()`) so the launcher keeps three lines and the
   reporter has one owner (thermo F8, about −40 lines).
+- `service.py` `fire`: a stage is persisted `sent` before the sender runs, so a crash between the claim and the send loses that one notice (at-most-once, pre-existing on main; it keeps the mod and the sidecar from both pushing). If lost pushes show up in practice, add a `sending` state that `recover` resends after a bounded age instead of a plain `sent` claim.

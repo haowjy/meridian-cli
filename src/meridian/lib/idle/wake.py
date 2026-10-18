@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -12,16 +13,21 @@ from meridian.lib.harness.idle_types import BackgroundTask
 
 # Meridian options that may precede a subcommand and take a value.
 _GLOBAL_VALUE_OPTIONS = frozenset({"-C", "--directory", "--config", "--format", "--mode"})
+_LOOP_COMMANDS = frozenset({"while", "until", "for", "select"})
 _YIELD_OPTION = "--yield-after-secs"
+_TIMEOUT_OPTION = "--timeout"
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)
 
 
 @dataclass(frozen=True)
 class SpawnCommand:
-    """A `meridian spawn ...` invocation found in a shell command line."""
+    """A certain-to-finish `meridian spawn` invocation."""
 
     waits: bool
     # `spawn wait --yield-after-secs`; None means the configured default.
     yield_seconds: float | None = None
+    # `spawn wait --timeout` is in minutes and disables yielding.
+    timeout_minutes: float | None = None
 
 
 @dataclass(frozen=True)
@@ -55,46 +61,117 @@ def _segments(command: str) -> list[list[str]]:
     return [segment for segment in segments if segment]
 
 
-def _spawn_in(tokens: list[str]) -> SpawnCommand | None:
-    for start, token in enumerate(tokens):
-        if PurePosixPath(token).name != "meridian":
-            continue
-        index = start + 1
-        while index < len(tokens) and tokens[index].startswith("-"):
-            index += 2 if tokens[index] in _GLOBAL_VALUE_OPTIONS else 1
-        if index >= len(tokens) or tokens[index] != "spawn":
-            return None
-        rest = tokens[index + 1 :]
-        if not rest or rest[0] != "wait":
-            return SpawnCommand(waits=False)
-        return SpawnCommand(waits=True, yield_seconds=_yield_seconds(rest[1:]))
-    return None
+def _command_index(tokens: list[str], start: int = 0) -> int | None:
+    index = start
+    while index < len(tokens) and _ASSIGNMENT.fullmatch(tokens[index]) is not None:
+        index += 1
+    return index if index < len(tokens) else None
 
 
-def _yield_seconds(args: list[str]) -> float | None:
+def _meridian_starts(tokens: list[str]) -> list[int]:
+    """Indexes where `meridian` may start this segment's command.
+
+    The command word itself, or, behind `uv run` / `uvx`, any later token named
+    `meridian`: their options are not parsed, and a candidate that is not
+    followed by `spawn` is simply passed over.
+    """
+
+    index = _command_index(tokens)
+    if index is None:
+        return []
+    command = PurePosixPath(tokens[index]).name
+    if command == "meridian":
+        return [index]
+    if command == "uvx" or (command == "uv" and tokens[index + 1 : index + 2] == ["run"]):
+        return [
+            candidate
+            for candidate in range(index + 1, len(tokens))
+            if PurePosixPath(tokens[candidate]).name == "meridian"
+        ]
+    return []
+
+
+def _option_number(args: list[str], option: str) -> tuple[bool, float | None]:
     for index, arg in enumerate(args):
         raw: str | None = None
-        if arg == _YIELD_OPTION and index + 1 < len(args):
+        if arg == option:
+            if index + 1 >= len(args):
+                return True, None
             raw = args[index + 1]
-        elif arg.startswith(f"{_YIELD_OPTION}="):
+        elif arg.startswith(f"{option}="):
             raw = arg.partition("=")[2]
-        if raw is not None:
-            try:
-                seconds = float(raw)
-            except ValueError:
-                return None
-            return seconds if math.isfinite(seconds) and seconds > 0 else None
-    return None
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            return True, None
+        return True, value if math.isfinite(value) and value > 0 else None
+    return False, None
 
 
-def spawn_command(command: str) -> SpawnCommand | None:
-    """Find a `meridian spawn` invocation in a shell command line, through any wrapper."""
-
-    for segment in _segments(command):
-        found = _spawn_in(segment)
+def _spawn_in(tokens: list[str]) -> SpawnCommand | None:
+    for start in _meridian_starts(tokens):
+        found = _spawn_after(tokens, start)
         if found is not None:
             return found
     return None
+
+
+def _spawn_after(tokens: list[str], start: int) -> SpawnCommand | None:
+    index = start + 1
+    while index < len(tokens) and tokens[index].startswith("-"):
+        option = tokens[index]
+        name, has_equals, _value = option.partition("=")
+        if name in _GLOBAL_VALUE_OPTIONS and not has_equals:
+            index += 2
+            if index > len(tokens):
+                return None
+        else:
+            index += 1
+    if index >= len(tokens) or tokens[index] != "spawn":
+        return None
+
+    rest = tokens[index + 1 :]
+    if rest and rest[0] == "wait":
+        timeout_present, timeout_minutes = _option_number(rest[1:], _TIMEOUT_OPTION)
+        yield_present, yield_seconds = _option_number(rest[1:], _YIELD_OPTION)
+        if (timeout_present and timeout_minutes is None) or (
+            yield_present and yield_seconds is None
+        ):
+            return None
+        return SpawnCommand(
+            waits=True,
+            yield_seconds=yield_seconds,
+            timeout_minutes=timeout_minutes,
+        )
+    # Creation starts with an option (`spawn -a coder -p ...`); any other word is
+    # a management subcommand (`list`, `show`, ...) that does not wake the session.
+    if not rest or not rest[0].startswith("-"):
+        return None
+    for arg in rest:
+        if arg == "--":
+            break
+        if arg in {"--bg", "--background"} or arg.startswith(
+            ("--bg=", "--background=")
+        ):
+            return None
+    return SpawnCommand(waits=False)
+
+
+def spawn_command(command: str) -> SpawnCommand | None:
+    """Read a `meridian spawn` whose completion is certain to end this shell."""
+
+    segments = _segments(command)
+    if not segments:
+        return None
+    if any(
+        (index := _command_index(segment)) is not None
+        and segment[index] in _LOOP_COMMANDS
+        for segment in segments
+    ):
+        return None
+    return _spawn_in(segments[-1])
 
 
 def expected_wake(
@@ -105,9 +182,9 @@ def expected_wake(
 ) -> ExpectedWake:
     """Reduce the running work to what it says about the next wake.
 
-    Agents and `meridian spawn` shells end and wake the session; a `spawn wait`
-    also yields by a known time. Watchers never count: they may stand forever
-    and wake only on events.
+    Agents and foreground `meridian spawn` shells end and wake the session; a
+    `spawn wait` also returns by a known time. Watchers never count: they may
+    stand forever and wake only on events.
     """
 
     agents = 0
@@ -122,7 +199,11 @@ def expected_wake(
         elif task.kind == "shell" and (found := spawn_command(task.command or "")) is not None:
             spawns += 1
             if found.waits:
-                seconds = found.yield_seconds or default_yield_seconds
+                seconds = (
+                    found.timeout_minutes * 60
+                    if found.timeout_minutes is not None
+                    else (found.yield_seconds or default_yield_seconds)
+                )
                 wake_ms = now_ms + int(seconds * 1000)
                 by_ms = wake_ms if by_ms is None else min(by_ms, wake_ms)
         else:

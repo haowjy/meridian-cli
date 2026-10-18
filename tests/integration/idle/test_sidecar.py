@@ -175,10 +175,7 @@ async def test_sidecar_drives_idle_push_and_warn(tmp_path: Path) -> None:
         )
     )
     await wait_until(
-        lambda: bool(
-            (state := store.read("codex", "session-1")) is not None
-            and state.done.get("warn") == "sent"
-        ),
+        lambda: len(sender.notices) == 2,
         description="warning sent",
     )
     alive[0] = False

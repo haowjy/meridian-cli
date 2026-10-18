@@ -39,7 +39,7 @@ class IdleState(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    v: Literal[1] = 1
+    v: Literal[2] = 2
     harness: str
     session: str
     stretch: int = Field(ge=1)

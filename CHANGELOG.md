@@ -28,7 +28,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--no-email` (and idle push / `warn_email = false`) now skips `smtp`/`gmail` even when a route names them. (#670)
 - A failing notification route is reported once, not also as a hook warning log. (#670)
 - Logging no longer caches each module logger's first configuration.
-- Claude primary no longer pushes "waiting on you" while subagents, workflows or `meridian spawn` shells run; the turn they wake pushes instead, timed from your last prompt. Other background shells delay the push to `quick_turn_push_seconds`; monitors ignored. Cache warning arms every turn, even with the push held, except under a `spawn wait` that yields before the cache goes cold.
+- Claude primary no longer pushes "waiting on you" while subagents, workflows, or a shell-ending foreground `meridian spawn` creation/wait runs; the turn they wake pushes instead, timed from your last prompt until a push is delivered. Endless loops, spawn management, detached creation, and commands followed by more work only delay the push. Monitors ignored.
+- Explicit `spawn wait --timeout` uses its minutes-valued hard deadline, not the yield interval, when deciding whether the wait keeps the cache warm.
+- A scheduled push replaced by a later turn keeps the original wait owed, so a long-wait response still uses the short push delay.
 
 ## [0.10.22] - 2026-10-18
 

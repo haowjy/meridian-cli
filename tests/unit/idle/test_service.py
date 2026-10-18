@@ -181,7 +181,30 @@ def test_return_then_long_turn_uses_the_short_push_delay() -> None:
     armed = idle.arm(harness="example", session="s1")
 
     assert armed.push_at == clock.value + 60_000
+    assert store.read("example", "s1").push_owed_since_ms == 1_000  # type: ignore[union-attr]
+
+    clock.value = armed.push_at
+    idle.fire("push", harness="example", session="s1", stretch=1, anchor=1)
     assert store.read("example", "s1").push_owed_since_ms is None  # type: ignore[union-attr]
+
+
+def test_replacing_a_scheduled_push_keeps_the_original_owed_time() -> None:
+    idle, clock, store, _ = service()
+    idle.return_(harness="example", session="s1")
+    clock.value = 180_000
+
+    delayed = idle.arm(
+        harness="example",
+        session="s1",
+        background_tasks=(BackgroundTask("shell", "npm test"),),
+    )
+    assert delayed.push_at == 780_000
+    assert store.read("example", "s1").push_owed_since_ms == 0  # type: ignore[union-attr]
+
+    clock.value = 181_000
+    replaced = idle.arm(harness="example", session="s1")
+    assert replaced.push_at == 241_000
+    assert store.read("example", "s1").push_owed_since_ms == 0  # type: ignore[union-attr]
 
 
 def test_close_on_launch_closes_open_row_without_creating_missing_file(tmp_path: Path) -> None:
