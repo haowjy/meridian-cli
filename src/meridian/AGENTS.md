@@ -53,7 +53,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/state/` | All disk I/O: spawn store, session store, atomic writes |
 | `lib/core/` | Domain types, spawn lifecycle state machine |
 | `lib/platform/` | OS abstractions: locking, process scope, signals |
-| `lib/catalog/` | Agent/skill catalog, profile resolution |
+| `lib/catalog/` | Agent profile and model catalog resolution |
 | `lib/config/` | Config loading and layering |
 | `lib/streaming/` | Harness output streaming, event parsing |
 | `lib/safety/` | Budget enforcement, guardrails, permission resolution |

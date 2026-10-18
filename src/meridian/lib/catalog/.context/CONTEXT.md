@@ -1,15 +1,15 @@
 # lib/catalog/ — Context
 
-Alias resolution, agent profile parsing, and skill loading. The catalog layer
-translates symbolic names into concrete execution parameters before any process
-launches.
+Alias resolution and agent profile parsing. The catalog layer translates symbolic
+names into concrete execution parameters before any process launches. Skill
+resolution belongs exclusively to the Mars launch bundle.
 
 `resolve_mars_roots()` is the package-content authority. It walks up for the
 nearest `mars.toml`; without one it selects `~/.meridian/mars`. Project agent and
-skill discovery then falls back to the user root, while aliases, models cache,
-bootstrap documents, targets, and other Mars configuration come only from the
-primary root. `ensure_user_mars_root()` initializes that ordinary Mars project
-under a Meridian lock before any Mars subprocess targets it.
+package-content lookup then fall back to the user root, while aliases, models cache,
+bootstrap documents, targets, and other Mars configuration come only from the primary
+root. `ensure_user_mars_root()` initializes that ordinary Mars project under a Meridian
+lock before any Mars subprocess targets it.
 Read-pure inspection is the exception: it may show the resolved user root while
 absent, but it must not call the ensure function or launch Mars. Bare-directory
 `doctor` depends on this distinction.
@@ -100,14 +100,11 @@ Do not add `model_invocable` checks to catalog scanning or loading functions —
 consumers that need all profiles (CLI listing, explicit `-a <name>` resolution)
 must not be affected by this flag.
 
-### AgentProfile.skills
+### Profile Skills Belong to Mars
 
-`AgentProfile.skills` parses only a flat `skills:` list. A `{load, available}`
-mapping parses to `()`. The skills an agent gets don't depend on this property:
-Mars reads the profile file itself when building the launch bundle, and Meridian passes `profile.skills` only as
-extra `--skill` names, which Mars dedupes against the profile's own `load`. Don't
-read `AgentProfile.skills` as "the skills this agent gets"; the bundle's
-`skills.loaded` is the answer.
+`AgentProfile` has no skills field. Mars reads the profile's `skills:` itself
+when it builds the launch bundle, and the bundle's `skills.loaded` is the set an
+agent gets. Don't add a Meridian-side parse of profile skills.
 
 ## Fallback to `.mars/models-merged.json`
 

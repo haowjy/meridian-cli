@@ -9,7 +9,6 @@ from meridian.lib.catalog.mars_roots import (
     resolve_mars_roots,
     user_mars_root,
 )
-from meridian.lib.catalog.skill import files_have_equal_text, split_markdown_frontmatter
 from meridian.lib.config.project_root import resolve_project_root_resolution
 
 
@@ -29,7 +28,6 @@ class AgentProfile(BaseModel):
     name: str
     description: str
     mode: Literal["primary", "subagent"] = "subagent"
-    skills: tuple[str, ...]
     subagents: tuple[str, ...] = ()
     meridian_capabilities: MeridianCapabilities | None = None
     model_invocable: bool = True
@@ -51,6 +49,24 @@ def _normalize_string_list(value: object) -> tuple[str, ...]:
     return ()
 
 
+def _split_markdown_frontmatter(markdown: str) -> tuple[dict[str, object], str]:
+    import frontmatter  # pyright: ignore[reportMissingTypeStubs]  # python-frontmatter ships no type information.
+    import yaml
+
+    try:
+        post = frontmatter.loads(markdown)
+    except yaml.YAMLError:
+        return {}, markdown
+    return dict(post.metadata), post.content
+
+
+def _files_have_equal_text(first: Path, second: Path) -> bool:
+    try:
+        return first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
 def _parse_meridian_capabilities(value: object) -> MeridianCapabilities | None:
     if value is None:
         return None
@@ -70,7 +86,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     """Parse a single markdown agent profile file."""
 
     markdown = path.read_text(encoding="utf-8")
-    frontmatter, body = split_markdown_frontmatter(markdown)
+    frontmatter, body = _split_markdown_frontmatter(markdown)
 
     name_value = frontmatter.get("name")
     description_value = frontmatter.get("description")
@@ -90,7 +106,6 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         name=profile_name,
         description=str(description_value).strip() if description_value is not None else "",
         mode=cast("Literal['primary', 'subagent']", mode),
-        skills=_normalize_string_list(frontmatter.get("skills")),
         subagents=_normalize_string_list(frontmatter.get("subagents")),
         meridian_capabilities=_parse_meridian_capabilities(
             frontmatter.get("meridian-capabilities")
@@ -137,7 +152,7 @@ def scan_agent_profiles(
                 continue
             existing = selected_by_name.get(profile.name)
             if existing is not None:
-                if files_have_equal_text(existing.path, profile.path):
+                if _files_have_equal_text(existing.path, profile.path):
                     continue
                 continue
             selected_by_name[profile.name] = profile

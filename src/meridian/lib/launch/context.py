@@ -1034,7 +1034,6 @@ def compile_prepared_policy_surface(
             config_overrides=config_overrides,
             config=config,
             harness_registry=harness_registry,
-            skills_readonly=dry_run,
             models_readonly=dry_run,
             requested_skills=request.skills,
             policy_snapshot=request.launch_policy_snapshot,

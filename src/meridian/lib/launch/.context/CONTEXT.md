@@ -483,12 +483,9 @@ a variant body was selected); a reconstructed primary-root path is only the
 fallback for producers that omit it. The header's resource directory comes from
 this path.
 
-**`resolve_skills_from_profile()` still exists** for the snapshot replay path
-(`policy_snapshot.py`) — when replaying from a persisted snapshot whose
-`loaded_skills` field is empty (pre-bundle snapshots), it falls back to disk
-loading through `SkillRegistry`, which still has a model-level variant ladder the
-bundle doesn't implement. New snapshots always persist `loaded_skills`, so this
-path is legacy compat.
+Snapshot replay consumes only the `loaded_skills` embedded in the snapshot. An empty
+field replays with no loaded skills; Meridian never re-resolves a snapshot against
+the current filesystem.
 
 ### Loaded Skills Are Composition Documents
 

@@ -19,7 +19,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchRouting, TerminalSurf
 from meridian.lib.tools import ToolsField
 
 from .request import SpawnRequest
-from .resolve import ResolvedSkills, dedupe_skill_names, resolve_skills_from_profile
+from .resolve import ResolvedSkills
 
 
 class SnapshotModelSelection(Protocol):
@@ -138,16 +138,13 @@ def build_launch_policy_snapshot(
     harness = (request.harness or "").strip()
     if not harness:
         raise ValueError("Resolved request is missing harness for launch policy snapshot.")
-    resolved_skill_names = tuple(skill.name for skill in loaded_skills) or request.skills
-    resolved_skill_paths = tuple(skill.path for skill in loaded_skills) or request.skill_paths
     return LaunchPolicySnapshot(
         model=model,
         harness=harness,
         agent=(request.agent or "").strip() or None,
         agent_opt_out=request.agent_opt_out,
         agent_profile=_persisted_agent_profile(profile=profile, request=request),
-        skills=resolved_skill_names,
-        skill_paths=resolved_skill_paths,
+        skills=request.skills,
         loaded_skills=loaded_skills,
         execution_policy=request.execution_policy,
         tools=request.tools,
@@ -177,7 +174,6 @@ def replay_launch_policy_snapshot(
     snapshot: LaunchPolicySnapshot,
     project_root: Path,
     harness_registry: HarnessRegistry,
-    skills_readonly: bool,
     alias_catalog: dict[str, AliasEntry],
 ) -> ReplayedLaunchPolicySnapshot:
     """Resolve policy fields directly from persisted snapshot data."""
@@ -191,24 +187,14 @@ def replay_launch_policy_snapshot(
     snapshot_model = snapshot.model.strip()
     adapter = harness_registry.get_subprocess_harness(harness_id)
     snapshot_agent = (snapshot.agent or "").strip() or None
-    snapshot_skill_names = (
-        tuple(skill.name for skill in snapshot.loaded_skills)
-        if snapshot.loaded_skills
-        else dedupe_skill_names(snapshot.skills)
-    )
-
     profile = _snapshot_profile(
         snapshot=snapshot,
-        snapshot_skill_names=snapshot_skill_names,
         project_root=project_root,
     )
-    resolved_skills = _snapshot_skills(
-        snapshot=snapshot,
-        project_root=project_root,
-        skills_readonly=skills_readonly,
-        snapshot_model=snapshot_model,
-        harness_id=harness_id,
-        snapshot_skill_names=snapshot_skill_names,
+    resolved_skills = ResolvedSkills(
+        skill_names=tuple(skill.name for skill in snapshot.loaded_skills),
+        loaded_skills=snapshot.loaded_skills,
+        missing_skills=(),
     )
     model_selection = _snapshot_model_selection(snapshot=snapshot, snapshot_model=snapshot_model)
     terminal_surface_mode = adapter.contract.capabilities.terminal_surface_mode
@@ -278,7 +264,6 @@ def _persisted_agent_profile(
     return AgentProfile(
         name=agent,
         description=description,
-        skills=tuple(request.skills),
         body=body,
         path=profile_path,
         raw_content=body,
@@ -288,46 +273,19 @@ def _persisted_agent_profile(
 def _snapshot_profile(
     *,
     snapshot: LaunchPolicySnapshot,
-    snapshot_skill_names: tuple[str, ...],
     project_root: Path,
 ) -> AgentProfile | None:
     if snapshot.agent_profile is None:
         return None
 
     profile = AgentProfile.model_validate(snapshot.agent_profile)
-    updates: dict[str, object] = {"skills": snapshot_skill_names}
     # Direct-launch fallback may persist a relative profile path (no project
     # root at build time); resolve it against the project root on replay so
     # downstream consumers (e.g. session_agent_path) keep absolute-path parity.
-    if not profile.path.is_absolute():
-        updates["path"] = (resolve_mars_roots(project_root).primary / profile.path).resolve()
-    return profile.model_copy(update=updates)
-
-
-def _snapshot_skills(
-    *,
-    snapshot: LaunchPolicySnapshot,
-    project_root: Path,
-    skills_readonly: bool,
-    snapshot_model: str,
-    harness_id: HarnessId,
-    snapshot_skill_names: tuple[str, ...],
-) -> ResolvedSkills:
-    if snapshot.loaded_skills:
-        return ResolvedSkills(
-            skill_names=snapshot_skill_names,
-            loaded_skills=snapshot.loaded_skills,
-            missing_skills=(),
-        )
-
-    return resolve_skills_from_profile(
-        profile_skills=dedupe_skill_names(snapshot.skills),
-        project_root=project_root,
-        readonly=skills_readonly,
-        harness_id=harness_id.value,
-        selected_model_token=snapshot.model_selection_requested_token or snapshot_model,
-        canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
-    )
+    if profile.path.is_absolute():
+        return profile
+    path = (resolve_mars_roots(project_root).primary / profile.path).resolve()
+    return profile.model_copy(update={"path": path})
 
 
 __all__ = [
