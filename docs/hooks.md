@@ -197,7 +197,7 @@ conflict_policy = "leave"
 `options.path` selects local commit-only mode. `options.remote` overrides the
 top-level shorthand, and remote mode wins when a path is also present.
 
-**Default events:** `spawn.running`, `spawn.finalized`, `work.started`, `work.done`
+**Default events:** `spawn.finalized`, `work.started`, `work.done`
 
 ```toml
 [[hooks]]

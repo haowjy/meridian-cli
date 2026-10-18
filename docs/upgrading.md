@@ -5,8 +5,9 @@
 The hook events `spawn.start` and `work.start` never had producers and are no
 longer accepted. Replace them with `spawn.running` and `work.started`,
 respectively. Hook config containing either removed name now fails to load and
-names its replacement. The `git-autosync` builtin now defaults to
-`spawn.running`, so it syncs when a spawn enters the running state.
+names its replacement. The `git-autosync` builtin drops `spawn.start` from its
+default events instead of moving to `spawn.running`; it syncs when spawns
+finish and work items start or finish, as it already did.
 
 Plugin API 3.0.0 removes the two dead literals from `HookEventName`. No state
 migration is needed; update hook configuration and plugin type assumptions

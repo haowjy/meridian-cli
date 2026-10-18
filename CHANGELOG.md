@@ -9,9 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Plugin API 3.0.0 removes `spawn.start` and `work.start` from `HookEventName`. (#687)
-
-### Fixed
-- `git-autosync` now syncs when a spawn starts running by default. (#687)
+- `git-autosync` default events: dead `spawn.start` dropped (not moved to `spawn.running`); sync timing unchanged. (#687)
 
 ## [0.10.28] - 2026-10-18
 
