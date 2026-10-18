@@ -199,7 +199,7 @@ The `notify.*` prefix means the event carries a notification payload.
 |---|---|---|---|
 | `push_backend` | `"ntfy"` | `MERIDIAN_NOTIFY_PUSH_BACKEND` | `ntfy` or `none` |
 | `email_backend` | `"gmail"` | `MERIDIAN_NOTIFY_EMAIL_BACKEND` | `gmail`, `smtp`, `ntfy`, or `none` |
-| `include_messages` | `true` | `MERIDIAN_NOTIFY_INCLUDE_MESSAGES` | Include the last user and assistant excerpts in idle push and warning notifications |
+| `include_messages` | `true` | `MERIDIAN_NOTIFY_INCLUDE_MESSAGES` | Include idle excerpts and permission-prompt text in notifications |
 | `ntfy_server` | `"https://ntfy.sh"` | `MERIDIAN_NOTIFY_NTFY_SERVER` | Base URL for the ntfy server |
 | `ntfy_topic` | unset | `MERIDIAN_NOTIFY_NTFY_TOPIC` | ntfy topic; an unset topic disables ntfy delivery with a warning |
 | `email_to` | unset | `MERIDIAN_NOTIFY_EMAIL_TO` | Email recipient |
@@ -229,8 +229,9 @@ countdown. Under a minute reads `<1 min until cold`; an elapsed deadline reads
 
 Bodies retain the warning details and message excerpts labelled
 `You` and `Assistant`, without repeating the tmux session.
-Permission notices use the transport-safe title `Claude needs permission`; the
-body contains Claude's prompt message followed by the session headline.
+Permission notices use `[permission]` followed by the same session headline;
+the body contains the harness notification text. With `include_messages = false`,
+the body is the generic `Permission prompt waiting` instead.
 
 Excerpts are plain text, whitespace-collapsed, and shortened before storage.
 Because they leave the machine through ntfy or email, set
@@ -266,10 +267,10 @@ event (source `default` in `meridian hooks list`), below every config layer. As
 with any hook, a config row with the same name and event replaces it. An
 unnamed `builtin = "notify"` row is named `notify`, so such a row for an event,
 even with `enabled = false`, replaces the default for that event only; one
-without `event` covers all four. A row named anything other than `notify` is
-an additional route alongside the default. If both routes select the same push
-backend, the recipient gets two pushes. To replace rather than add, omit
-`name` or set `name = "notify"`, as in the examples below.
+without `event` covers every notification event. A row named anything other
+than `notify` is an additional route alongside the default. If both routes
+select the same push backend, the recipient gets two pushes. To replace rather
+than add, omit `name` or set `name = "notify"`, as in the examples below.
 
 The `notify` builtin takes two options:
 

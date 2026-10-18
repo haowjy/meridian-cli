@@ -26,7 +26,7 @@ print(api.__version__)  # "3.0.0"
 | `HookEventName` | Valid event name literal — `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, `notify.needs_permission`, `notify.manual` |
 | `SpawnKind` | Spawn kind literal — `"child"` \| `"primary"` \| `"streaming"` |
 | `SpawnStatus` | Hook terminal status literal — `"success"` \| `"failure"` \| `"cancelled"` \| `"timeout"` |
-| `NOTIFICATION_EVENTS` | The four notification events, which carry `HookContext.notification` |
+| `NOTIFICATION_EVENTS` | Every notification event, each carrying `HookContext.notification` |
 | `Notification` | One notice — `title`, `body`, `priority` (1–5), `email`, `label` (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), `attachments` (absolute file paths) |
 
 `HookResult.details` is a mapping that builtin hook implementations may set with

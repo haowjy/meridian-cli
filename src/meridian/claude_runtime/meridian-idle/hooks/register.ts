@@ -334,9 +334,8 @@ async function returnTask($: EngineInterface, s: State, sessionId: Promise<strin
 
 async function needsPermissionTask($: EngineInterface, s: State, message: string): Promise<void> {
   try {
-    const session = await $.session.id()
     const reply = await cli($, s, [
-      'needs-permission', '--harness', HARNESS, '--session', session, `--message=${message}`,
+      'needs-permission', '--harness', HARNESS, `--message=${message}`,
     ])
     const problem = failure(reply)
     if (problem !== undefined) note($, s, `needs-permission failed: ${problem}`)

@@ -37,7 +37,6 @@ policy, not a harness adapter: **adapters report facts; core decides**.
   disposable and reconstructed from that state.
 - A permission notice is stateless: never read or write the idle store, alter a
   stretch, hold or release the push, track an answer, or correlate tool calls.
-  Only Claude produces `notify.needs_permission` today.
 - A primary reopen through Meridian closes any open stretch in the launcher
   before exec. Keep this out of exit hooks (a killed terminal runs none) and
   adapters (engines cannot distinguish reload from resume, and reload recovery

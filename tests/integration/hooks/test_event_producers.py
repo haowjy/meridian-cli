@@ -284,11 +284,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     idle.fire("push", harness="codex", session="idle-session", stretch=1, anchor=1)
     clock.now = armed.warn_at
     idle.fire("warn", harness="codex", session="idle-session", stretch=1, anchor=1)
-    idle.needs_permission(
-        harness="claude",
-        session="permission-session",
-        message="Claude needs your permission",
-    )
+    idle.needs_permission(harness="claude", message="Claude needs your permission")
 
     emit(
         "notify.manual",

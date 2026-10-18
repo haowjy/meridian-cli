@@ -543,18 +543,16 @@ class IdleService:
         self,
         *,
         harness: str,
-        session: str,
         message: str,
     ) -> None:
         """Forward one harness permission signal without touching idle state."""
 
         if not self.config_for(harness).enabled:
             return
-        if not session.strip():
-            raise ValueError("session must not be empty")
         notice = needs_permission_notice(
             message,
             build_session_label(environ=self.env),
+            include_messages=self._notify_config().include_messages,
         )
         report = self._notify_sender(NEEDS_PERMISSION_EVENT, notice)
         for warning in report.warnings:

@@ -253,8 +253,7 @@ test('only permission prompts are forwarded and a failing CLI does not fail the 
   await clock.advance(0)
 
   expect(calls(h, 'needs-permission')).toEqual([[
-    'needs-permission', '--harness', 'claude', '--session', 'sess-1',
-    `--message=${message}`, '--interactive',
+    'needs-permission', '--harness', 'claude', `--message=${message}`, '--interactive',
   ]])
 
   await $.classic.Notification({ message: 'Waiting for input', notification_type: 'idle_prompt' } as never)

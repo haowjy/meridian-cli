@@ -79,12 +79,20 @@ def stage_notice(
     )
 
 
-def needs_permission_notice(message: str, label: SessionLabel) -> Notification:
-    """Build a stateless notice from Claude's still-waiting prompt signal."""
+def needs_permission_notice(
+    message: str,
+    label: SessionLabel,
+    *,
+    include_messages: bool,
+) -> Notification:
+    """Build a stateless notice from a still-waiting permission signal."""
 
     return Notification(
-        title="Claude needs permission",
-        body=_body([message.strip(), label.headline]),
+        title=f"[permission] {label.headline}",
+        body=_body(
+            [message.strip() if include_messages else None],
+            fallback="Permission prompt waiting",
+        ),
         priority=3,
         email=False,
         label=label.to_dict(),
