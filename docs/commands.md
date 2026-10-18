@@ -304,22 +304,22 @@ when those values are available.
 ### `meridian idle`
 
 `idle` is an adapter-facing command group. Harness mods and launcher tasks use
-it to report events, ask core whether compaction is safe, and record the result.
-Humans normally use only:
+it to report turn ends and user returns, and to ask core whether a due push or
+cache warning should still be sent. Humans normally use only:
 
 | Command | Description |
 |---|---|
 | `meridian idle status [--json]` | List open idle stretches and their stored schedules |
 | `meridian idle mod-path` | Print the bundled Claude idle mod directory for an external-TUI opt-in |
 
-The adapter subcommands are `config`, `arm`, `return`, `fire`, `done`, and
-`event`; run `meridian idle --help` for their typed contract. Outside-Meridian
-adapters must pass `--interactive` on every call. An explicit spawn role stays
-disabled even with that flag.
+The adapter subcommands are `config`, `arm`, `return`, `fire`, and `event`;
+run `meridian idle --help` for their typed contract. Outside-Meridian adapters
+must pass `--interactive` on every call. An explicit spawn role stays disabled
+even with that flag.
 
 See [configuration.md](configuration.md#notifications-and-idle-sessions) for
-notification backends, idle timers, precedence, defaults, safety guards, and
-the Claude opt-in command.
+notification backends, idle timers, how running work affects the push,
+precedence, per-harness defaults, and the Claude opt-in command.
 
 ## Configuration & Diagnostics
 

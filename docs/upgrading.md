@@ -12,7 +12,44 @@ take longer. Older `history-v7.sqlite3`, `history-v8.sqlite3`, and
 `history-v9.sqlite3` files are left untouched and can be removed after rollback
 is no longer needed.
 
+## Idle compaction removed
+
+Meridian no longer compacts idle sessions. Idle handling now sends only the
+waiting push and the cache-expiry warning. Harness-native compaction is
+untouched: Claude Code 2.1.299+ (`/config` → Idle compaction), Codex, OpenCode,
+and Pi still compact on their own, and Meridian leaves those settings alone.
+
+Remove these settings. File keys are ignored with an "unknown config key"
+warning; environment variables are ignored silently:
+
+- `[idle]` keys `compact`, `compact_minutes`, `compact_min_growth_tokens`
+- `[harness.<harness>.idle]` keys `compact`, `compact_min_growth_tokens`
+- `MERIDIAN_IDLE_COMPACT`, `MERIDIAN_IDLE_COMPACT_MINUTES`,
+  `MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS`, `MERIDIAN_HARNESS_IDLE_COMPACT_<H>`,
+  `MERIDIAN_HARNESS_IDLE_COMPACT_MIN_GROWTH_TOKENS_<H>`
+
+`meridian idle done` is gone. `meridian idle fire` accepts only `push` or `warn`
+and no longer takes `--busy`, `--agents-running`, `--context-tokens`, or
+`--harness-autocompact-off`. `meridian idle arm` no longer takes
+`--context-tokens`; adapters report running work with
+`--background-tasks '[{"kind": "agent|shell|watcher|other", "command": "..."}]'`.
+The `idle status` table drops its COMPACT column. Compaction notices
+(`[compacted]`, `[compaction failed]`, `[compaction skipped]`) no longer appear.
+
+A Claude primary now holds the waiting push while subagents, workflows, or
+`meridian spawn` shells run, and the cache warning arms even then; see
+[running work](configuration.md#running-work).
+
+Idle files under `MERIDIAN_HOME/idle/` lose the `context`, `compact_eval` and
+other compaction fields. Files written by an older build no longer validate and
+are treated as absent: an idle stretch open across the upgrade starts fresh on
+the next turn, so its pending push or warning may not fire. No migration is
+needed. Stop active primaries before switching versions in either direction.
+
 ## Idle compaction growth floor
+
+Idle compaction was later removed; see
+[Idle compaction removed](#idle-compaction-removed).
 
 Replace `idle.min_compact_tokens` (and per-harness equivalents) with
 `idle.compact_min_growth_tokens`, or remove it to use the calculated break-even.
@@ -159,6 +196,8 @@ One-hour Anthropic cache writes cost more than five-minute writes. Export
   [Version 0.10.6](#idle-compaction-growth-floor) replaced the
   fixed context floor with growth since a baseline compared against each route's
   break-even.
+  Idle compaction was later removed entirely; see
+  [Idle compaction removed](#idle-compaction-removed).
 - Notifications are silent until configured: set `[notify] ntfy_topic` for push
   and `email_to`, `smtp_user` and `smtp_password_file` (a `0600` file holding
   a Gmail app password) for email. `MERIDIAN_NOTIFY_SMTP_PASSWORD` works as a

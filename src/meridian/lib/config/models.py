@@ -199,35 +199,6 @@ class IdleConfig(ConfigModel):
             env_vars=("MERIDIAN_IDLE_WARN_EMAIL",),
         ),
     ] = True
-    compact_minutes: Annotated[
-        int,
-        config_field(
-            "idle.compact_minutes",
-            value_kind="int",
-            file_aliases=(file_alias("idle", "compact_minutes"),),
-            env_vars=("MERIDIAN_IDLE_COMPACT_MINUTES",),
-        ),
-        Field(ge=0),
-    ] = 5
-    compact: Annotated[
-        bool,
-        config_field(
-            "idle.compact",
-            value_kind="bool",
-            file_aliases=(file_alias("idle", "compact"),),
-            env_vars=("MERIDIAN_IDLE_COMPACT",),
-        ),
-    ] = True
-    compact_min_growth_tokens: Annotated[
-        int | None,
-        config_field(
-            "idle.compact_min_growth_tokens",
-            value_kind="int",
-            file_aliases=(file_alias("idle", "compact_min_growth_tokens"),),
-            env_vars=("MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS",),
-        ),
-        Field(ge=0),
-    ] = None
     late_fire_tolerance_seconds: Annotated[
         int,
         config_field(

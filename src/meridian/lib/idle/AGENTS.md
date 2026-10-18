@@ -1,24 +1,35 @@
 # Idle Policy Core
 
-This package owns idle timelines, ordered safety guards, stretch transitions,
-notification decisions, and the launcher-hosted sensor loop. It is policy, not
-a harness adapter: **adapters report facts; core decides**.
+This package owns idle timelines, ordered stage guards, stretch transitions,
+notification decisions, and the launcher-hosted sensor loop. Idle does two
+things: the "your turn" push and the cache-expiry warning. Meridian does not
+compact; harnesses compact on their own. It is policy, not a harness adapter:
+**adapters report facts; core decides**.
 
 ## Invariants
 
 - Never name or branch on a harness here. Harness-specific sensing, TTL
-  detection, environment facts, and compaction mechanisms belong behind the
-  contracts in `../harness/idle_types.py`.
+  detection, and environment facts belong behind the contracts in
+  `../harness/idle_types.py`.
 - `service.py` is the only transition API. Preserve at-most-once stage claims,
-  anchor-versioned timers, explicit user-return priority, and stretch-keyed
-  compaction completion.
-- Keep `timeline.py` and `guards.py` pure. Guard order is behavioral: the first
-  match is the reported reason.
-- Context baselines survive returns and new stretches. Only a trustworthy shrink
-  or the first real turn after Meridian's own successful compaction resets them;
-  absorbed compaction turns never update context. The first arm after a closed
-  stretch with claimed/successful compaction also skips observation: it may be
-  the compaction's own late turn end.
+  anchor-versioned timers, and explicit user-return priority.
+- Keep `timeline.py`, `guards.py` and `wake.py` pure. Guard order is behavioral:
+  the first match is the reported reason.
+- Adapters report the work a turn left running as `BackgroundTask` facts, in the
+  host's own terms mapped to a kind. `wake.py` alone reads them, including
+  Meridian's own CLI grammar. A running agent is certain, and so is a shell
+  whose last command is a foreground spawn creation or `spawn wait`; loops,
+  detached spawns, management commands, and commands followed by more work are
+  maybe. An explicit wait `--timeout`
+  (minutes) replaces the yield deadline. Never classify spawn commands in an
+  adapter. A certain wake holds the push, and the response stays owed
+  (`push_owed_since_ms`) until a push is delivered or the user returns. A known
+  wake before cache expiry drops the warning. Only the Claude mod forwards
+  running work today; Codex, OpenCode and Pi send none (#669).
+- `wake.py` skips Meridian's top-level value flags through
+  `lib/cli_args.py` `TOP_LEVEL_VALUE_FLAGS`, the table `cli/bootstrap.py`
+  also uses. A new top-level flag that takes a value goes there, or wake.py
+  misreads `meridian <flag> <value> spawn ...`.
 - Authoritative state lives in `../state/idle_store.py`; sidecar timers are
   disposable and reconstructed from that state.
 - A primary reopen through Meridian closes any open stretch in the launcher
@@ -38,8 +49,6 @@ a harness adapter: **adapters report facts; core decides**.
 
 - CLI argument parsing and human rendering belong in `cli/`; adapter result shapes
   and their wire serialization stay with the service result types.
-- Spawn-store reads for the child guard go through `children.py`, stay read-only,
-  and use derived status so a dead unfinalized child does not block idle.
 - TTL detection reads the chat's launch-recorded native store through the
   session store using `MERIDIAN_CHAT_ID`. Never pass or derive a cwd for
   transcript lookup: agents can `cd`, while the transcript remains filed under

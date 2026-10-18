@@ -5,19 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from meridian.lib.idle.wake import NO_WAKE, ExpectedWake
+
 
 class TimelineConfig(Protocol):
     """Config fields needed to place idle stages."""
-
-    @property
-    def warn_minutes(self) -> int: ...
-
-    @property
-    def compact_minutes(self) -> int: ...
-
-
-class PushDelayConfig(Protocol):
-    """Config fields needed to choose the push delay for a turn."""
 
     @property
     def push_seconds(self) -> int: ...
@@ -28,6 +20,9 @@ class PushDelayConfig(Protocol):
     @property
     def quick_turn_push_seconds(self) -> int: ...
 
+    @property
+    def warn_minutes(self) -> int: ...
+
 
 @dataclass(frozen=True)
 class Schedule:
@@ -35,24 +30,19 @@ class Schedule:
 
     push_at: int | None
     warn_at: int | None = None
-    compact_at: int | None = None
 
 
-def select_push_delay(
-    now_ms: int,
-    returned_at_ms: int | None,
-    previous_idle_since_ms: int | None,
-    cfg: PushDelayConfig,
-) -> int:
-    """Choose the configured push delay from the preceding turn length."""
+def push_delay(now_ms: int, owed_since_ms: int | None, cfg: TimelineConfig) -> int:
+    """Push soon after a long wait for this response; wait longer after a quick turn.
+
+    `owed_since_ms` is when the user started waiting for a response no push has
+    answered yet. A turn that follows an earlier push (a background wake) is
+    treated as quick: the user may be reading.
+    """
 
     if cfg.long_turn_seconds == 0:
         return cfg.push_seconds
-    if returned_at_ms is None:
-        return cfg.quick_turn_push_seconds
-    if previous_idle_since_ms is not None and returned_at_ms <= previous_idle_since_ms:
-        return cfg.quick_turn_push_seconds
-    if now_ms - returned_at_ms >= cfg.long_turn_seconds * 1000:
+    if owed_since_ms is not None and now_ms - owed_since_ms >= cfg.long_turn_seconds * 1000:
         return cfg.push_seconds
     return cfg.quick_turn_push_seconds
 
@@ -63,24 +53,31 @@ def schedule(
     cfg: TimelineConfig,
     *,
     push_delay_seconds: int,
+    wake: ExpectedWake = NO_WAKE,
 ) -> Schedule:
-    """Place stages that fit strictly after their predecessor."""
+    """Place the push and the cache warning, each from what the running work says.
 
-    push_at = idle_since_ms + push_delay_seconds * 1000
+    No push when a wake is certain: that turn arms again. Work that may never
+    end only delays it. The warning is dropped only when a known wake lands
+    before the cache goes cold, since that wake keeps it warm.
+    """
+
+    push_at: int | None = None
+    if wake.certain is None:
+        delay = push_delay_seconds
+        if wake.maybe:
+            delay = max(delay, cfg.quick_turn_push_seconds)
+        push_at = idle_since_ms + delay * 1000
     if ttl_seconds is None:
         return Schedule(push_at=push_at)
 
     expires_at = idle_since_ms + ttl_seconds * 1000
+    kept_warm = wake.by_ms is not None and wake.by_ms < expires_at
     warn_candidate = expires_at - cfg.warn_minutes * 60 * 1000
-    warn_at = warn_candidate if warn_candidate > idle_since_ms else None
-    if warn_at is not None and push_at >= warn_at:
+    warn_at = warn_candidate if not kept_warm and warn_candidate > idle_since_ms else None
+    if warn_at is not None and push_at is not None and push_at >= warn_at:
         push_at = None
-
-    compact_candidate = expires_at - cfg.compact_minutes * 60 * 1000
-    predecessor = warn_at if warn_at is not None else push_at
-    assert predecessor is not None
-    compact_at = compact_candidate if compact_candidate > predecessor else None
-    return Schedule(push_at=push_at, warn_at=warn_at, compact_at=compact_at)
+    return Schedule(push_at=push_at, warn_at=warn_at)
 
 
-__all__ = ["PushDelayConfig", "Schedule", "TimelineConfig", "schedule", "select_push_delay"]
+__all__ = ["Schedule", "TimelineConfig", "push_delay", "schedule"]

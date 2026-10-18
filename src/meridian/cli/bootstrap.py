@@ -11,42 +11,8 @@ from pathlib import Path
 
 from meridian.cli.mode import RenderMode, is_agent_render_mode, parse_render_mode
 from meridian.cli.startup.policy import BootstrapPlan, StateRequirement
+from meridian.lib.cli_args import TOP_LEVEL_VALUE_FLAGS
 
-# Keep these startup parse tables in sync with `@app.default root(...)` in
-# `main.py` plus startup-only flags parsed before cyclopts (`--verbose` at root).
-_TOP_LEVEL_VALUE_FLAGS = frozenset(
-    {
-        "--format",
-        "--config",
-        "--continue",
-        "--fork",
-        "--fork-fresh",
-        "--from",
-        "--file",
-        "-f",
-        "--prompt-file",
-        "--prompt",
-        "-p",
-        "--skills",
-        "--goal",
-        "--model",
-        "-m",
-        "--harness",
-        "-a",
-        "--agent",
-        "--work",
-        "--task-dir",
-        "--autocompact",
-        "--autocompact-pct",
-        "--effort",
-        "--sandbox",
-        "--approval",
-        "--timeout",
-        "-C",
-        "--directory",
-        "--mode",
-    }
-)
 _TOP_LEVEL_BOOL_FLAGS = frozenset(
     {
         "--help",
@@ -101,7 +67,7 @@ def iter_positional_tokens(argv: Sequence[str]) -> Iterator[tuple[int, str]]:
         if token in _TOP_LEVEL_BOOL_FLAGS:
             index += 1
             continue
-        if token in _TOP_LEVEL_VALUE_FLAGS:
+        if token in TOP_LEVEL_VALUE_FLAGS:
             index += 2
             continue
         index += 1

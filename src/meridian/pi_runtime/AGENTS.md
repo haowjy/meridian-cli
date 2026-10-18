@@ -25,9 +25,10 @@ Its v2 record is nonce/PID-correlated and bounded. A shutdown with an invalidate
 Pi context clears quit and stays unresolved. The stale-context exception depends
 on Pi's exact error-text prefix; a changed prefix poisons the record fail-closed.
 See README for that dependency.
-`meridian-idle` is primary-only. It translates native idle/input events and live
-context facts into `meridian idle` commands; the Python core owns every policy,
-notification, persistence, and compaction decision.
+`meridian-idle` is primary-only. It translates native idle/input events into
+`meridian idle` commands; the Python core owns every policy, notification, and
+persistence decision.
+It does not forward the work a turn left running (`idle arm --background-tasks`) yet, so Pi sessions never hold the push for it (#669).
 
 ## Key Rules
 

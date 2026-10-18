@@ -42,7 +42,7 @@ from meridian.lib.harness.claude_boundary import (
     claude_boundary_journal_path,
     read_observations,
 )
-from meridian.lib.harness.claude_idle import autocompact_off, compact_costs, detect_ttl
+from meridian.lib.harness.claude_idle import detect_ttl
 from meridian.lib.harness.claude_inbox import post_primary_message
 from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
@@ -560,8 +560,6 @@ register_harness_bundle(
         ),
         semantics=CLAUDE_SEMANTICS,
         primary_inbox=post_primary_message,
-        autocompact_off=autocompact_off,
         detect_ttl=detect_ttl,
-        compact_costs=compact_costs,
     )
 )

@@ -7,19 +7,17 @@ export type MeridianRunner = (
   timeoutMs?: number,
 ) => Promise<CommandResult>;
 
-type IdleStage = "push" | "warn" | "compact";
+type IdleStage = "push" | "warn";
 type ActiveStretch = {
   session: string;
   stretch: number;
   anchor: number;
-  ctx: ExtensionContext;
 };
 type ArmReply = {
   stretch?: unknown;
   anchor?: unknown;
   push_at?: unknown;
   warn_at?: unknown;
-  compact_at?: unknown;
   reason?: unknown;
 };
 type StatusRow = {
@@ -31,7 +29,7 @@ type StatusRow = {
   done?: unknown;
 };
 
-const STAGES: readonly IdleStage[] = ["push", "warn", "compact"];
+const STAGES: readonly IdleStage[] = ["push", "warn"];
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const EXCERPT_CHAR_CAP = 4_000;
 
@@ -97,7 +95,7 @@ export class IdleRuntime {
     if (revision !== this.revision || !Array.isArray(rows)) {
       return;
     }
-    this.restore(rows, ctx);
+    this.restore(rows, ctx.sessionManager.getSessionId());
   }
 
   async agentEnd(ctx: ExtensionContext, messages?: unknown): Promise<void> {
@@ -123,10 +121,6 @@ export class IdleRuntime {
       if (provider) {
         args.push("--provider", provider);
       }
-      const tokens = contextTokens(ctx);
-      if (tokens !== null) {
-        args.push("--context-tokens", String(tokens));
-      }
       const excerpts = messageExcerpts(messages);
       if (excerpts.user !== null) this.lastUserText = excerpts.user;
       if (this.lastUserText !== null) {
@@ -144,7 +138,7 @@ export class IdleRuntime {
         this.restorePrevious(previous, previousDeadlines);
         return;
       }
-      this.applyArmReply(reply, ctx, previous, previousDeadlines);
+      this.applyArmReply(reply, session, previous, previousDeadlines);
     });
   }
 
@@ -173,8 +167,7 @@ export class IdleRuntime {
     this.lastUserText = null;
   }
 
-  private restore(rows: unknown[], ctx: ExtensionContext): void {
-    const session = ctx.sessionManager.getSessionId();
+  private restore(rows: unknown[], session: string): void {
     const row = rows.find((candidate): candidate is StatusRow => (
       isRecord(candidate)
       && candidate.harness === "pi"
@@ -190,7 +183,7 @@ export class IdleRuntime {
       return;
     }
 
-    this.active = { session, stretch, anchor, ctx };
+    this.active = { session, stretch, anchor };
     const done = isRecord(row.done) ? row.done : {};
     for (const stage of STAGES) {
       if (!(stage in done)) {
@@ -201,7 +194,7 @@ export class IdleRuntime {
 
   private applyArmReply(
     reply: ArmReply,
-    ctx: ExtensionContext,
+    session: string,
     previous: ActiveStretch | null,
     previousDeadlines: Map<IdleStage, number>,
   ): void {
@@ -218,17 +211,12 @@ export class IdleRuntime {
       && previous?.stretch === stretch
       && previous.anchor === anchor
     ) {
-      this.restorePrevious({ ...previous, ctx }, previousDeadlines);
+      this.restorePrevious(previous, previousDeadlines);
       return;
     }
 
     this.clearSchedule();
-    this.active = {
-      session: ctx.sessionManager.getSessionId(),
-      stretch,
-      anchor,
-      ctx,
-    };
+    this.active = { session, stretch, anchor };
     for (const stage of STAGES) {
       this.setDeadline(stage, reply[`${stage}_at`]);
     }
@@ -280,76 +268,13 @@ export class IdleRuntime {
   }
 
   private async fire(stage: IdleStage, active: ActiveStretch): Promise<void> {
-    const revision = this.revision;
-    const args = [
+    await this.runJson([
       "idle", "fire", stage,
       "--harness", "pi",
       "--session", active.session,
       "--stretch", String(active.stretch),
       "--anchor", String(active.anchor),
-    ];
-    if (busyFact(active.ctx)) {
-      args.push("--busy");
-    }
-    const tokens = contextTokens(active.ctx);
-    if (tokens !== null) {
-      args.push("--context-tokens", String(tokens));
-    }
-
-    const result = await this.runJson(args);
-    if (stage !== "compact" || !isRecord(result) || result.decision !== "act") {
-      return;
-    }
-
-    const veto = this.compactionVeto(active.ctx, revision);
-    if (veto !== null) {
-      await this.done(active, "vetoed", veto);
-      return;
-    }
-
-    try {
-      active.ctx.compact({
-        onComplete: () => {
-          void this.done(active, "ok");
-        },
-        onError: (error) => {
-          void this.done(active, "failed", String(error));
-        },
-      });
-    } catch (error) {
-      await this.done(active, "failed", String(error));
-    }
-  }
-
-  private async done(
-    active: ActiveStretch,
-    result: "ok" | "failed" | "vetoed",
-    reason?: string,
-  ): Promise<void> {
-    const args = [
-      "idle", "done", "compact",
-      "--harness", "pi",
-      "--session", active.session,
-      "--stretch", String(active.stretch),
-      "--result", result,
-    ];
-    if (reason) {
-      args.push("--reason", reason);
-    }
-    await this.runJson(args);
-  }
-
-  private compactionVeto(ctx: ExtensionContext, revision: number): string | null {
-    if (revision !== this.revision) {
-      return "user returned";
-    }
-    if (!safeIsIdle(ctx)) {
-      return "busy";
-    }
-    if (hasPendingMessages(ctx)) {
-      return "pending messages";
-    }
-    return null;
+    ]);
   }
 
   private enqueueTransition(task: () => Promise<void>): Promise<void> {
@@ -396,31 +321,6 @@ function safeIsIdle(ctx: ExtensionContext): boolean {
     return ctx.isIdle();
   } catch {
     return false;
-  }
-}
-
-function hasPendingMessages(ctx: ExtensionContext): boolean {
-  try {
-    return ctx.hasPendingMessages();
-  } catch {
-    return true;
-  }
-}
-
-function busyFact(ctx: ExtensionContext): boolean {
-  try {
-    return !ctx.isIdle() || ctx.hasPendingMessages();
-  } catch {
-    return true;
-  }
-}
-
-function contextTokens(ctx: ExtensionContext): number | null {
-  try {
-    const tokens = ctx.getContextUsage()?.tokens;
-    return typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens > 0 ? tokens : null;
-  } catch {
-    return null;
   }
 }
 

@@ -1,30 +1,31 @@
-import type { EngineInterface, Register, Timer } from 'claude-code'
+import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude-code'
 
 // Meridian's Claude idle sensor.
 //
 // This module senses two things and hands every decision to `meridian idle`:
-//   idle    a main-loop turn finished        -> `idle arm`, then one timer per stage
+//   idle    a main-loop turn finished        -> `idle arm` with the work still running, then one timer per stage
 //   return  the user typed or sent something -> `idle return`, timers cancelled
-// It acts on exactly one answer: `{decision: "act"}` from `idle fire compact`,
-// and then only from a timer callback, because `$.session.compact()` is
-// rejected inside a `command.run` hook and the mod cannot see its own
-// compaction (probes/P0a.md, Q2). Push and warn notifications belong to core;
-// this file never sends one, reads meridian config or env, or writes under
-// `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
+// Push and warn notifications belong to core; this file never sends one, reads
+// meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request.
 
-type Stage = 'push' | 'warn' | 'compact'
+type Stage = 'push' | 'warn'
 
-const STAGES: readonly Stage[] = ['push', 'warn', 'compact']
+const STAGES: readonly Stage[] = ['push', 'warn']
 const HARNESS = 'claude'
 const COMMAND = 'meridian-idle'
 const CLI_TIMEOUT_MS = 20_000
 const LOG_LIMIT = 100
 const EXCERPT_CHAR_CAP = 4_000
+// One JSON argv entry stays below ~50 KiB even if every command code unit needs
+// JSON's longest escape, well clear of Linux's 128 KiB per-argument limit.
+const BACKGROUND_TASK_LIMIT = 16
+const BACKGROUND_COMMAND_CHAR_CAP = 512
 
 type Json = Record<string, unknown>
+type BackgroundTask = NonNullable<ClassicHookInputs['Stop']['background_tasks']>[number]
 
-/** One open stretch as the mod knows it: the ids `fire` and `done` need, and the absolute stage times. */
+/** One open stretch as the mod knows it: the ids `fire` needs, and the absolute stage times. */
 type Armed = {
   session: string
   stretch: number
@@ -47,13 +48,13 @@ type State = {
   epoch: number
   /** An `arm` reached core since the last `return`, so a `return` call has something to close. */
   mayBeOpen: boolean
-  /** A main-loop turn is running (turn.start seen, its turn.complete not yet): `$.session.compact()` would be rejected. */
-  busy: boolean
-  /** Serialises the short `meridian idle` calls so arm/return/fire/done reach core in hook order. */
+  /** Serialises the short `meridian idle` calls so arm/return/fire reach core in hook order. */
   queue: Promise<unknown>
   log: string[]
   /** Last prompt typed by the human; tool results and injected hook turns never enter here. */
   lastUserText: string | undefined
+  /** The main loop's in-flight background work, from the `Stop` that precedes its `turn.complete`. */
+  stopTasks: BackgroundTask[] | undefined
 }
 
 function newState(): State {
@@ -65,10 +66,10 @@ function newState(): State {
     timers: [],
     epoch: 0,
     mayBeOpen: false,
-    busy: false,
     queue: Promise.resolve(),
     log: [],
     lastUserText: undefined,
+    stopTasks: undefined,
   }
 }
 
@@ -243,27 +244,39 @@ async function recover($: EngineInterface, s: State, session: string, epoch: num
   await adopt($, s, { session, stretch, anchor, at, fired: {} }, epoch)
 }
 
-async function runningAgents($: EngineInterface): Promise<number | undefined> {
-  try {
-    return (await $.agent.list()).filter(agent => agent.status === 'running').length
-  } catch {
-    return undefined
-  }
+/** Core's name for each kind of host background task. Core decides what each means for the push and the warning. */
+const TASK_KINDS: Record<string, string> = { subagent: 'agent', workflow: 'agent', shell: 'shell', monitor: 'watcher' }
+
+function backgroundCommand(command: string): string {
+  if (command.length <= BACKGROUND_COMMAND_CHAR_CAP) return command
+  // Make a truncated shell unreadable as a certain wake even when a meaningful
+  // option (such as --background) fell beyond the forwarded prefix.
+  return `${command.slice(0, BACKGROUND_COMMAND_CHAR_CAP - 3)}\n;:`
 }
 
-async function armTask($: EngineInterface, s: State, epoch: number, assistantText?: string): Promise<void> {
+/** The work the main loop left running, as `idle arm --background-tasks` JSON. */
+function backgroundTasks(tasks: BackgroundTask[]): string {
+  return JSON.stringify(
+    tasks.slice(0, BACKGROUND_TASK_LIMIT).map(task => ({
+      kind: TASK_KINDS[task.type] ?? 'other',
+      ...(task.type === 'shell' && task.command !== undefined ? { command: backgroundCommand(task.command) } : {}),
+    })),
+  )
+}
+
+async function armTask(
+  $: EngineInterface,
+  s: State,
+  epoch: number,
+  assistantText: string | undefined,
+  tasks: BackgroundTask[] | undefined,
+): Promise<void> {
   if (!(await gate($, s))) return
   try {
-    // The main loop can finish while a subagent still runs; the hand-back turn ends the main loop again, and arms then.
-    const running = await runningAgents($)
-    if (running !== undefined && running > 0) {
-      note($, s, `arm skipped: ${running} subagent(s) still running`)
-      return
-    }
+    // Work still running does not stop the arm: core reads it and holds or delays the push.
     const session = await $.session.id()
     const args = ['arm', '--harness', HARNESS, '--session', session]
-    const tokens = await contextTokens($)
-    if (tokens !== undefined) args.push('--context-tokens', String(tokens))
+    if (tasks !== undefined && tasks.length > 0) args.push(`--background-tasks=${backgroundTasks(tasks)}`)
     const userExcerpt = capExcerpt(s.lastUserText)
     const assistantExcerpt = capExcerpt(assistantText)
     if (userExcerpt !== undefined) args.push(`--user-text=${userExcerpt}`)
@@ -287,8 +300,9 @@ async function armTask($: EngineInterface, s: State, epoch: number, assistantTex
     if (s.epoch !== epoch) return // a return queued behind this arm closes the stretch; arm no timers for it
     const current = s.armed
     if (current !== undefined && current.session === session && current.stretch === stretch && current.anchor === anchor) {
-      return // same stretch and anchor: core absorbed this arm (compaction window, already compacted); keep our timers
+      return // same stretch and anchor: core absorbed this arm (a duplicate turn); keep our timers
     }
+    if (typeof reply.push_held === 'string') note($, s, `push held: ${reply.push_held}`)
     const at = readSchedule(reply)
     if (Object.keys(at).length === 0 && typeof reply.reason === 'string') {
       // An absorbed arm for a stretch we do not know yet carries no deadlines: take them from the store.
@@ -328,84 +342,20 @@ function userReturned($: EngineInterface, s: State): void {
   void enqueue(s, () => returnTask($, s, sessionId))
 }
 
-// -- timers: fire, and act on compact --------------------------------------
-
-async function contextTokens($: EngineInterface): Promise<number | undefined> {
-  try {
-    const tokens = asNumber((await $.session.usage()).context.tokens)
-    return tokens !== undefined && tokens > 0 ? tokens : undefined
-  } catch {
-    return undefined
-  }
-}
-
-async function autoCompactOff($: EngineInterface): Promise<boolean> {
-  try {
-    const rows = await $.config.list()
-    return rows.some(row => row.key === 'autoCompact' && row.value === false)
-  } catch {
-    return false
-  }
-}
-
-/** Facts `idle fire compact` needs. A fact the host will not give is omitted, so core applies its own unknown-fact rule. */
-async function compactFacts($: EngineInterface, busy: boolean): Promise<string[]> {
-  const [agents, tokens, autoOff] = await Promise.all([
-    runningAgents($),
-    contextTokens($),
-    autoCompactOff($),
-  ])
-  const facts: string[] = []
-  // A running turn, or agents we cannot list, is not "idle": report busy so core skips instead of compacting under them.
-  if (busy || agents === undefined) facts.push('--busy')
-  if (agents !== undefined) facts.push('--agents-running', String(agents))
-  if (tokens !== undefined) facts.push('--context-tokens', String(tokens))
-  if (autoOff) facts.push('--harness-autocompact-off')
-  return facts
-}
-
-type Outcome = { result: 'ok' | 'failed' | 'vetoed'; reason?: string }
-
-function compacted(tokensBefore: number | undefined, tokensAfter: number | undefined): Outcome {
-  if (tokensBefore === undefined || tokensAfter === undefined) return { result: 'ok' }
-  return { result: 'ok', reason: `${Math.round(tokensBefore / 1000)}k -> ${Math.round(tokensAfter / 1000)}k tokens` }
-}
-
-/** Core said "act" and has claimed the stage, so exactly one `done` must follow whatever happens here. */
-async function compactNow($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<Outcome> {
-  if (s.epoch !== epoch) return { result: 'vetoed', reason: 'user returned' }
-  try {
-    const result = await $.session.compact()
-    if (result.skip !== undefined) return { result: 'vetoed', reason: result.skip }
-    return compacted(result.tokensBefore, result.tokensAfter)
-  } catch (err) {
-    return { result: 'failed', reason: describeError(err) }
-  }
-}
+// -- timers -----------------------------------------------------------------
 
 async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed, epoch: number): Promise<void> {
   try {
     if (s.armed !== armed || s.epoch !== epoch) return
-    const facts = stage === 'compact' ? await compactFacts($, s.busy) : []
-    if (s.armed !== armed || s.epoch !== epoch) return
-    const args = ['fire', stage, ...who(armed), '--anchor', String(armed.anchor), ...facts]
+    const args = ['fire', stage, ...who(armed), '--anchor', String(armed.anchor)]
     const reply = await enqueue(s, () => cli($, s, args))
     const problem = failure(reply)
     if (problem !== undefined || !isRecord(reply)) {
       note($, s, `fire ${stage} failed: ${problem ?? 'unexpected reply'}`)
       return
     }
-    const detail = typeof reply.detail === 'string' ? `: ${reply.detail}` : ''
-    note($, s, `fire ${stage}: ${String(reply.decision)} (${String(reply.reason)})${detail}`)
+    note($, s, `fire ${stage}: ${String(reply.decision)} (${String(reply.reason)})`)
     armed.fired[stage] = reply.decision === 'act' ? 'act' : `skip: ${String(reply.reason)}`
-    // Push and warn are core's job. Only a compact "act" asks anything of us.
-    if (stage !== 'compact' || reply.decision !== 'act') return
-
-    const outcome = await compactNow($, s, armed, epoch)
-    const done = ['done', 'compact', ...who(armed), '--result', outcome.result]
-    if (outcome.reason !== undefined) done.push('--reason', outcome.reason)
-    const doneReply = await enqueue(s, () => cli($, s, done))
-    note($, s, `compact ${outcome.result}${outcome.reason ? ` (${outcome.reason})` : ''}${failure(doneReply) ? `; done failed: ${failure(doneReply)}` : ''}`)
   } catch (err) {
     note($, s, `timer ${stage} error: ${describeError(err)}`)
   }
@@ -473,16 +423,23 @@ export const register: Register = on => {
 
   // A subagent's run raises no turn.start, so this is always the main loop.
   on('turn.start', async ($, e, next) => {
-    s.busy = true
+    s.stopTasks = undefined
+    return next(e)
+  })
+
+  // The main loop's Stop fires just before its turn.complete and is the only place the host lists background work.
+  on('classic.Stop', async ($, e, next) => {
+    s.stopTasks = e.background_tasks
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     // A subagent's turn carries agentId; only the main loop's end is the user-visible idle.
     if (e.agentId === undefined && !s.inert) {
-      s.busy = false
       const epoch = s.epoch
-      void enqueue(s, () => armTask($, s, epoch, e.answer))
+      const tasks = s.stopTasks
+      s.stopTasks = undefined
+      void enqueue(s, () => armTask($, s, epoch, e.answer, tasks))
     }
     return next(e)
   })
