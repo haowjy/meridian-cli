@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from meridian.lib.config.layers import iter_config_layers
 from meridian.lib.hooks.schema import hook_row_values, hooks_from_spec, normalize_hook_row
@@ -72,8 +73,18 @@ def _hooks_from_payload(
                 )
             )
         except ValueError as exc:
-            errors.append(str(exc))
+            errors.append(_named_row_error(raw_row, exc))
     return tuple(hooks), tuple(errors)
+
+
+def _named_row_error(raw_row: object, exc: ValueError) -> str:
+    """Lead with the row's own `name`, when it has one, so users find it."""
+
+    if isinstance(raw_row, Mapping):
+        name = cast("Mapping[str, object]", raw_row).get("name")
+        if isinstance(name, str) and name.strip():
+            return f"hook {name.strip()!r}: {exc}"
+    return str(exc)
 
 
 def _apply_name_overrides(hooks: tuple[Hook, ...]) -> tuple[Hook, ...]:

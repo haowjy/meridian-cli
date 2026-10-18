@@ -49,7 +49,9 @@ def test_hook_scalar_constraints_are_enforced_by_the_config_model(
     with pytest.raises(ValueError) as exc_info:
         load_hooks_config(tmp_path)
 
-    assert str(exc_info.value) == f"Invalid value for 'project.hooks[1].{field}': {expected}."
+    assert str(exc_info.value) == (
+        f"hook 'invalid': Invalid value for 'project.hooks[1].{field}': {expected}."
+    )
 
 
 def test_hook_status_constraint_is_enforced_by_the_config_model(tmp_path: Path) -> None:
@@ -67,7 +69,7 @@ def test_hook_status_constraint_is_enforced_by_the_config_model(tmp_path: Path) 
         load_hooks_config(tmp_path)
 
     assert str(exc_info.value) == (
-        "Invalid value for 'project.hooks[1].when.status': expected values in "
+        "hook 'invalid': Invalid value for 'project.hooks[1].when.status': expected values in "
         "[cancelled, failure, skipped, success, timeout], got 'bogus'."
     )
 
