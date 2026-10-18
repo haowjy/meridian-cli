@@ -23,9 +23,10 @@ meridian hooks run sync-notes
 ```
 
 `hooks run` bypasses interval throttling. Registrations with the same name,
-builtin, command, and options run once without `--event`, even when one config
-row expanded across several events. When those fields differ, use `--event` to
-select a row. A builtin that only supports notification events cannot run
+builtin, command, options, timeout and failure policy are one hook: without
+`--event` it runs once, as its last registered event (an unevented
+`git-autosync` row runs as `work.done`), and `--event` may name any event, as
+for a single-row hook. When those fields differ, use `--event` to select a row. A builtin that only supports notification events cannot run
 manually because it has no notification payload; use `meridian notify` instead.
 
 ## Events

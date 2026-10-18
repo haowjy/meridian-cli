@@ -27,7 +27,7 @@ from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
 from meridian.lib.idle.messages import STAGE_EVENTS, stage_notice
 from meridian.lib.idle.timeline import Schedule, push_delay, schedule
 from meridian.lib.idle.wake import expected_wake
-from meridian.lib.notify import RouteResult, SendReport
+from meridian.lib.notify import RouteReport
 from meridian.lib.notify.emit import emit
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.state.idle_store import (
@@ -50,7 +50,7 @@ class NotifySender(Protocol):
 
     def __call__(
         self, event: HookEventName, notification: Notification
-    ) -> SendReport[RouteResult]: ...
+    ) -> RouteReport: ...
 
 
 def _recorded_native_store(
@@ -536,7 +536,7 @@ class IdleService:
 
     def _emit(
         self, event: HookEventName, notification: Notification
-    ) -> SendReport[RouteResult]:
+    ) -> RouteReport:
         return emit(event, notification, project_root=self.project_root, env=self.env)
 
     def _notify_config(self) -> NotifyConfig:

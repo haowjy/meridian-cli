@@ -308,6 +308,8 @@ def _same_manual_action(left: Hook, right: Hook) -> bool:
         left.builtin == right.builtin
         and left.command == right.command
         and left.options == right.options
+        and left.timeout_secs == right.timeout_secs
+        and left.failure_policy == right.failure_policy
     )
 
 
@@ -413,21 +415,23 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
     if all(_requires_notification(hook) for hook in named_hooks):
         _raise_manual_notification_error(named_hooks[0])
 
+    # Rows that differ only by event are one hook; without --event it runs as
+    # its last registration, like a single-row hook.
+    one_action = all(
+        _same_manual_action(named_hooks[0], candidate) for candidate in named_hooks[1:]
+    )
     if payload.event is not None:
         hook = registry.get_hook(hook_name, payload.event)
         if hook is None:
-            if len(named_hooks) != 1:
+            if not one_action:
                 events = ", ".join(candidate.event for candidate in named_hooks)
                 raise ValueError(
                     f"Hook '{hook_name}' is registered for multiple events [{events}], "
                     f"but not {payload.event!r}."
                 )
-            hook = named_hooks[0]
-    elif len(named_hooks) == 1 or all(
-        _same_manual_action(named_hooks[0], candidate)
-        for candidate in named_hooks[1:]
-    ):
-        hook = named_hooks[0]
+            hook = named_hooks[-1]
+    elif one_action:
+        hook = named_hooks[-1]
     else:
         events = ", ".join(hook.event for hook in named_hooks)
         raise ValueError(

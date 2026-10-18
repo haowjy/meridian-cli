@@ -51,10 +51,6 @@ class RouteReport:
     results: tuple[RouteResult, ...]
     warnings: tuple[str, ...] = ()
 
-    def __class_getitem__(cls, _item: object) -> type[RouteReport]:
-        # Subscription preserves postponed annotations; the report remains concrete.
-        return cls
-
     @property
     def all_none(self) -> bool:
         return all(result.status == "none" for result in self.results)

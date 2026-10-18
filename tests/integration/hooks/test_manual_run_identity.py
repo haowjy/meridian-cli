@@ -108,7 +108,18 @@ def test_hooks_run_uses_one_same_spec_registration_but_requires_event_for_differ
     )
 
     assert result.result.success
-    assert calls == ["spawn.start"]
+    assert calls == ["work.done"]
+
+    overridden = hooks_run_sync(
+        HookRunInput(
+            name="same-spec",
+            event="spawn.created",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert overridden.result.success
+    assert calls == ["work.done", "spawn.created"]
 
     (project_root / "meridian.toml").write_text(
         "[[hooks]]\n"

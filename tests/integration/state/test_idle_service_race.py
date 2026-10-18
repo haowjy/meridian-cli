@@ -3,7 +3,7 @@ from pathlib import Path
 
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.idle.service import IdleService
-from meridian.lib.notify import SendReport
+from meridian.lib.notify import RouteReport
 from meridian.lib.state.idle_store import IdleStore
 
 
@@ -15,7 +15,7 @@ def test_two_push_claims_racing_have_one_winner(tmp_path: Path) -> None:
         config=MeridianConfig(),
         env={"MERIDIAN_SESSION_ROLE": "primary"},
         now_ms=lambda: now[0],
-        notify_sender=lambda _event, _notice: SendReport(results=()),
+        notify_sender=lambda _event, _notice: RouteReport(results=()),
     )
     armed = service.arm(harness="example", session="s1", ttl_seconds=3600)
     now[0] = armed.push_at or 0
