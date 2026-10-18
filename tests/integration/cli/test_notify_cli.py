@@ -75,3 +75,45 @@ def test_notify_refuses_a_missing_attachment_before_any_delivery(
     assert exc_info.value.code == 2
     assert "attachment is not a readable file" in capsys.readouterr().err
     assert not (tmp_path / "ran").exists()
+
+
+def test_notify_splits_a_multiline_title_before_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for key in list(os.environ):
+        if key.upper().startswith("MERIDIAN") or key == "TMUX_PANE":
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "none")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_BACKEND", "none")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "meridian.toml").write_text(
+        '[[hooks]]\nname = "capture"\nevent = "notify.manual"\n'
+        'command = "cat > delivered.json"\n',
+        encoding="utf-8",
+    )
+
+    from meridian.cli.main import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "notify",
+                "\nDecision needed\nTradeoffs follow",
+                "Explicit body",
+                "--no-email",
+                "--json",
+            ]
+        )
+
+    assert exc_info.value.code == 0
+    delivery = json.loads((tmp_path / "delivered.json").read_text(encoding="utf-8"))
+    assert delivery["notification"]["title"] == "Decision needed"
+    assert delivery["notification"]["body"].splitlines()[:2] == [
+        "Tradeoffs follow",
+        "Explicit body",
+    ]
+    report = json.loads(capsys.readouterr().out)
+    assert sum(result["status"] == "sent" for result in report["results"]) == 1

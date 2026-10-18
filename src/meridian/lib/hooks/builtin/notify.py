@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints, field_validator
 
 from meridian.plugin_api import (
     NOTIFICATION_EVENTS,
@@ -27,6 +27,19 @@ class NotifyOptions(BaseModel):
     # `push`, `email` (the configured backends) or backend names; unset means both aliases.
     channels: tuple[_ChannelName, ...] | None = None
     priority: Annotated[StrictInt, Field(ge=1, le=5)] | None = None
+
+    @field_validator("channels")
+    @classmethod
+    def _validate_channels(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+
+        from meridian.lib.notify.channels import normalize_channel_name
+
+        return tuple(
+            normalize_channel_name(channel, aliases=("push", "email"))
+            for channel in value
+        )
 
 
 class NotifyHook:
@@ -68,17 +81,18 @@ class NotifyHook:
         if report.all_none:
             skipped = self._skipped(context, config, "disabled")
             return replace(skipped, error="; ".join(report.warnings) or None)
-        errors = [
+        diagnostics = list(report.warnings)
+        diagnostics.extend(
             f"{result.channel}: {result.error or 'delivery failed'}"
             for result in report.results
             if result.status == "failed"
-        ]
+        )
         return HookResult(
             hook_name=config.name,
             event=context.event_name,
             outcome="success" if report.ok else "failure",
             success=report.ok,
-            error="; ".join(errors) or None,
+            error="; ".join(diagnostics) or None,
             duration_ms=int((time.monotonic() - start) * 1000),
             stdout=", ".join(result.channel for result in report.results if result.ok) or None,
         )

@@ -33,6 +33,12 @@ class HooksConfig:
     hooks: tuple[Hook, ...]
 
 
+def default_hooks_config() -> HooksConfig:
+    """Return Meridian's built-in lowest-precedence hook layer."""
+
+    return HooksConfig(hooks=_DEFAULT_HOOKS)
+
+
 def _hooks_from_payload(payload: dict[str, object], *, source: str) -> tuple[Hook, ...]:
     hooks: list[Hook] = []
 

@@ -59,13 +59,26 @@ def manual_notification(
     Every attachment must be a readable file now, before any route runs.
     """
 
-    files = tuple(path.expanduser().resolve() for path in attachments)
+    files = tuple(dict.fromkeys(path.expanduser().resolve() for path in attachments))
     for path in files:
         if not path.is_file() or not os.access(path, os.R_OK):
             raise ValueError(f"attachment is not a readable file: {path}")
-    lines = [body.strip() if body else "", label.headline]
+
+    title_lines = title.splitlines()
+    title_index = next(
+        (index for index, line in enumerate(title_lines) if line.strip()),
+        None,
+    )
+    if title_index is None:
+        notification_title = title.strip()
+        title_detail = ""
+    else:
+        notification_title = title_lines[title_index].strip()
+        title_detail = "\n".join(title_lines[title_index + 1 :]).strip()
+
+    lines = [title_detail, body.strip() if body else "", label.headline]
     return Notification(
-        title=title.strip(),
+        title=notification_title,
         body="\n".join(line for line in lines if line),
         priority=priority,
         email=email,

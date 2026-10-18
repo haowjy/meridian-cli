@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,6 +62,8 @@ class Notification:
     def __post_init__(self) -> None:
         if not self.title.strip():
             raise ValueError("title must not be empty")
+        if any(unicodedata.category(character) == "Cc" for character in self.title):
+            raise ValueError("title must not contain control characters")
         if not 1 <= self.priority <= 5:
             raise ValueError(f"priority must be between 1 and 5, got {self.priority}")
 

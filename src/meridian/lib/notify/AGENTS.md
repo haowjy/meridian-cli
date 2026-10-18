@@ -12,6 +12,9 @@ each route's `HookResult` into one `SendResult` named by the hook. Never call
 retries or reads notification config from environment variables directly.
 
 `emit.py` is the only module that imports `lib/hooks`, lazily.
+If hook config cannot load, `emit` warns (in its report and the log) and fires
+the event through only the default `notify` routes. This keeps idle delivery
+fail-open without hiding the error from `meridian notify` or hook inspection.
 
 ## Channel seam
 

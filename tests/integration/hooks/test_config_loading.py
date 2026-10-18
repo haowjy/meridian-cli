@@ -116,3 +116,19 @@ def test_a_notify_row_replaces_only_its_events_default_route(tmp_path: Path) -> 
         ("session.responded", "default", True),
         ("notify.manual", "default", True),
     }
+
+
+def test_notify_route_rejects_an_unknown_channel_when_config_loads(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'builtin = "notify"\n'
+        'event = "session.responded"\n'
+        'options = { channels = ["phone"] }\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_hooks_config(tmp_path)
+
+    assert "project.hooks[1].options.channels" in str(exc_info.value)
+    assert "phone" in str(exc_info.value)

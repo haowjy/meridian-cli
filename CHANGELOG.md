@@ -21,6 +21,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - ntfy `Tags` = event name. Plugin API 2.0.0: `HookContext.runtime_root` may be `None`, `HookContext.notification`, payload `schema_version` 2. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
 
 ### Fixed
+- Multi-line `meridian notify` input keeps its first non-empty line as the transport-safe title and moves the rest into the body; all notification producers now reject control characters in titles. Duplicate resolved attachment paths are sent once. (#666, #670)
+- ntfy reports a route as delivered, with a file-specific warning, when its text POST succeeded but an attachment PUT failed. (#666)
+- Notification channel and backend names validate while config loads; removed `push_backend = "command"` now points to the upgrade guide. `meridian hooks check` validates the active config. (#670)
+- Invalid hook config no longer silences idle notices: emission warns and falls back to the default notification routes, while `meridian notify` also shows the warning. (#670)
 - `--no-email` (and idle push / `warn_email = false`) now skips `smtp`/`gmail` even when a route names them. (#670)
 - A failing notification route is reported once, not also as a hook warning log. (#670)
 - Logging no longer caches each module logger's first configuration.

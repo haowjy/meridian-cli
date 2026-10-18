@@ -41,7 +41,7 @@ def _hooks_list(emit: Emitter) -> None:
 
 
 def _hooks_check(emit: Emitter) -> None:
-    output = hooks_check_sync(HookCheckInput())
+    output = hooks_check_sync(HookCheckInput(project_root=_resolved_project_root()))
     emit(output)
     if not output.ok:
         raise SystemExit(1)

@@ -33,16 +33,22 @@ REGISTRY: dict[str, RegisteredChannel] = {
 }
 
 
+def normalize_channel_name(name: str, *, aliases: tuple[str, ...] = ()) -> str:
+    """Normalize a backend name and reject names no delivery path can resolve."""
+
+    normalized = name.strip().lower()
+    available = frozenset(REGISTRY) | frozenset(aliases)
+    if normalized not in available:
+        choices = ", ".join(sorted(available))
+        raise ValueError(
+            f"Unknown notification backend {name!r}. Available backends: {choices}."
+        )
+    return normalized
+
+
 def resolve_channel(name: str) -> RegisteredChannel:
     """Resolve a configured backend or raise a configuration-oriented error."""
-    normalized = name.strip().lower()
-    channel = REGISTRY.get(normalized)
-    if channel is None:
-        available = ", ".join(sorted(REGISTRY))
-        raise ValueError(
-            f"Unknown notification backend {name!r}. Available backends: {available}."
-        )
-    return channel
+    return REGISTRY[normalize_channel_name(name)]
 
 
-__all__ = ["REGISTRY", "RegisteredChannel", "resolve_channel"]
+__all__ = ["REGISTRY", "RegisteredChannel", "normalize_channel_name", "resolve_channel"]

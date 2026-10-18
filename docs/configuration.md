@@ -262,8 +262,10 @@ event (source `default` in `meridian hooks list`), below every config layer. As
 with any hook, a config row with the same name and event replaces it. An
 unnamed `builtin = "notify"` row is named `notify`, so such a row for an event,
 even with `enabled = false`, replaces the default for that event only; one
-without `event` covers all three. A row with another `name` is an additional
-route alongside the default.
+without `event` covers all three. A row named anything other than `notify` is
+an additional route alongside the default. If both routes select the same push
+backend, the recipient gets two pushes. To replace rather than add, omit
+`name` or set `name = "notify"`, as in the examples below.
 
 The `notify` builtin takes two options:
 
@@ -272,7 +274,7 @@ The `notify` builtin takes two options:
 | `channels` | `["push", "email"]` | `"push"` is `push_backend` and `"email"` is `email_backend`; a backend name (`ntfy`, `smtp`, `gmail`, `none`) sends there directly. |
 | `priority` | the notification's | 1–5; overrides the notification's priority |
 
-Unknown options are config errors. `meridian notify --no-email` and the idle
+Unknown options and channel names are config errors. `meridian notify --no-email` and the idle
 push never want email, and the cache warning follows `[idle] warn_email`: such
 a notification skips the email backends (`smtp`, `gmail`) however a route
 names them.
@@ -311,7 +313,10 @@ Notification routes run even in a directory with no Meridian runtime state;
 only `interval`-throttled hooks skip there. `meridian notify --json` reports one
 result per route, named by the hook: a route that delivered nothing (every
 backend `none`, or skipped by `when`) is `none`, and a failed `notify` route's
-error names each transport that failed.
+error names each transport that failed. If hook configuration is invalid,
+notification emission warns and uses only the default routes, so an idle push
+is not silenced by an unrelated broken hook row. `meridian hooks check` still
+reports the invalid configuration.
 
 ### `[idle]`
 

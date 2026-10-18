@@ -296,17 +296,20 @@ meridian notify "<title>" ["<body>"] [--attach <path>]... [--no-email] [--priori
 
 Fires the `notify.manual` hook event, which the built-in `notify` hook delivers
 through the configured push and email backends unless config routes it
-elsewhere. The title is one line: what the human needs to decide or see. The
-body is optional (`"$(cat file)"` for longer text); the session headline
-(tmux session, agent, work item) always ends it. `--no-email` keeps it off the
-email backends (`smtp`, `gmail`), however a route names them.
+elsewhere. The title is one line: what the human needs to decide or see. If the
+first argument contains several lines, the first non-empty line becomes the
+title and the remaining lines are prepended to the optional body; the session
+headline (tmux session, agent, work item) always ends it. `--no-email` keeps it
+off the email backends (`smtp`, `gmail`), however a route names them.
 
 `--attach <path>` (repeatable) sends a file with it: email attaches every file
 to the one message; ntfy, which carries one file per message, sends the text
 and then each file as its own lower-priority message (the server must allow
 attachments, and sets the size limit). Command hooks get the absolute paths in
 `notification.attachments`. A missing or unreadable path fails with exit 2
-before any route runs. A backend that rejects a file fails only that backend.
+before any route runs. Repeating paths that resolve to the same file sends that
+file once. If ntfy accepts the text but rejects a file, the route remains sent
+and warns with the file name; the notification text is not retried.
 
 Results list one entry per route, named by its hook (`notify` for the default
 route); a failed route's error names the transports that failed. `--json` adds

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+import structlog
+
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.service import SendReport
 
@@ -15,6 +17,7 @@ if TYPE_CHECKING:
     from meridian.plugin_api.types import HookEventName, HookResult, Notification
 
 _NO_ROUTE_WARNING = "no notification route ran for {event}"
+logger = structlog.get_logger(__name__)
 
 
 def _runtime_root(project_root: Path) -> Path | None:
@@ -61,7 +64,9 @@ def emit(
 ) -> SendReport:
     """Fire the notification's hook event and report what its routes delivered."""
 
+    from meridian.lib.hooks.config import default_hooks_config
     from meridian.lib.hooks.dispatch import HookDispatcher
+    from meridian.lib.hooks.registry import HookRegistry
     from meridian.lib.hooks.types import HookContext
 
     runtime_root = _runtime_root(project_root)
@@ -76,8 +81,33 @@ def emit(
         work_id=notification.label.get("work_id"),
         notification=notification,
     )
-    results = HookDispatcher(project_root, runtime_root, env=env).fire(context)
-    return report_from_hooks(event, results)
+    config_warning: str | None = None
+    try:
+        dispatcher = HookDispatcher(project_root, runtime_root, env=env)
+    except (OSError, ValueError) as exc:
+        config_warning = f"invalid hook configuration; using default notification routes: {exc}"
+        logger.warning(
+            "notification_hook_config_invalid",
+            hook_event=event,
+            error=str(exc),
+        )
+        dispatcher = HookDispatcher(
+            project_root,
+            runtime_root,
+            env=env,
+            registry=HookRegistry(
+                project_root,
+                hooks_config=default_hooks_config(),
+            ),
+        )
+
+    report = report_from_hooks(event, dispatcher.fire(context))
+    if config_warning is not None:
+        return SendReport(
+            results=report.results,
+            warnings=(config_warning, *report.warnings),
+        )
+    return report
 
 
 __all__ = ["emit", "report_from_hooks"]

@@ -453,6 +453,23 @@ def test_load_config_reads_notify_table_with_env_precedence(
     assert env_config.notify.smtp_port == 465
 
 
+def test_load_config_rejects_the_removed_command_notify_backend(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        '[notify]\npush_backend = "command"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_config(project_root)
+
+    error = str(exc_info.value)
+    assert "notify.push_backend" in error
+    assert "command" in error
+    assert "docs/upgrading.md" in error
+
+
 def test_load_config_reads_spawn_deny_headless_harnesses(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()

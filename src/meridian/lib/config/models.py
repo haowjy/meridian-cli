@@ -315,6 +315,19 @@ class NotifyConfig(ConfigModel):
             env_vars=("MERIDIAN_NOTIFY_SMTP_PASSWORD_FILE",),
         ),
     ] = None
+
+    @field_validator("push_backend", "email_backend")
+    @classmethod
+    def _validate_backend(cls, value: str) -> str:
+        from meridian.lib.notify.channels import normalize_channel_name
+
+        try:
+            return normalize_channel_name(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{exc} See docs/upgrading.md#notifications-are-hook-events."
+            ) from None
+
     @field_validator("smtp_port")
     @classmethod
     def _validate_smtp_port(cls, value: int) -> int:

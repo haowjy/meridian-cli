@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.config.loader import load_config
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.dispatch import HookDispatcher
@@ -67,6 +68,8 @@ class HookListOutput(BaseModel):
 
 class HookCheckInput(BaseModel):
     model_config = ConfigDict(frozen=True)
+
+    project_root: str | None = None
 
 
 class HookCheckItem(BaseModel):
@@ -292,7 +295,10 @@ def hooks_list_sync(payload: HookListInput) -> HookListOutput:
 
 
 def hooks_check_sync(payload: HookCheckInput) -> HookCheckOutput:
-    _ = payload
+    authority = resolve_project_authority(payload.project_root)
+    load_config(authority.project_root, authority=authority)
+    HookRegistry(authority.project_root, authority=authority)
+
     checks: list[HookCheckItem] = []
     all_ok = True
     for name in sorted(BUILTIN_HOOKS):

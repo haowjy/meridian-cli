@@ -87,13 +87,17 @@ event   = "spawn.finalized"
 | `when.status` | array[str] | no | — | Only fire when spawn exits with one of these statuses |
 | `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
 | `exclude` | array[str] | no | — | Skip for these agent profiles |
-| `options.conflict_policy` | str | no | `"leave"` | `git-autosync` only: `"leave"` keeps rebase conflicts for review; `"abort"` restores old abort behavior |
+| `options.conflict_policy` | str | no | `"abort"` | `git-autosync` only: `"abort"` aborts a conflicted sync; `"leave"` keeps conflicts for review |
 | `options.channels` | array[str] | no | `["push", "email"]` | `notify` only: transports to deliver to |
 | `options.priority` | int | no | notice's | `notify` only: 1–5 priority override |
 
 `command` and `builtin` are mutually exclusive.
 
-If you omit `name` for a builtin hook, Meridian names it from the options that pick its target: `git-autosync` rows from `remote` or `path`, so rows for different repos don't override each other; `notify` rows are all `notify`. For predictable `hooks run NAME` usage, set `name` explicitly.
+If you omit `name` for a builtin hook, Meridian names it from the options that
+pick its target: `git-autosync` rows from `remote` or `path`, so rows for
+different repos don't override each other; `notify` rows are all `notify`.
+For predictable `hooks run NAME` usage, set `name` explicitly, except when a
+`notify` row is meant to replace the default route as described below.
 
 ### Shell Behavior
 
@@ -126,7 +130,10 @@ such as `ntfy`) and `priority` (1–5) pick where and how loud.
 Meridian supplies a hook named `notify` on each of these events (source
 `default` in `hooks list`). An unnamed `builtin = "notify"` row is named
 `notify` too, so a row for an event, even with `enabled = false`, replaces only
-that event's default; give the row another `name` to add a route instead.
+that event's default. A row named anything other than `notify` adds a second
+route; if it selects the same backend as the default, the recipient gets the
+push twice. Omit `name` (as below), or set `name = "notify"`, to replace the
+default instead.
 
 ```toml
 # Silence the "your turn" push
@@ -151,21 +158,19 @@ for channel semantics and examples.
 3. Rebases when behind remote
 4. Pushes when ahead or after a local commit
 
-By default, if `git pull --rebase` encounters a conflict, the rebase is left in place
-so agents or humans can inspect and resolve the conflict markers. Future autosync runs
-detect the existing rebase state and skip all git operations until the conflict is resolved.
-
-Set `conflict_policy = "abort"` in options to restore the previous behavior of aborting
+By default, a conflicted sync is aborted, returning the repository to its
+pre-sync state. Set `conflict_policy = "leave"` to keep the merge or rebase in
+place so agents or humans can inspect and resolve it. Future autosync runs skip
+all git operations until that conflict is resolved.
 
 ```toml
-# Restore old abort-on-conflict behavior
+# Leave conflict markers for manual resolution
 [[hooks]]
 builtin = "git-autosync"
 remote  = "git@github.com:team/docs.git"
 [hooks.options]
-conflict_policy = "abort"
+conflict_policy = "leave"
 ```
-the rebase on conflict.
 
 **Required:** `remote` — the Git remote URL of the repo to sync.
 

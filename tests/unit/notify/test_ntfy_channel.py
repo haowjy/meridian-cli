@@ -47,11 +47,14 @@ def test_ntfy_sends_the_text_then_one_message_per_file(tmp_path: Path) -> None:
     assert {request.get_header("Title") for request in requests} == {"Pick auth storage"}
 
 
-def test_ntfy_names_the_file_a_server_rejects(tmp_path: Path) -> None:
+def test_ntfy_reports_text_as_sent_when_a_server_rejects_a_file(tmp_path: Path) -> None:
     (tmp_path / "big.pdf").write_bytes(b"%PDF")
 
     result = NtfyChannel(transport=lambda request: 413 if request.data == b"%PDF" else 200).send(
         _notice(tmp_path / "big.pdf"), _CONFIG, event="notify.manual"
     )
 
-    assert (result.status, result.error) == ("failed", "big.pdf: ntfy returned HTTP 413")
+    assert (result.status, result.warning) == (
+        "sent",
+        "big.pdf: ntfy returned HTTP 413",
+    )
