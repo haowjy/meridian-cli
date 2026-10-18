@@ -354,11 +354,13 @@ turn left running:
 - Subagents and workflows hold the push. A background shell does too only when
   its final command segment is a foreground `meridian spawn` creation or
   `meridian spawn wait`, with no `while`, `until`, `for`, or `select` segment.
-  Direct paths, leading environment assignments, `uv run ... meridian`, and
-  `uvx meridian` are recognized. Earlier setup such as `cd x &&` is fine. That
-  work ends and wakes the session, and that turn arms again; the response stays
-  owed until its push is sent, so a long wait uses `push_seconds` even when an
-  earlier scheduled push was replaced.
+  Semicolons, pipelines, background operators, subshell parentheses, and
+  unquoted newlines separate command segments; redirections stay with their
+  command. Direct paths, leading environment assignments, `uv run ...
+  meridian`, and `uvx meridian` are recognized. Earlier setup such as `cd x &&`
+  is fine. That work ends and wakes the session, and that turn arms again; the
+  response stays owed until its push is sent, so a long wait uses `push_seconds`
+  even when an earlier scheduled push was replaced.
 - A certain `meridian spawn wait` has a latest wake time. An explicit
   `--timeout` is minutes and disables yielding; otherwise Meridian uses
   `--yield-after-secs` or the harness's wait-yield default (3000 seconds for
@@ -371,8 +373,9 @@ turn left running:
 - Monitors are ignored.
 
 Otherwise the warning arms after every turn, even while the push is held. Only
-the Claude mod reports running work today; Codex, OpenCode, and Pi primaries
-push as if nothing were running.
+the Claude mod reports running work today, using a bounded snapshot so a large
+task list cannot exceed the operating system's argument limit. Codex, OpenCode,
+and Pi primaries push as if nothing were running.
 
 ### `[harness.<harness>.idle]`
 

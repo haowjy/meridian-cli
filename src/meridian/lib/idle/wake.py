@@ -17,6 +17,12 @@ _LOOP_COMMANDS = frozenset({"while", "until", "for", "select"})
 _YIELD_OPTION = "--yield-after-secs"
 _TIMEOUT_OPTION = "--timeout"
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)
+_NEWLINE_BOUNDARY = "\0"
+_PUNCTUATION = f"();<>|&{_NEWLINE_BOUNDARY}"
+_SEGMENT_BOUNDARIES = frozenset(
+    {";", "&&", "||", "|", "&", "(", ")", _NEWLINE_BOUNDARY}
+)
+_REDIRECTIONS = frozenset({">", ">>", "<", ">&", "<&", "&>", ">|"})
 
 
 @dataclass(frozen=True)
@@ -46,17 +52,76 @@ class ExpectedWake:
 NO_WAKE = ExpectedWake()
 
 
+def _lex_input(command: str) -> str | None:
+    """Mark unquoted newlines and remove attached redirection fd numbers."""
+
+    if _NEWLINE_BOUNDARY in command:
+        return None
+    chars = list(command)
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(command):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "\n":
+            # Keep the newline so shlex ends a shell comment there, then emit a
+            # distinct token that quoted and escaped newlines never produce.
+            chars[index] = f"\n{_NEWLINE_BOUNDARY}"
+            continue
+        if char not in "<>" and not (char == "&" and command[index : index + 2] == "&>"):
+            continue
+
+        # POSIX recognizes an IO number only when its digits touch the
+        # redirection operator. Blank it so it cannot become a command argument.
+        start = index
+        while start > 0 and command[start - 1].isdigit():
+            start -= 1
+        if start == index:
+            continue
+        if start > 0 and not (
+            command[start - 1].isspace() or command[start - 1] in "();|&"
+        ):
+            continue
+        chars[start:index] = " " * (index - start)
+    return "".join(chars)
+
+
 def _segments(command: str) -> list[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    prepared = _lex_input(command)
+    if prepared is None:
+        return []
+    lexer = shlex.shlex(prepared, posix=True, punctuation_chars=_PUNCTUATION)
     lexer.whitespace_split = True
     segments: list[list[str]] = [[]]
+    redirection_target = False
     try:
         for token in lexer:
-            if token and all(char in "();<>|&" for char in token):
+            if redirection_target:
+                if token and all(char in _PUNCTUATION for char in token):
+                    return []
+                redirection_target = False
+            elif token in _REDIRECTIONS:
+                redirection_target = True
+            elif token in _SEGMENT_BOUNDARIES:
                 segments.append([])
+            elif token and all(char in _PUNCTUATION for char in token):
+                return []
             else:
                 segments[-1].append(token)
     except ValueError:  # unbalanced quotes: not a command we can read
+        return []
+    if redirection_target:
         return []
     return [segment for segment in segments if segment]
 

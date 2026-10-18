@@ -5,10 +5,26 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol
+
+from pydantic import BeforeValidator
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
+
+_BACKGROUND_TASK_KINDS = frozenset({"agent", "shell", "watcher", "other"})
+
+
+def _background_task_kind(value: object) -> object:
+    if isinstance(value, str) and value not in _BACKGROUND_TASK_KINDS:
+        return "other"
+    return value
+
+
+BackgroundTaskKind = Annotated[
+    Literal["agent", "shell", "watcher", "other"],
+    BeforeValidator(_background_task_kind),
+]
 
 
 @dataclass(frozen=True)
@@ -17,7 +33,7 @@ class BackgroundTask:
 
     # agent: a harness subagent or workflow. shell: a background shell (command set).
     # watcher: a standing monitor that wakes the session only on events.
-    kind: Literal["agent", "shell", "watcher", "other"]
+    kind: BackgroundTaskKind
     command: str | None = None
 
 
