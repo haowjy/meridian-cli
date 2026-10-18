@@ -11,6 +11,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Plugin API 3.0.0 removes `spawn.start` and `work.start` from `HookEventName`. (#687)
 - `git-autosync` default events: dead `spawn.start` dropped (not moved to `spawn.running`); sync timing unchanged. (#687)
 
+### Fixed
+- Hook `when.status = ["timeout"]` now matches timed-out spawns (`timed_out` was mapped to nothing, so timeout filters never fired).
+
 ## [0.10.28] - 2026-10-18
 
 ### Added

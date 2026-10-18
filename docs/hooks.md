@@ -84,7 +84,7 @@ event   = "spawn.finalized"
 | `timeout_secs` | int | no | builtin default | Max seconds before hook is killed |
 | `interval` | str | no | builtin default | Minimum time between runs, e.g. `30s`, `5m`, `2h` |
 | `require_serial` | bool | no | `false` | Block concurrent hook executions |
-| `when.status` | array[str] | no | — | Only fire when spawn exits with one of these statuses |
+| `when.status` | array[str] | no | — | Only fire when the spawn ends with one of these: `success`, `failure`, `cancelled`, `timeout` (`succeeded`, `failed`, `cancelled`, `timed_out`), or `skipped` |
 | `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
 | `exclude` | array[str] | no | — | `git-autosync` file path patterns to leave out of commits and stash around merges |
 | `options.remote` | str | no | — | Git remote URL for `git-autosync` to clone and sync |

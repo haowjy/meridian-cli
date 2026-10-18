@@ -24,7 +24,6 @@ The dispatcher calls `_run_builtin(hook, context)` for a hook whose `builtin` fi
 - **Conflict retries**: a later event retries the commit/fetch/merge workflow. If that merge conflicts while any unresolved conflict record exists for the sync root, it aborts and returns `skip_reason="conflict_detected"` without adding another record.
 - **Excluded file stashing**: files matching `exclude` patterns are stashed before merge and popped after, preventing dirty working-tree state from blocking the merge
 - **Divergence fallback**: `rev-list --left-right --count` is tried first; falls back to `git log --oneline` pair if that fails; returns `skip_reason="divergence_check_failed"` if both fail
-- **Pre-existing conflict/rebase recovery**: if `MERGE_HEAD` or a rebase directory is detected at sync start, the hook aborts the in-progress operation (when `conflict_policy="abort"`) before proceeding
 - **Default ignores**: `.git` and `**/.git` are written into `.git/info/exclude` on each run
 - **Always returns `HookResult`**: never raises. Failures emit `outcome="skipped"`, not exceptions — the dispatcher is fail-open for `observe` and `post` events
 

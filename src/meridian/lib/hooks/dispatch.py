@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 import structlog
 
+from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.lifecycle import LifecycleEvent, LifecycleHook
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.builtin.base import BuiltinHook
@@ -403,11 +404,18 @@ class HookDispatcher(LifecycleHook):
         )
 
 
+# Every terminal spawn status maps to a plugin `when.status` value.
+_PLUGIN_SPAWN_STATUS: dict[TerminalSpawnStatus, SpawnStatus] = {
+    "succeeded": "success",
+    "failed": "failure",
+    "cancelled": "cancelled",
+    "timed_out": "timeout",
+}
+
+
 def _normalize_spawn_status(value: str | None) -> SpawnStatus | None:
-    if value == "succeeded":
-        return "success"
-    if value == "failed":
-        return "failure"
+    if value in _PLUGIN_SPAWN_STATUS:
+        return _PLUGIN_SPAWN_STATUS[value]
     if value in ("success", "failure", "cancelled", "timeout", "skipped"):
         return value
     return None

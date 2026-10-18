@@ -131,8 +131,7 @@ class GitAutosync:
     name: str = "git-autosync"
     requirements: tuple[str, ...] = ("git",)
 
-    # Default events. Not `spawn.running`: a sync there would delay every spawn
-    # start, and the old `spawn.start` default never fired, so it never did.
+    # Not `spawn.running`: a sync there would delay every spawn start.
     default_events: tuple[HookEventName, ...] = (
         "spawn.finalized",
         "work.started",
