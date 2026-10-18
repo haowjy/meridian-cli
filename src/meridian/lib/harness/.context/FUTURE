@@ -14,3 +14,5 @@
 - `connections/opencode_http.py`: split `events()` into a per-response drain that
   reports its close reason and small outer policies for spawn and primary-observer
   lifetimes; the current shared loop intentionally keeps the review fold bounded.
+- `claude_inbox.py`: posting to Claude's inbox is fire-and-forget, because the socket replies with nothing. Claude can send a `peer_message_status` receipt (delivered/held/refused) to a sender's `uds:` reply address, but the format was found only in the bundle and isn't documented. If it becomes documented, bind a temporary reply socket so `spawn inject` can report "held for approval" or "refused" instead of just "posted" (`work:claude-mod-inject` D7).
+- `../claude_runtime/meridian-idle/`: a TUI primary could also show child-spawn status through `$.ui.status`, and get native `done`/`rearm` tools via `$.tool.register`. Both were proven in probe p8415. They're left out because `spawn done`/`rearm` act only on resident spawns, and a user ends a TUI primary. Add them to the existing idle mod if primaries gain a resident/completion contract (`work:claude-mod-inject` D7).

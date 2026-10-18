@@ -7,14 +7,17 @@ import errno
 import json
 import sys
 import time
-from typing import cast
+from pathlib import Path
+from typing import Never, cast
 
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
+from meridian.lib.harness.bundle import PrimaryInboxError, post_to_primary
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
 )
 from meridian.lib.state import spawn_store
+from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.streaming.control_socket import control_socket_path
 
 _INJECT_RESPONSE_TIMEOUT_SECONDS = 30.0
@@ -22,7 +25,7 @@ _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> Never:
     print(f"Error: {message}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -42,6 +45,16 @@ async def _send_and_receive(
     finally:
         writer.close()
         await writer.wait_closed()
+
+
+def _inject_primary(runtime_root: Path, record: SpawnRecord, message: str) -> None:
+    if record.status not in ACTIVE_SPAWN_STATUSES:
+        _fail(f"spawn not running: {record.id}")
+    try:
+        confirmation = post_to_primary(record, runtime_root=runtime_root, message=message)
+    except PrimaryInboxError as exc:
+        _fail(str(exc))
+    print(confirmation)
 
 
 async def inject_message(
@@ -65,6 +78,11 @@ async def inject_message(
     normalized_message = message.strip()
     if not normalized_message:
         _fail("message is required")
+
+    record = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+    if record is not None and record.kind == "primary":
+        _inject_primary(runtime_root, record, normalized_message)
+        return
 
     discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
     while True:
