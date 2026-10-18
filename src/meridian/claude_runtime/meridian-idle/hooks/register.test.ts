@@ -24,6 +24,7 @@ function host(): Host {
       },
       return: { stretch_closed: true },
       fire: { decision: 'act', reason: 'guards-passed' },
+      'human-needed': { stretch: 1, anchor: 2, push_at: START + 12_000, warn_at: START + 20_000 },
       status: [],
     },
   }
@@ -54,6 +55,7 @@ function install(on: On, h: Host) {
   on('turn.start', () => ({ turnId: 't1' }))
   on('turn.complete', () => ({ text: '' }))
   on('classic.Stop', () => ({}))
+  on('classic.PermissionRequest', () => ({ decision: { behavior: 'deny', message: 'downstream' } }))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('command.run', () => ({ text: '' }))
   return clock
@@ -70,7 +72,7 @@ function flag(args: string[], name: string): string | undefined {
 
 function expectCliContract(h: Host): void {
   expect(h.calls.every(args => args.at(-1) === '--interactive')).toBe(true)
-  for (const args of h.calls.filter(args => ['config', 'arm', 'return', 'fire'].includes(args[0] ?? ''))) {
+  for (const args of h.calls.filter(args => ['config', 'arm', 'return', 'fire', 'human-needed'].includes(args[0] ?? ''))) {
     expect(flag(args, '--harness')).toBe('claude')
     if (args[0] !== 'config') expect(flag(args, '--session')).toBe('sess-1')
   }
@@ -236,5 +238,32 @@ test('arm forwards the work the main loop left running, from its Stop list', asy
   expect(tasks[4]?.command).toHaveLength(512)
   expect(tasks[4]?.command).toBe(`${longCommand.slice(0, 510)}\n:`)
   expect(arm).toContain('--assistant-text=done')
+  expectCliContract(h)
+})
+
+test('a permission request forwards unchanged and adopts the push core releases', async ($, on) => {
+  const h = host()
+  h.reply.arm = { stretch: 1, anchor: 1, warn_at: START + 20_000, push_held: '1 agent(s) running' }
+  const clock = install(on, h)
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.turn.complete(MAIN_TURN)
+  await clock.advance(0)
+  const downstream = await $.classic.PermissionRequest({
+    stop_hook_active: false,
+    tool_name: 'Bash',
+    tool_input: { command: 'curl https://example.com' },
+    permission_suggestions: [],
+  } as never)
+  await clock.advance(10_000)
+
+  expect(downstream).toEqual({ decision: { behavior: 'deny', message: 'downstream' } })
+  expect(calls(h, 'human-needed')).toEqual([
+    ['human-needed', '--harness', 'claude', '--session', 'sess-1', '--interactive'],
+  ])
+  expect(calls(h, 'fire')).toEqual([
+    ['fire', 'push', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--anchor', '2', '--interactive'],
+  ])
   expectCliContract(h)
 })

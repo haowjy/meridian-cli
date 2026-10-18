@@ -2,9 +2,10 @@ import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude
 
 // Meridian's Claude idle sensor.
 //
-// This module senses two things and hands every decision to `meridian idle`:
-//   idle    a main-loop turn finished        -> `idle arm` with the work still running, then one timer per stage
-//   return  the user typed or sent something -> `idle return`, timers cancelled
+// This module senses three things and hands every decision to `meridian idle`:
+//   idle    a main-loop turn finished         -> `idle arm` with the work still running, then one timer per stage
+//   need    Claude needs a permission decision -> `idle human-needed`, which may release a held push
+//   return  the user typed or sent something  -> `idle return`, timers cancelled
 // Push and warn notifications belong to core; this file never sends one, reads
 // meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request.
@@ -315,6 +316,31 @@ async function armTask(
   }
 }
 
+/** Reports that the harness is blocked on a human decision and adopts any push core releases. */
+async function humanNeededTask($: EngineInterface, s: State, epoch: number): Promise<void> {
+  if (!(await gate($, s))) return
+  try {
+    const session = await $.session.id()
+    const reply = await cli($, s, ['human-needed', '--harness', HARNESS, '--session', session])
+    const problem = failure(reply)
+    if (problem !== undefined || !isRecord(reply)) {
+      note($, s, `human-needed failed: ${problem ?? 'unexpected reply'}`)
+      return
+    }
+    const stretch = asNumber(reply.stretch)
+    const anchor = asNumber(reply.anchor)
+    if (stretch === undefined || anchor === undefined || typeof reply.reason === 'string') {
+      note($, s, `human needed: no change${typeof reply.reason === 'string' ? ` (${reply.reason})` : ''}`)
+      return
+    }
+    if (s.epoch !== epoch) return
+    s.mayBeOpen = true
+    await adopt($, s, { session, stretch, anchor, at: readSchedule(reply), fired: {} }, epoch)
+  } catch (err) {
+    note($, s, `human-needed error: ${describeError(err)}`)
+  }
+}
+
 // -- return ----------------------------------------------------------------
 
 async function returnTask($: EngineInterface, s: State, sessionId: Promise<string | undefined>): Promise<void> {
@@ -440,6 +466,16 @@ export const register: Register = on => {
       const tasks = s.stopTasks
       s.stopTasks = undefined
       void enqueue(s, () => armTask($, s, epoch, e.answer, tasks))
+    }
+    return next(e)
+  })
+
+  // PermissionRequest fires for main-loop and background-subagent prompts. It is
+  // observational only: core decides whether an existing held push changes.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    if (!s.inert) {
+      const epoch = s.epoch
+      void enqueue(s, () => humanNeededTask($, s, epoch))
     }
     return next(e)
   })

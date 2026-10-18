@@ -393,10 +393,52 @@ class IdleService:
                 ttl_seconds=resolved_ttl,
                 ttl_estimated=ttl_estimated,
                 schedule=_persisted_schedule(placed),
+                push_held=wake.certain if "push" not in done else None,
                 done=done,
                 updated_at_ms=now_ms,
             )
-            return next_state, _result_for_state(next_state, push_held=wake.certain)
+            return next_state, _result_for_state(
+                next_state,
+                push_held=next_state.push_held,
+            )
+
+        return self.store.mutate(harness, session, transition)
+
+    def human_needed(
+        self,
+        *,
+        harness: str,
+        session: str,
+    ) -> ArmResult:
+        """Release a push held by running work when the harness needs the user."""
+
+        config_result = self.config_for(harness)
+        if not config_result.enabled:
+            return ArmResult(None, None, reason=config_result.reason)
+        policy = config_result.policy
+        now_ms = self._now_ms()
+
+        def transition(current: IdleState | None) -> tuple[IdleState | None, ArmResult]:
+            if current is None:
+                return None, ArmResult(None, None, reason="no-stretch")
+            if not current.stretch_open:
+                return None, _result_for_state(current, reason="stretch-closed")
+            if "push" in current.done:
+                return None, _result_for_state(current, reason="push-done")
+            if current.push_held is None:
+                return None, _result_for_state(current, reason="push-not-held")
+
+            next_state = current.model_copy(
+                update={
+                    "anchor": current.anchor + 1,
+                    "schedule": current.schedule.model_copy(
+                        update={"push_at": now_ms + policy.push_seconds * 1000}
+                    ),
+                    "push_held": None,
+                    "updated_at_ms": now_ms,
+                }
+            )
+            return next_state, _result_for_state(next_state)
 
         return self.store.mutate(harness, session, transition)
 

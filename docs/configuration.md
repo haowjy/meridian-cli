@@ -300,6 +300,12 @@ turn left running:
   `quick_turn_push_seconds`.
 - Monitors are ignored.
 
+If Claude is holding the push for running work and any tool, including one in a
+background subagent, stops for a permission decision, the human is needed now.
+That signal releases the hold and schedules the push after `push_seconds`; it
+does not move or restore the cache warning. A permission prompt does nothing
+when no push is currently held.
+
 Otherwise the warning arms after every turn, even while the push is held. Only
 the Claude mod reports running work today, using a bounded snapshot so a large
 task list cannot exceed the operating system's argument limit. Codex, OpenCode,
