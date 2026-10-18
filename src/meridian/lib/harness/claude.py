@@ -38,8 +38,12 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
-from meridian.lib.harness.claude_boundary import read_observations
+from meridian.lib.harness.claude_boundary import (
+    claude_boundary_journal_path,
+    read_observations,
+)
 from meridian.lib.harness.claude_idle import detect_ttl
+from meridian.lib.harness.claude_inbox import post_primary_message
 from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
     ensure_claude_session_accessible,
@@ -89,7 +93,6 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
-from meridian.lib.state.paths import spawn_log_subpath
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
 
@@ -350,8 +353,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
         return HarnessPrelaunchState(env_overrides={
             "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(
-                (runtime_root / spawn_log_subpath(spawn_id)
-                 / "claude-session-boundary.jsonl").resolve()
+                claude_boundary_journal_path(runtime_root, spawn_id)
             ),
             "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
             "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON": sys.executable,
@@ -559,6 +561,7 @@ register_harness_bundle(
             subprocess_cli_args=project_claude_spec_to_cli_args,
         ),
         semantics=CLAUDE_SEMANTICS,
+        primary_inbox=post_primary_message,
         detect_ttl=detect_ttl,
     )
 )

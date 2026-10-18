@@ -27,15 +27,19 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `meridian spawn cancel ID` | Cancel a running spawn |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
-| `meridian spawn inject ID --message "text"` | Inject a message into a running streaming spawn |
+| `meridian spawn inject ID --message "text"` | Post a message to a running streaming spawn or supported primary inbox |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children ID` | List direct child spawns |
 | `meridian spawn files ID` | List files changed by a spawn |
 
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
-`spawn inject` requires a streaming spawn control endpoint; a native primary TUI
-does not currently expose that endpoint ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
+`spawn inject` uses the control endpoint for spawned sessions. For a live Claude
+primary, it posts to Claude Code's session inbox; the command confirms only that
+the message was posted, not delivered. Claude may hold the message for human
+approval when that session bypasses permission prompts. Other primary harnesses
+fail immediately because they do not yet expose an inject route
+([#498](https://github.com/haowjy/meridian-cli/issues/498)).
 
 Common `spawn` flags:
 

@@ -126,6 +126,18 @@ evidence only.
 The facts hook observes owned live session IDs. There is no artifact-identity or
 filesystem-discovery fallback.
 
+### Primary inbox injection
+
+`HarnessBundle.primary_inbox` is the optional mechanism port for posting to a
+live primary TUI that has no `SpawnManager` connection. The CLI selects it only
+for `kind == "primary"`; spawned sessions continue through their serialized
+control socket. Claude resolves the latest SessionStart-published inbox socket
+and record epoch for the primary's recorded worker PID, then refuses the post
+unless that PID is still a live, non-zombie process born by the recorded epoch.
+This prevents a stale primary row from posting to an unrelated Claude process
+that reused the PID. Claude owns the native wire protocol. A post has no delivery
+acknowledgement and must not be described as delivered.
+
 ### `HarnessContract` as Inspectable Surface
 
 Every adapter declares a `HarnessContract` — a frozen Pydantic model that makes
@@ -381,6 +393,9 @@ a V1 DB in place and keeps the V1 tables, a V1 *fallback* after a V2-first insta
 needs a separate data root (`OPENCODE_DB`/`XDG_DATA_HOME`).
 
 ### Cursor: Subprocess-Only, Read-Only stdout
+
+Cursor is unmaintained. Keep it building and its existing tests passing; don't extend it
+or add Cursor-specific parity work.
 
 Cursor is a single-turn, subprocess-only harness. `cursor agent <prompt>` streams
 NDJSON events to stdout then exits — there is no stdin injection, no session resume,

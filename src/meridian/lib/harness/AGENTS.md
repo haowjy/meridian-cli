@@ -229,6 +229,9 @@ bundled extension, `../../pi_runtime/extensions/meridian-idle/`; spawned Pi RPC
 sessions do not. Those runtimes translate native events into the same core idle
 contract rather than owning policy.
 
+Primary TUI injection routes through `HarnessBundle.primary_inbox`; see the
+[primary inbox contract](.context/CONTEXT.md#primary-inbox-injection).
+
 ## Adding a Harness
 
 Full guide: [`docs/harness-integration.md`](../../../../docs/harness-integration.md) —

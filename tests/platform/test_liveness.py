@@ -60,6 +60,7 @@ def test_process_liveness_treats_zombie_as_exited(monkeypatch) -> None:
 
     assert liveness.is_process_alive(123) is False
     assert liveness.is_process_alive_with_birth(123, 100.0) is False
+    assert liveness.is_process_alive_born_by(123, 100.0) is False
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX zombie semantics")
@@ -90,6 +91,7 @@ def test_is_process_alive_returns_true_on_access_denied(monkeypatch) -> None:
     monkeypatch.setattr(liveness.psutil, "Process", _raise_access_denied)
 
     assert liveness.is_process_alive(123) is True
+    assert liveness.is_process_alive_born_by(123, 100.0) is False
 def test_is_spawn_genuinely_active_uses_runner_pid_liveness(tmp_path, monkeypatch) -> None:
     record = SimpleNamespace(status="running", runner_pid=4321)
     monkeypatch.setattr("meridian.lib.state.spawn_store.get_spawn", lambda *_args: record)

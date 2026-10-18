@@ -13,6 +13,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Claude primary no longer pushes "waiting on you" while subagents, workflows or `meridian spawn` shells run; the turn they wake pushes instead, timed from your last prompt. Other background shells delay the push to `quick_turn_push_seconds`; monitors ignored. Cache warning arms every turn, even with the push held, except under a `spawn wait` that yields before the cache goes cold.
+
+## [0.10.22] - 2026-10-18
+
+### Added
+- `meridian spawn inject` can post to a live Claude primary through Claude Code's
+  session inbox socket; unsupported primary harnesses now fail immediately instead
+  of waiting for a child control endpoint. Stale records cannot post to a process
+  that reused the Claude PID. (#665)
+
+### Changed
+- Cursor harness unmaintained. Still ships; no longer tested or extended.
+
+### Fixed
 - Managed-bash ping retry coverage waits for the failed notification claim to be durably released, eliminating a timing-dependent CI failure. (#662)
 
 ## [0.10.21] - 2026-10-17
