@@ -14,6 +14,7 @@ from meridian.lib.idle.wake import ExpectedWake, SpawnCommand, expected_wake, sp
             "/usr/bin/meridian --format=json spawn wait --yield-after-secs=90",
             SpawnCommand(True, 90.0),
         ),
+        ("meridian --harness claude spawn wait", SpawnCommand(waits=True)),
         ('meridian report create "spawn later"', None),
         ("npm run dev", None),
         ("echo 'unterminated", None),
@@ -23,6 +24,7 @@ from meridian.lib.idle.wake import ExpectedWake, SpawnCommand, expected_wake, sp
         "wrapped-wait",
         "yield",
         "global-options",
+        "shared-global-options",
         "spawn-in-text",
         "other",
         "unparseable",
@@ -53,6 +55,9 @@ def test_spawn_command_reads_meridian_grammar_through_wrappers(
             ExpectedWake(certain="meridian spawns running", by_ms=3_001_000),
         ),
         ("meridian spawn wait p1\nnpm run dev", ExpectedWake(maybe=True)),
+        ("meridian spawn wait # don't stop\nnpm run dev", ExpectedWake(maybe=True)),
+        ('meridian spawn wait # say "hi\nnpm run dev', ExpectedWake(maybe=True)),
+        ("meridian spawn wait # C:\\\nnpm run dev", ExpectedWake(maybe=True)),
         (
             "meridian spawn -a coder -p hi\ntail -f /tmp/log",
             ExpectedWake(maybe=True),
@@ -95,6 +100,10 @@ def test_spawn_command_reads_meridian_grammar_through_wrappers(
         ),
         (
             "meridian spawn wait --timeout 120 --yield-after-secs 60",
+            ExpectedWake(certain="meridian spawns running", by_ms=7_201_000),
+        ),
+        (
+            "meridian spawn wait p1 \\\n--yield-after-secs 7200",
             ExpectedWake(certain="meridian spawns running", by_ms=7_201_000),
         ),
     ],

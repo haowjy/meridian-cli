@@ -9,10 +9,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from meridian.lib.cli_args import TOP_LEVEL_VALUE_FLAGS
 from meridian.lib.harness.idle_types import BackgroundTask
 
-# Meridian options that may precede a subcommand and take a value.
-_GLOBAL_VALUE_OPTIONS = frozenset({"-C", "--directory", "--config", "--format", "--mode"})
 _LOOP_COMMANDS = frozenset({"while", "until", "for", "select"})
 _YIELD_OPTION = "--yield-after-secs"
 _TIMEOUT_OPTION = "--timeout"
@@ -53,47 +52,78 @@ NO_WAKE = ExpectedWake()
 
 
 def _lex_input(command: str) -> str | None:
-    """Mark unquoted newlines and remove attached redirection fd numbers."""
+    """Mark command newlines, strip comments, and remove redirection fd numbers."""
 
     if _NEWLINE_BOUNDARY in command:
         return None
     chars = list(command)
     quote: str | None = None
     escaped = False
-    for index, char in enumerate(command):
+    word_started = False
+    index = 0
+    while index < len(command):
+        char = command[index]
         if escaped:
             escaped = False
+            if char != "\n":
+                word_started = True
+            index += 1
             continue
         if char == "\\" and quote != "'":
+            if command[index + 1 : index + 2] == "\n":
+                # The shell removes an unquoted backslash-newline pair before
+                # tokenization; it neither ends the command nor starts a word.
+                chars[index : index + 2] = "  "
+                index += 2
+                continue
             escaped = True
+            index += 1
             continue
         if quote is not None:
             if char == quote:
                 quote = None
+            index += 1
             continue
         if char in {"'", '"'}:
             quote = char
+            word_started = True
+            index += 1
+            continue
+        if char == "#" and not word_started:
+            # Quotes and backslashes inside a shell comment are inert. Blank
+            # them so shlex cannot mistake them for live syntax.
+            while index < len(command) and command[index] != "\n":
+                chars[index] = " "
+                index += 1
             continue
         if char == "\n":
             # Keep the newline so shlex ends a shell comment there, then emit a
             # distinct token that quoted and escaped newlines never produce.
             chars[index] = f"\n{_NEWLINE_BOUNDARY}"
+            word_started = False
+            index += 1
             continue
-        if char not in "<>" and not (char == "&" and command[index : index + 2] == "&>"):
+        if char.isspace():
+            word_started = False
+            index += 1
+            continue
+        if char not in "();<>|&":
+            word_started = True
+            index += 1
             continue
 
-        # POSIX recognizes an IO number only when its digits touch the
-        # redirection operator. Blank it so it cannot become a command argument.
-        start = index
-        while start > 0 and command[start - 1].isdigit():
-            start -= 1
-        if start == index:
-            continue
-        if start > 0 and not (
-            command[start - 1].isspace() or command[start - 1] in "();|&"
-        ):
-            continue
-        chars[start:index] = " " * (index - start)
+        if char in "<>" or (char == "&" and command[index : index + 2] == "&>"):
+            # POSIX recognizes an IO number only when its digits touch the
+            # redirection operator. Blank it so it cannot become a command argument.
+            start = index
+            while start > 0 and command[start - 1].isdigit():
+                start -= 1
+            if start < index and (
+                start == 0 or command[start - 1].isspace() or command[start - 1] in "();|&"
+            ):
+                chars[start:index] = " " * (index - start)
+        word_started = False
+        index += 1
     return "".join(chars)
 
 
@@ -188,7 +218,7 @@ def _spawn_after(tokens: list[str], start: int) -> SpawnCommand | None:
     while index < len(tokens) and tokens[index].startswith("-"):
         option = tokens[index]
         name, has_equals, _value = option.partition("=")
-        if name in _GLOBAL_VALUE_OPTIONS and not has_equals:
+        if name in TOP_LEVEL_VALUE_FLAGS and not has_equals:
             index += 2
             if index > len(tokens):
                 return None

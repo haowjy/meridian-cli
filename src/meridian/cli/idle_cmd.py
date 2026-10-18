@@ -195,25 +195,6 @@ def cmd_idle_return(
     )
 
 
-@idle_app.command(name="human-needed")
-def cmd_idle_human_needed(
-    *,
-    harness: HarnessOption = None,
-    session: SessionOption,
-    interactive: InteractiveOption = False,
-) -> None:
-    """Report that the harness is waiting for a human decision."""
-
-    _json(
-        harness,
-        interactive,
-        lambda service, normalized: service.human_needed(
-            harness=normalized,
-            session=session,
-        ),
-    )
-
-
 @idle_app.command(name="fire")
 def cmd_idle_fire(
     stage: StageOption,

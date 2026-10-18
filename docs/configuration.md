@@ -355,8 +355,8 @@ turn left running:
   its final command segment is a foreground `meridian spawn` creation or
   `meridian spawn wait`, with no `while`, `until`, `for`, or `select` segment.
   Semicolons, pipelines, background operators, subshell parentheses, and
-  unquoted newlines separate command segments; redirections stay with their
-  command. Direct paths, leading environment assignments, `uv run ...
+  unescaped, unquoted newlines separate command segments; redirections stay
+  with their command. Direct paths, leading environment assignments, `uv run ...
   meridian`, and `uvx meridian` are recognized. Earlier setup such as `cd x &&`
   is fine. That work ends and wakes the session, and that turn arms again; the
   response stays owed until its push is sent, so a long wait uses `push_seconds`
@@ -371,12 +371,6 @@ turn left running:
   background shell or task may never end. They only delay the push to at least
   `quick_turn_push_seconds`.
 - Monitors are ignored.
-
-If Claude is holding the push for running work and any tool, including one in a
-background subagent, stops for a permission decision, the human is needed now.
-That signal releases the hold and schedules the push after `push_seconds`; it
-does not move or restore the cache warning. A permission prompt does nothing
-when no push is currently held.
 
 Otherwise the warning arms after every turn, even while the push is held. Only
 the Claude mod reports running work today, using a bounded snapshot so a large

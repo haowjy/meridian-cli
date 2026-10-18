@@ -39,7 +39,7 @@ class IdleState(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    v: Literal[3] = 3
+    v: Literal[2] = 2
     harness: str
     session: str
     stretch: int = Field(ge=1)
@@ -55,8 +55,6 @@ class IdleState(BaseModel):
     ttl_seconds: int | None = Field(default=None, gt=0)
     ttl_estimated: bool = True
     schedule: IdleSchedule
-    # Non-null only when certain running work suppressed an otherwise-owed push.
-    push_held: str | None = None
     done: dict[Stage, str] = Field(default_factory=_empty_done)
     updated_at_ms: int
 
