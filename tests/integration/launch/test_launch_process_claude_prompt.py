@@ -18,6 +18,7 @@ import pytest
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
 from meridian.lib.launch.constants import OUTPUT_FILENAME
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import PrimaryProcessResult, run_harness_process
@@ -30,6 +31,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.state.spawn_store import list_spawns
+from tests.support.fixtures import write_agent
 from tests.support.launch import (
     assert_task_cwd_instruction,
     build_launch_context,
@@ -191,6 +193,83 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         },
     }
     assert outcome.exit_code == 0
+
+
+@pytest.mark.slow
+def test_claude_primary_prompt_file_holds_each_loaded_skill_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The file Claude reads as its system prompt carries every loaded skill, once."""
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    skills = (
+        LoadedSkillEntry(name="dev-principles", skill_type="principle", body="Prefer deletion."),
+        LoadedSkillEntry(name="verification", skill_type="reference", body="Check each edge."),
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4-5",
+        harness=HarnessId.CLAUDE,
+        skills_loaded=skills,
+    )
+    write_agent(
+        tmp_path,
+        name="solo-dev",
+        model="claude-sonnet-4-5",
+        skills=tuple(skill.name for skill in skills),
+    )
+    _write_minimal_mars_config(tmp_path)
+    harness_registry = get_default_harness_registry()
+    config = load_config(tmp_path)
+    launch_context = build_launch_context(
+        spawn_id="dry-run-primary-skills",
+        request=SpawnRequest(
+            prompt="primary prompt",
+            prompt_is_composed=False,
+            model="claude-sonnet-4-5",
+            harness=HarnessId.CLAUDE.value,
+            agent="solo-dev",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.PRIMARY,
+            config_snapshot=config.model_dump(mode="json", exclude_none=True),
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=harness_registry,
+        dry_run=True,
+    )
+    captured: dict[str, str] = {}
+
+    def fake_run_primary_process_with_capture(
+        command: tuple[str, ...],
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        process_launcher: Any,
+        on_child_started: Any,
+        launcher_diagnostics_path: Any,
+    ) -> PrimaryProcessResult:
+        _ = cwd, env, output_log_path, process_launcher, launcher_diagnostics_path
+        command = tuple(command)
+        prompt_file = Path(command[command.index("--append-system-prompt-file") + 1])
+        captured["prompt_file_text"] = prompt_file.read_text(encoding="utf-8")
+        on_child_started(ProcessIdentity(222, 100.0, 222))
+        return PrimaryProcessResult(0, 222, None)
+
+    run_harness_process(
+        launch_context,
+        harness_registry,
+        prepared=launch_context.prepared,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+    )
+
+    prompt_file_text = captured["prompt_file_text"]
+    for skill in skills:
+        assert prompt_file_text.count(f"# Skill: /{skill.name}") == 1
+        assert prompt_file_text.count(skill.body) == 1
 
 
 @pytest.mark.slow

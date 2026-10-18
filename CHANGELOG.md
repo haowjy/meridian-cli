@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Managed-bash ping retry coverage waits for the failed notification claim to be durably released, eliminating a timing-dependent CI failure. (#662)
+- Claude agents get their loaded skills again: `system-prompt.md`, the file Claude reads, had none. Every harness now carries loaded skills in the normal system prompt position, after the agent profile. (#661)
 
 ## [0.10.21] - 2026-10-17
 

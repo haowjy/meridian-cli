@@ -92,7 +92,6 @@ class HarnessCapabilities(BaseModel):
     supports_stdin_prompt: bool = False
     supports_session_resume: bool = False
     supports_session_fork: bool = False
-    supports_native_skills: bool = False
     supports_native_agents: bool = False
     supports_primary_launch: bool = False
     supports_named_primary_resume: bool = False
@@ -175,7 +174,6 @@ class RunPromptPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    skill_injection_mode: Literal["none", "append-system-prompt"] = "none"
     spawn_usage_contract_variants: SpawnUsageContractVariants = GENERIC_SPAWN_USAGE_VARIANTS
 
 
