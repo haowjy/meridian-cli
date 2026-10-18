@@ -10,7 +10,7 @@ The dispatcher calls `_run_builtin(hook, context)` when it encounters a hook wit
 
 - `base.py` — `BuiltinHook` protocol: `name`, `requirements`, `default_events`, `default_interval`, `options_model` (Pydantic; `schema.py` validates a row's `options` with it), `identity_options` (options that name an unnamed row), `check_requirements()`, `execute(context, config)`. The builtin object is the only owner of this metadata.
 - `git_autosync.py` — `GIT_AUTOSYNC` singleton: commit-first merge-based sync (add → commit → fetch → merge → push)
-- `notify.py` — `NOTIFY`: delivers a notification event's `HookContext.notification` through `lib/notify`'s `send()` to the channels its row's `options.channels` names (unset: `send`'s defaults), with an optional `options.priority`. One result per route: failure names each failed transport in `error`; a route that delivered nothing is skipped (`disabled`) with the backends' warnings in `error`. Unnamed `notify` rows are all named `notify` (`identity_options = ()`).
+- `notify.py` — `NOTIFY`: delivers a notification event's `HookContext.notification` through `lib/notify`'s `send()` to the channels its row's `options.channels` names (unset: `send`'s defaults), with an optional `options.priority`. One result per route: `transports` names successful backends, partial delivery goes in `warning`, failure names each failed transport in `error`, and a route that delivered nothing is skipped (`disabled`). Unnamed `notify` rows are all named `notify` (`identity_options = ()`).
 - `autosync_store.py` — sole owner of the `.meridian/autosync/` file layout and its sync-root transaction lock: conflict metadata JSON and sync state JSON.
 
 ## GitAutosync Behavior

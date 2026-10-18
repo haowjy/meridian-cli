@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,11 +32,19 @@ def _runtime_root(project_root: Path) -> Path | None:
 
 def _route_result(result: HookResult) -> SendResult:
     if result.skipped:
-        # A route that chose not to deliver; its error says why, when it knows.
-        return SendResult(channel=result.hook_name, status="none", warning=result.error)
+        return SendResult(
+            channel=result.hook_name,
+            status="none",
+            warning=result.warning or result.error,
+            transports=result.transports,
+        )
     if result.success:
-        # Delivered somewhere; an error here is a transport the route also named that failed.
-        return SendResult(channel=result.hook_name, status="sent", warning=result.error)
+        return SendResult(
+            channel=result.hook_name,
+            status="sent",
+            warning=result.warning or result.error,
+            transports=result.transports,
+        )
     return SendResult(
         channel=result.hook_name,
         status="failed",
@@ -64,7 +73,7 @@ def emit(
 ) -> SendReport:
     """Fire the notification's hook event and report what its routes delivered."""
 
-    from meridian.lib.hooks.config import HookConfigError, default_hooks_config
+    from meridian.lib.hooks.config import load_hooks_config_report
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.hooks.registry import HookRegistry
     from meridian.lib.hooks.types import HookContext
@@ -81,25 +90,29 @@ def emit(
         work_id=notification.label.get("work_id"),
         notification=notification,
     )
-    try:
-        dispatcher = HookDispatcher(project_root, runtime_root, env=env)
-    except HookConfigError as exc:
+    loaded_hooks = load_hooks_config_report(project_root)
+    fallback_warning: str | None = None
+    if loaded_hooks.errors:
+        fallback_warning = "dropped invalid hook rows: " + "; ".join(loaded_hooks.errors)
         logger.warning(
             "notification_hook_config_invalid",
             hook_event=event,
-            error=str(exc),
+            error=fallback_warning,
         )
-        dispatcher = HookDispatcher(
+    dispatcher = HookDispatcher(
+        project_root,
+        runtime_root,
+        env=env,
+        registry=HookRegistry(
             project_root,
-            runtime_root,
-            env=env,
-            registry=HookRegistry(
-                project_root,
-                hooks_config=default_hooks_config(),
-            ),
-        )
+            hooks_config=loaded_hooks.config,
+        ),
+    )
 
-    return report_from_hooks(event, dispatcher.fire(context))
+    report = report_from_hooks(event, dispatcher.fire(context))
+    if fallback_warning is not None:
+        report = replace(report, warnings=(*report.warnings, fallback_warning))
+    return report
 
 
 __all__ = ["emit", "report_from_hooks"]

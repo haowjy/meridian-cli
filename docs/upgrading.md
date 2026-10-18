@@ -14,8 +14,9 @@ With no hook config, delivery is unchanged.
   `--title` is gone; replace `meridian notify "msg" --title T` with
   `meridian notify T "msg"`. `--no-email`, `--priority` and `--json` are
   unchanged, but the results list one entry per route (the default route is
-  `notify`) rather than one per transport; a failed route's error still names
-  each failed transport. The session label moves from the report to the
+  `notify`) rather than one per transport. Sent text names both, such as
+  `notify (ntfy)`, and each JSON result has a `transports` list; a failed
+  route's error still names each failed transport. The session label moves from the report to the
   top-level `label` key. For compatibility with the former one-argument form,
   a multi-line first argument uses its first non-empty line as the title and
   prepends the remaining lines to the body. Repeated attachment paths that
@@ -39,14 +40,16 @@ With no hook config, delivery is unchanged.
   `default` source marks Meridian's own routes. Unnamed `git-autosync` rows are
   named from `remote`/`path` only, so a row that also sets `conflict_policy`
   gets a new name. Unknown `options` keys and unknown notification channel
-  names on a builtin row are config errors. If configured hook rows fail to
-  load during notification emission, Meridian warns and uses the default
-  routes so an idle notice still has a delivery path; hook inspection still
-  reports the error.
+  names on a builtin row are config errors. The `notify` builtin is rejected
+  on non-notification events. During notification emission, invalid rows are
+  dropped and named in the result warning; valid rows, including silencing and
+  command rows, remain, and the ordinary default-route overrides still apply.
+  Hook inspection exits non-zero and names every invalid row.
 - **ntfy.** The `Tags` header is now the event name; update filters that
   matched the old `kind` values. When ntfy accepts the text message but rejects
-  an attachment, the route is sent with a warning naming the file; do not retry
-  the already delivered text.
+  attachments, it attempts the rest and the route is sent with a warning naming
+  every failed file; do not retry the already delivered text. Email remains
+  all-or-nothing: one rejected attachment fails that email and its text.
 - **Plugin API 2.0.0.** `HookContext.runtime_root` may be `None`;
   `HookContext.notification` is new; the hook payload `schema_version` is `2`
   and carries a `notification` object on notification events. See

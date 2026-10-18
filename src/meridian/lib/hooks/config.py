@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.config.layers import iter_config_layers
-from meridian.lib.hooks.schema import hooks_from_spec, normalize_hooks_array
+from meridian.lib.hooks.schema import hook_row_values, hooks_from_spec, normalize_hook_row
 from meridian.lib.hooks.types import NOTIFICATION_EVENTS, Hook, HookEventName
 
 if TYPE_CHECKING:
@@ -37,29 +37,43 @@ class HookConfigError(ValueError):
     """A syntactically readable config contains invalid hook rows."""
 
 
-def default_hooks_config() -> HooksConfig:
-    """Return Meridian's built-in lowest-precedence hook layer."""
+@dataclass(frozen=True)
+class HookConfigLoad:
+    """Valid hook rows plus every invalid row found while loading them."""
 
-    return HooksConfig(hooks=_DEFAULT_HOOKS)
+    config: HooksConfig
+    errors: tuple[str, ...] = ()
 
 
-def _hooks_from_payload(payload: dict[str, object], *, source: str) -> tuple[Hook, ...]:
+def _hooks_from_payload(
+    payload: dict[str, object], *, source: str
+) -> tuple[tuple[Hook, ...], tuple[str, ...]]:
     hooks: list[Hook] = []
+    errors: list[str] = []
 
     raw_hooks = payload.get("hooks")
     if raw_hooks is None:
-        return tuple(hooks)
+        return tuple(hooks), ()
 
-    specs = normalize_hooks_array(raw_hooks, source=f"{source}.hooks")
-    for index, spec in enumerate(specs, start=1):
-        hooks.extend(
-            hooks_from_spec(
-                spec,
-                source=source,
-                row_source=f"{source}.hooks[{index}]",
+    try:
+        rows = hook_row_values(raw_hooks, source=f"{source}.hooks")
+    except ValueError as exc:
+        return (), (str(exc),)
+
+    for index, raw_row in enumerate(rows, start=1):
+        row_source = f"{source}.hooks[{index}]"
+        try:
+            spec = normalize_hook_row(raw_row, source=row_source)
+            hooks.extend(
+                hooks_from_spec(
+                    spec,
+                    source=source,
+                    row_source=row_source,
+                )
             )
-        )
-    return tuple(hooks)
+        except ValueError as exc:
+            errors.append(str(exc))
+    return tuple(hooks), tuple(errors)
 
 
 def _apply_name_overrides(hooks: tuple[Hook, ...]) -> tuple[Hook, ...]:
@@ -73,6 +87,31 @@ def _apply_name_overrides(hooks: tuple[Hook, ...]) -> tuple[Hook, ...]:
     return tuple(effective.values())
 
 
+def load_hooks_config_report(
+    project_root: Path,
+    *,
+    user_config: Path | None = None,
+    authority: RuntimeAuthoritySnapshot | None = None,
+) -> HookConfigLoad:
+    """Load valid rows with precedence and report every invalid row."""
+
+    hooks: list[Hook] = list(_DEFAULT_HOOKS)
+    errors: list[str] = []
+    for layer in iter_config_layers(
+        project_root,
+        authority=authority,
+        user_config=user_config,
+    ):
+        layer_hooks, layer_errors = _hooks_from_payload(layer.payload, source=layer.name)
+        hooks.extend(layer_hooks)
+        errors.extend(layer_errors)
+
+    return HookConfigLoad(
+        config=HooksConfig(hooks=_apply_name_overrides(tuple(hooks))),
+        errors=tuple(errors),
+    )
+
+
 def load_hooks_config(
     project_root: Path,
     *,
@@ -81,15 +120,14 @@ def load_hooks_config(
 ) -> HooksConfig:
     """Load hook config with precedence: default < user < project < local."""
 
-    hooks: list[Hook] = list(_DEFAULT_HOOKS)
-    for layer in iter_config_layers(
+    report = load_hooks_config_report(
         project_root,
-        authority=authority,
         user_config=user_config,
-    ):
-        try:
-            hooks.extend(_hooks_from_payload(layer.payload, source=layer.name))
-        except ValueError as exc:
-            raise HookConfigError(str(exc)) from None
-
-    return HooksConfig(hooks=_apply_name_overrides(tuple(hooks)))
+        authority=authority,
+    )
+    if len(report.errors) == 1:
+        raise HookConfigError(report.errors[0])
+    if report.errors:
+        details = "\n".join(f"- {error}" for error in report.errors)
+        raise HookConfigError(f"Invalid hook rows:\n{details}")
+    return report.config

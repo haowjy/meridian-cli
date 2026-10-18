@@ -47,11 +47,10 @@ class SendReport:
 
 def _backends(notification: Notification, cfg: NotifyConfig, channels: Sequence[str]) -> list[str]:
     aliases = {"push": cfg.push_backend, "email": cfg.email_backend}
-    names = (channel.strip().lower() for channel in channels)
     return [
-        aliases.get(name, name).strip().lower()
-        for name in names
-        if name != "email" or notification.email
+        aliases.get(channel, channel)
+        for channel in channels
+        if channel != "email" or notification.email
     ]
 
 

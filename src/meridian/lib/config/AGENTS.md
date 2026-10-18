@@ -42,15 +42,13 @@ and `lib/catalog/`.
 against `MeridianConfig`, then merges user → project → local → env.
 `load_config_with_sources()` retains typed dynamic sections and field provenance for
 inspection; `load_config()` returns its final `MeridianConfig`. Do not add implicit
-Pydantic settings sources (no `pydantic-settings`) or ambient loader state.
-`load_config_without_hooks()` is reserved for the built-in notification route,
-whose registry has already validated hook rows. It keeps `[notify]` precedence
-without validating those rows twice; after `emit` catches a hook-row error, that
-separation lets the default route still load its transport settings.
+Pydantic settings sources (no `pydantic-settings`) or ambient loader state. Hook
+rows are carried unvalidated for inspection; `lib/hooks/config.py` is their one
+validation and runtime-loading boundary.
 
-**The models are the only validation path.** Every config shape is a Pydantic model
+**The models are the only validation path.** Every operational config shape is a Pydantic model
 (`models.py`, `harness_models.py`, `history_models.py`) rooted at `MeridianConfig`,
-including `[env]` and the dynamic sections' descriptor models. Field types and
+including `[env]` and the non-hook dynamic sections' descriptor models. Field types and
 validators carry the constraints. Unknown-key warnings come from one
 `extra="allow"` validation pass and its `model_extra` values, with Pydantic owning
 the traversal; never walk annotations separately. `config_silences_extras` is the

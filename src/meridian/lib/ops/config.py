@@ -51,6 +51,7 @@ from meridian.lib.state.project_identity import (
     resolve_project_identity,
 )
 from meridian.lib.state.user_paths import get_project_home, get_user_home
+from meridian.lib.utils.json_shapes import is_json_object, is_object_sequence
 
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config here; run 'meridian init'"
 logger = structlog.get_logger(__name__)
@@ -427,11 +428,26 @@ def _dynamic_config_values(surface: ConfigSurface) -> list[ConfigResolvedValue]:
 
     if resolved.hooks is not None:
         rendered_hook_value: object
-        if not resolved.hooks:
+        if is_object_sequence(resolved.hooks) and not resolved.hooks:
             rendered_hook_value = "[] (suppressed)"
+        elif is_object_sequence(resolved.hooks):
+            names: list[str] = []
+            for raw_hook in resolved.hooks:
+                if not is_json_object(raw_hook):
+                    names.append("hook")
+                    continue
+                display_name = next(
+                    (
+                        value
+                        for key in ("name", "event", "builtin")
+                        if isinstance((value := raw_hook.get(key)), str) and value
+                    ),
+                    "hook",
+                )
+                names.append(display_name)
+            rendered_hook_value = f"{len(resolved.hooks)} hooks ({', '.join(names)})"
         else:
-            names = ", ".join(spec.display_name for spec in resolved.hooks)
-            rendered_hook_value = f"{len(resolved.hooks)} hooks ({names})"
+            rendered_hook_value = "configured (run `meridian hooks check`)"
         values.append(
             ConfigResolvedValue(
                 key="hooks",

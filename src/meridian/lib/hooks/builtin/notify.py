@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints, field_validator
 
@@ -62,39 +62,42 @@ class NotifyHook:
     def execute(self, context: HookContext, config: Hook) -> HookResult:
         from dataclasses import replace
 
-        from meridian.lib.config.loader import load_config_without_hooks
+        from meridian.lib.config.loader import load_config
         from meridian.lib.notify.service import send
 
         start = time.monotonic()
         notification = context.notification
         if notification is None:
             return self._skipped(context, config, "no_notification")
-        options = NotifyOptions.model_validate(config.options)
-        if options.priority is not None:
-            notification = replace(notification, priority=options.priority)
+        priority = cast("int | None", config.options.get("priority"))
+        channels = cast("tuple[str, ...] | None", config.options.get("channels"))
+        if priority is not None:
+            notification = replace(notification, priority=priority)
         report = send(
             notification,
-            load_config_without_hooks(Path(context.project_root)).notify,
+            load_config(Path(context.project_root)).notify,
             event=context.event_name,
-            channels=options.channels,
+            channels=channels,
         )
         if report.all_none:
             skipped = self._skipped(context, config, "disabled")
-            return replace(skipped, error="; ".join(report.warnings) or None)
+            return replace(skipped, warning="; ".join(report.warnings) or None)
         diagnostics = list(report.warnings)
         diagnostics.extend(
             f"{result.channel}: {result.error or 'delivery failed'}"
             for result in report.results
             if result.status == "failed"
         )
+        diagnostic = "; ".join(diagnostics) or None
         return HookResult(
             hook_name=config.name,
             event=context.event_name,
             outcome="success" if report.ok else "failure",
             success=report.ok,
-            error="; ".join(diagnostics) or None,
+            warning=diagnostic if report.ok else None,
+            error=None if report.ok else diagnostic,
             duration_ms=int((time.monotonic() - start) * 1000),
-            stdout=", ".join(result.channel for result in report.results if result.ok) or None,
+            transports=tuple(result.channel for result in report.results if result.ok),
         )
 
     def _skipped(self, context: HookContext, config: Hook, reason: str) -> HookResult:

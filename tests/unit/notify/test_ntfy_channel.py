@@ -47,14 +47,25 @@ def test_ntfy_sends_the_text_then_one_message_per_file(tmp_path: Path) -> None:
     assert {request.get_header("Title") for request in requests} == {"Pick auth storage"}
 
 
-def test_ntfy_reports_text_as_sent_when_a_server_rejects_a_file(tmp_path: Path) -> None:
-    (tmp_path / "big.pdf").write_bytes(b"%PDF")
+def test_ntfy_reports_every_failed_file_after_sending_the_rest(tmp_path: Path) -> None:
+    (tmp_path / "first.pdf").write_bytes(b"%PDF-1")
+    (tmp_path / "kept.txt").write_bytes(b"kept")
+    (tmp_path / "last.pdf").write_bytes(b"%PDF-2")
+    attempted: list[bytes] = []
 
-    result = NtfyChannel(transport=lambda request: 413 if request.data == b"%PDF" else 200).send(
-        _notice(tmp_path / "big.pdf"), _CONFIG, event="notify.manual"
+    def transport(request: Request) -> int:
+        data = request.data or b""
+        attempted.append(data)
+        return 413 if data.startswith(b"%PDF") else 200
+
+    result = NtfyChannel(transport=transport).send(
+        _notice(tmp_path / "first.pdf", tmp_path / "kept.txt", tmp_path / "last.pdf"),
+        _CONFIG,
+        event="notify.manual",
     )
 
     assert (result.status, result.warning) == (
         "sent",
-        "big.pdf: ntfy returned HTTP 413",
+        "first.pdf: ntfy returned HTTP 413; last.pdf: ntfy returned HTTP 413",
     )
+    assert attempted == [b"Tradeoffs attached", b"%PDF-1", b"kept", b"%PDF-2"]

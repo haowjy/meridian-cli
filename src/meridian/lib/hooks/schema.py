@@ -13,13 +13,12 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
-    RootModel,
     StringConstraints,
     ValidationError,
     field_validator,
 )
 
-from meridian.lib.config.errors import config_validation_error
+from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS, BuiltinHook
 from meridian.lib.hooks.types import (
     FailurePolicy,
@@ -159,35 +158,24 @@ class HookSpec(BaseModel):
         values = json_list(value)
         return tuple(values) if values is not None else value
 
-    @property
-    def display_name(self) -> str:
-        """Return the label used by ``config show`` summaries."""
+def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
+    """Return raw hook rows while keeping hook-section shape validation here."""
 
-        return self.name or self.event or self.builtin or "hook"
-
-
-class HookConfigSection(RootModel[tuple[HookSpec, ...]]):
-    """Validated representation of one ``[[hooks]]`` array."""
-
-    model_config = ConfigDict(frozen=True, strict=True)
-
-    @field_validator("root", mode="before")
-    @classmethod
-    def _tuple_rows(cls, value: object) -> object:
-        values = json_list(value)
-        if values is None:
-            raise ValueError(
-                "expected array[table], "
-                f"got {type(value).__name__} ({value!r})"
-            )
-        return tuple(values)
+    values = json_list(raw_value)
+    if values is None:
+        raise ValueError(
+            f"Invalid value for '{source}': expected array[table], "
+            f"got {type(raw_value).__name__} ({raw_value!r})."
+        )
+    return tuple(values)
 
 
-def normalize_hooks_array(raw_value: object, *, source: str) -> tuple[HookSpec, ...]:
-    """Parse hooks without re-emitting config-loader unknown-key diagnostics."""
+def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec:
+    """Validate one hook row and emit its unknown-key diagnostics once."""
 
+    warn_unknown_model_keys(raw_value, model=HookSpec, source=source)
     try:
-        return HookConfigSection.model_validate(raw_value).root
+        return HookSpec.model_validate(raw_value)
     except ValidationError as error:
         raise config_validation_error(error, source=source) from None
 
@@ -268,9 +256,10 @@ def hooks_from_spec(
                 f"got {spec.builtin!r}."
             )
         try:
-            builtin.options_model.model_validate(options)
+            validated_options = builtin.options_model.model_validate(options)
         except ValidationError as error:
             raise config_validation_error(error, source=f"{row_source}.options") from None
+        options = validated_options.model_dump(exclude_none=True)
 
     name = spec.name
     if name is None:
@@ -285,6 +274,15 @@ def hooks_from_spec(
         events = builtin.default_events
     else:
         raise ValueError(f"Invalid hook config '{row_source}': 'event' is required.")
+
+    if builtin is not None and builtin.name == "notify":
+        unsupported = tuple(event for event in events if event not in builtin.default_events)
+        if unsupported:
+            supported = ", ".join(builtin.default_events)
+            raise ValueError(
+                f"Invalid value for '{row_source}.event': builtin 'notify' supports only "
+                f"[{supported}], got {unsupported[0]!r}."
+            )
 
     interval = spec.interval or (builtin.default_interval if builtin is not None else None)
 

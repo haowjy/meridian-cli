@@ -247,7 +247,7 @@ password at <https://myaccount.google.com/apppasswords>, and store it in
 `smtp_password_file`. `smtp_user` is the Gmail address that owns the app
 password and is the default sender; `email_to` can be any address. Check the
 setup with `meridian notify "test" --json`: `"channel": "notify", "status":
-"sent"` means the default route delivered, and an error starting `gmail:` with
+"sent", "transports": ["gmail"]` means the default route delivered, and an error starting `gmail:` with
 `535` means the app password is wrong or 2-Step Verification is off.
 
 ### Routing and extending notifications
@@ -313,10 +313,12 @@ Notification routes run even in a directory with no Meridian runtime state;
 only `interval`-throttled hooks skip there. `meridian notify --json` reports one
 result per route, named by the hook: a route that delivered nothing (every
 backend `none`, or skipped by `when`) is `none`, and a failed `notify` route's
-error names each transport that failed. If hook configuration is invalid,
-notification emission warns and uses only the default routes, so an idle push
-is not silenced by an unrelated broken hook row. `meridian hooks check` still
-reports the invalid configuration.
+error names each transport that failed. Sent routes list the transports that
+delivered. If hook rows are invalid, notification emission drops and names only
+those rows, keeps all valid rows (including silencing rows and command routes),
+then applies the usual default-route overrides. The warning is part of both
+text and JSON reports. `meridian hooks check` still exits non-zero and names
+every invalid row.
 
 ### `[idle]`
 

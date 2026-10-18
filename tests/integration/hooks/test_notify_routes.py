@@ -95,7 +95,59 @@ def test_idle_records_the_push_as_its_routes_delivered_it(
     assert state is not None and state.done["push"] == recorded
 
 
-def test_emit_uses_the_default_route_when_hook_config_is_invalid(
+def test_idle_without_injected_config_delivers_despite_an_invalid_hook_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    delivered: list[str] = []
+
+    class CaptureChannel:
+        name = "capture"
+        email = False
+
+        def send(
+            self,
+            notification: Notification,
+            cfg: NotifyConfig,
+            *,
+            event: str,
+        ) -> SendResult:
+            _ = cfg
+            delivered.append(f"{event}:{notification.title}")
+            return SendResult(channel=self.name, status="sent")
+
+    monkeypatch.setitem(REGISTRY, "capture", CaptureChannel())
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "capture")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_BACKEND", "none")
+    monkeypatch.delenv("MERIDIAN_HOOKS_ENABLED", raising=False)
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "broken"\n'
+        'command = "true"\n'
+        'event = "spawn.finalized"\n'
+        'timeout_secs = "abc"\n',
+        encoding="utf-8",
+    )
+    now = [0]
+    store = IdleStore(now_ms=lambda: now[0])
+    idle = IdleService(
+        store=store,
+        env={"MERIDIAN_SESSION_ROLE": "primary"},
+        now_ms=lambda: now[0],
+        project_root=tmp_path,
+    )
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    now[0] = armed.push_at or 0
+
+    idle.fire("push", harness="example", session="s1", stretch=1, anchor=1)
+
+    assert len(delivered) == 1
+    assert delivered[0].startswith("session.responded:[idle] ")
+    state = store.read("example", "s1")
+    assert state is not None and state.done["push"] == "sent"
+
+
+def test_invalid_hook_row_keeps_a_valid_silencing_row_and_warns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     delivered: list[str] = []
@@ -123,6 +175,11 @@ def test_emit_uses_the_default_route_when_hook_config_is_invalid(
     (tmp_path / "meridian.toml").write_text(
         "[[hooks]]\n"
         'builtin = "notify"\n'
+        'event = "notify.manual"\n'
+        "enabled = false\n"
+        "[[hooks]]\n"
+        'name = "broken"\n'
+        'command = "true"\n'
         'event = "not.an.event"\n',
         encoding="utf-8",
     )
@@ -135,9 +192,9 @@ def test_emit_uses_the_default_route_when_hook_config_is_invalid(
             env={},
         )
 
-    assert delivered == ["notify.manual:Pick a store"]
-    assert [(result.channel, result.status) for result in report.results] == [
-        ("notify", "sent")
-    ]
+    assert delivered == []
+    assert report.results == ()
+    assert any("project.hooks[2]" in warning for warning in report.warnings)
+    assert any("not.an.event" in warning for warning in report.warnings)
     fallback_log = next(log for log in logs if log["event"] == "notification_hook_config_invalid")
     assert "not.an.event" in str(fallback_log["error"])

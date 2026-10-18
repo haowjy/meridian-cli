@@ -49,8 +49,8 @@ def normalize_channel_name(name: str, *, aliases: tuple[str, ...] = ()) -> str:
 
 
 def resolve_channel(name: str) -> RegisteredChannel:
-    """Resolve a configured backend or raise a configuration-oriented error."""
-    return REGISTRY[normalize_channel_name(name)]
+    """Resolve a backend already normalized and validated by config loading."""
+    return REGISTRY[name]
 
 
 __all__ = ["REGISTRY", "RegisteredChannel", "normalize_channel_name", "resolve_channel"]

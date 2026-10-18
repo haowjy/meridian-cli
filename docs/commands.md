@@ -308,12 +308,16 @@ and then each file as its own lower-priority message (the server must allow
 attachments, and sets the size limit). Command hooks get the absolute paths in
 `notification.attachments`. A missing or unreadable path fails with exit 2
 before any route runs. Repeating paths that resolve to the same file sends that
-file once. If ntfy accepts the text but rejects a file, the route remains sent
-and warns with the file name; the notification text is not retried.
+file once. Email attachments are all-or-nothing: if the email provider rejects
+one file (for example, for size), that email and its text fail together. If
+ntfy accepts the text but rejects files, it still attempts every remaining file;
+the route remains sent and warns with every failed file name, and the
+notification text is not retried.
 
 Results list one entry per route, named by its hook (`notify` for the default
-route); a failed route's error names the transports that failed. `--json` adds
-the session `label`. Exit 0 when something delivered, when every route
+route) plus its successful transports: text renders `notify (ntfy)`, while
+`--json` has a `transports` list per route and adds the session `label`. A
+failed route's error names the transports that failed. Exit 0 when something delivered, when every route
 delivered nothing (backends `none`), or when no route ran (with the warning "no
 notification route ran for notify.manual"); exit 1 when a route failed and none
 delivered. No in-process retry.

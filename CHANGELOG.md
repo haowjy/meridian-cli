@@ -15,16 +15,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `idle arm` takes `--background-tasks JSON` (`[{"kind": "agent|shell|watcher|other", "command": ...}]`); core decides what running work means. Claude mod forwards the `Stop` hook's background tasks. Codex/OpenCode/Pi report none yet (#669).
 - Cache warning says "reply to keep it warm".
-- `meridian notify "<title>" ["<body>"]`: title positional, body optional, session headline always ends body. `--title` gone. Results: one per route (`notify` = default route), failed route's error names failed transports; `label` top-level in `--json`. No route ran = warning, exit 0. (#670)
+- `meridian notify "<title>" ["<body>"]`: title positional, body optional, session headline always ends body. `--title` gone. Results: one per route (`notify` = default route), with successful transports named in text and `transports` in JSON; failed route's error names failed transports; `label` top-level in `--json`. No route ran = warning, exit 0. (#670)
 - `MERIDIAN_HOOKS_ENABLED=false` also silences notifications. Hooks (and `hooks run`) run without project runtime state; only `interval` hooks skip there. (#670)
 - Builtin hook rows validate `options` against the builtin's own model; unknown keys error. `hooks list` drops `registration` column. Unnamed `git-autosync` rows named from `remote`/`path` only. (#670)
 - ntfy `Tags` = event name. Plugin API 2.0.0: `HookContext.runtime_root` may be `None`, `HookContext.notification`, payload `schema_version` 2. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
 
 ### Fixed
 - Multi-line `meridian notify` input keeps its first non-empty line as the transport-safe title and moves the rest into the body; all notification producers now reject control characters in titles. Duplicate resolved attachment paths are sent once. (#666, #670)
-- ntfy reports a route as delivered, with a file-specific warning, when its text POST succeeded but an attachment PUT failed. (#666)
+- ntfy reports a route as delivered when its text POST succeeded but attachment PUTs failed, attempts every remaining file, and warns with every failed file name. Email attachments remain all-or-nothing. (#666)
 - Notification channel and backend names validate while config loads; removed `push_backend = "command"` now points to the upgrade guide. `meridian hooks check` validates the active config. (#670)
-- Invalid hook config no longer silences idle notices: emission warns and falls back to the default notification routes, while `meridian notify` also shows the warning. (#670)
+- Invalid hook config no longer silences idle notices: emission drops and names invalid rows while retaining valid silencing and command rows plus ordinary default-route overrides; `meridian notify` reports the warning in text and JSON. `hooks check` names every invalid row. (#670)
 - `--no-email` (and idle push / `warn_email = false`) now skips `smtp`/`gmail` even when a route names them. (#670)
 - A failing notification route is reported once, not also as a hook warning log. (#670)
 - Logging no longer caches each module logger's first configuration.

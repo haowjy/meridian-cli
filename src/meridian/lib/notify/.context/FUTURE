@@ -1,0 +1,7 @@
+# lib/notify — nice-to-have follow-ups
+
+- `hooks/builtin/notify.py` reloads `[notify]` from config files and ambient
+  `os.environ` for every delivery, while `IdleService` holds its own config
+  snapshot for message construction. Give notification emission one explicit
+  config snapshot so embedded callers and idle cannot build and deliver from
+  different settings.

@@ -127,6 +127,9 @@ such as `ntfy`) and `priority` (1–5) pick where and how loud.
 
 **Default events:** `session.responded`, `session.cache_expiring`, `notify.manual`
 
+The `notify` builtin accepts only those notification events; configuring it on
+another event is a hook config error.
+
 Meridian supplies a hook named `notify` on each of these events (source
 `default` in `hooks list`). An unnamed `builtin = "notify"` row is named
 `notify` too, so a row for an event, even with `enabled = false`, replaces only
@@ -148,6 +151,11 @@ A `command` hook on a notification event is an extra channel: it gets the
 `_PRIORITY` in its environment. See
 [Routing and extending notifications](configuration.md#routing-and-extending-notifications)
 for channel semantics and examples.
+
+When notification emission finds invalid hook rows, it drops and names only
+those rows, retains every valid row, and applies default-route overrides as
+usual. `meridian hooks check` instead exits non-zero and names every invalid
+row.
 
 ## Builtin: `git-autosync`
 

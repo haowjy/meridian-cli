@@ -60,15 +60,13 @@ class NtfyChannel:
 
         # ntfy carries one file per message: each follows the text quietly, at low priority.
         file_headers = {**headers, "Priority": str(min(notification.priority, 2))}
+        warnings: list[str] = []
         for path in map(Path, notification.attachments):
             try:
                 data = path.read_bytes()
             except OSError as exc:
-                return SendResult(
-                    channel=self.name,
-                    status="sent",
-                    warning=f"{path.name}: {exc}",
-                )
+                warnings.append(f"{path.name}: {exc}")
+                continue
             error = self._deliver(
                 path.name,
                 Request(
@@ -79,8 +77,12 @@ class NtfyChannel:
                 ),
             )
             if error is not None:
-                return SendResult(channel=self.name, status="sent", warning=error)
-        return SendResult(channel=self.name, status="sent")
+                warnings.append(error)
+        return SendResult(
+            channel=self.name,
+            status="sent",
+            warning="; ".join(warnings) or None,
+        )
 
     def _deliver(self, what: str, request: Request) -> str | None:
         try:

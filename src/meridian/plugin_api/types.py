@@ -275,11 +275,13 @@ class HookResult:
     success: bool
     skipped: bool = False
     skip_reason: str | None = None
+    warning: str | None = None
     error: str | None = None
     exit_code: int | None = None
     duration_ms: int = 0
     stdout: str | None = None
     stderr: str | None = None
+    transports: tuple[str, ...] = ()
 
 
 __all__ = [

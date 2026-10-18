@@ -12,10 +12,10 @@ each route's `HookResult` into one `SendResult` named by the hook. Never call
 retries or reads notification config from environment variables directly.
 
 `emit.py` is the only module that imports `lib/hooks`, lazily.
-If hook rows cannot load, `emit` logs the error and fires the event through
-only the default `notify` routes. This keeps idle delivery fail-open; CLI log
-rendering still shows the error from `meridian notify`, and hook inspection
-raises it normally.
+If hook rows cannot load, `emit` drops and names each invalid row, preserves
+every valid row, and applies normal default-route overrides. This keeps idle
+delivery fail-open without losing silencing or extension routes; the warning
+travels in `SendReport`, and hook inspection raises all row errors normally.
 
 ## Channel seam
 
@@ -34,8 +34,8 @@ backend.
 This package never writes stdout/stderr directly. Expected transport failures
 and warnings travel in `SendReport`; CLI callers render them through the CLI
 output sink, while in-process callers decide where they belong. The one logger
-warning is the hook-row load error in `emit`: idle otherwise has no diagnostic,
-and CLI logging already shows it, so it is not duplicated in `SendReport`.
+warning is the hook-row load error in `emit`; the same diagnostic is retained in
+`SendReport` so JSON and text callers can observe the fallback.
 
 SMTP credentials come from `smtp_password_file` first, and that file is refused
 when group/world readable; `MERIDIAN_NOTIFY_SMTP_PASSWORD` is only a documented

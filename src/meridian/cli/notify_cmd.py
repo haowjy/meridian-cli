@@ -17,6 +17,12 @@ from meridian.lib.notify.notice import SessionLabel, manual_notification
 from meridian.lib.notify.service import SendReport
 
 
+def _route_label(channel: str, transports: tuple[str, ...]) -> str:
+    if not transports:
+        return channel
+    return f"{channel} ({', '.join(transports)})"
+
+
 def _render_report(
     report: SendReport, label: SessionLabel, *, json_mode: bool = False
 ) -> None:
@@ -38,7 +44,11 @@ def _render_report(
     if report.all_none:
         sink.result("Nothing delivered.")
         return
-    sent = ", ".join(result.channel for result in report.results if result.ok)
+    sent = ", ".join(
+        _route_label(result.channel, result.transports)
+        for result in report.results
+        if result.ok
+    )
     if sent:
         sink.result(f"Notification sent via {sent}.")
 

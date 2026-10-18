@@ -35,10 +35,10 @@ that name an unnamed row; they apply only when a row names that builtin.
 Unnamed `notify` rows are all named `notify`, which is how a plain
 `builtin = "notify"` row replaces its event's default.
 
-Notification emission is the one fail-open config consumer: when configured
-hook rows do not load, it logs the error, then builds a registry
-from the default layer only. Hook commands and other dispatchers still surface
-the config error normally.
+Notification emission is the one fail-open config consumer: it drops and names
+invalid rows, keeps every valid row, then applies the same layering and default
+overrides as a clean load. Hook commands and other dispatchers surface all row
+errors normally.
 
 Override key is `(name, event)`. A higher-priority source row with the same key replaces the lower-priority row entirely. Use `meridian.local.toml` for machine-specific overrides without committing them.
 
