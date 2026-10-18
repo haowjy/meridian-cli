@@ -10,14 +10,14 @@ import time
 from pathlib import Path
 from typing import Never, cast
 
-from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
+from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.bundle import PrimaryInboxError, post_to_primary
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
 )
-from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.control_socket import control_socket_path
 
 _INJECT_RESPONSE_TIMEOUT_SECONDS = 30.0
@@ -48,7 +48,7 @@ async def _send_and_receive(
 
 
 def _inject_primary(runtime_root: Path, record: SpawnRecord, message: str) -> None:
-    if record.status not in ACTIVE_SPAWN_STATUSES:
+    if not is_active_spawn_status(record.status):
         _fail(f"spawn not running: {record.id}")
     try:
         confirmation = post_to_primary(record, runtime_root=runtime_root, message=message)
@@ -79,15 +79,15 @@ async def inject_message(
     if not normalized_message:
         _fail("message is required")
 
-    record = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+    record = read_derived(runtime_root, normalized_spawn_id)
     if record is not None and record.kind == "primary":
         _inject_primary(runtime_root, record, normalized_message)
         return
 
     discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
     while True:
-        record = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-        if record is None or record.status not in ACTIVE_SPAWN_STATUSES:
+        record = read_derived(runtime_root, normalized_spawn_id)
+        if record is None or not is_active_spawn_status(record.status):
             _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
         if socket_path.exists():
             break

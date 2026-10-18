@@ -115,7 +115,6 @@ class SurfacePolicyInput:
     config_overrides: RuntimeOverrides
     config: MeridianConfig
     harness_registry: HarnessRegistry
-    skills_readonly: bool = True
     models_readonly: bool = False
     requested_skills: tuple[str, ...] = ()
     policy_snapshot: LaunchPolicySnapshot | None = None
@@ -428,8 +427,6 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     profile_overrides = RuntimeOverrides.from_agent_profile(profile)
     full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
     base_resolved = resolve(*full_layers)
-    profile_skills = dedupe_skill_names(profile.skills) if profile is not None else ()
-
     (
         bundle_model_override,
         bundle_harness_override,
@@ -443,7 +440,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     if requested_model_token:
         alias_catalog = surface.catalog.alias_map(no_refresh_models=surface.models_readonly)
 
-    resolved_skill_names = dedupe_skill_names((*profile_skills, *surface.requested_skills))
+    requested_skill_names = dedupe_skill_names(surface.requested_skills)
     bundle_request = bundle_adapter.BundleRequest(
         agent=profile.name if profile is not None else requested_agent,
         project_root=project_root,
@@ -454,7 +451,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         effort_override=explicit_user_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
-        extra_skills=resolved_skill_names,
+        extra_skills=requested_skill_names,
         no_refresh_models=surface.models_readonly,
     )
     bundle_result = bundle_adapter.request_and_resolve(
@@ -588,7 +585,6 @@ def _resolve_policy_from_snapshot(
         snapshot=snapshot,
         project_root=surface.catalog.project_root,
         harness_registry=surface.harness_registry,
-        skills_readonly=surface.skills_readonly,
         alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
     )
     return ResolvedLaunchPolicy(
@@ -714,7 +710,6 @@ def resolve_policies(
     config_overrides: RuntimeOverrides,
     config: MeridianConfig,
     harness_registry: HarnessRegistry,
-    skills_readonly: bool = True,
 ) -> ResolvedLaunchPolicy:
     """Compatibility wrapper over the public shared launch policy boundary."""
 
@@ -726,7 +721,6 @@ def resolve_policies(
             config_overrides=config_overrides,
             config=config,
             harness_registry=harness_registry,
-            skills_readonly=skills_readonly,
         )
     )
 

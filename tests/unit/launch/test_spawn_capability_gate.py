@@ -34,7 +34,6 @@ def _profile(
         name="tech-lead",
         description="Orchestrator",
         mode="primary",
-        skills=(),
         subagents=subagents,
         meridian_capabilities=capabilities,
         model_invocable=False,
@@ -90,7 +89,6 @@ def test_snapshot_preserves_profile_and_raw_inventory() -> None:
     )
     reconstructed = _snapshot_profile(
         snapshot=snapshot,
-        snapshot_skill_names=("loaded-skill",),
         project_root=Path("/tmp/project"),
     )
 
@@ -101,7 +99,6 @@ def test_snapshot_preserves_profile_and_raw_inventory() -> None:
     assert reconstructed.meridian_capabilities == profile.meridian_capabilities
     assert reconstructed.mode == profile.mode
     assert reconstructed.model_invocable == profile.model_invocable
-    assert reconstructed.skills == ("loaded-skill",)
 
 
 def test_snapshot_replay_uses_persisted_policy_inventory() -> None:
@@ -126,7 +123,6 @@ def test_snapshot_replay_uses_persisted_policy_inventory() -> None:
         snapshot=snapshot,
         project_root=Path("/tmp/project"),
         harness_registry=get_default_harness_registry(),
-        skills_readonly=True,
         alias_catalog={},
     )
 
@@ -144,6 +140,5 @@ def test_snapshot_replay_rejects_empty_harness() -> None:
             snapshot=LaunchPolicySnapshot(model="gpt-5.4", harness=""),
             project_root=Path("/tmp/project"),
             harness_registry=get_default_harness_registry(),
-            skills_readonly=True,
             alias_catalog={},
         )

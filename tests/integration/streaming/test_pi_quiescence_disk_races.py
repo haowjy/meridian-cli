@@ -295,7 +295,7 @@ async def test_pi_non_spawn_background_only_nudges_after_idle_delay(
 
 
 @pytest.mark.asyncio
-async def test_pi_unpublished_child_result_suppresses_done_nudge_for_private_work(
+async def test_pi_undelivered_child_result_suppresses_done_nudge_for_private_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spawn_id = SpawnId("p1")
@@ -323,11 +323,8 @@ async def test_pi_unpublished_child_result_suppresses_done_nudge_for_private_wor
         prompt="child",
         status="running",
     )
-    spawn_store.mark_finalizing(tmp_path, child_id)
-    (tmp_path / "spawns" / str(child_id) / "report.md").write_text(
-        "# Report\n\nChild completed.\n",
-        encoding="utf-8",
-    )
+    # The child has finished, but the parent hasn't consumed its result yet.
+    spawn_store.finalize_spawn(tmp_path, child_id, "succeeded", 0, origin="runner")
     coordinator = await _started_pi_coordinator(
         tmp_path,
         monkeypatch=monkeypatch,

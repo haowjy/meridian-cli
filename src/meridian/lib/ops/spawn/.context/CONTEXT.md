@@ -54,7 +54,10 @@ spawn), `spawn_cancel_all_sync()` uses `state.spawn_tree.descendant_id_set()` to
 spawn's subtree. Siblings, ancestors, and the primary session are not touched. When called from
 a root/primary context (no `MERIDIAN_SPAWN_ID`), the full chat scope applies.
 
-`--include-others` bypasses the subtree scope and cancels across all non-primary running spawns.
+Cancel-all selects stored-active rows, not derived-running rows. Its cancel pipeline
+claims and finalizes a dead lock-backed target under the launch lock.
+
+`--include-others` bypasses the subtree scope and cancels across all non-primary stored-active spawns.
 `--include-primaries` is separately required to cancel primary sessions.
 
 **Early-exit guard:** `spawn_cancel_all_sync()` exits immediately with no side effects when
@@ -184,50 +187,6 @@ call. Callers that need machine-readable output should request `--format json`.
 
 → [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — ops/ layer overview, SpawnApplicationService, SEAM-1/2/3
 → [../../../launch/.context/CONTEXT.md](../../../launch/.context/CONTEXT.md) — launch mechanism ops/spawn drives
-
-## Pi Nested Stale Detection
-
-`_read_only_nested_staleness_view()` in `query.py` handles the case where a nested
-spawn reads the status of a Pi spawn. Pi spawned sessions stay alive after task
-completion (quiescence model), so a nested reader observing a non-terminal Pi spawn
-must detect staleness differently than for other harnesses.
-
-### Detection Method
-
-The staleness check uses file modification times rather than PID liveness:
-- Reads mtimes of four files (`_NESTED_READ_ACTIVITY_ARTIFACTS` in `query.py`):
-  `heartbeat`, `bash-records.json`, `stderr.log`, `report.md`. It does not read
-  `history.jsonl` or `output.jsonl`.
-- If ANY file has been modified within the last 120 seconds
-  (`_NESTED_READ_HEARTBEAT_WINDOW_SECS`), the spawn is considered alive — the
-  Pi process may be blocked on lifecycle processing
-- A 15-second startup grace period (`_NESTED_READ_STARTUP_GRACE_SECS`) from
-  `started_at` prevents false staleness detection during Pi initialization
-- A 5-second post-runner-exit grace period
-  (`_NESTED_READ_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS`) allows the runner
-  process to finalize before the spawn row is considered stale
-
-If no file has been updated recently, the spawn is marked as `failed` with
-`error="stale_nested_read"` or `error="stale_nested_read_no_pid"`. This is a
-**read-only view** — `_read_only_nested_staleness_view()` returns a copy of the
-record with modified status, not a mutation.
-
-### Why File-Based Instead of PID-Based
-
-`is_process_alive()` (PID check) doesn't work for Pi spawned sessions because:
-1. The Pi process may be alive but blocked (quiescence drain waiting for children)
-2. The Pi process may have exited but the spawn row hasn't yet been reconciled
-   (cleanup phases still running)
-
-File mtime checks catch both cases: a blocked process usually writes heartbeat
-timestamps, and a dead process stops updating all files.
-
-### Scope: Read-Only Nested Context Only
-
-This detection only applies when `is_root_side_effect_process()` is false — i.e.,
-a nested agent reading another spawn's status. The root Meridian process uses the
-reaper (`lib/state/reaper.py`) for staleness detection, which has its own
-activity/grace windows and does actual row mutations.
 
 ### Pi Cleanup Telemetry in `spawn show`
 

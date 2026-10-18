@@ -36,8 +36,7 @@ _PI_BUSY_REJECTION = (
 )
 _PI_HELP_SURFACE = (
     "--mode rpc --model --append-system-prompt --session --session-id --fork "
-    "--session-dir --no-extensions --no-skills "
-    "--no-context-files --no-prompt-templates -e --extension "
+    "--session-dir --no-extensions -e --extension "
     "PI_CODING_AGENT_SESSION_DIR"
 )
 
@@ -177,7 +176,18 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
     class _FakePopen:
         pid = 42424
 
-    monkeypatch.setattr(spawn_execute_module.subprocess, "Popen", lambda *_a, **_kw: _FakePopen())
+    worker_handoff_fd: int | None = None
+
+    def _fake_popen(
+        *_args: object,
+        pass_fds: tuple[int, ...],
+        **_kwargs: object,
+    ) -> _FakePopen:
+        nonlocal worker_handoff_fd
+        worker_handoff_fd = os.dup(pass_fds[0])
+        return _FakePopen()
+
+    monkeypatch.setattr(spawn_execute_module.subprocess, "Popen", _fake_popen)
     launch = spawn_execute_module.execute_spawn_background(
         payload=SpawnCreateInput(prompt="FIRST", background=True),
         request=SpawnRequest(
@@ -246,6 +256,8 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         if cleanup_task is not None:
             await asyncio.wait_for(cleanup_task, timeout=5.0)
         await manager.shutdown()
+        if worker_handoff_fd is not None:
+            os.close(worker_handoff_fd)
         shutil.rmtree(runtime_root, ignore_errors=True)
 
 

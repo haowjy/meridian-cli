@@ -84,11 +84,9 @@ from meridian.lib.launch.runner_helpers import (
 )
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
-from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouch
 from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
 from meridian.lib.safety.guardrails import run_guardrails
-from meridian.lib.state import paths as state_paths
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.paths import resolve_spawn_log_dir
@@ -107,7 +105,6 @@ if TYPE_CHECKING:
 _DEFAULT_CONFIG = MeridianConfig()
 DEFAULT_GUARDRAIL_TIMEOUT_SECONDS = _DEFAULT_CONFIG.guardrail_timeout_minutes * 60.0
 logger = structlog.get_logger(__name__)
-_HEARTBEAT_INTERVAL_SECS = 30.0
 
 
 @dataclass(frozen=True)
@@ -180,18 +177,6 @@ def _inactivity_terminal_outcome(
     if extraction.durable_report_completion:
         return 0, None
     return None, "stalled"
-
-
-def _touch_heartbeat_file(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-    *,
-    clock: Clock | None = None,
-) -> None:
-    FileHeartbeat(
-        state_paths.heartbeat_path(runtime_root, spawn_id),
-        clock=clock,
-    ).touch()
 
 
 def _install_signal_handlers(
@@ -433,8 +418,6 @@ async def run_streaming_spawn(
     spawn_id: SpawnId,
     startup_timeout_seconds: float,
     stream_to_terminal: bool = False,
-    heartbeat_touch: HeartbeatTouch | None = None,
-    heartbeat_interval_secs: float = _HEARTBEAT_INTERVAL_SECS,
     lifecycle_service: SpawnLifecycleService | None = None,
     on_control_endpoint_ready: Callable[[str], None] | None = None,
     on_running: Callable[[HarnessConnection[Any]], None] | None = None,
@@ -447,14 +430,9 @@ async def run_streaming_spawn(
     executor accepts a fully-composed spec and MUST NOT perform composition.
     """
 
-    resolved_heartbeat_touch = heartbeat_touch or (
-        lambda: _touch_heartbeat_file(runtime_root, spawn_id)
-    )
     manager = SpawnManager(
         runtime_root=runtime_root,
         project_root=project_root,
-        heartbeat_interval_secs=heartbeat_interval_secs,
-        heartbeat_touch=lambda _runtime_root, _spawn_id: resolved_heartbeat_touch(),
     )
 
     loop = asyncio.get_running_loop()
@@ -499,7 +477,6 @@ async def run_streaming_spawn(
                         spawn_id=str(spawn_id),
                         exc_info=True,
                     )
-        await manager.start_heartbeat(spawn_id)
         subscriber = manager.subscribe(spawn_id)
         if subscriber is None:
             raise RuntimeError("failed to subscribe to spawn stream")
@@ -656,7 +633,6 @@ async def _run_streaming_attempt(
             recording_selection = True
             on_running(connection)
             recording_selection = False
-        await manager.start_heartbeat(run.spawn_id)
         lifecycle_service.mark_running(
             run.spawn_id,
             launch_mode=launch_mode,
@@ -855,15 +831,12 @@ async def execute_with_streaming(
     space_spent_usd: float = 0.0,
     guardrails: tuple[Path, ...] = (),
     guardrail_timeout_seconds: float = DEFAULT_GUARDRAIL_TIMEOUT_SECONDS,
-    harness_session_id_observer: Callable[[str], None] | None = None,
     session_attempt: SessionAttempt,
     event_observer: Callable[[StreamEvent], None] | None = None,
     stream_stdout_to_terminal: bool = False,
     stream_stderr_to_terminal: bool = False,
     debug: bool = False,
     clock: Clock | None = None,
-    heartbeat_touch: HeartbeatTouch | None = None,
-    heartbeat_interval_secs: float = _HEARTBEAT_INTERVAL_SECS,
 ) -> int:
     """Execute one streaming spawn and always finalize the spawn row.
 
@@ -876,12 +849,6 @@ async def execute_with_streaming(
     resolved_clock = clock or RealClock()
     started_at = resolved_clock.monotonic()
     started_at_epoch = resolved_clock.time()
-    resolved_heartbeat_touch = heartbeat_touch or (
-        lambda: _touch_heartbeat_file(
-            runtime_root,
-            run.spawn_id,
-        )
-    )
     conclusion = StreamingRunConclusion()
     lifecycle_service: SpawnLifecycleService | None = None
     manager: SpawnManager | None = None
@@ -993,7 +960,6 @@ async def execute_with_streaming(
             spec,
             harness=str(resolved_harness_id),
             policy=launch_context.resolved_request.launch_policy_snapshot,
-            on_accepted=harness_session_id_observer,
         )
         config = ConnectionConfig(
             spawn_id=run.spawn_id,
@@ -1045,8 +1011,6 @@ async def execute_with_streaming(
         manager = SpawnManager(
             runtime_root=runtime_root,
             project_root=project_root,
-            heartbeat_interval_secs=heartbeat_interval_secs,
-            heartbeat_touch=lambda _runtime_root, _spawn_id: resolved_heartbeat_touch(),
         )
         lifecycle_service = build_spawn_lifecycle_service_from_roots(
             project_root,
@@ -1353,18 +1317,7 @@ async def execute_with_streaming(
             conclusion.exit_code = execution_outcome.resolved.exit_code
             conclusion.failure_reason = execution_outcome.resolved.error
             outcome = execution_outcome.completion
-            if outcome.entered_finalizing:
-                try:
-                    resolved_heartbeat_touch()
-                except Exception:
-                    logger.warning(
-                        "Failed to touch heartbeat after entering finalizing; "
-                        "terminal finalize already written.",
-                        spawn_id=str(run.spawn_id),
-                        harness_id=str(launch_context.harness.id),
-                        exc_info=True,
-                    )
-            elif not outcome.wrote:
+            if not outcome.wrote:
                 logger.info(
                     "Runner finalize skipped; spawn already terminal or missing.",
                     spawn_id=str(run.spawn_id),

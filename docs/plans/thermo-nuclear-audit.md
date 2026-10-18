@@ -61,7 +61,7 @@ unverified.
 
 | Strength | Evidence | Peer contrast |
 |---|---|---|
-| [32] Descendant-aware completion over crash-recoverable state | resident/Pi completion holds until every transitive descendant `state.json` is terminal; reaper classifies outcomes (`orphan_finalization`/`orphan_run`/`timed_out`) rather than kill-and-rebuild | omnigent has no analog: `subagents` is a flat capability boolean; sub-agent dispatch is fire-and-forget; crash recovery is orphan-PID reconciliation only |
+| [32] Descendant-aware completion over crash-recoverable state | resident/Pi completion holds until every transitive descendant `state.json` is terminal; runner loss becomes `failed`/`crashed` (or `cancelled` on request) rather than kill-and-rebuild | omnigent has no analog: `subagents` is a flat capability boolean; sub-agent dispatch is fire-and-forget; crash recovery is orphan-PID reconciliation only |
 | [37] Journaled permission/approval broker | `permission_broker.py` persists every approval as an append-only sequenced journal with pending/resolved/failed/cancelled transitions — crash recovery independent of the orchestrator | Vercel's `pendingToolApprovals` is an in-memory Map; its durability is outsourced to the Workflow DevKit. Do not "simplify" 499 lines toward a shape that only works with an external durable-workflow dependency |
 | [42] Transitive drain evidence as one canonical helper | `ReconciledDescendantEvidence` shared by resident and Pi paths — single helper, not per-harness forks | SYNTHESIS.md §2: "Nobody does descendant-aware completion. Nobody." Any Pi/resident drain consolidation must not fork or dilute this helper |
 

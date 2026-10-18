@@ -200,7 +200,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stdin_prompt=True,
             supports_session_resume=True,
             supports_session_fork=True,
-            supports_native_skills=True,
             supports_native_agents=True,
             supports_primary_launch=True,
             supports_named_primary_resume=True,
@@ -211,7 +210,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy(
-            skill_injection_mode="append-system-prompt",
             spawn_usage_contract_variants=CLAUDE_SPAWN_USAGE_VARIANTS,
         )
 

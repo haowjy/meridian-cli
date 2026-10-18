@@ -1,8 +1,8 @@
 """Shared spawn lifecycle decisions.
 
-Durable completion evidence is authoritative. If Meridian later sends a cleanup
-signal after a final report already exists, that cleanup must not downgrade the
-spawn from succeeded to failed.
+Durable completion evidence belongs to the live runner's execution resolution and
+the lockless compatibility path. A dead lock-backed launch derives its outcome from
+the free launch lock and cancel intent, not from its report.
 """
 
 from __future__ import annotations
@@ -386,9 +386,9 @@ def resolve_completion_cancel_precedence(
     was recovered from the killed attempt.
 
     Only when there is no execution evidence does a durable report stay
-    authoritative, preserving a genuine completion that a late cleanup signal
-    arrived after (see the module docstring). In that case a bare cancel keeps
-    the caller's ``cancel_exit_code``.
+    authoritative in this lockless compatibility rule, preserving a genuine
+    completion that a late cleanup signal arrived after. In that case a bare
+    cancel keeps the caller's ``cancel_exit_code``.
 
     Returns ``None`` when neither a report nor a cancel request is present, so
     the caller keeps its own fallback outcome.
@@ -414,15 +414,3 @@ def resolve_completion_cancel_precedence(
         terminal_status=execution_terminal_status,
     )
     return ExecutionTerminalOutcome(status=status, exit_code=exit_code, error=error)
-
-
-def resolve_reconciled_terminal_state(
-    *,
-    durable_report_completion: bool,
-    fallback_error: str,
-) -> tuple[TerminalSpawnStatus, int, str | None]:
-    """Resolve the terminal state produced by read-path reconciliation."""
-
-    if durable_report_completion:
-        return "succeeded", 0, None
-    return "failed", 1, fallback_error

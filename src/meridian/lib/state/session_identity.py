@@ -15,6 +15,7 @@ from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import quarantine_may_observe
 
 
 def spawn_exact_chat_id(row: SpawnRecord) -> str | None:
@@ -189,7 +190,10 @@ def live_observer_for_chat(
 
     if records is None:
         scan = spawn_store.list_spawns(runtime_root)
-        if scan.quarantines:
+        if any(
+            quarantine_may_observe(runtime_root, report, chat_id)
+            for report in scan.quarantines
+        ):
             raise ValueError("Cannot establish current-chat ownership; run `meridian doctor`")
         records = scan.records
     for row in records:

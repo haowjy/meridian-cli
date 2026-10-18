@@ -78,7 +78,6 @@ class PreparedExecutionHandoff:
     session_exit_stack: ExitStack
     execution_cwd: str
     work_id: str | None
-    harness_session_id_observer: Callable[[str], None] | None = None
 
 
 def _with_source_ref(exc: Exception, session: SessionRequest) -> Exception:
@@ -316,7 +315,6 @@ async def _invoke_runner(
         project_root=project_paths.project_root,
         runtime_root=runtime_root,
         artifacts=runtime.artifacts,
-        harness_session_id_observer=handoff.harness_session_id_observer,
         session_attempt=handoff.session_context.attempt,
         event_observer=event_observer,
         stream_stdout_to_terminal=stream_stdout_to_terminal,
@@ -346,7 +344,6 @@ async def launch_prepared_spawn(
     stream_stdout_to_terminal: bool = False,
     stream_stderr_to_terminal: bool = False,
     event_observer: Callable[[StreamEvent], None] | None = None,
-    harness_session_id_observer: Callable[[str], None] | None = None,
     debug: bool = False,
     ctx: RuntimeContext | None = None,
     prepared: PreparedLaunchSurface | None = None,
@@ -387,9 +384,6 @@ async def launch_prepared_spawn(
 
     try:
         try:
-            if harness_session_id_observer is not None:
-                handoff.harness_session_id_observer = harness_session_id_observer
-
             prepare_prelaunch = getattr(handoff.launch_context.harness, "prepare_prelaunch", None)
             child_env: dict[str, str] | None = None
             if callable(prepare_prelaunch):

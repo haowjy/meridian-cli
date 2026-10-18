@@ -86,8 +86,7 @@ for harness in ("claude", "codex", "opencode", "pi"):
                     (case / "fake-bin" / harness).write_text(
                         '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.0.0; '
                         'else echo "--mode rpc --session-id --fork --session --session-dir '
-                        "--no-extensions --no-skills --no-context-files --no-prompt-templates "
-                        '-e --extension PI_CODING_AGENT_SESSION_DIR"; fi\n'
+                        '--no-extensions -e --extension PI_CODING_AGENT_SESSION_DIR"; fi\n'
                     )
                     store = {
                         "claude": case / "native" / "claude" / "projects" / project_slug(root),

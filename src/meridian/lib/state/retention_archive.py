@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.atomic import fsync_directory, is_atomic_temp_name
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -55,10 +56,13 @@ _MAX_METADATA = 32 * 1024 * 1024
 _MAX_CONTENT = 1024**4  # ZIP64, including a single oversized record.
 _EXCLUDED = frozenset(
     {
+        # Older builds still write these. Remove with legacy_runner_alive once no
+        # lockless rows remain.
         "heartbeat",
+        "finalize-evidence.json",
+        "launch-boundary.jsonl",
         "process_scopes.json",
         "reaper_cleanup_claim.json",
-        "finalize-evidence.json",
         "restored-from.json",
     }
 )
@@ -320,6 +324,8 @@ def capture_record(
     session: SessionRecord | None,
     activity: str,
 ) -> ArchivedRecord:
+    if state.status not in TERMINAL_SPAWN_STATUSES:
+        raise ValueError("Archive capture requires a stored terminal record")
     if state.history_id is None:
         raise ValueError("Assign file-authoritative history identity before capture")
     if session and session.history_id not in {None, state.history_id}:
@@ -393,9 +399,7 @@ def _member_bytes(archive: zipfile.ZipFile, name: str, *, limit: int) -> bytes:
 
 def read_record_metadata(archive: zipfile.ZipFile, history_id: UUID) -> bytes:
     """The bounded ``record.json`` bytes exactly as one record stored them."""
-    return _member_bytes(
-        archive, record_member(history_id, "record.json"), limit=_MAX_METADATA
-    )
+    return _member_bytes(archive, record_member(history_id, "record.json"), limit=_MAX_METADATA)
 
 
 def archive_manifest_digest(path: Path) -> str:
@@ -532,9 +536,7 @@ def verify_archive(
         ):
             raise ArchiveValidationError("Selected history is not covered by the ZIP")
         for member in manifest.members if full else ():
-            if history_id is not None and not member.name.startswith(
-                record_member(history_id)
-            ):
+            if history_id is not None and not member.name.startswith(record_member(history_id)):
                 continue
             checksum = hashlib.sha256()
             size = 0

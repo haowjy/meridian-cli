@@ -29,21 +29,6 @@ class FakeClock:
         self._now += seconds
 
 
-class FakeHeartbeat:
-    """Test double for heartbeat touch operations."""
-
-    def __init__(self) -> None:
-        self.touches: list[float] = []
-        self._clock: FakeClock | None = None
-
-    def set_clock(self, clock: FakeClock) -> None:
-        self._clock = clock
-
-    def touch(self) -> None:
-        timestamp = self._clock.time() if self._clock is not None else 0.0
-        self.touches.append(timestamp)
-
-
 class RecordingTelemetrySink:
     """In-process telemetry sink for integration tests.
 

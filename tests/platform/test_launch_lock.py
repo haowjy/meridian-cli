@@ -190,7 +190,14 @@ def continue_orphan(runtime: Runtime, *, backend: bool, primary: bool, dry_run: 
         assert projection.read_bytes() == before, "dry run released scopes"
         assert not (runtime.root / "runtime/spawns/p2").exists()
         return
-    runtime.pid("p2.pid")
+    try:
+        runtime.pid("p2.pid")
+    except AssertionError as exc:
+        log = runtime.root / f"cli-{runtime.processes.index(process)}.log"
+        raise AssertionError(
+            f"continue never started its harness; exit={process.poll()}\n"
+            + log.read_text(errors="replace")[-4000:]
+        ) from exc
     orphan_gone_before_start = not alive(worker)
     (runtime.root / "p2.exit").touch()
     code = process.wait(timeout=30)
@@ -208,6 +215,36 @@ def test_continue_after_runner_sigkill_sweeps_orphan(
     runtime: Runtime, primary: bool, dry_run: bool, backend: bool,
 ) -> None:
     continue_orphan(runtime, backend=backend, primary=primary, dry_run=dry_run)
+
+
+@pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
+def test_continue_names_non_runner_holder_of_dead_source(
+    runtime: Runtime, primary: bool,
+) -> None:
+    # Doctor (or another continue's sweep) may hold a dead source's lock while
+    # it persists the crash. The refusal must not claim the dead source runs.
+    runtime.orphan()
+    lock = runtime.root / "runtime/spawns/p1/launch.lock"
+    holder = subprocess.Popen(
+        [
+            sys.executable, "-c",
+            "import fcntl,os,sys,time; fd=os.open(sys.argv[1],os.O_RDWR); "
+            "fcntl.flock(fd,fcntl.LOCK_EX); print('held',flush=True); time.sleep(60)",
+            str(lock),
+        ],
+        stdout=subprocess.PIPE,
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline() == b"held\n"
+        process = runtime.cli(*continue_args(primary))
+        assert process.wait(timeout=30) != 0
+        log = (runtime.root / f"cli-{runtime.processes.index(process)}.log").read_text()
+        assert "held by a repair or another continue" in log
+        assert "still running" not in log
+        assert not (runtime.root / "runtime/spawns/p2").exists()
+    finally:
+        holder.kill()
+        holder.wait()
 
 
 @pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
@@ -310,26 +347,19 @@ def test_continue_of_superseded_spawn_sweeps_dead_successor(runtime: Runtime) ->
 
 
 def test_continue_refuses_live_legacy_runner(runtime: Runtime) -> None:
-    from meridian.lib.state import spawn_store
-
-    sleeper = subprocess.Popen(["sleep", "120"], start_new_session=True)
-    runtime.processes.append(sleeper)
-    runtime.groups.add(sleeper.pid)
     root = runtime.root / "runtime"
     parent = runtime.cli("spawn", "-m", "haiku", "-p", "hold", "--no-background")
     runtime.started()
-    (runtime.root / "p1.exit").touch()
-    assert parent.wait(timeout=30) == 0
-    # A finished fixture supplies faithful native identity; remove its unlocked
-    # file to model an old-build row, then assign a live legacy runner.
+    # Remove the held lock's path to model an old-build active row. The runner
+    # still holds the unlinked inode and supplies exact live-runner evidence.
     (root / "spawns/p1/launch.lock").unlink()
-    spawn_store.update_spawn(root, "p1", runner_pid=sleeper.pid)
-    assert runtime.row()["runner_created_at_epoch"] == psutil.Process(sleeper.pid).create_time()
     process = runtime.cli(*continue_args(False))
     assert process.wait(timeout=30) != 0
-    assert "running under an older meridian" in (runtime.root / "cli-2.log").read_text()
+    assert "running under an older meridian" in (runtime.root / "cli-1.log").read_text()
     assert not (root / "spawns/p1/launch.lock").exists()
-    assert alive(sleeper.pid)
+    assert parent.poll() is None
+    (runtime.root / "p1.exit").touch()
+    assert parent.wait(timeout=30) == 0
 
 
 def test_continue_releases_reused_root_without_signalling(runtime: Runtime) -> None:

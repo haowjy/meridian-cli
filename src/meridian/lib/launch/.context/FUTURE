@@ -28,3 +28,12 @@
   `DIRECT` and 18 test/support files reference a facade that reimplements direct
   preparation. In a test-architecture pass, remove the production-invalid default
   and migrate those tests through the production prepare/bind pipeline.
+- policy_snapshot.py / policies.py `_resolve_policy_from_snapshot`: replay rebuilds
+  `ResolvedLaunchPolicy` without `bundle_available_skills`, so on continue the
+  available skills survive only as persisted `bundle_inventory_prompt` text and are
+  not projected into the workspace. Persist and replay the available entries if a
+  continued agent needs to load them natively.
+- ops/spawn/api.py fork path: `inherited_skills` re-passes the source spawn's
+  resolved skill names to Mars as extra skills, duplicating the profile's own
+  loads (Mars dedupes, so it is harmless). Pass only the source's caller-requested
+  extras once the snapshot records them separately.

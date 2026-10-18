@@ -37,6 +37,7 @@ from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.session_store import cleanup_stale_sessions
 from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_status import overlay_derived
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry.retention import (
     DEFAULT_MAX_TOTAL_BYTES,
@@ -288,10 +289,13 @@ def _repair_orphan_runs(
     return len(reconciled_orphans), tuple(reconciled_orphans)
 
 
-def schedule_background_repairs(project_root: Path) -> None:
+def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = True) -> None:
     """Resolve runtime root and run stale-lock + orphan-run repairs in a daemon thread.
 
     Callers gate on startup class and side-effect eligibility before calling.
+    ``repair_orphans=False`` is for a launch that continues a spawn: its own
+    sweep acquires the source's launch lock, which the orphan repair would
+    otherwise contend for.
     """
 
     if not is_root_side_effect_process():
@@ -332,7 +336,8 @@ def schedule_background_repairs(project_root: Path) -> None:
         with suppress(Exception):
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
-            _repair_orphan_runs(project_root, runtime_root=runtime_root)
+            if repair_orphans:
+                _repair_orphan_runs(project_root, runtime_root=runtime_root)
 
     threading.Thread(
         target=_run_repairs,
@@ -434,6 +439,7 @@ def _doctor_local(
 
     spawn_scan = spawn_store.list_spawns(runtime_root)
     spawns = spawn_scan.records
+    # Destructive pruning stays conservative: stored-active rows remain protected.
     active_spawn_ids = {spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)}
     protected_spawn_ids = active_spawn_ids | {
         quarantine.spawn_id for quarantine in spawn_scan.quarantines
@@ -520,7 +526,27 @@ def _doctor_local(
             )
         )
 
-    running = [row.id for row in spawns if is_active_spawn_status(row.status)]
+    derived = overlay_derived(runtime_root, spawns)
+    running = [row.id for row in derived if is_active_spawn_status(row.status)]
+    # Stored-active but derived-terminal: the runner is gone and no outcome is
+    # persisted yet. Readers already show the crash; --kill-orphans writes it.
+    unpersisted = [
+        row.id
+        for row, stored in zip(derived, spawns, strict=True)
+        if is_active_spawn_status(stored.status) and not is_active_spawn_status(row.status)
+    ]
+    if unpersisted:
+        warnings.append(
+            DoctorWarning(
+                code="dead_spawns_unfinalized",
+                message=(
+                    "Spawns whose runner is gone have no persisted outcome; "
+                    "`meridian doctor --kill-orphans` records it and reaps their processes: "
+                    + ", ".join(unpersisted)
+                ),
+                payload={"spawn_ids": unpersisted},
+            )
+        )
     if running:
         reconciliation_mode = (
             "after orphan-kill reconciliation"
@@ -590,16 +616,11 @@ def _doctor_global(
                         "with --prune --global."
                     ),
                     payload={
-                        "project_ids": [
-                            item.project_id for item in prunable_adhoc_project_dirs
-                        ],
+                        "project_ids": [item.project_id for item in prunable_adhoc_project_dirs],
                         "paths": [
-                            item.path or item.runtime_root
-                            for item in prunable_adhoc_project_dirs
+                            item.path or item.runtime_root for item in prunable_adhoc_project_dirs
                         ],
-                        "reasons": [
-                            item.reason for item in prunable_adhoc_project_dirs
-                        ],
+                        "reasons": [item.reason for item in prunable_adhoc_project_dirs],
                     },
                 )
             )

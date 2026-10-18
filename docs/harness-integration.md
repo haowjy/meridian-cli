@@ -76,8 +76,12 @@ launch modes only when their protocols differ. Declare `_PROJECTED_FIELDS` and
 
 Define passthrough policy per flag: model overrides can be last-wins, but identity,
 transport mode, and managed extension selectors must not silently contradict
-Meridian's launch. Keep interactive starting prompts in the harness's supported
-prompt channel and apply the shared argument-size guard where prompts use argv.
+Meridian's launch. Keep native skill, context-file, and prompt-template discovery
+enabled for spawns as it is for primary sessions. Suppress an ambient code-loading
+surface only when the integration owns it explicitly; Pi suppresses extensions
+because Meridian selects its RPC bundles. Keep interactive starting prompts in the
+harness's supported prompt channel and apply the shared argument-size guard where
+prompts use argv.
 
 A connection implements start, stop, event streaming, cancellation, and supported
 control messages. Keep RPC acknowledgements independent of event consumption;
@@ -117,7 +121,7 @@ remain validated fail-closed.
 | Launch | Transport and discovery |
 |---|---|
 | Primary | Native Pi TUI, no `--mode rpc`; native ambient discovery remains enabled |
-| Spawned | `pi --mode rpc`; suppress skills, context files, and prompt templates; suppress ambient extensions unless `load_all_pi_extensions = true` |
+| Spawned | `pi --mode rpc`; native skills, context files, and prompt templates remain enabled; suppress ambient extensions unless `load_all_pi_extensions = true` |
 
 Both roles load the stable bundles listed below where enabled; `meridian-idle` loads only for interactive primaries:
 

@@ -213,12 +213,16 @@ def write_projection_artifacts(
     """Write launch observability artifacts for one prepared context."""
 
     projected = launch_context.projected_content
+    run_params = launch_context.binding.run_params
+    # The appended prompt is what the harness receives (Claude reads this file
+    # through --append-system-prompt-file). It extends the projected system
+    # prompt with additions made after projection, such as the source-edit
+    # directory instruction.
+    system_prompt = (run_params.appended_system_prompt or "").strip()
     if projected is not None:
-        system_prompt = projected.system_prompt.strip()
         starting_prompt = projected.user_turn_content.strip()
     else:
-        system_prompt = (launch_context.binding.run_params.appended_system_prompt or "").strip()
-        user_turn = (launch_context.binding.run_params.user_turn_content or "").strip()
+        user_turn = (run_params.user_turn_content or "").strip()
         starting_prompt = user_turn or launch_context.request.prompt.strip()
 
     if system_prompt:

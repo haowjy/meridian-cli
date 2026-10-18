@@ -104,6 +104,25 @@ def _terminal(root: Path) -> str:
     return key
 
 
+def test_capture_record_refuses_stored_active_state(tmp_path: Path) -> None:
+    from meridian.lib.state.retention_archive import capture_record
+
+    root = tmp_path / "runtime"
+    key = spawn_store.start_spawn(
+        root,
+        chat_id="c1",
+        model="test",
+        agent="coder",
+        harness="codex",
+        prompt="still active",
+    )
+    state = spawn_store.get_spawn(root, key)
+    assert state is not None
+
+    with pytest.raises(ValueError, match="stored terminal"):
+        capture_record(root / "spawns" / key, state, None, state.started_at or "")
+
+
 def test_rebuild_and_missed_metadata_write_are_discovered(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     key = _terminal(root)

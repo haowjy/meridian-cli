@@ -113,8 +113,9 @@ Frozen sub-model holding the runner's resolved terminal outcome (`status`,
 `exit_code`, `error`, `exited_at`). Written exactly once after the harness drain
 and post-run work are complete, before `mark_finalizing()`.
 
-**Authoritative presence check:** `runner_exit is not None`. The reaper pivots
-entirely on this; pre-finalization harness-exit fields carry no terminal weight.
+`runner_exit` is intent for the live runner's writer path, not authority for a dead
+launch. A lock-backed dead launch is claimed through `claim_dead_launch()`; the free
+runner-lifetime lock and cancel intent determine its derived outcome.
 
 **Write sequence (caller contract):**
 
@@ -122,9 +123,9 @@ entirely on this; pre-finalization harness-exit fields carry no terminal weight.
 2. `record_runner_exit()` — persist `RunnerExitFacts` (atomic write)
 3. `complete_execution()` → `mark_finalizing()` → `finalize()`
 
-Crash between 2 and 3: reaper sees `runner_exit` on a `running`/`finalizing`
-spawn and uses it. Crash before 2: reaper sees no `runner_exit` and
-orphan-fails. Writers must cover all terminal paths.
+If the runner crashes before step 3, `SpawnApplicationService.finalize_dead_launch()`
+claims the free launch lock and persists the same `cancelled` or `failed`/`crashed`
+outcome whether or not step 2 completed. Writers must cover all terminal paths.
 
 ### Finalized outcome: `terminal: TerminalFacts | None`
 
@@ -172,11 +173,10 @@ pre-finalization crash-recovery bookkeeping and can disagree with the final
 outcome when budget checks or guardrails fail. The runner's terminal intent
 lives in `runner_exit.status`, not in the harness exit code.
 
-**Don't trust `durable_report` as success evidence when `runner_exit is None`
-and the runner is dead.** A `report.md` can exist before a post-run guardrail
-fails. The runner is the only entity that knows whether the spawn succeeded —
-if it never persisted `runner_exit`, treat the spawn as an orphan failure even
-if artifacts exist.
+**Don't use `durable_report` or `runner_exit` to classify a dead lock-backed
+launch.** `read_derived()` and dead-launch finalization ignore both: cancel intent
+yields `cancelled`; otherwise the free launch lock yields `failed`/`crashed`. Do not
+invent a separate orphan branch from a missing `runner_exit`.
 
 **Don't set flat lifecycle fact fields on the model.** Fields like `exit_code`,
 `finished_at`, `terminal_origin` are read-only properties that delegate to the

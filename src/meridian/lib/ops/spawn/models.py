@@ -852,11 +852,6 @@ class SpawnDetailOutput(BaseModel):
         failure_value = self.failure_reason
         if failure_value is None:
             return None
-        if failure_value == "orphan_finalization":
-            failure_value = (
-                "orphan_finalization (harness likely completed; "
-                "report.md may still contain useful content)"
-            )
         label = "Warning" if self.status == "succeeded" else "Failure"
         return label, failure_value
 
@@ -1080,11 +1075,6 @@ class SpawnDetailOutput(BaseModel):
         failure_value = self.failure_reason
         if failure_value is not None:
             failure_label = "Warning" if self.status == "succeeded" else "Failure"
-            if failure_value == "orphan_finalization":
-                failure_value = (
-                    "orphan_finalization (harness likely completed; "
-                    "report.md may still contain useful content)"
-                )
 
         work_value = (self.work_id or "").strip() or None
         desc_value = (self.desc or "").strip() or None

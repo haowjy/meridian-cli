@@ -146,7 +146,6 @@ def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
     def _unexpected(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("reconciliation should not run for read-only target resolution")
 
-    monkeypatch.setattr("meridian.lib.state.reaper.reconcile_spawns", _unexpected)
     monkeypatch.setattr("meridian.lib.state.reaper.reconcile_active_spawn", _unexpected)
     monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
 
@@ -208,7 +207,6 @@ def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
     def _unexpected(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("reconciliation should not run for read-only target resolution")
 
-    monkeypatch.setattr("meridian.lib.state.reaper.reconcile_spawns", _unexpected)
     monkeypatch.setattr("meridian.lib.state.reaper.reconcile_active_spawn", _unexpected)
     monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
 

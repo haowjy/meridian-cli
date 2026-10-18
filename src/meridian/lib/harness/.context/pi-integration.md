@@ -30,8 +30,9 @@ Bundle toggles and `load_all_pi_extensions` resolve from the launch config snaps
 in `bind_launch_context()` → `SpawnParams.pi_harness_profile` →
 `PiAdapter.resolve_launch_spec()`, not ambient CWD config reload. Spawned RPC
 suppresses ambient extensions by default; `load_all_pi_extensions = true` retains
-native discovery and adds configured extra roots. Primary always retains native
-discovery. Both roles reject passthrough mode/extension selectors.
+extension discovery and adds configured extra roots. Native skills, context files,
+and prompt templates remain discoverable in both roles. Both roles reject
+passthrough mode/extension selectors.
 
 The runtime itself is resolved by `pi_runtime_resolver.py`. Both managed TUI primary
 and spawned RPC roles require a stable Pi `>=1.1.0 <2`; prerelease, ambiguous or

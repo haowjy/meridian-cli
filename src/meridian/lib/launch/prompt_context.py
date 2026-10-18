@@ -35,21 +35,6 @@ def _render_skill_block(skill: SkillContent, content: str) -> str:
     )
 
 
-def _render_skill_blocks(skills: Sequence[SkillContent]) -> tuple[str, ...]:
-    blocks: list[str] = []
-    for skill in skills:
-        content = skill.content.strip()
-        if not content:
-            continue
-        blocks.append(_render_skill_block(skill, content))
-    return tuple(blocks)
-
-
-def _join_sections(sections: Sequence[str]) -> str:
-    non_empty = [section.strip() for section in sections if section.strip()]
-    return "\n\n".join(non_empty)
-
-
 def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[PromptDocument, ...]:
     """Format loaded skills as typed supplemental prompt documents."""
 
@@ -69,19 +54,6 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
             )
         )
     return tuple(documents)
-
-
-def compose_skill_injections(skills: Sequence[SkillContent]) -> str | None:
-    """Format skill content for --append-system-prompt injection.
-
-    Includes each skill's name, directory, and content (not frontmatter).
-    Returns None when there are no skills (caller omits the flag entirely).
-    """
-
-    blocks = _render_skill_blocks(skills)
-    if not blocks:
-        return None
-    return _join_sections(blocks)
 
 
 def build_context_prompt(
@@ -125,6 +97,5 @@ __all__ = [
     "CONTEXT_PROMPT_FOOTER",
     "CONTEXT_PROMPT_HEADER",
     "build_context_prompt",
-    "compose_skill_injections",
     "compose_skill_prompt_documents",
 ]

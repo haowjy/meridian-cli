@@ -62,9 +62,6 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--no-extensions": ("--no-extensions",),
     "--mode": ("--mode",),
     "-e": ("-e", "--extension"),
-    "--no-skills": ("--no-skills",),
-    "--no-context-files": ("--no-context-files",),
-    "--no-prompt-templates": ("--no-prompt-templates",),
 }
 
 _EFFORT_TO_THINKING: dict[str, str] = {
@@ -184,8 +181,6 @@ def project_pi_spec_to_cli_args(
         has_managed_value=bool(spec.appended_system_prompt),
         passthrough_tail=passthrough_tail,
     )
-
-
     _log_collision_if_needed(
         managed_flag="--no-extensions",
         has_managed_value=not spec.load_all_pi_extensions,
@@ -196,34 +191,11 @@ def project_pi_spec_to_cli_args(
         has_managed_value=True,
         passthrough_tail=passthrough_tail,
     )
-    _log_collision_if_needed(
-        managed_flag="--no-skills",
-        has_managed_value=True,
-        passthrough_tail=passthrough_tail,
-    )
-    _log_collision_if_needed(
-        managed_flag="--no-context-files",
-        has_managed_value=True,
-        passthrough_tail=passthrough_tail,
-    )
-    _log_collision_if_needed(
-        managed_flag="--no-prompt-templates",
-        has_managed_value=True,
-        passthrough_tail=passthrough_tail,
-    )
 
     command.extend(project_identity(spec.native_identity))
 
     if not spec.load_all_pi_extensions:
         command.append("--no-extensions")
-
-    command.extend(
-        (
-            "--no-skills",
-            "--no-context-files",
-            "--no-prompt-templates",
-        )
-    )
 
     for extension_entrypoint in spec.pi_extension_entrypoints:
         command.extend(("-e", extension_entrypoint))

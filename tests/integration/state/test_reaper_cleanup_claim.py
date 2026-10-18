@@ -36,6 +36,7 @@ def _spawn_with_scope(tmp_path: Path) -> tuple[Path, str, ProcessScopeSnapshot]:
         started_at=_OLD_STARTED_AT,
         status="running",
     )
+    (runtime_root / "spawns" / spawn_id / "launch.lock").touch()
     scope = ProcessScopeSnapshot(
         scope_id="worker",
         owner_policy="spawn_owned",
@@ -76,7 +77,6 @@ def test_runner_finalize_between_reaper_snapshot_and_cleanup_preserves_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root, spawn_id, _scope = _spawn_with_scope(tmp_path)
-    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", lambda *_a, **_k: False)
     kill_calls: list[str] = []
     from meridian.lib.state.reaper_cleanup_claim import claim_active_spawn_scopes
 
@@ -112,7 +112,6 @@ def test_reaper_recovers_claim_after_crash_before_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root, spawn_id, scope = _spawn_with_scope(tmp_path)
-    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", lambda *_a, **_k: False)
     from meridian.lib.state.reaper import _cleanup_claimed_scopes
 
     monkeypatch.setattr(
@@ -141,7 +140,8 @@ def test_reaper_recovers_claim_after_crash_before_cleanup(
     )
     recovered = reconcile_active_spawn(tmp_path, runtime_root, terminal)
 
-    assert recovered == terminal
+    assert recovered.status == terminal.status
+    assert recovered.terminal == terminal.terminal
     assert terminated == [scope.release_id]
     assert not claim_path.exists()
 
@@ -151,7 +151,6 @@ def test_double_reconcile_does_not_double_kill_claimed_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root, spawn_id, scope = _spawn_with_scope(tmp_path)
-    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", lambda *_a, **_k: False)
     terminated: list[str] = []
 
     def terminate(claimed: ProcessScopeSnapshot, **_kwargs) -> CleanupResult:
@@ -167,8 +166,10 @@ def test_double_reconcile_does_not_double_kill_claimed_scope(
         first = first_future.result()
         second = second_future.result()
 
-    assert first.status == "failed"
-    assert second.status == "failed"
+    # The caller that loses the non-blocking launch claim may return its stale
+    # running input; persisted state and the one cleanup action are authoritative.
+    assert "failed" in {first.status, second.status}
+    assert _record(runtime_root, spawn_id).status == "failed"
     assert terminated == [scope.release_id]
     claim_path = runtime_root / "spawns" / spawn_id / "reaper_cleanup_claim.json"
     assert not claim_path.exists()
@@ -179,8 +180,6 @@ def test_cleanup_failure_keeps_only_unresolved_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root, spawn_id, scope = _spawn_with_scope(tmp_path)
-    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", lambda *_a, **_k: False)
-
     def fail(claimed: ProcessScopeSnapshot, **_kwargs) -> CleanupResult:
         result = _cleanup_result(claimed)
         return CleanupResult(**{**result.__dict__, "skip_reason": "termination_exception"})

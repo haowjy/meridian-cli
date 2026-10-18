@@ -6,9 +6,7 @@ Read this only when something looks wrong: a spawn seems stuck, expected output 
 
 | Symptom | Likely cause | First move |
 |---|---|---|
-| `orphan_run` | Runner process died while `running` without ever reaching `finalizing` | Relaunch after read-path reconciliation updates the record; no report will be present |
-| `orphan_finalization` | Runner reached `finalizing` but was abandoned before writing terminal state | Check `spawn show` — `report.md` may still hold useful content the harness produced before exit |
-| `missing_runner_pid` | Runner PID was never recorded (harness crashed before startup stabilized) | Confirm harness binaries are installed and on `$PATH`; relaunch |
+| `crashed` | The runner's lifetime lock was freed before it wrote an outcome | Check `report.md`; the work may still be usable. Relaunch or use `--continue`. A pending cancel request produces `cancelled` instead. |
 | `missing_spawn_dir` | Crash during launch before spawn artifacts stabilized | Relaunch the spawn |
 | Exit 127 or 2 with empty report | Harness binary missing from `$PATH` | Install or fix PATH for the selected harness |
 | Exit 143 or 137 | Process terminated externally | Check `meridian spawn show <id>` first; if status is `succeeded`, signal hit during cleanup and no retry is needed. Otherwise check host logs for OOM or external kill, then retry |
@@ -27,7 +25,6 @@ Each spawn writes artifacts under `~/.meridian/projects/<project-id>/spawns/<spa
 | `stderr.log` | Harness stderr, warnings, and errors |
 | `prompt.md` | Prompt materialized for the harness |
 | `harness.pid` | Foreground harness PID file |
-| `heartbeat` | Liveness touch file while spawn is active |
 
 ## First Checks
 
@@ -72,9 +69,9 @@ ls -la "$(meridian context kb)"
 
 ## Stuck Spawn Recovery
 
-Meridian reconciles running spawns on read. If a process died, wrote a report without finalizing, or went stale, the next `spawn list`, `spawn show`, `spawn wait`, or `meridian doctor` call detects that and marks it failed.
+Meridian derives running-spawn status on read. If a runner dies without writing an outcome, `spawn list`, `spawn show`, and `spawn wait` immediately report `failed`/`crashed`; a pending cancel request reports `cancelled`. Plain `meridian doctor` lists such spawns under `dead_spawns_unfinalized`; `meridian doctor --kill-orphans` persists the outcome and cleans up recorded process scopes.
 
-A spawn in `finalizing` status is **not stuck** — it is in the drain/report/final-status window after the runner has recorded its resolved exit tuple. Give it a few seconds before treating it as stuck. If a `finalizing` record persists with no recent activity, reconciliation uses any durable report or recorded runner-exit tuple first; if neither can prove completion, it moves the spawn to `failed` with `orphan_finalization`.
+A spawn in `finalizing` status is **not stuck** — it is in the drain/report/final-status window. Give it a few seconds before treating it as stuck. If the runner's lifetime lock is freed before an outcome is written, the spawn reads as `failed`/`crashed` (or `cancelled` when cancellation was requested). Check `report.md`; it may still contain useful work, but it does not determine the outcome.
 
 If a spawn seems stuck, run:
 

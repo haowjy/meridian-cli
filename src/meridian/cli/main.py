@@ -809,6 +809,19 @@ def _bootstrap_setup_requested(argv: Sequence[str]) -> bool:
     return False
 
 
+def _is_launch_continue(argv: Sequence[str], *, command_path: tuple[str, ...] | None) -> bool:
+    """Return whether startup belongs to a primary launch that continues a spawn."""
+
+    if command_path != ():
+        return False
+    for token in argv:
+        if token == "--":
+            break
+        if token == "--continue" or token.startswith("--continue="):
+            return True
+    return False
+
+
 def _is_launch_dry_run(argv: Sequence[str], *, command_path: tuple[str, ...] | None) -> bool:
     """Return whether startup belongs to a non-mutating launch preview."""
 
@@ -923,6 +936,7 @@ def _maybe_schedule_background_repairs(
     startup_class: StartupClass,
     project_root: Path | None,
     bootstrap_skipped: bool,
+    continues_spawn: bool,
 ) -> None:
     """Schedule cheap per-project repairs on PRIMARY_LAUNCH in a daemon thread."""
 
@@ -931,7 +945,7 @@ def _maybe_schedule_background_repairs(
 
     from meridian.lib.ops.diag import schedule_background_repairs
 
-    schedule_background_repairs(project_root)
+    schedule_background_repairs(project_root, repair_orphans=not continues_spawn)
 
 
 def _print_agent_root_help() -> None:
@@ -1095,6 +1109,10 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
             startup_class=startup_class,
             project_root=project_root,
             bootstrap_skipped=bootstrap_skipped or launch_dry_run,
+            continues_spawn=_is_launch_continue(
+                cleaned_args,
+                command_path=descriptor.command_path if descriptor is not None else None,
+            ),
         )
         _emit_usage_command_invoked(cleaned_args)
 
