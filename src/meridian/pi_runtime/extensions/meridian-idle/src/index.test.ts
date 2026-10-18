@@ -142,10 +142,11 @@ describe("meridian idle event mapping", () => {
     expectCliContract(calls);
   });
 
-  it("forwards a bounded snapshot of running Bash records and survives unreadable evidence", async () => {
+  it("forwards bounded tracked background Bash records and survives unreadable evidence", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meridian-pi-idle-"));
     vi.stubEnv("_MERIDIAN_PI_STATE_DIR", root);
     vi.stubEnv("MERIDIAN_SPAWN_ID", "p-parent");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     try {
       const recordsPath = resolveBashRecordsPath();
@@ -174,12 +175,16 @@ describe("meridian idle event mapping", () => {
         index === 0 ? longCommand : `sleep ${index}`,
         "running",
       ));
+      const detached = {
+        ...record("b-detached", "detached command", "running"),
+        is_tracked: false,
+      };
       const finished = record("b-finished", "finished command", "exited");
       await writeJsonAtomic(recordsPath, {
         v: 1,
         spawn_id: "p-parent",
         updated_at_ms: 1,
-        records: Object.fromEntries([...running, finished].map((row) => [row.bash_id, row])),
+        records: Object.fromEntries([detached, ...running, finished].map((row) => [row.bash_id, row])),
       });
 
       const run = vi.fn<MeridianRunner>(async (args) => {
@@ -202,13 +207,13 @@ describe("meridian idle event mapping", () => {
       expect(taskArg).toBeDefined();
       const tasks = JSON.parse(taskArg!.slice("--background-tasks=".length)) as Array<{
         kind: string;
-        command: string;
+        command?: string;
       }>;
       expect(tasks).toHaveLength(16);
-      expect(tasks.every((task) => task.kind === "shell")).toBe(true);
       expect(tasks.map((task) => task.command)).not.toContain("finished command");
-      expect(tasks[0]?.command).toBe(`${longCommand.slice(0, 509)}\n;:`);
-      expect(tasks[0]?.command).toHaveLength(512);
+      expect(tasks.map((task) => task.command)).not.toContain("detached command");
+      expect(tasks.map((task) => task.command)).toContain("sleep 15");
+      expect(tasks[0]).toEqual({ kind: "other" });
 
       await writeFile(recordsPath, "{", "utf8");
       await event(handlers, "agent_end", {}, ctx);
@@ -219,7 +224,11 @@ describe("meridian idle event mapping", () => {
 
       const secondArm = run.mock.calls.filter(([args]) => args[1] === "arm")[1]![0];
       expect(secondArm.some((arg) => arg.startsWith("--background-tasks="))).toBe(false);
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining(
+        "[meridian-idle] running work unavailable:",
+      ));
     } finally {
+      stderr.mockRestore();
       await rm(root, { recursive: true, force: true });
     }
   });

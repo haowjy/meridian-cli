@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { readBashRecords } from "../../shared/bash_records";
 import { runMeridianCommand, type CommandResult } from "../../shared/meridian_cli";
+import { isTrackedBackground } from "../../shared/schemas";
 
 export type MeridianRunner = (
   args: string[],
@@ -36,7 +37,7 @@ const EXCERPT_CHAR_CAP = 4_000;
 const BACKGROUND_TASK_LIMIT = 16;
 const BACKGROUND_COMMAND_CHAR_CAP = 512;
 
-type BackgroundTask = { kind: "shell"; command: string };
+type BackgroundTask = { kind: "shell"; command: string } | { kind: "other" };
 
 function capExcerpt(value: string): string | null {
   const capped = value.slice(0, EXCERPT_CHAR_CAP);
@@ -72,21 +73,17 @@ export function messageExcerpts(messages: unknown): {
   return { user, assistant };
 }
 
-function backgroundCommand(command: string): string {
-  if (command.length <= BACKGROUND_COMMAND_CHAR_CAP) return command;
-  // Keep a truncated shell from looking like a certain wake if a meaningful
-  // suffix (such as --background or a following command) was cut off.
-  return `${command.slice(0, BACKGROUND_COMMAND_CHAR_CAP - 3)}\n;:`;
-}
-
 async function runningBackgroundTasks(): Promise<BackgroundTask[]> {
   try {
     const file = await readBashRecords();
     return Object.values(file.records)
-      .filter((record) => record.status === "running")
+      .filter((record) => record.status === "running" && isTrackedBackground(record))
       .slice(0, BACKGROUND_TASK_LIMIT)
-      .map((record) => ({ kind: "shell", command: backgroundCommand(record.command) }));
-  } catch {
+      .map((record) => record.command.length <= BACKGROUND_COMMAND_CHAR_CAP
+        ? { kind: "shell", command: record.command }
+        : { kind: "other" });
+  } catch (error) {
+    process.stderr.write(`[meridian-idle] running work unavailable: ${String(error)}\n`);
     return [];
   }
 }

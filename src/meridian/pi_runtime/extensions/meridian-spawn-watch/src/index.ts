@@ -17,7 +17,7 @@ import {
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
-import { isTerminalBashStatus, parseSpawnStateFile } from "../../shared/schemas";
+import { isTerminalBashStatus, isTrackedBackground, parseSpawnStateFile } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
 import { bashOutcome } from "../../shared/task_outcome";
 import {
@@ -244,7 +244,7 @@ export class SpawnWatchRuntime {
     }
     for (const record of Object.values(bash.records)) {
       const outcome = bashOutcome(record);
-      if (record.is_tracked && record.is_background && isTerminalBashStatus(record.status)
+      if (isTrackedBackground(record) && isTerminalBashStatus(record.status)
           && record.notification_consumed_at_ms == null && !correlated.has(record.bash_id)
           && !consumed.has(record.bash_id) && !claimed.has(record.bash_id)) eligible.push({
         id: record.bash_id, kind: "bash", status: outcome.status, label: record.command,

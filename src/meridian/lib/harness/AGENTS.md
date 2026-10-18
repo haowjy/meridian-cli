@@ -50,8 +50,9 @@ launcher-hosted Codex/OpenCode sensing (events plus a `busy()` probe),
 downstream delegation, and `detect_ttl` where the harness can observe cache
 retention. The core passes `detect_ttl` the chat's launch-recorded
 `native_store` from its session record. Adapters report the work a turn left
-running as `IdleEvent.background_tasks` (Claude's mod does, through
-`idle arm --background-tasks`); core alone decides what that work means. Keep
+running as `IdleEvent.background_tasks` (Claude's mod and Pi's
+`meridian-idle` do, through `idle arm --background-tasks`); core alone decides
+what that work means. Keep
 all native parsing and facts in `*_idle.py`; `lib/idle/` owns policy and
 state. A primary observer's stream lives
 until the primary closes; spawn streams may end at a reconciled terminal.

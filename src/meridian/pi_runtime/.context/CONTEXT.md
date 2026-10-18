@@ -201,8 +201,9 @@ always loaded by the adapter and has no config toggle. Meridian-idle is selected
 only when the launch profile is interactive. It passes `--interactive` on every
 `meridian idle` call, serializes arm/return transitions without making user input
 wait for the CLI, and fires each due push/warn stage back to the core. Its arm
-snapshot contains the Bash rows still running, bounded to 16
-shell facts and 512 characters per command. Invalid or unresolved Bash evidence
+snapshot contains the tracked background Bash rows still running, bounded to 16
+facts. Commands up to 512 characters remain shell facts; longer commands become
+`other` instead of incomplete shell syntax. Invalid or unresolved Bash evidence
 degrades to no task facts rather than preventing the arm; command interpretation
 remains in the Python idle core.
 

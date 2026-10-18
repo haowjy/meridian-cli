@@ -25,7 +25,8 @@ compact; harnesses compact on their own. It is policy, not a harness adapter:
   adapter. A certain wake holds the push, and the response stays owed
   (`push_owed_since_ms`) until a push is delivered or the user returns. A known
   wake before cache expiry drops the warning. The Claude mod forwards native
-  background-task facts; Pi forwards running managed-bash rows as shell facts.
+  background-task facts; Pi forwards tracked background managed-bash rows as
+  shell facts when the full command fits its bound, or `other` otherwise.
   Codex and OpenCode send none (#669).
 - `wake.py` skips Meridian's top-level value flags through
   `lib/cli_args.py` `TOP_LEVEL_VALUE_FLAGS`, the table `cli/bootstrap.py`

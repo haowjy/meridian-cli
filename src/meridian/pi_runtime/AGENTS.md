@@ -27,9 +27,10 @@ on Pi's exact error-text prefix; a changed prefix poisons the record fail-closed
 See README for that dependency.
 `meridian-idle` is primary-only. It translates native idle/input events into
 `meridian idle` commands; the Python core owns every policy, notification, and
-persistence decision. At `agent_end` it reads valid managed-bash rows that are
-still running and forwards a bounded shell-task
-snapshot to `idle arm`; it never classifies Meridian commands itself.
+persistence decision. At `agent_end` it reads valid tracked background
+managed-bash rows that are still running and forwards a bounded task snapshot
+to `idle arm`; an over-cap command becomes `other`, and it never classifies
+Meridian commands itself.
 
 ## Key Rules
 

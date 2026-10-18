@@ -72,6 +72,11 @@ export function parseBashRecordsFile(value: unknown): BashRecordsFile | null {
   return value;
 }
 
+/** Host scope shared by Pi Bash pings, completion notices, and idle work. */
+export function isTrackedBackground(record: BashRecord): boolean {
+  return record.is_background && record.is_tracked;
+}
+
 export type ObservedSpawnsFile = {
   v: 1;
   spawn_id: string;
