@@ -279,16 +279,23 @@ push.
 The push means the agent is done and waiting on you, so it reads the work a
 turn left running:
 
-- Subagents and workflows, and background shells running `meridian spawn ...`,
-  hold the push. That work ends and wakes the session, and that turn arms
-  again; its push is timed from your last prompt, so a long wait uses
-  `push_seconds`.
-- A background `meridian spawn wait` also wakes the session when it yields
-  (`--yield-after-secs`, else the harness's wait-yield default: 3000 seconds for
-  Claude). If that lands before the cache goes cold, the cache warning is
+- Subagents and workflows hold the push. A background shell does too only when
+  its final command segment is a foreground `meridian spawn` creation or
+  `meridian spawn wait`, with no `while`, `until`, `for`, or `select` segment.
+  Direct paths, leading environment assignments, `uv run ... meridian`, and
+  `uvx meridian` are recognized. Earlier setup such as `cd x &&` is fine. That
+  work ends and wakes the session, and that turn arms again; the response stays
+  owed until its push is sent, so a long wait uses `push_seconds` even when an
+  earlier scheduled push was replaced.
+- A certain `meridian spawn wait` has a latest wake time. An explicit
+  `--timeout` is minutes and disables yielding; otherwise Meridian uses
+  `--yield-after-secs` or the harness's wait-yield default (3000 seconds for
+  Claude). If that wake lands before the cache goes cold, the cache warning is
   dropped, since the wake keeps the cache warm; otherwise the warning stays.
-- Any other background shell or task (a dev server, a build) may never end, so
-  it only delays the push to at least `quick_turn_push_seconds`.
+- Detached spawn creation (`--bg`), spawn management commands such as
+  `list`/`show`/`cancel`, loops, commands followed by more work, and any other
+  background shell or task may never end. They only delay the push to at least
+  `quick_turn_push_seconds`.
 - Monitors are ignored.
 
 Otherwise the warning arms after every turn, even while the push is held. Only

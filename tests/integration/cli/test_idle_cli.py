@@ -101,7 +101,7 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
     updated_at_ms = status[0]["updated_at_ms"]
     assert isinstance(updated_at_ms, int)
     assert status[0] == {
-        "v": 1,
+        "v": 2,
         "harness": "claude",
         "session": "fake-claude-session",
         "stretch": 1,
@@ -110,7 +110,7 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "last_input_count": None,
         "anchor": 1,
         "idle_since_ms": armed["push_at"],
-        "push_owed_since_ms": None,
+        "push_owed_since_ms": armed["push_at"],
         "ttl_seconds": 61,
         "ttl_estimated": True,
         "schedule": {"push_at": armed["push_at"], "warn_at": None},

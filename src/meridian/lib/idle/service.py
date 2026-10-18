@@ -388,8 +388,8 @@ class IdleService:
                 last_assistant_text=assistant_excerpt,
                 anchor=anchor,
                 idle_since_ms=now_ms,
-                # A held push leaves the response owed: the turn the work wakes times it.
-                push_owed_since_ms=owed_since_ms if placed.push_at is None else None,
+                # Scheduling does not answer the response; delivery or return does.
+                push_owed_since_ms=owed_since_ms,
                 ttl_seconds=resolved_ttl,
                 ttl_estimated=ttl_estimated,
                 schedule=_persisted_schedule(placed),
@@ -522,11 +522,27 @@ class IdleService:
             ok = self._notify_sender(notice, self._notify_config()).ok
         except Exception:
             ok = False
-        if not ok:
+        if ok and stage == "push":
+            self._clear_push_owed(harness, session, stretch)
+        elif not ok:
             self._mark_notification_failed(harness, session, stretch, stage)
 
     def _notify_config(self) -> NotifyConfig:
         return self.config.notify
+
+    def _clear_push_owed(self, harness: str, session: str, stretch: int) -> None:
+        def transition(current: IdleState | None) -> tuple[IdleState | None, None]:
+            if (
+                current is None
+                or current.stretch != stretch
+                or not current.stretch_open
+                or current.done.get("push") != "sent"
+                or current.push_owed_since_ms is None
+            ):
+                return current, None
+            return current.model_copy(update={"push_owed_since_ms": None}), None
+
+        self.store.mutate(harness, session, transition)
 
     def _mark_notification_failed(
         self,

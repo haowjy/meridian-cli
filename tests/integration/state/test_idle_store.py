@@ -31,7 +31,7 @@ def test_idle_store_round_trips_versioned_json(tmp_path: Path) -> None:
     assert store.read("example", "native-1") == written
     assert store.path_for("example", "native-1").name == "example-native-1.json"
     assert (
-        store.path_for("example", "native-1").read_text(encoding="utf-8").startswith('{\n  "v": 1,')
+        store.path_for("example", "native-1").read_text(encoding="utf-8").startswith('{\n  "v": 2,')
     )
 
 

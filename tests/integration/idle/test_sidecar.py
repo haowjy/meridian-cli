@@ -174,10 +174,7 @@ async def test_sidecar_drives_idle_push_and_warn(tmp_path: Path) -> None:
         )
     )
     await wait_until(
-        lambda: bool(
-            (state := store.read("codex", "session-1")) is not None
-            and state.done.get("warn") == "sent"
-        ),
+        lambda: len(sender.notices) == 2,
         description="warning sent",
     )
     alive[0] = False
@@ -303,11 +300,7 @@ async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path
         turn_id="external-turn",
     )
     await wait_until(
-        lambda: bool(
-            (state := store.read("codex", "session-1")) is not None
-            and state.stretch == 2
-            and state.done.get("warn") == "sent"
-        ),
+        lambda: len(sender.notices) == 2,
         description="externally written arm completion",
     )
     alive[0] = False

@@ -17,10 +17,13 @@ compact; harnesses compact on their own. It is policy, not a harness adapter:
   the first match is the reported reason.
 - Adapters report the work a turn left running as `BackgroundTask` facts, in the
   host's own terms mapped to a kind. `wake.py` alone reads them, including
-  Meridian's own CLI grammar (`meridian spawn`, `spawn wait --yield-after-secs`);
-  never classify spawn commands in an adapter. A certain wake holds the push,
-  and the response stays owed (`push_owed_since_ms`) until the turn that wake
-  arms. A known wake before cache expiry drops the warning.
+  Meridian's own CLI grammar. Only a foreground spawn creation or `spawn wait`
+  that ends the shell is certain; loops, detached spawns, management commands,
+  and commands followed by more work are maybe. An explicit wait `--timeout`
+  (minutes) replaces the yield deadline. Never classify spawn commands in an
+  adapter. A certain wake holds the push, and the response stays owed
+  (`push_owed_since_ms`) until a push is delivered or the user returns. A known
+  wake before cache expiry drops the warning.
 - Authoritative state lives in `../state/idle_store.py`; sidecar timers are
   disposable and reconstructed from that state.
 - A primary reopen through Meridian closes any open stretch in the launcher
