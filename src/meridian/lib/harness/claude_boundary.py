@@ -36,8 +36,9 @@ class _Record(BaseModel):
     source: Literal["startup", "resume", "fork", "clear", "compact"]
     session_id: str = Field(min_length=1, max_length=256, pattern=r"^[a-zA-Z0-9_-]+$")
     transcript_path: str = Field(min_length=1, max_length=4096, pattern=r"^[^\x00-\x1f]+$")
-    messaging_socket: str | None = None
-    recorded_at: float | None = None
+    # Typed at lookup, not here: a bad inbox field must never drop the identity record.
+    messaging_socket: object = None
+    recorded_at: object = None
 
     def observation(self, next_cursor: int) -> NativeObservation:
         path = Path(self.transcript_path)
@@ -80,8 +81,8 @@ def _iter_complete_records(
         yield next_cursor, _parse_record(line)
 
 
-def _usable_messaging_socket(value: str | None) -> Path | None:
-    if not value or not Path(value).is_absolute():
+def _usable_messaging_socket(value: object) -> Path | None:
+    if not isinstance(value, str) or not value or not Path(value).is_absolute():
         return None
     try:
         if len(value.encode()) > UNIX_SOCKET_PATH_MAX_BYTES:
@@ -139,5 +140,8 @@ def latest_messaging_socket(path: Path, *, pid: int) -> tuple[Path, float | None
             continue
         socket_path = _usable_messaging_socket(record.messaging_socket)
         if socket_path is not None:
-            latest = socket_path, record.recorded_at
+            recorded_at = record.recorded_at
+            if isinstance(recorded_at, bool) or not isinstance(recorded_at, int | float):
+                recorded_at = None
+            latest = socket_path, None if recorded_at is None else float(recorded_at)
     return latest

@@ -165,6 +165,7 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
         record("latest", socket_path=latest, recorded_at=2.0),
         record("invalid-socket", socket_path=Path("relative.sock"), recorded_at=3.0),
         record("future", socket_path=ignored_version, version=3),
+        {**record("wrong-type-socket"), "messaging_socket": 123, "recorded_at": "soon"},
     ]
     path.write_bytes(
         b"\n".join(json.dumps(line).encode() for line in lines)
@@ -176,7 +177,7 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
     assert [
         item.key.session_id
         for item in read_observations(path, nonce="nonce", pid=pid, cursor=0).observations
-    ] == ["first", "without-socket", "latest", "invalid-socket"]
+    ] == ["first", "without-socket", "latest", "invalid-socket", "wrong-type-socket"]
 
 
 def test_hook_does_not_recreate_deleted_spawn_parent(tmp_path, monkeypatch):
