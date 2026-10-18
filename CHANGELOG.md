@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.22] - 2026-10-18
+
 ### Added
 - `meridian spawn inject` can post to a live Claude primary through Claude Code's
   session inbox socket; unsupported primary harnesses now fail immediately instead
