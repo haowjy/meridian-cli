@@ -63,11 +63,9 @@ def _derived_terminal(row: SpawnRecord, *, cancelled: bool) -> TerminalFacts:
     )
 
 
-def derive(row: SpawnRecord, lock_free: bool) -> SpawnRecord:
-    """Overlay status from one row and its simultaneous lock observation."""
+def derive(row: SpawnRecord) -> SpawnRecord:
+    """Overlay status on a row read while its launch lock was free (no runner)."""
     if not is_active_spawn_status(row.status):
-        return row
-    if not lock_free:
         return row
     cancelled = row.cancel_intent is not None
     return row.model_copy(
@@ -136,7 +134,7 @@ def claim_dead_launch(runtime_root: Path, spawn_id: str) -> DeadLaunchClaim:
             return Live()
         if not is_active_spawn_status(row.status):
             return Settled(handle=handle, stored=row)
-        derived = derive(row, lock_free=True)
+        derived = derive(row)
         return Claimed(handle=handle, stored=row, derived=derived)
     except SpawnStateQuarantined:
         handle.close()
@@ -155,14 +153,14 @@ def read_derived(runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
         if row is None:
             return None
         if lock_free is True:
-            return derive(row, lock_free=True)
+            return derive(row)
         if lock_free is False:
             return row
     if not is_active_spawn_status(row.status):
         return row
     if legacy_runner_alive(row):
         return row
-    return derive(row, lock_free=True)
+    return derive(row)
 
 
 def overlay_derived(runtime_root: Path, rows: Iterable[SpawnRecord]) -> list[SpawnRecord]:
