@@ -65,12 +65,11 @@ def test_push_warn_and_missing_message_rendering() -> None:
     )
     assert warn.title == '[cache warning] main: tech-lead on work: "idle-cache-notify"'
     assert warn.body.startswith("Cache expiry warning: reply to keep it warm\nYou: ")
-    assert hidden == push.__class__(
-        title='[idle] coder in project: "meridian-cli"',
-        body="Your turn",
-        priority=3,
-        email=False,
-        kind="idle",
+    assert (hidden.title, hidden.body, hidden.priority, hidden.email) == (
+        '[idle] coder in project: "meridian-cli"',
+        "Your turn",
+        3,
+        False,
     )
 
 

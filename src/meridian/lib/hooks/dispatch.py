@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -27,11 +29,8 @@ from meridian.lib.hooks.types import (
     SpawnStatus,
 )
 from meridian.plugin_api import Hook as PluginHook
-from meridian.plugin_api import HookContext as PluginHookContext
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
     from meridian.lib.service_context import ApplicationContext
 
@@ -69,7 +68,10 @@ class HookDispatcher(LifecycleHook):
         interval_tracker: _IntervalTrackerLike | None = None,
         external_runner: _ExternalRunnerLike | None = None,
         builtin_hooks: Mapping[str, BuiltinHook] | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> None:
+        # The environment hooks run in; MERIDIAN_HOOKS_ENABLED=false there turns them off.
+        self._env = os.environ if env is None else env
         if authority is not None:
             self._project_root = authority.project_root.expanduser().resolve()
             self._runtime_root = (
@@ -96,8 +98,8 @@ class HookDispatcher(LifecycleHook):
         self._interval_tracker = interval_tracker or (
             IntervalTracker(self._runtime_root) if self._runtime_root is not None else None
         )
-        self._external_runner = external_runner or (
-            ExternalHookRunner(self._project_root) if self._runtime_root is not None else None
+        self._external_runner = external_runner or ExternalHookRunner(
+            self._project_root, env=self._env
         )
         self._builtin_hooks = builtin_hooks or BUILTIN_HOOKS
 
@@ -135,17 +137,17 @@ class HookDispatcher(LifecycleHook):
     def on_event(self, event: LifecycleEvent) -> None:
         """LifecycleHook protocol implementation."""
 
-        if self._runtime_root is None:
-            return
         self.fire(self._build_context(event))
 
     def fire(self, context: HookContext) -> list[HookResult]:
-        """Execute hooks registered for one event and return per-hook results."""
+        """Execute hooks registered for one event and return per-hook results.
 
-        if self._runtime_root is None:
-            return []
+        Without a runtime root (an ad-hoc directory nothing has initialized), hooks
+        still run; only interval-throttled ones skip, having nowhere to keep state.
+        A notification's emitter reports its route failures, so they log at info.
+        """
 
-        if not hooks_dispatch_enabled():
+        if not hooks_dispatch_enabled(self._env):
             logger.info(
                 "hook_dispatch_skipped",
                 hook_event=context.event_name,
@@ -195,7 +197,8 @@ class HookDispatcher(LifecycleHook):
                 continue
 
             fail_open = self._is_fail_open(event_class, self._resolve_failure_policy(hook))
-            logger.warning(
+            log_failure = logger.info if context.notification is not None else logger.warning
+            log_failure(
                 "hook_execution_failed",
                 hook=hook.name,
                 hook_event=context.event_name,
@@ -299,15 +302,6 @@ class HookDispatcher(LifecycleHook):
             if hook.builtin:
                 result = self._run_builtin(hook, context)
             else:
-                if self._external_runner is None:
-                    return HookResult(
-                        hook_name=hook.name,
-                        event=context.event_name,
-                        outcome="skipped",
-                        success=True,
-                        skipped=True,
-                        skip_reason="no_state",
-                    )
                 result = self._external_runner.run(hook, context, timeout_secs=timeout_secs)
         except Exception as exc:
             result = HookResult(
@@ -352,20 +346,8 @@ class HookDispatcher(LifecycleHook):
                 error=requirements_error,
             )
 
-        result = builtin.execute(_to_plugin_context(context), _to_plugin_hook(hook))
-        return HookResult(
-            hook_name=hook.name,
-            event=context.event_name,
-            outcome=result.outcome,
-            success=result.success,
-            skipped=result.skipped,
-            skip_reason=result.skip_reason,
-            error=result.error,
-            exit_code=result.exit_code,
-            duration_ms=result.duration_ms,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
+        result = builtin.execute(context, _to_plugin_hook(hook))
+        return replace(result, hook_name=hook.name, event=context.event_name)
 
     def _check_conditions(self, hook: Hook, context: HookContext) -> bool:
         when = hook.when
@@ -405,8 +387,6 @@ class HookDispatcher(LifecycleHook):
                 work_id=event.work_id,
             )
 
-        if self._runtime_root is None:
-            raise ValueError("Hook dispatcher context is missing runtime_root.")
         return HookContext.from_roots(
             project_root=self._project_root,
             runtime_root=self._runtime_root,
@@ -447,24 +427,4 @@ def _to_plugin_hook(hook: Hook) -> PluginHook:
         options=hook.options,
         failure_policy=hook.failure_policy,
         remote=hook.remote,
-    )
-
-
-def _to_plugin_context(context: HookContext) -> PluginHookContext:
-    return PluginHookContext(
-        event_name=context.event_name,
-        event_id=context.event_id,
-        timestamp=context.timestamp,
-        project_root=context.project_root,
-        runtime_root=context.runtime_root,
-        schema_version=context.schema_version,
-        spawn_id=context.spawn_id,
-        spawn_status=context.spawn_status,
-        spawn_agent=context.spawn_agent,
-        spawn_model=context.spawn_model,
-        spawn_duration_secs=context.spawn_duration_secs,
-        spawn_cost_usd=context.spawn_cost_usd,
-        spawn_error=context.spawn_error,
-        work_id=context.work_id,
-        work_dir=context.work_dir,
     )

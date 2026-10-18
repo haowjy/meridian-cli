@@ -13,9 +13,9 @@ from meridian.lib.idle.service import (
     close_on_launch,
     effective,
 )
-from meridian.lib.notify import Notice, SendReport
-from meridian.lib.notify.channels.base import SendResult
+from meridian.lib.notify import RouteReport, RouteResult
 from meridian.lib.state.idle_store import IdleSchedule, IdleState, IdleStore
+from meridian.plugin_api.types import HookEventName, Notification
 
 T = TypeVar("T")
 
@@ -56,13 +56,15 @@ class MemoryStore:
 class Sender:
     def __init__(self, *, ok: bool = True) -> None:
         self.ok = ok
-        self.notices: list[Notice] = []
+        self.notices: list[Notification] = []
 
-    def __call__(self, notice: Notice, cfg: object) -> SendReport:
-        _ = cfg
+    def __call__(
+        self, event: HookEventName, notice: Notification
+    ) -> RouteReport:
+        _ = event
         self.notices.append(notice)
         status = "sent" if self.ok else "failed"
-        return SendReport(results=(SendResult(channel="test", status=status),))
+        return RouteReport(results=(RouteResult(route="test", status=status),))
 
 
 def service(

@@ -2,26 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from meridian.plugin_api import Hook, HookContext, HookResult
+from meridian.plugin_api import Hook, HookContext, HookEventName, HookResult
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 
 class BuiltinHook(Protocol):
-    """Protocol implemented by in-process built-in hooks."""
+    """Protocol implemented by in-process built-in hooks; each owns its metadata."""
 
     name: str
     requirements: tuple[str, ...]
-
-    @property
-    def default_events(self) -> tuple[str, ...]:
-        """Default lifecycle events for this builtin hook."""
-        ...
-
-    @property
-    def default_interval(self) -> str | None:
-        """Default throttle interval for this builtin hook."""
-        ...
+    # Events an unevented row runs on, and its throttle when the row sets none.
+    default_events: tuple[HookEventName, ...]
+    # Events the builtin accepts; None means any configured event.
+    supported_events: tuple[HookEventName, ...] | None
+    default_interval: str | None
+    # Validates a row's `options` when config loads.
+    options_model: type[BaseModel]
+    # Options that make two unnamed rows different targets (and different names).
+    identity_options: tuple[str, ...]
 
     def check_requirements(self) -> tuple[bool, str | None]:
         """Return whether runtime requirements are available."""

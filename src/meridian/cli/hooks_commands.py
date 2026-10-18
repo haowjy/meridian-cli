@@ -41,7 +41,7 @@ def _hooks_list(emit: Emitter) -> None:
 
 
 def _hooks_check(emit: Emitter) -> None:
-    output = hooks_check_sync(HookCheckInput())
+    output = hooks_check_sync(HookCheckInput(project_root=_resolved_project_root()))
     emit(output)
     if not output.ok:
         raise SystemExit(1)
@@ -97,8 +97,7 @@ def register_hooks_commands(app: App) -> None:
         command_help_epilogues={
             "meridian.hooks.run": (
                 "Examples:\n\n"
-                "  meridian hooks run git-autosync\n\n"
-                "  meridian hooks run git-autosync --event spawn.finalized\n"
+                "  meridian hooks run sync-notes\n"
             )
         },
         default_handler=partial(_hooks_list, emit),

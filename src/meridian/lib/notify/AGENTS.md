@@ -1,23 +1,44 @@
 # lib/notify/ — Notification Delivery
 
-Harness-agnostic leaf service for labels and one-shot notification delivery.
-Callers construct a `Notice`; `service.send(notice, NotifyConfig)` fans out to
-the selected push and email backends and returns a `SendReport`. It never retries
-or reads notification config directly from environment variables.
+Harness-agnostic labels and one-shot delivery transports. The message is
+`plugin_api.Notification` (title, body, priority, email, label dict,
+attachment paths); nothing here defines another. Callers build one
+(`notice.manual_notification`, `lib/idle/messages.stage_notice`) and call
+`emit.emit(event, notification, ...)`, which fires that hook event through
+`lib/hooks`; the routes on it deliver it. The built-in `notify` hook calls
+`service.send(notification, cfg, event=..., channels=...)`, and `emit` turns
+each route's `HookResult` into one `RouteResult` in its route-level
+`RouteReport`. Never call `send()` from a caller: that skips routing and every
+extension. Nothing here retries or reads notification config from environment
+variables directly.
+
+`emit.py` is the only module that imports `lib/hooks`, lazily.
+If hook rows cannot load, `emit` drops and names each invalid row, preserves
+every valid row, and applies normal default-route overrides. This keeps idle
+delivery fail-open without losing silencing or extension routes; the warning
+travels in `emit.RouteReport`, and hook inspection raises all row errors normally.
 
 ## Channel seam
 
-Each backend is one module under `channels/` exposing a `CHANNEL` that satisfies
-`Channel.send(notice, cfg) -> SendResult`. Add its lazy entry to
-`channels.REGISTRY`; that dict is the only registration point. A backend failure
-is data in its result and must not stop another selected backend.
+Each backend is one module under `channels/` exposing a `CHANNEL` with
+`send(notification, cfg, *, event) -> SendResult`. Add its entry to
+`channels.REGISTRY`, the only registration point; mark email transports
+`email=True`, and `send()` skips them for a notification with `email=False`
+however a route named them. A route's `channels` option names backends
+directly or through `push` / `email` (the configured backends). User-defined
+channels are command hooks on the notification events, not backends. A
+backend failure is data in its result and must not stop another selected
+backend. `service.send()` aggregates those results in its own `SendReport`;
+transport reports and route reports are separate contracts.
 
 ## Output and logging
 
-This package never writes stdout/stderr. Expected failures and warnings travel
-in `SendReport`; CLI callers render them through the CLI output sink, while
-in-process callers decide where they belong. This matches sibling
-`lib/artifact`: no library logger is used for user-facing diagnostics.
+This package never writes stdout/stderr directly. Expected transport failures
+and warnings travel in `service.SendReport`; route failures and warnings travel
+in `emit.RouteReport`. CLI callers render the route report through the CLI output
+sink, while in-process callers decide where it belongs. `emit` also retains
+hook-row load errors in that report. Idle has no user-facing output, so its
+caller logs each report warning once.
 
 SMTP credentials come from `smtp_password_file` first, and that file is refused
 when group/world readable; `MERIDIAN_NOTIFY_SMTP_PASSWORD` is only a documented

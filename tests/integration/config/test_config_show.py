@@ -245,25 +245,55 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
     assert next(item for item in shown.values if item.key == "hooks").source == "file"
 
 
+def test_config_show_names_valid_hooks_and_counts_invalid_rows(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'builtin = "notify"\n'
+        'event = "notify.manual"\n'
+        "enabled = false\n"
+        "[[hooks]]\n"
+        'name = "broken"\n'
+        'event = "not.an.event"\n'
+        'command = "true"\n'
+        "[[hooks]]\n"
+        'name = "extra"\n'
+        'event = "notify.manual"\n'
+        'command = "true"\n'
+        "[[hooks]]\n"
+        'name = "sync"\n'
+        'builtin = "git-autosync"\n'
+        'remote = "https://example.com/notes.git"\n',
+        encoding="utf-8",
+    )
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    hook_value = next(item for item in shown.values if item.key == "hooks")
+
+    assert hook_value.value == "3 hooks (notify, extra, sync); 1 invalid row"
+
+
 @pytest.mark.parametrize(
-    ("project_toml", "user_toml", "expected_source"),
+    ("project_toml", "user_toml", "expected_source", "expected_value"),
     [
-        ("hooks = []\n", None, "file"),
-        (None, "hooks = []\n", "user-config"),
+        ("hooks = []\n", None, "file", "0 hooks"),
+        (None, "hooks = []\n", "user-config", "0 hooks"),
         (
             "hooks = []\n",
             '[[hooks]]\nname = "user-hook"\nevent = "spawn.start"\ncommand = "echo user"\n',
             "file",
+            "1 hook (user-hook)",
         ),
     ],
-    ids=["project", "user", "project-suppression-over-user-hooks"],
+    ids=["project", "user", "project-empty-over-user-hooks"],
 )
-def test_config_show_reports_hook_suppression_provenance_by_precedence(
+def test_config_show_reports_layered_hooks_with_dynamic_section_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     project_toml: str | None,
     user_toml: str | None,
     expected_source: str,
+    expected_value: str,
 ) -> None:
     project_root = _repo(tmp_path)
     if project_toml is not None:
@@ -276,8 +306,8 @@ def test_config_show_reports_hook_suppression_provenance_by_precedence(
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
     hook_value = next(item for item in shown.values if item.key == "hooks")
 
-    assert hook_value.value == "[] (suppressed)"
+    assert hook_value.value == expected_value
     assert hook_value.source == expected_source
-    assert f"hooks: [] (suppressed) [source: {expected_source}]" in shown.format_text(
+    assert f"hooks: {expected_value} [source: {expected_source}]" in shown.format_text(
         FormatContext()
     )

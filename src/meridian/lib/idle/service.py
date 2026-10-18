@@ -24,10 +24,11 @@ from meridian.lib.harness.idle_types import (
 )
 from meridian.lib.idle.excerpts import trim_turn_excerpts
 from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
-from meridian.lib.idle.messages import stage_notice
+from meridian.lib.idle.messages import STAGE_EVENTS, stage_notice
 from meridian.lib.idle.timeline import Schedule, push_delay, schedule
 from meridian.lib.idle.wake import expected_wake
-from meridian.lib.notify import Notice, SendReport, send
+from meridian.lib.notify import RouteReport
+from meridian.lib.notify.emit import emit
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.state.idle_store import (
     IdleSchedule,
@@ -39,14 +40,17 @@ from meridian.lib.state.idle_store import (
 from meridian.lib.state.paths import resolve_project_runtime_root_or_none
 from meridian.lib.state.session_store import chat_record
 from meridian.lib.state.user_paths import get_user_home
+from meridian.plugin_api.types import HookEventName, Notification
 
 logger = logging.getLogger(__name__)
 
 
 class NotifySender(Protocol):
-    """Notification delivery seam for tests."""
+    """Emits a notification as its hook event; a seam for tests."""
 
-    def __call__(self, notice: Notice, cfg: NotifyConfig) -> SendReport: ...
+    def __call__(
+        self, event: HookEventName, notification: Notification
+    ) -> RouteReport: ...
 
 
 def _recorded_native_store(
@@ -279,7 +283,7 @@ class IdleService:
         self.config = config if config is not None else load_config(self.project_root)
         self._now_ms = now_ms
         self.store = store if store is not None else IdleStore(now_ms=now_ms)
-        self._notify_sender = notify_sender if notify_sender is not None else send
+        self._notify_sender = notify_sender or self._emit
         self._detect_ttl = detect_ttl
         self._native_idle_hook = native_idle_hook
 
@@ -519,13 +523,21 @@ class IdleService:
                 now_ms=self._now_ms(),
                 warn_email=policy.warn_email,
             )
-            ok = self._notify_sender(notice, self._notify_config()).ok
+            report = self._notify_sender(STAGE_EVENTS[stage], notice)
+            for warning in report.warnings:
+                logger.warning("idle notification delivery warning: %s", warning)
+            ok = report.ok
         except Exception:
             ok = False
         if ok and stage == "push":
             self._clear_push_owed(harness, session, stretch)
         elif not ok:
             self._mark_notification_failed(harness, session, stretch, stage)
+
+    def _emit(
+        self, event: HookEventName, notification: Notification
+    ) -> RouteReport:
+        return emit(event, notification, project_root=self.project_root, env=self.env)
 
     def _notify_config(self) -> NotifyConfig:
         return self.config.notify

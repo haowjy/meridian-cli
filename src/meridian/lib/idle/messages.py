@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from typing import Literal
 
-from meridian.lib.notify import Notice, SessionLabel
+from meridian.lib.notify import SessionLabel
 from meridian.lib.state.idle_store import IdleState
+from meridian.plugin_api.types import HookEventName, Notification
+
+# The hook event each stage's notification travels as.
+STAGE_EVENTS: dict[Literal["push", "warn"], HookEventName] = {
+    "push": "session.responded",
+    "warn": "session.cache_expiring",
+}
 
 
 def _body(lines: list[str | None], *, fallback: str | None = None) -> str:
@@ -37,7 +44,7 @@ def stage_notice(
     include_messages: bool,
     now_ms: int,
     warn_email: bool,
-) -> Notice:
+) -> Notification:
     """Build a waiting or cache-warning notice from persisted turn context."""
 
     countdown = _cache_countdown(state, now_ms)
@@ -59,7 +66,7 @@ def stage_notice(
         if include_messages and state.last_assistant_text
         else None
     )
-    return Notice(
+    return Notification(
         title=title,
         body=_body(
             [event, user, assistant],
@@ -67,8 +74,8 @@ def stage_notice(
         ),
         priority=3 if stage == "push" else 4,
         email=warn_email if stage == "warn" else False,
-        kind="idle",
+        label=label.to_dict(),
     )
 
 
-__all__ = ["stage_notice"]
+__all__ = ["STAGE_EVENTS", "stage_notice"]

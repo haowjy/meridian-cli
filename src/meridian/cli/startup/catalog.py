@@ -444,7 +444,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_rootless(("artifact", "list"), "List active artifact serves."),
     _write_rootless(("artifact", "stop"), "Stop an artifact serve."),
     _write_rootless(("artifact", "gc"), "Garbage-collect expired artifact serves."),
-    _write_rootless(("notify",), "Send a push and optional email notification."),
+    _write_rootless(("notify",), "Send a notification through its hook routes."),
     _read_rootless(("idle",), "Manage harness idle schedules.", default_output_mode="json"),
     _read_rootless(("idle", "config"), "Resolve idle policy.", default_output_mode="json"),
     _write_rootless(("idle", "arm"), "Arm an idle schedule.", default_output_mode="json"),

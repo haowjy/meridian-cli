@@ -4,12 +4,13 @@ Built-ins run inside the Meridian process with no subprocess overhead. They use 
 
 ## Mental Model
 
-The dispatcher calls `_run_builtin(hook, context)` when it encounters a hook with a name matching a registered `BuiltinHook`. Built-ins receive a `PluginHookContext` (plugin API surface), not the internal `HookContext`. The bridge happens in `dispatch.py` via `_to_plugin_context()`.
+The dispatcher calls `_run_builtin(hook, context)` for a hook whose `builtin` field names a registered `BuiltinHook` (`hook.builtin`, not the hook's `name`: a command hook named `notify` is just a command). Built-ins receive the plugin API's `HookContext` (the dispatcher uses that type itself) and a plugin `Hook` built by `_to_plugin_hook()`.
 
 ## What Lives Here
 
-- `base.py` — `BuiltinHook` protocol: `name`, `requirements`, `default_events`, `default_interval`, `check_requirements()`, `execute(hook, context, config)`
+- `base.py` — `BuiltinHook` protocol: `name`, `requirements`, `default_events`, `supported_events` (`None` means any), `default_interval`, `options_model` (Pydantic; `schema.py` validates a row's `options` with it), `identity_options` (options that name an unnamed row), `check_requirements()`, `execute(context, config)`. The builtin object is the only owner of this metadata.
 - `git_autosync.py` — `GIT_AUTOSYNC` singleton: commit-first merge-based sync (add → commit → fetch → merge → push)
+- `notify.py` — `NOTIFY`: delivers a notification event's `HookContext.notification` through `lib/notify`'s `send()` to the channels its row's `options.channels` names (unset: `send`'s defaults), with an optional `options.priority`. `HookResult.details["transports"]` names successful backends, partial delivery goes in `warning`, failure names each failed transport in `error`, and a route that delivered nothing is skipped (`disabled`). Unnamed `notify` rows are all named `notify` (`identity_options = ()`).
 - `autosync_store.py` — sole owner of the `.meridian/autosync/` file layout and its sync-root transaction lock: conflict metadata JSON and sync state JSON.
 
 ## GitAutosync Behavior
@@ -33,15 +34,17 @@ The dispatcher calls `_run_builtin(hook, context)` when it encounters a hook wit
 - `meridian.plugin_api` — the stable external surface
 - `meridian.lib.hooks.builtin.autosync_store` — the artifact store and transaction companion
 
+`notify.py` imports `meridian.plugin_api` at module level and, inside `execute`, its companion `lib/notify` transports and `lib.config.loader`. The transports are Meridian's own delivery policy, not a plugin capability, so they are not in the plugin API. The lazy import keeps config loading (which imports every builtin for its options model) free of the notify stack.
+
 `autosync_store.py` directly imports the reentrant platform lock because a complete autosync transaction is stronger than the intentionally non-reentrant plugin lock API. The store owns that exception and the canonical lock identity.
 
 If `git_autosync.py` ever needs something else from `meridian.lib.*`, extend `meridian.plugin_api` rather than breaking the boundary.
 
 ## Adding a Built-In
 
-1. Implement the `BuiltinHook` protocol in a new module here
+1. Implement the `BuiltinHook` protocol in a new module here, including its `options_model`
 2. Import general capabilities only from `meridian.plugin_api`; keep any tightly coupled companion import explicit and narrowly scoped
-3. Register the instance in `lib/hooks/dispatch.py`'s built-in registry (`BUILTIN_HOOKS`)
+3. Register the instance in `BUILTIN_HOOKS` (`builtin/__init__.py`); config validation and the dispatcher both read it
 
 If you need something from `meridian.lib.*`, that's a signal to extend `meridian.plugin_api` instead.
 

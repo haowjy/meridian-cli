@@ -5,21 +5,22 @@ import pytest
 from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels import REGISTRY
 from meridian.lib.notify.channels.base import SendResult
-from meridian.lib.notify.notice import Notice
 from meridian.lib.notify.service import send
+from meridian.plugin_api.types import Notification
 
 
 @dataclass(frozen=True)
 class _ResultChannel:
     name: str
     result: SendResult
+    email: bool = False
 
-    def send(self, notice: Notice, cfg: NotifyConfig) -> SendResult:
-        _ = (notice, cfg)
+    def send(self, notification: Notification, cfg: NotifyConfig, *, event: str) -> SendResult:
+        _ = (notification, cfg, event)
         return self.result
 
 
-_NOTICE = Notice(title="Meridian", body="done", priority=3, email=True, kind="manual")
+_NOTICE = Notification(title="Meridian", body="done")
 
 
 def test_send_succeeds_when_one_channel_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -34,7 +35,9 @@ def test_send_succeeds_when_one_channel_succeeds(monkeypatch: pytest.MonkeyPatch
         _ResultChannel("broken", SendResult(channel="broken", status="failed", error="down")),
     )
 
-    report = send(_NOTICE, NotifyConfig(push_backend="ok", email_backend="broken"))
+    report = send(
+        _NOTICE, NotifyConfig(push_backend="ok", email_backend="broken"), event="notify.manual"
+    )
 
     assert report.ok is True
     assert report.exit_code == 0
@@ -57,16 +60,35 @@ def test_send_fails_when_all_channels_fail(monkeypatch: pytest.MonkeyPatch) -> N
         ),
     )
 
-    report = send(_NOTICE, NotifyConfig(push_backend="broken-a", email_backend="broken-b"))
+    report = send(
+        _NOTICE,
+        NotifyConfig(push_backend="broken-a", email_backend="broken-b"),
+        event="notify.manual",
+    )
 
     assert report.ok is False
     assert report.exit_code == 1
 
 
-def test_send_treats_all_none_as_success_with_warning() -> None:
-    report = send(_NOTICE, NotifyConfig(push_backend="none", email_backend="none"))
+def test_send_treats_all_none_as_quiet_success() -> None:
+    report = send(
+        _NOTICE, NotifyConfig(push_backend="none", email_backend="none"), event="notify.manual"
+    )
 
     assert report.ok is True
     assert report.exit_code == 0
     assert [result.status for result in report.results] == ["none"]
-    assert report.warnings == ("notification disabled: every selected backend is none",)
+    assert report.all_none
+    assert report.warnings == ()
+
+
+def test_an_email_backend_named_directly_still_honours_no_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = SendResult(channel="mail", status="sent")
+    monkeypatch.setitem(REGISTRY, "mail", _ResultChannel("mail", sent, email=True))
+    quiet = Notification(title="Meridian", body="done", email=False)
+
+    report = send(quiet, NotifyConfig(), event="notify.manual", channels=["mail"])
+
+    assert report.results == ()

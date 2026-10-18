@@ -1,5 +1,62 @@
 # Upgrade notes
 
+## Notifications are hook events
+
+Idle pushes, cache warnings and `meridian notify` now fire the hook events
+`session.responded`, `session.cache_expiring` and `notify.manual`. A built-in
+`notify` hook delivers them through the `[notify]` backends, so routing,
+silencing and extra channels are `[[hooks]]` rows; see
+[Routing and extending notifications](configuration.md#routing-and-extending-notifications).
+With no hook config, delivery is unchanged.
+
+- **CLI.** `meridian notify "<title>" ["<body>"]`: the title is positional and
+  required, the body optional, and the session headline always ends the body.
+  `--title` is gone; replace `meridian notify "msg" --title T` with
+  `meridian notify T "msg"`. `--no-email`, `--priority` and `--json` are
+  unchanged, but the results list one entry per route (the default route is
+  `notify`) rather than one per transport. Sent text names both, such as
+  `notify (ntfy)`, and each JSON result has a `transports` list; a failed
+  route's error still names each failed transport. The session label moves from the report to the
+  top-level `label` key. For compatibility with the former one-argument form,
+  a multi-line first argument uses its first non-empty line as the title and
+  prepends the remaining lines to the body. Repeated attachment paths that
+  resolve to the same file are sent once.
+- **`command` backend removed.** `push_backend = "command"` and
+  `email_backend = "command"`, with `push_command`, `email_command` and their
+  `MERIDIAN_NOTIFY_*_COMMAND` variables, are gone. Move the script to a command
+  hook on the notification events: it gets the notification as JSON on stdin
+  (`notification.title`, `body`, `priority`, `label`, `attachments`) and in
+  `MERIDIAN_NOTIFICATION_*` variables, rather than title and body as arguments.
+  The removed `command` value, and every other unknown `push_backend` or
+  `email_backend`, is now rejected when config loads instead of failing during
+  delivery.
+- **`--no-email` covers every email backend.** A notification that does not
+  want email now skips `smtp` and `gmail` even when a route names them.
+- **Hooks switch.** `MERIDIAN_HOOKS_ENABLED=false` now also turns off every
+  notification. Hooks, notification routes included, now run in a directory
+  with no Meridian runtime state (`meridian hooks run` too); only
+  `interval`-throttled hooks skip there.
+- **Hook rows.** `meridian hooks list` drops the `registration` column; the
+  `default` source marks Meridian's own routes. Unnamed `git-autosync` rows are
+  named from `remote`/`path` only, so a row that also sets `conflict_policy`
+  gets a new name. Unknown `options` keys and unknown notification channel
+  names on a builtin row are config errors. The `notify` builtin is rejected
+  on non-notification events. During notification emission, invalid rows are
+  dropped and named in the result warning; valid rows, including silencing and
+  command rows, remain, and the ordinary default-route overrides still apply.
+  Hook inspection exits non-zero and names every invalid row.
+- **ntfy.** The `Tags` header is now the event name; update filters that
+  matched the old `kind` values. When ntfy accepts the text message but rejects
+  attachments, it attempts the rest and the route is sent with a warning naming
+  every failed file; do not retry the already delivered text. Email remains
+  all-or-nothing: one rejected attachment fails that email and its text.
+- **Plugin API 2.0.0.** `HookContext.runtime_root` may be `None`;
+  `HookContext.notification` is new; the hook payload `schema_version` is `2`
+  and carries a `notification` object on notification events. See
+  [plugin-api.md](plugin-api.md).
+
+No state migration is needed.
+
 ## History index schema 10
 
 No authority migration is needed. The rebuildable history index moves from

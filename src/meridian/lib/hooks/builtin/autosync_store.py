@@ -196,6 +196,9 @@ def autosync_lock_path(sync_root: Path) -> Path:
 class AutosyncMutation(Protocol):
     """Autosync mutations available only inside :func:`transaction`."""
 
+    @property
+    def runtime_root(self) -> Path: ...
+
     def write_conflict(self, record: ConflictRecord) -> None: ...
 
     def write_sync_state(

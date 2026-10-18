@@ -7,11 +7,11 @@ HookDispatcher.fire(context: HookContext)
   └── HookRegistry.get_hooks_for_event(event)
         ← load_hooks_config(project_root)  [config.py]
               validates each row once as HookSpec  [schema.py]
-              layered: user < project < local
+              layered: default < user < project < local
               override key: (name, event)
   └── for each Hook (ordered by source rank, priority, declaration order):
         _check_conditions(hook, context)     when.status / when.agent filters
-        IntervalTracker.should_run(name, interval)   throttle check
+        IntervalTracker.run_if_due(name, interval)   throttle check
         _run_builtin(hook, context)          OR
         ExternalHookRunner.run(hook, context, timeout_secs=...)
   └── returns list[HookResult]
@@ -22,14 +22,24 @@ HookDispatcher.fire(context: HookContext)
 Hook sources in ascending precedence:
 
 ```
-user config  (~/.meridian/config.toml)
+default  (Meridian's own rows: a `notify` route per notification event)
+  ↑ user config  (~/.meridian/config.toml)
   ↑ project config  (meridian.toml)
   ↑ local config  (meridian.local.toml)   ← highest
 ```
 
-There is no builtin layer. `builtin_registry.py` supplies a builtin hook's default
-events, interval and options, which apply only when some config row names that
-builtin.
+The `default` layer holds only the `notify` routes, so notifications deliver
+with no config at all; it overrides like any layer. Each builtin hook object
+(`builtin/`) owns its default events, supported events (`None` means any),
+interval, options model and the options that name an unnamed row; they apply
+only when a row names that builtin.
+Unnamed `notify` rows are all named `notify`, which is how a plain
+`builtin = "notify"` row replaces its event's default.
+
+Notification emission is the one fail-open config consumer: it drops and names
+invalid rows, keeps every valid row, then applies the same layering and default
+overrides as a clean load. Hook commands and other dispatchers surface all row
+errors normally.
 
 Override key is `(name, event)`. A higher-priority source row with the same key replaces the lower-priority row entirely. Use `meridian.local.toml` for machine-specific overrides without committing them.
 
@@ -39,7 +49,7 @@ Override key is `(name, event)`. A higher-priority source row with the same key 
 
 | Class | Events | Default failure policy | Fail-open? |
 |-------|--------|----------------------|-----------|
-| `observe` | `spawn.created`, `spawn.running`, `spawn.start`, `work.start`, `work.started` | `warn` | Yes |
+| `observe` | `spawn.created`, `spawn.running`, `spawn.start`, `work.start`, `work.started`, `session.responded`, `session.cache_expiring`, `notify.manual` | `warn` | Yes |
 | `post` | `spawn.finalized`, `work.done` | `warn` | Yes |
 | `gate` | (none currently registered) | `fail` | No |
 
@@ -47,14 +57,14 @@ Override key is `(name, event)`. A higher-priority source row with the same key 
 
 ## Plugin API Boundary
 
-**Built-in hooks must import only from `meridian.plugin_api`** — zero imports from `meridian.lib.*`. This is an enforced discipline: the plugin API is a stable boundary that external plugins can also use. If a built-in needs something not in the API, extend the API rather than breaking the boundary.
+**Built-in hooks take general capabilities from `meridian.plugin_api`**, the stable boundary external plugins also use; extend the API rather than reaching into `meridian.lib.*` for those. The exception is a tightly coupled companion a built-in wraps: `git-autosync`'s `autosync_store`, and `notify`'s `lib/notify` transports (imported lazily in `execute`). Those stay out of the plugin API because no external plugin should depend on them.
 
-The dispatcher bridges internal `HookContext` to plugin `PluginHookContext` via `_to_plugin_context()` and `_to_plugin_hook()` in `dispatch.py`. Built-ins see only the plugin surface.
+`HookContext` and `HookResult` are the plugin API's own classes, so built-ins receive the context the dispatcher built; `_to_plugin_hook()` in `dispatch.py` narrows the internal `Hook` row to the plugin `Hook`. Built-ins see only the plugin surface.
 
 ## Hook Execution Order
 
 Within an event, hooks are sorted by:
-1. Source rank (`user` → `project` → `local`, lower = earlier; `HOOK_SOURCE_PRECEDENCE` in `config.py`)
+1. Source rank (`default` → `user` → `project` → `local`, lower = earlier; `HOOK_SOURCE_PRECEDENCE` in `config.py`)
 2. Negative priority (higher `priority` value = earlier execution)
 3. Declaration order (stable sort)
 
@@ -64,7 +74,7 @@ Within an event, hooks are sorted by:
 
 ## Context Transport
 
-`HookContext.to_env()` emits `MERIDIAN_HOOK_*`, `MERIDIAN_SPAWN_*`, `MERIDIAN_ACTIVE_WORK_*` env vars. `None` values are omitted (no empty string env vars). External hooks receive both env vars and JSON on stdin — the JSON schema includes a `schema_version` field (`HOOK_CONTEXT_SCHEMA_VERSION = 1`) for forward compatibility.
+`HookContext.to_env()` emits `MERIDIAN_HOOK_*`, `MERIDIAN_SPAWN_*`, `MERIDIAN_ACTIVE_WORK_*` env vars. `None` values are omitted (no empty string env vars). External hooks receive both env vars and JSON on stdin — the JSON schema includes a `schema_version` field (`HOOK_CONTEXT_SCHEMA_VERSION = 2`) for forward compatibility. Version 2 added the `notification` object (and `MERIDIAN_NOTIFICATION_TITLE/BODY/PRIORITY`) and made `runtime_root` nullable.
 
 ## `__init__.py` Lazy Loading
 

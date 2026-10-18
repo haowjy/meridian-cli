@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +18,18 @@ HookEventName = Literal[
     "work.start",
     "work.started",
     "work.done",
+    "session.responded",
+    "session.cache_expiring",
+    "notify.manual",
 ]
+
+# Events that carry a `HookContext.notification`.
+NOTIFICATION_EVENTS: tuple[HookEventName, ...] = (
+    "session.responded",
+    "session.cache_expiring",
+    "notify.manual",
+)
+HOOK_CONTEXT_SCHEMA_VERSION = 2
 
 HookOutcome = Literal["success", "failure", "timeout", "skipped"]
 FailurePolicy = Literal["fail", "warn", "ignore"]
@@ -26,6 +38,48 @@ SpawnStatus = Literal["success", "failure", "cancelled", "timeout", "skipped"]
 
 def _default_options() -> dict[str, object]:
     return {}
+
+
+def _empty_label() -> dict[str, str | None]:
+    return {}
+
+
+def _empty_details() -> dict[str, object]:
+    return {}
+
+
+@dataclass(frozen=True)
+class Notification:
+    """One message for the human, as its producer rendered it."""
+
+    title: str
+    body: str
+    # 1 (min) to 5 (urgent), ntfy's scale.
+    priority: int = 3
+    # Whether the producer wants email channels to carry it.
+    email: bool = True
+    # Where it came from: tmux_session, project, work_id, agent, harness, headline.
+    label: Mapping[str, str | None] = field(default_factory=_empty_label)
+    # Absolute paths of files to send with it, checked readable when it was made.
+    attachments: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.title.strip():
+            raise ValueError("title must not be empty")
+        if any(unicodedata.category(character) == "Cc" for character in self.title):
+            raise ValueError("title must not contain control characters")
+        if not 1 <= self.priority <= 5:
+            raise ValueError(f"priority must be between 1 and 5, got {self.priority}")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "title": self.title,
+            "body": self.body,
+            "priority": self.priority,
+            "email": self.email,
+            "label": dict(self.label),
+            "attachments": list(self.attachments),
+        }
 
 
 @dataclass(frozen=True)
@@ -54,8 +108,8 @@ class HookContext:
     event_id: UUID
     timestamp: str
     project_root: str
-    runtime_root: str
-    schema_version: int = 1
+    runtime_root: str | None
+    schema_version: int = HOOK_CONTEXT_SCHEMA_VERSION
 
     spawn_id: str | None = None
     spawn_status: SpawnStatus | None = None
@@ -68,12 +122,14 @@ class HookContext:
     work_id: str | None = None
     work_dir: str | None = None
 
+    notification: Notification | None = None
+
     @classmethod
     def from_roots(
         cls,
         *,
         project_root: str | Path,
-        runtime_root: str | Path,
+        runtime_root: str | Path | None,
         event_name: HookEventName,
         event_id: UUID,
         timestamp: str,
@@ -86,13 +142,14 @@ class HookContext:
         spawn_error: str | None = None,
         work_id: str | None = None,
         work_dir: str | Path | None = None,
+        notification: Notification | None = None,
     ) -> HookContext:
         return cls(
             event_name=event_name,
             event_id=event_id,
             timestamp=timestamp,
             project_root=Path(project_root).as_posix(),
-            runtime_root=Path(runtime_root).as_posix(),
+            runtime_root=Path(runtime_root).as_posix() if runtime_root is not None else None,
             spawn_id=spawn_id,
             spawn_status=spawn_status,
             spawn_agent=spawn_agent,
@@ -102,6 +159,7 @@ class HookContext:
             spawn_error=spawn_error,
             work_id=work_id,
             work_dir=Path(work_dir).as_posix() if work_dir is not None else None,
+            notification=notification,
         )
 
     @classmethod
@@ -126,8 +184,6 @@ class HookContext:
         runtime_root = getattr(authority, "runtime_root", None)
         if project_root is None:
             raise ValueError("Hook authority is missing project_root.")
-        if runtime_root is None:
-            raise ValueError("Hook authority is missing runtime_root.")
         return cls.from_roots(
             project_root=project_root,
             runtime_root=runtime_root,
@@ -169,6 +225,11 @@ class HookContext:
             "spawn_error": self.spawn_error,
             "work_id": self.work_id,
             "work_dir": self.work_dir,
+            "notification_title": self.notification.title if self.notification else None,
+            "notification_body": self.notification.body if self.notification else None,
+            "notification_priority": (
+                str(self.notification.priority) if self.notification else None
+            ),
         }
         return {
             HOOK_PAYLOAD_ENV_KEYS[field]: value
@@ -203,13 +264,19 @@ class HookContext:
             }
             if self.work_id or self.work_dir
             else None,
+            "notification": self.notification.to_dict() if self.notification else None,
         }
         return json.dumps(payload)
 
 
 @dataclass
 class HookResult:
-    """Plugin-facing result for one hook execution."""
+    """Plugin-facing result for one hook execution.
+
+    Builtin hook implementations may set ``details`` to JSON-serializable
+    structured data. Builtins document the keys they produce and the surfaces
+    that project them.
+    """
 
     hook_name: str
     event: HookEventName
@@ -217,18 +284,24 @@ class HookResult:
     success: bool
     skipped: bool = False
     skip_reason: str | None = None
+    warning: str | None = None
     error: str | None = None
     exit_code: int | None = None
     duration_ms: int = 0
     stdout: str | None = None
     stderr: str | None = None
+    details: Mapping[str, object] = field(default_factory=_empty_details)
 
 
 __all__ = [
+    "HOOK_CONTEXT_SCHEMA_VERSION",
+    "NOTIFICATION_EVENTS",
     "FailurePolicy",
     "Hook",
     "HookContext",
     "HookEventName",
     "HookOutcome",
     "HookResult",
+    "Notification",
+    "SpawnStatus",
 ]

@@ -64,13 +64,15 @@ def _terminate_process_tree(process: subprocess.Popen[bytes], *, grace_secs: flo
 class ExternalHookRunner:
     """Run one external hook command with context transport and timeout handling."""
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, *, env: Mapping[str, str] | None = None) -> None:
         self._project_root = project_root.expanduser().resolve()
+        # The environment hooks run in, and whose MERIDIAN_HOOKS_ENABLED gates them.
+        self._env = os.environ if env is None else env
 
     def run(self, hook: Hook, context: HookContext, *, timeout_secs: int) -> HookResult:
         """Execute one hook command and return structured result."""
 
-        if not hooks_dispatch_enabled():
+        if not hooks_dispatch_enabled(self._env):
             return HookResult(
                 hook_name=hook.name,
                 event=context.event_name,
@@ -92,7 +94,7 @@ class ExternalHookRunner:
                 error="Hook command is required for external execution.",
             )
 
-        env = {**os.environ, **context.to_env()}
+        env = {**self._env, **context.to_env()}
         env.pop("_MERIDIAN_RUNTIME_DIR", None)
         start = time.monotonic()
         process: subprocess.Popen[bytes] | None = None

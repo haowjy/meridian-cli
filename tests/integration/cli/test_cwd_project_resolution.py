@@ -19,12 +19,15 @@ def _run_meridian(
     *,
     cwd: Path,
     meridian_home: Path,
+    inherited_project_root: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     for key in tuple(env):
         if key.upper().startswith("MERIDIAN_"):
             env.pop(key, None)
     env["MERIDIAN_HOME"] = meridian_home.as_posix()
+    if inherited_project_root is not None:
+        env["MERIDIAN_PROJECT_DIR"] = inherited_project_root.as_posix()
     return subprocess.run(
         [sys.executable, "-m", "meridian", *args],
         cwd=cwd,
@@ -33,6 +36,36 @@ def _run_meridian(
         text=True,
         check=False,
     )
+
+
+@pytest.mark.integration
+def test_hooks_commands_follow_cwd_instead_of_inherited_project_root(
+    tmp_path: Path,
+    meridian_home: Path,
+) -> None:
+    cwd_project = tmp_path / "cwd-project"
+    inherited_project = tmp_path / "inherited-project"
+    cwd_project.mkdir()
+    inherited_project.mkdir()
+    (cwd_project / "meridian.toml").write_text(
+        '[[hooks]]\nname = "from-cwd"\nevent = "spawn.finalized"\ncommand = "true"\n',
+        encoding="utf-8",
+    )
+    (inherited_project / "meridian.toml").write_text(
+        '[[hooks]]\nname = "from-env"\nevent = "spawn.finalized"\ncommand = "true"\n',
+        encoding="utf-8",
+    )
+
+    result = _run_meridian(
+        ["hooks", "list"],
+        cwd=cwd_project,
+        meridian_home=meridian_home,
+        inherited_project_root=inherited_project,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "from-cwd" in result.stdout
+    assert "from-env" not in result.stdout
 
 
 def _assert_project_initialized(project_root: Path) -> None:
@@ -157,7 +190,7 @@ def test_doctor_observes_bare_directory_without_writing(
 
 
 @pytest.mark.integration
-def test_hooks_run_is_noop_without_materialized_state(
+def test_hooks_run_creates_no_state_without_materialized_state(
     cwd_without_project_id: Path,
     meridian_home: Path,
 ) -> None:
@@ -165,7 +198,7 @@ def test_hooks_run_is_noop_without_materialized_state(
         "[[hooks]]\n"
         'name = "manual-test"\n'
         'event = "spawn.finalized"\n'
-        'command = "printf should-not-run"\n',
+        'command = "true"\n',
         encoding="utf-8",
     )
 
@@ -176,7 +209,7 @@ def test_hooks_run_is_noop_without_materialized_state(
     )
 
     assert result.returncode == 0, result.stderr
-    assert "skip_reason: no_state" in result.stdout
+    assert "exit_code: 0" in result.stdout
     assert not (meridian_home / "projects").exists()
     _assert_project_not_initialized(cwd_without_project_id)
 

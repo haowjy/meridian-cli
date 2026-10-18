@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks let you run commands or builtins automatically when Meridian events fire — syncing a remote repo, running checks after a spawn finishes, or any custom script you want wired to the agent lifecycle.
+Hooks let you run commands or builtins automatically when Meridian events fire — syncing a remote repo, running checks after a spawn finishes, delivering notifications, or any custom script you want wired to the agent lifecycle.
 
 ## Commands
 
@@ -12,20 +12,22 @@ Hooks let you run commands or builtins automatically when Meridian events fire �
 | `meridian hooks run NAME --event EVENT` | Execute with a specific event context |
 
 ```bash
-# See all hooks, including builtins and per-source registration
+# See all hooks, including builtins and Meridian's default routes, with their sources
 meridian hooks list
 
 # Validate config before committing changes
 meridian hooks check
 
-# Manually trigger a named autosync hook
+# Trigger a hook manually
 meridian hooks run sync-notes
-
-# Trigger with a specific event context
-meridian hooks run sync-notes --event work.done
 ```
 
-`hooks run` bypasses interval throttling. Use it to test hooks or force a sync outside the normal lifecycle.
+`hooks run` bypasses interval throttling. Registrations with the same name,
+builtin, command, options, timeout and failure policy are one hook: without
+`--event` it runs once, as its last registered event (an unevented
+`git-autosync` row runs as `work.done`), and `--event` may name any event, as
+for a single-row hook. When those fields differ, use `--event` to select a row. A builtin that only supports notification events cannot run
+manually because it has no notification payload; use `meridian notify` instead.
 
 ## Events
 
@@ -38,6 +40,14 @@ meridian hooks run sync-notes --event work.done
 | `work.start` | observe | A work item is switched to (becomes active) |
 | `work.started` | observe | Alias for `work.start` |
 | `work.done` | post | A work item is completed |
+| `session.responded` | observe | An idle primary sends its "your turn" push |
+| `session.cache_expiring` | observe | An idle primary warns that its prompt cache is about to go cold |
+| `notify.manual` | observe | `meridian notify` runs |
+
+The last three are notification events: their context carries a
+`notification` (title, body, priority, email, session label, attachment paths). Meridian routes
+each one to the built-in `notify` hook unless config routes it; see
+[Builtin: `notify`](#builtin-notify).
 
 Event class affects default timeout and failure policy: `observe` events default to 30s / `warn`; `post` events default to 60s / `warn`.
 
@@ -45,7 +55,7 @@ A single hook row can register for multiple events. When a builtin supplies defa
 
 ## Configuring Hooks
 
-Hooks live in any Meridian config file. Precedence is: `user < project < local`.
+Hooks live in any Meridian config file. Precedence is: `default < user < project < local`, where `default` is Meridian's own `notify` routes. A row with the same name and event as a lower layer's replaces it.
 
 ```toml
 # meridian.toml (project) or ~/.meridian/config.toml (user)
@@ -77,13 +87,19 @@ event   = "spawn.finalized"
 | `interval` | str | no | builtin default | Minimum time between runs, e.g. `30s`, `5m`, `2h` |
 | `require_serial` | bool | no | `false` | Block concurrent hook executions |
 | `when.status` | array[str] | no | — | Only fire when spawn exits with one of these statuses |
-| `when.agent` | str | no | — | Only fire for this agent profile |
+| `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
 | `exclude` | array[str] | no | — | Skip for these agent profiles |
-| `options.conflict_policy` | str | no | `"leave"` | `git-autosync` only: `"leave"` keeps rebase conflicts for review; `"abort"` restores old abort behavior |
+| `options.conflict_policy` | str | no | `"abort"` | `git-autosync` only: `"abort"` aborts a conflicted sync; `"leave"` keeps conflicts for review |
+| `options.channels` | array[str] | no | `["push", "email"]` | `notify` only: transports to deliver to |
+| `options.priority` | int | no | notice's | `notify` only: 1–5 priority override |
 
 `command` and `builtin` are mutually exclusive.
 
-If you omit `name` for a builtin hook, Meridian may synthesize a stable name from the builtin identity (for example remote/options). That keeps distinct unnamed builtin rows from overriding each other. For predictable `hooks run NAME` usage, set `name` explicitly.
+If you omit `name` for a builtin hook, Meridian names it from the options that
+pick its target: `git-autosync` rows from `remote` or `path`, so rows for
+different repos don't override each other; `notify` rows are all `notify`.
+For predictable `hooks run NAME` usage, set `name` explicitly, except when a
+`notify` row is meant to replace the default route as described below.
 
 ### Shell Behavior
 
@@ -99,6 +115,53 @@ event   = "spawn.finalized"
 
 Inline commands are fine when they remain short and readable.
 
+Command hooks receive the event context as JSON on stdin (`schema_version` 2)
+and as `MERIDIAN_HOOK_*` and related environment variables. Hooks run even in a
+directory with no Meridian runtime state; only `interval`-throttled hooks skip
+there. `MERIDIAN_HOOKS_ENABLED=false` turns off all hook dispatch, including
+notification delivery.
+
+## Builtin: `notify`
+
+`notify` delivers a notification event through the transports configured in
+`[notify]`. Options `channels` (default `["push", "email"]`, or backend names
+such as `ntfy`) and `priority` (1–5) pick where and how loud.
+
+**Default events:** `session.responded`, `session.cache_expiring`, `notify.manual`
+
+The `notify` builtin accepts only those notification events; configuring it on
+another event is a hook config error.
+
+Its `HookResult.details["transports"]` value lists the backend names that
+delivered. Other builtins need not produce that key.
+
+Meridian supplies a hook named `notify` on each of these events (source
+`default` in `hooks list`). An unnamed `builtin = "notify"` row is named
+`notify` too, so a row for an event, even with `enabled = false`, replaces only
+that event's default. A row named anything other than `notify` adds a second
+route; if it selects the same backend as the default, the recipient gets the
+push twice. Omit `name` (as below), or set `name = "notify"`, to replace the
+default instead.
+
+```toml
+# Silence the "your turn" push
+[[hooks]]
+builtin = "notify"
+event   = "session.responded"
+enabled = false
+```
+
+A `command` hook on a notification event is an extra channel: it gets the
+`notification` object on stdin and `MERIDIAN_NOTIFICATION_TITLE`, `_BODY`, and
+`_PRIORITY` in its environment. See
+[Routing and extending notifications](configuration.md#routing-and-extending-notifications)
+for channel semantics and examples.
+
+When notification emission finds invalid hook rows, it drops and names only
+those rows, retains every valid row, and applies default-route overrides as
+usual. `meridian hooks check` instead exits non-zero and names every invalid
+row.
+
 ## Builtin: `git-autosync`
 
 `git-autosync` keeps a remote Git repo in sync with local changes. On each trigger it:
@@ -108,21 +171,19 @@ Inline commands are fine when they remain short and readable.
 3. Rebases when behind remote
 4. Pushes when ahead or after a local commit
 
-By default, if `git pull --rebase` encounters a conflict, the rebase is left in place
-so agents or humans can inspect and resolve the conflict markers. Future autosync runs
-detect the existing rebase state and skip all git operations until the conflict is resolved.
-
-Set `conflict_policy = "abort"` in options to restore the previous behavior of aborting
+By default, a conflicted sync is aborted, returning the repository to its
+pre-sync state. Set `conflict_policy = "leave"` to keep the merge or rebase in
+place so agents or humans can inspect and resolve it. Future autosync runs skip
+all git operations until that conflict is resolved.
 
 ```toml
-# Restore old abort-on-conflict behavior
+# Leave conflict markers for manual resolution
 [[hooks]]
 builtin = "git-autosync"
 remote  = "git@github.com:team/docs.git"
 [hooks.options]
-conflict_policy = "abort"
+conflict_policy = "leave"
 ```
-the rebase on conflict.
 
 **Required:** `remote` — the Git remote URL of the repo to sync.
 
@@ -149,7 +210,7 @@ event   = "work.done"
 To run manually at any time:
 
 ```bash
-meridian hooks run sync-notes --event work.done
+meridian hooks run sync-notes
 ```
 
 ## MCP

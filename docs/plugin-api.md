@@ -1,6 +1,6 @@
 # Plugin API
 
-`meridian.plugin_api` is the stable public contract for hook and plugin authors. It version-pins at `1.0.0` and exposes only the symbols intended for external use.
+`meridian.plugin_api` is the stable public contract for hook and plugin authors. It version-pins at `2.0.0` and exposes only the symbols intended for external use.
 
 Install meridian-cli and import from this package directly — do not import from internal submodules.
 
@@ -12,7 +12,7 @@ from meridian.plugin_api import Hook, HookContext, HookResult, HookOutcome
 
 ```python
 import meridian.plugin_api as api
-print(api.__version__)  # "1.0.0"
+print(api.__version__)  # "2.0.0"
 ```
 
 ## Hook Types
@@ -21,10 +21,19 @@ print(api.__version__)  # "1.0.0"
 | ------ | ------- |
 | `Hook` | Resolved hook record — `name`, `event`, `builtin`, `command`, `options`, `remote`, `enabled`, `priority`, `failure_policy`, `require_serial`, `exclude` |
 | `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name |
-| `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr` |
+| `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `details` |
 | `HookOutcome` | `"success"` \| `"failure"` \| `"timeout"` \| `"skipped"` |
-| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.running`, `spawn.start`, `spawn.finalized`, `work.start`, `work.started`, `work.done` |
+| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.running`, `spawn.start`, `spawn.finalized`, `work.start`, `work.started`, `work.done`, `session.responded`, `session.cache_expiring`, `notify.manual` |
+| `NOTIFICATION_EVENTS` | The three notification events, which carry `HookContext.notification` |
+| `Notification` | One notice — `title`, `body`, `priority` (1–5), `email`, `label` (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), `attachments` (absolute file paths) |
 | `FailurePolicy` | `"fail"` \| `"warn"` \| `"ignore"` |
+
+`HookResult.details` is a mapping that builtin hook implementations may set with
+JSON-serializable structured data. Builtins document their keys in
+[hooks.md](hooks.md); consumers must not assume unrelated hooks share them.
+Today only the `notify` builtin sets a key: `transports` is projected into
+`meridian notify` text and JSON reports. `hooks run --json` does not expose
+arbitrary `details`.
 
 ### `HookContext` fields
 
@@ -34,8 +43,8 @@ print(api.__version__)  # "1.0.0"
 | `event_id` | `UUID` | all events |
 | `timestamp` | `str` (ISO 8601) | all events |
 | `project_root` | `str` | all events |
-| `runtime_root` | `str` | all events |
-| `schema_version` | `int` | all events |
+| `runtime_root` | `str \| None` | all events; `None` in a directory with no Meridian runtime state |
+| `schema_version` | `int` (currently `2`) | all events |
 | `spawn_id` | `str \| None` | spawn events |
 | `spawn_status` | `str \| None` | `spawn.finalized` |
 | `spawn_agent` | `str \| None` | spawn events |
@@ -45,8 +54,9 @@ print(api.__version__)  # "1.0.0"
 | `spawn_error` | `str \| None` | `spawn.finalized` (on failure) |
 | `work_id` | `str \| None` | work events |
 | `work_dir` | `str \| None` | work events |
+| `notification` | `Notification \| None` | notification events |
 
-`HookContext.to_env()` returns a `dict[str, str]` of `MERIDIAN_HOOK_*` environment variables. Shell-command hooks receive these automatically. `HookContext.to_json()` returns the context as a JSON string (passed via stdin for stdin-transport hooks).
+`HookContext.to_env()` returns a `dict[str, str]` of `MERIDIAN_HOOK_*` and related environment variables (notification events add `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`, `MERIDIAN_NOTIFICATION_PRIORITY`). Shell-command hooks receive these automatically. `HookContext.to_json()` returns the context as a JSON string (passed via stdin for stdin-transport hooks).
 
 ## State Helpers
 
@@ -105,7 +115,7 @@ A minimal custom hook registered via `command`:
 ```toml
 # meridian.toml
 [[hooks]]
-name    = "notify"
+name    = "spawn-done-alert"
 command = "notify-send 'spawn done'"
 event   = "spawn.finalized"
 ```

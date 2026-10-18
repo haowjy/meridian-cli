@@ -315,24 +315,18 @@ class NotifyConfig(ConfigModel):
             env_vars=("MERIDIAN_NOTIFY_SMTP_PASSWORD_FILE",),
         ),
     ] = None
-    push_command: Annotated[
-        str | None,
-        config_field(
-            "notify.push_command",
-            value_kind="str",
-            file_aliases=(file_alias("notify", "push_command"),),
-            env_vars=("MERIDIAN_NOTIFY_PUSH_COMMAND",),
-        ),
-    ] = None
-    email_command: Annotated[
-        str | None,
-        config_field(
-            "notify.email_command",
-            value_kind="str",
-            file_aliases=(file_alias("notify", "email_command"),),
-            env_vars=("MERIDIAN_NOTIFY_EMAIL_COMMAND",),
-        ),
-    ] = None
+
+    @field_validator("push_backend", "email_backend")
+    @classmethod
+    def _validate_backend(cls, value: str) -> str:
+        from meridian.lib.notify.channels import normalize_channel_name
+
+        try:
+            return normalize_channel_name(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{exc} See docs/upgrading.md#notifications-are-hook-events."
+            ) from None
 
     @field_validator("smtp_port")
     @classmethod

@@ -13,18 +13,13 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
-    RootModel,
     StringConstraints,
     ValidationError,
     field_validator,
 )
 
-from meridian.lib.config.errors import config_validation_error
-from meridian.lib.hooks.builtin_registry import (
-    BUILTIN_HOOK_REGISTRY,
-    get_default_events,
-    validate_builtin_options,
-)
+from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
+from meridian.lib.hooks.builtin import BUILTIN_HOOKS, BuiltinHook
 from meridian.lib.hooks.types import (
     FailurePolicy,
     Hook,
@@ -163,35 +158,24 @@ class HookSpec(BaseModel):
         values = json_list(value)
         return tuple(values) if values is not None else value
 
-    @property
-    def display_name(self) -> str:
-        """Return the label used by ``config show`` summaries."""
+def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
+    """Return raw hook rows while keeping hook-section shape validation here."""
 
-        return self.name or self.event or self.builtin or "hook"
-
-
-class HookConfigSection(RootModel[tuple[HookSpec, ...]]):
-    """Validated representation of one ``[[hooks]]`` array."""
-
-    model_config = ConfigDict(frozen=True, strict=True)
-
-    @field_validator("root", mode="before")
-    @classmethod
-    def _tuple_rows(cls, value: object) -> object:
-        values = json_list(value)
-        if values is None:
-            raise ValueError(
-                "expected array[table], "
-                f"got {type(value).__name__} ({value!r})"
-            )
-        return tuple(values)
+    values = json_list(raw_value)
+    if values is None:
+        raise ValueError(
+            f"Invalid value for '{source}': expected array[table], "
+            f"got {type(raw_value).__name__} ({raw_value!r})."
+        )
+    return tuple(values)
 
 
-def normalize_hooks_array(raw_value: object, *, source: str) -> tuple[HookSpec, ...]:
-    """Parse hooks without re-emitting config-loader unknown-key diagnostics."""
+def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec:
+    """Validate one hook row and emit its unknown-key diagnostics once."""
 
+    warn_unknown_model_keys(raw_value, model=HookSpec, source=source)
     try:
-        return HookConfigSection.model_validate(raw_value).root
+        return HookSpec.model_validate(raw_value)
     except ValidationError as error:
         raise config_validation_error(error, source=source) from None
 
@@ -204,17 +188,14 @@ def _slugify_hook_name_component(raw: str) -> str:
     return normalized[:48].strip("-.")
 
 
-def _synthesize_builtin_hook_name(
-    *,
-    builtin: str,
-    remote: str | None,
-    options: Mapping[str, object],
-) -> str:
-    identity: dict[str, object] = dict(options)
-    if remote is not None:
-        identity["remote"] = remote
+def _synthesize_builtin_hook_name(builtin: BuiltinHook, options: Mapping[str, object]) -> str:
+    """Name an unnamed row by its builtin and the options that pick its target."""
+
+    identity = {
+        key: options[key] for key in builtin.identity_options if options.get(key) is not None
+    }
     if not identity:
-        return builtin
+        return builtin.name
 
     payload = json.dumps(
         identity,
@@ -224,14 +205,11 @@ def _synthesize_builtin_hook_name(
         default=str,
     )
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:10]
-    slug_source = ""
-    for candidate_key in ("remote", "path"):
-        candidate = identity.get(candidate_key)
-        if isinstance(candidate, str) and candidate.strip():
-            slug_source = candidate
-            break
+    slug_source = next(
+        (value for value in identity.values() if isinstance(value, str) and value.strip()), ""
+    )
     slug = _slugify_hook_name_component(slug_source) if slug_source else ""
-    return f"{builtin}:{slug}-{digest}" if slug else f"{builtin}:{digest}"
+    return f"{builtin.name}:{slug}-{digest}" if slug else f"{builtin.name}:{digest}"
 
 
 def _parse_when(spec: HookWhenSpec | None) -> HookWhen | None:
@@ -251,64 +229,62 @@ def hooks_from_spec(
     *,
     source: str,
     row_source: str,
-    auto_registered: bool = False,
 ) -> tuple[Hook, ...]:
     """Apply semantic validation and construct runtime hooks from one typed spec."""
 
     command = spec.command
-    builtin = spec.builtin
     options = dict(spec.options)
     if spec.remote is not None:
         options.setdefault("remote", spec.remote)
 
-    if command is not None and builtin is not None:
+    if command is not None and spec.builtin is not None:
         raise ValueError(
             f"Invalid hook config '{row_source}': 'command' and 'builtin' are mutually exclusive."
         )
-    if command is None and builtin is None:
+    if command is None and spec.builtin is None:
         raise ValueError(
             f"Invalid hook config '{row_source}': expected either 'command' or 'builtin'."
         )
 
-    name = spec.name
-    if name is None:
-        if builtin is not None:
-            name = _synthesize_builtin_hook_name(
-                builtin=builtin,
-                remote=spec.remote,
-                options=options,
-            )
-        else:
-            raise ValueError(f"Invalid hook config '{row_source}': 'name' is required.")
-
-    if builtin is not None and builtin not in BUILTIN_HOOK_REGISTRY:
-        valid = ", ".join(sorted(BUILTIN_HOOK_REGISTRY.keys()))
-        raise ValueError(
-            f"Invalid value for '{row_source}.builtin': expected one of [{valid}], got {builtin!r}."
-        )
-    if builtin is not None:
-        try:
-            validate_builtin_options(builtin, options)
-        except KeyError:
-            valid = ", ".join(sorted(BUILTIN_HOOK_REGISTRY.keys()))
+    builtin: BuiltinHook | None = None
+    if spec.builtin is not None:
+        builtin = BUILTIN_HOOKS.get(spec.builtin)
+        if builtin is None:
+            valid = ", ".join(sorted(BUILTIN_HOOKS))
             raise ValueError(
                 f"Invalid value for '{row_source}.builtin': expected one of [{valid}], "
-                f"got {builtin!r}."
-            ) from None
-        except ValueError as exc:
-            raise ValueError(f"Invalid hook config '{row_source}': {exc}") from exc
+                f"got {spec.builtin!r}."
+            )
+        try:
+            validated_options = builtin.options_model.model_validate(options)
+        except ValidationError as error:
+            raise config_validation_error(error, source=f"{row_source}.options") from None
+        options = validated_options.model_dump(exclude_none=True)
 
-    default_events = get_default_events(builtin) if builtin is not None else ()
+    name = spec.name
+    if name is None:
+        if builtin is None:
+            raise ValueError(f"Invalid hook config '{row_source}': 'name' is required.")
+        name = _synthesize_builtin_hook_name(builtin, options)
+
     events: tuple[HookEventName, ...]
     if spec.event is not None:
         events = (spec.event,)
-    elif default_events:
-        events = default_events
+    elif builtin is not None:
+        events = builtin.default_events
     else:
         raise ValueError(f"Invalid hook config '{row_source}': 'event' is required.")
 
-    default_interval = BUILTIN_HOOK_REGISTRY[builtin].interval if builtin is not None else None
-    interval = spec.interval or default_interval
+    if builtin is not None and builtin.supported_events is not None:
+        unsupported = tuple(event for event in events if event not in builtin.supported_events)
+        if unsupported:
+            supported = ", ".join(builtin.supported_events)
+            raise ValueError(
+                f"Invalid value for '{row_source}.event': builtin {builtin.name!r} supports only "
+                f"[{supported}], got {unsupported[0]!r}."
+            )
+
+    interval = spec.interval or (builtin.default_interval if builtin is not None else None)
 
     when = _parse_when(spec.when)
     return tuple(
@@ -317,7 +293,7 @@ def hooks_from_spec(
             event=event,
             source=source,
             command=command,
-            builtin=builtin,
+            builtin=spec.builtin,
             timeout_secs=spec.timeout_secs,
             interval=interval,
             enabled=spec.enabled,
@@ -327,7 +303,6 @@ def hooks_from_spec(
             when=when,
             exclude=spec.exclude,
             options=options,
-            auto_registered=auto_registered,
             remote=spec.remote,
         )
         for event in events

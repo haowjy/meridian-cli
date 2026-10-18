@@ -36,8 +36,9 @@ compact; harnesses compact on their own. It is policy, not a harness adapter:
   before exec. Keep this out of exit hooks (a killed terminal runs none) and
   adapters (engines cannot distinguish reload from resume, and reload recovery
   must keep working).
-- Inject notification delivery. This package constructs `lib/notify.Notice`
-  values and depends on `lib/notify` in the designed one-way direction.
+- Inject notification delivery. This package builds `plugin_api.Notification`
+  values, emits them as `STAGE_EVENTS[stage]` through `lib/notify.emit`, and
+  depends on `lib/notify` in the designed one-way direction.
 - The sidecar is hosted in the primary TUI process. It must contain sensor
   failures, move synchronous service/store work off the launcher event loop,
   and stop before the live connection is torn down. Its liveness follows the

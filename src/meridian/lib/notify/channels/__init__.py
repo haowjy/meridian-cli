@@ -4,42 +4,53 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import Channel, SendResult
-from meridian.lib.notify.notice import Notice
+
+if TYPE_CHECKING:
+    from meridian.lib.config.models import NotifyConfig
+    from meridian.plugin_api.types import Notification
 
 
 @dataclass(frozen=True)
-class _LazyChannel:
+class RegisteredChannel:
+    """A backend by name, imported when it first sends."""
+
     name: str
     module: str
+    # Email transports carry only notifications that want email.
+    email: bool = False
 
-    def send(self, notice: Notice, cfg: NotifyConfig) -> SendResult:
+    def send(self, notification: Notification, cfg: NotifyConfig, *, event: str) -> SendResult:
         channel = cast("Channel", import_module(self.module).CHANNEL)
-        return channel.send(notice, cfg)
+        return channel.send(notification, cfg, event=event)
 
 
-REGISTRY: dict[str, Channel] = {
-    "command": _LazyChannel("command", "meridian.lib.notify.channels.command"),
-    "gmail": _LazyChannel("gmail", "meridian.lib.notify.channels.gmail"),
-    "none": _LazyChannel("none", "meridian.lib.notify.channels.none"),
-    "ntfy": _LazyChannel("ntfy", "meridian.lib.notify.channels.ntfy"),
-    "smtp": _LazyChannel("smtp", "meridian.lib.notify.channels.smtp"),
+REGISTRY: dict[str, RegisteredChannel] = {
+    "gmail": RegisteredChannel("gmail", "meridian.lib.notify.channels.gmail", email=True),
+    "none": RegisteredChannel("none", "meridian.lib.notify.channels.none"),
+    "ntfy": RegisteredChannel("ntfy", "meridian.lib.notify.channels.ntfy"),
+    "smtp": RegisteredChannel("smtp", "meridian.lib.notify.channels.smtp", email=True),
 }
 
 
-def resolve_channel(name: str) -> Channel:
-    """Resolve a configured backend or raise a configuration-oriented error."""
+def normalize_channel_name(name: str, *, aliases: tuple[str, ...] = ()) -> str:
+    """Normalize a backend name and reject names no delivery path can resolve."""
+
     normalized = name.strip().lower()
-    channel = REGISTRY.get(normalized)
-    if channel is None:
-        available = ", ".join(sorted(REGISTRY))
+    available = frozenset(REGISTRY) | frozenset(aliases)
+    if normalized not in available:
+        choices = ", ".join(sorted(available))
         raise ValueError(
-            f"Unknown notification backend {name!r}. Available backends: {available}."
+            f"Unknown notification backend {name!r}. Available backends: {choices}."
         )
-    return channel
+    return normalized
 
 
-__all__ = ["REGISTRY", "resolve_channel"]
+def resolve_channel(name: str) -> RegisteredChannel:
+    """Resolve a backend already normalized and validated by config loading."""
+    return REGISTRY[name]
+
+
+__all__ = ["REGISTRY", "RegisteredChannel", "normalize_channel_name", "resolve_channel"]

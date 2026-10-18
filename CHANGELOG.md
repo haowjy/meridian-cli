@@ -4,6 +4,29 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Notifications are hook events: `session.responded` (idle push), `session.cache_expiring` (cache warning), `notify.manual` (`meridian notify`). Built-in `notify` hook delivers; options `channels` (`push`, `email`, or backend name) and `priority`. Default `notify` route per event (source `default`, lowest layer); a same-name row replaces it, and an unnamed `builtin = "notify"` row is named `notify`. Any `command` hook on these events is an extra channel: `notification` object on stdin, `MERIDIAN_NOTIFICATION_TITLE`/`_BODY`/`_PRIORITY` env. See [routing](docs/configuration.md#routing-and-extending-notifications) (#670).
+- `meridian notify --attach <path>` (repeatable): email attaches all files; ntfy sends the text, then one message per file; file messages at priority ≤2; command hooks get the paths in `notification.attachments`. Missing/unreadable path = exit 2 before any route. (#666)
+
+### Removed
+- `command` notify backend, `push_command`/`email_command`, `MERIDIAN_NOTIFY_PUSH_COMMAND`/`_EMAIL_COMMAND`: use a command hook on the notification events. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
+
+### Changed
+- `meridian notify "<title>" ["<body>"]`: title positional, body optional, session headline always ends body. `--title` gone. Results: one per route (`notify` = default route), with successful transports named in text and `transports` in JSON; failed route's error names failed transports; `label` top-level in `--json`. No route ran = warning, exit 0. (#670)
+- `MERIDIAN_HOOKS_ENABLED=false` also silences notifications. Hooks (and `hooks run`) run without project runtime state; only `interval` hooks skip there. (#670)
+- Builtin hook rows validate `options` and supported events against the builtin's own metadata; unknown keys error. `hooks list` drops `registration` column. Unnamed `git-autosync` rows named from `remote`/`path` only. (#670)
+- ntfy `Tags` = event name. Plugin API 2.0.0: `HookContext.runtime_root` may be `None`, `HookContext.notification`, and payload `schema_version` 2. Builtin implementations may set `HookResult.details`; today `notify` sets successful transport names, which surface through `meridian notify` text and JSON reports. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
+
+### Fixed
+- Multi-line `meridian notify` input keeps its first non-empty line as the transport-safe title and moves the rest into the body; all notification producers now reject control characters in titles. Duplicate resolved attachment paths are sent once. (#666, #670)
+- ntfy reports a route as delivered when its text POST succeeded but attachment PUTs failed, attempts every remaining file, and warns with every failed file name. Email attachments remain all-or-nothing. (#666)
+- Notification channel and backend names validate while config loads; removed `push_backend = "command"` now points to the upgrade guide. `meridian hooks check` validates the active config. (#670)
+- Invalid hook config no longer silences idle notices: emission drops and names invalid rows while retaining valid silencing and command rows plus ordinary default-route overrides; `meridian notify` reports the warning in text and JSON. `hooks check` names every invalid row. (#670)
+- `--no-email` (and idle push / `warn_email = false`) now skips `smtp`/`gmail` even when a route names them. (#670)
+- A failing notification route is reported once, not also as a hook warning log. (#670)
+- `config show` names each valid hook once and counts invalid rows. `hooks run` treats registrations differing only by event as one hook (runs once as its last registered event, any `--event` allowed), requires `--event` only when command, options, timeout or failure policy differ, preserves builtin event limits, and points notification-only builtins to `meridian notify`. Hook commands continue to follow the current directory instead of an inherited session project. (#670)
+- Logging no longer caches each module logger's first configuration.
+
 ## [0.10.27] - 2026-10-18
 
 ### Removed

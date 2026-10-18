@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
     from meridian.lib.config.models import NotifyConfig
-    from meridian.lib.notify.notice import Notice
+    from meridian.plugin_api.types import Notification
 
 type SendStatus = Literal["sent", "failed", "none"]
 
@@ -41,7 +41,7 @@ class Channel(Protocol):
     @property
     def name(self) -> str: ...
 
-    def send(self, notice: Notice, cfg: NotifyConfig) -> SendResult: ...
+    def send(self, notification: Notification, cfg: NotifyConfig, *, event: str) -> SendResult: ...
 
 
 __all__ = ["Channel", "SendResult", "SendStatus"]

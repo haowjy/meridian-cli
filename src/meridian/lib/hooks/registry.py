@@ -31,7 +31,7 @@ class HookRegistry:
             user_config=user_config,
             authority=authority,
         )
-        self._hooks = {hook.name: hook for hook in self._config.hooks}
+        self._hooks = {(hook.name, hook.event): hook for hook in self._config.hooks}
         self._by_event: dict[HookEventName, list[Hook]] = {}
         self._build_event_index()
 
@@ -55,10 +55,15 @@ class HookRegistry:
             by_event[event] = [hook for _, hook in ordered]
         self._by_event = by_event
 
-    def get_hook(self, name: str) -> Hook | None:
-        """Return one hook by name if registered."""
+    def get_hook(self, name: str, event: HookEventName) -> Hook | None:
+        """Return the hook registered for an exact name and event."""
 
-        return self._hooks.get(name)
+        return self._hooks.get((name, event))
+
+    def get_hooks_named(self, name: str) -> list[Hook]:
+        """Return every event-specific hook registered under a name."""
+
+        return [hook for hook in self._config.hooks if hook.name == name]
 
     def get_all_hooks(self) -> list[Hook]:
         """Return all effective hooks after precedence/override resolution."""

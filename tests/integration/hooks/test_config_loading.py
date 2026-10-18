@@ -11,7 +11,8 @@ from meridian.lib.hooks.config import load_hooks_config
         (
             "event",
             'event = "bogus"',
-            "expected one of [spawn.created, spawn.finalized, spawn.running, spawn.start, "
+            "expected one of [notify.manual, session.cache_expiring, session.responded, "
+            "spawn.created, spawn.finalized, spawn.running, spawn.start, "
             "work.done, work.start, work.started], got 'bogus'",
         ),
         (
@@ -48,7 +49,9 @@ def test_hook_scalar_constraints_are_enforced_by_the_config_model(
     with pytest.raises(ValueError) as exc_info:
         load_hooks_config(tmp_path)
 
-    assert str(exc_info.value) == f"Invalid value for 'project.hooks[1].{field}': {expected}."
+    assert str(exc_info.value) == (
+        f"hook 'invalid': Invalid value for 'project.hooks[1].{field}': {expected}."
+    )
 
 
 def test_hook_status_constraint_is_enforced_by_the_config_model(tmp_path: Path) -> None:
@@ -66,7 +69,7 @@ def test_hook_status_constraint_is_enforced_by_the_config_model(tmp_path: Path) 
         load_hooks_config(tmp_path)
 
     assert str(exc_info.value) == (
-        "Invalid value for 'project.hooks[1].when.status': expected values in "
+        "hook 'invalid': Invalid value for 'project.hooks[1].when.status': expected values in "
         "[cancelled, failure, skipped, success, timeout], got 'bogus'."
     )
 
@@ -85,7 +88,7 @@ def test_hook_config_model_normalizes_closed_values(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    hook = load_hooks_config(tmp_path).hooks[0]
+    hook = next(hook for hook in load_hooks_config(tmp_path).hooks if hook.name == "normalized")
 
     assert hook.event == "spawn.finalized"
     assert hook.interval == "5m"
@@ -93,3 +96,41 @@ def test_hook_config_model_normalizes_closed_values(tmp_path: Path) -> None:
     assert hook.timeout_secs == 1
     assert hook.when is not None
     assert hook.when.status == ("success", "failure")
+
+
+def test_a_notify_row_replaces_only_its_events_default_route(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'builtin = "notify"\n'
+        'event = "session.cache_expiring"\n'
+        "enabled = false\n",
+        encoding="utf-8",
+    )
+
+    routes = {
+        (hook.event, hook.source, hook.enabled)
+        for hook in load_hooks_config(tmp_path).hooks
+        if hook.builtin == "notify"
+    }
+
+    assert routes == {
+        ("session.cache_expiring", "project", False),
+        ("session.responded", "default", True),
+        ("notify.manual", "default", True),
+    }
+
+
+def test_notify_route_rejects_an_unknown_channel_when_config_loads(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'builtin = "notify"\n'
+        'event = "session.responded"\n'
+        'options = { channels = ["phone"] }\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_hooks_config(tmp_path)
+
+    assert "project.hooks[1].options.channels" in str(exc_info.value)
+    assert "phone" in str(exc_info.value)
