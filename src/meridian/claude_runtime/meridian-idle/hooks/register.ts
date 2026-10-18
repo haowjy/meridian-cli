@@ -1,11 +1,10 @@
-import type { ClassicHookInputs, EngineInterface, Register, Timer, ToolCallInput } from 'claude-code'
+import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude-code'
 
 // Meridian's Claude idle sensor.
 //
-// This module senses three things and hands every decision to `meridian idle`:
-//   idle    a main-loop turn finished         -> `idle arm` with the work still running, then one timer per stage
-//   need    Claude needs a permission decision -> `idle human-needed`, which may release a held push
-//   return  the user typed, sent, or answered a permission prompt -> `idle return`, timers cancelled
+// This module senses two things and hands every decision to `meridian idle`:
+//   idle    a main-loop turn finished        -> `idle arm` with the work still running, then one timer per stage
+//   return  the user typed or sent something -> `idle return`, timers cancelled
 // Push and warn notifications belong to core; this file never sends one, reads
 // meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request.
@@ -47,7 +46,7 @@ type State = {
   timers: Timer[]
   /** Bumped by every user return. Async work compares it to detect that the user came back meanwhile. */
   epoch: number
-  /** An `arm` or `human-needed` reached core since the last `return`, so a return has state to close. */
+  /** An `arm` reached core since the last `return`, so a `return` call has something to close. */
   mayBeOpen: boolean
   /** Serialises the short `meridian idle` calls so arm/return/fire reach core in hook order. */
   queue: Promise<unknown>
@@ -56,11 +55,7 @@ type State = {
   lastUserText: string | undefined
   /** The main loop's in-flight background work, from the `Stop` that precedes its `turn.complete`. */
   stopTasks: BackgroundTask[] | undefined
-  /** Tool calls still running, grouped by the permission hook's call signature. */
-  toolCalls: Map<string, PendingToolCall[]>
 }
-
-type PendingToolCall = { prompted: boolean }
 
 function newState(): State {
   return {
@@ -75,7 +70,6 @@ function newState(): State {
     log: [],
     lastUserText: undefined,
     stopTasks: undefined,
-    toolCalls: new Map(),
   }
 }
 
@@ -88,60 +82,6 @@ function describeError(err: unknown): string {
 
 function isRecord(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (isRecord(value)) {
-    return `{${Object.keys(value)
-      .sort()
-      .map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`)
-      .join(',')}}`
-  }
-  return JSON.stringify(value) ?? String(value)
-}
-
-function toolInput(e: ToolCallInput): Json {
-  const input: Json = {}
-  for (const [key, value] of Object.entries(e)) {
-    if (!['tool', 'tool_use_id', 'agentId', 'requestMeta', 'consent'].includes(key) && value !== undefined) {
-      input[key] = value
-    }
-  }
-  return input
-}
-
-function toolCallKey(tool: string, input: unknown, agentId: string | undefined): string {
-  return `${agentId ?? ''}\0${tool}\0${stableJson(input)}`
-}
-
-function trackToolCall(s: State, e: ToolCallInput): [string, PendingToolCall] {
-  const key = toolCallKey(e.tool, toolInput(e), e.agentId)
-  const call = { prompted: false }
-  const calls = s.toolCalls.get(key)
-  if (calls === undefined) s.toolCalls.set(key, [call])
-  else calls.push(call)
-  return [key, call]
-}
-
-function forgetToolCall(s: State, key: string, call: PendingToolCall): void {
-  const calls = s.toolCalls.get(key)
-  if (calls === undefined) return
-  const index = calls.indexOf(call)
-  if (index >= 0) calls.splice(index, 1)
-  if (calls.length === 0) s.toolCalls.delete(key)
-}
-
-function markPromptedToolCall(
-  s: State,
-  tool: string,
-  input: unknown,
-  agentId: string | undefined,
-): void {
-  const call = s.toolCalls
-    .get(toolCallKey(tool, input, agentId))
-    ?.find(candidate => !candidate.prompted)
-  if (call !== undefined) call.prompted = true
 }
 
 function asNumber(value: unknown): number | undefined {
@@ -375,34 +315,6 @@ async function armTask(
   }
 }
 
-/** Reports that the harness is blocked on a human decision and adopts any push core releases. */
-async function humanNeededTask($: EngineInterface, s: State, epoch: number): Promise<void> {
-  if (!(await gate($, s))) return
-  try {
-    const session = await $.session.id()
-    const reply = await cli($, s, ['human-needed', '--harness', HARNESS, '--session', session])
-    const problem = failure(reply)
-    if (problem !== undefined || !isRecord(reply)) {
-      note($, s, `human-needed failed: ${problem ?? 'unexpected reply'}`)
-      return
-    }
-    // A prompt can appear before any stretch opens; core still persists it so
-    // the answer must call return instead of taking the no-open-state shortcut.
-    s.mayBeOpen = true
-    const stretch = asNumber(reply.stretch)
-    const anchor = asNumber(reply.anchor)
-    if (stretch === undefined || anchor === undefined || typeof reply.reason === 'string') {
-      note($, s, `human needed: no change${typeof reply.reason === 'string' ? ` (${reply.reason})` : ''}`)
-      return
-    }
-    if (s.epoch !== epoch) return
-    s.mayBeOpen = true
-    await adopt($, s, { session, stretch, anchor, at: readSchedule(reply), fired: {} }, epoch)
-  } catch (err) {
-    note($, s, `human-needed error: ${describeError(err)}`)
-  }
-}
-
 // -- return ----------------------------------------------------------------
 
 async function returnTask($: EngineInterface, s: State, sessionId: Promise<string | undefined>): Promise<void> {
@@ -530,33 +442,6 @@ export const register: Register = on => {
       void enqueue(s, () => armTask($, s, epoch, e.answer, tasks))
     }
     return next(e)
-  })
-
-  // PermissionRequest does not carry tool_use_id. Match its loop, tool name,
-  // and canonical input to the in-flight call; equal concurrent calls consume
-  // requests in call order. Only that call's resolution is the answer.
-  on('tool.call', async ($, e, next) => {
-    if (s.inert) return next(e)
-    const [key, call] = trackToolCall(s, e)
-    try {
-      const result = await next(e)
-      if (call.prompted) userReturned($, s)
-      return result
-    } finally {
-      forgetToolCall(s, key, call)
-    }
-  })
-
-  // PermissionRequest fires for main-loop and background-subagent prompts. It is
-  // observational only: downstream keeps the decision, and core owns idle policy.
-  on('classic.PermissionRequest', async ($, e, next) => {
-    const result = await next(e)
-    if (!s.inert && result.decision === undefined) {
-      markPromptedToolCall(s, e.tool_name, e.tool_input, e.agent_id)
-      const epoch = s.epoch
-      void enqueue(s, () => humanNeededTask($, s, epoch))
-    }
-    return result
   })
 
   on('prompt.submit', async ($, e, next) => {

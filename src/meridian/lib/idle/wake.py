@@ -70,6 +70,12 @@ def _lex_input(command: str) -> str | None:
             index += 1
             continue
         if char == "\\" and quote != "'":
+            if command[index + 1 : index + 2] == "\n":
+                # The shell removes an unquoted backslash-newline pair before
+                # tokenization; it neither ends the command nor starts a word.
+                chars[index : index + 2] = "  "
+                index += 2
+                continue
             escaped = True
             index += 1
             continue

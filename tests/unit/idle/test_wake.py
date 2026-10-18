@@ -102,6 +102,10 @@ def test_spawn_command_reads_meridian_grammar_through_wrappers(
             "meridian spawn wait --timeout 120 --yield-after-secs 60",
             ExpectedWake(certain="meridian spawns running", by_ms=7_201_000),
         ),
+        (
+            "meridian spawn wait p1 \\\n--yield-after-secs 7200",
+            ExpectedWake(certain="meridian spawns running", by_ms=7_201_000),
+        ),
     ],
 )
 def test_shell_wake_certainty_follows_the_command_that_ends_the_shell(

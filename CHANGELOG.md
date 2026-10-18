@@ -13,8 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Claude primary no longer pushes "waiting on you" while subagents, workflows, or a shell-ending foreground `meridian spawn` creation/wait runs; the turn they wake pushes instead, timed from your last prompt until a push is delivered. Endless loops, spawn management, detached creation, and commands followed by more work only delay the push. Monitors ignored.
-- A Claude permission prompt, including one from a background subagent, records that the human is needed and releases a waiting push held by running work. Later arms cannot re-hold it; answering the prompt is a user return that cancels the released timer, and the agent's next completed turn arms a fresh push. The cache-warning schedule is unchanged.
-- Running-work detection treats unquoted newlines and shell comments as command boundaries and redirections as part of their command. Unknown task kinds become `other`, and Claude bounds task snapshots so oversized lists no longer make the idle arm fail.
+- Running-work detection treats unescaped, unquoted newlines and shell comments as command boundaries and redirections as part of their command. Unknown task kinds become `other`, and Claude bounds task snapshots so oversized lists no longer make the idle arm fail.
 - Explicit `spawn wait --timeout` uses its minutes-valued hard deadline, not the yield interval, when deciding whether the wait keeps the cache warm.
 - A scheduled push replaced by a later turn keeps the original wait owed, so a long-wait response still uses the short push delay.
 

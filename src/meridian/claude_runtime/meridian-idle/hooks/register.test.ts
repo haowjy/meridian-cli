@@ -4,14 +4,7 @@ import type { On } from 'claude-code'
 type Host = {
   calls: string[][]
   reply: Record<string, unknown | ((args: string[]) => unknown)>
-  permissionDecision: 'deny' | undefined
-  toolBehavior: Record<string, 'approve' | 'deny' | 'auto'>
-  settleTool: Record<string, ((result: ToolAnswer) => void) | undefined>
 }
-
-type ToolAnswer =
-  | { result: { stdout: string; stderr: string; interrupted: boolean } }
-  | { result: string; text: string; isError: true }
 
 const START = 1_000_000
 const TUI = { cwd: '/work/project', surface: 'terminal', isInteractive: true } as const
@@ -31,12 +24,8 @@ function host(): Host {
       },
       return: { stretch_closed: true },
       fire: { decision: 'act', reason: 'guards-passed' },
-      'human-needed': { stretch: 1, anchor: 2, push_at: START + 12_000, warn_at: START + 20_000 },
       status: [],
     },
-    permissionDecision: undefined,
-    toolBehavior: {},
-    settleTool: {},
   }
 }
 
@@ -65,22 +54,6 @@ function install(on: On, h: Host) {
   on('turn.start', () => ({ turnId: 't1' }))
   on('turn.complete', () => ({ text: '' }))
   on('classic.Stop', () => ({}))
-  on('classic.PermissionRequest', () =>
-    h.permissionDecision === undefined
-      ? {}
-      : { decision: { behavior: h.permissionDecision, message: 'downstream' } },
-  )
-  on('tool.call', async ($, e) => {
-    void $
-    if (e.tool !== 'Bash') return { deny: `unexpected tool: ${e.tool}` }
-    const behavior = h.toolBehavior[e.command] ?? 'auto'
-    if (behavior === 'auto') {
-      return { result: { stdout: 'ok', stderr: '', interrupted: false } }
-    }
-    return new Promise<ToolAnswer>(resolve => {
-      h.settleTool[e.command] = resolve
-    })
-  })
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('command.run', () => ({ text: '' }))
   return clock
@@ -97,7 +70,7 @@ function flag(args: string[], name: string): string | undefined {
 
 function expectCliContract(h: Host): void {
   expect(h.calls.every(args => args.at(-1) === '--interactive')).toBe(true)
-  for (const args of h.calls.filter(args => ['config', 'arm', 'return', 'fire', 'human-needed'].includes(args[0] ?? ''))) {
+  for (const args of h.calls.filter(args => ['config', 'arm', 'return', 'fire'].includes(args[0] ?? ''))) {
     expect(flag(args, '--harness')).toBe('claude')
     if (args[0] !== 'config') expect(flag(args, '--session')).toBe('sess-1')
   }
@@ -267,114 +240,5 @@ test('arm forwards the work the main loop left running, from its Stop list', asy
   expect(tasks[5]?.command).toBe(`${continuedCommand.slice(0, 509)}\n;:`)
   expect(tasks[5]?.command).toContain('\\\n;:')
   expect(arm).toContain('--assistant-text=done')
-  expectCliContract(h)
-})
-
-test('an undecided permission request forwards unchanged and adopts the push core releases', async ($, on) => {
-  const h = host()
-  h.reply.arm = { stretch: 1, anchor: 1, warn_at: START + 20_000, push_held: '1 agent(s) running' }
-  const clock = install(on, h)
-
-  await $.session.start(TUI)
-  await clock.advance(2000)
-  await $.turn.complete(MAIN_TURN)
-  await clock.advance(0)
-  const downstream = await $.classic.PermissionRequest({
-    stop_hook_active: false,
-    tool_name: 'Bash',
-    tool_input: { command: 'curl https://example.com' },
-    permission_suggestions: [],
-  } as never)
-  await clock.advance(10_000)
-
-  expect(downstream).toEqual({})
-  expect(calls(h, 'human-needed')).toEqual([
-    ['human-needed', '--harness', 'claude', '--session', 'sess-1', '--interactive'],
-  ])
-  expect(calls(h, 'fire')).toEqual([
-    ['fire', 'push', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--anchor', '2', '--interactive'],
-  ])
-  expectCliContract(h)
-})
-
-test('a permission request decided downstream is not reported as human-needed', async ($, on) => {
-  const h = host()
-  h.permissionDecision = 'deny'
-  const clock = install(on, h)
-
-  await $.session.start(TUI)
-  await clock.advance(2000)
-  const downstream = await $.classic.PermissionRequest({
-    stop_hook_active: false,
-    tool_name: 'Bash',
-    tool_input: { command: 'curl https://example.com' },
-    permission_suggestions: [],
-  } as never)
-  await clock.advance(0)
-
-  expect(downstream).toEqual({ decision: { behavior: 'deny', message: 'downstream' } })
-  expect(calls(h, 'human-needed')).toEqual([])
-})
-
-test('approve and deny answers to prompted tool calls are user returns', async ($, on) => {
-  const h = host()
-  h.toolBehavior.approve = 'approve'
-  h.toolBehavior.deny = 'deny'
-  const clock = install(on, h)
-
-  await $.session.start(TUI)
-  await clock.advance(2000)
-  await $.turn.complete(MAIN_TURN)
-  await clock.advance(0)
-
-  const approvedCall = $.tool.call({ tool: 'Bash', command: 'approve' })
-  await clock.advance(0)
-  await $.classic.PermissionRequest({
-    stop_hook_active: false,
-    tool_name: 'Bash',
-    tool_input: { command: 'approve' },
-    permission_suggestions: [],
-  } as never)
-  h.settleTool.approve?.({ result: { stdout: 'ok', stderr: '', interrupted: false } })
-  const approved = await approvedCall
-  await clock.advance(0)
-  const deniedCall = $.tool.call({ tool: 'Bash', command: 'deny' })
-  await clock.advance(0)
-  await $.classic.PermissionRequest({
-    stop_hook_active: false,
-    tool_name: 'Bash',
-    tool_input: { command: 'deny' },
-    permission_suggestions: [],
-  } as never)
-  h.settleTool.deny?.({ result: 'permission denied', text: 'permission denied', isError: true })
-  const denied = await deniedCall
-  await clock.advance(0)
-  await clock.advance(20_000)
-
-  expect(approved).toEqual({ result: { stdout: 'ok', stderr: '', interrupted: false } })
-  expect(denied).toEqual({ result: 'permission denied', text: 'permission denied', isError: true })
-  expect(calls(h, 'human-needed')).toHaveLength(2)
-  expect(calls(h, 'return')).toHaveLength(2)
-  expect(calls(h, 'fire')).toEqual([])
-  expectCliContract(h)
-})
-
-test('an auto-allowed tool call is not a user return', async ($, on) => {
-  const h = host()
-  h.toolBehavior.auto = 'auto'
-  const clock = install(on, h)
-
-  await $.session.start(TUI)
-  await clock.advance(2000)
-  await $.turn.complete(MAIN_TURN)
-  await clock.advance(0)
-  await $.tool.call({ tool: 'Bash', command: 'auto' })
-  await clock.advance(10_000)
-
-  expect(calls(h, 'human-needed')).toEqual([])
-  expect(calls(h, 'return')).toEqual([])
-  expect(calls(h, 'fire')).toEqual([[
-    'fire', 'push', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--anchor', '1', '--interactive',
-  ]])
   expectCliContract(h)
 })

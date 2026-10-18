@@ -39,3 +39,8 @@
   background work starts a new main-loop turn, a timer can therefore push
   mid-turn. This predates running-work holds; share a host-busy fact with core
   rather than adding adapter-local scheduling policy.
+- `claude_runtime/meridian-idle`: a background subagent waiting on a permission
+  prompt holds the push, as on main where the mod skipped the arm while
+  subagents ran. Fix this with a stateless ping on Claude's
+  `classic.Notification` with `notification_type=permission_prompt`, not by
+  tracking prompts and answers ([#684](https://github.com/haowjy/meridian-cli/issues/684)).

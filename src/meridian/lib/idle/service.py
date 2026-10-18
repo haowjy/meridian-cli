@@ -26,7 +26,7 @@ from meridian.lib.idle.excerpts import trim_turn_excerpts
 from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
 from meridian.lib.idle.messages import stage_notice
 from meridian.lib.idle.timeline import Schedule, push_delay, schedule
-from meridian.lib.idle.wake import ExpectedWake, expected_wake
+from meridian.lib.idle.wake import expected_wake
 from meridian.lib.notify import Notice, SendReport, send
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.state.idle_store import (
@@ -252,11 +252,7 @@ def _persisted_schedule(value: Schedule) -> IdleSchedule:
 
 def _close_open_stretch(state: IdleState, *, returned_at_ms: int) -> IdleState:
     return state.model_copy(
-        update={
-            "stretch_open": False,
-            "push_owed_since_ms": returned_at_ms,
-            "human_needed": False,
-        }
+        update={"stretch_open": False, "push_owed_since_ms": returned_at_ms}
     )
 
 
@@ -370,20 +366,12 @@ class IdleService:
                 if implies_return
                 else (current.push_owed_since_ms if current is not None else None)
             )
-            human_needed = (
-                current.human_needed
-                if current is not None and not implies_return
-                else False
-            )
-            scheduling_wake = (
-                ExpectedWake(by_ms=wake.by_ms) if human_needed else wake
-            )
             placed = schedule(
                 now_ms,
                 resolved_ttl,
                 policy,
                 push_delay_seconds=push_delay(now_ms, owed_since_ms, policy),
-                wake=scheduling_wake,
+                wake=wake,
             )
             next_state = IdleState(
                 harness=harness,
@@ -405,73 +393,10 @@ class IdleService:
                 ttl_seconds=resolved_ttl,
                 ttl_estimated=ttl_estimated,
                 schedule=_persisted_schedule(placed),
-                push_held=(
-                    wake.certain
-                    if not human_needed and "push" not in done
-                    else None
-                ),
-                human_needed=human_needed,
                 done=done,
                 updated_at_ms=now_ms,
             )
-            return next_state, _result_for_state(
-                next_state,
-                push_held=next_state.push_held,
-            )
-
-        return self.store.mutate(harness, session, transition)
-
-    def human_needed(
-        self,
-        *,
-        harness: str,
-        session: str,
-    ) -> ArmResult:
-        """Record that the harness needs the user and release any held push."""
-
-        config_result = self.config_for(harness)
-        if not config_result.enabled:
-            return ArmResult(None, None, reason=config_result.reason)
-        policy = config_result.policy
-        now_ms = self._now_ms()
-
-        def transition(current: IdleState | None) -> tuple[IdleState | None, ArmResult]:
-            if current is None:
-                next_state = IdleState(
-                    harness=harness,
-                    session=session,
-                    stretch=1,
-                    stretch_open=False,
-                    anchor=1,
-                    idle_since_ms=None,
-                    push_owed_since_ms=now_ms,
-                    ttl_seconds=None,
-                    schedule=IdleSchedule(),
-                    human_needed=True,
-                    updated_at_ms=now_ms,
-                )
-                return next_state, ArmResult(None, None, reason="no-stretch")
-            recorded = current.model_copy(update={"human_needed": True})
-            if not current.stretch_open:
-                return recorded, _result_for_state(recorded, reason="stretch-closed")
-            if "push" in current.done:
-                return recorded, _result_for_state(recorded, reason="push-done")
-            if current.push_held is None:
-                return recorded, _result_for_state(recorded, reason="push-not-held")
-
-            next_state = recorded.model_copy(
-                update={
-                    "anchor": current.anchor + 1,
-                    "schedule": current.schedule.model_copy(
-                        # A human-needed push must survive even when the cache
-                        # warning is nearer; the two notices answer different needs.
-                        update={"push_at": now_ms + policy.push_seconds * 1000}
-                    ),
-                    "push_held": None,
-                    "updated_at_ms": now_ms,
-                }
-            )
-            return next_state, _result_for_state(next_state)
+            return next_state, _result_for_state(next_state, push_held=wake.certain)
 
         return self.store.mutate(harness, session, transition)
 
@@ -502,9 +427,7 @@ class IdleService:
                 )
                 return next_state, ReturnResult(stretch_closed=None, was_open=False)
             if not current.stretch_open:
-                next_state = current.model_copy(
-                    update={"push_owed_since_ms": now_ms, "human_needed": False}
-                )
+                next_state = current.model_copy(update={"push_owed_since_ms": now_ms})
                 stretch_closed = current.stretch if current.idle_since_ms is not None else None
                 return next_state, ReturnResult(stretch_closed=stretch_closed, was_open=False)
             next_state = _close_open_stretch(current, returned_at_ms=now_ms)
@@ -714,17 +637,13 @@ def close_on_launch(*, harness: str, session: str, env: Mapping[str, str]) -> No
     try:
         store = IdleStore(root=get_user_home(env=env) / "idle")
         current = store.read(harness, session)
-        if current is None or (not current.stretch_open and not current.human_needed):
+        if current is None or not current.stretch_open:
             return
         returned_at_ms = _default_now_ms()
 
         def transition(state: IdleState | None) -> tuple[IdleState | None, None]:
-            if state is None or (not state.stretch_open and not state.human_needed):
+            if state is None or not state.stretch_open:
                 return None, None
-            if not state.stretch_open:
-                return state.model_copy(
-                    update={"push_owed_since_ms": returned_at_ms, "human_needed": False}
-                ), None
             return _close_open_stretch(state, returned_at_ms=returned_at_ms), None
 
         store.mutate(harness, session, transition)

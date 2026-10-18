@@ -114,8 +114,6 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "ttl_seconds": 61,
         "ttl_estimated": True,
         "schedule": {"push_at": armed["push_at"], "warn_at": None},
-        "push_held": None,
-        "human_needed": False,
         "done": {},
         "updated_at_ms": updated_at_ms,
     }

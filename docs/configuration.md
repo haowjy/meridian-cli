@@ -283,8 +283,8 @@ turn left running:
   its final command segment is a foreground `meridian spawn` creation or
   `meridian spawn wait`, with no `while`, `until`, `for`, or `select` segment.
   Semicolons, pipelines, background operators, subshell parentheses, and
-  unquoted newlines separate command segments; redirections stay with their
-  command. Direct paths, leading environment assignments, `uv run ...
+  unescaped, unquoted newlines separate command segments; redirections stay
+  with their command. Direct paths, leading environment assignments, `uv run ...
   meridian`, and `uvx meridian` are recognized. Earlier setup such as `cd x &&`
   is fine. That work ends and wakes the session, and that turn arms again; the
   response stays owed until its push is sent, so a long wait uses `push_seconds`
@@ -299,20 +299,6 @@ turn left running:
   background shell or task may never end. They only delay the push to at least
   `quick_turn_push_seconds`.
 - Monitors are ignored.
-
-If Claude is holding the push for running work and any tool, including one in a
-background subagent, stops for a permission decision, the human is needed now.
-Meridian records that need even when the main turn is still running. The signal
-releases an existing hold and schedules the push after `push_seconds`; any
-later arm while the prompt remains pending schedules instead of holding the
-push. It does not move or restore the cache warning.
-
-Approving or denying the prompted tool call is a user return. It closes the
-stretch and cancels the released timer; when the agent later finishes, that
-wake turn arms a fresh push. The Claude mod correlates the permission request
-to that tool call, so an auto-allowed call does not count. A downstream hook
-that supplies the permission decision prevents both the human-needed report
-and this answer-as-return path.
 
 Otherwise the warning arms after every turn, even while the push is held. Only
 the Claude mod reports running work today, using a bounded snapshot so a large

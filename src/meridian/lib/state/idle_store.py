@@ -55,10 +55,6 @@ class IdleState(BaseModel):
     ttl_seconds: int | None = Field(default=None, gt=0)
     ttl_estimated: bool = True
     schedule: IdleSchedule
-    # Non-null only when certain running work suppressed an otherwise-owed push.
-    push_held: str | None = None
-    # Set when a permission prompt needs a person, until their answer is a return.
-    human_needed: bool = False
     done: dict[Stage, str] = Field(default_factory=_empty_done)
     updated_at_ms: int
 

@@ -40,13 +40,6 @@ A Claude primary now holds the waiting push while subagents, workflows, or
 `meridian spawn` shells run, and the cache warning arms even then; see
 [running work](configuration.md#running-work).
 
-When a Claude permission prompt is shown, Meridian records that the human is
-needed even if the main turn is still running. A held push is released, and a
-later arm while the prompt is pending schedules rather than holding the push.
-Approving or denying that same tool call is a user return: it closes the idle
-stretch and cancels the released timer. Auto-allowed calls and permission
-requests decided by another hook do not count as a prompt or a return.
-
 Idle files under `MERIDIAN_HOME/idle/` lose the `context`, `compact_eval` and
 other compaction fields. Files written by an older build no longer validate and
 are treated as absent: an idle stretch open across the upgrade starts fresh on
