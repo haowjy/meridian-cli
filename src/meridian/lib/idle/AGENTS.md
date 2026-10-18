@@ -24,8 +24,9 @@ compact; harnesses compact on their own. It is policy, not a harness adapter:
   (minutes) replaces the yield deadline. Never classify spawn commands in an
   adapter. A certain wake holds the push, and the response stays owed
   (`push_owed_since_ms`) until a push is delivered or the user returns. A known
-  wake before cache expiry drops the warning. Only the Claude mod forwards
-  running work today; Codex, OpenCode and Pi send none (#669).
+  wake before cache expiry drops the warning. The Claude mod forwards native
+  background-task facts; Pi forwards running managed-bash rows as shell facts.
+  Codex and OpenCode send none (#669).
 - `wake.py` skips Meridian's top-level value flags through
   `lib/cli_args.py` `TOP_LEVEL_VALUE_FLAGS`, the table `cli/bootstrap.py`
   also uses. A new top-level flag that takes a value goes there, or wake.py

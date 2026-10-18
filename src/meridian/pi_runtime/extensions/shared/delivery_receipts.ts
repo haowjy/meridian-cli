@@ -1,9 +1,8 @@
-import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { writeJsonAtomic } from "./json_file";
+import { readPrivateJson, writeJsonAtomic } from "./json_file";
 import { currentSpawnIdFromEnv, resolveDeliveryReceiptsPath, resolveObservedSpawnsPath } from "./pi_state_paths";
 import type { DeliveryReceiptsFile, ObservedSpawnsFile } from "./schemas";
 
@@ -20,15 +19,6 @@ const ObservedSchema = Type.Object({
   }))),
 });
 const receiptQueues = new Map<string, Promise<void>>();
-
-/** Invalid present bytes never become a successful empty read. */
-export async function readPrivateJson(file: string): Promise<unknown | undefined> {
-  try { return JSON.parse(await readFile(file, "utf8")) as unknown; }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-}
 
 export async function readDeliveryReceipts(spawnId = currentSpawnIdFromEnv(), file = resolveDeliveryReceiptsPath(spawnId)): Promise<DeliveryReceiptsFile> {
   const value = await readPrivateJson(file);

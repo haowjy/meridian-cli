@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { readBashRecords } from "../../shared/bash_records";
 import { runMeridianCommand, type CommandResult } from "../../shared/meridian_cli";
 
 export type MeridianRunner = (
@@ -32,6 +33,10 @@ type StatusRow = {
 const STAGES: readonly IdleStage[] = ["push", "warn"];
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const EXCERPT_CHAR_CAP = 4_000;
+const BACKGROUND_TASK_LIMIT = 16;
+const BACKGROUND_COMMAND_CHAR_CAP = 512;
+
+type BackgroundTask = { kind: "shell"; command: string };
 
 function capExcerpt(value: string): string | null {
   const capped = value.slice(0, EXCERPT_CHAR_CAP);
@@ -65,6 +70,25 @@ export function messageExcerpts(messages: unknown): {
     }
   }
   return { user, assistant };
+}
+
+function backgroundCommand(command: string): string {
+  if (command.length <= BACKGROUND_COMMAND_CHAR_CAP) return command;
+  // Keep a truncated shell from looking like a certain wake if a meaningful
+  // suffix (such as --background or a following command) was cut off.
+  return `${command.slice(0, BACKGROUND_COMMAND_CHAR_CAP - 3)}\n;:`;
+}
+
+async function runningBackgroundTasks(): Promise<BackgroundTask[]> {
+  try {
+    const file = await readBashRecords();
+    return Object.values(file.records)
+      .filter((record) => record.status === "running")
+      .slice(0, BACKGROUND_TASK_LIMIT)
+      .map((record) => ({ kind: "shell", command: backgroundCommand(record.command) }));
+  } catch {
+    return [];
+  }
 }
 
 export class IdleRuntime {
@@ -120,6 +144,10 @@ export class IdleRuntime {
       const provider = ctx.model?.provider;
       if (provider) {
         args.push("--provider", provider);
+      }
+      const backgroundTasks = await runningBackgroundTasks();
+      if (backgroundTasks.length > 0) {
+        args.push(`--background-tasks=${JSON.stringify(backgroundTasks)}`);
       }
       const excerpts = messageExcerpts(messages);
       if (excerpts.user !== null) this.lastUserText = excerpts.user;
