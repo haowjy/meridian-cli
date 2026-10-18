@@ -22,6 +22,7 @@ from meridian.lib.harness.idle_types import (
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
+from meridian.lib.state.spawn.model import SpawnRecord
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
 BootstrapPayloadT = TypeVar("BootstrapPayloadT", covariant=True)
@@ -78,6 +79,22 @@ PrimaryIdleSensor = Callable[[IdleSensorContext], IdleSensor | None]
 AutocompactOffReader = Callable[[Mapping[str, str]], bool | None]
 
 
+class PrimaryInboxError(RuntimeError):
+    """A user-facing failure to post a message to a primary harness inbox."""
+
+
+class PrimaryInbox(Protocol):
+    """Post one message through a harness-owned primary inbox."""
+
+    def __call__(
+        self,
+        *,
+        runtime_root: Path,
+        record: SpawnRecord,
+        message: str,
+    ) -> str: ...
+
+
 def _no_event_sinks(
     runtime_root: Path, spawn_id: SpawnId
 ) -> tuple[Callable[[RawHarnessEvent], None], ...]:
@@ -96,6 +113,7 @@ class HarnessBundle(Generic[SpecT]):
     projections: HarnessProjectionPorts[SpecT]
     semantics: HarnessSemantics
     event_sinks: EventSinks = _no_event_sinks
+    primary_inbox: PrimaryInbox | None = None
     primary_idle_sensor: PrimaryIdleSensor | None = None
     native_idle_hook: NativeIdleHook | None = None
     autocompact_off: AutocompactOffReader | None = None
@@ -186,6 +204,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         projections=bundle.projections,
         semantics=bundle.semantics,
         event_sinks=bundle.event_sinks,
+        primary_inbox=bundle.primary_inbox,
         primary_idle_sensor=bundle.primary_idle_sensor,
         native_idle_hook=bundle.native_idle_hook,
         autocompact_off=bundle.autocompact_off,
@@ -227,6 +246,33 @@ def get_harness_bundle(harness_id: HarnessId) -> HarnessBundle[Any]:
         return _REGISTRY[harness_id]
     except KeyError as exc:
         raise KeyError(f"unknown harness: {harness_id}") from exc
+
+
+def post_to_primary(
+    record: SpawnRecord,
+    *,
+    runtime_root: Path,
+    message: str,
+) -> str:
+    """Dispatch one primary inbox post through its harness bundle."""
+
+    harness_name = record.harness or "unknown"
+    try:
+        harness_id = HarnessId(harness_name)
+    except ValueError as exc:
+        raise PrimaryInboxError(
+            f"{harness_name} primaries have no inject route yet (see #498)"
+        ) from exc
+
+    from meridian.lib.harness import ensure_bootstrap
+
+    ensure_bootstrap()
+    primary_inbox = get_harness_bundle(harness_id).primary_inbox
+    if primary_inbox is None:
+        raise PrimaryInboxError(
+            f"{harness_name} primaries have no inject route yet (see #498)"
+        )
+    return primary_inbox(runtime_root=runtime_root, record=record, message=message)
 
 
 def get_bundle_registry() -> Mapping[HarnessId, HarnessBundle[Any]]:
@@ -341,9 +387,12 @@ __all__ = [
     "HarnessBundle",
     "HarnessProjectionPorts",
     "ManagedPrimaryProjectionPorts",
+    "PrimaryInbox",
+    "PrimaryInboxError",
     "get_bundle_registry",
     "get_connection_cls",
     "get_harness_bundle",
+    "post_to_primary",
     "project_managed_primary_backend_command",
     "project_managed_primary_bootstrap",
     "project_subprocess_spec",

@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
@@ -13,6 +14,25 @@ _INPUT_LIMIT = 1024 * 1024
 _RECORD_LIMIT = 8 * 1024
 _JOURNAL_LIMIT = 1024 * 1024
 _SOURCES = frozenset({"startup", "resume", "fork", "clear", "compact"})
+# Mirrors meridian.lib.streaming.control_socket.UNIX_SOCKET_PATH_MAX_BYTES;
+# this hook is stdlib-only and cannot import it.
+_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
+
+
+def _messaging_socket() -> str | None:
+    value = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
+    try:
+        encoded_length = len(value.encode()) if value else 0
+    except UnicodeEncodeError:
+        return None
+    if (
+        not value
+        or encoded_length > _SOCKET_PATH_MAX_BYTES
+        or not Path(value).is_absolute()
+        or any(ord(character) < 32 for character in value)
+    ):
+        return None
+    return value
 
 
 def record() -> None:
@@ -46,16 +66,21 @@ def record() -> None:
         return
 
     # A leading separator isolates a prior short/torn append from this record.
+    record_payload: dict[str, object] = {
+        "v": 2,
+        "launch_nonce": nonce,
+        # The hook command execs this interpreter; its parent is Claude.
+        "pid": os.getppid(),
+        "recorded_at": time.time(),
+        "source": source,
+        "session_id": session_id,
+        "transcript_path": transcript,
+    }
+    messaging_socket = _messaging_socket()
+    if messaging_socket is not None:
+        record_payload["messaging_socket"] = messaging_socket
     line = b"\n" + json.dumps(
-        {
-            "v": 2,
-            "launch_nonce": nonce,
-            # The hook command execs this interpreter; its parent is Claude.
-            "pid": os.getppid(),
-            "source": source,
-            "session_id": session_id,
-            "transcript_path": transcript,
-        },
+        record_payload,
         separators=(",", ":"),
     ).encode() + b"\n"
     if len(line) > _RECORD_LIMIT:
