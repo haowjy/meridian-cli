@@ -26,8 +26,6 @@ bare path
                                     — stable process-scope sidecar mutation lock
   locks/reaper-cleanup/<spawn_id>.lock
                                     — stable reaper cleanup lock
-  locks/launch-boundary/<spawn_id>.lock
-                                    — stable launch-boundary append lock
   locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
   spawns/<spawn_id>/
@@ -36,10 +34,9 @@ bare path
     history.jsonl                   — legacy runner event stream (no longer written), never read
     attempt-N/                      — legacy retry evidence; new runs do not create it
     runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
-    finalize-evidence.json          — orphan-time liveness snapshot before reaper cleanup
     process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
-    heartbeat · report.md · stderr.log · params.json · tokens.json
+    report.md · stderr.log · params.json · tokens.json
   artifacts/<spawn_id>/             — auxiliary artifact store, not a transcript source
 
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
@@ -82,8 +79,10 @@ Explicit continue resolves the named spawn's current chat owner, takes that
 owner's lock before the named source lock, and sweeps their birth-verified scopes
 before creating another row. An exact-continue parent publishes the new row as
 the chat owner while its launch lock is still held; a background worker confirms
-that pointer after hand-off. Lockless legacy rows retain their birth/grace guard
-and convert under the mutation lock. This does not change v3 status authority.
+that pointer after hand-off. Lockless legacy rows alone use
+`legacy_runner_alive()`'s 15-second pre-worker PID-less window and convert under
+the mutation lock. Lock-backed rows have no grace: a free lock derives terminal.
+This does not change v3 status authority.
 
 ## Spawn Mutation Seam
 
@@ -101,8 +100,7 @@ Any writer into a destructible `spawns/<id>/` directory that can outlive deletio
 not recreate its owner. Parent-creating mutations take the spawn-state lock and refuse
 a missing published row through `published_artifact_lock()`; callback-only writers use
 `mutate_published_spawn_artifact()` on the same seam. Signals, scope, history,
-launch/reaper diagnostics, failure sentinels, and harness journals all use it.
-Heartbeats never create a missing parent directory and stop after deletion.
+reaper diagnostics, failure sentinels, and harness journals all use it.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
 the repository never imports the projection. Cross-leaf operations belong in
@@ -194,27 +192,35 @@ historical records and imported archive refs read a sealed `snapshot` source ins
 
 ## Reconciliation Behavior
 
-`reaper.py:reconcile_spawns()` accepts and returns an immutable `SpawnScan`, preserving
-its quarantine partition while projecting stale active records for list, stats, reference,
-and dashboard callers. It may return an in-memory terminal status but never persists
-state or terminates processes, and it is safe at any depth.
+Readers get status only from `spawn_status.py`: `read_derived()` for one spawn and
+`overlay_derived()` for rows from a scan or the index. For lock-backed rows, they hold
+the shared launch lock across the authority read. Lockless legacy rows use the bounded
+legacy liveness rule instead. Both may return an in-memory terminal status, never
+persist state or terminate processes, and are safe at any depth.
+
+Use derived status for liveness, display, wait, and idle questions. Selection for
+cancel/archive/destruction uses stored status until dead-launch finalization persists
+an outcome. `claim_dead_launch()` returns `Claimed`, `Settled`, `Live`, or `Lockless`;
+only `Claimed` authorizes `SpawnApplicationService.finalize_dead_launch()`, the sole
+writer of a dead lock-backed launch's outcome.
 
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
-background repair and fails closed outside root depth. It snapshots a cleanup claim
-under the spawn lock, persists the terminal outcome through the locked external-writer
-path, then terminates the claimed, birth-validated scopes. A separate stable cleanup
-lock prevents concurrent reapers from double-signalling; terminal rows retain failed
-claims for the next doctor pass. Startup candidate discovery streams authoritative
-spawn rows directly, selecting active rows and rows with a cleanup claim; it does not
-trust the disposable history index or retain a corpus-sized scan. Orphan primaries are
-captured only after the whole pass: the capture guard defers while any row bound to the
-same native session is active, and crashed `--continue` generations share one.
-Both paths share decision rules in `reaper.py` and completion/cancel precedence in
-`reconciliation.py`. Primary scope termination additionally requires positive runner-death
-evidence against the recorded birth, with the same one-second clock tolerance as
-the liveness check. Unknown identity, access errors and stale heartbeats never
-authorize primary scope termination, including replayed terminal claims; they do
-not block status finalization.
+background repair and fails closed outside root depth. It delegates persistence to
+`finalize_dead_launch()`, which retains the claimed runner-lifetime `launch.lock`;
+lockless legacy rows are never finalized here. The repairer snapshots a cleanup claim,
+persists the derived outcome while retaining the launch lock, then terminates the
+claimed, birth-validated scopes. A separate stable
+cleanup lock prevents concurrent repairers from double-signalling; terminal rows
+retain failed claims for the next doctor pass. Startup candidate discovery streams
+authoritative spawn rows directly, selecting active rows and rows with a cleanup
+claim; it does not trust the disposable history index or retain a corpus-sized scan.
+Orphan primaries are captured only after the whole pass: the capture guard defers
+while any row bound to the same native session is active, and crashed `--continue`
+generations share one. Primary scope termination additionally requires positive
+runner-death evidence against the recorded birth, with the same one-second clock
+tolerance as the liveness check. Unknown identity and access errors never authorize
+primary scope termination, including replayed terminal claims; they do not block
+status finalization.
 Read-only projected status is not authorization to terminate a scope.
 
 ## Native Chat Identity
@@ -244,9 +250,10 @@ Historical multi-ID arrays are ignored on read.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.
-- `reaper.py` — read-only `reconcile_spawns()` projection and root-only
-  `reconcile_active_spawn()` repair.
-- `reconciliation.py` — shared reconciliation decisions and completion/cancel precedence.
+- `spawn_status.py` — lock-consistent status for every reader and
+  `claim_dead_launch()`'s typed writer-side claim.
+- `reaper.py` — root-only repair that claims dead launches, persists their projected
+  outcome through the application service, then cleans claimed process scopes.
 
 ## Spawn Subpackage
 

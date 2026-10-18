@@ -14,6 +14,7 @@ from meridian.lib.ops.session_archive import (
     session_stop_maintenance,
 )
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 OLD = (datetime.now(UTC) - timedelta(days=30)).isoformat()
@@ -55,6 +56,7 @@ def add_spawn(
     bound: bool = True,
     finished_at: str | None = OLD,
     boundary: RunBoundaryOutcome | None = None,
+    launch_lock: LaunchSlot | None = None,
 ) -> str:
     sid = f"{n:08d}-1111-4111-8111-111111111111"
     chat = f"c{n}"
@@ -84,6 +86,7 @@ def add_spawn(
         agent="a",
         prompt="question",
         harness_session_id=sid if bound else None,
+        launch_lock=launch_lock,
     )
     if boundary is not None:
         spawn_store.update_spawn(root, key, run_boundary=boundary)
@@ -168,53 +171,57 @@ def runner_paths(root: Path, key: str) -> set[str]:
 
 def test_qualification_matrix_and_apply_removes_only_runner_files(tmp_path: Path) -> None:
     project, root, store = corpus(tmp_path)
-    prunable = add_spawn(root, store, 1)
-    recent = add_spawn(root, store, 2, finished_at=datetime.now(UTC).isoformat())
-    running = add_spawn(root, store, 3, finished_at=None)
-    unbound = add_spawn(root, store, 4, bound=False)
-    missing = add_spawn(root, store, 5)
-    (store / "00000005-1111-4111-8111-111111111111.jsonl").unlink()
-    mismatch = add_spawn(root, store, 6)
-    (store / "00000006-1111-4111-8111-111111111111.jsonl").write_text(
-        json.dumps({"sessionId": "someone-else"}) + "\n"
-    )
-    unresolved = add_spawn(root, store, 7, boundary=RunBoundaryOutcome(status="unresolved"))
+    running_launch = LaunchSlot()
+    try:
+        prunable = add_spawn(root, store, 1)
+        recent = add_spawn(root, store, 2, finished_at=datetime.now(UTC).isoformat())
+        running = add_spawn(root, store, 3, finished_at=None, launch_lock=running_launch)
+        unbound = add_spawn(root, store, 4, bound=False)
+        missing = add_spawn(root, store, 5)
+        (store / "00000005-1111-4111-8111-111111111111.jsonl").unlink()
+        mismatch = add_spawn(root, store, 6)
+        (store / "00000006-1111-4111-8111-111111111111.jsonl").write_text(
+            json.dumps({"sessionId": "someone-else"}) + "\n"
+        )
+        unresolved = add_spawn(root, store, 7, boundary=RunBoundaryOutcome(status="unresolved"))
 
-    from meridian.lib.ops.runtime import resolve_roots_for_read
+        from meridian.lib.ops.runtime import resolve_roots_for_read
 
-    resolve_roots_for_read(str(project))  # One-time startup import, not the dry run.
-    before = tree(root)
-    planned = prune(project)
-    assert tree(root) == before, "dry-run must not change bytes or mtimes"
-    assert [row.spawn_id for row in planned.pruned] == [prunable]
-    assert planned.pruned[0].bytes == sum(
-        entry_size(before[name]) for name in runner_paths(root, prunable)
-    )
-    assert {reason: rows for reason, rows in planned.skipped.items()} == {
-        "recent": (recent,),
-        "running": (running,),
-        "unbound": (unbound,),
-        "missing": (missing,),
-        "error": (mismatch,),
-        "exit_unresolved": (unresolved,),
-    }
+        resolve_roots_for_read(str(project))  # One-time startup import, not the dry run.
+        before = tree(root)
+        planned = prune(project)
+        assert tree(root) == before, "dry-run must not change bytes or mtimes"
+        assert [row.spawn_id for row in planned.pruned] == [prunable]
+        assert planned.pruned[0].bytes == sum(
+            entry_size(before[name]) for name in runner_paths(root, prunable)
+        )
+        assert {reason: rows for reason, rows in planned.skipped.items()} == {
+            "recent": (recent,),
+            "running": (running,),
+            "unbound": (unbound,),
+            "missing": (missing,),
+            "error": (mismatch,),
+            "exit_unresolved": (unresolved,),
+        }
 
-    applied = prune(project, apply=True)
-    assert [row.spawn_id for row in applied.pruned] == [prunable]
-    after = tree(root, authority_only=True)
-    removed = runner_paths(root, prunable)
-    assert removed <= set(before)
-    assert after == {
-        name: value
-        for name, value in before.items()
-        if name not in removed and not not_authority(name)
-    }
-    for template in KEPT_FILES:
-        assert (root / template.format(key=prunable)).is_file()
+        applied = prune(project, apply=True)
+        assert [row.spawn_id for row in applied.pruned] == [prunable]
+        after = tree(root, authority_only=True)
+        removed = runner_paths(root, prunable)
+        assert removed <= set(before)
+        assert after == {
+            name: value
+            for name, value in before.items()
+            if name not in removed and not not_authority(name)
+        }
+        for template in KEPT_FILES:
+            assert (root / template.format(key=prunable)).is_file()
 
-    rerun = prune(project, apply=True)
-    assert rerun.pruned == ()
-    assert tree(root, authority_only=True) == after
+        rerun = prune(project, apply=True)
+        assert rerun.pruned == ()
+        assert tree(root, authority_only=True) == after
+    finally:
+        running_launch.close()
 
 
 def test_after_days_is_measured_from_terminal_time(tmp_path: Path) -> None:
@@ -292,9 +299,7 @@ def test_unreleased_live_scope_skips_terminal_spawn(tmp_path: Path) -> None:
     assert [row.spawn_id for row in prune(project).pruned] == [key]
 
 
-def test_one_spawn_failure_is_recorded_and_the_pass_continues(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_one_spawn_failure_is_recorded_and_the_pass_continues(tmp_path: Path, monkeypatch) -> None:
     project, root, store = corpus(tmp_path)
     blocked = add_spawn(root, store, 1)
     free = add_spawn(root, store, 2)

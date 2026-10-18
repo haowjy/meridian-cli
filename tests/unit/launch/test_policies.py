@@ -176,7 +176,6 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
         snapshot=snapshot,
         project_root=Path("/tmp/project"),
         harness_registry=get_default_harness_registry(),
-        skills_readonly=True,
         alias_catalog={},
     )
 

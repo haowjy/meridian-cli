@@ -50,7 +50,6 @@ def _request(
         profile_routing_harness=profile_routing_harness,
         profile_policy_defaults=profile_policy_defaults or ResolvedExecutionPolicy(),
         profile_model_policies=profile_model_policies,
-        profile_skills=(),
         resolved_alias_entry=resolved_alias,
         alias_catalog=resolved_catalog,
         project_root="/repo",
@@ -69,7 +68,6 @@ def test_compiler_result_dry_run_dict_includes_selection_report_and_warnings() -
         model_token="gptmini",
         harness="codex",
         execution_policy=ResolvedExecutionPolicy(effort="high"),
-        skill_names=(),
         selection_report={"version": 2, "outcome": "selected"},
         warnings=("warning-one",),
     )

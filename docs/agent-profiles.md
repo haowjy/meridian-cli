@@ -1,6 +1,6 @@
 # Agent Profiles
 
-Agent profiles are markdown files that tell Meridian how to launch and configure a specific agent: which model to use, which harness to run it on, which skills to inject, and what policies to apply when the selected model changes.
+Agent profiles are markdown files that tell Meridian how to launch and configure a specific agent: which model to use, which harness to run it on, which skills it loads, and what policies to apply when the selected model changes.
 
 ## Location
 
@@ -52,8 +52,8 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `model` | str | — | Default model alias or ID (e.g. `claude-sonnet`, `gpt-5.3-codex`) |
 | `harness` | str | — | Force a specific harness (`claude`, `codex`, `opencode`) |
 | `mode` | str | `subagent` | `primary` or `subagent` — controls listing grouping |
-| `model-invocable` | bool | `true` | `false` hides agent from model-facing inventory prompt; explicit `-a NAME` invocation still works |
-| `skills` | list[str] | `[]` | Skill names to inject into the system prompt |
+| `model-invocable` | bool | `true` | `false` hides agent from model-facing inventory prompt; explicit `-a NAME` invocation still works. Skills have their own `model-invocable`; see [Skills](#skills-and-skill-variants) |
+| `skills` | list[str] or `{load, available}` | `[]` | Skills the agent loads into its system prompt; the mapping form also lists skills it may load itself. See [Skills](#skills-and-skill-variants) |
 | `tools` | list[str] | `[]` | Tool names to allow |
 | `disallowed-tools` | list[str] | `[]` | Tool names to block |
 | `mcp-tools` | list[str] | `[]` | MCP tool names to enable |
@@ -177,10 +177,7 @@ considered for fallback.
 
 ## Skills and Skill Variants
 
-When Meridian launches an agent, skill content comes from the Mars launch-bundle JSON
-(`skills.loaded[]`), not from reading `.mars/skills/` on disk. Mars owns the `.mars/`
-directory schema, skill variant resolution, and compilation. Meridian consumes the
-structured bundle output.
+`skills:` takes a flat list or a mapping:
 
 ```yaml
 skills:
@@ -188,27 +185,62 @@ skills:
   - shared-workspace
 ```
 
-`shared-workspace` guidance should set the work item's source-edit directory with `meridian work start ... --task-dir <path>` or `meridian work task-dir <path>` (for example, pointing at a `git worktree add` directory).
+```yaml
+skills:
+  load: [meridian-spawn, shared-workspace]
+  available: [diagnose, probe]
+```
 
-**Bundle interface.** Mars resolves skills through the launch-bundle subcommand and
-delivers structured data to meridian:
+A flat list means every skill is loaded. A name in both `load` and `available`
+counts as loaded.
+
+`shared-workspace` guidance should set the work item's source-edit
+directory with `meridian work start ... --task-dir <path>` or
+`meridian work task-dir <path>` (for example, pointing at a `git worktree add`
+directory).
+
+| How the agent gets the skill | What reaches the agent |
+|---|---|
+| `load` (or the flat list) | The skill's full text, in the system prompt after the profile body, on every launch |
+| `--skills NAME` on `meridian spawn` or `meridian start` | Same as `load`, for that launch |
+| `available` | The skill's name under `# Available Skills`, grouped by [type](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#type). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
+
+**Known gap:** on OpenCode v2 and the `opencode run` path, the composed system
+prompt, including loaded skills and the profile body, does not reach the model.
+OpenCode v1 is unaffected.
+
+**Loaded skills ignore the skill's `model-invocable`.** A skill's own
+`model-invocable: false` only keeps it out of the harness's skill list, the list
+a model browses to find skills by itself. A loaded skill still arrives in full.
+So `model-invocable: false` plus `load` gives one agent a skill that no other
+agent sees or loads on its own. The reverse pairing doesn't work: an `available`
+skill with `model-invocable: false` is named in the listing, but the harness
+won't load it.
+
+Each loaded skill is headed `# Skill: /<name>` with a line saying its text is
+already loaded and where its resource files are. An agent body can name a loaded
+skill (`/solo-dev`) even though the skill won't appear in the harness's skill
+list.
+
+**Bundle interface.** Skill content comes from the Mars launch-bundle JSON, not
+from Meridian reading `.mars/skills/` on disk. Mars owns the `.mars/` directory
+schema, skill variant selection, and compilation:
 
 ```
-Mars launch-bundle → skills.loaded[{name, skill_type, body}]
-                          │
-                          ▼
-_build_resolved_skills_from_bundle()  → ResolvedSkills.loaded_skills
+Mars launch-bundle → skills.loaded[{name, skill_type, source_path, body}]
+                   → skills.available[{name, skill_type, description, source_path}]
+                   → skills.missing[name]
 ```
 
 Meridian receives already-resolved content and:
 - Renders type-group headers (`## Principle`, `## Guardrail`, etc.) for loaded skills
-- Groups available (on-demand) skills by type with descriptions and a load nudge
-- Uses synthetic paths for snapshot persistence compatibility
+- Lists available skills by name, grouped by type, with a load nudge
+- Unknown skill names produce a warning, not a failed launch
 
-**Variant selection** (harness- or model-specific body overrides from a `variants/`
-subdirectory) is now Mars's responsibility. Meridian receives the final resolved
-content — no variant resolution runs in meridian-cli at launch time. The specificity
-ladder still applies but resolution happens inside Mars, not meridian-cli.
+**Variant selection** happens inside Mars. If a skill has
+`variants/<harness>/SKILL.md`, its body replaces the base body for that harness;
+the base frontmatter still supplies metadata. Model-level
+variants (`variants/<harness>/<model>/`) are not supported.
 
 See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md) for the skill authoring format.
 

@@ -106,27 +106,6 @@ class Spawn(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class IndexReport(BaseModel):
-    """Skill index operation summary."""
-
-    model_config = ConfigDict(frozen=True)
-
-    indexed_count: int
-
-    def format_text(self, ctx: FormatContext | None = None) -> str:
-        return f"skills.reindex  ok  indexed={self.indexed_count}"
-
-
-class SkillManifest(BaseModel):
-    """Skill manifest metadata."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    description: str
-    path: str = ""
-
-
 class SkillContent(BaseModel):
     """Loaded skill body."""
 

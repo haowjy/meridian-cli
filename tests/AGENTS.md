@@ -80,7 +80,7 @@ for a coherent fail-closed security suite is defined in
 ## Shared Test Support
 
 Search `tests/support/` before adding a local fake. Common helpers include
-`fakes.py` for clocks and heartbeats, `async_determinism.py` for bounded async
+`fakes.py` for clocks, `async_determinism.py` for bounded async
 observation, `executables.py` for CLI preflight stubs, `process_race.py` for
 cross-process contention, and adapter-specific support in `opencode.py`,
 `pi.py`, and `resident_drain.py`.

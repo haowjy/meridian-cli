@@ -28,6 +28,7 @@ from meridian.lib.ops.spawn.models import (
     SpawnWaitInput,
 )
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.session_store import start_session
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
@@ -57,9 +58,7 @@ def test_wait_can_fetch_results_without_consuming_parent_notifications(
     )
     spawn_store.finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
     result = spawn_api.spawn_wait_sync(
-        SpawnWaitInput(
-            project_root=str(project_root), spawn_ids=(str(spawn_id),), observe=observe
-        ),
+        SpawnWaitInput(project_root=str(project_root), spawn_ids=(str(spawn_id),), observe=observe),
         ctx=RuntimeContext(spawn_id=SpawnId("p-wait-observer")),
     )
     assert result.total_runs == 1
@@ -175,49 +174,52 @@ def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
     project_root.mkdir()
     runtime_root = _state_root(project_root)
 
-    running_id = spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="running",
-    )
-    finalizing_id = spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c2",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="finalizing",
-    )
-    assert isinstance(spawn_store.mark_finalizing(runtime_root, finalizing_id), Applied)
-    succeeded_id = spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c3",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="done",
-    )
-    spawn_store.finalize_spawn(
-        runtime_root,
-        succeeded_id,
-        status="succeeded",
-        exit_code=0,
-        origin="runner",
-    )
+    with LaunchSlot() as running_launch, LaunchSlot() as finalizing_launch:
+        running_id = spawn_store.start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="running",
+            launch_lock=running_launch,
+        )
+        finalizing_id = spawn_store.start_spawn(
+            runtime_root,
+            chat_id="c2",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="finalizing",
+            launch_lock=finalizing_launch,
+        )
+        assert isinstance(spawn_store.mark_finalizing(runtime_root, finalizing_id), Applied)
+        succeeded_id = spawn_store.start_spawn(
+            runtime_root,
+            chat_id="c3",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="done",
+        )
+        spawn_store.finalize_spawn(
+            runtime_root,
+            succeeded_id,
+            status="succeeded",
+            exit_code=0,
+            origin="runner",
+        )
 
-    output = spawn_api.spawn_stats_sync(SpawnStatsInput(project_root=project_root.as_posix()))
+        output = spawn_api.spawn_stats_sync(SpawnStatsInput(project_root=project_root.as_posix()))
 
-    assert output.total_runs == 3
-    assert output.running == 1
-    assert output.finalizing == 1
-    assert output.succeeded == 1
-    model_stats = output.models["gpt-5.4"]
-    assert model_stats.running == 1
-    assert model_stats.finalizing == 1
-    assert running_id != finalizing_id
+        assert output.total_runs == 3
+        assert output.running == 1
+        assert output.finalizing == 1
+        assert output.succeeded == 1
+        model_stats = output.models["gpt-5.4"]
+        assert model_stats.running == 1
+        assert model_stats.finalizing == 1
+        assert running_id != finalizing_id
 
 
 def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
@@ -225,36 +227,39 @@ def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
     project_root.mkdir()
     runtime_root = _state_root(project_root)
 
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-owner-child",
-        chat_id="c-child",
-        owner_chat_id="c-owner",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="child",
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-sibling",
-        chat_id="c-sibling",
-        owner_chat_id="c-owner",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="sibling",
-    )
+    with LaunchSlot() as child_launch, LaunchSlot() as sibling_launch:
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p-owner-child",
+            chat_id="c-child",
+            owner_chat_id="c-owner",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="child",
+            launch_lock=child_launch,
+        )
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p-sibling",
+            chat_id="c-sibling",
+            owner_chat_id="c-owner",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="sibling",
+            launch_lock=sibling_launch,
+        )
 
-    child_only = spawn_api.spawn_stats_sync(
-        SpawnStatsInput(project_root=project_root.as_posix(), session="c-child")
-    )
-    owner_family = spawn_api.spawn_stats_sync(
-        SpawnStatsInput(project_root=project_root.as_posix(), session="c-owner")
-    )
+        child_only = spawn_api.spawn_stats_sync(
+            SpawnStatsInput(project_root=project_root.as_posix(), session="c-child")
+        )
+        owner_family = spawn_api.spawn_stats_sync(
+            SpawnStatsInput(project_root=project_root.as_posix(), session="c-owner")
+        )
 
-    assert child_only.total_runs == 1
-    assert owner_family.total_runs == 0
+        assert child_only.total_runs == 1
+        assert owner_family.total_runs == 0
 
 
 def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
@@ -267,32 +272,68 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
     runtime_root = prepared.runtime_root
     assert runtime_root is not None
 
-    spawn_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p11",
-        chat_id="c11",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="running",
-    )
-
-    def _fake_spawn_cancel_sync(
-        _payload: SpawnCancelInput,
-        ctx=None,
-        *,
-        sink=None,
-        prepared=None,
-    ) -> SpawnActionOutput:
-        _ = (ctx, sink, prepared)
-        return SpawnActionOutput(
-            command="spawn.cancel",
-            status="finalizing",
-            spawn_id=str(spawn_id),
-            message="Spawn did not terminate within grace; reaper will reconcile.",
+    with LaunchSlot() as launch:
+        spawn_id = spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p11",
+            chat_id="c11",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="running",
+            launch_lock=launch,
         )
 
-    monkeypatch.setattr(spawn_api, "spawn_cancel_sync", _fake_spawn_cancel_sync)
+        def _fake_spawn_cancel_sync(
+            _payload: SpawnCancelInput,
+            ctx=None,
+            *,
+            sink=None,
+            prepared=None,
+        ) -> SpawnActionOutput:
+            _ = (ctx, sink, prepared)
+            return SpawnActionOutput(
+                command="spawn.cancel",
+                status="finalizing",
+                spawn_id=str(spawn_id),
+                message="Spawn did not terminate within grace; reaper will reconcile.",
+            )
+
+        monkeypatch.setattr(spawn_api, "spawn_cancel_sync", _fake_spawn_cancel_sync)
+
+        output = spawn_api.spawn_cancel_all_sync(
+            SpawnCancelAllInput(project_root=project_root.as_posix(), include_others=True),
+            prepared=prepared,
+        )
+
+        assert output.total_running == 1
+        assert output.cancelled_count == 1
+        assert output.finalizing_count == 1
+        assert output.failed_count == 0
+        assert (
+            output.format_text()
+            == "Requested cancellation for 1 running spawn(s).\n1 cancellation(s) still finalizing."
+        )
+
+
+def test_spawn_cancel_all_finalizes_dead_stored_active_spawn(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    runtime_root = prepared.runtime_root
+    assert runtime_root is not None
+
+    with LaunchSlot() as launch:
+        spawn_id = spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p12",
+            chat_id="c12",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="running",
+            launch_lock=launch,
+        )
 
     output = spawn_api.spawn_cancel_all_sync(
         SpawnCancelAllInput(project_root=project_root.as_posix(), include_others=True),
@@ -301,12 +342,10 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
 
     assert output.total_running == 1
     assert output.cancelled_count == 1
-    assert output.finalizing_count == 1
-    assert output.failed_count == 0
-    assert (
-        output.format_text()
-        == "Requested cancellation for 1 running spawn(s).\n1 cancellation(s) still finalizing."
-    )
+    stored = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert stored is not None
+    assert stored.status == "cancelled"
+    assert stored.terminal is not None
 
 
 def test_spawn_list_does_not_infer_running_star_from_last_attempt_exit(tmp_path: Path) -> None:
@@ -314,28 +353,30 @@ def test_spawn_list_does_not_infer_running_star_from_last_attempt_exit(tmp_path:
     project_root.mkdir()
     runtime_root = _state_root(project_root)
 
-    spawn_id = spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="hello",
-    )
-    spawn_store.record_spawn_exited(
-        runtime_root,
-        spawn_id,
-        exit_code=143,
-        exited_at="2026-04-13T10:00:00Z",
-    )
+    with LaunchSlot() as launch:
+        spawn_id = spawn_store.start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+            launch_lock=launch,
+        )
+        spawn_store.record_spawn_exited(
+            runtime_root,
+            spawn_id,
+            exit_code=143,
+            exited_at="2026-04-13T10:00:00Z",
+        )
 
-    output = spawn_api.spawn_list_sync(
-        SpawnListInput(project_root=project_root.as_posix(), statuses=("running",))
-    )
+        output = spawn_api.spawn_list_sync(
+            SpawnListInput(project_root=project_root.as_posix(), statuses=("running",))
+        )
 
-    assert len(output.spawns) == 1
-    assert output.spawns[0].status == "running"
-    assert output.spawns[0].status_display is None
+        assert len(output.spawns) == 1
+        assert output.spawns[0].status == "running"
+        assert output.spawns[0].status_display is None
 
 
 def test_spawn_list_filters_by_profile_name(tmp_path: Path) -> None:
@@ -429,36 +470,38 @@ def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) 
         prompt="fail",
     )
     spawn_store.finalize_spawn(runtime_root, failed_id, "failed", 1, origin="runner")
-    pending_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-pending",
-        chat_id="c-wait",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="keep running",
-    )
-
-    output = spawn_api.spawn_wait_sync(
-        SpawnWaitInput(
-            project_root=project_root.as_posix(),
-            spawn_ids=(str(failed_id), str(pending_id)),
-            fail_fast=True,
-            yield_after_secs=0,
+    with LaunchSlot() as pending_launch:
+        pending_id = spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p-pending",
+            chat_id="c-wait",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="keep running",
+            launch_lock=pending_launch,
         )
-    )
 
-    assert output.fail_fast
-    assert output.any_failed
-    assert output.pending_ids == (str(pending_id),)
-    assert {spawn.spawn_id: spawn.status for spawn in output.spawns} == {
-        str(failed_id): "failed",
-        str(pending_id): "running",
-    }
-    assert (
-        output.format_text().splitlines()[0]
-        == "Fail-fast: p-failed failed or timed out. Still pending: p-pending."
-    )
+        output = spawn_api.spawn_wait_sync(
+            SpawnWaitInput(
+                project_root=project_root.as_posix(),
+                spawn_ids=(str(failed_id), str(pending_id)),
+                fail_fast=True,
+                yield_after_secs=0,
+            )
+        )
+
+        assert output.fail_fast
+        assert output.any_failed
+        assert output.pending_ids == (str(pending_id),)
+        assert {spawn.spawn_id: spawn.status for spawn in output.spawns} == {
+            str(failed_id): "failed",
+            str(pending_id): "running",
+        }
+        assert (
+            output.format_text().splitlines()[0]
+            == "Fail-fast: p-failed failed or timed out. Still pending: p-pending."
+        )
 
 
 def test_spawn_wait_fail_fast_uses_one_snapshot_when_pending_spawn_finishes(
@@ -478,52 +521,54 @@ def test_spawn_wait_fail_fast_uses_one_snapshot_when_pending_spawn_finishes(
         prompt="fail",
     )
     spawn_store.finalize_spawn(runtime_root, failed_id, "failed", 1, origin="runner")
-    finishing_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-finishing",
-        chat_id="c-wait-race",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="finish during snapshot",
-    )
-
-    original_read_spawn_row = spawn_api.read_spawn_row
-    finishing_reads = 0
-
-    def _finish_before_snapshot_read(*args, **kwargs):
-        nonlocal finishing_reads
-        spawn_id = args[1]
-        if spawn_id == str(finishing_id):
-            finishing_reads += 1
-            if finishing_reads == 2:
-                spawn_store.finalize_spawn(
-                    runtime_root,
-                    finishing_id,
-                    "succeeded",
-                    0,
-                    origin="runner",
-                )
-        return original_read_spawn_row(*args, **kwargs)
-
-    monkeypatch.setattr(spawn_api, "read_spawn_row", _finish_before_snapshot_read)
-
-    output = spawn_api.spawn_wait_sync(
-        SpawnWaitInput(
-            project_root=project_root.as_posix(),
-            spawn_ids=(str(failed_id), str(finishing_id)),
-            fail_fast=True,
-            yield_after_secs=0,
+    with LaunchSlot() as finishing_launch:
+        finishing_id = spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p-finishing",
+            chat_id="c-wait-race",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="finish during snapshot",
+            launch_lock=finishing_launch,
         )
-    )
 
-    assert finishing_reads == 2
-    assert not output.fail_fast
-    assert output.pending_ids == ()
-    assert {spawn.spawn_id: spawn.status for spawn in output.spawns} == {
-        str(failed_id): "failed",
-        str(finishing_id): "succeeded",
-    }
+        original_read_spawn_row = spawn_api.read_spawn_row
+        finishing_reads = 0
+
+        def _finish_before_snapshot_read(*args, **kwargs):
+            nonlocal finishing_reads
+            spawn_id = args[1]
+            if spawn_id == str(finishing_id):
+                finishing_reads += 1
+                if finishing_reads == 2:
+                    spawn_store.finalize_spawn(
+                        runtime_root,
+                        finishing_id,
+                        "succeeded",
+                        0,
+                        origin="runner",
+                    )
+            return original_read_spawn_row(*args, **kwargs)
+
+        monkeypatch.setattr(spawn_api, "read_spawn_row", _finish_before_snapshot_read)
+
+        output = spawn_api.spawn_wait_sync(
+            SpawnWaitInput(
+                project_root=project_root.as_posix(),
+                spawn_ids=(str(failed_id), str(finishing_id)),
+                fail_fast=True,
+                yield_after_secs=0,
+            )
+        )
+
+        assert finishing_reads == 2
+        assert not output.fail_fast
+        assert output.pending_ids == ()
+        assert {spawn.spawn_id: spawn.status for spawn in output.spawns} == {
+            str(failed_id): "failed",
+            str(finishing_id): "succeeded",
+        }
 
 
 def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:

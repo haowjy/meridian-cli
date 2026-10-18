@@ -219,12 +219,13 @@ for durable completion against an outstanding cancel request. It delegates to
   cancel request → `cancelled` with the caller's `cancel_exit_code`.
 - Neither report nor cancel → `None` (caller falls back to its own outcome).
 
-This helper is consumed by `spawn_service._force_cancel_convergence` and by
-`state/reconciliation.py:completion_or_cancel_decision()`, so the runner, application
-service, and reaper converge on the same precedence. The runner path
-(`complete_execution`) folds the durable `cancel_intent` into its
-`ExecutionTerminalFacts` and calls `resolve_execution_terminal_state` directly instead
-of letting a second rule override the resolved result.
+This helper remains in the application service's explicit compatibility path for
+lockless legacy rows. Lock-backed dead launches use their runner-lifetime lock instead:
+a cancel request becomes `cancelled`; otherwise loss without an outcome becomes
+`failed`/`crashed`, regardless of report text. The runner path (`complete_execution`)
+folds the durable `cancel_intent` into its `ExecutionTerminalFacts` and calls
+`resolve_execution_terminal_state` directly instead of letting a second rule override
+the resolved result.
 
 ### Execution Terminal State Resolution
 
@@ -245,17 +246,15 @@ cancelled or exited non-zero is not a success merely because a report was extrac
 | False | False | non-zero | None | `failed`, exit_code, failure_reason |
 
 A clean exit with a genuine report stays `succeeded` even when a later cleanup
-signal arrives (the module docstring invariant); only an abnormal exit or a
-non-succeeded `terminal_status` downgrades it.
+signal arrives on the live-runner path; only an abnormal exit or a non-succeeded
+`terminal_status` downgrades it. This report rule also remains in explicit lockless
+compatibility, but does not apply to dead lock-backed launches.
 
 `resolve_execution_terminal_outcome(facts: ExecutionTerminalFacts)` wraps this for the
 runner path.
 
-### Reaper-Specific Resolved State
-
-`resolve_reconciled_terminal_state(*, durable_report_completion, fallback_error)` produces
-the terminal state for read-path reconciliation. Durable completion → `succeeded`; otherwise
-→ `failed` with the supplied fallback error.
+Read-path status overlay belongs to `state.spawn_status.derive()` / `read_derived()`;
+it does not consult report text.
 
 ## Related KB
 

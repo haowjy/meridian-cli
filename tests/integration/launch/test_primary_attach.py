@@ -948,7 +948,6 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
     assert launch_meta["backend_port"] == 7811
     assert launch_meta["harness_session_id"] == "thread-123"
     assert process_launcher.output_log_paths == [None]
-    assert (spawn_dir / "heartbeat").is_file()
 
 
 @pytest.mark.asyncio
@@ -1369,7 +1368,6 @@ async def test_primary_attach_sigint_during_backend_startup_propagates_and_tears
 
     assert coordinator.sigint_was_intercepted is False
     assert coordinator.receivers == set()
-    assert launcher._heartbeat_task is None
     assert process_launcher.launch_commands == []
 
 

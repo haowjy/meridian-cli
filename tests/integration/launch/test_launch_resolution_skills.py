@@ -1,5 +1,5 @@
 # qa-validated: test-suite-redesign
-"""Skill variant resolution tests: alias → canonical → harness fallback chain."""
+"""Launch skill resolution tests: bundle-provided skill content reaches composition."""
 
 from __future__ import annotations
 
@@ -69,11 +69,7 @@ def test_launch_skill_content_flows_from_bundle_to_composition(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bundle-provided skill content flows through policy → composition.
-
-    Variant resolution (alias → canonical → harness) is mars's responsibility.
-    Meridian-cli consumes whatever mars resolved and sent in skills.loaded[].
-    """
+    """Bundle-provided skill content flows through policy → composition."""
     _write_minimal_mars_config(tmp_path)
     fallback_skill_path = tmp_path / "user-mars/.mars/skills/variant-skill/SKILL.md"
     _stub_bundle_resolution(
@@ -109,18 +105,18 @@ def test_launch_skill_content_flows_from_bundle_to_composition(
         dry_run=True,
     )
 
-    # Codex declares supports_native_skills=True, so skill content is suppressed
-    # from the system prompt (it goes via native skill injection).
     system_prompt = preview.projected_content.system_prompt if preview.projected_content else ""
-    assert "Resolved variant body from mars" not in system_prompt
+    assert system_prompt.count("Resolved variant body from mars") == 1
+    appended = preview.binding.run_params.appended_system_prompt or ""
+    assert appended.count("Resolved variant body from mars") == 1
     assert preview.resolved_request.skill_paths == (fallback_skill_path.resolve().as_posix(),)
 
 
-def test_bundle_skill_content_renders_via_append_for_native_skill_harness(
+def test_bundle_skill_content_renders_in_system_prompt_for_claude(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Native-skill harness (Claude) delivers bundle skill body via append-system-prompt."""
+    """Claude carries the bundle skill body in its projected system prompt, once."""
     from meridian.lib.launch.request import (
         LaunchArgvIntent,
         LaunchCompositionSurface,
@@ -171,11 +167,10 @@ def test_bundle_skill_content_renders_via_append_for_native_skill_harness(
         dry_run=True,
     )
 
-    # Claude delivers skills via --append-system-prompt, not in main system_prompt
     system_prompt = preview.projected_content.system_prompt if preview.projected_content else ""
-    assert "Always prefer simplicity over cleverness." not in system_prompt
+    assert system_prompt.count("Always prefer simplicity over cleverness.") == 1
     assert preview.binding.run_params.appended_system_prompt is not None
     appended = preview.binding.run_params.appended_system_prompt
-    assert "Always prefer simplicity over cleverness." in appended
+    assert appended.count("Always prefer simplicity over cleverness.") == 1
     assert preview.resolved_request.skill_paths
     assert ".mars/skills/my-principle/SKILL.md" in preview.resolved_request.skill_paths[0]

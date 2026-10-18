@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.catalog.agent import AgentProfile, load_agent_profile
 from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.catalog.skill import SkillRegistry
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.types import HarnessId, ModelId
@@ -30,41 +29,6 @@ def dedupe_skill_names(names: Iterable[str]) -> tuple[str, ...]:
         seen.add(normalized)
         ordered.append(normalized)
     return tuple(ordered)
-
-
-def dedupe_skill_contents(skills: Sequence[SkillContent]) -> tuple[SkillContent, ...]:
-    """De-duplicate loaded skill payloads by skill name preserving order."""
-
-    seen: set[str] = set()
-    ordered: list[SkillContent] = []
-    for skill in skills:
-        if skill.name in seen:
-            continue
-        seen.add(skill.name)
-        ordered.append(skill)
-    return tuple(ordered)
-
-
-def load_skill_contents(
-    registry: SkillRegistry,
-    names: Sequence[str],
-    *,
-    harness_id: str | None = None,
-    selected_model_token: str | None = None,
-    canonical_model_id: str | None = None,
-) -> tuple[SkillContent, ...]:
-    """Load skill contents in deterministic deduplicated order."""
-
-    deduped_names = dedupe_skill_names(names)
-    if not deduped_names:
-        return ()
-    loaded = registry.load(
-        list(deduped_names),
-        harness_id=harness_id,
-        selected_model_token=selected_model_token,
-        canonical_model_id=canonical_model_id,
-    )
-    return dedupe_skill_contents(loaded)
 
 
 @dataclass(frozen=True)
@@ -151,60 +115,15 @@ class ResolvedSkills(BaseModel):
     missing_skills: tuple[str, ...]
 
 
-def resolve_skills_from_profile(
-    *,
-    profile_skills: tuple[str, ...],
-    project_root: Path,
-    readonly: bool = False,
-    harness_id: str | None = None,
-    selected_model_token: str | None = None,
-    canonical_model_id: str | None = None,
-) -> ResolvedSkills:
-    """Load and resolve skills declared in an agent profile."""
-
-    registry = SkillRegistry(
-        project_root=project_root,
-        readonly=readonly,
-    )
-    manifests = registry.list_skills()
-    if not manifests and not registry.readonly:
-        registry.reindex()
-        manifests = registry.list_skills()
-
-    available_skill_names = {item.name for item in manifests}
-    missing_skills = tuple(
-        skill_name for skill_name in profile_skills if skill_name not in available_skill_names
-    )
-    resolved_skill_names = tuple(
-        skill_name for skill_name in profile_skills if skill_name in available_skill_names
-    )
-    loaded_skills = load_skill_contents(
-        registry,
-        resolved_skill_names,
-        harness_id=harness_id,
-        selected_model_token=selected_model_token,
-        canonical_model_id=canonical_model_id,
-    )
-    return ResolvedSkills(
-        skill_names=tuple(skill.name for skill in loaded_skills),
-        loaded_skills=loaded_skills,
-        missing_skills=missing_skills,
-    )
-
-
 def format_missing_skills_warning(missing_skills: tuple[str, ...]) -> str:
     """Render a user-facing warning for unavailable skills."""
 
     if not missing_skills:
         return ""
 
-    expected_paths = [f".mars/skills/{skill}/SKILL.md" for skill in missing_skills]
-    expected_lines = [f"Expected: {expected_paths[0]}"]
-    expected_lines.extend(f"         {path}" for path in expected_paths[1:])
     return "\n".join(
         (
             f"Skipped unavailable skills: {', '.join(missing_skills)}",
-            *expected_lines,
             "Run `meridian mars sync` to install missing skills.",
         )
     )
@@ -507,7 +426,6 @@ __all__ = [
     "resolve_resident_deadline_seconds",
     "resolve_resident_poll_seconds",
     "resolve_skill_paths",
-    "resolve_skills_from_profile",
     "resolve_startup_timeout_seconds",
     "validate_harness_compatibility",
 ]

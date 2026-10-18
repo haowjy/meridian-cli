@@ -1,22 +1,18 @@
 # pyright: reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnknownParameterType=false, reportMissingParameterType=false
 # qa-validated: test-suite-redesign
 
-"""spawn_cancel_sync flows for managed-primary and orphan-primary spawns.
-
-Covers: cancel after passive reconcile, unreadable-metadata worker-pid
-fallback, terminal-non-orphan no-op, launcher-signal ordering, queued
-timeout convergence.  Reconciliation logic lives in
-test_reaper_reconciliation.py; managed-primary detection in
-test_reaper_managed_primary.py.
-"""
+"""Public cancel flows for managed-primary and descendant spawns."""
 
 from __future__ import annotations
 
 import json
+import subprocess
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
+import psutil
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
@@ -25,18 +21,16 @@ from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.spawn_service import CancelOutcome, SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.spawn.models import SpawnCancelInput
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state import spawn_store, spawn_tree
+from meridian.lib.state.process_scope_projection import record_scope
 from tests.integration.state.conftest import (
     _OLD_STARTED_AT,
     _create_spawn,
     _get_spawn,
-    _reconcile,
-    _write_corrupt_primary_meta,
     _write_primary_meta,
     fake_managed_primary_birth_liveness,
-    fake_reaper_liveness,
     recording_managed_primary_terminations,
-    recording_scope_cleanup,
 )
 
 
@@ -179,111 +173,44 @@ async def test_cancel_descendants_reports_only_proven_terminal_descendants(
     assert reaped_ids == {"p3"}
 
 
-def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root, spawn_id = _create_spawn(
-        tmp_path, kind="primary", runner_pid=7301, started_at=_OLD_STARTED_AT
-    )
-    spawn_store.update_spawn(runtime_root, spawn_id, runner_created_at_epoch=100.0)
-    _write_primary_meta(
-        runtime_root,
-        spawn_id,
-        launcher_pid=7301,
-        backend_pid=7302,
-        tui_pid=7303,
-        activity="idle",
-    )
-    _patch_spawn_cancel_runtime_resolution(
-        monkeypatch,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
-    fake_reaper_liveness(monkeypatch, set())
-    fake_managed_primary_birth_liveness(monkeypatch, {7302, 7303})
-    terminated_pids = recording_managed_primary_terminations(monkeypatch)
-
-    reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
-
-    assert reconciled.status == "cancelled"
-    assert reconciled.terminal is not None
-    assert reconciled.terminal.exit_code == 130
-    assert reconciled.terminal.error == "session_ended_without_finalize"
-    assert terminated_pids == [7302, 7303]
-
-    output = spawn_api.spawn_cancel_sync(
-        SpawnCancelInput(
-            spawn_id=spawn_id,
-            project_root=tmp_path.as_posix(),
+@pytest.mark.asyncio
+async def test_cancel_descendants_sweeps_dead_child_scope(tmp_path: Path) -> None:
+    runtime_root = tmp_path / ".meridian"
+    _start_descendant(runtime_root, "p1")
+    _start_descendant(runtime_root, "p2", parent_id="p1")
+    (runtime_root / "spawns" / "p2" / "launch.lock").touch()
+    sleeper = subprocess.Popen(["sleep", "30"])
+    try:
+        record_scope(
+            runtime_root,
+            SpawnId("p2"),
+            ProcessScopeSnapshot(
+                scope_id="harness",
+                owner_policy="spawn_owned",
+                owner_id="p2",
+                role="harness_backend",
+                containment="pid_tree_fallback",
+                root_pid=sleeper.pid,
+                root_created_at_epoch=psutil.Process(sleeper.pid).create_time(),
+                pgid=None,
+                job_name=None,
+                degraded_reason=None,
+            ),
         )
-    )
 
-    assert output.status == "cancelled"
-    assert output.exit_code == 130
-    assert terminated_pids == [7302, 7303, 7302, 7303]
-    latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "cancelled"
-    assert latest.terminal is not None
-    assert latest.terminal.error == "session_ended_without_finalize"
+        reaped_ids = await _spawn_service(runtime_root).cancel_descendants(SpawnId("p1"))
 
-
-def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pid_fallback(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runner_pid = 9351
-    worker_pid = 9352
-    runtime_root, spawn_id = _create_spawn(
-        tmp_path,
-        kind="primary",
-        harness="codex",
-        runner_pid=runner_pid,
-        worker_pid=worker_pid,
-        started_at=_OLD_STARTED_AT,
-    )
-    spawn_store.update_spawn(runtime_root, spawn_id, runner_created_at_epoch=100.0)
-    _write_corrupt_primary_meta(runtime_root, spawn_id)
-
-    _patch_spawn_cancel_runtime_resolution(
-        monkeypatch,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
-    fake_reaper_liveness(monkeypatch, {worker_pid})
-    passive_terminated_pids = recording_scope_cleanup(
-        monkeypatch,
-        "meridian.lib.core.process_cleanup.terminate_tree_sync",
-    )
-
-    reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
-
-    assert reconciled.status == "failed"
-    assert reconciled.terminal is not None
-    assert reconciled.terminal.exit_code == 1
-    assert reconciled.terminal is not None
-    assert reconciled.terminal.error == "orphan_primary"
-    assert passive_terminated_pids == [worker_pid]
-
-    explicit_terminated_pids = recording_scope_cleanup(
-        monkeypatch,
-        "meridian.lib.core.process_cleanup.terminate_tree_sync",
-    )
-
-    output = spawn_api.spawn_cancel_sync(
-        SpawnCancelInput(
-            spawn_id=spawn_id,
-            project_root=tmp_path.as_posix(),
-        )
-    )
-
-    assert output.status == "failed"
-    assert output.exit_code == 1
-    assert explicit_terminated_pids == [worker_pid]
-    latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "failed"
-    assert latest.terminal is not None
-    assert latest.terminal.error == "orphan_primary"
+        assert reaped_ids == {"p2"}
+        sleeper.wait(timeout=5)
+        assert sleeper.poll() is not None
+        stored = spawn_store.get_spawn(runtime_root, "p2")
+        assert stored is not None
+        assert stored.status == "cancelled"
+    finally:
+        if sleeper.poll() is None:
+            with suppress(ProcessLookupError):
+                sleeper.kill()
+        sleeper.wait(timeout=5)
 
 
 def test_spawn_cancel_managed_primary_signals_launcher_first(

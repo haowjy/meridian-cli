@@ -21,7 +21,6 @@ class LaunchPolicySnapshot(BaseModel):
     agent_opt_out: bool = False
     agent_profile: dict[str, object] | None = None
     skills: tuple[str, ...] = ()
-    skill_paths: tuple[str, ...] = ()
     loaded_skills: tuple[SkillContent, ...] = ()
     extra_args: tuple[str, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)

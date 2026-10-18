@@ -32,8 +32,7 @@ from tests.support.pi_extensions import configure_pi_extension_projection
 
 _PI_HELP_SURFACE = (
     "--mode rpc --model --append-system-prompt --session --session-id --fork "
-    "--session-dir --no-extensions --no-skills "
-    "--no-context-files --no-prompt-templates -e --extension "
+    "--session-dir --no-extensions -e --extension "
     "PI_CODING_AGENT_SESSION_DIR"
 )
 

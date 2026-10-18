@@ -17,6 +17,27 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Explicit `spawn wait --timeout` uses its minutes-valued hard deadline, not the yield interval, when deciding whether the wait keeps the cache warm.
 - A scheduled push replaced by a later turn keeps the original wait owed, so a long-wait response still uses the short push delay.
 
+## [0.10.26] - 2026-10-18
+
+### Fixed
+- Pi spawns see native skills, project `AGENTS.md`, and prompt templates.
+
+## [0.10.25] - 2026-10-18
+
+## [0.10.24] - 2026-10-18
+
+### Fixed
+- Spawn status follows runner-lifetime lock. Dead runner reads `failed`/`crashed` on next read: no 120 s heartbeat window, no 30 s PID-reuse slack. Cancel requested → `cancelled`; cancel-all now converges dead stored-active launches instead of skipping their derived terminal view. Behaviour change: runner killed mid-finalize, or managed primary SIGKILLed, now `crashed` (was `succeeded` / `cancelled` 130); cancel of dead spawn with report but no outcome → `cancelled` (was `succeeded`). Unloadable spawn row for another chat, or with free lock, no longer blocks resume. `doctor` warns `dead_spawns_unfinalized`; `--kill-orphans` persists outcome. Heartbeat and launch-boundary files gone. (#663)
+
+## [0.10.23] - 2026-10-18
+
+### Fixed
+- Claude agents get their loaded skills again: `system-prompt.md`, the file Claude reads, had none. Every harness now carries loaded skills in the normal system prompt position, after the agent profile. (#661)
+
+### Changed
+- Mars is the sole skill resolver; exact continuation of snapshots without embedded
+  skill content no longer reloads skills from the filesystem.
+
 ## [0.10.22] - 2026-10-18
 
 ### Added

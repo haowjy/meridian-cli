@@ -212,7 +212,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stdin_prompt=True,
             supports_session_resume=True,
             supports_session_fork=True,
-            supports_native_skills=False,
             supports_native_agents=False,
             supports_primary_launch=True,
             supports_named_primary_resume=True,

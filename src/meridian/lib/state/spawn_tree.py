@@ -62,31 +62,17 @@ def descendant_id_set(root_id: str, rows: Sequence[SpawnRecord]) -> set[str]:
     return {row.id for row in iter_descendants_from_parent_map(root_id, _by_parent(rows))}
 
 
-def has_outstanding_descendant_work(root_id: str, rows: Sequence[SpawnRecord]) -> bool:
-    """Return whether any transitive child spawn is still non-terminal.
-
-    This is intentionally a pure spawn-row check. It does not reconcile,
-    terminate, or mutate child rows; resident harness drains use it as their
-    zero-cooperation tracked-work signal.
-    """
-
-    return any(
-        is_active_spawn_status(child.status)
-        for child in iter_descendants_from_parent_map(root_id, _by_parent(rows))
-    )
-
-
 def active_descendants(
     runtime_root: Path,
     root_id: str | SpawnId,
 ) -> list[SpawnRecord]:
-    """Active (non-terminal) transitive descendants of one spawn."""
+    """Selection for convergence uses stored status; liveness questions use read_derived."""
 
     rows = spawn_store.list_spawns(runtime_root).records
     return [
-        record
-        for record in iter_descendants_from_parent_map(str(root_id), _by_parent(rows))
-        if is_active_spawn_status(record.status)
+        child
+        for child in iter_descendants_from_parent_map(str(root_id), _by_parent(rows))
+        if is_active_spawn_status(child.status)
     ]
 
 
@@ -113,7 +99,6 @@ __all__ = [
     "active_descendants",
     "collect_descendants",
     "descendant_id_set",
-    "has_outstanding_descendant_work",
     "iter_descendants_from_parent_map",
     "terminate_recorded_spawn_scope",
 ]

@@ -29,8 +29,7 @@ from meridian.lib.state.paths import (
 
 _PI_HELP = (
     "--mode rpc --model --append-system-prompt --session --session-id --fork "
-    "--session-dir --no-extensions --no-skills --no-context-files "
-    "--no-prompt-templates -e --extension PI_CODING_AGENT_SESSION_DIR"
+    "--session-dir --no-extensions -e --extension PI_CODING_AGENT_SESSION_DIR"
 )
 
 

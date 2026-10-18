@@ -22,7 +22,6 @@ from meridian.lib.harness.adapter import (
     HarnessContract,
     McpConfig,
     PermissionResolver,
-    RunPromptPolicy,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -326,7 +325,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stdin_prompt=True,
             supports_session_resume=True,
             supports_session_fork=True,
-            supports_native_skills=True,
             supports_native_agents=True,
             supports_primary_launch=True,
             supports_named_primary_resume=True,
@@ -334,9 +332,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_native_file_injection=False,
             terminal_surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
         )
-
-    def run_prompt_policy(self) -> RunPromptPolicy:
-        return RunPromptPolicy()
 
     def validate_intent(self, intent: LaunchIntent) -> None:
         source = intent.source_session_id or intent.preforked_session_id

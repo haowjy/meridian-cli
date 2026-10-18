@@ -153,16 +153,13 @@ meridian spawn report search "keyword"   # search across all spawn reports
 
 `finalizing` is a normal, short-lived active status. It means the runner has finished its post-exit work (output drain, report extraction) and is committing the terminal state. You may briefly see it in `spawn list` or the `work` dashboard between harness exit and terminal persistence. No action needed — the spawn will move to `succeeded` or `failed` momentarily.
 
-If a spawn stays in `finalizing` for more than a minute or two, the runner may have crashed in the finalization window. In that case `meridian doctor` will reclassify it (see below).
+If a spawn stays in `finalizing` for more than a minute or two, the runner may have crashed in the finalization window. If so, status reads already show it as crashed (see below).
 
-## Spawn shows as orphaned
+## Spawn shows as crashed
 
-Meridian classifies a spawn as orphaned when its runner process is gone and there has been no recent activity on the spawn's artifacts (heartbeat, output, stderr, or report) for 120 seconds. There are two distinct orphan errors:
+Meridian classifies an active spawn as crashed as soon as its runner-lifetime launch lock is free. Status reads project that failure immediately. Plain `meridian doctor` lists such spawns under `dead_spawns_unfinalized`; `meridian doctor --kill-orphans` persists the terminal result and cleans up recorded process scopes.
 
-- **`orphan_run`** — the spawn record was `status=running` (or `queued`) when reaped. The runner died before the finalization boundary. The spawn likely produced partial or no output.
-- **`orphan_finalization`** — the spawn record was `status=finalizing` when reaped, meaning the runner had left active execution and was in the drain/report/final-status window. If a durable report exists, reconciliation prefers it; otherwise the spawn is marked failed with this error.
-- **`launch_boundary_no_takeover`** — a background spawn's `launch-boundary.jsonl` shows that the parent launched the subprocess but the worker process never recorded a takeover event. The harness process died in the startup window before it could begin work. No output was produced.
-- **`orphan_primary`** — a managed Codex/OpenCode primary lost its Meridian launcher/wrapper. Passive reconciliation records the failed state. Use `meridian spawn cancel ID` to clean up tracked runtime processes — it terminates the launcher first (to let harness-driven shutdown propagate), then terminates backend and TUI processes if they are still running.
+- **`crashed`** — the runner's lifetime lock was freed before it wrote an outcome. A pending cancel request produces `cancelled` instead. Check `report.md`; the work may still be usable. Relaunch or use `meridian spawn --continue ID -p "continue"`.
 
 To detect and reconcile orphaned state, run:
 
@@ -178,10 +175,6 @@ meridian spawn show ID --verbose # include internal diagnostics (error field, li
 ```
 
 If `report.md` exists and looks complete, the work product is likely usable even though the spawn is marked `failed`. Relaunch only if the work wasn't done.
-
-### A spawn briefly showed orphaned but now shows `succeeded`
-
-This is expected, not a bug. Meridian's read-path reconciler makes a best-effort assessment based on heartbeat and artifact recency. If the runner was slow (not dead) and later completed normally, its terminal status overwrites the reconciler's orphan stamp — the process that actually ran the work has final say. You can confirm by checking `meridian spawn show ID`.
 
 ## Spawn exited with code 143 or 137
 
@@ -241,7 +234,6 @@ to read them without navigating the path directly.
 | `history.jsonl` | Legacy runner events from older builds; no longer written or read as a transcript. Eligible files can be removed with `meridian session archive --prune-runner-history --apply` |
 | `output.jsonl` | Captured stdout of Claude `--print` runs only |
 | `stderr.log` | Harness stderr, warnings, errors |
-| `launch-boundary.jsonl` | Background spawn startup lifecycle — parent-side launch attempt/spawned/failed events and worker-side boot/takeover events. Used by the reaper to detect startup-phase failures. |
 | `system-prompt.md` | System instruction content as sent to the harness (Claude composed launches) |
 | `starting-prompt.md` | Full user-turn content (prompt + prepended context) |
 | `projection-manifest.json` | Harness ID and per-category channel routing decisions |

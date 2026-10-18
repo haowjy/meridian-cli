@@ -32,7 +32,7 @@ from tests.integration.launch.streaming_runner_support import (
     _execute_with_context,
     _FakeControlSocketServer,
 )
-from tests.support.fakes import FakeClock, FakeHeartbeat
+from tests.support.fakes import FakeClock
 
 
 class _ClaudeSeedPersistenceConnection:
@@ -285,8 +285,6 @@ async def test_execute_with_streaming_persists_claude_seed_before_start(
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
     _ClaudeSeedPersistenceConnection.observed_start_session_id = None
 
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
@@ -323,8 +321,6 @@ async def test_execute_with_streaming_persists_claude_seed_before_start(
             artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
         ),
         timeout=15.0,
     )
@@ -345,8 +341,6 @@ async def test_execute_with_streaming_without_owned_signal_stays_unbound(
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
     _UnboundOpenCodeConnection.observed_start_session_id = None
 
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
@@ -387,8 +381,6 @@ async def test_execute_with_streaming_without_owned_signal_stays_unbound(
             artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
         ),
         timeout=15.0,
     )
@@ -409,8 +401,6 @@ async def test_execute_with_streaming_persists_opencode_session_id_at_connect(
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
     _OpenCodeConnectSessionConnection.observed_start_session_id = None
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
@@ -450,8 +440,6 @@ async def test_execute_with_streaming_persists_opencode_session_id_at_connect(
             artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
         ),
         timeout=15.0,
     )
@@ -472,8 +460,6 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
     external_task_cwd = tmp_path.parent / f"{tmp_path.name}-outside-task"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
 
@@ -521,8 +507,6 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
             registry=registry,
             execution_cwd=external_task_cwd,
             clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
         ),
         timeout=15.0,
     )
