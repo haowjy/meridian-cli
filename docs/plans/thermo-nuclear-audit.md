@@ -93,9 +93,9 @@ unverified.
   clocks.
 - **[39] Diff/change-preview surface** (claude-squad/vibe-kanban/crystal all have
   first-class diff viewers) → adopted as a design issue, corrected: `meridian
-  spawn files` already exists as an artifact-derived change surface
-  (`cli/spawn.py:1022-1048`); worktrees are not auto-provisioned; the real gap is
-  a git-optional diff against a **recorded base**, not naive `git diff` in a
+  spawn files` keeps an empty command surface after its unwritten artifact-manifest
+  protocol was removed; worktrees are not auto-provisioned; the real gap is a
+  git-optional diff against a **recorded base**, not naive `git diff` in a
   possibly-shared checkout.
 
 ### Move rejected — steals refuted

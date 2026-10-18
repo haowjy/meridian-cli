@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -19,7 +20,7 @@ from meridian.lib.platform.terminate import terminate_tree as _terminate_tree
 from meridian.lib.safety.budget import BudgetBreach
 from meridian.lib.safety.guardrails import GuardrailFailure
 from meridian.lib.state import spawn_store
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.atomic import append_text_line
 
 logger = structlog.get_logger(__name__)
 DEFAULT_KILL_GRACE_SECONDS = MeridianConfig().kill_grace_minutes * 60.0
@@ -69,13 +70,15 @@ def append_text_to_stderr_log(
     stderr_path: Path,
     text: str,
 ) -> None:
+    stderr_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        existing = stderr_path.read_text(encoding="utf-8", errors="ignore")
-    except (FileNotFoundError, OSError):
-        existing = ""
-    prefix = "\n" if existing and not existing.endswith("\n") else ""
-    combined = f"{existing}{prefix}{text}\n"
-    atomic_write_text(stderr_path, combined)
+        with stderr_path.open("rb") as handle:
+            handle.seek(-1, os.SEEK_END)
+            ends_with_newline = handle.read(1) == b"\n"
+    except OSError:
+        ends_with_newline = True
+    prefix = "" if ends_with_newline else "\n"
+    append_text_line(stderr_path, f"{prefix}{text}\n")
 
 
 def _extract_tokens_payload(raw_line: bytes) -> bytes | None:
