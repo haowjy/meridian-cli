@@ -176,6 +176,23 @@ def test_idle_status_never_exposes_excerpts_when_messages_are_disabled(tmp_path:
 
 
 @pytest.mark.integration
+def test_idle_arm_treats_unknown_background_task_kind_as_other(tmp_path: Path) -> None:
+    env = _idle_env(tmp_path)
+
+    armed = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        *_IDENTITY,
+        '--background-tasks=[{"kind": "future-kind"}]',
+    )
+
+    assert isinstance(armed, dict)
+    assert set(armed) == {"stretch", "anchor", "push_at"}
+
+
+@pytest.mark.integration
 def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) -> None:
     env = _idle_env(tmp_path)
     thread_id = "01a11e8c-4466-7771-8f11-14286723b1bb"

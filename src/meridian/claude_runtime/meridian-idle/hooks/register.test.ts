@@ -197,6 +197,7 @@ test('arm forwards the work the main loop left running, from its Stop list', asy
   const h = host()
   h.reply.arm = { stretch: 1, anchor: 1, warn_at: START + 20_000, push_held: '1 agent(s) running' }
   const clock = install(on, h)
+  const longCommand = `meridian spawn wait p3 --timeout 60 ${'large inline prompt '.repeat(100)}`
 
   await $.session.start(TUI)
   await clock.advance(2000)
@@ -208,21 +209,32 @@ test('arm forwards the work the main loop left running, from its Stop list', asy
       { id: 'b', type: 'shell', status: 'running', description: 'wait', command: 'meridian spawn wait p3' },
       { id: 'c', type: 'monitor', status: 'running', description: 'logs' },
       { id: 'd', type: 'workflow', status: 'running', description: 'plan' },
+      { id: 'e', type: 'shell', status: 'running', description: 'large', command: longCommand },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `extra-${index}`,
+        type: 'monitor' as const,
+        status: 'running' as const,
+        description: 'extra',
+      })),
     ],
     session_crons: [],
   } as never)
   await $.turn.complete(MAIN_TURN)
   await clock.advance(0)
 
-  const tasks = [
+  const arm = calls(h, 'arm')[0]
+  const tasksArg = arm.find(arg => arg.startsWith('--background-tasks='))
+  const tasks = JSON.parse(tasksArg?.slice('--background-tasks='.length) ?? '') as Array<Record<string, string>>
+  expect(arm.filter(arg => arg.startsWith('--background-tasks='))).toHaveLength(1)
+  expect(tasks).toHaveLength(16)
+  expect(tasks.slice(0, 4)).toEqual([
     { kind: 'agent' },
     { kind: 'shell', command: 'meridian spawn wait p3' },
     { kind: 'watcher' },
     { kind: 'agent' },
-  ]
-  expect(calls(h, 'arm')).toEqual([[
-    'arm', '--harness', 'claude', '--session', 'sess-1', `--background-tasks=${JSON.stringify(tasks)}`,
-    '--assistant-text=done', '--interactive',
-  ]])
+  ])
+  expect(tasks[4]?.command).toHaveLength(512)
+  expect(tasks[4]?.command).toBe(`${longCommand.slice(0, 510)}\n:`)
+  expect(arm).toContain('--assistant-text=done')
   expectCliContract(h)
 })

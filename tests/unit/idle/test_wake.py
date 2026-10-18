@@ -52,6 +52,28 @@ def test_spawn_command_reads_meridian_grammar_through_wrappers(
             "cd x && meridian spawn wait p1",
             ExpectedWake(certain="meridian spawns running", by_ms=3_001_000),
         ),
+        ("meridian spawn wait p1\nnpm run dev", ExpectedWake(maybe=True)),
+        (
+            "meridian spawn -a coder -p hi\ntail -f /tmp/log",
+            ExpectedWake(maybe=True),
+        ),
+        (
+            'meridian spawn -a coder -p "fix\nthis"',
+            ExpectedWake(certain="meridian spawns running"),
+        ),
+        (
+            "meridian spawn wait 2>&1",
+            ExpectedWake(certain="meridian spawns running", by_ms=3_001_000),
+        ),
+        (
+            "meridian spawn wait p12 >/dev/null 2>&1",
+            ExpectedWake(certain="meridian spawns running", by_ms=3_001_000),
+        ),
+        (
+            "meridian spawn -a coder -p hi > /tmp/out.txt",
+            ExpectedWake(certain="meridian spawns running"),
+        ),
+        ("meridian spawn wait 2>&1 && npm run dev", ExpectedWake(maybe=True)),
         (
             "uv run meridian spawn -a coder -p 'fix it'",
             ExpectedWake(certain="meridian spawns running"),
