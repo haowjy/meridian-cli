@@ -436,8 +436,8 @@ trees drain; plain subprocess harnesses complete on exit or a terminal event.
 `pi_runtime_resolver.py` probes the installed `pi` binary before every launch. It
 runs `pi --version` and `pi --help`, then checks the help surface for required
 CLI flags. The required set differs between `primary` and `spawned` roles —
-spawned requires `--mode`, `rpc`, `--no-extensions`, `--no-skills`, `-e`/`--extension`,
-etc. If any required token group is missing, the launch fails with a descriptive
+spawned requires `--mode`, `rpc`, `--no-extensions`, `-e`/`--extension`, etc. If any
+required token group is missing, the launch fails with a descriptive
 `PiRuntimeResolutionError`.
 
 The compatibility probe prevents silent failures where an older Pi binary is on

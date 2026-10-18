@@ -204,8 +204,9 @@ wait for the CLI, and re-checks live idle and pending-message state after a
 compact claim before calling Pi's aborting `ctx.compact()`.
 
 - **Spawned RPC**: suppress ambient extensions by default (`--no-extensions`),
-  skills, context files, and prompt templates. `load_all_pi_extensions = true`
-  retains native extension discovery and adds configured extra roots.
+  while retaining native skill, context-file, and prompt-template discovery.
+  `load_all_pi_extensions = true` retains native extension discovery and adds
+  configured extra roots.
 - **Primary native TUI**: retain native discovery, including ambient extensions;
   managed-bash overrides bash when enabled. No spawned-session quiescence auto-stop.
 

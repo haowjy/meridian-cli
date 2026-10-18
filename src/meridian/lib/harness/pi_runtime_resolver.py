@@ -42,9 +42,6 @@ _REQUIRED_HELP_SURFACE_TOKEN_GROUPS_SPAWNED: Final[tuple[tuple[str, ...], ...]] 
     ("--fork",),
     ("--session-dir",),
     ("--no-extensions",),
-    ("--no-skills",),
-    ("--no-context-files",),
-    ("--no-prompt-templates",),
     ("-e", "--extension"),
 )
 

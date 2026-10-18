@@ -14,8 +14,8 @@ Meridian does not bundle or control Pi itself.
 
 Both launch roles load managed-bash and spawn-watch when enabled in `[harness.pi]`.
 Session-boundary is always loaded. Meridian-idle loads only for interactive primary
-launches. Primary retains native ambient discovery; spawned RPC suppresses ambient
-extensions unless `load_all_pi_extensions = true`.
+launches. Both roles retain native skill, context-file, and prompt-template discovery.
+Spawned RPC suppresses ambient extensions unless `load_all_pi_extensions = true`.
 See the [integration contract](../lib/harness/.context/pi-integration.md).
 
 Meridian-idle marks every core call `--interactive`. User input cancels timers
