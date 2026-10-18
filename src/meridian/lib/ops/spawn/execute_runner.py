@@ -314,7 +314,6 @@ async def _invoke_runner(
         launch_context=handoff.launch_context,
         project_root=project_paths.project_root,
         runtime_root=runtime_root,
-        artifacts=runtime.artifacts,
         session_attempt=handoff.session_context.attempt,
         event_observer=event_observer,
         stream_stdout_to_terminal=stream_stdout_to_terminal,

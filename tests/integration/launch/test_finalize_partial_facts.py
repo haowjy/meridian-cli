@@ -11,7 +11,6 @@ from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.claude import ClaudeFold, ClaudeHarnessExtractor
 from meridian.lib.launch.extract import enrich_finalize
-from meridian.lib.state.artifact_store import InMemoryStore
 
 
 def test_stdout_bad_byte_and_fold_error_preserve_report(tmp_path):
@@ -33,7 +32,6 @@ def test_stdout_bad_byte_and_fold_error_preserve_report(tmp_path):
     assert facts.incomplete
     assert facts.final_text == "surviving report"
     result = enrich_finalize(
-        artifacts=InMemoryStore(),
         extractor=extractor,
         facts=facts,
         spawn_id=SpawnId("p1"),
@@ -50,7 +48,6 @@ def test_finalize_logs_incomplete_facts_and_capped_report(tmp_path, incomplete):
     facts.set_text("x" * (1024 * 1024 + 1))
     with capture_logs() as logs:
         result = enrich_finalize(
-            artifacts=InMemoryStore(),
             extractor=ClaudeHarnessExtractor(),
             facts=facts,
             spawn_id=SpawnId("p1"),
@@ -63,7 +60,6 @@ def test_finalize_logs_incomplete_facts_and_capped_report(tmp_path, incomplete):
 
 def test_unknown_usage_is_none_and_empty_failure_does_not_create_history(tmp_path):
     result = enrich_finalize(
-        artifacts=InMemoryStore(),
         extractor=ClaudeHarnessExtractor(),
         facts=AttemptFacts(),
         spawn_id=SpawnId("p1"),
@@ -82,7 +78,6 @@ def test_blank_stdout_lines_do_not_hide_known_usage(tmp_path):
     fold = extractor.create_fold()
     fold.fold_stdout(output, "claude")
     result = enrich_finalize(
-        artifacts=InMemoryStore(),
         extractor=extractor,
         facts=fold.facts,
         spawn_id=SpawnId("p1"),
@@ -94,7 +89,6 @@ def test_blank_stdout_lines_do_not_hide_known_usage(tmp_path):
 
 def _finalize(tmp_path, extractor, facts):
     return enrich_finalize(
-        artifacts=InMemoryStore(),
         extractor=extractor,
         facts=facts,
         spawn_id=SpawnId("p1"),

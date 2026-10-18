@@ -112,7 +112,6 @@ from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create
 from .query import (
     detail_from_row,
     read_spawn_row,
-    read_written_files,
     resolve_spawn_reference,
     resolve_spawn_references,
 )
@@ -960,10 +959,9 @@ def spawn_files_sync(
     row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
-    written_files = read_written_files(project_root, spawn_id, runtime_root=runtime_root)
     return SpawnWrittenFilesOutput(
         spawn_id=spawn_id,
-        written_files=written_files,
+        written_files=(),
     )
 
 

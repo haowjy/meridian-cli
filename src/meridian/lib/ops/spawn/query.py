@@ -314,23 +314,6 @@ def _pi_cleanup_telemetry(
     )
 
 
-def read_written_files(
-    project_root: Path,
-    spawn_id: str,
-    *,
-    runtime_root: Path | None = None,
-) -> tuple[str, ...]:
-    from meridian.lib.core.types import SpawnId
-    from meridian.lib.launch.written_files import extract_written_files
-    from meridian.lib.state.artifact_store import LocalStore
-
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
-        return ()
-    artifacts = LocalStore(root_dir=resolved_runtime_root / "artifacts")
-    return extract_written_files(artifacts, SpawnId(spawn_id))
-
-
 def spawn_session_log_available(
     runtime_root: Path,
     spawn_id: str,
@@ -450,7 +433,6 @@ __all__ = [
     "read_report",
     "read_report_text",
     "read_spawn_row",
-    "read_written_files",
     "resolve_spawn_reference",
     "resolve_spawn_references",
     "spawn_session_log_available",

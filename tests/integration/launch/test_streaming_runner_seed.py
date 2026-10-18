@@ -22,7 +22,6 @@ from meridian.lib.launch import context as launch_context_module
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.workspace_projection import ProjectionResult
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
     resolve_spawn_log_dir,
@@ -282,7 +281,6 @@ async def test_execute_with_streaming_persists_claude_seed_before_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
     _ClaudeSeedPersistenceConnection.observed_start_session_id = None
@@ -318,7 +316,6 @@ async def test_execute_with_streaming_persists_claude_seed_before_start(
             request=_build_claude_request(),
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
         ),
@@ -338,7 +335,6 @@ async def test_execute_with_streaming_without_owned_signal_stays_unbound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
     _UnboundOpenCodeConnection.observed_start_session_id = None
@@ -378,7 +374,6 @@ async def test_execute_with_streaming_without_owned_signal_stays_unbound(
             ),
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
         ),
@@ -398,7 +393,6 @@ async def test_execute_with_streaming_persists_opencode_session_id_at_connect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
     _OpenCodeConnectSessionConnection.observed_start_session_id = None
@@ -437,7 +431,6 @@ async def test_execute_with_streaming_persists_opencode_session_id_at_connect(
             ),
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
         ),
@@ -457,7 +450,6 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
     external_task_cwd = tmp_path.parent / f"{tmp_path.name}-outside-task"
@@ -503,7 +495,6 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
             ),
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
             execution_cwd=external_task_cwd,
             clock=fake_clock,
@@ -585,7 +576,6 @@ async def test_streaming_claude_exec_receives_prebound_identity(
                 request=request,
                 project_root=tmp_path,
                 runtime_root=runtime_root,
-                artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
                 registry=HarnessRegistry.with_defaults(),
                 session_attempt=managed,
             )

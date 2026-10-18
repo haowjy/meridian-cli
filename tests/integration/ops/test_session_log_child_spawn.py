@@ -18,7 +18,6 @@ from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 
@@ -281,8 +280,6 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
     _write_spawn_output(runtime_root, "p42", *canonical_events)
     _write_spawn_output(runtime_root, "p42", *legacy_events, artifact=True)
 
-    artifacts = LocalStore(root_dir=runtime_root / "artifacts")
-    history_key = make_artifact_key("p42", HISTORY_FILENAME)
     row = spawn_store.get_spawn(runtime_root, "p42")
     assert row is not None
     detail = detail_from_row(
@@ -302,7 +299,7 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
         )
 
     assert not (runtime_root / "spawns" / "p42" / "native-transcript.jsonl").exists()
-    assert artifacts.list_artifacts("p42").count(history_key) == 1
+    assert (runtime_root / "artifacts" / "p42" / HISTORY_FILENAME).is_file()
     # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
     assert detail.pi_lifecycle_phase is None
 

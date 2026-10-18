@@ -15,7 +15,6 @@ from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.platform.process_scope import fallback as process_scope_fallback
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -48,7 +47,6 @@ async def test_execute_with_streaming_routes_backend_cleanup_through_stop_spawn(
     spawn_request: SpawnRequest,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
     cleanup_calls: list[dict[str, object]] = []
@@ -111,7 +109,6 @@ async def test_execute_with_streaming_routes_backend_cleanup_through_stop_spawn(
             request=spawn_request,
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
         ),

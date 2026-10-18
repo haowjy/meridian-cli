@@ -24,7 +24,6 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.launch.resolve import parse_duration_seconds
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE
@@ -232,7 +231,6 @@ def build_create_payload(
                 authority=resolved_authority,
                 config=config,
                 harness_registry=harness_registry,
-                artifacts=LocalStore(root_dir=preview_root / "artifacts"),
             )
         composition_dry_run = payload.dry_run
         preview_runtime = build_spawn_mars_runtime(

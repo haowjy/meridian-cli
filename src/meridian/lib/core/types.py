@@ -38,7 +38,6 @@ SpawnId = NewType("SpawnId", str)
 ModelId = NewType("ModelId", str)
 ChatId = NewType("ChatId", str)
 HarnessSessionId = NewType("HarnessSessionId", str)
-ArtifactKey = NewType("ArtifactKey", str)
 SchemaVersion = NewType("SchemaVersion", int)
 
 
@@ -76,7 +75,6 @@ OptionalPersistedHarnessSessionId = Annotated[
 ]
 
 __all__ = [
-    "ArtifactKey",
     "ChatId",
     "HarnessId",
     "HarnessSessionId",

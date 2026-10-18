@@ -146,7 +146,7 @@ to inspect without instantiating an adapter. The contract sub-models:
 
 - `HarnessCapabilities` — boolean feature flags
 - `ProjectionContract` — how content reaches the harness (which mode, who owns policy)
-- `ExtractionContract` — what the adapter extracts from artifacts
+- `ExtractionContract` — what the adapter extracts from attempt and native evidence
 - `ApprovalContract` — runtime HITL mode and permission routing
 - `BootstrapContract` — subprocess-only vs managed-primary-attach, fork materialization
 - `TransportContract` — transport IDs and whether observer/controller is required
@@ -491,8 +491,8 @@ guards make omissions loud.
 
 ### Anti-Patterns
 
-**Don't access artifact files directly** — use the `ArtifactStore` protocol.
-Direct path access bypasses the abstraction and breaks tests that mock artifacts.
+**Don't invent a second per-spawn file store.** Harnesses expose native evidence and
+attempt facts; launch finalization owns `report.md` and `stderr.log` in the spawn directory.
 
 **Don't assume `event_type` is globally unique** — always check `event.harness_id`
 first. `turn/completed` is a Codex event; OpenCode V1 uses `session.idle` and V2
@@ -536,7 +536,7 @@ Tracked, non-blocking:
 
 ## Related .context/
 
-- [../../state/.context/CONTEXT.md](../../state/.context/CONTEXT.md) — artifact store that `SpawnExtractor` reads from; atomic write primitives
+- [../../state/.context/CONTEXT.md](../../state/.context/CONTEXT.md) — authoritative spawn layout and atomic write primitives
 - [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — composition seam, three driving adapters, prepare/bind split, invariants
 - [../../../pi_runtime/.context/CONTEXT.md](../../../pi_runtime/.context/CONTEXT.md) — Pi TypeScript extensions, build pipeline, managed-bash / meridian-spawn-watch split
 - [Pi integration](pi-integration.md) — Pi adapter, runtime, and quiescence details

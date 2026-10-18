@@ -36,7 +36,6 @@ from meridian.lib.launch.streaming_runner import run_streaming_spawn, signal_coo
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.launch_lock import LaunchSlot
 
 
@@ -271,7 +270,6 @@ async def streaming_serve(
                 usage = None
                 try:
                     extraction = enrich_finalize(
-                        artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
                         extractor=extractor,
                         facts=facts,
                         native_key=native_key,

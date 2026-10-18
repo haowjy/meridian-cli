@@ -8,7 +8,7 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 
 
-def _artifact_store_from_lines(spawn_id: SpawnId, lines: list[dict[str, object]]) -> AttemptFacts:
+def _facts_from_lines(spawn_id: SpawnId, lines: list[dict[str, object]]) -> AttemptFacts:
     fold = CURSOR_EXTRACTOR.create_fold()
     facts = fold.facts
     for event in lines:
@@ -18,7 +18,7 @@ def _artifact_store_from_lines(spawn_id: SpawnId, lines: list[dict[str, object]]
 
 def test_cursor_extractor_reads_session_usage_and_result_report() -> None:
     spawn_id = SpawnId("p-cursor-extractor")
-    store = _artifact_store_from_lines(
+    facts = _facts_from_lines(
         spawn_id,
         [
             {
@@ -38,15 +38,15 @@ def test_cursor_extractor_reads_session_usage_and_result_report() -> None:
         ],
     )
 
-    usage = store.usage
+    usage = facts.usage
     assert usage is not None
 
-    assert store.first_session_id == "ses-cursor-1"
+    assert facts.first_session_id == "ses-cursor-1"
     assert usage.input_tokens == 123
     assert usage.output_tokens == 45
     assert usage.cache_read_input_tokens == 7
     assert usage.cache_creation_input_tokens == 8
-    assert store.final_text == "final cursor report"
+    assert facts.final_text == "final cursor report"
 
 
 def test_cursor_extractor_detects_session_from_nested_event_payload() -> None:
@@ -61,7 +61,7 @@ def test_cursor_extractor_detects_session_from_nested_event_payload() -> None:
 
 def test_cursor_extractor_returns_none_when_report_or_session_missing() -> None:
     spawn_id = SpawnId("p-cursor-empty-report")
-    store = _artifact_store_from_lines(
+    facts = _facts_from_lines(
         spawn_id,
         [
             {
@@ -74,13 +74,13 @@ def test_cursor_extractor_returns_none_when_report_or_session_missing() -> None:
         ],
     )
 
-    assert store.final_text is None
-    assert store.first_session_id is None
+    assert facts.final_text is None
+    assert facts.first_session_id is None
 
 
 def test_cursor_extractor_falls_back_to_last_assistant_message_when_no_result() -> None:
     spawn_id = SpawnId("p-cursor-assistant-fallback")
-    store = _artifact_store_from_lines(
+    facts = _facts_from_lines(
         spawn_id,
         [
             {
@@ -100,12 +100,12 @@ def test_cursor_extractor_falls_back_to_last_assistant_message_when_no_result() 
         ],
     )
 
-    assert store.final_text == "final assistant reply"
+    assert facts.final_text == "final assistant reply"
 
 
 def test_cursor_extractor_prefers_result_over_assistant_message() -> None:
     spawn_id = SpawnId("p-cursor-result-preferred")
-    store = _artifact_store_from_lines(
+    facts = _facts_from_lines(
         spawn_id,
         [
             {
@@ -123,7 +123,7 @@ def test_cursor_extractor_prefers_result_over_assistant_message() -> None:
         ],
     )
 
-    assert store.final_text == "terminal result text"
+    assert facts.final_text == "terminal result text"
 
 
 def _fold(fold, payload):

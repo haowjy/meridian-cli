@@ -21,7 +21,6 @@ from meridian.lib.harness.semantics import EventSemantics, NormalizedHarnessEven
 from meridian.lib.launch import constants as launch_constants
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
@@ -391,7 +390,6 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
 
@@ -429,7 +427,6 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
             request=_build_request(),
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
         ),
@@ -452,7 +449,6 @@ async def test_execute_with_streaming_finalizes_when_duration_clock_read_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     failing_clock = _EndMonotonicFailsClock(start=2_000.0)
 
@@ -490,7 +486,6 @@ async def test_execute_with_streaming_finalizes_when_duration_clock_read_fails(
             request=_build_request(),
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
             clock=failing_clock,
         ),

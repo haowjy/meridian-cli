@@ -13,7 +13,7 @@ import structlog
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.native_identity import NativeIdentityError
-from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
     ReferenceRouting,
@@ -21,7 +21,6 @@ from meridian.lib.launch.composition import (
     build_reference_routing,
 )
 from meridian.lib.launch.constants import RUNNER_LIFECYCLE_FILENAME
-from meridian.lib.state.artifact_store import ArtifactStore
 from meridian.lib.state.atomic import append_text_line, atomic_write_text
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
@@ -114,13 +113,6 @@ def record_identity_failure(
 
 
 ProjectionSurface = Literal["primary", "spawn"]
-
-
-def read_artifact_text(artifacts: ArtifactStore, spawn_id: SpawnId, name: str) -> str:
-    key = ArtifactKey(f"{spawn_id}/{name}")
-    if not artifacts.exists(key):
-        return ""
-    return artifacts.get(key).decode("utf-8", errors="ignore")
 
 
 def _resolve_reference_routing(launch_context: LaunchContext) -> tuple[ReferenceRouting, ...]:

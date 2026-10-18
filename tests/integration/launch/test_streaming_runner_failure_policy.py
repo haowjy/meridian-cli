@@ -23,7 +23,6 @@ from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
@@ -55,7 +54,6 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
         raise RuntimeError("Pi abort tail failed while classifying stream exit")
 
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
@@ -126,7 +124,6 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
             request=request,
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
         ),
         timeout=6.0,
@@ -159,7 +156,6 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
     _ResidentDeadlineConnection.starts = 0
@@ -218,7 +214,6 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
             request=request,
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
         ),
@@ -296,7 +291,6 @@ async def test_claude_failure_runs_one_real_subprocess(
             ),
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=LocalStore(root_dir=tmp_path / ".artifacts"),
             registry=HarnessRegistry.with_defaults(),
         ),
         timeout=15.0,
@@ -315,7 +309,6 @@ async def test_guardrail_failure_does_not_rerun_harness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
     _ResidentGuardrailConnection.reset(runtime_root)
@@ -353,7 +346,6 @@ async def test_guardrail_failure_does_not_rerun_harness(
             request=_build_request(),
             project_root=tmp_path,
             runtime_root=runtime_root,
-            artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
             guardrails=(guardrail,),

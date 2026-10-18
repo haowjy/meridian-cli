@@ -13,7 +13,7 @@ from meridian.lib.core.spawn_lifecycle import (
     DurableReportEvidence,
     classify_durable_report_text,
 )
-from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.cost import estimate_usage_cost
@@ -21,7 +21,6 @@ from meridian.lib.launch.constants import (
     REPORT_FILENAME,
 )
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
-from meridian.lib.state.artifact_store import ArtifactStore
 from meridian.lib.state.atomic import atomic_write_text
 
 # ---------------------------------------------------------------------------
@@ -56,8 +55,6 @@ class FinalizeExtraction(BaseModel):
 
 def _persist_report(
     *,
-    artifacts: ArtifactStore,
-    spawn_id: SpawnId,
     log_dir: Path,
     extracted: ExtractedReport,
     text_capped: bool,
@@ -66,7 +63,6 @@ def _persist_report(
         return None
 
     target = log_dir / REPORT_FILENAME
-    report_key = ArtifactKey(f"{spawn_id}/{REPORT_FILENAME}")
     if extracted.source in {"assistant_message", "failure_reason", "pi_failure"}:
         heading = (
             "# Spawn failed" if extracted.source in {"failure_reason", "pi_failure"} else "# Report"
@@ -75,14 +71,9 @@ def _persist_report(
         if text_capped and extracted.source == "assistant_message":
             wrapped += "\n[Attempt text was truncated at 1 MiB before report extraction.]\n"
         atomic_write_text(target, wrapped)
-        artifacts.put(report_key, wrapped.encode("utf-8"))
         return target
 
-    # The harness may have written report.md directly. Ensure both filesystem and artifact
-    # views are populated so downstream readers can consume a single source.
-    text = extracted.content
-    atomic_write_text(target, text)
-    artifacts.put(report_key, text.encode("utf-8"))
+    # The harness wrote report.md directly; its spawn-local path is authoritative.
     return target
 
 
@@ -106,7 +97,6 @@ def classify_finalize_report(extracted: ExtractedReport) -> FinalizeReportKind:
 
 def enrich_finalize(
     *,
-    artifacts: ArtifactStore,
     extractor: SpawnExtractor,
     facts: AttemptFacts,
     native_key: NativeKey | None = None,
@@ -118,10 +108,6 @@ def enrich_finalize(
     failure_reason: str | None = None,
 ) -> FinalizeExtraction:
     """Spawn all extraction steps and return one enriched finalization payload."""
-
-    explicit_report = log_dir / REPORT_FILENAME
-    if explicit_report.is_file():
-        artifacts.put(ArtifactKey(f"{spawn_id}/{REPORT_FILENAME}"), explicit_report.read_bytes())
 
     if facts.incomplete:
         structlog.get_logger(__name__).warning("facts_incomplete", spawn_id=str(spawn_id))
@@ -137,8 +123,7 @@ def enrich_finalize(
     )
     harness_session_id = facts.first_session_id
     report = extract_or_fallback_report(
-        artifacts,
-        spawn_id,
+        log_dir,
         facts=facts,
         load_native_text=partial(extractor.read_native_turn, native_key, facts.native_turn_ids)
         if native_key is not None
@@ -146,8 +131,6 @@ def enrich_finalize(
         failure_reason=failure_reason,
     )
     report_path = _persist_report(
-        artifacts=artifacts,
-        spawn_id=spawn_id,
         log_dir=log_dir,
         extracted=report,
         text_capped=facts.text_capped,

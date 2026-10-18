@@ -20,7 +20,6 @@ from meridian.lib.config.project_root import (
 )
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.sink import NullSink, OutputSink
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.project_identity import (
     ensure_project_identity,
@@ -83,7 +82,6 @@ class OperationRuntime(BaseModel):
     authority: "RuntimeAuthoritySnapshot"
     config: MeridianConfig
     harness_registry: Any  # HarnessRegistry — typed as Any to avoid circular import
-    artifacts: LocalStore
     sink: OutputSink = Field(default_factory=NullSink)
 
     @classmethod
@@ -103,7 +101,6 @@ class OperationRuntime(BaseModel):
             authority=prepared.authority,
             config=prepared.config,
             harness_registry=harness_registry,
-            artifacts=LocalStore(root_dir=prepared.runtime_root / "artifacts"),
             sink=sink or NullSink(),
         )
 
@@ -322,7 +319,6 @@ def build_runtime_from_root_and_config(
         authority=resolved_authority,
         config=config,
         harness_registry=get_default_harness_registry(),
-        artifacts=LocalStore(root_dir=resolved_authority.runtime_root / "artifacts"),
         sink=sink or NullSink(),
     )
 

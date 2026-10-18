@@ -67,7 +67,6 @@ from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinat
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.primary_meta import (
@@ -545,7 +544,6 @@ def _finalize_lifecycle(
     if primary_spawn_id is not None:
         log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id, runtime_root=runtime_root)
         extraction = enrich_finalize(
-            artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
             extractor=get_harness_bundle(harness_adapter.id).extractor,
             facts=facts,
             native_key=native_key,

@@ -74,7 +74,7 @@ from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
 )
 from meridian.lib.launch.runner_helpers import (
-    append_text_to_stderr_artifact as _append_text_to_stderr_artifact,
+    append_text_to_stderr_log as _append_text_to_stderr_log,
 )
 from meridian.lib.launch.runner_helpers import (
     guardrail_failure_text as _guardrail_failure_text,
@@ -88,7 +88,6 @@ from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbit
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
 from meridian.lib.safety.guardrails import run_guardrails
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
@@ -826,7 +825,6 @@ async def execute_with_streaming(
     launch_context: LaunchContext,
     project_root: Path,
     runtime_root: Path,
-    artifacts: ArtifactStore,
     budget: Budget | None = None,
     space_spent_usd: float = 0.0,
     guardrails: tuple[Path, ...] = (),
@@ -1104,9 +1102,8 @@ async def execute_with_streaming(
                             error=attempt.start_error,
                         )
                         conclusion.failure_reason = attempt.start_error
-                        _append_text_to_stderr_artifact(
-                            artifacts=artifacts,
-                            spawn_id=run.spawn_id,
+                        _append_text_to_stderr_log(
+                            stderr_path=log_dir / STDERR_FILENAME,
                             text=attempt.start_error,
                         )
                     attempt_cancelled = False
@@ -1125,13 +1122,6 @@ async def execute_with_streaming(
                         and attempt.drain_error is not None
                     ):
                         conclusion.failure_reason = attempt.drain_error
-
-                    stderr_path = log_dir / STDERR_FILENAME
-                    if stderr_path.exists():
-                        artifacts.put(
-                            make_artifact_key(run.spawn_id, STDERR_FILENAME),
-                            stderr_path.read_bytes(),
-                        )
 
                     outcome = conclude_native_run(
                         native_run,
@@ -1154,7 +1144,6 @@ async def execute_with_streaming(
                         lifecycle=lifecycle,
                     )
                     extraction = enrich_finalize(
-                        artifacts=artifacts,
                         extractor=harness_bundle.extractor,
                         facts=facts,
                         native_key=native_run.entry.complete(),
@@ -1240,9 +1229,8 @@ async def execute_with_streaming(
                             if not guardrail_result.ok:
                                 conclusion.exit_code = 1
                                 conclusion.failure_reason = "guardrail_failed"
-                                _append_text_to_stderr_artifact(
-                                    artifacts=artifacts,
-                                    spawn_id=run.spawn_id,
+                                _append_text_to_stderr_log(
+                                    stderr_path=log_dir / STDERR_FILENAME,
                                     text=_guardrail_failure_text(guardrail_result.failures),
                                 )
         except asyncio.CancelledError:
