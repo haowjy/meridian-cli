@@ -59,7 +59,8 @@ seam shared by the loader, hook registry, and config inspection.
 `ConfigValueSource` per explicitly set field. Inspection commands render those validated
 values and sources. The hook row exception delegates names and invalid-row counts to
 `load_hooks_config_report()`, their validation owner, while the dynamic value retains
-provenance and the explicit-empty display.
+the provenance of the explicitly configured section. An empty higher-precedence
+`hooks` section does not suppress lower-layer rows in either inspection or runtime.
 
 ### `resolve_project_root_resolution()` — `ignore_env` Parameter
 
@@ -84,7 +85,7 @@ Sections in `DYNAMIC_SECTION_DESCRIPTORS` use one of three merge strategies:
 
 | Section | Strategy | Behavior |
 |---|---|---|
-| `hooks` | `replace` | Later raw section supplies provenance and explicit-empty display; `config show` and hook runtime use the hook owner's layered rows |
+| `hooks` | `replace` | Later raw section supplies provenance; `config show` and hook runtime use the hook owner's layered rows |
 | `work` | `nested_dict` | Deep merge: worktree_base etc. overwrite per-key |
 | `context` | `nested_dict` | Deep merge: named contexts overwrite per-context-name |
 | `workspace` | `external` | Not merged by the loader — workspace config owns it |

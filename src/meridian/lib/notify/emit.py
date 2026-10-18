@@ -3,19 +3,79 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from meridian.lib.notify.service import RouteResult, SendReport
+from meridian.lib.notify.channels.base import SendStatus
 from meridian.lib.utils.json_shapes import is_object_sequence
 
 if TYPE_CHECKING:
     from meridian.plugin_api.types import HookEventName, HookResult, Notification
 
 _NO_ROUTE_WARNING = "no notification route ran for {event}"
+
+
+@dataclass(frozen=True)
+class RouteResult:
+    """Outcome from one hook route, including transports it reached."""
+
+    route: str
+    status: SendStatus
+    error: str | None = None
+    warning: str | None = None
+    transports: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "sent"
+
+    def to_dict(self) -> dict[str, object]:
+        # `channel` is the established CLI wire name for a notification route.
+        return {
+            "channel": self.route,
+            "status": self.status,
+            "ok": self.ok,
+            "error": self.error,
+            "warning": self.warning,
+            "transports": list(self.transports),
+        }
+
+
+@dataclass(frozen=True)
+class RouteReport:
+    """Aggregate result from notification hook routes."""
+
+    results: tuple[RouteResult, ...]
+    warnings: tuple[str, ...] = ()
+
+    def __class_getitem__(cls, _item: object) -> type[RouteReport]:
+        # Subscription preserves postponed annotations; the report remains concrete.
+        return cls
+
+    @property
+    def all_none(self) -> bool:
+        return all(result.status == "none" for result in self.results)
+
+    @property
+    def ok(self) -> bool:
+        """Something delivered, or nothing was meant to (no route, or every one off)."""
+
+        return self.all_none or any(result.ok for result in self.results)
+
+    @property
+    def exit_code(self) -> int:
+        return 0 if self.ok else 1
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "ok": self.ok,
+            "exit_code": self.exit_code,
+            "results": [result.to_dict() for result in self.results],
+            "warnings": list(self.warnings),
+        }
 
 
 def _runtime_root(project_root: Path) -> Path | None:
@@ -28,10 +88,17 @@ def _runtime_root(project_root: Path) -> Path | None:
 
 
 def _transports(result: HookResult) -> tuple[str, ...]:
-    raw = result.details.get("transports", ())
-    if not is_object_sequence(raw):
+    if "transports" not in result.details:
         return ()
-    return tuple(value for value in raw if isinstance(value, str))
+    raw = result.details["transports"]
+    if not is_object_sequence(raw):
+        raise TypeError("HookResult.details['transports'] must be a sequence of strings")
+    transports: list[str] = []
+    for value in raw:
+        if not isinstance(value, str):
+            raise TypeError("HookResult.details['transports'] must be a sequence of strings")
+        transports.append(value)
+    return tuple(transports)
 
 
 def _route_result(result: HookResult) -> RouteResult:
@@ -59,7 +126,7 @@ def _route_result(result: HookResult) -> RouteResult:
 
 def report_from_hooks(
     event: str, hook_results: Sequence[HookResult]
-) -> SendReport[RouteResult]:
+) -> RouteReport:
     """One result per route; with no route at all, ok with a warning."""
 
     results = tuple(_route_result(result) for result in hook_results)
@@ -68,7 +135,7 @@ def report_from_hooks(
     )
     if not results:
         warnings = (_NO_ROUTE_WARNING.format(event=event),)
-    return SendReport(results=results, warnings=warnings)
+    return RouteReport(results=results, warnings=warnings)
 
 
 def emit(
@@ -77,7 +144,7 @@ def emit(
     *,
     project_root: Path,
     env: Mapping[str, str],
-) -> SendReport[RouteResult]:
+) -> RouteReport:
     """Fire the notification's hook event and report what its routes delivered."""
 
     from meridian.lib.hooks.config import load_hooks_config_report
@@ -117,4 +184,4 @@ def emit(
     return report
 
 
-__all__ = ["emit", "report_from_hooks"]
+__all__ = ["RouteReport", "RouteResult", "emit", "report_from_hooks"]

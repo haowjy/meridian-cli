@@ -70,7 +70,7 @@ its env vars.
 | Section | Strategy | Effect |
 |---|---|---|
 | `work`, `context`, `env` | `nested_dict` | Keys in higher-precedence file overwrite matching keys; others inherited |
-| `hooks` | `replace` | Retains the highest-precedence raw section for provenance and explicit-empty display; hook rows themselves are inspected and run through `lib/hooks/config.py` |
+| `hooks` | `replace` | Retains the highest-precedence raw section for provenance; hook rows themselves are inspected and run through `lib/hooks/config.py` |
 | `workspace` | `external` | Not merged here; workspace config owns it |
 
 **`preserving_edit.py` for in-place config edits.** Direct TOML writes lose comments

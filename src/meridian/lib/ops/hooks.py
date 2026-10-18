@@ -17,7 +17,13 @@ from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.dispatch import HookDispatcher
 from meridian.lib.hooks.interval import IntervalTracker
 from meridian.lib.hooks.registry import HookRegistry
-from meridian.lib.hooks.types import Hook, HookContext, HookEventName, HookResult
+from meridian.lib.hooks.types import (
+    NOTIFICATION_EVENTS,
+    Hook,
+    HookContext,
+    HookEventName,
+    HookResult,
+)
 from meridian.lib.ops.runtime import (
     resolve_project_authority,
     resolve_runtime_authority_for_read,
@@ -281,6 +287,30 @@ def _hook_status(hook: Hook) -> str:
     return "enabled" if hook.enabled else "disabled"
 
 
+def _requires_notification(hook: Hook) -> bool:
+    if hook.builtin is None:
+        return False
+    supported_events = BUILTIN_HOOKS[hook.builtin].supported_events
+    return supported_events is not None and all(
+        event in NOTIFICATION_EVENTS for event in supported_events
+    )
+
+
+def _raise_manual_notification_error(hook: Hook) -> None:
+    raise ValueError(
+        f"The {hook.builtin} builtin needs a notification payload and cannot run "
+        "manually; use `meridian notify` instead."
+    )
+
+
+def _same_manual_action(left: Hook, right: Hook) -> bool:
+    return (
+        left.builtin == right.builtin
+        and left.command == right.command
+        and left.options == right.options
+    )
+
+
 def hooks_list_sync(payload: HookListInput) -> HookListOutput:
     authority = resolve_project_authority(payload.project_root)
     registry = HookRegistry(authority.project_root)
@@ -380,11 +410,8 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
     if not named_hooks:
         raise ValueError(f"Hook '{hook_name}' not found")
 
-    if all(hook.builtin == "notify" for hook in named_hooks):
-        raise ValueError(
-            "The notify builtin needs a notification payload and cannot run manually; "
-            "use `meridian notify` instead."
-        )
+    if all(_requires_notification(hook) for hook in named_hooks):
+        _raise_manual_notification_error(named_hooks[0])
 
     if payload.event is not None:
         hook = registry.get_hook(hook_name, payload.event)
@@ -396,7 +423,10 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
                     f"but not {payload.event!r}."
                 )
             hook = named_hooks[0]
-    elif len(named_hooks) == 1:
+    elif len(named_hooks) == 1 or all(
+        _same_manual_action(named_hooks[0], candidate)
+        for candidate in named_hooks[1:]
+    ):
         hook = named_hooks[0]
     else:
         events = ", ".join(hook.event for hook in named_hooks)
@@ -405,11 +435,8 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
             "pass --event to select one."
         )
 
-    if hook.builtin == "notify":
-        raise ValueError(
-            "The notify builtin needs a notification payload and cannot run manually; "
-            "use `meridian notify` instead."
-        )
+    if _requires_notification(hook):
+        _raise_manual_notification_error(hook)
 
     effective_hook = hook if hook.enabled else replace(hook, enabled=True)
     run_event = payload.event or effective_hook.event

@@ -18,14 +18,15 @@ meridian hooks list
 # Validate config before committing changes
 meridian hooks check
 
-# Trigger with a specific event context
-meridian hooks run sync-notes --event work.done
+# Trigger a hook manually
+meridian hooks run sync-notes
 ```
 
-`hooks run` bypasses interval throttling. When a name is registered for more
-than one event, `--event` is required to select the row. The `notify` builtin
-cannot run manually because it has no notification payload; use
-`meridian notify` instead.
+`hooks run` bypasses interval throttling. Registrations with the same name,
+builtin, command, and options run once without `--event`, even when one config
+row expanded across several events. When those fields differ, use `--event` to
+select a row. A builtin that only supports notification events cannot run
+manually because it has no notification payload; use `meridian notify` instead.
 
 ## Events
 
@@ -208,7 +209,7 @@ event   = "work.done"
 To run manually at any time:
 
 ```bash
-meridian hooks run sync-notes --event work.done
+meridian hooks run sync-notes
 ```
 
 ## MCP

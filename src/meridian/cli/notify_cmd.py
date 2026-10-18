@@ -11,10 +11,9 @@ from cyclopts import Parameter
 from meridian.cli.app_tree import notify_app
 from meridian.cli.invocation import current_output_sink, get_global_options
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.notify.emit import emit
+from meridian.lib.notify.emit import RouteReport, emit
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.notify.notice import SessionLabel, manual_notification
-from meridian.lib.notify.service import RouteResult, SendReport
 
 
 def _route_label(channel: str, transports: tuple[str, ...]) -> str:
@@ -24,7 +23,7 @@ def _route_label(channel: str, transports: tuple[str, ...]) -> str:
 
 
 def _render_report(
-    report: SendReport[RouteResult], label: SessionLabel, *, json_mode: bool = False
+    report: RouteReport, label: SessionLabel, *, json_mode: bool = False
 ) -> None:
     sink = current_output_sink()
     for warning in report.warnings:

@@ -273,8 +273,9 @@ class HookContext:
 class HookResult:
     """Plugin-facing result for one hook execution.
 
-    ``details`` is hook-defined JSON-serializable structured output. Builtins
-    document the keys they produce.
+    Builtin hook implementations may set ``details`` to JSON-serializable
+    structured data. Builtins document the keys they produce and the surfaces
+    that project them.
     """
 
     hook_name: str

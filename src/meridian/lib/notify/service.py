@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Generic, Protocol, TypeVar
 
 from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels import resolve_channel
-from meridian.lib.notify.channels.base import SendResult, SendStatus
+from meridian.lib.notify.channels.base import SendResult
 from meridian.plugin_api.types import Notification
 
 _ALL_NONE_WARNING = "notification disabled: every selected backend is none"
@@ -16,53 +15,11 @@ _ALL_NONE_WARNING = "notification disabled: every selected backend is none"
 DEFAULT_CHANNELS: tuple[str, ...] = ("push", "email")
 
 
-class _DeliveryResult(Protocol):
-    @property
-    def status(self) -> SendStatus: ...
-
-    @property
-    def warning(self) -> str | None: ...
-
-    @property
-    def ok(self) -> bool: ...
-
-    def to_dict(self) -> dict[str, object]: ...
-
-
-_ResultT = TypeVar("_ResultT", bound=_DeliveryResult, covariant=True)
-
-
 @dataclass(frozen=True)
-class RouteResult:
-    """Outcome from one hook route, including transports it reached."""
+class SendReport:
+    """Aggregate result from one transport fan-out."""
 
-    route: str
-    status: SendStatus
-    error: str | None = None
-    warning: str | None = None
-    transports: tuple[str, ...] = ()
-
-    @property
-    def ok(self) -> bool:
-        return self.status == "sent"
-
-    def to_dict(self) -> dict[str, object]:
-        # `channel` is the established CLI wire name for a notification route.
-        return {
-            "channel": self.route,
-            "status": self.status,
-            "ok": self.ok,
-            "error": self.error,
-            "warning": self.warning,
-            "transports": list(self.transports),
-        }
-
-
-@dataclass(frozen=True)
-class SendReport(Generic[_ResultT]):
-    """Aggregate delivery result used by CLI and idle callers."""
-
-    results: tuple[_ResultT, ...]
+    results: tuple[SendResult, ...]
     warnings: tuple[str, ...] = ()
 
     @property
@@ -103,7 +60,7 @@ def send(
     *,
     event: str,
     channels: Sequence[str] | None = None,
-) -> SendReport[SendResult]:
+) -> SendReport:
     """Fan out once to each selected backend; never retry in-process.
 
     `push` and `email` name the configured backends, and unset means both; any
@@ -131,4 +88,4 @@ def send(
     return report
 
 
-__all__ = ["DEFAULT_CHANNELS", "RouteResult", "SendReport", "send"]
+__all__ = ["DEFAULT_CHANNELS", "SendReport", "send"]

@@ -28,9 +28,12 @@ print(api.__version__)  # "2.0.0"
 | `Notification` | One notice — `title`, `body`, `priority` (1–5), `email`, `label` (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), `attachments` (absolute file paths) |
 | `FailurePolicy` | `"fail"` \| `"warn"` \| `"ignore"` |
 
-`HookResult.details` is a mapping for hook-defined, JSON-serializable structured
-output. Builtins document the keys they produce in [hooks.md](hooks.md); consumers
-must not assume that unrelated hooks share detail keys.
+`HookResult.details` is a mapping that builtin hook implementations may set with
+JSON-serializable structured data. Builtins document their keys in
+[hooks.md](hooks.md); consumers must not assume unrelated hooks share them.
+Today only the `notify` builtin sets a key: `transports` is projected into
+`meridian notify` text and JSON reports. `hooks run --json` does not expose
+arbitrary `details`.
 
 ### `HookContext` fields
 
