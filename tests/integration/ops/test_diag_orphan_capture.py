@@ -147,6 +147,7 @@ def test_repair_reconciles_active_orphan_and_terminal_cleanup_claim(
             started_at="2000-01-01T00:00:00Z",
             status="running",
         )
+        (runtime_root / "spawns" / spawn_id / "launch.lock").touch()
 
     scope = ProcessScopeSnapshot(
         scope_id="worker",
@@ -171,11 +172,6 @@ def test_repair_reconciles_active_orphan_and_terminal_cleanup_claim(
         error="orphan_run",
     )
 
-    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", lambda *_a, **_k: False)
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda *_a, **_k: False,
-    )
     terminated: list[str] = []
 
     def terminate(claimed: ProcessScopeSnapshot, **_kwargs: object) -> CleanupResult:
@@ -245,6 +241,7 @@ def test_repair_captures_every_orphan_primary_of_one_native_session(
             runner_pid=111,
             started_at="2000-01-01T00:00:00Z",
         )
+        (runtime_root / "spawns" / spawn_id / "launch.lock").touch()
         session_store.start_session(
             runtime_root,
             "pi",
@@ -256,12 +253,6 @@ def test_repair_captures_every_orphan_primary_of_one_native_session(
             native_store=str(native_root),
         )
         session_store.stop_session(runtime_root, "c1")
-    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", lambda *_a, **_k: False)
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda *_a, **_k: False,
-    )
-
     count, ids = diag._repair_orphan_runs(project, runtime_root=runtime_root)
 
     assert (count, ids) == (3, spawn_ids)

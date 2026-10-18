@@ -37,7 +37,7 @@ from tests.integration.launch.streaming_runner_support import (
     _TimeoutAbortPiConnection,
     streaming_runner_module,
 )
-from tests.support.fakes import FakeClock, FakeHeartbeat
+from tests.support.fakes import FakeClock
 from tests.support.history import warm_history_index
 from tests.support.launch import FakeBundleResult
 
@@ -162,8 +162,6 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
     _ResidentDeadlineConnection.starts = 0
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
@@ -223,8 +221,6 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
             artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
         ),
         timeout=15.0,
     )
@@ -322,8 +318,6 @@ async def test_guardrail_failure_does_not_rerun_harness(
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
     _ResidentGuardrailConnection.reset(runtime_root)
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
@@ -362,8 +356,6 @@ async def test_guardrail_failure_does_not_rerun_harness(
             artifacts=artifacts,
             registry=registry,
             clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
             guardrails=(guardrail,),
         ),
         timeout=15.0,

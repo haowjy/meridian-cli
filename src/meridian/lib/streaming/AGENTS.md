@@ -69,7 +69,7 @@ stream. Terminal classification follows successful delivery. See the delivery
 contract in `.context/CONTEXT.md`.
 
 `SpawnManager` is the integration point for everything that touches a live spawn:
-starting, stopping, injecting messages, subscribing to events, and tracking heartbeats.
+starting, stopping, injecting messages, and subscribing to events.
 Do not bypass it to reach a connection or subscriber directly.
 
 `connection.primary_event_scope` is part of terminal classification for multiplexed
@@ -125,14 +125,6 @@ session teardown for one active spawn. Its `coordinator=None` value is the plain
 Pass `PersistentDrainPolicy` to `start_spawn(drain_policy=...)` for long-lived
 session drains that keep the harness alive across turns.
 
-## Heartbeat / Reaper Contract
-
-`heartbeat_loop` touches `spawns/<id>/heartbeat` every 30 seconds. It never creates the
-spawn directory and stops if the directory has been deleted. The reaper
-(`lib/state/reaper.py`) identifies orphaned spawns by staleness. Unexpected heartbeat
-cessation while a spawn should remain active means the manager died or the spawn is
-orphaned; deletion, normal completion, cancellation, and shutdown stop it intentionally.
-
 ## Entry Points
 
 - `spawn_manager.py` — `SpawnManager`: public live-spawn registry/control API
@@ -164,9 +156,10 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `types.py` — `InjectResult`, `ControlMessage`
 
 Codex/OpenCode and Pi completion use the shared reconciled transitive spawn-tree assessment as
-their sole persisted-descendant authority. One reconciled projection also retains raw
-canonical rows for Pi result obligations: a read-only terminal inference cannot replace
-terminal publication. Pi's disk watcher observes private task, consumption, receipt,
+their sole persisted-descendant authority. The derived rows also decide Pi result
+publication: a dead child with no written outcome reads terminal and waits on result
+delivery. `pi_result_publication_pending` remains only for a row that vanishes between
+the index read and the authority read. Pi's disk watcher observes private task, consumption, receipt,
 public-observation and fault files; incomplete or wrong-parent spawn directories are not descendant
 evidence. Accessors read one immutable cached assessment; a single-flight worker catches
 up the history index, selects the transitive subtree (including archived ancestry), and
@@ -185,4 +178,3 @@ freshness check is not an atomic child-admission barrier.
 ## Related
 
 - `../harness/connections/` — `HarnessConnection` protocol (event source)
-- `../state/reaper.py` — uses heartbeat sentinel to detect orphaned spawns

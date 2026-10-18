@@ -16,7 +16,6 @@ RETIRED_RUNNER_STREAM_FILENAMES: Final[tuple[str, ...]] = (
     "last-observed-event.json",
 )
 RUNNER_LIFECYCLE_FILENAME: Final[str] = "runner-lifecycle.jsonl"
-FINALIZE_EVIDENCE_FILENAME: Final[str] = "finalize-evidence.json"
 PRIMARY_META_FILENAME: Final[str] = "primary_meta.json"
 PI_RUNTIME_META_FILENAME: Final[str] = "pi_runtime_meta.json"
 STDERR_FILENAME: Final[str] = "stderr.log"
@@ -95,7 +94,6 @@ __all__ = [
     "CURSOR_INACTIVITY_TIMEOUT_SECONDS",
     "DEFAULT_INFRA_EXIT_CODE",
     "DRY_RUN_REPORT_PATH",
-    "FINALIZE_EVIDENCE_FILENAME",
     "HISTORY_FILENAME",
     "LAUNCHER_LOG_FILENAME",
     "OUTPUT_FILENAME",

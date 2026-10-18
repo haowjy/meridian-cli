@@ -28,7 +28,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.harness.transcript import reject_runner_history
 from meridian.lib.ops.run_boundary import spawn_view_label
-from meridian.lib.ops.spawn.query import read_spawn_row_read_only
+from meridian.lib.ops.spawn.query import read_stored_spawn_row
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import ALIASES, RECORDS, HistoryIndex
 from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
@@ -334,7 +334,7 @@ def _resolve_from_spawn_id(
     purpose: Literal["display", "capture"] = "display",
     deadline: float | None = None,
 ) -> SessionLogTarget:
-    row = read_spawn_row_read_only(project_root, spawn_id, runtime_root=runtime_root)
+    row = read_stored_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
     if row is None and purpose == "display":
         indexed = _indexed_spawn(runtime_root, spawn_id, deadline=deadline)
         if indexed is not None:

@@ -49,24 +49,31 @@ def write_segment(
     return path
 
 
-def start_spawn(service: SpawnLifecycleService, *, status: str = "running") -> str:
-    with LaunchSlot() as launch_lock:
-        return service.start(
-            SpawnReservation(
-                chat_id="chat-1",
-                session_metadata=PrimarySessionMetadata(
-                    harness="test-harness",
-                    model="test-model",
-                    agent="coder",
-                    agent_path="",
-                    skills=(),
-                    skill_paths=(),
-                ),
-                prompt="do the thing",
-                status=status,  # type: ignore[arg-type]
+def start_spawn(
+    service: SpawnLifecycleService,
+    *,
+    status: str = "running",
+    launch_lock: LaunchSlot | None = None,
+) -> str:
+    if launch_lock is None:
+        with LaunchSlot() as owned_lock:
+            return start_spawn(service, status=status, launch_lock=owned_lock)
+    return service.start(
+        SpawnReservation(
+            chat_id="chat-1",
+            session_metadata=PrimarySessionMetadata(
+                harness="test-harness",
+                model="test-model",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
             ),
-            launch_lock=launch_lock,
-        )
+            prompt="do the thing",
+            status=status,  # type: ignore[arg-type]
+        ),
+        launch_lock=launch_lock,
+    )
 
 
 def setup_spawn_projection(runtime_root: Path, monkeypatch) -> None:
@@ -78,7 +85,7 @@ def setup_spawn_projection(runtime_root: Path, monkeypatch) -> None:
     spawn_observer.register_spawn_telemetry_observer()
 
 
-def test_retention_preserves_spawn_owned_segments_for_reconciled_active_spawns(tmp_path) -> None:
+def test_retention_preserves_spawn_owned_segments_for_live_spawns(tmp_path) -> None:
     telemetry_dir = tmp_path / "telemetry"
     segment = write_segment(
         telemetry_dir,
@@ -90,13 +97,11 @@ def test_retention_preserves_spawn_owned_segments_for_reconciled_active_spawns(t
     os.utime(segment, (old_time, old_time))
 
     service = SpawnLifecycleService(tmp_path)
-    spawn_id = start_spawn(service)
-    assert spawn_id == "p1"
-    heartbeat = tmp_path / "spawns" / spawn_id / "heartbeat"
-    heartbeat.parent.mkdir(parents=True, exist_ok=True)
-    heartbeat.touch()
+    with LaunchSlot() as launch_lock:
+        spawn_id = start_spawn(service, launch_lock=launch_lock)
+        assert spawn_id == "p1"
 
-    run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
+        run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
 
     assert segment.exists()
 
@@ -120,17 +125,16 @@ def test_retention_preserves_valid_active_segment_beside_quarantined_row(tmp_pat
     os.utime(quarantined_segment, (old_time, old_time))
 
     service = SpawnLifecycleService(tmp_path)
-    valid_id = start_spawn(service)
-    quarantined_id = start_spawn(service)
-    assert (valid_id, quarantined_id) == ("p1", "p2")
-    heartbeat = tmp_path / "spawns" / valid_id / "heartbeat"
-    heartbeat.touch()
-    state_path = tmp_path / "spawns" / quarantined_id / "state.json"
-    payload = json.loads(state_path.read_text(encoding="utf-8"))
-    payload["status"] = "zombie"
-    atomic_write_text(state_path, json.dumps(payload))
+    with LaunchSlot() as launch_lock:
+        valid_id = start_spawn(service, launch_lock=launch_lock)
+        quarantined_id = start_spawn(service)
+        assert (valid_id, quarantined_id) == ("p1", "p2")
+        state_path = tmp_path / "spawns" / quarantined_id / "state.json"
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        payload["status"] = "zombie"
+        atomic_write_text(state_path, json.dumps(payload))
 
-    run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
+        run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
 
     assert valid_segment.exists()
     assert quarantined_segment.exists()
@@ -172,29 +176,29 @@ def test_retention_size_pressure_prefers_legacy_orphan_over_stale_recognized_seg
     orphan = write_segment(telemetry_dir, "123-0001.jsonl")
 
     service = SpawnLifecycleService(tmp_path)
-    spawn_id = start_spawn(service)
-    assert spawn_id == "p1"
-    heartbeat = tmp_path / "spawns" / spawn_id / "heartbeat"
-    heartbeat.parent.mkdir(parents=True, exist_ok=True)
-    heartbeat.touch()
+    with LaunchSlot() as launch_lock:
+        spawn_id = start_spawn(service, launch_lock=launch_lock)
+        assert spawn_id == "p1"
 
-    now = time.time()
-    os.utime(stale_recognized, (now - 20, now - 20))
-    os.utime(orphan, (now - 10, now - 10))
-    monkeypatch.setattr(
-        "meridian.lib.state.liveness.is_process_alive",
-        lambda pid, created_after_epoch=None: pid == os.getpid(),
-    )
+        now = time.time()
+        os.utime(stale_recognized, (now - 20, now - 20))
+        os.utime(orphan, (now - 10, now - 10))
+        monkeypatch.setattr(
+            "meridian.lib.state.liveness.is_process_alive",
+            lambda pid, created_after_epoch=None: pid == os.getpid(),
+        )
 
-    live_and_stale_budget = (
-        active_spawn.stat().st_size + live_cli.stat().st_size + stale_recognized.stat().st_size
-    )
-    run_retention_cleanup(
-        telemetry_dir,
-        runtime_root=tmp_path,
-        max_age_days=365,
-        max_total_bytes=live_and_stale_budget,
-    )
+        live_and_stale_budget = (
+            active_spawn.stat().st_size
+            + live_cli.stat().st_size
+            + stale_recognized.stat().st_size
+        )
+        run_retention_cleanup(
+            telemetry_dir,
+            runtime_root=tmp_path,
+            max_age_days=365,
+            max_total_bytes=live_and_stale_budget,
+        )
 
     assert active_spawn.exists()
     assert live_cli.exists()

@@ -1,132 +1,16 @@
-"""Shared managed-primary runtime helpers."""
+"""Shared managed-primary process teardown helpers."""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import psutil
-import structlog
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
+from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
-from meridian.lib.state.reconciliation import (
-    FinalizeFailed,
-    FinalizeFromRunnerExit,
-    ReconciliationDecision,
-    Skip,
-    completion_or_cancel_decision,
-)
 from meridian.lib.state.spawn.model import SpawnRecord
-
-if TYPE_CHECKING:
-    from meridian.lib.state.reaper import ArtifactSnapshot
-
-
-logger = structlog.get_logger(__name__)
-
-
-@dataclass(frozen=True)
-class ManagedPrimarySnapshot:
-    """Snapshot of managed primary runtime state for reconciliation."""
-
-    metadata: PrimaryMetadata
-    launcher_pid_alive: bool
-    started_epoch: float | None
-
-
-@dataclass(frozen=True)
-class ReconciliationContext:
-    """Context passed to reconciliation strategies."""
-
-    record: SpawnRecord
-    artifact_snapshot: ArtifactSnapshot
-    managed_snapshot: ManagedPrimarySnapshot
-    now: float
-
-
-class ManagedPrimaryReconciliationStrategy:
-    """Managed-primary reconciliation policy."""
-
-    @staticmethod
-    def supports(snapshot: ManagedPrimarySnapshot | None) -> bool:
-        """Return whether this strategy handles the given snapshot."""
-
-        return snapshot is not None and snapshot.metadata.managed_backend
-
-    @staticmethod
-    def decide(
-        context: ReconciliationContext,
-        *,
-        has_recent_activity: bool,
-    ) -> ReconciliationDecision:
-        """Decide reconciliation outcome for a managed primary."""
-
-        managed = context.managed_snapshot
-
-        if managed.launcher_pid_alive:
-            return Skip(reason="primary_launcher_alive")
-
-        if managed.metadata.activity == "finalizing" and has_recent_activity:
-            return Skip(reason="recent_activity")
-
-        decision = completion_or_cancel_decision(
-            context.record,
-            context.artifact_snapshot.durable_report_completion,
-        )
-        if decision is not None:
-            return decision
-
-        if managed.metadata.activity == "finalizing":
-            return FinalizeFailed(error="orphan_finalization")
-        # Launcher/backend/TUI are all dead with no durable completion. For an
-        # interactive managed primary this is a terminal that ended without
-        # running finalize (pane closed, process killed), not a crash-in-flight.
-        # Record it as a clean stop rather than a failure, and keep the liveness
-        # snapshot in the logs for diagnostics.
-        logger.info(
-            "Managed primary ended without finalize; finalizing as cancelled",
-            spawn_id=context.record.id,
-            launcher_pid=managed.metadata.launcher_pid,
-            backend_pid=managed.metadata.backend_pid,
-            tui_pid=managed.metadata.tui_pid,
-            activity=managed.metadata.activity,
-        )
-        return FinalizeFromRunnerExit(
-            status="cancelled",
-            exit_code=130,
-            error="session_ended_without_finalize",
-            managed_scopes_pending=True,
-        )
-
-
-def read_managed_primary_snapshot(
-    runtime_root: Path,
-    record: SpawnRecord,
-    *,
-    started_epoch: float | None = None,
-) -> ManagedPrimarySnapshot | None:
-    """Read managed primary snapshot for reconciliation decisions."""
-
-    metadata = read_primary_metadata(runtime_root, record.id)
-    if metadata is None or not metadata.managed_backend:
-        return None
-
-    launcher_pid_alive = False
-    if metadata.launcher_pid is not None:
-        launcher_pid_alive = is_process_alive(
-            metadata.launcher_pid,
-            created_after_epoch=started_epoch,
-        )
-
-    return ManagedPrimarySnapshot(
-        metadata=metadata,
-        launcher_pid_alive=launcher_pid_alive,
-        started_epoch=started_epoch,
-    )
 
 
 def _terminate_pid(pid: int) -> bool:
@@ -177,12 +61,7 @@ def terminate_managed_primary_processes(
 
 
 def is_managed_primary_candidate(record: SpawnRecord) -> bool:
-    """Conservative managed-primary identification from spawn state.
-
-    When primary metadata is missing/corrupt we cannot prove whether a Codex or
-    OpenCode primary is managed-backend or black-box, so teardown treats these
-    as managed-primary candidates to avoid passive worker/TUI termination.
-    """
+    """Conservatively identify managed-primary rows when metadata is unavailable."""
 
     harness = (record.harness or "").strip().lower()
     return record.kind == "primary" and harness in {"codex", "opencode"}
@@ -229,11 +108,7 @@ def release_managed_primary_scopes(
 
 
 __all__ = [
-    "ManagedPrimaryReconciliationStrategy",
-    "ManagedPrimarySnapshot",
-    "ReconciliationContext",
     "is_managed_primary_candidate",
-    "read_managed_primary_snapshot",
     "release_managed_primary_scopes",
     "terminate_managed_primary_processes",
 ]

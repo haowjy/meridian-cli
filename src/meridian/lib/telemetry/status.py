@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from meridian.lib.core.util import FormatContext
-from meridian.lib.state.liveness import is_process_alive, is_spawn_genuinely_active
+from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.spawn_status import is_live
 from meridian.lib.telemetry.reader import discover_segments
 from meridian.lib.telemetry.retention import parse_segment_owner
 
@@ -118,7 +119,7 @@ def compute_status(
             # the runtime root from each segment so global status checks spawn
             # liveness against the owning project's runtime state.
             segment_runtime_root = segment.parent.parent
-            if is_spawn_genuinely_active(segment_runtime_root, owner.logical_owner):
+            if is_live(segment_runtime_root, owner.logical_owner):
                 writers.add(writer)
 
     legacy_count = 0

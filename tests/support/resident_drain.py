@@ -26,6 +26,7 @@ from meridian.lib.harness.semantics import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
@@ -242,6 +243,8 @@ def start_row(
     spawn_id: str,
     harness: HarnessId,
     parent_id: str | None,
+    *,
+    launch_lock: LaunchSlot | None = None,
 ) -> None:
     spawn_store.start_spawn(
         runtime_root,
@@ -253,6 +256,7 @@ def start_row(
         harness=harness.value,
         prompt="hello",
         status="running",
+        launch_lock=launch_lock,
     )
 
 

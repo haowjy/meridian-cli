@@ -45,7 +45,6 @@ from meridian.lib.platform.process_scope.base import (
 )
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
-from meridian.lib.streaming.heartbeat import heartbeat_loop
 
 from .native_launcher import native_sigint_shield
 from .ports import TUI_TERMINATE_GRACE_SECONDS, LaunchedProcess, ProcessLauncher, RunningProcess
@@ -218,7 +217,6 @@ class PrimaryAttachLauncher:
         self._metadata = _LauncherMetadata(managed_backend=True)
         self._metadata_lock = Lock()
         self._event_consumer_task: asyncio.Task[None] | None = None
-        self._heartbeat_task: asyncio.Task[None] | None = None
         self._idle_task: asyncio.Task[None] | None = None
         self._idle_error_reporter: idle_sidecar.SensorErrorReporter | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
@@ -315,10 +313,6 @@ class PrimaryAttachLauncher:
 
         if self._runtime_root is None:
             self._spawn_dir.mkdir(parents=True, exist_ok=True)
-        if self._runtime_root is not None:
-            self._heartbeat_task = asyncio.create_task(
-                heartbeat_loop(self._runtime_root, self._spawn_id)
-            )
         self._signal_cancel_requested = False
         cancel_receiver = SignalCallbackReceiver(
             target_signals=(signal.SIGTERM, signal.SIGHUP),
@@ -480,12 +474,6 @@ class PrimaryAttachLauncher:
                         )
                     self._event_consumer_task = None
                 await self._stop_idle_task()
-                heartbeat_task = self._heartbeat_task
-                if heartbeat_task is not None:
-                    heartbeat_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await heartbeat_task
-                    self._heartbeat_task = None
                 if connection_started:
                     await self._connection.stop()
             finally:

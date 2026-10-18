@@ -29,7 +29,7 @@ Importing the drain contract no longer pulls in Pi policy; the test suite for th
 
 Delivered in sequence: #369 (deterministic race repro + bounded history-phase
 polls; windows-gate CI demoted to non-blocking per POSIX-first decision) →
-#322 item 3 (shared `state/reconciliation.py`, parallel lane) → #371
+#322 item 3 (shared state-convergence policy, parallel lane) → #371
 (scaffolding deletion, net -178 production LOC; unreachable `cleaning` phase
 literal removed) → #370 (neutral `drain_teardown.py` vs `pi_drain_teardown.py`
 split, factory-injected resident descendant cancellation, import isolation
