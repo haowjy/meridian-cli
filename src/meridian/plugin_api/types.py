@@ -19,6 +19,7 @@ HookEventName = Literal[
     "work.done",
     "notify.your_turn",
     "notify.cache_expiring",
+    "notify.needs_permission",
     "notify.manual",
 ]
 
@@ -26,6 +27,7 @@ HookEventName = Literal[
 NOTIFICATION_EVENTS: tuple[HookEventName, ...] = (
     "notify.your_turn",
     "notify.cache_expiring",
+    "notify.needs_permission",
     "notify.manual",
 )
 HOOK_CONTEXT_SCHEMA_VERSION = 3

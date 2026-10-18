@@ -157,6 +157,7 @@ _GROUP_HELP: dict[str, GroupHelp] = {
             "config",
             "arm",
             "return",
+            "needs-permission",
             "fire",
             "done",
             "event",

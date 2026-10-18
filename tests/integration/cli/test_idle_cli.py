@@ -398,3 +398,84 @@ def test_idle_mod_path_wire_contract(tmp_path: Path) -> None:
     result = _run(tmp_path, _idle_env(tmp_path), "idle", "mod-path")
     assert (result.returncode, result.stderr) == (0, "")
     assert (Path(result.stdout.strip()) / ".claude-plugin" / "plugin.json").is_file()
+
+
+def test_idle_needs_permission_emits_once_and_its_notify_route_can_be_silenced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from meridian.lib.config.models import NotifyConfig
+    from meridian.lib.notify.channels import REGISTRY
+    from meridian.lib.notify.channels.base import SendResult
+    from meridian.plugin_api.types import Notification
+
+    delivered: list[tuple[str, Notification]] = []
+
+    class CaptureChannel:
+        name = "capture"
+        email = False
+
+        def send(
+            self,
+            notification: Notification,
+            cfg: NotifyConfig,
+            *,
+            event: str,
+        ) -> SendResult:
+            _ = cfg
+            delivered.append((event, notification))
+            return SendResult(channel=self.name, status="sent")
+
+    for key in tuple(os.environ):
+        if key.startswith(("MERIDIAN_", "_MERIDIAN_")) or key == "TMUX_PANE":
+            monkeypatch.delenv(key, raising=False)
+    home = tmp_path / "home"
+    project = tmp_path / "checkout"
+    project.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", (home / ".meridian").as_posix())
+    monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "capture")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_BACKEND", "none")
+    monkeypatch.setenv("MERIDIAN_SESSION_ROLE", "primary")
+    monkeypatch.setenv("_MERIDIAN_HARNESS", "claude")
+    monkeypatch.setitem(REGISTRY, "capture", CaptureChannel())
+    monkeypatch.chdir(project)
+
+    from meridian.cli.main import main
+
+    args = [
+        "idle",
+        "needs-permission",
+        "--harness",
+        "claude",
+        "--session",
+        "session-1",
+        "--message",
+        "Claude wants to use Bash",
+        "--interactive",
+    ]
+    with pytest.raises(SystemExit) as first_exit:
+        main(args)
+    assert first_exit.value.code == 0
+    assert json.loads(capsys.readouterr().out) == {}
+    assert len(delivered) == 1
+    event, notification = delivered[0]
+    assert event == "notify.needs_permission"
+    assert notification.title == "Claude needs permission"
+    assert notification.body == (
+        'Claude wants to use Bash\nclaude in project: "checkout"'
+    )
+
+    (project / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'builtin = "notify"\n'
+        'event = "notify.needs_permission"\n'
+        "enabled = false\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit) as silenced_exit:
+        main(args)
+    assert silenced_exit.value.code == 0
+    assert json.loads(capsys.readouterr().out) == {}
+    assert len(delivered) == 1
+    assert not (home / ".meridian" / "idle").exists()

@@ -13,6 +13,7 @@ STAGE_EVENTS: dict[Literal["push", "warn"], HookEventName] = {
     "push": "notify.your_turn",
     "warn": "notify.cache_expiring",
 }
+NEEDS_PERMISSION_EVENT: HookEventName = "notify.needs_permission"
 
 
 def _body(lines: list[str | None], *, fallback: str | None = None) -> str:
@@ -78,4 +79,21 @@ def stage_notice(
     )
 
 
-__all__ = ["STAGE_EVENTS", "stage_notice"]
+def needs_permission_notice(message: str, label: SessionLabel) -> Notification:
+    """Build a stateless notice from Claude's still-waiting prompt signal."""
+
+    return Notification(
+        title="Claude needs permission",
+        body=_body([message.strip(), label.headline]),
+        priority=3,
+        email=False,
+        label=label.to_dict(),
+    )
+
+
+__all__ = [
+    "NEEDS_PERMISSION_EVENT",
+    "STAGE_EVENTS",
+    "needs_permission_notice",
+    "stage_notice",
+]

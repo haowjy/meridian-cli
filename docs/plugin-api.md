@@ -23,10 +23,10 @@ print(api.__version__)  # "3.0.0"
 | `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name |
 | `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `details` |
 | `HookOutcome` | `"success"` \| `"failure"` \| `"timeout"` \| `"skipped"` |
-| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, `notify.manual` |
+| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, `notify.needs_permission`, `notify.manual` |
 | `SpawnKind` | Spawn kind literal — `"child"` \| `"primary"` \| `"streaming"` |
 | `SpawnStatus` | Hook terminal status literal — `"success"` \| `"failure"` \| `"cancelled"` \| `"timeout"` |
-| `NOTIFICATION_EVENTS` | The three notification events, which carry `HookContext.notification` |
+| `NOTIFICATION_EVENTS` | The four notification events, which carry `HookContext.notification` |
 | `Notification` | One notice — `title`, `body`, `priority` (1–5), `email`, `label` (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), `attachments` (absolute file paths) |
 
 `HookResult.details` is a mapping that builtin hook implementations may set with

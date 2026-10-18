@@ -54,6 +54,7 @@ function install(on: On, h: Host) {
   on('turn.start', () => ({ turnId: 't1' }))
   on('turn.complete', () => ({ text: '' }))
   on('classic.Stop', () => ({}))
+  on('classic.Notification', () => ({}))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('command.run', () => ({ text: '' }))
   return clock
@@ -239,4 +240,31 @@ test('arm forwards the work the main loop left running, from its Stop list', asy
   expect(tasks[5]).toEqual({ kind: 'other' })
   expect(arm).toContain('--assistant-text=done')
   expectCliContract(h)
+})
+
+test('only permission prompts are forwarded and a failing CLI does not fail the hook', async ($, on) => {
+  const h = host()
+  const clock = install(on, h)
+  const message = 'Claude needs your permission to use Bash'
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.classic.Notification({ message, notification_type: 'permission_prompt' } as never)
+  await clock.advance(0)
+
+  expect(calls(h, 'needs-permission')).toEqual([[
+    'needs-permission', '--harness', 'claude', '--session', 'sess-1',
+    `--message=${message}`, '--interactive',
+  ]])
+
+  await $.classic.Notification({ message: 'Waiting for input', notification_type: 'idle_prompt' } as never)
+  await clock.advance(0)
+  expect(calls(h, 'needs-permission')).toHaveLength(1)
+
+  h.reply['needs-permission'] = () => {
+    throw new Error('meridian failed')
+  }
+  await $.classic.Notification({ message, notification_type: 'permission_prompt' } as never)
+  await clock.advance(0)
+  expect(calls(h, 'needs-permission')).toHaveLength(2)
 })
