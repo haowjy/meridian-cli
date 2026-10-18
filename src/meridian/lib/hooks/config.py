@@ -33,6 +33,10 @@ class HooksConfig:
     hooks: tuple[Hook, ...]
 
 
+class HookConfigError(ValueError):
+    """A syntactically readable config contains invalid hook rows."""
+
+
 def default_hooks_config() -> HooksConfig:
     """Return Meridian's built-in lowest-precedence hook layer."""
 
@@ -83,6 +87,9 @@ def load_hooks_config(
         authority=authority,
         user_config=user_config,
     ):
-        hooks.extend(_hooks_from_payload(layer.payload, source=layer.name))
+        try:
+            hooks.extend(_hooks_from_payload(layer.payload, source=layer.name))
+        except ValueError as exc:
+            raise HookConfigError(str(exc)) from None
 
     return HooksConfig(hooks=_apply_name_overrides(tuple(hooks)))

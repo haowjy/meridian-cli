@@ -64,7 +64,7 @@ def emit(
 ) -> SendReport:
     """Fire the notification's hook event and report what its routes delivered."""
 
-    from meridian.lib.hooks.config import default_hooks_config
+    from meridian.lib.hooks.config import HookConfigError, default_hooks_config
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.hooks.registry import HookRegistry
     from meridian.lib.hooks.types import HookContext
@@ -81,11 +81,9 @@ def emit(
         work_id=notification.label.get("work_id"),
         notification=notification,
     )
-    config_warning: str | None = None
     try:
         dispatcher = HookDispatcher(project_root, runtime_root, env=env)
-    except (OSError, ValueError) as exc:
-        config_warning = f"invalid hook configuration; using default notification routes: {exc}"
+    except HookConfigError as exc:
         logger.warning(
             "notification_hook_config_invalid",
             hook_event=event,
@@ -101,13 +99,7 @@ def emit(
             ),
         )
 
-    report = report_from_hooks(event, dispatcher.fire(context))
-    if config_warning is not None:
-        return SendReport(
-            results=report.results,
-            warnings=(config_warning, *report.warnings),
-        )
-    return report
+    return report_from_hooks(event, dispatcher.fire(context))
 
 
 __all__ = ["emit", "report_from_hooks"]

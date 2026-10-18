@@ -123,8 +123,7 @@ def test_emit_uses_the_default_route_when_hook_config_is_invalid(
     (tmp_path / "meridian.toml").write_text(
         "[[hooks]]\n"
         'builtin = "notify"\n'
-        'event = "notify.manual"\n'
-        "options = { unknown = true }\n",
+        'event = "not.an.event"\n',
         encoding="utf-8",
     )
 
@@ -140,6 +139,5 @@ def test_emit_uses_the_default_route_when_hook_config_is_invalid(
     assert [(result.channel, result.status) for result in report.results] == [
         ("notify", "sent")
     ]
-    assert any("unknown" in warning for warning in report.warnings)
     fallback_log = next(log for log in logs if log["event"] == "notification_hook_config_invalid")
-    assert "unknown" in str(fallback_log["error"])
+    assert "not.an.event" in str(fallback_log["error"])

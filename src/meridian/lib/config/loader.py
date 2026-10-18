@@ -152,11 +152,13 @@ def _normalize_toml_payload(
     *,
     payload: dict[str, object],
     path: Path,
+    validate_hooks: bool = True,
 ) -> _NormalizedConfigLayer:
     try:
         return _normalize_toml_payload_values(
             payload=payload,
             path=path,
+            validate_hooks=validate_hooks,
         )
     except ValueError as error:
         message = str(error)
@@ -169,12 +171,15 @@ def _normalize_toml_payload_values(
     *,
     payload: dict[str, object],
     path: Path,
+    validate_hooks: bool,
 ) -> _NormalizedConfigLayer:
     normalized: dict[str, object] = {}
     dynamic: dict[str, object] = {}
     for key, raw_value in payload.items():
         if key == "project":
             # Identity is read by the precedence-exempt minimal loader.
+            continue
+        if key == "hooks" and not validate_hooks:
             continue
         if key == _LEGACY_AGENTS_SECTION:
             raise _legacy_agents_section_error(path=path)
@@ -298,11 +303,12 @@ def _record_layer_sources(
         sources[path] = ConfigValueSource(path=path, source=source)
 
 
-def load_config_with_sources(
+def _load_config_with_sources(
     project_root: Path,
     *,
     authority: _ProjectAuthorityLike | None = None,
     user_config: Path | None = None,
+    validate_hooks: bool,
 ) -> LoadedConfig:
     """Load validated config and provenance across all precedence layers.
 
@@ -326,6 +332,7 @@ def load_config_with_sources(
         normalized = _normalize_toml_payload(
             payload=layer.payload,
             path=layer.path,
+            validate_hooks=validate_hooks,
         )
         values = merge_nested_dict_values(
             values,
@@ -356,6 +363,22 @@ def load_config_with_sources(
     )
 
 
+def load_config_with_sources(
+    project_root: Path,
+    *,
+    authority: _ProjectAuthorityLike | None = None,
+    user_config: Path | None = None,
+) -> LoadedConfig:
+    """Load validated config and provenance across all precedence layers."""
+
+    return _load_config_with_sources(
+        project_root,
+        authority=authority,
+        user_config=user_config,
+        validate_hooks=True,
+    )
+
+
 def load_config(
     project_root: Path,
     *,
@@ -368,6 +391,22 @@ def load_config(
         project_root,
         authority=authority,
         user_config=user_config,
+    ).config
+
+
+def load_config_without_hooks(
+    project_root: Path,
+    *,
+    authority: _ProjectAuthorityLike | None = None,
+    user_config: Path | None = None,
+) -> MeridianConfig:
+    """Load operational config without revalidating independently loaded hook rows."""
+
+    return _load_config_with_sources(
+        project_root,
+        authority=authority,
+        user_config=user_config,
+        validate_hooks=False,
     ).config
 
 

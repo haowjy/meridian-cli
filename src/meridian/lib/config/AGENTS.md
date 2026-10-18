@@ -43,6 +43,10 @@ against `MeridianConfig`, then merges user → project → local → env.
 `load_config_with_sources()` retains typed dynamic sections and field provenance for
 inspection; `load_config()` returns its final `MeridianConfig`. Do not add implicit
 Pydantic settings sources (no `pydantic-settings`) or ambient loader state.
+`load_config_without_hooks()` is reserved for the built-in notification route,
+whose registry has already validated hook rows. It keeps `[notify]` precedence
+without validating those rows twice; after `emit` catches a hook-row error, that
+separation lets the default route still load its transport settings.
 
 **The models are the only validation path.** Every config shape is a Pydantic model
 (`models.py`, `harness_models.py`, `history_models.py`) rooted at `MeridianConfig`,

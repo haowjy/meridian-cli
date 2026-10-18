@@ -4,8 +4,8 @@ Hooks fire at spawn, work and notification events for side effects: syncing, not
 
 Notification events (`session.responded`, `session.cache_expiring`, `notify.manual`) carry `HookContext.notification`. Delivering them is itself a hook: the built-in `notify` routes them to transports, and `config.py` supplies a `notify` row per notification event as the lowest layer (source `default`). An unnamed `builtin = "notify"` row is named `notify`, so a row for an event, even disabled, replaces that event's default by the ordinary `(name, event)` override. Command hooks on these events are the extension channels. A notification's emitter (`lib/notify/emit.py`) reports route failures itself, so the dispatcher logs them at info.
 
-If configured hook rows do not load, notification emission logs and reports the
-error, then dispatches against only that default layer. Direct hook inspection
+If configured hook rows do not load, notification emission logs the error,
+then dispatches against only that default layer. Direct hook inspection
 still raises the config error; the fallback exists only so idle notifications
 survive an unrelated broken hook row.
 

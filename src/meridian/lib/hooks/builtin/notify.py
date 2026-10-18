@@ -62,7 +62,7 @@ class NotifyHook:
     def execute(self, context: HookContext, config: Hook) -> HookResult:
         from dataclasses import replace
 
-        from meridian.lib.config.loader import load_config
+        from meridian.lib.config.loader import load_config_without_hooks
         from meridian.lib.notify.service import send
 
         start = time.monotonic()
@@ -74,7 +74,7 @@ class NotifyHook:
             notification = replace(notification, priority=options.priority)
         report = send(
             notification,
-            load_config(Path(context.project_root)).notify,
+            load_config_without_hooks(Path(context.project_root)).notify,
             event=context.event_name,
             channels=options.channels,
         )

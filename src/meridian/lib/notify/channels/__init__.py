@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import Channel, SendResult
-from meridian.plugin_api.types import Notification
+
+if TYPE_CHECKING:
+    from meridian.lib.config.models import NotifyConfig
+    from meridian.plugin_api.types import Notification
 
 
 @dataclass(frozen=True)
