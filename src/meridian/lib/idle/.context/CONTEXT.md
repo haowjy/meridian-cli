@@ -8,8 +8,9 @@ OpenCode). If the guard list, the at-most-once stage rule and config precedence
 lived in the adapters, four copies would drift, and the hard cases (late timers,
 reloads, work still running when a turn ends) would be solved four times. So
 adapters report facts and run the timers core places, and this package decides,
-including whether a human-needed signal releases a push held by that running
-work. `lib/harness` never imports it, which an AST layering test enforces.
+including how a persisted human-needed signal changes arms until its correlated
+answer arrives as a return. `lib/harness` never imports it, which an AST
+layering test enforces.
 The launcher-hosted sidecar exists because Codex and OpenCode primaries already
 have a Meridian process holding the backend connection for the whole session,
 so no plugin is needed there. Full record, including rejected alternatives:

@@ -34,3 +34,8 @@
   (`on_raw_event`, `async stop()`) so the launcher keeps three lines and the
   reporter has one owner (thermo F8, about −40 lines).
 - `service.py` `fire`: a stage is persisted `sent` before the sender runs, so a crash between the claim and the send loses that one notice (at-most-once, pre-existing on main; it keeps the mod and the sidecar from both pushing). If lost pushes show up in practice, add a `sending` state that `recover` resends after a bounded age instead of a plain `sent` claim.
+- `claude_runtime/meridian-idle`: unlike the launcher sidecar, the mod does not
+  check whether the primary is busy before firing a due push. When finishing
+  background work starts a new main-loop turn, a timer can therefore push
+  mid-turn. This predates running-work holds; share a host-busy fact with core
+  rather than adding adapter-local scheduling policy.

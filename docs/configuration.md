@@ -302,9 +302,17 @@ turn left running:
 
 If Claude is holding the push for running work and any tool, including one in a
 background subagent, stops for a permission decision, the human is needed now.
-That signal releases the hold and schedules the push after `push_seconds`; it
-does not move or restore the cache warning. A permission prompt does nothing
-when no push is currently held.
+Meridian records that need even when the main turn is still running. The signal
+releases an existing hold and schedules the push after `push_seconds`; any
+later arm while the prompt remains pending schedules instead of holding the
+push. It does not move or restore the cache warning.
+
+Approving or denying the prompted tool call is a user return. It closes the
+stretch and cancels the released timer; when the agent later finishes, that
+wake turn arms a fresh push. The Claude mod correlates the permission request
+to that tool call, so an auto-allowed call does not count. A downstream hook
+that supplies the permission decision prevents both the human-needed report
+and this answer-as-return path.
 
 Otherwise the warning arms after every turn, even while the push is held. Only
 the Claude mod reports running work today, using a bounded snapshot so a large

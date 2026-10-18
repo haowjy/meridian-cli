@@ -25,10 +25,11 @@ compact; harnesses compact on their own. It is policy, not a harness adapter:
   (`push_owed_since_ms`) until a push is delivered or the user returns. A known
   wake before cache expiry drops the warning.
 - A harness reports that it needs the human through `IdleService.human_needed`.
-  Only a push currently held by certain running work is released: re-anchor it
-  at `push_seconds` and preserve the cache-warning deadline. No stretch, a
-  closed stretch, a done push, or a push not held by work is a no-op. Adapters
-  never decide whether to release a push.
+  Persist that fact even with no open stretch, until the next return. Release a
+  push currently held by certain running work at `push_seconds`, preserve the
+  cache-warning deadline, and never let a later arm hold the push while the fact
+  remains. Adapters report the prompt and its correlated answer; they never
+  decide whether to release or schedule a push.
 - Authoritative state lives in `../state/idle_store.py`; sidecar timers are
   disposable and reconstructed from that state.
 - A primary reopen through Meridian closes any open stretch in the launcher

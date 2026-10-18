@@ -312,10 +312,11 @@ cache warning should still be sent. Humans normally use only:
 | `meridian idle status [--json]` | List open idle stretches and their stored schedules |
 | `meridian idle mod-path` | Print the bundled Claude idle mod directory for an external-TUI opt-in |
 
-The adapter subcommands are `config`, `arm`, `return`, `fire`, and `event`;
-run `meridian idle --help` for their typed contract. Outside-Meridian adapters
-must pass `--interactive` on every call. An explicit spawn role stays disabled
-even with that flag.
+The adapter subcommands are `config`, `arm`, `human-needed`, `return`, `fire`,
+and `event`; run `meridian idle --help` for their typed contract.
+`human-needed` records a permission prompt; its answer uses the existing
+`return` command. Outside-Meridian adapters must pass `--interactive` on every
+call. An explicit spawn role stays disabled even with that flag.
 
 See [configuration.md](configuration.md#notifications-and-idle-sessions) for
 notification backends, idle timers, how running work affects the push,
