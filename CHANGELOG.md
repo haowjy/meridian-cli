@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.24] - 2026-10-18
+
 ### Fixed
 - Spawn status follows runner-lifetime lock. Dead runner reads `failed`/`crashed` on next read: no 120 s heartbeat window, no 30 s PID-reuse slack. Cancel requested → `cancelled`; cancel-all now converges dead stored-active launches instead of skipping their derived terminal view. Behaviour change: runner killed mid-finalize, or managed primary SIGKILLed, now `crashed` (was `succeeded` / `cancelled` 130); cancel of dead spawn with report but no outcome → `cancelled` (was `succeeded`). Unloadable spawn row for another chat, or with free lock, no longer blocks resume. `doctor` warns `dead_spawns_unfinalized`; `--kill-orphans` persists outcome. Heartbeat and launch-boundary files gone. (#663)
 
