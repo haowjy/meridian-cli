@@ -10,11 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 - `command` notify backend, `push_command`/`email_command`, `MERIDIAN_NOTIFY_PUSH_COMMAND`/`_EMAIL_COMMAND`: use a command hook on the notification events. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
-- Meridian idle compaction, end to end. Idle now sends only the "your turn" push and the cache warning. Gone: `idle.compact`, `idle.compact_minutes`, `idle.compact_min_growth_tokens`, `[harness.<h>.idle] compact`/`compact_min_growth_tokens`, their `MERIDIAN_*IDLE_COMPACT*` env vars, `meridian idle done`, `idle fire` fact flags, `idle arm --context-tokens`, `[compacted]`/`[compaction failed]`/`[compaction skipped]` notices, status COMPACT column. Harness-native compaction (Claude Code 2.1.299+, Codex, OpenCode, Pi) untouched. Old idle state files are dropped; open stretches start fresh. See [upgrade note](docs/upgrading.md#idle-compaction-removed).
 
 ### Changed
-- `idle arm` takes `--background-tasks JSON` (`[{"kind": "agent|shell|watcher|other", "command": ...}]`); core decides what running work means. Claude mod forwards the `Stop` hook's background tasks. Codex/OpenCode/Pi report none yet (#669).
-- Cache warning says "reply to keep it warm".
 - `meridian notify "<title>" ["<body>"]`: title positional, body optional, session headline always ends body. `--title` gone. Results: one per route (`notify` = default route), with successful transports named in text and `transports` in JSON; failed route's error names failed transports; `label` top-level in `--json`. No route ran = warning, exit 0. (#670)
 - `MERIDIAN_HOOKS_ENABLED=false` also silences notifications. Hooks (and `hooks run`) run without project runtime state; only `interval` hooks skip there. (#670)
 - Builtin hook rows validate `options` and supported events against the builtin's own metadata; unknown keys error. `hooks list` drops `registration` column. Unnamed `git-autosync` rows named from `remote`/`path` only. (#670)
@@ -29,6 +26,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A failing notification route is reported once, not also as a hook warning log. (#670)
 - `config show` names each valid hook once and counts invalid rows. `hooks run` treats registrations differing only by event as one hook (runs once as its last registered event, any `--event` allowed), requires `--event` only when command, options, timeout or failure policy differ, preserves builtin event limits, and points notification-only builtins to `meridian notify`. Hook commands continue to follow the current directory instead of an inherited session project. (#670)
 - Logging no longer caches each module logger's first configuration.
+
+## [0.10.27] - 2026-10-18
+
+### Removed
+- Meridian idle compaction, end to end. Idle now sends only the "your turn" push and the cache warning. Gone: `idle.compact`, `idle.compact_minutes`, `idle.compact_min_growth_tokens`, `[harness.<h>.idle] compact`/`compact_min_growth_tokens`, their `MERIDIAN_*IDLE_COMPACT*` env vars, `meridian idle done`, `idle fire` fact flags, `idle arm --context-tokens`, `[compacted]`/`[compaction failed]`/`[compaction skipped]` notices, status COMPACT column. Harness-native compaction (Claude Code 2.1.299+, Codex, OpenCode, Pi) untouched. Old idle state files are dropped; open stretches start fresh. See [upgrade note](docs/upgrading.md#idle-compaction-removed).
+
+### Changed
+- `idle arm` takes `--background-tasks JSON` (`[{"kind": "agent|shell|watcher|other", "command": ...}]`); core decides what running work means. Claude mod forwards the `Stop` hook's background tasks. Codex/OpenCode/Pi report none yet (#669).
+- Cache warning says "reply to keep it warm".
+
+### Fixed
 - Claude primary no longer pushes "waiting on you" while subagents, workflows, or a shell-ending foreground `meridian spawn` creation/wait runs; the turn they wake pushes instead, timed from your last prompt until a push is delivered. Endless loops, spawn management, detached creation, and commands followed by more work only delay the push. Monitors ignored.
 - Running-work detection treats unescaped, unquoted newlines and shell comments as command boundaries and redirections as part of their command. Unknown task kinds become `other`, and Claude bounds task snapshots so oversized lists no longer make the idle arm fail.
 - Explicit `spawn wait --timeout` uses its minutes-valued hard deadline, not the yield interval, when deciding whether the wait keeps the cache warm.
