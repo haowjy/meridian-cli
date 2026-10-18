@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels import resolve_channel
 from meridian.lib.notify.channels.base import SendResult
 from meridian.plugin_api.types import Notification
 
-_ALL_NONE_WARNING = "notification disabled: every selected backend is none"
 # The configured push backend, and the email backend when the notification wants email.
 DEFAULT_CHANNELS: tuple[str, ...] = ("push", "email")
 
@@ -82,10 +81,7 @@ def send(
         results.append(result)
 
     warnings = tuple(result.warning for result in results if result.warning is not None)
-    report = SendReport(results=tuple(results), warnings=warnings)
-    if results and report.all_none:
-        report = replace(report, warnings=(*report.warnings, _ALL_NONE_WARNING))
-    return report
+    return SendReport(results=tuple(results), warnings=warnings)
 
 
 __all__ = ["DEFAULT_CHANNELS", "SendReport", "send"]

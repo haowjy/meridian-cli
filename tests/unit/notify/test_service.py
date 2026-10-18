@@ -70,7 +70,7 @@ def test_send_fails_when_all_channels_fail(monkeypatch: pytest.MonkeyPatch) -> N
     assert report.exit_code == 1
 
 
-def test_send_treats_all_none_as_success_with_warning() -> None:
+def test_send_treats_all_none_as_quiet_success() -> None:
     report = send(
         _NOTICE, NotifyConfig(push_backend="none", email_backend="none"), event="notify.manual"
     )
@@ -78,7 +78,8 @@ def test_send_treats_all_none_as_success_with_warning() -> None:
     assert report.ok is True
     assert report.exit_code == 0
     assert [result.status for result in report.results] == ["none"]
-    assert report.warnings == ("notification disabled: every selected backend is none",)
+    assert report.all_none
+    assert report.warnings == ()
 
 
 def test_an_email_backend_named_directly_still_honours_no_email(

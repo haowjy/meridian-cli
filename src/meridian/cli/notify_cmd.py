@@ -28,6 +28,9 @@ def _render_report(
     sink = current_output_sink()
     for warning in report.warnings:
         sink.warning(warning)
+    if report.results and report.all_none:
+        # A deliberate `none` is quiet for idle; only the person who asked is told.
+        sink.warning("notification disabled: every selected backend is none")
 
     for result in report.results:
         if result.status == "failed":
