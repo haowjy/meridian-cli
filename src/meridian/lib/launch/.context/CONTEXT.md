@@ -457,66 +457,60 @@ blocks and out of `SystemInstruction`.
 
 ### Skill Loading — Bundle as Sole Interface
 
-Skill content comes from the Mars launch-bundle JSON (`skills.loaded[]`), not from
-reading `.mars/skills/` on disk. Mars owns the `.mars/` directory schema, skill
-variant resolution, and compilation. Meridian consumes the structured output:
+Skill content comes from the Mars launch-bundle JSON (parsed in
+`bundle_adapter.py`), not from reading `.mars/skills/` on disk. Mars reads the agent profile's `skills:` (a flat list
+means all `load`; a mapping has `load` and `available`), adds the `--skills`
+names Meridian passes as `--skill` to `load`, selects the harness variant, and
+returns:
 
 ```
-Mars launch-bundle → skills.loaded[{name, skill_type, body}]
-                          │
-                          ▼
-_build_resolved_skills_from_bundle()  ← policies.py
-                          │
-                          ▼
-ResolvedSkills.loaded_skills: tuple[SkillContent, ...]
+skills.loaded[{name, skill_type, source_path, body}]   → _build_resolved_skills_from_bundle()
+                                                          → ResolvedSkills.loaded_skills
+skills.available[{name, skill_type, description, source_path}] → available listing (names only)
+skills.missing[name]                                   → warning, not a failed launch
 ```
 
-`_build_resolved_skills_from_bundle` in `policies.py` constructs `SkillContent`
-objects with synthetic paths (`project_root/.mars/skills/{name}/SKILL.md`) for
-downstream heading rendering and snapshot persistence. The parser reads the
-`body` field from each `skills.loaded[]` entry (mars >= 0.8).
+Neither list is filtered by `model-invocable`. A loaded skill is composed in full
+whatever its value; `model-invocable` only decides whether the harness's own
+skill list shows it, and that list is not how loaded skills arrive. Don't add an
+invocability check on this path. The skill block header (`# Skill: /<name>`,
+`_render_skill_block()` in `prompt_context.py`) tells the agent the skill is
+already loaded, because agents otherwise look for it in the harness list, miss
+it, and skip it.
+
+`SkillContent.path` is the bundle's `source_path` (the base `SKILL.md`, even when
+a variant body was selected); a reconstructed primary-root path is only the
+fallback for producers that omit it. The header's resource directory comes from
+this path.
 
 **`resolve_skills_from_profile()` still exists** for the snapshot replay path
 (`policy_snapshot.py`) — when replaying from a persisted snapshot whose
 `loaded_skills` field is empty (pre-bundle snapshots), it falls back to disk
-loading. New snapshots always persist `loaded_skills`, so this path is legacy compat.
+loading through `SkillRegistry`, which still has a model-level variant ladder the
+bundle doesn't implement. New snapshots always persist `loaded_skills`, so this
+path is legacy compat.
 
-### Skill Injection Channels
+### Loaded Skills Are Composition Documents
 
-Two distinct channels deliver loaded skill content to agents. They are controlled
-by separate capability flags and must not be conflated:
+Loaded skills reach the agent one way on every harness, primary and spawn:
+`compose_skill_prompt_documents()` turns them into supplemental documents in
+`_build_spawn_composed_launch_content()` and `_resolve_primary_projection()`, and
+harness projection places them in the system prompt after the agent profile.
+Bind-time re-projection rebuilds from the same composed content, so the skills
+survive it without special handling.
 
-**Channel 1 — `supplemental_documents`** (prompt-embedded):
-Populated by `compose_skill_prompt_documents()` in `_resolve_spawn_prepare_projection()`
-and `_resolve_primary_projection()`. **Gated on `not harness.capabilities.supports_native_skills`.**
-When the harness supports native skills (currently Claude, Codex, and OpenCode), this
-channel is suppressed — `supplemental_documents` is set to an empty tuple.
+Don't add a second channel keyed on a harness capability. A native skill list
+shows only model-invocable skills, so a loaded skill that isn't model-invocable
+reaches the agent only through composition. Claude reads the appended prompt from
+`system-prompt.md` (`--append-system-prompt-file`), which `write_projection_artifacts()`
+writes from the full appended prompt, not `projected.system_prompt`: post-projection
+additions such as the source-edit-directory instruction live only there.
 
-**Channel 2 — `append-system-prompt`** (Claude spawns only):
-Populated by `compose_skill_injections()` in `_prepare_spawn_surface()` when
-`harness.run_prompt_policy().skill_injection_mode == "append-system-prompt"`.
-This channel is **not** gated on `supports_native_skills` — it is preserved for
-Claude spawn skill injection via `--append-system-prompt`.
-
-### `prepare_prompt_payload` or-chain Pitfall
-
-`prepare_prompt_payload(projected_content=X, appended_system_prompt=Y)` silently drops
-`Y` when `X` is present — the implementation prefers projected content and the
-or-chain short-circuits. Callers that need both (projected user-turn content from
-`project_content()` **and** an appended system prompt for Claude skill injection) must
-construct `PreparedPromptPayload` directly:
-
-```python
-PreparedPromptPayload(
-    adhoc_agent_payload=...,
-    appended_system_prompt=appended_system_prompt,  # not dropped
-    user_turn_content=content.prompt_payload.user_turn_content,
-)
-```
-
-`_prepare_spawn_surface()` uses direct construction for this reason. Avoid calling
-`prepare_prompt_payload()` in any path where both projected content and an appended
-system prompt must coexist.
+Composition is not delivery on every transport. OpenCode v2 streaming hands the
+prompt to `opencode serve` only as an instructions file, which v2 ignores, and
+the `opencode run` projection drops `appended_system_prompt`. Agents on those
+paths get no loaded skills. That is a harness-connection gap, not a reason to
+add a skill channel here.
 
 ## Patterns
 

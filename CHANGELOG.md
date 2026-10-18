@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Claude agents get their loaded skills again: `system-prompt.md`, the file Claude reads, had none. Every harness now carries loaded skills in the normal system prompt position, after the agent profile. (#661)
+
 ## [0.10.22] - 2026-10-18
 
 ### Added
