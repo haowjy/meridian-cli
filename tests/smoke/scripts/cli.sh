@@ -68,7 +68,6 @@ _rootless_case kg-check "" kg check
 _rootless_case kg-graph "" kg graph
 _rootless_case qi-check "" qi check
 _rootless_case qi-list $'agents\tAGENTS.md' qi list
-_rootless_case qi-claude-md-fix "[DRY-RUN] would create CLAUDE.md" qi claude-md-fix --dry-run
 _rootless_case mermaid-check "" mermaid check
 _rootless_case config-show "project_root:" config show
 _rootless_case config-get-max-depth "defaults.max_depth:" config get defaults.max_depth

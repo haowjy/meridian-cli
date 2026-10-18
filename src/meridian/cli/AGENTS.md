@@ -50,7 +50,6 @@ argv
 |---|---|---|
 | `TRIVIAL` | `--help`, `--version` | none |
 | `READ_ROOTLESS` | `doctor`, `qi`, `kg check`, `config show` | none |
-| `WRITE_ROOTLESS` | `qi claude-md-fix` | none |
 | `READ_PROJECT` | `context`, `hooks list` | `prepare_for_project_read()` |
 | `READ_RUNTIME` | `spawn list`, `session log` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `config init` | `prepare_for_project_write()` |

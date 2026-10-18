@@ -460,7 +460,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_rootless(("qi",), "Show inline knowledge for current path."),
     _read_rootless(("qi", "list"), "List all inline knowledge locations."),
     _read_rootless(("qi", "check"), "Check inline knowledge health."),
-    _write_rootless(("qi", "claude-md-fix"), "Create CLAUDE.md mirrors for AGENTS.md files."),
     _write_runtime(("streaming", "test"), "Run streaming test."),
     _descriptor(
         ("streaming", "serve"),

@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- `meridian qi claude-md-fix` gone. Claude Code reads `AGENTS.md` itself; repo's `@AGENTS.md` `CLAUDE.md` mirrors deleted.
+
 ## [0.11.3] - 2026-10-21
 
 ### Upgrade notes
