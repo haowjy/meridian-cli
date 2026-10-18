@@ -70,7 +70,6 @@ def append_text_to_stderr_log(
     stderr_path: Path,
     text: str,
 ) -> None:
-    stderr_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with stderr_path.open("rb") as handle:
             handle.seek(-1, os.SEEK_END)

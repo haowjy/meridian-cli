@@ -49,14 +49,12 @@ from meridian.lib.ops.spawn.api import (
     SpawnStatusInput,
     SpawnSubagentsInput,
     SpawnWaitInput,
-    SpawnWrittenFilesInput,
     spawn_cancel_all_sync,
     spawn_cancel_sync,
     spawn_children_sync,
     spawn_continue_sync,
     spawn_create_sync,
     spawn_done_sync,
-    spawn_files_sync,
     spawn_fork_sync,
     spawn_list_sync,
     spawn_rearm_sync,
@@ -297,7 +295,7 @@ def _spawn_create(
             help="Inline literal prompt.",
         ),
     ] = None,
-    *,
+    *extra_positional: Annotated[str, Parameter(show=False)],
     ignore_direnv: Annotated[
         bool | None,
         Parameter(help="Undo inherited direnv changes before launching the harness."),
@@ -601,6 +599,10 @@ def _spawn_create(
         ),
     ] = (),
 ) -> None:
+    if extra_positional:
+        _validate_positional_spawn_prompt(positional_prompt, subcommands=subcommands)
+        raise ValueError(f"unexpected positional arguments: {', '.join(extra_positional)}")
+
     # Passthrough lives on GlobalOptions, not a function parameter — see
     # _split_passthrough_args() for why cyclopts can't handle ``--`` correctly.
     passthrough = get_global_options().passthrough_args
@@ -1138,33 +1140,6 @@ def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
         return None
 
 
-def _spawn_files(
-    emit: Emitter,
-    spawn_id: Annotated[
-        str,
-        Parameter(
-            help=("Spawn ID. Lists the files this spawn changed, one per line."),
-        ),
-    ],
-    null: Annotated[
-        bool,
-        Parameter(name=["-0", "--null"], help="Null-delimited output for xargs -0."),
-    ] = False,
-) -> None:
-    result = spawn_files_sync(
-        SpawnWrittenFilesInput(spawn_id=spawn_id),
-        sink=current_output_sink(),
-        prepared=_prepare_spawn_runtime_read(),
-    )
-    if null and result.written_files:
-        import sys
-
-        sys.stdout.write("\0".join(result.written_files))
-        sys.stdout.flush()
-    else:
-        emit(result)
-
-
 def _spawn_subagents(emit: Emitter) -> None:
     emit(
         spawn_subagents_sync(
@@ -1294,7 +1269,6 @@ def register_spawn_commands(app: App) -> None:
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.spawn.subagents": lambda: partial(_spawn_subagents, emit),
         "meridian.spawn.children": lambda: partial(_spawn_children, emit),
-        "meridian.spawn.files": lambda: partial(_spawn_files, emit),
         "meridian.spawn.list": lambda: partial(_spawn_list, emit),
         "meridian.spawn.stats": lambda: partial(_spawn_stats, emit),
         "meridian.spawn.show": lambda: partial(_spawn_show, emit),

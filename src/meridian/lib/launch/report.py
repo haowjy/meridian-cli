@@ -34,7 +34,7 @@ def extract_or_fallback_report(
     report_path = spawn_dir / REPORT_FILENAME
     try:
         report = report_path.read_text(encoding="utf-8", errors="ignore").strip()
-    except (FileNotFoundError, OSError):
+    except OSError:
         report = ""
     if report and not _is_terminal_control_frame(report):
         return ExtractedReport(content=report, source="report_md")

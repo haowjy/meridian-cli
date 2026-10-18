@@ -92,10 +92,10 @@ unverified.
   re-anchoring, so model per-window deadlines and total lifetime as separate
   clocks.
 - **[39] Diff/change-preview surface** (claude-squad/vibe-kanban/crystal all have
-  first-class diff viewers) → adopted as a design issue, corrected: `meridian
-  spawn files` keeps an empty command surface after its unwritten artifact-manifest
-  protocol was removed; worktrees are not auto-provisioned; the real gap is a
-  git-optional diff against a **recorded base**, not naive `git diff` in a
+  first-class diff viewers) → adopted as a design issue, corrected: the empty
+  spawn file-listing command was removed because its unwritten artifact-manifest
+  protocol had no producer; worktrees are not auto-provisioned; the real gap is
+  a git-optional diff against a **recorded base**, not naive `git diff` in a
   possibly-shared checkout.
 
 ### Move rejected — steals refuted

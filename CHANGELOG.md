@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Per-spawn files live only in the spawn dir; runtime `artifacts/` store gone (legacy dirs still pruned). Runner start and guardrail failure text now lands in the spawn's `stderr.log`. (#677)
+
+### Removed
+- `meridian spawn files` removed: never had a producer, always empty. (#677)
+
 ## [0.10.26] - 2026-10-18
 
 ### Fixed

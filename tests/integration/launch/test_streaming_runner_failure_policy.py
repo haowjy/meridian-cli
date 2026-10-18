@@ -359,3 +359,6 @@ async def test_guardrail_failure_does_not_rerun_harness(
     assert row is not None and row.terminal is not None
     assert row.status == "failed"
     assert row.terminal.error == "guardrail_failed"
+    assert (runtime_root / "spawns" / str(run.spawn_id) / "stderr.log").read_text(
+        encoding="utf-8"
+    ).endswith(f"Guardrail validation failed:\n- {guardrail} (exit 1)\n")

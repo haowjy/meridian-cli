@@ -299,7 +299,6 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
         )
 
     assert not (runtime_root / "spawns" / "p42" / "native-transcript.jsonl").exists()
-    assert (runtime_root / "artifacts" / "p42" / HISTORY_FILENAME).is_file()
     # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
     assert detail.pi_lifecycle_phase is None
 

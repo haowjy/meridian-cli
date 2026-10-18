@@ -314,7 +314,6 @@ def _render_context_ref(ref: ContextRef) -> str:
     lines.append("")
     lines.append("## Explore Further")
     lines.append(f"- Full details: `meridian spawn show {ref.spawn_id}`")
-    lines.append(f"- Read modified files: `meridian spawn files {ref.spawn_id}`")
     if ref.chat_id and ref.chat_id.strip():
         lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
     lines.append("</prior-spawn-context>")
