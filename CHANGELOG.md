@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.27] - 2026-10-18
+
 ### Removed
 - Meridian idle compaction, end to end. Idle now sends only the "your turn" push and the cache warning. Gone: `idle.compact`, `idle.compact_minutes`, `idle.compact_min_growth_tokens`, `[harness.<h>.idle] compact`/`compact_min_growth_tokens`, their `MERIDIAN_*IDLE_COMPACT*` env vars, `meridian idle done`, `idle fire` fact flags, `idle arm --context-tokens`, `[compacted]`/`[compaction failed]`/`[compaction skipped]` notices, status COMPACT column. Harness-native compaction (Claude Code 2.1.299+, Codex, OpenCode, Pi) untouched. Old idle state files are dropped; open stretches start fresh. See [upgrade note](docs/upgrading.md#idle-compaction-removed).
 
