@@ -14,81 +14,6 @@ from meridian.lib.harness.idle_types import BackgroundTask
 # Meridian options that may precede a subcommand and take a value.
 _GLOBAL_VALUE_OPTIONS = frozenset({"-C", "--directory", "--config", "--format", "--mode"})
 _LOOP_COMMANDS = frozenset({"while", "until", "for", "select"})
-_SPAWN_SUBCOMMANDS = frozenset(
-    {
-        "cancel",
-        "cancel-all",
-        "children",
-        "done",
-        "files",
-        "inject",
-        "list",
-        "log",
-        "rearm",
-        "report",
-        "show",
-        "stats",
-        "status",
-        "subagents",
-    }
-)
-# Known uv/uvx options that consume the following token. Unknown options fall
-# back safely by making that following token the apparent command.
-_UV_VALUE_OPTIONS = frozenset(
-    {
-        "-C",
-        "-P",
-        "-b",
-        "-c",
-        "-f",
-        "-i",
-        "-p",
-        "-w",
-        "--allow-insecure-host",
-        "--build-constraints",
-        "--cache-dir",
-        "--color",
-        "--config-file",
-        "--config-setting",
-        "--config-settings-package",
-        "--constraints",
-        "--default-index",
-        "--directory",
-        "--env-file",
-        "--exclude-newer",
-        "--exclude-newer-package",
-        "--extra",
-        "--extra-index-url",
-        "--find-links",
-        "--fork-strategy",
-        "--from",
-        "--group",
-        "--index",
-        "--index-strategy",
-        "--index-url",
-        "--keyring-provider",
-        "--link-mode",
-        "--no-binary-package",
-        "--no-build-isolation-package",
-        "--no-build-package",
-        "--no-extra",
-        "--no-group",
-        "--only-group",
-        "--overrides",
-        "--package",
-        "--prerelease",
-        "--project",
-        "--python",
-        "--python-platform",
-        "--refresh-package",
-        "--reinstall-package",
-        "--resolution",
-        "--upgrade-package",
-        "--with",
-        "--with-editable",
-        "--with-requirements",
-    }
-)
 _YIELD_OPTION = "--yield-after-secs"
 _TIMEOUT_OPTION = "--timeout"
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)
@@ -143,40 +68,27 @@ def _command_index(tokens: list[str], start: int = 0) -> int | None:
     return index if index < len(tokens) else None
 
 
-def _skip_options(tokens: list[str], start: int, value_options: frozenset[str]) -> int | None:
-    index = start
-    while index < len(tokens) and tokens[index].startswith("-"):
-        option = tokens[index]
-        if option == "--":
-            return index + 1 if index + 1 < len(tokens) else None
-        name, has_equals, _value = option.partition("=")
-        if name in value_options and not has_equals:
-            index += 2
-            if index > len(tokens):
-                return None
-        else:
-            index += 1
-    return index if index < len(tokens) else None
+def _meridian_starts(tokens: list[str]) -> list[int]:
+    """Indexes where `meridian` may start this segment's command.
 
+    The command word itself, or, behind `uv run` / `uvx`, any later token named
+    `meridian`: their options are not parsed, and a candidate that is not
+    followed by `spawn` is simply passed over.
+    """
 
-def _meridian_index(tokens: list[str]) -> int | None:
     index = _command_index(tokens)
     if index is None:
-        return None
+        return []
     command = PurePosixPath(tokens[index]).name
     if command == "meridian":
-        return index
-    if command == "uv":
-        if index + 1 >= len(tokens) or tokens[index + 1] != "run":
-            return None
-        index = _skip_options(tokens, index + 2, _UV_VALUE_OPTIONS)
-    elif command == "uvx":
-        index = _skip_options(tokens, index + 1, _UV_VALUE_OPTIONS)
-    else:
-        return None
-    if index is None or PurePosixPath(tokens[index]).name != "meridian":
-        return None
-    return index
+        return [index]
+    if command == "uvx" or (command == "uv" and tokens[index + 1 : index + 2] == ["run"]):
+        return [
+            candidate
+            for candidate in range(index + 1, len(tokens))
+            if PurePosixPath(tokens[candidate]).name == "meridian"
+        ]
+    return []
 
 
 def _option_number(args: list[str], option: str) -> tuple[bool, float | None]:
@@ -199,9 +111,14 @@ def _option_number(args: list[str], option: str) -> tuple[bool, float | None]:
 
 
 def _spawn_in(tokens: list[str]) -> SpawnCommand | None:
-    start = _meridian_index(tokens)
-    if start is None:
-        return None
+    for start in _meridian_starts(tokens):
+        found = _spawn_after(tokens, start)
+        if found is not None:
+            return found
+    return None
+
+
+def _spawn_after(tokens: list[str], start: int) -> SpawnCommand | None:
     index = start + 1
     while index < len(tokens) and tokens[index].startswith("-"):
         option = tokens[index]
@@ -228,7 +145,9 @@ def _spawn_in(tokens: list[str]) -> SpawnCommand | None:
             yield_seconds=yield_seconds,
             timeout_minutes=timeout_minutes,
         )
-    if rest and rest[0] in _SPAWN_SUBCOMMANDS:
+    # Creation starts with an option (`spawn -a coder -p ...`); any other word is
+    # a management subcommand (`list`, `show`, ...) that does not wake the session.
+    if not rest or not rest[0].startswith("-"):
         return None
     for arg in rest:
         if arg == "--":

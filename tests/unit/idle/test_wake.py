@@ -62,6 +62,11 @@ def test_spawn_command_reads_meridian_grammar_through_wrappers(
         ),
         ("meridian spawn --bg -a coder -p 'fix it'", ExpectedWake(maybe=True)),
         ("meridian spawn list", ExpectedWake(maybe=True)),
+        ("meridian spawn some-new-subcommand p1", ExpectedWake(maybe=True)),
+        (
+            "uv run --project ~/x/meridian meridian spawn wait p1",
+            ExpectedWake(certain="meridian spawns running", by_ms=3_001_000),
+        ),
         (
             "meridian spawn wait --timeout 120",
             ExpectedWake(certain="meridian spawns running", by_ms=7_201_000),
