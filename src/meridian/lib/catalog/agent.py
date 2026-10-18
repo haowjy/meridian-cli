@@ -60,13 +60,6 @@ def _split_markdown_frontmatter(markdown: str) -> tuple[dict[str, object], str]:
     return dict(post.metadata), post.content
 
 
-def _files_have_equal_text(first: Path, second: Path) -> bool:
-    try:
-        return first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
-    except OSError:
-        return False
-
-
 def _parse_meridian_capabilities(value: object) -> MeridianCapabilities | None:
     if value is None:
         return None
@@ -150,10 +143,7 @@ def scan_agent_profiles(
                 profile = parse_agent_profile(path)
             except (OSError, ValueError):
                 continue
-            existing = selected_by_name.get(profile.name)
-            if existing is not None:
-                if _files_have_equal_text(existing.path, profile.path):
-                    continue
+            if profile.name in selected_by_name:
                 continue
             selected_by_name[profile.name] = profile
             profiles.append(profile)
