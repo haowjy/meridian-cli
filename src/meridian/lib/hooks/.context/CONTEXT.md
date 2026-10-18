@@ -7,11 +7,11 @@ HookDispatcher.fire(context: HookContext)
   └── HookRegistry.get_hooks_for_event(event)
         ← load_hooks_config(project_root)  [config.py]
               validates each row once as HookSpec  [schema.py]
-              layered: user < project < local
+              layered: default < user < project < local
               override key: (name, event)
   └── for each Hook (ordered by source rank, priority, declaration order):
         _check_conditions(hook, context)     when.status / when.agent filters
-        IntervalTracker.should_run(name, interval)   throttle check
+        IntervalTracker.run_if_due(name, interval)   throttle check
         _run_builtin(hook, context)          OR
         ExternalHookRunner.run(hook, context, timeout_secs=...)
   └── returns list[HookResult]

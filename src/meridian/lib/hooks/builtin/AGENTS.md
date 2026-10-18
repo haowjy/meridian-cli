@@ -4,7 +4,7 @@ Built-ins run inside the Meridian process with no subprocess overhead. They use 
 
 ## Mental Model
 
-The dispatcher calls `_run_builtin(hook, context)` when it encounters a hook with a name matching a registered `BuiltinHook`. Built-ins receive the plugin API's `HookContext` (the dispatcher uses that type itself) and a plugin `Hook` built by `_to_plugin_hook()`.
+The dispatcher calls `_run_builtin(hook, context)` for a hook whose `builtin` field names a registered `BuiltinHook` (`hook.builtin`, not the hook's `name`: a command hook named `notify` is just a command). Built-ins receive the plugin API's `HookContext` (the dispatcher uses that type itself) and a plugin `Hook` built by `_to_plugin_hook()`.
 
 ## What Lives Here
 

@@ -34,6 +34,7 @@ Override key is `(name, event)` — a higher-priority row with the same key repl
 - **Hook execution order within an event:** source rank (default → user → project → local) → negative priority → declaration order. This is stable and deterministic. A configured builtin row ranks by the file it came from.
 - **Hook rows validate only through `config.py` and `schema.py`.** `normalize_hook_row()` is the production model path; single-field constraints (event, interval, timeout, failure policy, status) live on `HookSpec` / `HookWhenSpec` fields. Hand checks after the model are only for multi-field rules (command vs builtin, conditional name/event, builtin defaults and options). Operational config loading carries hook rows without validating them; hook loading also owns their unknown-key warning.
 - **`when.status` and `when.agent` conditions** are checked before interval throttling.
+- **`meridian hooks list/check/run` resolve the project from the cwd, never an inherited `MERIDIAN_PROJECT_DIR`** (`ignore_env=True` in `cli/hooks_commands.py`, #178): a spawn's environment must not make `hooks run git-autosync` act on another project's config. Notification emission does follow the session's project; inside a spawn the two can differ by design.
 
 ## Entry Points
 
