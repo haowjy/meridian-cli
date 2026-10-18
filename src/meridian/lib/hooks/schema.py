@@ -275,12 +275,12 @@ def hooks_from_spec(
     else:
         raise ValueError(f"Invalid hook config '{row_source}': 'event' is required.")
 
-    if builtin is not None and builtin.name == "notify":
-        unsupported = tuple(event for event in events if event not in builtin.default_events)
+    if builtin is not None and builtin.supported_events is not None:
+        unsupported = tuple(event for event in events if event not in builtin.supported_events)
         if unsupported:
-            supported = ", ".join(builtin.default_events)
+            supported = ", ".join(builtin.supported_events)
             raise ValueError(
-                f"Invalid value for '{row_source}.event': builtin 'notify' supports only "
+                f"Invalid value for '{row_source}.event': builtin {builtin.name!r} supports only "
                 f"[{supported}], got {unsupported[0]!r}."
             )
 

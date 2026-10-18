@@ -51,6 +51,7 @@ class NotifyHook:
     name = "notify"
     requirements: tuple[str, ...] = ()
     default_events: tuple[HookEventName, ...] = NOTIFICATION_EVENTS
+    supported_events: tuple[HookEventName, ...] | None = NOTIFICATION_EVENTS
     default_interval: str | None = None
     options_model: type[BaseModel] = NotifyOptions
     # Unnamed rows are all `notify`, so a row on an event replaces its default route.
@@ -97,7 +98,9 @@ class NotifyHook:
             warning=diagnostic if report.ok else None,
             error=None if report.ok else diagnostic,
             duration_ms=int((time.monotonic() - start) * 1000),
-            transports=tuple(result.channel for result in report.results if result.ok),
+            details={
+                "transports": tuple(result.channel for result in report.results if result.ok)
+            },
         )
 
     def _skipped(self, context: HookContext, config: Hook, reason: str) -> HookResult:

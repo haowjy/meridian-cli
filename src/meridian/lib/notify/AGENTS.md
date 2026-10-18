@@ -7,7 +7,7 @@ attachment paths); nothing here defines another. Callers build one
 `emit.emit(event, notification, ...)`, which fires that hook event through
 `lib/hooks`; the routes on it deliver it. The built-in `notify` hook calls
 `service.send(notification, cfg, event=..., channels=...)`, and `emit` turns
-each route's `HookResult` into one `SendResult` named by the hook. Never call
+each route's `HookResult` into one `RouteResult` named by the hook. Never call
 `send()` from a caller: that skips routing and every extension. Nothing here
 retries or reads notification config from environment variables directly.
 
@@ -33,9 +33,9 @@ backend.
 
 This package never writes stdout/stderr directly. Expected transport failures
 and warnings travel in `SendReport`; CLI callers render them through the CLI
-output sink, while in-process callers decide where they belong. The one logger
-warning is the hook-row load error in `emit`; the same diagnostic is retained in
-`SendReport` so JSON and text callers can observe the fallback.
+output sink, while in-process callers decide where they belong. `emit` only
+retains hook-row load errors in the report. Idle has no user-facing output, so
+its caller logs each report warning once.
 
 SMTP credentials come from `smtp_password_file` first, and that file is refused
 when group/world readable; `MERIDIAN_NOTIFY_SMTP_PASSWORD` is only a documented

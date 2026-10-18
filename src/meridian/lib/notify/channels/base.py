@@ -20,7 +20,6 @@ class SendResult:
     status: SendStatus
     error: str | None = None
     warning: str | None = None
-    transports: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -33,7 +32,6 @@ class SendResult:
             "ok": self.ok,
             "error": self.error,
             "warning": self.warning,
-            "transports": list(self.transports),
         }
 
 

@@ -21,12 +21,16 @@ print(api.__version__)  # "2.0.0"
 | ------ | ------- |
 | `Hook` | Resolved hook record — `name`, `event`, `builtin`, `command`, `options`, `remote`, `enabled`, `priority`, `failure_policy`, `require_serial`, `exclude` |
 | `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name |
-| `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `transports` (notification routes) |
+| `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `details` |
 | `HookOutcome` | `"success"` \| `"failure"` \| `"timeout"` \| `"skipped"` |
 | `HookEventName` | Valid event name literal — `spawn.created`, `spawn.running`, `spawn.start`, `spawn.finalized`, `work.start`, `work.started`, `work.done`, `session.responded`, `session.cache_expiring`, `notify.manual` |
 | `NOTIFICATION_EVENTS` | The three notification events, which carry `HookContext.notification` |
 | `Notification` | One notice — `title`, `body`, `priority` (1–5), `email`, `label` (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), `attachments` (absolute file paths) |
 | `FailurePolicy` | `"fail"` \| `"warn"` \| `"ignore"` |
+
+`HookResult.details` is a mapping for hook-defined, JSON-serializable structured
+output. Builtins document the keys they produce in [hooks.md](hooks.md); consumers
+must not assume that unrelated hooks share detail keys.
 
 ### `HookContext` fields
 

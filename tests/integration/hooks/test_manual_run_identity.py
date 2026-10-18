@@ -33,6 +33,17 @@ def test_hooks_run_creates_no_state_in_unmaterialized_adhoc_place(
     assert list(project_root.iterdir()) == []
 
 
+def test_hooks_run_rejects_notify_builtin_without_delivering(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=r"meridian notify"):
+        hooks_run_sync(
+            HookRunInput(
+                name="notify",
+                event="spawn.finalized",
+                project_root=tmp_path.as_posix(),
+            )
+        )
+
+
 @pytest.mark.asyncio
 async def test_mcp_hooks_run_is_read_only_and_omits_identity_created(
     tmp_path: Path,

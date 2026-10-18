@@ -17,6 +17,8 @@ class BuiltinHook(Protocol):
     requirements: tuple[str, ...]
     # Events an unevented row runs on, and its throttle when the row sets none.
     default_events: tuple[HookEventName, ...]
+    # Events the builtin accepts; None means any configured event.
+    supported_events: tuple[HookEventName, ...] | None
     default_interval: str | None
     # Validates a row's `options` when config loads.
     options_model: type[BaseModel]

@@ -298,7 +298,7 @@ def _record_layer_sources(
         sources[path] = ConfigValueSource(path=path, source=source)
 
 
-def _load_config_with_sources(
+def load_config_with_sources(
     project_root: Path,
     *,
     authority: _ProjectAuthorityLike | None = None,
@@ -353,21 +353,6 @@ def _load_config_with_sources(
         config=config,
         dynamic=dynamic,
         sources=tuple(sources.values()),
-    )
-
-
-def load_config_with_sources(
-    project_root: Path,
-    *,
-    authority: _ProjectAuthorityLike | None = None,
-    user_config: Path | None = None,
-) -> LoadedConfig:
-    """Load validated config and provenance across all precedence layers."""
-
-    return _load_config_with_sources(
-        project_root,
-        authority=authority,
-        user_config=user_config,
     )
 
 

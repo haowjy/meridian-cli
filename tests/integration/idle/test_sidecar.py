@@ -19,8 +19,7 @@ from meridian.lib.harness.idle_types import (
 )
 from meridian.lib.idle.service import IdleService
 from meridian.lib.idle.sidecar import SidecarClock, run
-from meridian.lib.notify import SendReport
-from meridian.lib.notify.channels.base import SendResult
+from meridian.lib.notify import RouteResult, SendReport
 from meridian.lib.state.idle_store import IdleStore
 from meridian.plugin_api.types import HookEventName, Notification
 from tests.support.async_determinism import wait_until
@@ -52,10 +51,12 @@ class Sender:
     def __init__(self) -> None:
         self.notices: list[Notification] = []
 
-    def __call__(self, event: HookEventName, notice: Notification) -> SendReport:
+    def __call__(
+        self, event: HookEventName, notice: Notification
+    ) -> SendReport[RouteResult]:
         _ = event
         self.notices.append(notice)
-        return SendReport(results=(SendResult(channel="test", status="sent"),))
+        return SendReport(results=(RouteResult(route="test", status="sent"),))
 
 
 class Sensor:

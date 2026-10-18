@@ -331,6 +331,7 @@ def test_hooks_run_json_contract(
         "success",
         "skipped",
         "skip_reason",
+        "warning",
         "error",
         "exit_code",
         "duration_ms",

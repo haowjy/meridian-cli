@@ -26,7 +26,7 @@ Override key is `(name, event)` — a higher-priority row with the same key repl
 
 - **Fire `HookDispatcher.fire(context)` — don't instantiate the registry or runner directly.** `HookDispatcher.from_application_context(ctx)` is the preferred constructor.
 - **Built-in hooks take general capabilities from `meridian.plugin_api`.** If a built-in needs a general capability not in the API, extend the API. The only `meridian.lib.*` imports are a built-in's tightly coupled companion (`autosync_store`; `notify`'s `lib/notify` transports, lazily); see `builtin/AGENTS.md`.
-- **A builtin is one object owning its metadata**: default events, interval, Pydantic `options_model` (validated by `schema.py` when the row loads) and `identity_options` (which options name an unnamed row). Adding one = a module in `builtin/` + an entry in `BUILTIN_HOOKS`.
+- **A builtin is one object owning its metadata**: default events, supported events (`None` means any), interval, Pydantic `options_model` (validated by `schema.py` when the row loads) and `identity_options` (which options name an unnamed row). Adding one = a module in `builtin/` + an entry in `BUILTIN_HOOKS`.
 - **`HookContext`, `HookResult` and `HookEventName` are the plugin API's types**, re-exported from `types.py`. Built-ins receive exactly what the dispatcher builds; never fork a lib copy.
 - **Hooks fire without a runtime root** (an ad-hoc directory), `hooks run` included: only `interval` hooks skip, with nowhere to keep state. A built-in that needs the runtime root checks `context.runtime_root` once in `execute`.
 - **`HookDispatcher(env=...)`** is the environment hooks run in and whose `MERIDIAN_HOOKS_ENABLED` gates them; it defaults to `os.environ`.

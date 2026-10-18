@@ -18,14 +18,14 @@ meridian hooks list
 # Validate config before committing changes
 meridian hooks check
 
-# Manually trigger a named autosync hook
-meridian hooks run sync-notes
-
 # Trigger with a specific event context
 meridian hooks run sync-notes --event work.done
 ```
 
-`hooks run` bypasses interval throttling. Use it to test hooks or force a sync outside the normal lifecycle.
+`hooks run` bypasses interval throttling. When a name is registered for more
+than one event, `--event` is required to select the row. The `notify` builtin
+cannot run manually because it has no notification payload; use
+`meridian notify` instead.
 
 ## Events
 
@@ -129,6 +129,9 @@ such as `ntfy`) and `priority` (1–5) pick where and how loud.
 
 The `notify` builtin accepts only those notification events; configuring it on
 another event is a hook config error.
+
+Its `HookResult.details["transports"]` value lists the backend names that
+delivered. Other builtins need not produce that key.
 
 Meridian supplies a hook named `notify` on each of these events (source
 `default` in `hooks list`). An unnamed `builtin = "notify"` row is named

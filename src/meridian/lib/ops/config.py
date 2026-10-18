@@ -29,6 +29,7 @@ from meridian.lib.config.schema import (
 )
 from meridian.lib.config.workspace import WorkspaceFinding
 from meridian.lib.core.util import FormatContext, to_jsonable
+from meridian.lib.hooks.config import DEFAULT_SOURCE, load_hooks_config_report
 from meridian.lib.ops.config_surface import (
     ConfigSurface,
     ConfigSurfaceWorkspace,
@@ -51,7 +52,7 @@ from meridian.lib.state.project_identity import (
     resolve_project_identity,
 )
 from meridian.lib.state.user_paths import get_project_home, get_user_home
-from meridian.lib.utils.json_shapes import is_json_object, is_object_sequence
+from meridian.lib.utils.json_shapes import is_object_sequence
 
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config here; run 'meridian init'"
 logger = structlog.get_logger(__name__)
@@ -430,24 +431,25 @@ def _dynamic_config_values(surface: ConfigSurface) -> list[ConfigResolvedValue]:
         rendered_hook_value: object
         if is_object_sequence(resolved.hooks) and not resolved.hooks:
             rendered_hook_value = "[] (suppressed)"
-        elif is_object_sequence(resolved.hooks):
-            names: list[str] = []
-            for raw_hook in resolved.hooks:
-                if not is_json_object(raw_hook):
-                    names.append("hook")
-                    continue
-                display_name = next(
-                    (
-                        value
-                        for key in ("name", "event", "builtin")
-                        if isinstance((value := raw_hook.get(key)), str) and value
-                    ),
-                    "hook",
-                )
-                names.append(display_name)
-            rendered_hook_value = f"{len(resolved.hooks)} hooks ({', '.join(names)})"
         else:
-            rendered_hook_value = "configured (run `meridian hooks check`)"
+            report = load_hooks_config_report(
+                surface.project_root,
+                authority=surface.authority,
+                user_config=surface.user_config_path,
+            )
+            configured_hooks = tuple(
+                hook for hook in report.config.hooks if hook.source != DEFAULT_SOURCE
+            )
+            count = len(configured_hooks)
+            rendered_hook_value = f"{count} hook" + ("" if count == 1 else "s")
+            if configured_hooks:
+                names = ", ".join(hook.name for hook in configured_hooks)
+                rendered_hook_value += f" ({names})"
+            if report.errors:
+                invalid_count = len(report.errors)
+                rendered_hook_value += (
+                    f"; {invalid_count} invalid row" + ("" if invalid_count == 1 else "s")
+                )
         values.append(
             ConfigResolvedValue(
                 key="hooks",

@@ -17,8 +17,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cache warning says "reply to keep it warm".
 - `meridian notify "<title>" ["<body>"]`: title positional, body optional, session headline always ends body. `--title` gone. Results: one per route (`notify` = default route), with successful transports named in text and `transports` in JSON; failed route's error names failed transports; `label` top-level in `--json`. No route ran = warning, exit 0. (#670)
 - `MERIDIAN_HOOKS_ENABLED=false` also silences notifications. Hooks (and `hooks run`) run without project runtime state; only `interval` hooks skip there. (#670)
-- Builtin hook rows validate `options` against the builtin's own model; unknown keys error. `hooks list` drops `registration` column. Unnamed `git-autosync` rows named from `remote`/`path` only. (#670)
-- ntfy `Tags` = event name. Plugin API 2.0.0: `HookContext.runtime_root` may be `None`, `HookContext.notification`, payload `schema_version` 2. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
+- Builtin hook rows validate `options` and supported events against the builtin's own metadata; unknown keys error. `hooks list` drops `registration` column. Unnamed `git-autosync` rows named from `remote`/`path` only. (#670)
+- ntfy `Tags` = event name. Plugin API 2.0.0: `HookContext.runtime_root` may be `None`, `HookContext.notification`, payload `schema_version` 2, and hook-defined JSON output lives in `HookResult.details`. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
 
 ### Fixed
 - Multi-line `meridian notify` input keeps its first non-empty line as the transport-safe title and moves the rest into the body; all notification producers now reject control characters in titles. Duplicate resolved attachment paths are sent once. (#666, #670)
@@ -27,6 +27,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Invalid hook config no longer silences idle notices: emission drops and names invalid rows while retaining valid silencing and command rows plus ordinary default-route overrides; `meridian notify` reports the warning in text and JSON. `hooks check` names every invalid row. (#670)
 - `--no-email` (and idle push / `warn_email = false`) now skips `smtp`/`gmail` even when a route names them. (#670)
 - A failing notification route is reported once, not also as a hook warning log. (#670)
+- `config show` names valid hook rows and counts invalid ones. `hooks run` requires an event when a name has several rows, preserves builtin event limits, and points `notify` invocations to `meridian notify`. Hook commands continue to follow the current directory instead of an inherited session project. (#670)
 - Logging no longer caches each module logger's first configuration.
 - Claude primary no longer pushes "waiting on you" while subagents, workflows, or a shell-ending foreground `meridian spawn` creation/wait runs; the turn they wake pushes instead, timed from your last prompt until a push is delivered. Endless loops, spawn management, detached creation, and commands followed by more work only delay the push. Monitors ignored.
 - A Claude permission prompt, including one from a background subagent, releases a waiting push held by running work so the human is notified while the decision is still pending. The cache-warning schedule is unchanged.

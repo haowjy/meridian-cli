@@ -14,7 +14,7 @@ from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.notify.emit import emit
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.notify.notice import SessionLabel, manual_notification
-from meridian.lib.notify.service import SendReport
+from meridian.lib.notify.service import RouteResult, SendReport
 
 
 def _route_label(channel: str, transports: tuple[str, ...]) -> str:
@@ -24,7 +24,7 @@ def _route_label(channel: str, transports: tuple[str, ...]) -> str:
 
 
 def _render_report(
-    report: SendReport, label: SessionLabel, *, json_mode: bool = False
+    report: SendReport[RouteResult], label: SessionLabel, *, json_mode: bool = False
 ) -> None:
     sink = current_output_sink()
     for warning in report.warnings:
@@ -32,7 +32,7 @@ def _render_report(
 
     for result in report.results:
         if result.status == "failed":
-            message = f"{result.channel}: {result.error or 'delivery failed'}"
+            message = f"{result.route}: {result.error or 'delivery failed'}"
             if report.ok:
                 sink.warning(message)
             else:
@@ -45,7 +45,7 @@ def _render_report(
         sink.result("Nothing delivered.")
         return
     sent = ", ".join(
-        _route_label(result.channel, result.transports)
+        _route_label(result.route, result.transports)
         for result in report.results
         if result.ok
     )

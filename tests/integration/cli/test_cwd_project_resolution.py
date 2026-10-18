@@ -19,12 +19,15 @@ def _run_meridian(
     *,
     cwd: Path,
     meridian_home: Path,
+    inherited_project_root: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     for key in tuple(env):
         if key.upper().startswith("MERIDIAN_"):
             env.pop(key, None)
     env["MERIDIAN_HOME"] = meridian_home.as_posix()
+    if inherited_project_root is not None:
+        env["MERIDIAN_PROJECT_DIR"] = inherited_project_root.as_posix()
     return subprocess.run(
         [sys.executable, "-m", "meridian", *args],
         cwd=cwd,
@@ -33,6 +36,36 @@ def _run_meridian(
         text=True,
         check=False,
     )
+
+
+@pytest.mark.integration
+def test_hooks_commands_follow_cwd_instead_of_inherited_project_root(
+    tmp_path: Path,
+    meridian_home: Path,
+) -> None:
+    cwd_project = tmp_path / "cwd-project"
+    inherited_project = tmp_path / "inherited-project"
+    cwd_project.mkdir()
+    inherited_project.mkdir()
+    (cwd_project / "meridian.toml").write_text(
+        '[[hooks]]\nname = "from-cwd"\nevent = "spawn.finalized"\ncommand = "true"\n',
+        encoding="utf-8",
+    )
+    (inherited_project / "meridian.toml").write_text(
+        '[[hooks]]\nname = "from-env"\nevent = "spawn.finalized"\ncommand = "true"\n',
+        encoding="utf-8",
+    )
+
+    result = _run_meridian(
+        ["hooks", "list"],
+        cwd=cwd_project,
+        meridian_home=meridian_home,
+        inherited_project_root=inherited_project,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "from-cwd" in result.stdout
+    assert "from-env" not in result.stdout
 
 
 def _assert_project_initialized(project_root: Path) -> None:

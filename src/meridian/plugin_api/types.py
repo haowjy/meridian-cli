@@ -44,6 +44,10 @@ def _empty_label() -> dict[str, str | None]:
     return {}
 
 
+def _empty_details() -> dict[str, object]:
+    return {}
+
+
 @dataclass(frozen=True)
 class Notification:
     """One message for the human, as its producer rendered it."""
@@ -267,7 +271,11 @@ class HookContext:
 
 @dataclass
 class HookResult:
-    """Plugin-facing result for one hook execution."""
+    """Plugin-facing result for one hook execution.
+
+    ``details`` is hook-defined JSON-serializable structured output. Builtins
+    document the keys they produce.
+    """
 
     hook_name: str
     event: HookEventName
@@ -281,7 +289,7 @@ class HookResult:
     duration_ms: int = 0
     stdout: str | None = None
     stderr: str | None = None
-    transports: tuple[str, ...] = ()
+    details: Mapping[str, object] = field(default_factory=_empty_details)
 
 
 __all__ = [

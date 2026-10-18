@@ -138,6 +138,7 @@ class GitAutosync:
         "work.started",
         "work.done",
     )
+    supported_events: tuple[HookEventName, ...] | None = None
     # No default interval - runs on every event
     default_interval: str | None = None
     options_model: type[BaseModel] = GitAutosyncOptions

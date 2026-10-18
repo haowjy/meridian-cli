@@ -123,6 +123,7 @@ class HookRunResult(BaseModel):
     success: bool
     skipped: bool
     skip_reason: str | None = None
+    warning: str | None = None
     error: str | None = None
     exit_code: int | None = None
     duration_ms: int
@@ -147,6 +148,7 @@ class HookRunOutput(BaseModel):
             "success": self.result.success,
             "skipped": self.result.skipped,
             "skip_reason": self.result.skip_reason,
+            "warning": self.result.warning,
             "error": self.result.error,
             "exit_code": self.result.exit_code,
             "duration_ms": self.result.duration_ms,
@@ -183,6 +185,7 @@ class HookRunOutput(BaseModel):
                 ("success", str(self.result.success).lower()),
                 ("skipped", str(self.result.skipped).lower()),
                 ("skip_reason", self.result.skip_reason or "-"),
+                ("warning", self.result.warning or "-"),
                 (
                     "exit_code",
                     str(self.result.exit_code) if self.result.exit_code is not None else "-",
@@ -356,6 +359,7 @@ def _result_to_output(result: HookResult) -> HookRunResult:
         success=result.success,
         skipped=result.skipped,
         skip_reason=result.skip_reason,
+        warning=result.warning,
         error=result.error,
         exit_code=result.exit_code,
         duration_ms=result.duration_ms,
@@ -372,12 +376,51 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
     if not hook_name:
         raise ValueError("Hook name is required.")
 
-    hook = registry.get_hook(hook_name)
-    if hook is None:
+    named_hooks = registry.get_hooks_named(hook_name)
+    if not named_hooks:
         raise ValueError(f"Hook '{hook_name}' not found")
+
+    if all(hook.builtin == "notify" for hook in named_hooks):
+        raise ValueError(
+            "The notify builtin needs a notification payload and cannot run manually; "
+            "use `meridian notify` instead."
+        )
+
+    if payload.event is not None:
+        hook = registry.get_hook(hook_name, payload.event)
+        if hook is None:
+            if len(named_hooks) != 1:
+                events = ", ".join(candidate.event for candidate in named_hooks)
+                raise ValueError(
+                    f"Hook '{hook_name}' is registered for multiple events [{events}], "
+                    f"but not {payload.event!r}."
+                )
+            hook = named_hooks[0]
+    elif len(named_hooks) == 1:
+        hook = named_hooks[0]
+    else:
+        events = ", ".join(hook.event for hook in named_hooks)
+        raise ValueError(
+            f"Hook '{hook_name}' is registered for multiple events [{events}]; "
+            "pass --event to select one."
+        )
+
+    if hook.builtin == "notify":
+        raise ValueError(
+            "The notify builtin needs a notification payload and cannot run manually; "
+            "use `meridian notify` instead."
+        )
 
     effective_hook = hook if hook.enabled else replace(hook, enabled=True)
     run_event = payload.event or effective_hook.event
+    if effective_hook.builtin is not None:
+        builtin = BUILTIN_HOOKS[effective_hook.builtin]
+        if builtin.supported_events is not None and run_event not in builtin.supported_events:
+            supported = ", ".join(builtin.supported_events)
+            raise ValueError(
+                f"Builtin hook {builtin.name!r} supports only [{supported}], "
+                f"not {run_event!r}."
+            )
     if run_event != effective_hook.event:
         effective_hook = replace(effective_hook, event=run_event)
 

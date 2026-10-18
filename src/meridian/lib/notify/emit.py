@@ -9,16 +9,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-import structlog
-
-from meridian.lib.notify.channels.base import SendResult
-from meridian.lib.notify.service import SendReport
+from meridian.lib.notify.service import RouteResult, SendReport
+from meridian.lib.utils.json_shapes import is_object_sequence
 
 if TYPE_CHECKING:
     from meridian.plugin_api.types import HookEventName, HookResult, Notification
 
 _NO_ROUTE_WARNING = "no notification route ran for {event}"
-logger = structlog.get_logger(__name__)
 
 
 def _runtime_root(project_root: Path) -> Path | None:
@@ -30,34 +27,44 @@ def _runtime_root(project_root: Path) -> Path | None:
         return None
 
 
-def _route_result(result: HookResult) -> SendResult:
+def _transports(result: HookResult) -> tuple[str, ...]:
+    raw = result.details.get("transports", ())
+    if not is_object_sequence(raw):
+        return ()
+    return tuple(value for value in raw if isinstance(value, str))
+
+
+def _route_result(result: HookResult) -> RouteResult:
+    transports = _transports(result)
     if result.skipped:
-        return SendResult(
-            channel=result.hook_name,
+        return RouteResult(
+            route=result.hook_name,
             status="none",
             warning=result.warning or result.error,
-            transports=result.transports,
+            transports=transports,
         )
     if result.success:
-        return SendResult(
-            channel=result.hook_name,
+        return RouteResult(
+            route=result.hook_name,
             status="sent",
             warning=result.warning or result.error,
-            transports=result.transports,
+            transports=transports,
         )
-    return SendResult(
-        channel=result.hook_name,
+    return RouteResult(
+        route=result.hook_name,
         status="failed",
         error=result.error or result.outcome,
     )
 
 
-def report_from_hooks(event: str, hook_results: Sequence[HookResult]) -> SendReport:
+def report_from_hooks(
+    event: str, hook_results: Sequence[HookResult]
+) -> SendReport[RouteResult]:
     """One result per route; with no route at all, ok with a warning."""
 
     results = tuple(_route_result(result) for result in hook_results)
     warnings = tuple(
-        f"{result.channel}: {result.warning}" for result in results if result.warning
+        f"{result.route}: {result.warning}" for result in results if result.warning
     )
     if not results:
         warnings = (_NO_ROUTE_WARNING.format(event=event),)
@@ -70,7 +77,7 @@ def emit(
     *,
     project_root: Path,
     env: Mapping[str, str],
-) -> SendReport:
+) -> SendReport[RouteResult]:
     """Fire the notification's hook event and report what its routes delivered."""
 
     from meridian.lib.hooks.config import load_hooks_config_report
@@ -94,11 +101,6 @@ def emit(
     fallback_warning: str | None = None
     if loaded_hooks.errors:
         fallback_warning = "dropped invalid hook rows: " + "; ".join(loaded_hooks.errors)
-        logger.warning(
-            "notification_hook_config_invalid",
-            hook_event=event,
-            error=fallback_warning,
-        )
     dispatcher = HookDispatcher(
         project_root,
         runtime_root,

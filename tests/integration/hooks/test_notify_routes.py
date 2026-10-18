@@ -1,8 +1,8 @@
 import json
+import logging
 from pathlib import Path
 
 import pytest
-from structlog.testing import capture_logs
 
 from meridian.lib.config.models import MeridianConfig, NotifyConfig
 from meridian.lib.idle.service import IdleService
@@ -55,7 +55,7 @@ def test_a_notification_reaches_command_hooks_and_its_route(
     assert (tmp_path / "title.txt").read_text(encoding="utf-8") == "Pick a store\n"
     # The row replaced the default route and sent only to push (the none backend),
     # never to the smtp email backend.
-    assert [(result.channel, result.status) for result in report.results] == [
+    assert [(result.route, result.status) for result in report.results] == [
         ("desk", "sent"),
         ("notify", "none"),
     ]
@@ -96,7 +96,9 @@ def test_idle_records_the_push_as_its_routes_delivered_it(
 
 
 def test_idle_without_injected_config_delivers_despite_an_invalid_hook_row(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     delivered: list[str] = []
 
@@ -139,10 +141,18 @@ def test_idle_without_injected_config_delivers_despite_an_invalid_hook_row(
     armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
     now[0] = armed.push_at or 0
 
-    idle.fire("push", harness="example", session="s1", stretch=1, anchor=1)
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.idle.service"):
+        idle.fire("push", harness="example", session="s1", stretch=1, anchor=1)
 
     assert len(delivered) == 1
     assert delivered[0].startswith("session.responded:[idle] ")
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "meridian.lib.idle.service"
+    ]
+    assert len(warnings) == 1
+    assert "dropped invalid hook rows" in warnings[0]
     state = store.read("example", "s1")
     assert state is not None and state.done["push"] == "sent"
 
@@ -184,17 +194,14 @@ def test_invalid_hook_row_keeps_a_valid_silencing_row_and_warns(
         encoding="utf-8",
     )
 
-    with capture_logs() as logs:
-        report = emit(
-            "notify.manual",
-            manual_notification("Pick a store", None, SessionLabel()),
-            project_root=tmp_path,
-            env={},
-        )
+    report = emit(
+        "notify.manual",
+        manual_notification("Pick a store", None, SessionLabel()),
+        project_root=tmp_path,
+        env={},
+    )
 
     assert delivered == []
     assert report.results == ()
     assert any("project.hooks[2]" in warning for warning in report.warnings)
     assert any("not.an.event" in warning for warning in report.warnings)
-    fallback_log = next(log for log in logs if log["event"] == "notification_hook_config_invalid")
-    assert "not.an.event" in str(fallback_log["error"])

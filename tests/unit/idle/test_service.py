@@ -13,8 +13,7 @@ from meridian.lib.idle.service import (
     close_on_launch,
     effective,
 )
-from meridian.lib.notify import SendReport
-from meridian.lib.notify.channels.base import SendResult
+from meridian.lib.notify import RouteResult, SendReport
 from meridian.lib.state.idle_store import IdleSchedule, IdleState, IdleStore
 from meridian.plugin_api.types import HookEventName, Notification
 
@@ -59,11 +58,13 @@ class Sender:
         self.ok = ok
         self.notices: list[Notification] = []
 
-    def __call__(self, event: HookEventName, notice: Notification) -> SendReport:
+    def __call__(
+        self, event: HookEventName, notice: Notification
+    ) -> SendReport[RouteResult]:
         _ = event
         self.notices.append(notice)
         status = "sent" if self.ok else "failed"
-        return SendReport(results=(SendResult(channel="test", status=status),))
+        return SendReport(results=(RouteResult(route="test", status=status),))
 
 
 def service(

@@ -27,8 +27,11 @@ from meridian.lib.ops.hooks import (
 
 
 def _resolved_project_root() -> str:
+    # ignore_env=True: hooks commands resolve from actual CWD, not the
+    # inherited MERIDIAN_PROJECT_DIR of the calling session.
     return resolve_project_root_resolution(
         execution_cwd=Path.cwd().resolve(),
+        ignore_env=True,
     ).project_root.as_posix()
 
 
@@ -94,7 +97,6 @@ def register_hooks_commands(app: App) -> None:
         command_help_epilogues={
             "meridian.hooks.run": (
                 "Examples:\n\n"
-                "  meridian hooks run git-autosync\n\n"
                 "  meridian hooks run git-autosync --event spawn.finalized\n"
             )
         },

@@ -245,6 +245,30 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
     assert next(item for item in shown.values if item.key == "hooks").source == "file"
 
 
+def test_config_show_names_valid_hooks_and_counts_invalid_rows(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'builtin = "notify"\n'
+        'event = "notify.manual"\n'
+        "enabled = false\n"
+        "[[hooks]]\n"
+        'name = "broken"\n'
+        'event = "not.an.event"\n'
+        'command = "true"\n'
+        "[[hooks]]\n"
+        'name = "extra"\n'
+        'event = "notify.manual"\n'
+        'command = "true"\n',
+        encoding="utf-8",
+    )
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    hook_value = next(item for item in shown.values if item.key == "hooks")
+
+    assert hook_value.value == "2 hooks (notify, extra); 1 invalid row"
+
+
 @pytest.mark.parametrize(
     ("project_toml", "user_toml", "expected_source"),
     [

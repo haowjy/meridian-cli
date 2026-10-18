@@ -30,8 +30,9 @@ default  (Meridian's own rows: a `notify` route per notification event)
 
 The `default` layer holds only the `notify` routes, so notifications deliver
 with no config at all; it overrides like any layer. Each builtin hook object
-(`builtin/`) owns its default events, interval, options model and the options
-that name an unnamed row; they apply only when a row names that builtin.
+(`builtin/`) owns its default events, supported events (`None` means any),
+interval, options model and the options that name an unnamed row; they apply
+only when a row names that builtin.
 Unnamed `notify` rows are all named `notify`, which is how a plain
 `builtin = "notify"` row replaces its event's default.
 
