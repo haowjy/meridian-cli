@@ -394,6 +394,9 @@ needs a separate data root (`OPENCODE_DB`/`XDG_DATA_HOME`).
 
 ### Cursor: Subprocess-Only, Read-Only stdout
 
+Cursor is unmaintained. Keep it building and its existing tests passing; don't extend it
+or add Cursor-specific parity work.
+
 Cursor is a single-turn, subprocess-only harness. `cursor agent <prompt>` streams
 NDJSON events to stdout then exits — there is no stdin injection, no session resume,
 and no bidirectional transport. `CursorSubprocessConnection` is a connection adapter

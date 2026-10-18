@@ -1,5 +1,7 @@
 # Cursor harness configuration
 
+> The Cursor harness is unmaintained: it still ships but is no longer tested or extended.
+
 ## Model Selection
 
 Pass a cursor model alias directly with `-m`:
