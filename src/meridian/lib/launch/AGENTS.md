@@ -11,8 +11,8 @@ Skill content comes from the Mars launch-bundle JSON (`skills.loaded[].{name, sk
 not from reading `.mars/skills/` on disk. `_build_resolved_skills_from_bundle()` in `policies.py`
 constructs `ResolvedSkills` from bundle data and preserves `source_path` for snapshots and
 workspace projection. It reconstructs a primary-root path only for older producers that omit
-provenance. `resolve_skills_from_profile()` is kept only for legacy snapshot replay when a
-persisted snapshot's `loaded_skills` field is empty.
+provenance. Snapshot replay uses only its persisted `loaded_skills`; an empty field means no
+skills are loaded.
 
 ## The Composition Seam (Invariant I-1)
 

@@ -1,9 +1,10 @@
 # lib/catalog/
 
-Translates symbolic names — model aliases, agent profile names, skill names — into
-concrete execution parameters before any process launches. This layer is the bridge
-between what users or config files specify ("gpt55", "coder") and what the launch
-layer needs to build a command.
+Translates model aliases and agent profile names into concrete execution parameters
+before any process launches. This layer is the bridge between what users or config
+files specify ("gpt55", "coder") and what the launch layer needs to build a command.
+Mars resolves skills as part of the launch bundle; Meridian has no filesystem skill
+catalog.
 
 Zero builtin aliases. All alias-to-model-id mappings come from mars packages
 (`.mars/models-merged.json`). Do not add hardcoded aliases to this module.
@@ -69,7 +70,6 @@ environments silently skip auto-resolve aliases.
 - `mars_capabilities.py` — cached help-surface probe for optional fallback lookup
 - `model_aliases.py` — `AliasEntry`, `MarsResultCache`, mars subprocess integration
 - `agent.py` — `AgentProfile`, agent frontmatter parsing for `.mars/agents/*.md`
-- `skill.py` — skill YAML/markdown parsing for `.mars/skills/*/SKILL.md` (legacy compat; primary path uses mars launch-bundle)
 
 ## Usage Pattern
 

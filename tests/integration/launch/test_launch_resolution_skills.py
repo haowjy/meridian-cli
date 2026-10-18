@@ -1,5 +1,5 @@
 # qa-validated: test-suite-redesign
-"""Skill variant resolution tests: alias → canonical → harness fallback chain."""
+"""Launch skill resolution tests: bundle-provided skill content reaches composition."""
 
 from __future__ import annotations
 
@@ -69,11 +69,7 @@ def test_launch_skill_content_flows_from_bundle_to_composition(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bundle-provided skill content flows through policy → composition.
-
-    Variant resolution (alias → canonical → harness) is mars's responsibility.
-    Meridian-cli consumes whatever mars resolved and sent in skills.loaded[].
-    """
+    """Bundle-provided skill content flows through policy → composition."""
     _write_minimal_mars_config(tmp_path)
     fallback_skill_path = tmp_path / "user-mars/.mars/skills/variant-skill/SKILL.md"
     _stub_bundle_resolution(

@@ -12,6 +12,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Claude agents get their loaded skills again: `system-prompt.md`, the file Claude reads, had none. Every harness now carries loaded skills in the normal system prompt position, after the agent profile. (#661)
 
+### Changed
+- Mars is the sole skill resolver; exact continuation of snapshots without embedded
+  skill content no longer reloads skills from the filesystem.
+
 ## [0.10.22] - 2026-10-18
 
 ### Added

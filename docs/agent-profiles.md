@@ -209,7 +209,6 @@ directory).
 prompt, including loaded skills and the profile body, does not reach the model.
 OpenCode v1 is unaffected.
 
-
 **Loaded skills ignore the skill's `model-invocable`.** A skill's own
 `model-invocable: false` only keeps it out of the harness's skill list, the list
 a model browses to find skills by itself. A loaded skill still arrives in full.
@@ -240,8 +239,8 @@ Meridian receives already-resolved content and:
 
 **Variant selection** happens inside Mars. If a skill has
 `variants/<harness>/SKILL.md`, its body replaces the base body for that harness;
-the base frontmatter still supplies metadata. Model-level variant directories
-(`variants/<harness>/<model>/`) are not selected.
+the base frontmatter still supplies metadata. Model-level
+variants (`variants/<harness>/<model>/`) are not supported.
 
 See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md) for the skill authoring format.
 

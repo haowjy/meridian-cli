@@ -84,7 +84,6 @@ class CompilerRequest:
     profile_routing_harness: str | None
     profile_policy_defaults: ResolvedExecutionPolicy
     profile_model_policies: tuple[ModelPolicyRule, ...] | None  # None = no profile
-    profile_skills: tuple[str, ...]
 
     # Model catalog data
     resolved_alias_entry: AliasEntry | None
@@ -117,8 +116,6 @@ class CompilerResult:
     # Runtime policy
     execution_policy: ResolvedExecutionPolicy
 
-    # Profile-derived content identifiers
-    skill_names: tuple[str, ...]
     tools: ToolsField | None = None
     mcp_tools: tuple[str, ...] | None = None
 
@@ -323,7 +320,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
             timeout=timeout,
             resident_rearm_budget=resident_rearm_budget,
         ),
-        skill_names=request.profile_skills,
         model_selection_requested_token=requested_token,
         model_selection_canonical_id=canonical_model_id,
         harness_provenance=harness_provenance,
