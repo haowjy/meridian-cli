@@ -12,6 +12,7 @@ import pytest
 from structlog.testing import capture_logs
 
 import meridian.lib.state.work_store as work_store
+from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.state import work_repository
 from meridian.lib.state.work_state import WorkItem
 from tests.conftest import posix_only
@@ -124,7 +125,8 @@ def test_work_status_preserves_unknown_fields_through_mutation(tmp_path: Path) -
     payload["worktree"]["future_worktree_field"] = ["also", "newer"]
     status_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with capture_logs() as logs:
+    with capture_logs() as logs, warning_cache_scope():
+        assert work_store.get_work_item(runtime_root, item.name) is not None
         loaded = work_repository.update_work_item(
             runtime_root,
             item.name,
@@ -134,15 +136,23 @@ def test_work_status_preserves_unknown_fields_through_mutation(tmp_path: Path) -
     assert loaded.description == "changed description"
     assert loaded.goal == "keep this goal"
     rewritten = json.loads(status_path.read_text(encoding="utf-8"))
-    assert rewritten["future_field"] == {
-        "from": "newer build"
-    }
+    assert rewritten["future_field"] == {"from": "newer build"}
     assert rewritten["worktree"]["future_worktree_field"] == ["also", "newer"]
     unknown_warnings = [
         log for log in logs if log["event"] == "Keeping unknown work item metadata fields."
     ]
     assert len(unknown_warnings) == 1
     assert unknown_warnings[0]["path"] == str(status_path)
+
+    with capture_logs() as next_command_logs, warning_cache_scope():
+        assert work_store.get_work_item(runtime_root, item.name) is not None
+    assert (
+        sum(
+            log["event"] == "Keeping unknown work item metadata fields."
+            for log in next_command_logs
+        )
+        == 1
+    )
 
 
 def test_newer_work_status_is_visible_and_refused_for_mutation(tmp_path: Path) -> None:

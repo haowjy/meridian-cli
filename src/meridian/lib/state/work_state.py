@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path, PurePath
 from typing import Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from meridian.lib.core.logging import warn_once
 from meridian.lib.state.paths import (
     ProjectPaths,
     resolve_project_paths,
@@ -37,50 +37,59 @@ class UnsupportedWorkStateVersion(ValueError):
     """Raised when a mutation would overwrite work metadata from a newer build."""
 
 
-# One CLI operation may project a row before the repository re-reads it under lock.
-@lru_cache(maxsize=256)
 def _warn_newer_work_state(path: str, version: int) -> None:
-    logger.warning(
-        "Work item metadata was written by a newer Meridian build; "
-        "upgrade Meridian to read it.",
-        path=path,
-        version=version,
-        supported_versions=sorted(SUPPORTED_WORK_STATE_VERSIONS),
+    warn_once(
+        ("work-state", path),
+        lambda: logger.warning(
+            "Work item metadata was written by a newer Meridian build; "
+            "upgrade Meridian to read it.",
+            path=path,
+            version=version,
+            supported_versions=sorted(SUPPORTED_WORK_STATE_VERSIONS),
+        ),
     )
 
 
-@lru_cache(maxsize=256)
 def _warn_unknown_work_state_fields(path: str, fields: tuple[str, ...]) -> None:
-    logger.warning(
-        "Keeping unknown work item metadata fields.",
-        path=path,
-        fields=fields,
+    warn_once(
+        ("work-state", path),
+        lambda: logger.warning(
+            "Keeping unknown work item metadata fields.",
+            path=path,
+            fields=fields,
+        ),
     )
 
 
-@lru_cache(maxsize=256)
 def _warn_work_state_read_failure(path: str, error: str) -> None:
-    logger.warning(
-        "Unable to read work item metadata; using directory defaults.",
-        path=path,
-        error=error,
+    warn_once(
+        ("work-state", path),
+        lambda: logger.warning(
+            "Unable to read work item metadata; using directory defaults.",
+            path=path,
+            error=error,
+        ),
     )
 
 
-@lru_cache(maxsize=256)
 def _warn_work_state_parse_failure(path: str) -> None:
-    logger.warning(
-        "Unable to parse work item metadata; using directory defaults.",
-        path=path,
+    warn_once(
+        ("work-state", path),
+        lambda: logger.warning(
+            "Unable to parse work item metadata; using directory defaults.",
+            path=path,
+        ),
     )
 
 
-@lru_cache(maxsize=256)
 def _warn_work_state_validation_failure(path: str, error: str) -> None:
-    logger.warning(
-        "Unable to validate work item metadata; using directory defaults.",
-        path=path,
-        error=error,
+    warn_once(
+        ("work-state", path),
+        lambda: logger.warning(
+            "Unable to validate work item metadata; using directory defaults.",
+            path=path,
+            error=error,
+        ),
     )
 
 
@@ -239,15 +248,17 @@ def serialize_work_item_state(state: StoredWorkItemState) -> str:
 
 def stored_state_from_item(item: WorkItem) -> StoredWorkItemState:
     payload: dict[str, object] = dict(item.stored_state_extras)
-    payload.update({
-        "status": item.status,
-        "description": item.description,
-        "goal": item.goal,
-        "created_at": item.created_at,
-        "archived_at": item.archived_at,
-        "task_dir": item.task_dir,
-        "worktree": item.worktree,
-    })
+    payload.update(
+        {
+            "status": item.status,
+            "description": item.description,
+            "goal": item.goal,
+            "created_at": item.created_at,
+            "archived_at": item.archived_at,
+            "task_dir": item.task_dir,
+            "worktree": item.worktree,
+        }
+    )
     return StoredWorkItemState.model_validate(payload)
 
 
@@ -311,13 +322,8 @@ def load_work_item_from_dir(
             stored = fallback
         else:
             version = payload.get("v", WORK_STATE_VERSION)
-            if (
-                type(version) is int
-                and version > max(SUPPORTED_WORK_STATE_VERSIONS)
-            ):
-                remedy = (
-                    f"Upgrade Meridian to read work item metadata format v{version}."
-                )
+            if type(version) is int and version > max(SUPPORTED_WORK_STATE_VERSIONS):
+                remedy = f"Upgrade Meridian to read work item metadata format v{version}."
                 _warn_newer_work_state(str(metadata_path), version)
                 if not mark_unsupported:
                     raise UnsupportedWorkStateVersion(f"{metadata_path}: {remedy}")

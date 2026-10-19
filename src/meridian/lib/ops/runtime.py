@@ -69,7 +69,10 @@ def _runtime_dir_env_override_applies(*, ignore_runtime_env: bool = False) -> bo
 def async_from_sync(sync_fn: Callable[P, T]) -> Callable[P, Coroutine[Any, Any, T]]:
     @functools.wraps(sync_fn)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-        return await asyncio.to_thread(sync_fn, *args, **kwargs)
+        from meridian.lib.core.logging import warning_cache_scope
+
+        with warning_cache_scope():
+            return await asyncio.to_thread(sync_fn, *args, **kwargs)
 
     return wrapper
 
@@ -258,10 +261,7 @@ def resolve_runtime_authority_for_write(
         ensured_project_id = identity.id
         runtime_root = get_project_home(identity.id)
     runtime_source: RuntimeRootSource = "user-home-project"
-    if (
-        override is not None
-        and override == runtime_root
-    ):
+    if override is not None and override == runtime_root:
         runtime_source = "env"
     from meridian.lib.ops.legacy_native_import import maybe_import_legacy_native_sessions
 

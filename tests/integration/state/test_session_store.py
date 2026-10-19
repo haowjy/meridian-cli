@@ -137,6 +137,27 @@ def test_live_session_appends_do_not_replay_the_session_log(
         "stop",
     ]
 
+    future = {
+        "v": 2,
+        "event": "update",
+        "chat_id": chat_id,
+        "session_instance_id": record.session_instance_id,
+        "active_work_id": "future-work",
+    }
+    with paths.sessions_jsonl.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(future) + "\n")
+    original = paths.sessions_jsonl.read_bytes()
+    stale = session_store.SessionUpdateEvent(
+        chat_id=chat_id,
+        session_instance_id=record.session_instance_id,
+        active_work_id="stale-work",
+    )
+
+    with pytest.raises(ValueError, match=r"unsupported sessions\.jsonl format"):
+        session_store.append_chat_rows(runtime_root, {chat_id: [stale]})
+
+    assert paths.sessions_jsonl.read_bytes() == original
+
 
 def test_historical_generation_prefix_is_enforced_at_append(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)

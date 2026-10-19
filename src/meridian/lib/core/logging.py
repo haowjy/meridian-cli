@@ -2,8 +2,41 @@
 
 import logging as std_logging
 import sys
+from collections.abc import Callable, Generator, Hashable
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import structlog
+
+_WARNING_KEYS: ContextVar[set[Hashable] | None] = ContextVar(
+    "_WARNING_KEYS",
+    default=None,
+)
+
+
+@contextmanager
+def warning_cache_scope() -> Generator[None]:
+    """Deduplicate keyed warnings within one command or operation."""
+
+    if _WARNING_KEYS.get() is not None:
+        yield
+        return
+    token = _WARNING_KEYS.set(set())
+    try:
+        yield
+    finally:
+        _WARNING_KEYS.reset(token)
+
+
+def warn_once(key: Hashable, emit: Callable[[], None]) -> None:
+    """Run ``emit`` once for *key* in the current warning scope."""
+
+    seen = _WARNING_KEYS.get()
+    if seen is not None:
+        if key in seen:
+            return
+        seen.add(key)
+    emit()
 
 
 def _level_from_verbosity(verbosity: int) -> int:

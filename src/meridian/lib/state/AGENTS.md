@@ -21,7 +21,8 @@ bare path
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   origin.json                       — ad-hoc path attribution and activity only
   sessions.jsonl                    — session events (append-only; absent v means v1,
-                                      unsupported versions warn and are skipped)
+                                      unsupported versions warn and are skipped by
+                                      reads; writes refuse them in their target scope)
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock

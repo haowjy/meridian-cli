@@ -223,7 +223,12 @@ still scan `sessions.jsonl` bytes. Bulk repair/import bindings keep one
 view. Lock-scoped reads that make write decisions refuse unsupported rows in their
 scope. Selection and observation dedup run inside the append seam's mutation
 (shared) → sessions-flock epoch, without nested lock re-entry. The append seam
-consumes lazy row iterators there, so validation and publication are atomic.
+checks the target chat or native-session scope centrally before consuming lazy row
+iterators, so validation and publication are atomic and no direct writer can bypass
+the version gate. Its process-local compatibility snapshot is keyed by the journal's
+device, inode, size, and nanosecond modification/change times, refreshed after its
+own append, and includes a complete delimiter-less tail because append repair would
+commit that tail.
 [#418](https://github.com/haowjy/meridian-cli/issues/418) replaces these filtered
 passes with per-chat journals. `live_observer_for_chat` and capture's spawn-side
 ownership check still scan spawn rows: chat claims cannot find a spawn whose

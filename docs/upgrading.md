@@ -101,8 +101,9 @@ What users may notice:
   now warn before using directory-derived defaults.
 - `meridian telemetry query` and session replay skip records carrying an
   unsupported `v` and warn instead of interpreting them with the current schema.
-  Locked session decisions refuse unsupported records in their scope rather than
-  creating a duplicate chat. The disposable history index stops its cursor before
+  Every locked session append refuses unsupported records in its target chat or
+  native-session scope rather than writing stale state or creating a duplicate
+  chat. The disposable history index stops its cursor before
   an unsupported session row, and its file name includes both the index schema and
   session format (`history-v10-sessions-v1.sqlite3`) so a format change rebuilds
   from authority. Idle files are the deliberate exception to refusal: they are

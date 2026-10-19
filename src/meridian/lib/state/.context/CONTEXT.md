@@ -64,6 +64,8 @@ Discovery uses the disposable history index; its recency and preview reads
 select the highest-ordinal generation from the same authority.
 An absent event `v` is legacy v1. Events with an unsupported version are
 skipped with a warning rather than being folded as if their shape were current.
+The locked append seams refuse unsupported rows in the target chat or native
+session scope before consuming a write batch.
 
 A scoped `SessionBindings` snapshot raises `ChatOutsideBindingScope` for chats
 outside its scope; cross-chat repair uniqueness requires `scope=None`.
