@@ -235,10 +235,8 @@ test('arm forwards the work the main loop left running, from its Stop list', asy
     { kind: 'watcher' },
     { kind: 'agent' },
   ])
-  expect(tasks[4]?.command).toHaveLength(512)
-  expect(tasks[4]?.command).toBe(`${longCommand.slice(0, 509)}\n;:`)
-  expect(tasks[5]?.command).toBe(`${continuedCommand.slice(0, 509)}\n;:`)
-  expect(tasks[5]?.command).toContain('\\\n;:')
+  expect(tasks[4]).toEqual({ kind: 'other' })
+  expect(tasks[5]).toEqual({ kind: 'other' })
   expect(arm).toContain('--assistant-text=done')
   expectCliContract(h)
 })

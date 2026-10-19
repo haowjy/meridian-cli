@@ -56,7 +56,7 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 |---|---|---|
 | `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits and terminal output reads mark their record's notification as consumed |
 | `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, boundary/idle completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
-| `meridian-idle` | native idle and interactive-return sensing in primary TUIs | shells out to the hidden `meridian idle` API; owns only in-memory push/warn timers; the core decides and delivers every notification |
+| `meridian-idle` | native idle and interactive-return sensing in primary TUIs | observes scoped managed-bash rows at `agent_end`, shells out to the hidden `meridian idle` API, and owns in-memory push/warn timers; the core decides and delivers every notification |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
@@ -200,7 +200,12 @@ spawn-watch when their `[harness.pi]` toggles are enabled. Session-boundary is
 always loaded by the adapter and has no config toggle. Meridian-idle is selected
 only when the launch profile is interactive. It passes `--interactive` on every
 `meridian idle` call, serializes arm/return transitions without making user input
-wait for the CLI, and fires each due push/warn stage back to the core.
+wait for the CLI, and fires each due push/warn stage back to the core. Its arm
+snapshot contains the tracked background Bash rows still running, bounded to 16
+facts. Commands up to 512 characters remain shell facts; longer commands become
+`other` instead of incomplete shell syntax. Invalid or unresolved Bash evidence
+degrades to no task facts rather than preventing the arm; command interpretation
+remains in the Python idle core.
 
 - **Spawned RPC**: suppress ambient extensions by default (`--no-extensions`),
   while retaining native skill, context-file, and prompt-template discovery.

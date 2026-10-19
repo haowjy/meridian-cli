@@ -5,9 +5,10 @@ import path from "node:path";
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 
-import { writeJsonAtomic } from "../../shared/json_file";
+import { readBashRecords } from "../../shared/bash_records";
+import { readPrivateJson, writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
-import { admitDelivery, admittedWorkIds, readDeliveryReceipts, readPrivateJson, readSpawnObservations, reservedSpawnIds } from "../../shared/delivery_receipts";
+import { admitDelivery, admittedWorkIds, readDeliveryReceipts, readSpawnObservations, reservedSpawnIds } from "../../shared/delivery_receipts";
 import {
   currentSpawnIdFromEnv,
   resolveBashRecordsPath,
@@ -16,7 +17,7 @@ import {
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
-import { isTerminalBashStatus, parseBashRecordsFile, parseSpawnStateFile } from "../../shared/schemas";
+import { isTerminalBashStatus, isTrackedBackground, parseSpawnStateFile } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
 import { bashOutcome } from "../../shared/task_outcome";
 import {
@@ -243,7 +244,7 @@ export class SpawnWatchRuntime {
     }
     for (const record of Object.values(bash.records)) {
       const outcome = bashOutcome(record);
-      if (record.is_tracked && record.is_background && isTerminalBashStatus(record.status)
+      if (isTrackedBackground(record) && isTerminalBashStatus(record.status)
           && record.notification_consumed_at_ms == null && !correlated.has(record.bash_id)
           && !consumed.has(record.bash_id) && !claimed.has(record.bash_id)) eligible.push({
         id: record.bash_id, kind: "bash", status: outcome.status, label: record.command,
@@ -367,11 +368,7 @@ export class SpawnWatchRuntime {
   }
 
   private async readBash(): Promise<BashRecordsFile> {
-    const value = await readPrivateJson(this.bashRecordsPath);
-    if (value === undefined) return { v: 1, spawn_id: this.currentSpawnId, updated_at_ms: 0, records: {} };
-    const file = parseBashRecordsFile(value);
-    if (!file || file.spawn_id !== this.currentSpawnId || file.runtime_error) throw Error("invalid or unresolved bash evidence");
-    return file;
+    return readBashRecords(this.currentSpawnId, this.bashRecordsPath);
   }
 
   private async readCleared(): Promise<Set<string>> {
