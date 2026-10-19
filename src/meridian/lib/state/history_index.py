@@ -64,6 +64,7 @@ from meridian.lib.state.session_fold import (
     SessionRecord,
     SessionStartEvent,
     SessionUpdateEvent,
+    UnsupportedSessionRecords,
     parse_event,
     project_session_generation,
 )
@@ -192,6 +193,8 @@ CURSORS = Table(
     Column("inode", Text),
     Column("extent", Integer),
     Column("tail", Text),
+    # Sorted JSON list of unsupported session versions already passed by the cursor.
+    Column("unsupported", Text),
 )
 
 
@@ -342,7 +345,7 @@ def _tail(handle: BinaryIO, extent: int, count: int = 256) -> str:
 
 @dataclass(frozen=True)
 class HistoryIndex:
-    """One schema's projection. Every path it owns is named by ``SCHEMA_VERSION``.
+    """One format's projection. Every owned path names both input and index versions.
 
     A schema bump starts a new file built fresh from authority. Older builds keep
     their own file (0.6.7 and earlier: ``history.sqlite3``), which this build never
@@ -515,6 +518,7 @@ class HistoryIndex:
                 .first()
             )
             offset = 0
+            unsupported = UnsupportedSessionRecords()
             if (
                 cursor
                 and cursor["inode"] == inode
@@ -524,6 +528,7 @@ class HistoryIndex:
                 if cursor["extent"] == snapshot_extent:
                     return  # Nothing appended since the cursor.
                 offset = cursor["extent"]
+                unsupported.versions.update(json.loads(cursor["unsupported"] or "[]"))
             else:
                 db.execute(delete(SESSIONS))
                 db.execute(delete(SESSION_CHATS))
@@ -543,7 +548,7 @@ class HistoryIndex:
             work_chats: set[tuple[str, str]] = set()
             for parsed_event, end in iter_jsonl_file(
                 handle,
-                parse_event,
+                lambda payload: parse_event(payload, unsupported),
                 path=path,
                 offset=offset,
                 extent=snapshot_extent,
@@ -656,10 +661,23 @@ class HistoryIndex:
                     list(work_chats),
                 )
             db.exec_driver_sql(
-                "INSERT OR REPLACE INTO cursors (source, inode, extent, tail) VALUES "
-                "('sessions', ?, ?, ?)",
-                (inode, offset, _tail(handle, offset)),
+                "INSERT OR REPLACE INTO cursors (source, inode, extent, tail, unsupported) "
+                "VALUES ('sessions', ?, ?, ?, ?)",
+                (
+                    inode,
+                    offset,
+                    _tail(handle, offset),
+                    json.dumps(sorted(unsupported.versions)) if unsupported.versions else None,
+                ),
             )
+
+    def _warn_unsupported_sessions(self, db: Connection) -> None:
+        """Every indexed read repeats the warning for rows the cursor skipped earlier."""
+        stored = db.execute(
+            select(CURSORS.c.unsupported).where(CURSORS.c.source == "sessions")
+        ).scalar()
+        if stored:
+            UnsupportedSessionRecords(set(json.loads(stored))).warn(self.root / "sessions.jsonl")
 
     def _project(self, db: Connection, source: HistorySource) -> bool:
         if source.kind == "spawn":
@@ -838,6 +856,7 @@ class HistoryIndex:
                     raise TimeoutError("History rebuild exhausted its remaining budget")
                 db.execute(text("ANALYZE"))
                 db.commit()
+                self._warn_unsupported_sessions(db)
             # The root gate is already held: ordinary readers must never take it
             # while holding a database gate. Catchup/rebuild share catchup.lock.
             with lock_file(self.database_lock, timeout=_remaining(deadline)):
@@ -1130,6 +1149,7 @@ class HistoryIndex:
                 active += self._reread_unmarked(db, target)
                 for marker in acknowledged:
                     changes.acknowledge(marker)
+                self._warn_unsupported_sessions(db)
                 return IndexCoverage(
                     generation, meta["build"], not pending, tuple(pending), tuple(active), warnings
                 )

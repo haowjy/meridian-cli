@@ -17,13 +17,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The unused `gate` hook event class and the impossible `"skipped"` Plugin API spawn status. (#687)
 - The inert Plugin API `FailurePolicy` type and hook field. The config key remains temporarily as the deprecated no-op described above. (#687)
 - `HookContext.from_authority`; construct plugin hook contexts with `HookContext.from_roots` instead. (#687)
+- Unread version copies from the plugin API, launch-policy snapshots, Pi runtime metadata, and native-search SQLite metadata. The native-search file name now derives from its schema constant.
 
 ### Changed
 - Hook events are `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, and `notify.manual`; the `notify.*` prefix identifies notification-bearing events. Lifecycle/telemetry producer names change from `spawn.queued` to `spawn.created`, `spawn.running` to `spawn.started`, and `work.started` to separate `work.created` / `work.activated` moments. (#687)
-- Plugin API 3.0.0 carries the event contract changes and exports the shared `SpawnKind` and `SpawnStatus`; command hook context schema version 3 adds spawn kind. (#687)
+- Hook payload `schema_version` 3 carries the event contract changes and adds spawn kind; the Plugin API exports the shared `SpawnKind` and `SpawnStatus`. (#687)
 - `git-autosync` defaults are `spawn.finished`, `work.activated`, and `work.done`, so it syncs for sessionless `work start` / `work switch` and once before a primary launch with `--work` / `--from` attached. (#687)
 - Explicitly named hooks with impossible conditions are skipped during the compatibility window. Unevented builtin rows enable compatible defaults, keep incompatible defaults as disabled overrides, and error only when none can match. (#687)
 - Spawn event IDs remain stable per spawn and event; work event IDs are now unique per firing. (#687)
+- Compatibility policy: one-minor deprecation for config, CLI, and hook names; cross-build state readers check explicit integer format versions, with short-lived idle state as the documented absent-state exception. See [upgrade note](docs/upgrading.md#compatibility-policy-and-state-version-checks).
+- Telemetry queries and session folds skip records from unsupported format versions and warn instead of interpreting them as current data.
+- History index namespaces now include the session event format version, and the index warns on every read about unsupported session rows it skipped. Session writes that read existing records to decide what to append refuse unsupported rows in their chat or native-session scope instead of writing stale state past them. The one-time native-session import reads only the chats it binds and defers when one has an unsupported row, so a newer build's records do not fail every command.
 
 ### Fixed
 - `spawn.started` now fires once for spawns persisted initially as `running`, including streaming-serve spawns. (#687)
@@ -31,6 +35,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `spawn.finished` command hooks now receive the persisted terminal error; hook subprocesses no longer inherit stale payload variables for fields absent from the current event. (#687)
 - Invalid hook config can no longer interrupt `work start` after its state mutation; work hook dispatch logs the failure and the operation continues. (#687)
 - An invalid hook row no longer stops spawns: lifecycle dispatch drops it with a warning and valid hooks keep running. (#687)
+- Work items no longer silently lose status, description, goal, or unknown fields when `__status.json` comes from another build. Unknown fields survive later writes; every active and archived copy is validated before a mutation touches disk; newer versions remain visible and mutations refuse them; malformed metadata warns with its path.
+- Idle state version skew now names the ignored file and explains that another Meridian build wrote it.
+
+### Upgrade notes
+- State-version warnings and removed no-op version fields are described in [Compatibility policy and state version checks](docs/upgrading.md#compatibility-policy-and-state-version-checks).
 
 ## [0.10.29] - 2026-10-19
 

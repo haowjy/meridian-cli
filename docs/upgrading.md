@@ -40,14 +40,14 @@ repointing, and clear do not fire it. The `git-autosync` defaults are now
 work syncs. A primary launch with attached work performs one synchronous sync
 after creating its session and before starting the harness.
 
-Plugin API 3.0.0 carries the renamed event literal, removes the impossible
-`when.status = ["skipped"]` value and the inert `failure_policy` Plugin API
-field/type, exports `SpawnKind` and `SpawnStatus`, and adds
+Hook payload `schema_version` 3 marks this contract change and adds `spawn.kind`
+and `MERIDIAN_SPAWN_KIND`. The Plugin API carries the renamed event literal,
+removes the impossible `when.status = ["skipped"]` value and the inert
+`failure_policy` field/type, exports `SpawnKind` and `SpawnStatus`, and adds
 `HookContext.spawn_kind`. It also removes `HookContext.from_authority`; package
 code that constructed contexts through it should call `HookContext.from_roots`
-with the authority's `project_root` and `runtime_root`. Command hook payload
-schema version 3 adds `spawn.kind` and `MERIDIAN_SPAWN_KIND`. The new
-`when.kind` list accepts `child`, `primary`, and `streaming`.
+with the authority's `project_root` and `runtime_root`. The new `when.kind` list
+accepts `child`, `primary`, and `streaming`.
 
 The corresponding config transitions share the one-minor window:
 
@@ -83,6 +83,59 @@ rejects the new names. Keep the old names until every machine has upgraded,
 then rename them before the next minor release. Runtime lifecycle dispatch
 continues to drop truly invalid rows while valid and deprecated rows run; work
 commands keep their core mutation even if dispatch setup itself fails.
+
+## Compatibility policy and state version checks
+
+Meridian now keeps renamed config keys, hook names, and CLI flags working with a
+replacement warning for one minor release. State shared across builds uses an
+integer format version where another build can read it; rebuildable indexes put
+that version in the file name.
+
+What users may notice:
+
+- Work items whose `__status.json` contains an unknown field keep it through
+  later metadata updates and warn once per file per command. A status file from a
+  newer format is displayed as `requires-newer-meridian`, warns with its path and
+  asks for an upgrade; commands validate every active and archived copy before
+  renaming, deleting, moving, or rewriting anything. Other malformed status files
+  now warn before using directory-derived defaults.
+- `meridian telemetry query` and session replay skip records carrying an
+  unsupported `v` and warn instead of interpreting them with the current schema.
+  Session writes that read existing records to decide what to append (starting a
+  chat, binding a native session, deduplicating model records, adopting an
+  observed native session) refuse when an unsupported record names the same chat
+  or native session, rather than writing stale state or creating a duplicate
+  chat. Other session updates append without reading the journal. A newer record
+  that names no chat or native session is invisible to those scoped decisions; it
+  refuses only decisions that check every chat, such as repair binds. The
+  one-time native-session import reads only the chats it binds; an unsupported
+  record in one of them defers the import with a message instead of failing the
+  command. The disposable history index skips unsupported session rows, keeps
+  indexing later ones, and remembers the skipped versions so every indexed read
+  warns once per command. Its file name includes both the index schema and
+  session format (`history-v10-sessions-v1.sqlite3`) so a format change rebuilds
+  from authority.
+  Idle files are the deliberate exception to refusal: they are short-lived and
+  expected to be absent, and refusing one after a mid-session upgrade would
+  disable idle handling; they keep absent-state behavior and now warn with the
+  file path.
+- `meridian.plugin_api.__version__` is removed because the API is not installed
+  independently; callers that need a version should use Meridian's package
+  version. Launch-policy snapshot `schema_version`, Pi `pi_runtime_meta.json`
+  `schema_version`, and the duplicate native-search SQLite metadata are removed
+  because their released readers default or ignore them. Existing files that
+  contain these state fields remain readable. The legacy native-import marker
+  keeps its `schema_version`: released repair readers still require it.
+
+No state migration or manual index rebuild is required. The first indexed read
+builds the new input-versioned file automatically. Work status writers do not emit
+`v` yet, so released strict readers continue to accept files this version writes.
+When rolling back to v0.10.29, authority remains readable because this version
+still writes the released work and session shapes. Its old `history-v10.sqlite3`
+was not updated while the newer input-versioned index was active; run
+`meridian session index rebuild --metadata-only` after rollback before relying on
+indexed session discovery. Rollback support for other state changes remains
+specific to their topic below.
 
 ## Notifications are hook events
 
@@ -134,11 +187,11 @@ With no hook config, delivery is unchanged.
   attachments, it attempts the rest and the route is sent with a warning naming
   every failed file; do not retry the already delivered text. Email remains
   all-or-nothing: one rejected attachment fails that email and its text.
-- **Plugin API 2.0.0 (historical contract).** `HookContext.runtime_root` became
-  nullable, `HookContext.notification` was added, and hook payload schema 2
-  added the notification object. Those events were then named
-  `session.responded`, `session.cache_expiring`, and `notify.manual`; Plugin API
-  3.0.0 applies the current `notify.*` names and payload schema 3 described in
+- **Hook payload schema 2 (historical contract).** `HookContext.runtime_root`
+  became nullable, `HookContext.notification` was added, and hook payload schema
+  2 added the notification object. Those events were then named
+  `session.responded`, `session.cache_expiring`, and `notify.manual`; payload
+  schema 3 applies the current `notify.*` names described in
   [Hook event names](#hook-event-names).
 
 No state migration is needed.
@@ -150,10 +203,10 @@ schema 7 to 10 so an unstopped session generation becomes inactive when a later
 generation of the same chat starts. Schema numbers 8 and 9 are skipped because
 unreleased builds wrote projections in those namespaces.
 
-The first indexed read rebuilds `history-v10.sqlite3` from authority and may
-take longer. Older `history-v7.sqlite3`, `history-v8.sqlite3`, and
-`history-v9.sqlite3` files are left untouched and can be removed after rollback
-is no longer needed.
+The first indexed read rebuilds `history-v10-sessions-v1.sqlite3` from authority
+and may take longer. Older `history-v7.sqlite3`, `history-v8.sqlite3`,
+`history-v9.sqlite3`, and pre-policy `history-v10.sqlite3` files are left untouched
+and can be removed after rollback is no longer needed.
 
 ## Idle compaction removed
 

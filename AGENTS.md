@@ -3,7 +3,8 @@
 Multi-agent coordination CLI. Launches harness subprocesses, tracks state
 on disk, surfaces results. Coordinates agents — does not control them.
 
-No real users, no backwards compatibility. Change the schema to get it right.
+Compatibility: one-release deprecation for config, CLI, and hook names; new builds
+read state older builds wrote. Details: `docs/releasing.md#compatibility-and-versioning`.
 
 ## Safety Rules
 

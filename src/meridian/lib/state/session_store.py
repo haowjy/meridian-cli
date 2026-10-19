@@ -57,11 +57,13 @@ from meridian.lib.state.session_fold import (
 )
 from meridian.lib.state.session_fold import (
     SessionSettings,
+    UnsupportedSessionRecords,
     fold_session_generations,
     generation_matches,
     is_historical_generation,
     parse_event,
     session_instance_for_event,
+    supported_session_event_version,
     validate_historical_import,
     validate_startup_identity,
     with_key,
@@ -157,20 +159,34 @@ class ChatRows(dict[str, list[SessionEvent]]):
             self.setdefault(row.chat_id, []).append(row)
 
 
-def chats_rows(root: Path, chats: Collection[str] | None) -> ChatRows:
+def chats_rows(
+    root: Path,
+    chats: Collection[str] | None,
+    *,
+    require_supported: bool = False,
+) -> ChatRows:
     """Read a selected set in one pass; None explicitly requests the full snapshot."""
-    return ChatRows(read_session_events(root, chats) if chats is None or chats else [])
+    return ChatRows(
+        read_session_events(root, chats, require_supported=require_supported)
+        if chats is None or chats
+        else []
+    )
 
 
-def chat_rows(root: Path, chat: str) -> list[SessionEvent]:
-    return chats_rows(root, {chat}).get(chat, [])
+def chat_rows(root: Path, chat: str, *, require_supported: bool = False) -> list[SessionEvent]:
+    return chats_rows(root, {chat}, require_supported=require_supported).get(chat, [])
 
 
-def chat_record(root: Path, chat: str | None) -> SessionRecord | None:
+def chat_record(
+    root: Path,
+    chat: str | None,
+    *,
+    require_supported: bool = False,
+) -> SessionRecord | None:
     if chat is None:
         return None
     records: dict[str, SessionRecord] = {}
-    for event in chat_rows(root, chat):
+    for event in chat_rows(root, chat, require_supported=require_supported):
         project_session_event(records, event)
     return records.get(chat)
 
@@ -186,21 +202,31 @@ def chat_generations(root: Path, chat: str) -> tuple[SessionRecord, ...]:
     return fold_session_generations(chat_rows(root, chat))
 
 
-def native_chats(root: Path, native_id: str) -> tuple[str, ...]:
+def native_chats(
+    root: Path,
+    native_id: str,
+    *,
+    require_supported: bool = False,
+) -> tuple[str, ...]:
     """Nominate chats naming a native key; callers verify their own exact facts."""
 
+    path = RuntimePaths.from_root_dir(root).sessions_jsonl
+    unsupported = UnsupportedSessionRecords()
+
     def select(row: dict[str, object]) -> str | None:
+        if not supported_session_event_version(row, unsupported):
+            return None
         if native_id not in native_ids(row):
             return None
         record = _row_record(row)
         chat = record.get("chat_id")
         return chat.strip() if isinstance(chat, str) and chat.strip() else None
 
-    return tuple(
+    chats = tuple(
         sorted(
             set(
                 read_events(
-                    RuntimePaths.from_root_dir(root).sessions_jsonl,
+                    path,
                     select,
                     raw_filter=lambda raw: _row_may_name_native(raw, native_id),
                 )
@@ -208,19 +234,39 @@ def native_chats(root: Path, native_id: str) -> tuple[str, ...]:
             key=_session_sort_key,
         )
     )
+    if require_supported:
+        unsupported.require_supported(path)
+    else:
+        unsupported.warn(path)
+    return chats
 
 
-def native_observations(root: Path, native_id: str) -> list[SessionModelObservationEvent]:
+def native_observations(
+    root: Path,
+    native_id: str,
+    *,
+    require_supported: bool = False,
+) -> list[SessionModelObservationEvent]:
+    path = RuntimePaths.from_root_dir(root).sessions_jsonl
+    unsupported = UnsupportedSessionRecords()
+
     def select(row: dict[str, object]) -> SessionModelObservationEvent | None:
+        if not supported_session_event_version(row, unsupported):
+            return None
         if native_id not in native_ids(row):
             return None
         return _parse_model_observation(row)
 
-    return read_events(
-        RuntimePaths.from_root_dir(root).sessions_jsonl,
+    observations = read_events(
+        path,
         select,
         raw_filter=lambda raw: _row_may_name_native(raw, native_id),
     )
+    if require_supported:
+        unsupported.require_supported(path)
+    else:
+        unsupported.warn(path)
+    return observations
 
 
 def append_chat_rows(root: Path, batches: Mapping[str, Iterable[SessionEvent]]) -> None:
@@ -264,11 +310,16 @@ def _native_scope(
     native_id: str | None,
     *,
     source_chat_id: str | None = None,
+    require_supported: bool = False,
 ) -> list[SessionEvent]:
-    chats: set[str] = set(native_chats(root, native_id)) if native_id else set()
+    chats: set[str] = (
+        set(native_chats(root, native_id, require_supported=require_supported))
+        if native_id
+        else set()
+    )
     if source_chat_id is not None:
         chats.add(source_chat_id)
-    return chats_rows(root, chats).ordered
+    return chats_rows(root, chats, require_supported=require_supported).ordered
 
 
 class StartedSession(NamedTuple):
@@ -296,6 +347,9 @@ def _append_session_rows(data_path: Path, rows: Iterable[BaseModel]) -> None:
             mode="json",
             exclude_none=isinstance(event, (SessionUpdateEvent, SessionStopEvent)),
         )
+        unsupported = UnsupportedSessionRecords()
+        if not supported_session_event_version(payload, unsupported):
+            unsupported.require_supported(data_path)
         lines.append(json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n")
     if not lines:
         return
@@ -407,7 +461,10 @@ def reserve_chat_id(runtime_root: Path) -> str:
 
 
 def read_session_events(
-    runtime_root: Path, chat_ids: Collection[str] | None = None
+    runtime_root: Path,
+    chat_ids: Collection[str] | None = None,
+    *,
+    require_supported: bool = False,
 ) -> list[SessionEvent]:
     """Parse every session event in source order, or only those of ``chat_ids``.
 
@@ -418,6 +475,7 @@ def read_session_events(
     selected, so a poisoned chat no longer blocks other chats' reads and binds.
     """
     paths = RuntimePaths.from_root_dir(runtime_root)
+    unsupported = UnsupportedSessionRecords()
 
     def selected_event(payload: Mapping[str, object]) -> SessionEvent | None:
         # This check decides selection; _row_may_select_chat must nominate
@@ -426,13 +484,18 @@ def read_session_events(
             raw_id = _row_record(payload).get("chat_id")
             if not isinstance(raw_id, str) or raw_id.strip() not in chat_ids:
                 return None
-        return parse_event(payload)
+        return parse_event(payload, unsupported)
 
-    return read_events(
+    events = read_events(
         paths.sessions_jsonl,
         selected_event,
         raw_filter=None if chat_ids is None else lambda raw: _row_may_select_chat(raw, chat_ids),
     )
+    if require_supported:
+        unsupported.require_supported(paths.sessions_jsonl)
+    else:
+        unsupported.warn(paths.sessions_jsonl)
+    return events
 
 
 def _records_by_session(
@@ -543,7 +606,7 @@ def start_session(
             lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
             lock_file(paths.sessions_flock),
         ):
-            existing = chat_record(runtime_root, resolved_chat_id)
+            existing = chat_record(runtime_root, resolved_chat_id, require_supported=True)
             if existing is not None:
                 from meridian.lib.state.session_identity import live_observer_for_chat
 
@@ -562,7 +625,7 @@ def start_session(
             # Chat-only callers select the current generation. Resolved references
             # carry their exact portable ancestor and must never be re-resolved.
             if forked_from_chat_id and forked_from_history_id is None:
-                source = chat_record(runtime_root, forked_from_chat_id)
+                source = chat_record(runtime_root, forked_from_chat_id, require_supported=True)
                 event = event.model_copy(
                     update={"forked_from_history_id": source.history_id if source else None}
                 )
@@ -919,14 +982,25 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
         nonlocal recorded
         native_id = event.harness_session_id
         if native_id is None:
-            source_rows = chat_rows(runtime_root, event.chat_id)
+            source_rows = chat_rows(runtime_root, event.chat_id, require_supported=True)
             _, native_id = _bound_model_selections([*source_rows, event])[-1]
             events = (
-                _native_scope(runtime_root, native_id, source_chat_id=event.chat_id)
-                if native_id is not None else source_rows
+                _native_scope(
+                    runtime_root,
+                    native_id,
+                    source_chat_id=event.chat_id,
+                    require_supported=True,
+                )
+                if native_id is not None
+                else source_rows
             )
         else:
-            events = _native_scope(runtime_root, native_id, source_chat_id=event.chat_id)
+            events = _native_scope(
+                runtime_root,
+                native_id,
+                source_chat_id=event.chat_id,
+                require_supported=True,
+            )
         source_start = next(
             (
                 start
@@ -1006,7 +1080,12 @@ def record_model_observation(runtime_root: Path, event: SessionModelObservationE
     def rows() -> Iterator[SessionModelObservationEvent]:
         nonlocal recorded
         if (
-            get_last_executed_model(runtime_root, event.harness, event.harness_session_id)
+            get_last_executed_model(
+                runtime_root,
+                event.harness,
+                event.harness_session_id,
+                require_supported=True,
+            )
             != event.observed_model_token
         ):
             yield event
@@ -1024,11 +1103,17 @@ def get_last_executed_model(
     runtime_root: Path,
     harness: str,
     harness_session_id: str,
+    *,
+    require_supported: bool = False,
 ) -> str | None:
     """Return the latest observed executed model token for a native session, or None."""
 
     latest: str | None = None
-    for event in native_observations(runtime_root, harness_session_id):
+    for event in native_observations(
+        runtime_root,
+        harness_session_id,
+        require_supported=require_supported,
+    ):
         if event.harness == harness and event.harness_session_id == harness_session_id:
             latest = event.observed_model_token
     return latest
@@ -1047,14 +1132,23 @@ def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[s
     ]
 
 
-def get_session_records(runtime_root: Path, chat_ids: set[str]) -> list[SessionRecord]:
+def get_session_records(
+    runtime_root: Path,
+    chat_ids: set[str],
+    *,
+    require_supported: bool = False,
+) -> list[SessionRecord]:
     """Return materialized records for a set of Meridian chat/session IDs."""
 
     if not chat_ids:
         return []
     selected = {chat_id.strip() for chat_id in chat_ids if chat_id.strip()}
     records: dict[str, SessionRecord] = {}
-    for event in chats_rows(runtime_root, selected).ordered:
+    for event in chats_rows(
+        runtime_root,
+        selected,
+        require_supported=require_supported,
+    ).ordered:
         project_session_event(records, event)
     return [
         records[chat_id]
@@ -1143,6 +1237,7 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                 for record in get_session_records(
                     runtime_root,
                     {chat for chat, _, _ in stale},
+                    require_supported=True,
                 )
             }
             stopped_at = utc_now_iso()
@@ -1227,7 +1322,7 @@ def append_historical_session(runtime_root: Path, record: SessionRecord) -> None
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        existing = chat_record(runtime_root, record.chat_id)
+        existing = chat_record(runtime_root, record.chat_id, require_supported=True)
         if existing is not None:
             if existing == record:
                 return
@@ -1326,11 +1421,11 @@ def _get_or_create_observed_chat_locked(
     their schema. Work is part of the initial event, not a later repair/update.
     The owning execution keeps its own entry chat and lifetime lease.
     """
-    source = chat_record(runtime_root, source_chat_id)
+    source = chat_record(runtime_root, source_chat_id, require_supported=True)
     if source is None or source.record_mode != "live":
         raise ValueError(f"Source chat is missing or historical: {source_chat_id}")
     records: dict[str, SessionRecord] = {}
-    for event in _native_scope(runtime_root, session_id):
+    for event in _native_scope(runtime_root, session_id, require_supported=True):
         project_session_event(records, event)
     # Dict insertion follows the first accepted row, even with tied/backwards clocks.
     for record in (source, *records.values()):
@@ -1366,6 +1461,8 @@ def _get_or_create_observed_chat_locked(
 
 def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
     """All generations, including historical and legacy starts, in source order."""
-    return fold_session_generations(
-        read_events(RuntimePaths.from_root_dir(runtime_root).sessions_jsonl, parse_event)
-    )
+    path = RuntimePaths.from_root_dir(runtime_root).sessions_jsonl
+    unsupported = UnsupportedSessionRecords()
+    events = read_events(path, lambda payload: parse_event(payload, unsupported))
+    unsupported.warn(path)
+    return fold_session_generations(events)

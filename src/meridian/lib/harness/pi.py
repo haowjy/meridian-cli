@@ -116,7 +116,7 @@ def _write_pi_runtime_metadata_sidecar(
         spawn_id,
         lambda: atomic_write_text(
             metadata_path,
-            json.dumps({"schema_version": 1, **payload}, separators=(",", ":")) + "\n",
+            json.dumps(payload, separators=(",", ":")) + "\n",
         ),
     )
 

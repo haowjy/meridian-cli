@@ -19,7 +19,7 @@ from meridian.lib.core.native_identity import NativeKey
 
 SCHEMA_VERSION = 1
 PARSER_VERSION = 2
-INDEX_FILENAME = "native-search-v1.sqlite3"
+INDEX_FILENAME = f"native-search-v{SCHEMA_VERSION}.sqlite3"
 MINIMUM_SQLITE_VERSION = (3, 43, 0)
 
 
@@ -130,13 +130,12 @@ class NativeSearchIndex:
 
     def _initialize(self) -> None:
         with closing(self._connect()) as db, db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone():
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='sources'").fetchone():
                 return
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(
                 """
                 BEGIN IMMEDIATE;
-                CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sources(
                   source_id INTEGER PRIMARY KEY,
                   harness TEXT NOT NULL, native_store TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -153,10 +152,6 @@ class NativeSearchIndex:
                   t, content='', contentless_delete=1, tokenize='trigram', detail='none');
                 """
             )
-            db.execute(
-                "INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)",
-                (str(SCHEMA_VERSION),),
-            )
 
     @contextmanager
     def write_batch(self) -> Generator[None]:
@@ -165,8 +160,7 @@ class NativeSearchIndex:
         Closing the final connection checkpoints the WAL. Doing that per source
         repeatedly rewrites the growing FTS index; one refresh needs one lifetime.
         """
-        with closing(self._connect()) as keeper:
-            keeper.execute("SELECT value FROM meta").fetchall()
+        with closing(self._connect()):
             yield
 
     def inventory(self) -> dict[NativeKey, SourceRecord]:

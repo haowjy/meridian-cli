@@ -43,6 +43,7 @@ from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.native_binding import Conflict
 from meridian.lib.state.retention_archive import read_archived_member, read_receipts
 from meridian.lib.state.session_binding import session_bindings
+from meridian.lib.state.session_fold import UnsupportedSessionFormat
 from meridian.lib.state.session_store import (
     SessionRecord,
     get_session_records,
@@ -73,7 +74,7 @@ class LateBinding:
 class ImportReport(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
-    schema_version: int
+    schema_version: int = 1
     timestamp: str
     counts: dict[str, dict[str, int]]
     unbound: dict[str, list[str]]
@@ -191,41 +192,43 @@ def import_legacy_native_sessions(runtime_root: Path) -> ImportReport | None:
             chat.chat_id: chat for chat in list_all_session_records(runtime_root)
         }
         report = report_legacy_native_import(runtime_root, records=list(records.values()))
-        with session_bindings(runtime_root) as bindings:
+        if report.bindings:
             # Native validation can be slow. Recheck identity under the sessions lock
-            # without holding it over native I/O or the spawn scan.
-            current_ids: dict[str, set[str]] = defaultdict(set)
-            for event in bindings.events:
-                session_id = getattr(event, "harness_session_id", None)
-                if session_id:
-                    current_ids[str(event.chat_id)].add(session_id)
-            for chat_id, (session_id, store) in tuple(report.bindings.items()):
-                original = records[chat_id]
-                current = bindings.records.get(chat_id)
-                if current is not None and current.native_store and current.harness_session_id:
-                    # A concurrent launch already bound this chat; never touch it.
-                    del report.bindings[chat_id]
-                    report.counts[original.harness]["imported"] -= 1
-                    continue
-                if (
-                    current is None
-                    or len(current_ids[chat_id] | {session_id}) > 1
-                    or current.session_instance_id != original.session_instance_id
-                ):
-                    del report.bindings[chat_id]
-                    report.counts[original.harness]["imported"] -= 1
-                    report.record(original, "ambiguous_id")
-                    continue
-                result = bindings.bind(
-                    chat_id,
-                    NativeKeyFields(original.harness, store, session_id),
-                    source="legacy_import",
-                    session_instance_id=original.session_instance_id,
-                )
-                if isinstance(result, Conflict):
-                    del report.bindings[chat_id]
-                    report.counts[original.harness]["imported"] -= 1
-                    report.record(original, "ambiguous_id")
+            # without holding it over native I/O or the spawn scan. Read only the
+            # chats being bound, so newer-format rows in other chats can't block it.
+            with session_bindings(runtime_root, scope=report.bindings.keys()) as bindings:
+                current_ids: dict[str, set[str]] = defaultdict(set)
+                for event in bindings.events:
+                    session_id = getattr(event, "harness_session_id", None)
+                    if session_id:
+                        current_ids[str(event.chat_id)].add(session_id)
+                for chat_id, (session_id, store) in tuple(report.bindings.items()):
+                    original = records[chat_id]
+                    current = bindings.records.get(chat_id)
+                    if current is not None and current.native_store and current.harness_session_id:
+                        # A concurrent launch already bound this chat; never touch it.
+                        del report.bindings[chat_id]
+                        report.counts[original.harness]["imported"] -= 1
+                        continue
+                    if (
+                        current is None
+                        or len(current_ids[chat_id] | {session_id}) > 1
+                        or current.session_instance_id != original.session_instance_id
+                    ):
+                        del report.bindings[chat_id]
+                        report.counts[original.harness]["imported"] -= 1
+                        report.record(original, "ambiguous_id")
+                        continue
+                    result = bindings.bind(
+                        chat_id,
+                        NativeKeyFields(original.harness, store, session_id),
+                        source="legacy_import",
+                        session_instance_id=original.session_instance_id,
+                    )
+                    if isinstance(result, Conflict):
+                        del report.bindings[chat_id]
+                        report.counts[original.harness]["imported"] -= 1
+                        report.record(original, "ambiguous_id")
         atomic_write_text(marker, report.to_json())
         deferral.unlink(missing_ok=True)
         imported = sum(counts["imported"] for counts in report.counts.values())
@@ -632,7 +635,7 @@ def maybe_import_legacy_native_sessions(runtime_root: Path) -> None:
     """Keep a damaged source or unavailable filesystem from disabling the CLI."""
     try:
         import_legacy_native_sessions(runtime_root)
-    except (SpawnStateQuarantined, OSError, sqlite3.Error) as exc:
+    except (SpawnStateQuarantined, UnsupportedSessionFormat, OSError, sqlite3.Error) as exc:
         # Do not skip quarantined spawn rows: they might carry a conflicting ID.
         # A short backoff avoids repeating an expensive source scan on every command.
         with suppress(OSError):

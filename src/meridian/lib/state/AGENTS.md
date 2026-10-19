@@ -20,7 +20,10 @@ bare path
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   origin.json                       — ad-hoc path attribution and activity only
-  sessions.jsonl                    — session events (append-only)
+  sessions.jsonl                    — session events (append-only; absent v means v1,
+                                      unsupported versions warn and are skipped by
+                                      reads; read-then-append decisions refuse them
+                                      in scope)
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
@@ -40,7 +43,8 @@ bare path
   artifacts/<spawn_id>/             — auxiliary artifact store, not a transcript source
 
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
-  __status.json                     — mutable per-work-item metadata
+  __status.json                     — mutable per-work-item metadata; readers accept
+                                      absent v as v1, writers do not emit v yet
   prompts/ handoffs/ …              — work artifacts
 ```
 
@@ -57,6 +61,12 @@ Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
 `work_state.py` — **never** the project repo. See `docs/configuration.md` for
 context-path resolution.
+
+Work metadata reads tolerate, preserve, and warn about unknown fields. A newer `v`
+gets a compatibility marker displayed as `requires-newer-meridian`; it never
+collides with the stored status, and mutations validate every located copy before
+touching disk. Malformed metadata still projects directory defaults, but always
+warns with the file path. Repeated reads warn once per file per command.
 
 ## Spawn State: Per-Spawn Files
 
@@ -136,8 +146,11 @@ lock is busy; the lock gates marker acknowledgement, not the read. Spawn and arc
 catalog projection still require their source locks. Incremental session catch-up
 loads only the working sets for chats touched after its cursor.
 The index file and its sidecars (marker queue, GENERATION, catch-up/database/marker
-locks, init latch) are named by `SCHEMA_VERSION`; a schema bump builds a new file
-from authority and never touches an older build's file. Never migrate in place.
+locks, init latch) are named by both `SCHEMA_VERSION` and the latest supported
+session event version; either change builds a new file from authority and never
+touches an older build's file. Unsupported session rows are skipped; the cursor
+stores their versions so every indexed read warns.
+Never migrate in place.
 See [.context/history.md](.context/history.md) before changing locks, projection,
 transcript retry behavior, ZIP retention, or restore.
 
@@ -247,7 +260,8 @@ Historical multi-ID arrays are ignored on read.
 - `session_store.py` — Session event I/O, lease ownership, and the canonical
   `session_exists()` predicate (a chat record exists; a harness ID is not required).
 - `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars.
-- `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC.
+- `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC;
+  a version mismatch remains absent behaviorally but warns that another build wrote the file.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.

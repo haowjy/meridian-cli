@@ -44,7 +44,7 @@ class SessionBindings:
         self.runtime_root = runtime_root
         self.paths = RuntimePaths.from_root_dir(runtime_root)
         self.scope = None if scope is None else frozenset(scope)
-        self.events = chats_rows(runtime_root, self.scope).ordered
+        self.events = chats_rows(runtime_root, self.scope, require_supported=True).ordered
         self._pending: list[sessions.SessionUpdateEvent] = []
         self.records: dict[str, sessions.SessionRecord] = {}
         for event in self.events:

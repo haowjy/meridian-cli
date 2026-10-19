@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
@@ -87,6 +92,25 @@ def test_query_spawn_correlation_filter(tmp_path: Path) -> None:
     _write_segment(telemetry_dir, "123-0001.jsonl", [matching, other])
 
     assert list(query_events(telemetry_dir, ids_filter={"spawn_id": "p123"})) == [matching]
+
+
+def test_query_skips_unsupported_versions_with_one_summary_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    telemetry_dir = tmp_path / "telemetry"
+    supported = _event(datetime.now(UTC), "chat.ws.connected")
+    unsupported = _event(datetime.now(UTC), "chat.ws.disconnected")
+    unsupported["v"] = 2
+    _write_segment(telemetry_dir, "123-0001.jsonl", [unsupported, supported, unsupported])
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.telemetry.reader"):
+        assert list(query_events(telemetry_dir)) == [supported]
+
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "2 telemetry records" in warnings[0].message
+    assert "unsupported format version" in warnings[0].message
 
 
 def test_status_returns_segment_count_and_size(tmp_path: Path) -> None:

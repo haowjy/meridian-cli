@@ -29,8 +29,6 @@ from meridian.plugin_api.types import (
     SpawnStatus,
 )
 
-__version__ = "3.0.0"
-
 __all__ = [
     "NOTIFICATION_EVENTS",
     "Hook",
@@ -41,7 +39,6 @@ __all__ = [
     "Notification",
     "SpawnKind",
     "SpawnStatus",
-    "__version__",
     "get_project_home",
     "get_user_home",
 ]
