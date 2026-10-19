@@ -73,7 +73,7 @@ class LateBinding:
 class ImportReport(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
-    schema_version: int
+    schema_version: int = 1
     timestamp: str
     counts: dict[str, dict[str, int]]
     unbound: dict[str, list[str]]

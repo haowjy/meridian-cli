@@ -252,6 +252,8 @@ def test_late_session_id_is_imported_once_after_legacy_marker(
     marker["timestamp"] = "2026-09-25T00:00:00Z"
     # Previous branch builds wrote the marker before late_retries existed.
     marker.pop("late_retries")
+    # Readers accept the unused version before a future writer stops emitting it.
+    marker.pop("schema_version")
     (root / legacy.MARKER).write_text(json.dumps(marker))
     session_id = "01a0d525-a4e8-7741-ad00-8cd251adfb11"
     record = session_store.chat_record(root, chat_id)

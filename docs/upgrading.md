@@ -40,14 +40,14 @@ repointing, and clear do not fire it. The `git-autosync` defaults are now
 work syncs. A primary launch with attached work performs one synchronous sync
 after creating its session and before starting the harness.
 
-Plugin API 3.0.0 carries the renamed event literal, removes the impossible
-`when.status = ["skipped"]` value and the inert `failure_policy` Plugin API
-field/type, exports `SpawnKind` and `SpawnStatus`, and adds
+Hook payload `schema_version` 3 marks this contract change and adds `spawn.kind`
+and `MERIDIAN_SPAWN_KIND`. The Plugin API carries the renamed event literal,
+removes the impossible `when.status = ["skipped"]` value and the inert
+`failure_policy` field/type, exports `SpawnKind` and `SpawnStatus`, and adds
 `HookContext.spawn_kind`. It also removes `HookContext.from_authority`; package
 code that constructed contexts through it should call `HookContext.from_roots`
-with the authority's `project_root` and `runtime_root`. Command hook payload
-schema version 3 adds `spawn.kind` and `MERIDIAN_SPAWN_KIND`. The new
-`when.kind` list accepts `child`, `primary`, and `streaming`.
+with the authority's `project_root` and `runtime_root`. The new `when.kind` list
+accepts `child`, `primary`, and `streaming`.
 
 The corresponding config transitions share the one-minor window:
 
@@ -83,6 +83,34 @@ rejects the new names. Keep the old names until every machine has upgraded,
 then rename them before the next minor release. Runtime lifecycle dispatch
 continues to drop truly invalid rows while valid and deprecated rows run; work
 commands keep their core mutation even if dispatch setup itself fails.
+
+## Compatibility policy and state version checks
+
+Meridian now keeps renamed config keys, hook names, and CLI flags working with a
+replacement warning for one minor release. State shared across builds uses an
+integer format version where another build can read it; rebuildable indexes put
+that version in the file name.
+
+What users may notice:
+
+- Work items whose `__status.json` contains an unknown field keep their stored
+  metadata and warn. A status file from a newer format is listed as
+  `requires-newer-meridian`, warns with its path and asks for an upgrade; commands
+  refuse to overwrite it. Other malformed status files now warn before using
+  directory-derived defaults.
+- `meridian telemetry query` and session replay skip records carrying an
+  unsupported `v` and warn instead of interpreting them with the current schema.
+  Idle files from another format keep their previous absent-state behavior but
+  now warn with the file path.
+- `meridian.plugin_api.__version__`, launch-policy snapshot `schema_version`, Pi
+  `pi_runtime_meta.json` `schema_version`, and the duplicate native-search SQLite
+  schema metadata are removed because no reader used them. Existing files that
+  contain these fields remain readable. The legacy native-import marker keeps
+  its `schema_version`: released repair readers still require it.
+
+No state migration or index rebuild is required. Work status writers do not emit
+`v` yet, so released strict readers continue to accept files this version writes.
+Rollback support for other state changes remains specific to their topic below.
 
 ## Notifications are hook events
 
@@ -134,11 +162,11 @@ With no hook config, delivery is unchanged.
   attachments, it attempts the rest and the route is sent with a warning naming
   every failed file; do not retry the already delivered text. Email remains
   all-or-nothing: one rejected attachment fails that email and its text.
-- **Plugin API 2.0.0 (historical contract).** `HookContext.runtime_root` became
-  nullable, `HookContext.notification` was added, and hook payload schema 2
-  added the notification object. Those events were then named
-  `session.responded`, `session.cache_expiring`, and `notify.manual`; Plugin API
-  3.0.0 applies the current `notify.*` names and payload schema 3 described in
+- **Hook payload schema 2 (historical contract).** `HookContext.runtime_root`
+  became nullable, `HookContext.notification` was added, and hook payload schema
+  2 added the notification object. Those events were then named
+  `session.responded`, `session.cache_expiring`, and `notify.manual`; payload
+  schema 3 applies the current `notify.*` names described in
   [Hook event names](#hook-event-names).
 
 No state migration is needed.

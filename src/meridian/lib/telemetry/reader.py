@@ -2,12 +2,56 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Generator
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from meridian.lib.state.jsonl import iter_jsonl
 from meridian.lib.utils.json_shapes import json_object
+
+SUPPORTED_TELEMETRY_VERSIONS = frozenset({1})
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class UnsupportedTelemetryRecords:
+    """Accumulate unsupported envelopes so one read emits one useful warning."""
+
+    count: int = 0
+    versions: set[str] = field(default_factory=set[str])
+    paths: set[Path] = field(default_factory=set[Path])
+    warned: bool = False
+
+    def record(self, path: Path, version: object) -> None:
+        self.count += 1
+        self.versions.add(repr(version))
+        self.paths.add(path)
+
+    def warn(self) -> None:
+        if not self.count or self.warned:
+            return
+        self.warned = True
+        noun = "record" if self.count == 1 else "records"
+        logger.warning(
+            "Skipped %d telemetry %s with an unsupported format version (%s) in %s; "
+            "upgrade Meridian to read these records.",
+            self.count,
+            noun,
+            ", ".join(sorted(self.versions)),
+            ", ".join(sorted(str(path) for path in self.paths)),
+        )
+
+
+def _supported_envelope(
+    envelope: dict[str, object], path: Path, summary: UnsupportedTelemetryRecords
+) -> bool:
+    version = envelope.get("v", 1)
+    if type(version) is int and version in SUPPORTED_TELEMETRY_VERSIONS:
+        return True
+    summary.record(path, version)
+    return False
 
 
 def _envelope(payload: dict[str, object]) -> dict[str, object]:
@@ -55,22 +99,31 @@ def read_events(
     since_ts: str | None = None,
     domain: str | None = None,
     ids_filter: dict[str, str] | None = None,
+    unsupported: UnsupportedTelemetryRecords | None = None,
 ) -> Generator[dict[str, object], None, None]:
     """Yield parsed telemetry envelopes from a segment, applying optional filters.
 
     Truncation-tolerant: an incomplete tail is left for a later read.
     """
+    summary = unsupported or UnsupportedTelemetryRecords()
     try:
         for envelope, _offset in iter_jsonl(path, _envelope):
-            if envelope is not None and _matches_filters(
-                envelope,
-                since_ts=since_ts,
-                domain=domain,
-                ids_filter=ids_filter,
+            if (
+                envelope is not None
+                and _supported_envelope(envelope, path, summary)
+                and _matches_filters(
+                    envelope,
+                    since_ts=since_ts,
+                    domain=domain,
+                    ids_filter=ids_filter,
+                )
             ):
                 yield envelope
     except OSError:
         return
+    finally:
+        if unsupported is None:
+            summary.warn()
 
 
 def _snapshot_segment_offsets(telemetry_dir: Path | list[Path]) -> dict[Path, int]:
@@ -121,6 +174,7 @@ def _tail_events_from_offsets(
 ) -> Generator[dict[str, object], None, None]:
     dirs = telemetry_dir if isinstance(telemetry_dir, list) else [telemetry_dir]
     seen_files = dict(start_offsets)
+    unsupported = UnsupportedTelemetryRecords()
 
     while True:
         found_new = False
@@ -136,9 +190,12 @@ def _tail_events_from_offsets(
                 try:
                     for envelope, end_offset in iter_jsonl(segment, _envelope, offset=offset):
                         seen_files[segment] = end_offset
-                        if envelope is not None and _matches_filters(
-                            envelope, domain=domain, ids_filter=ids_filter
-                        ):
+                        if envelope is None:
+                            continue
+                        if not _supported_envelope(envelope, segment, unsupported):
+                            unsupported.warn()
+                            continue
+                        if _matches_filters(envelope, domain=domain, ids_filter=ids_filter):
                             found_new = True
                             yield envelope
                 except OSError:

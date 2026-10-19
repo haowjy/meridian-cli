@@ -20,7 +20,8 @@ bare path
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   origin.json                       — ad-hoc path attribution and activity only
-  sessions.jsonl                    — session events (append-only)
+  sessions.jsonl                    — session events (append-only; absent v means v1,
+                                      unsupported versions warn and are skipped)
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
@@ -40,7 +41,8 @@ bare path
   artifacts/<spawn_id>/             — auxiliary artifact store, not a transcript source
 
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
-  __status.json                     — mutable per-work-item metadata
+  __status.json                     — mutable per-work-item metadata; readers accept
+                                      absent v as v1, writers do not emit v yet
   prompts/ handoffs/ …              — work artifacts
 ```
 
@@ -57,6 +59,11 @@ Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
 `work_state.py` — **never** the project repo. See `docs/configuration.md` for
 context-path resolution.
+
+Work metadata reads tolerate and warn about unknown fields. A newer `v` stays
+visible as `requires-newer-meridian`; read projections never replace it with
+directory defaults, and mutations refuse to overwrite it. Malformed metadata
+still projects directory defaults, but always warns with the file path.
 
 ## Spawn State: Per-Spawn Files
 
@@ -247,7 +254,8 @@ Historical multi-ID arrays are ignored on read.
 - `session_store.py` — Session event I/O, lease ownership, and the canonical
   `session_exists()` predicate (a chat record exists; a harness ID is not required).
 - `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars.
-- `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC.
+- `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC;
+  a version mismatch remains absent behaviorally but warns that another build wrote the file.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.

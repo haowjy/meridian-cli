@@ -57,11 +57,13 @@ from meridian.lib.state.session_fold import (
 )
 from meridian.lib.state.session_fold import (
     SessionSettings,
+    UnsupportedSessionRecords,
     fold_session_generations,
     generation_matches,
     is_historical_generation,
     parse_event,
     session_instance_for_event,
+    supported_session_event_version,
     validate_historical_import,
     validate_startup_identity,
     with_key,
@@ -189,18 +191,23 @@ def chat_generations(root: Path, chat: str) -> tuple[SessionRecord, ...]:
 def native_chats(root: Path, native_id: str) -> tuple[str, ...]:
     """Nominate chats naming a native key; callers verify their own exact facts."""
 
+    path = RuntimePaths.from_root_dir(root).sessions_jsonl
+    unsupported = UnsupportedSessionRecords()
+
     def select(row: dict[str, object]) -> str | None:
+        if not supported_session_event_version(row, unsupported):
+            return None
         if native_id not in native_ids(row):
             return None
         record = _row_record(row)
         chat = record.get("chat_id")
         return chat.strip() if isinstance(chat, str) and chat.strip() else None
 
-    return tuple(
+    chats = tuple(
         sorted(
             set(
                 read_events(
-                    RuntimePaths.from_root_dir(root).sessions_jsonl,
+                    path,
                     select,
                     raw_filter=lambda raw: _row_may_name_native(raw, native_id),
                 )
@@ -208,19 +215,28 @@ def native_chats(root: Path, native_id: str) -> tuple[str, ...]:
             key=_session_sort_key,
         )
     )
+    unsupported.warn(path)
+    return chats
 
 
 def native_observations(root: Path, native_id: str) -> list[SessionModelObservationEvent]:
+    path = RuntimePaths.from_root_dir(root).sessions_jsonl
+    unsupported = UnsupportedSessionRecords()
+
     def select(row: dict[str, object]) -> SessionModelObservationEvent | None:
+        if not supported_session_event_version(row, unsupported):
+            return None
         if native_id not in native_ids(row):
             return None
         return _parse_model_observation(row)
 
-    return read_events(
-        RuntimePaths.from_root_dir(root).sessions_jsonl,
+    observations = read_events(
+        path,
         select,
         raw_filter=lambda raw: _row_may_name_native(raw, native_id),
     )
+    unsupported.warn(path)
+    return observations
 
 
 def append_chat_rows(root: Path, batches: Mapping[str, Iterable[SessionEvent]]) -> None:
@@ -418,6 +434,7 @@ def read_session_events(
     selected, so a poisoned chat no longer blocks other chats' reads and binds.
     """
     paths = RuntimePaths.from_root_dir(runtime_root)
+    unsupported = UnsupportedSessionRecords()
 
     def selected_event(payload: Mapping[str, object]) -> SessionEvent | None:
         # This check decides selection; _row_may_select_chat must nominate
@@ -426,13 +443,15 @@ def read_session_events(
             raw_id = _row_record(payload).get("chat_id")
             if not isinstance(raw_id, str) or raw_id.strip() not in chat_ids:
                 return None
-        return parse_event(payload)
+        return parse_event(payload, unsupported)
 
-    return read_events(
+    events = read_events(
         paths.sessions_jsonl,
         selected_event,
         raw_filter=None if chat_ids is None else lambda raw: _row_may_select_chat(raw, chat_ids),
     )
+    unsupported.warn(paths.sessions_jsonl)
+    return events
 
 
 def _records_by_session(
@@ -1366,6 +1385,8 @@ def _get_or_create_observed_chat_locked(
 
 def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
     """All generations, including historical and legacy starts, in source order."""
-    return fold_session_generations(
-        read_events(RuntimePaths.from_root_dir(runtime_root).sessions_jsonl, parse_event)
-    )
+    path = RuntimePaths.from_root_dir(runtime_root).sessions_jsonl
+    unsupported = UnsupportedSessionRecords()
+    events = read_events(path, lambda payload: parse_event(payload, unsupported))
+    unsupported.warn(path)
+    return fold_session_generations(events)

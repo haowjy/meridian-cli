@@ -10,6 +10,7 @@ update flows.  Cross-process lock safety lives in test_session_concurrency.py.
 from __future__ import annotations
 
 import json
+import logging
 import multiprocessing
 import os
 import signal
@@ -290,6 +291,33 @@ def test_malformed_session_identity_does_not_abort_sibling_event_reads(
     records = session_store.list_all_session_records(runtime_root)
 
     assert [record.chat_id for record in records] == ["c1"]
+
+
+def test_unsupported_session_event_version_is_skipped_with_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="unsupported",
+    )
+    path = runtime_root / "sessions.jsonl"
+    unsupported = json.loads(path.read_text(encoding="utf-8"))
+    unsupported["v"] = 2
+    path.write_text(json.dumps(unsupported) + "\n", encoding="utf-8")
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c2",
+        session_instance_id="supported",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.state.session_fold"):
+        records = session_store.list_all_session_records(runtime_root)
+
+    assert [record.chat_id for record in records] == ["c2"]
+    assert "unsupported sessions.jsonl format version 2" in caplog.text
 
 
 def test_start_session_does_not_append_start_event_when_lock_acquire_fails(

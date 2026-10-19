@@ -14,7 +14,6 @@ class LaunchPolicySnapshot(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    schema_version: int = 1
     model: str
     harness: str
     agent: str | None = None

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Protocol, TypeVar
 
@@ -14,11 +16,24 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.utils.json_shapes import loads_json_object
 
 Stage = Literal["push", "warn"]
 _RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 _GC_INTERVAL_MS = 60 * 60 * 1000
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
+
+
+# Read, mutation and lazy GC may inspect the same skewed file in one process.
+@lru_cache(maxsize=256)
+def _warn_idle_version_skew(path: Path, version: str) -> None:
+    logger.warning(
+        "Ignoring idle state %s because a different Meridian build wrote "
+        "format version %s (this build supports version 2).",
+        path,
+        version,
+    )
 
 
 class IdleSchedule(BaseModel):
@@ -122,7 +137,17 @@ class IdleStore:
 
     @staticmethod
     def _read_path(path: Path) -> IdleState | None:
-        return read_model(path, IdleState)
+        state = read_model(path, IdleState)
+        if state is not None:
+            return state
+        try:
+            payload = loads_json_object(path.read_text(encoding="utf-8"))
+        except OSError:
+            return None
+        version = payload.get("v", 2) if payload is not None else 2
+        if type(version) is not int or version != 2:
+            _warn_idle_version_skew(path, repr(version))
+        return None
 
     def mutate(
         self,
@@ -142,6 +167,7 @@ class IdleStore:
             IdleState,
             stamp,
             lock=lock_file(self._lock_path(path)),
+            read_current=lambda: self._read_path(path),
             indent=2,
         )
         if next_state is not None:

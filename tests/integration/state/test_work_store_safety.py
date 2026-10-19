@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
 import meridian.lib.state.work_store as work_store
 from meridian.lib.state import work_repository
@@ -94,17 +95,65 @@ def test_get_work_item_is_pure_and_explicit_repair_fixes_malformed_status(
     status_path = runtime_root / "work" / item.name / "__status.json"
     status_path.write_text("not json", encoding="utf-8")
 
-    loaded = work_store.get_work_item(runtime_root, item.name)
+    with capture_logs() as logs:
+        loaded = work_store.get_work_item(runtime_root, item.name)
     assert loaded is not None
     assert loaded.name == item.name
     assert loaded.status == "open"
     assert status_path.read_text(encoding="utf-8") == "not json"
+    assert any(log.get("path") == str(status_path) for log in logs)
 
     work_repository.repair_work_item(runtime_root, item.name)
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload["status"] == "open"
     assert payload["created_at"]
     assert payload["archived_at"] is None
+
+
+def test_work_status_tolerates_unknown_fields_without_rewriting(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = work_repository.create_work_item(
+        runtime_root,
+        "future-field",
+        description="keep this description",
+        goal="keep this goal",
+    )
+    status_path = runtime_root / "work" / item.name / "__status.json"
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    payload["future_field"] = {"from": "newer build"}
+    status_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = work_store.get_work_item(runtime_root, item.name)
+
+    assert loaded is not None
+    assert loaded.description == "keep this description"
+    assert loaded.goal == "keep this goal"
+    assert json.loads(status_path.read_text(encoding="utf-8"))["future_field"] == {
+        "from": "newer build"
+    }
+
+
+def test_newer_work_status_is_visible_and_refused_for_mutation(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = work_repository.create_work_item(
+        runtime_root,
+        "newer-status",
+        description="newer description",
+    )
+    status_path = runtime_root / "work" / item.name / "__status.json"
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    payload["v"] = 2
+    status_path.write_text(json.dumps(payload), encoding="utf-8")
+    original = status_path.read_bytes()
+
+    loaded = work_store.get_work_item(runtime_root, item.name)
+
+    assert loaded is not None
+    assert loaded.status == "requires-newer-meridian"
+    assert "Upgrade Meridian" in loaded.description
+    with pytest.raises(ValueError, match="Upgrade Meridian"):
+        work_repository.update_work_item(runtime_root, item.name, status="blocked")
+    assert status_path.read_bytes() == original
 
 
 def test_repair_uses_directory_timestamp_when_archived_at_is_missing(tmp_path: Path) -> None:

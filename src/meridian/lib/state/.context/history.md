@@ -209,8 +209,9 @@ live start must not) run only at append time. Replay must never enforce them: re
 cannot skip a row, so one older-build restore would fail every indexed read and
 rebuild. Replay checks only that an import is inactive, plus the mutation rule. An
 unprefixed restore already appended by an older build bypasses the append guard but
-remains inoperable: operations refuse to continue or fork historical sessions. An unfinished older-build `RestorePlan`
-does not resume; backward compatibility is not supported.
+remains inoperable: operations refuse to continue or fork historical sessions. An
+unfinished older-build `RestorePlan` does not resume because the released plan had
+no persisted resume contract.
 
 Per-operation session reads use `chats_rows`/`chat_rows`/`chat_record`/`chat_generations` and
 `native_chats`/`native_observations`; they decode only selected rows. Their bodies

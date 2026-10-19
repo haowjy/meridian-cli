@@ -39,6 +39,32 @@ older build cannot read:
   data the harness or Meridian no longer keeps, and whether rollback works. Probe
   the rollback against a real previous release on a copy before writing it.
 
+## Compatibility and versioning
+
+Use these rules when changing a stored format, config key, hook name, or CLI flag.
+
+- **Deprecation window.** A removed or renamed config key, hook name, or CLI flag
+  keeps working for one minor release and warns with its replacement. It becomes
+  an error in the following minor release. Track the removal in the owning
+  directory's `.context/TODO`.
+- **State.** A new build reads anything an older build wrote: migrate on read and
+  persist the migrated form on the next write. An older build that finds newer
+  data refuses it loudly with a remedy (for example, quarantine a row or refuse
+  a file); it never substitutes defaults. Rollback is supported only where that
+  version's [upgrade note](upgrading.md) says it is.
+- **When to version.** Version a format only when a different build can read it:
+  another machine through a synced repository, a process that outlives an
+  upgrade, or a separately installed component such as Mars or a harness
+  extension. Store an integer in the data and check it against the reader's
+  supported set. Semver is for software people install (`meridian`, `mars`, and
+  package `requires-*`). Delete a version nothing reads.
+- **Rebuildable indexes.** Put the version in the file name and rebuild on a
+  mismatch. Do not migrate a disposable projection in place.
+- **Adding a version.** Stage versioning for an unversioned format: readers learn
+  the field one release before writers emit it.
+- **Labels.** Keep the release-label rules above. A deprecation that still accepts
+  the old input is not itself a breaking change.
+
 ## What CI does
 
 On push to `main`, `.github/workflows/release-on-merge.yml`:

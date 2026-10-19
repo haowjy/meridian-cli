@@ -64,6 +64,7 @@ from meridian.lib.state.session_fold import (
     SessionRecord,
     SessionStartEvent,
     SessionUpdateEvent,
+    UnsupportedSessionRecords,
     parse_event,
     project_session_generation,
 )
@@ -541,9 +542,10 @@ class HistoryIndex:
             dirty: set[tuple[str, str]] = set()
             dirty_chats: set[str] = set()
             work_chats: set[tuple[str, str]] = set()
+            unsupported = UnsupportedSessionRecords()
             for parsed_event, end in iter_jsonl_file(
                 handle,
-                parse_event,
+                lambda payload: parse_event(payload, unsupported),
                 path=path,
                 offset=offset,
                 extent=snapshot_extent,
@@ -601,6 +603,7 @@ class HistoryIndex:
                         if started_key in changed:
                             ordinals[started_key] = offset
                 offset = end
+            unsupported.warn(path)
             for chat, generation in dirty:
                 record = generations[(chat, generation)][chat]
                 history_id = str(record.history_id) if record.history_id else None

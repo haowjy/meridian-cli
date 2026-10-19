@@ -1,18 +1,12 @@
 # Plugin API
 
-`meridian.plugin_api` is the stable public contract for hook and plugin authors. It version-pins at `3.0.0` and exposes only the symbols intended for external use.
+`meridian.plugin_api` is the stable public contract for hook and plugin authors.
+It exposes only the symbols intended for external use.
 
 Install meridian-cli and import from this package directly — do not import from internal submodules.
 
 ```python
 from meridian.plugin_api import Hook, HookContext, HookResult, HookOutcome, SpawnStatus
-```
-
-## Version
-
-```python
-import meridian.plugin_api as api
-print(api.__version__)  # "3.0.0"
 ```
 
 ## Hook Types

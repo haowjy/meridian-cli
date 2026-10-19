@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path, PurePath
+from typing import Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -18,13 +20,33 @@ from meridian.lib.state.paths import (
     resolve_project_paths,
     resolve_project_paths_for_write,
 )
+from meridian.lib.utils.json_shapes import json_object, loads_json_object
 
 MAX_SLUG_LENGTH = 64
 STATUS_FILENAME = "__status.json"
+WORK_STATE_VERSION = 1
+SUPPORTED_WORK_STATE_VERSIONS = frozenset({WORK_STATE_VERSION})
+REQUIRES_NEWER_MERIDIAN_STATUS = "requires-newer-meridian"
 _NON_ALNUM_HYPHEN = re.compile(r"[^a-z0-9-]+")
 _WHITESPACE_OR_UNDERSCORE = re.compile(r"[\s_]+")
 _REPEATED_HYPHENS = re.compile(r"-+")
 logger = structlog.get_logger(__name__)
+
+
+class UnsupportedWorkStateVersion(ValueError):
+    """Raised when a mutation would overwrite work metadata from a newer build."""
+
+
+# One CLI operation may project a row before the repository re-reads it under lock.
+@lru_cache(maxsize=256)
+def _warn_newer_work_state(path: str, version: int) -> None:
+    logger.warning(
+        "Work item metadata was written by a newer Meridian build; "
+        "upgrade Meridian to read it.",
+        path=path,
+        version=version,
+        supported_versions=sorted(SUPPORTED_WORK_STATE_VERSIONS),
+    )
 
 
 def _normalize_worktree_path_text(path: str) -> str:
@@ -34,7 +56,7 @@ def _normalize_worktree_path_text(path: str) -> str:
 
 
 class WorktreeMetadata(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     path: str | None = None
     branch: str | None = None
@@ -93,8 +115,11 @@ class WorkItem(BaseModel):
 class StoredWorkItemState(BaseModel):
     """The sole codec for the contents of ``__status.json``."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
+    # Readers learn the format before writers emit it. Field exclusion keeps
+    # this release's files readable by strict older builds.
+    v: Literal[1] = Field(default=WORK_STATE_VERSION, exclude=True)
     status: str
     description: str
     goal: str | None
@@ -181,6 +206,16 @@ def stored_state_from_item(item: WorkItem) -> StoredWorkItemState:
     )
 
 
+def _unknown_work_state_fields(payload: dict[str, object]) -> tuple[str, ...]:
+    unknown = [key for key in payload if key not in StoredWorkItemState.model_fields]
+    worktree = json_object(payload.get("worktree"))
+    if worktree is not None:
+        unknown.extend(
+            f"worktree.{key}" for key in worktree if key not in WorktreeMetadata.model_fields
+        )
+    return tuple(sorted(unknown))
+
+
 def load_work_item_from_dir(
     work_dir: Path,
     *,
@@ -192,6 +227,7 @@ def load_work_item_from_dir(
     default_archived_at: str | None = None,
     default_task_dir: str | None = None,
     default_worktree: WorktreeMetadata | None = None,
+    mark_unsupported: bool = False,
 ) -> WorkItem:
     """Project a work item from its directory and optional stored metadata."""
 
@@ -214,19 +250,73 @@ def load_work_item_from_dir(
         task_dir=default_task_dir,
         worktree=default_worktree or WorktreeMetadata(),
     )
+    metadata_path = status_path(work_dir)
     try:
-        stored = StoredWorkItemState.model_validate_json(
-            status_path(work_dir).read_text(encoding="utf-8")
-        )
-    except (OSError, ValidationError):
+        raw_text = metadata_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         stored = fallback
+    except OSError as exc:
+        logger.warning(
+            "Unable to read work item metadata; using directory defaults.",
+            path=str(metadata_path),
+            error=str(exc),
+        )
+        stored = fallback
+    else:
+        payload = loads_json_object(raw_text)
+        if payload is None:
+            logger.warning(
+                "Unable to parse work item metadata; using directory defaults.",
+                path=str(metadata_path),
+            )
+            stored = fallback
+        else:
+            version = payload.get("v", WORK_STATE_VERSION)
+            if (
+                type(version) is int
+                and version > max(SUPPORTED_WORK_STATE_VERSIONS)
+            ):
+                remedy = (
+                    f"Upgrade Meridian to read work item metadata format v{version}."
+                )
+                _warn_newer_work_state(str(metadata_path), version)
+                if not mark_unsupported:
+                    raise UnsupportedWorkStateVersion(f"{metadata_path}: {remedy}")
+                stored = fallback.model_copy(
+                    update={
+                        "status": REQUIRES_NEWER_MERIDIAN_STATUS,
+                        "description": remedy,
+                        "goal": None,
+                    }
+                )
+            else:
+                unknown_fields = _unknown_work_state_fields(payload)
+                if unknown_fields:
+                    logger.warning(
+                        "Ignoring unknown work item metadata fields.",
+                        path=str(metadata_path),
+                        fields=unknown_fields,
+                    )
+                try:
+                    stored = StoredWorkItemState.model_validate(payload)
+                except ValidationError as exc:
+                    logger.warning(
+                        "Unable to validate work item metadata; using directory defaults.",
+                        path=str(metadata_path),
+                        error=str(exc),
+                    )
+                    stored = fallback
+    if stored.status == REQUIRES_NEWER_MERIDIAN_STATUS:
+        projected_status = REQUIRES_NEWER_MERIDIAN_STATUS
+    elif archived:
+        projected_status = "done"
+    else:
+        projected_status = default_status if stored.status == "done" else stored.status
     return WorkItem(
         name=work_dir.name,
         description=stored.description,
         goal=stored.goal,
-        status=(
-            "done" if archived else (default_status if stored.status == "done" else stored.status)
-        ),
+        status=projected_status,
         created_at=stored.created_at,
         archived_at=(stored.archived_at or fallback.archived_at) if archived else None,
         task_dir=stored.task_dir,

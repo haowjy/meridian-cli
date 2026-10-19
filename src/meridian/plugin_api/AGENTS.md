@@ -1,6 +1,9 @@
 # plugin_api/ — Stable External Plugin Surface
 
-The only surface external plugins (and built-in hooks) may import from. Versioned at `3.0.0` — breaking changes require a version bump and migration path. Internal `meridian.lib.*` is not stable; this is.
+The only surface external plugins (and built-in hooks) may import from. Breaking
+changes follow the project's compatibility and migration policy; this package
+does not carry an independent version. Internal `meridian.lib.*` is not stable;
+this is.
 
 ## Mental Model
 
@@ -31,7 +34,8 @@ Submodule utilities (`fs`, `git`, `config`) are NOT re-exported from `__init__.p
 ## Key Rules
 
 - `HookContext.to_env()` and `HookContext.to_json()` are the canonical serialization paths. External hooks receive both. Use them; don't build the serialization manually.
-- Breaking this API requires a version bump. Additions are fine; removals or signature changes are breaking.
+- Additions are fine; removals or signature changes follow the compatibility
+  policy in `docs/releasing.md`.
 - Stable wrappers may delegate to dependency-neutral `meridian.lib.platform` primitives.
   They must not depend on `meridian.lib.state` or other policy/state internals.
 

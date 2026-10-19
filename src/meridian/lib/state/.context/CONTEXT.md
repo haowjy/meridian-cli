@@ -62,6 +62,8 @@ reads use the keyed seam in `session_store.py`; multi-chat callers select all
 needed chats in one pass and project the accepted binding and generation.
 Discovery uses the disposable history index; its recency and preview reads
 select the highest-ordinal generation from the same authority.
+An absent event `v` is legacy v1. Events with an unsupported version are
+skipped with a warning rather than being folded as if their shape were current.
 
 A scoped `SessionBindings` snapshot raises `ChatOutsideBindingScope` for chats
 outside its scope; cross-chat repair uniqueness requires `scope=None`.
@@ -139,6 +141,9 @@ file, so a corrupt sidecar loads as absent and the next write repairs it.
 `mutate_model()` requires the caller's lock and re-reads under it; there is no
 unlocked read-modify-write. A new sidecar adopts this seam rather than hand-rolling
 read, validate, lock and replace.
+Idle state adds one diagnostic to that generic absent-on-invalid contract: if
+the document's `v` names another format, `idle_store.py` warns with the path and
+that a different Meridian build wrote it.
 
 ### JSONL Commit Contract (`jsonl.py`)
 
@@ -273,6 +278,9 @@ provides pure read projections; `work_repository.py` serializes all status and
 directory-namespace mutations behind the stable project-level `work-store.flock`.
 Mutable metadata lives in
 `<context.work root>/<slug>/__status.json`; there is no separate rename-intent file.
+Its reader treats absent `v` as v1 and ignores unknown fields with a warning;
+writers deliberately omit `v` until the next format change. A newer version is
+shown as `requires-newer-meridian`, while mutation paths refuse to overwrite it.
 
 ### WorktreeMetadata
 
