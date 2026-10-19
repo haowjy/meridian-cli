@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.29] - 2026-10-19
+
 ### Fixed
 - Pi primaries report tracked background managed-bash work to idle policy. A shell that will wake Pi now holds or delays the "your turn" push instead of the push racing it; Pi only forwards host facts, and core still decides what the command means. (#669)
 
