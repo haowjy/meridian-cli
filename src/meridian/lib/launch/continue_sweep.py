@@ -17,7 +17,7 @@ from meridian.lib.state.liveness import is_process_dead_with_birth
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scope_projection
 from meridian.lib.state.session_store import chat_record
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined, read_state, spawn_lock_path
-from meridian.lib.state.spawn_status import legacy_runner_alive
+from meridian.lib.state.spawn_status import is_live, legacy_runner_alive
 
 
 def _acquire_source(runtime_root: Path, spawn_id: str) -> LaunchHandle:
@@ -60,19 +60,20 @@ def _group_gone(pgid: int) -> bool:
     return False
 
 
-def _owner_ids(runtime_root: Path, spawn_id: str) -> tuple[str, ...]:
+def _owner_ids(runtime_root: Path, spawn_id: str, chat_id: str | None) -> tuple[str, ...]:
     source = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
-    if source is None:
-        raise NotFound(f"Spawn '{spawn_id}' not found")
-    chat = chat_record(runtime_root, source.chat_id)
+    chat = chat_record(runtime_root, chat_id) if chat_id else None
     current_id = chat.spawn_id.strip() if chat and chat.spawn_id else ""
+    owner_ids: list[str] = []
     if (
         current_id
         and current_id != spawn_id
         and read_state(runtime_root / "spawns", current_id, include_prompt=False) is not None
     ):
-        return current_id, spawn_id
-    return (spawn_id,)
+        owner_ids.append(current_id)
+    if source is not None:
+        owner_ids.append(spawn_id)
+    return tuple(owner_ids)
 
 
 def _recorded_runner_dead(runtime_root: Path, spawn_id: str) -> bool:
@@ -86,11 +87,31 @@ def _recorded_runner_dead(runtime_root: Path, spawn_id: str) -> bool:
     )
 
 
-def sweep_before_continue(runtime_root: Path, spawn_id: str, *, dry_run: bool = False) -> None:
+def _live_owner_error(spawn_id: str, owner_id: str) -> ValueError:
+    if owner_id != spawn_id:
+        return ValueError(
+            f"{spawn_id} was continued as {owner_id}, which is still running; "
+            f"use spawn inject {owner_id}, --fork {owner_id}, or spawn cancel {owner_id}"
+        )
+    return ValueError(
+        f"{spawn_id} is still running; use spawn inject {spawn_id} or --fork {spawn_id}"
+    )
+
+
+def sweep_before_continue(
+    runtime_root: Path,
+    spawn_id: str,
+    *,
+    chat_id: str | None,
+    dry_run: bool = False,
+) -> None:
     """Refuse a live chat owner; release only safely swept scopes, never status."""
+    owner_ids = _owner_ids(runtime_root, spawn_id, chat_id)
     if dry_run:
+        for owner_id in owner_ids:
+            if is_live(runtime_root, owner_id):
+                raise _live_owner_error(spawn_id, owner_id)
         return
-    owner_ids = _owner_ids(runtime_root, spawn_id)
     with ExitStack() as stack:
         handles: list[LaunchHandle] = []
         for owner_id in owner_ids:
@@ -102,16 +123,7 @@ def sweep_before_continue(runtime_root: Path, spawn_id: str, *, dry_run: bool = 
                         f"{owner_id}'s launch lock is held by a repair or another continue; "
                         "retry in a moment"
                     ) from exc
-                if owner_id != spawn_id:
-                    raise ValueError(
-                        f"{spawn_id} was continued as {owner_id}, which is still running; "
-                        f"use spawn inject {owner_id}, --fork {owner_id}, or "
-                        f"spawn cancel {owner_id}"
-                    ) from exc
-                raise ValueError(
-                    f"{spawn_id} is still running; "
-                    f"use spawn inject {spawn_id} or --fork {spawn_id}"
-                ) from exc
+                raise _live_owner_error(spawn_id, owner_id) from exc
         for handle in handles:
             sweep_scopes(runtime_root, handle)
 

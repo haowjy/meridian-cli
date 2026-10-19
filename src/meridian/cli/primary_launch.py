@@ -242,6 +242,7 @@ def run_primary_launch(
         if resolved_continue.source_spawn_id is not None:
             sweep_before_continue(
                 resolve_project_runtime_root(project_root), resolved_continue.source_spawn_id,
+                chat_id=resolved_continue.source_chat_id,
                 dry_run=dry_run,
             )
         continue_contract = build_continue_replay_contract(
