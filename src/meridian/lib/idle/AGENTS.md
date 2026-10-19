@@ -1,10 +1,11 @@
 # Idle Policy Core
 
 This package owns idle timelines, ordered stage guards, stretch transitions,
-notification decisions, and the launcher-hosted sensor loop. Idle does two
-things: the "your turn" push and the cache-expiry warning. Meridian does not
-compact; harnesses compact on their own. It is policy, not a harness adapter:
-**adapters report facts; core decides**.
+notification decisions, and the launcher-hosted sensor loop. The idle timeline
+does two things: the "your turn" push and the cache-expiry warning. Separately,
+it forwards a harness's still-waiting permission signal without touching that
+timeline. Meridian does not compact; harnesses compact on their own. It is
+policy, not a harness adapter: **adapters report facts; core decides**.
 
 ## Invariants
 
@@ -34,13 +35,16 @@ compact; harnesses compact on their own. It is policy, not a harness adapter:
   misreads `meridian <flag> <value> spawn ...`.
 - Authoritative state lives in `../state/idle_store.py`; sidecar timers are
   disposable and reconstructed from that state.
+- A permission notice is stateless: never read or write the idle store, alter a
+  stretch, hold or release the push, track an answer, or correlate tool calls.
 - A primary reopen through Meridian closes any open stretch in the launcher
   before exec. Keep this out of exit hooks (a killed terminal runs none) and
   adapters (engines cannot distinguish reload from resume, and reload recovery
   must keep working).
 - Inject notification delivery. This package builds `plugin_api.Notification`
-  values, emits them as `STAGE_EVENTS[stage]` through `lib/notify.emit`, and
-  depends on `lib/notify` in the designed one-way direction.
+  values, emits scheduled notices as `STAGE_EVENTS[stage]` and permission
+  notices as `NEEDS_PERMISSION_EVENT` through `lib/notify.emit`, and depends on
+  `lib/notify` in the designed one-way direction.
 - The sidecar is hosted in the primary TUI process. It must contain sensor
   failures, move synchronous service/store work off the launcher event loop,
   and stop before the live connection is torn down. Its liveness follows the

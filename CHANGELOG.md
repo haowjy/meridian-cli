@@ -7,6 +7,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Hook events `work.created` for new work items and `work.activated` whenever `work start` / `work switch` resolves an item or a primary launch attaches `--work` / `--from` work. (#687)
 - Hook `when.kind` filtering with the shared `child` / `primary` / `streaming` `SpawnKind`; `HookContext.spawn_kind`, `spawn.kind` in JSON, and `MERIDIAN_SPAWN_KIND` expose it to plugins and command hooks. (#687)
+- Claude pings you when a main-loop or background-subagent permission prompt is still waiting. The new `notify.needs_permission` hook event routes like other notifications and can be silenced on its own. (#684)
 
 ### Deprecated
 - Old hook names `spawn.start`, `spawn.running`, `spawn.finalized`, `work.start`, `work.started`, `session.responded`, and `session.cache_expiring` load on their replacement for one minor release, warn once per row, and preserve the configured name in that row's payload. They will be rejected in the next minor release. See [upgrade note](docs/upgrading.md#hook-event-names). (#687)

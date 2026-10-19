@@ -398,3 +398,49 @@ def test_idle_mod_path_wire_contract(tmp_path: Path) -> None:
     result = _run(tmp_path, _idle_env(tmp_path), "idle", "mod-path")
     assert (result.returncode, result.stderr) == (0, "")
     assert (Path(result.stdout.strip()) / ".claude-plugin" / "plugin.json").is_file()
+
+
+def test_idle_needs_permission_emits_once_without_idle_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from meridian.lib.notify.channels import REGISTRY
+    from tests.support.notifications import RecordingChannel
+
+    for key in tuple(os.environ):
+        if key.startswith(("MERIDIAN_", "_MERIDIAN_")) or key == "TMUX_PANE":
+            monkeypatch.delenv(key, raising=False)
+    home = tmp_path / "home"
+    project = tmp_path / "checkout"
+    project.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", (home / ".meridian").as_posix())
+    monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "capture")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_BACKEND", "none")
+    monkeypatch.setenv("MERIDIAN_SESSION_ROLE", "primary")
+    monkeypatch.setenv("_MERIDIAN_HARNESS", "claude")
+    capture = RecordingChannel()
+    monkeypatch.setitem(REGISTRY, "capture", capture)
+    monkeypatch.chdir(project)
+
+    from meridian.cli.main import main
+
+    args = [
+        "idle",
+        "needs-permission",
+        "--harness",
+        "claude",
+        "--message",
+        "Claude wants to use Bash",
+        "--interactive",
+    ]
+    with pytest.raises(SystemExit) as first_exit:
+        main(args)
+    assert first_exit.value.code == 0
+    assert json.loads(capsys.readouterr().out) == {}
+    assert len(capture.deliveries) == 1
+    event, notification = capture.deliveries[0]
+    assert event == "notify.needs_permission"
+    assert notification.title == '[permission] claude in project: "checkout"'
+    assert "Claude wants to use Bash" in notification.body
+    assert not (home / ".meridian" / "idle").exists()

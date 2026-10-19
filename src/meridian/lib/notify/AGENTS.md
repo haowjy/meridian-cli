@@ -3,9 +3,10 @@
 Harness-agnostic labels and one-shot delivery transports. The message is
 `plugin_api.Notification` (title, body, priority, email, label dict,
 attachment paths); nothing here defines another. Callers build one
-(`notice.manual_notification`, `lib/idle/messages.stage_notice`) and call
-`emit.emit(event, notification, ...)`, which fires that hook event through
-`lib/hooks`; the routes on it deliver it. The built-in `notify` hook calls
+(`notice.manual_notification`, `lib/idle/messages.stage_notice`, or
+`lib/idle/messages.needs_permission_notice`) and call `emit.emit(event,
+notification, ...)`, which fires that hook event through `lib/hooks`; the
+routes on it deliver it. The built-in `notify` hook calls
 `service.send(notification, cfg, event=..., channels=...)`, and `emit` turns
 each route's `HookResult` into one `RouteResult` in its route-level
 `RouteReport`. Never call `send()` from a caller: that skips routing and every
