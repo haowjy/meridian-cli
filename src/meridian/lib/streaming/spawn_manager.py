@@ -26,6 +26,7 @@ from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
+from meridian.lib.state.spawn_signals import write_accepted_signals
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.control_socket import ControlSocketServer, control_socket_path
@@ -191,11 +192,7 @@ class SpawnManager:
                 drain_plan = drain_plan.with_policy(resolved_policy)
             # Declare once, before any event drains, which `spawn done`/`rearm`
             # signals this plan consumes; the CLI refuses the rest.
-            spawn_store.update_spawn(
-                self._runtime_root,
-                spawn_id,
-                completion_signals=tuple(sorted(drain_plan.accepted_signals)),
-            )
+            write_accepted_signals(self._runtime_root, spawn_id, drain_plan.accepted_signals)
             drain_task = asyncio.create_task(
                 self._drain_loop(
                     spawn_id,

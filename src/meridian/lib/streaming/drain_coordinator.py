@@ -15,7 +15,7 @@ from meridian.lib.streaming.drain_teardown import (
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.harness.semantics import NormalizedHarnessEvent, TerminalEventOutcome
-    from meridian.lib.state.spawn.model import SpawnSignalKind
+    from meridian.lib.state.spawn_signals import SpawnSignalKind
     from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
@@ -76,7 +76,7 @@ class DrainPlan:
     finalizer: DrainFinalizer | None = None
     teardown: DrainSessionTeardown = DEFAULT_DRAIN_SESSION_TEARDOWN
     #: `meridian spawn done`/`rearm` signals the coordinator consumes. SpawnManager
-    #: persists it on the row so the CLI can refuse a signal nothing will read.
+    #: persists it in the spawn dir so the CLI can refuse a signal nothing will read.
     accepted_signals: frozenset[SpawnSignalKind] = frozenset()
 
     def selected_policy(self) -> DrainPolicy:

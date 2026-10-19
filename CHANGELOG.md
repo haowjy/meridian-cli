@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Upgrade notes
-- Spawn rows gain `completion_signals`. Older builds (0.11.0 and earlier) quarantine any spawn row this version writes, and their `spawn list` can fail. Stop active launches before upgrading and don't run older builds on the same runtime afterwards; rollback needs pre-upgrade state. See [completion signal reporting](docs/upgrading.md#completion-signal-reporting).
+- `meridian spawn done` / `rearm` can now exit 1 where they used to succeed; scripts that ignored a signal nothing reads will see the failure. No steps before or after upgrading; older builds ignore the new `accepted-signals.json`, so rollback works. See [completion signal reporting](docs/upgrading.md#completion-signal-reporting).
 
 ### Changed
 - `meridian spawn done` / `rearm` refuse, exit 1, instead of reporting "signal written" when nothing will read the signal: a primary session, a spawn that is no longer running, a spawn with no completion hold (Cursor, OpenCode 2.x and other plain plans), `rearm` on Pi, and `rearm` once the rearm budget is spent. A spawn whose runner hasn't reported yet still gets the signal, with a note that delivery is unconfirmed.

@@ -118,9 +118,9 @@ needed to guarantee it gets through — without it, the subscriber hangs forever
 session teardown for one active spawn. Its `coordinator=None` value is the plain path.
 `accepted_signals` names the `spawn done`/`rearm` signals the coordinator consumes:
 hold plans `{done, rearm}`, Pi `{done}`, plain none. `build_drain_plan` is the only
-place that sets it; `SpawnManager.start_spawn` persists it once on the spawn row as
-`completion_signals` before the drain starts, and the CLI refuses a signal the row
-doesn't list.
+place that sets it; `SpawnManager.start_spawn` writes it once to
+`spawns/<id>/accepted-signals.json` before the drain starts, and the CLI refuses a
+signal the file doesn't list. Don't move it onto the spawn row (see `.context/CONTEXT.md`).
 `DrainPolicy` governs terminal event behavior:
 
 | Policy | On terminal event | Action |

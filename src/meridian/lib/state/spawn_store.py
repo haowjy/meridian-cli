@@ -36,7 +36,6 @@ from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 from meridian.lib.state.spawn.model import (
     AUTHORITATIVE_ORIGINS,
-    SpawnSignalKind,
 )
 from meridian.lib.state.spawn.model import (
     CancelIntent as CancelIntent,
@@ -394,7 +393,6 @@ def update_spawn(
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
     resident_rearm_count: int | None = None,
-    completion_signals: tuple[SpawnSignalKind, ...] | None = None,
     harness_session_id: str | None = None,
     control_root: str | None = None,
     task_cwd: str | None = None,
@@ -436,8 +434,6 @@ def update_spawn(
                 current.resident_rearm_count,
                 resident_rearm_count,
             )
-        if completion_signals is not None:
-            updates["completion_signals"] = completion_signals
         if harness_session_id is not None:
             updates["harness_session_id"] = harness_session_id
         if control_root is not None:

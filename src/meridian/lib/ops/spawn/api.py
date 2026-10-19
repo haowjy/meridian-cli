@@ -66,7 +66,11 @@ from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_signals import SpawnSignalKind, write_spawn_signal
+from meridian.lib.state.spawn_signals import (
+    SpawnSignalKind,
+    read_accepted_signals,
+    write_spawn_signal,
+)
 from meridian.lib.state.spawn_status import overlay_derived, read_derived
 from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
 from meridian.lib.state.work_state import slugify
@@ -1107,8 +1111,15 @@ def _resolve_signal_spawn_id(
     return resolved_spawn_id
 
 
-def _signal_refusal(row: SpawnRecord, kind: SpawnSignalKind) -> str | None:
-    """Return why nothing will consume ``kind`` for this lock-consistent row."""
+def _signal_refusal(
+    row: SpawnRecord,
+    kind: SpawnSignalKind,
+    accepted: frozenset[SpawnSignalKind] | None,
+) -> str | None:
+    """Return why nothing will consume ``kind`` for this lock-consistent row.
+
+    ``accepted`` is the runner's declared set; ``None`` means it hasn't declared.
+    """
 
     label = f"{row.id} ({row.harness})" if row.harness else row.id
     if row.kind == "primary":
@@ -1121,14 +1132,13 @@ def _signal_refusal(row: SpawnRecord, kind: SpawnSignalKind) -> str | None:
             f"Spawn {label} is no longer running (status: {row.status}); "
             f"nothing will read a {kind} signal."
         )
-    accepted = row.completion_signals
     if accepted is not None and kind not in accepted:
         if not accepted:
             return (
                 f"Spawn {label} has no completion hold, so nothing reads "
                 f"`meridian spawn {kind}`; it finishes when its turn ends."
             )
-        commands = " or ".join(f"`meridian spawn {item}`" for item in accepted)
+        commands = " or ".join(f"`meridian spawn {item}`" for item in sorted(accepted))
         return f"Spawn {label} does not consume {kind} signals; it accepts only {commands}."
     if kind == "rearm":
         snapshot = row.launch_policy_snapshot
@@ -1174,8 +1184,9 @@ def _spawn_signal_sync(
             # Decided under the published-artifact lock that guards the write.
             nonlocal refusal, reported
             row = read_derived(runtime_root, stored.id) or stored
-            refusal = _signal_refusal(row, kind)
-            reported = row.completion_signals is not None
+            accepted = read_accepted_signals(runtime_root, stored.id)
+            refusal = _signal_refusal(row, kind, accepted)
+            reported = accepted is not None
             return refusal is None
 
         if not write_spawn_signal(
