@@ -392,6 +392,108 @@ fixing it is out of scope unless trivial. New work targets V2. Because V2 migrat
 a V1 DB in place and keeps the V1 tables, a V1 *fallback* after a V2-first install
 needs a separate data root (`OPENCODE_DB`/`XDG_DATA_HOME`).
 
+### OpenCode: Background Work That Wakes the Session
+
+The idle push is held only for work OpenCode will resume the session for, so the
+V2 sensor (`opencode_idle.py`, tracker in `opencode_running_work.py`) reports a
+narrower set than "everything running". Source: OpenCode v2.0.29, checked on
+v2.0.32.
+
+| Work | Wakes the primary? | Why |
+|---|---|---|
+| Agent `shell` tool, `background: true` | Yes | Its completion observer calls `sessions.synthetic` without overriding `resume` ([`tool/plugin/shell.ts`](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/tool/plugin/shell.ts#L157-L188)). |
+| `subagent` tool, `background: true` | Yes | `SubagentCompletion.deliver` adds `resume: false` only on an explicit override ([`subagent-completion.ts`](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/session/subagent-completion.ts#L21-L46)). |
+| `POST /api/session/:id/shell` | **No** | Completion calls `synthetic(..., resume: false)`, hard-coded, and the request body has no `resume` field ([`session.ts`](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/session/session.ts#L179-L222), [protocol](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/protocol/src/groups/session.ts#L480-L496)). |
+| `POST /api/shell` | **No** | A standalone location-scoped shell with no session notification ([`groups/shell.ts`](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/protocol/src/groups/shell.ts#L8-L37)). |
+| A child session made through `POST /api/session` with `parentID` | **No** | Only the `subagent` tool attaches the completion observer; a plain child that finishes never restarts its parent. |
+
+The two non-waking shell routes are deliberate upstream behavior, not a bug to
+route around. Do not report those shells (or add a Meridian-side wake prompt) to
+make them look like running work: the push would hold for work that never
+resumes the session. Live canaries on v2.0.29 with the free
+`opencode/deepseek-v4.1-flash-free` model agree: both agent tools wake the
+parent (a new `session.execution.started` 3–5 ms after the shell exits or the
+child ends, no input); `POST /api/shell` does not.
+
+Tracking rules, all learned from the live event stream:
+
+- Only work a tool event of the primary names counts: `session.tool.progress`
+  with `metadata.shellID` or with a child `metadata.sessionID` and
+  `status: "running"`. `shell.created` (command) and `session.created` with the
+  primary as `parentID` only announce a candidate, so a shell or child created
+  any other way, including one carrying the primary's id in its metadata, is
+  never reported. Continuing an existing child (`subagent` with `sessionID` and
+  `background: true`) emits no `session.created`, so it is never a candidate:
+  the push may come before its wake, as it did before this tracking existed.
+- Ends: `shell.exited`, `shell.deleted`, the child's own terminal
+  `session.execution.*`, the primary's `session.tool.failed` naming it, or the
+  primary's synthetic `session.inbox.enqueued` (`payload.metadata.source` of
+  `shell` or `subagent`).
+- An interrupted turn emits its terminal event **before** the aborted foreground
+  shell or child ends (`shell.exited` and the child's terminal arrive 2–4 ms
+  later). `shell.deleted` and the parent's `session.tool.failed` precede the
+  terminal, so they must count as ends, or an interrupted foreground tool would
+  hold the push forever (a certain `agent` hold never lifts without another
+  turn end).
+- A child waiting on a permission prompt cannot end until the user answers, so
+  it does not count while the prompt is open (a hold would hide the one thing the
+  user has to do). The connection consumes the raw `permission.asked` and
+  `permission.replied` events, so the sensor sees the managed primary's
+  `request/opened` (the ask under `params`, with the asking `sessionID`) and
+  `request/resolved|failed|cancelled` (request id only). A prompt from the child
+  or any descendant counts: `session.created` with a tracked `parentID` maps each
+  descendant to the child it belongs to. A prompt can open before or after the
+  primary's turn end; the snapshot excludes an asking child either way. Only
+  permission prompts are handled; other waits on the user are not. Answering a
+  prompt the tracker recorded (`request/resolved`, not `failed` or `cancelled`) is
+  the user acting in the TUI without sending a message, so the sensor emits
+  `user_prompt` before the re-arm: the answer closes the idle stretch and the
+  re-arm opens a new one, held on the child. Without it the stretch stays open, a
+  push already sent stays sent, and a later prompt or the wake turn's end never
+  pushes again.
+- Work that changes while the primary is idle re-arms the push: the sensor emits
+  another `turn_end` (turn id `None`), which the sidecar turns into an `arm` in
+  the same stretch. The new schedule replaces the old one and a stage already
+  sent stays sent. A busy primary does not re-arm, because its own turn end
+  reports the work. Three triggers exist: a prompt opening or closing for a
+  counted child, a reconnect re-check that changed the reported work, and a
+  reconnect that finds the primary's turn ended unseen. A re-arm sets
+  `idle_since_ms` anew, so the cache-expiry warning and the remaining-cache
+  figure count from the re-arm rather than the real turn end and drift later by
+  the re-arm delay; this affects only `openai`, whose TTL is an estimate.
+- `/api/event` is live-only and announces each connection with `server.connected`.
+  On every reconnect (the sensor has already seen the stream; the first
+  connection makes no request) it re-checks, in a background task that stops
+  with the sensor, what the closed stream may have hidden, since no turn end is
+  guaranteed to come:
+  - The primary's own turn: `GET /api/session/active` lists the sessions whose
+    turn the server is running; absent ones are inactive. If the sensor thought
+    the primary busy and the server says idle, the terminal event fell in the gap:
+    it corrects busy and emits the missed `turn_end`, with the work as just
+    re-checked. Without it a wake turn lost in a gap leaves the sensor busy for
+    good, which suppresses every re-arm. If the server runs a turn the sensor
+    missed starting, busy is set so the work re-check cannot arm a push inside it.
+    A snapshot the stream outdated meanwhile (it reported the primary starting or
+    ending) is ignored. If the request fails, the observed state stays and one
+    line is logged.
+  - The work, only when something is named: `GET /api/shell` and
+    `GET /api/session?parentID=` keep only ids still running, and the push
+    re-arms if that changed what is reported. If the server cannot answer, it
+    reports nothing and logs one line, since a hold on work that already ended
+    would never lift.
+  The normal path makes no request. The shell listing follows the request's
+  location: `?directory=` is ignored, while the `x-opencode-directory` header and
+  the `location[directory]` query both select it (the sensor uses the query, with
+  the session's own `location.directory`). Starts that fell in the gap cannot be
+  recovered and stay unreported; a prompt answered in the gap leaves the child
+  uncounted until it ends; a whole turn (prompt and end) inside the gap leaves no
+  trace to find.
+- The report holds at most 16 tasks, agents first: an `agent` is the certain
+  hold, so shells never push one out.
+- A fresh `opencode serve` loads its provider catalog on first touch of a
+  location; a prompt that races it fails with `provider.no-route`. Touch the
+  location (any `GET /api/shell`) before driving a headless session.
+
 ### Cursor: Subprocess-Only, Read-Only stdout
 
 Cursor is unmaintained. Keep it building and its existing tests passing; don't extend it
