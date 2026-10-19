@@ -17,7 +17,6 @@ from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -129,7 +128,6 @@ async def test_streaming_initial_identity(
                 request=request,
                 project_root=tmp_path,
                 runtime_root=runtime_root,
-                artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
                 registry=HarnessRegistry.with_defaults(),
                 session_attempt=managed,
             ),
@@ -267,7 +265,6 @@ async def test_later_switch_does_not_rebind_or_fail_entry(
                     request=request,
                     project_root=tmp_path,
                     runtime_root=runtime_root,
-                    artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
                     registry=HarnessRegistry.with_defaults(),
                     session_attempt=managed,
                 ),

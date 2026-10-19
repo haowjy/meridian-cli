@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -15,12 +16,11 @@ from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import StreamEvent
-from meridian.lib.launch.constants import STDERR_FILENAME
 from meridian.lib.platform.terminate import terminate_tree as _terminate_tree
 from meridian.lib.safety.budget import BudgetBreach
 from meridian.lib.safety.guardrails import GuardrailFailure
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
+from meridian.lib.state.atomic import append_text_line
 
 logger = structlog.get_logger(__name__)
 DEFAULT_KILL_GRACE_SECONDS = MeridianConfig().kill_grace_minutes * 60.0
@@ -65,17 +65,19 @@ def guardrail_failure_text(failures: tuple[GuardrailFailure, ...]) -> str:
     return "\n".join(lines)
 
 
-def append_text_to_stderr_artifact(
+def append_text_to_stderr_log(
     *,
-    artifacts: ArtifactStore,
-    spawn_id: SpawnId,
+    stderr_path: Path,
     text: str,
 ) -> None:
-    key = make_artifact_key(spawn_id, STDERR_FILENAME)
-    existing = artifacts.get(key).decode("utf-8", errors="ignore") if artifacts.exists(key) else ""
-    prefix = "\n" if existing and not existing.endswith("\n") else ""
-    combined = f"{existing}{prefix}{text}\n"
-    artifacts.put(key, combined.encode("utf-8"))
+    try:
+        with stderr_path.open("rb") as handle:
+            handle.seek(-1, os.SEEK_END)
+            ends_with_newline = handle.read(1) == b"\n"
+    except OSError:
+        ends_with_newline = True
+    prefix = "" if ends_with_newline else "\n"
+    append_text_line(stderr_path, f"{prefix}{text}\n")
 
 
 def _extract_tokens_payload(raw_line: bytes) -> bytes | None:
@@ -248,7 +250,7 @@ __all__ = [
     "DEFAULT_STREAM_READ_CHUNK_SIZE",
     "SpawnTimeoutError",
     "append_budget_exceeded_event",
-    "append_text_to_stderr_artifact",
+    "append_text_to_stderr_log",
     "capture_stderr_stream",
     "capture_stdout_stream",
     "extract_latest_tokens_payload",

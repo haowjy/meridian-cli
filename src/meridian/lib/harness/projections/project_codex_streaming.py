@@ -182,7 +182,9 @@ def project_codex_spec_to_appserver_command(
         command.extend(("-c", "tools.web_search=true"))
 
     if spec.report_output_path is not None:
-        logger.debug("Codex streaming ignores report_output_path; reports extracted from artifacts")
+        logger.debug(
+            "Codex streaming ignores report_output_path; reports extracted from stream events"
+        )
 
     writable_roots_config = _build_writable_roots_config(
         tuple(root.as_posix() for root in spec.projected_roots)

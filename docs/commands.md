@@ -30,7 +30,6 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn inject ID --message "text"` | Post a message to a running streaming spawn or supported primary inbox |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children ID` | List direct child spawns |
-| `meridian spawn files ID` | List files changed by a spawn |
 
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).

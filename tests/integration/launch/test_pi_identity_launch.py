@@ -25,7 +25,6 @@ from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 from tests.support.pi_extensions import configure_pi_extension_projection
@@ -331,7 +330,6 @@ async def test_rpc_spawn_uses_prebound_scoped_store(pi_runtime: Path, behavior: 
                 launch_context=ctx,
                 project_root=root,
                 runtime_root=ctx.runtime_root,
-                artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
                 session_attempt=managed,
             ),
             20,
@@ -426,7 +424,6 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
                     launch_context=ctx,
                     project_root=root,
                     runtime_root=ctx.runtime_root,
-                    artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
                     session_attempt=managed.attempt,
                 ),
                 20,

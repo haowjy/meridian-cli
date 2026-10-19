@@ -15,7 +15,6 @@ from meridian.lib.state.spawn_status import overlay_derived
 from .query import (
     read_report_text,
     read_spawn_row,
-    read_written_files,
     resolve_spawn_reference,
 )
 
@@ -64,7 +63,6 @@ class SpawnContextRef(BaseModel):
     model: str
     harness: str
     report_text: str | None = None
-    written_files: tuple[str, ...] = ()
     harness_session_id: str | None = None
     chat_id: str | None = None
     work_id: str | None = None
@@ -117,13 +115,6 @@ def _is_tracked_session(project_root: Path, chat_id: str) -> bool:
 def _load_report_text(project_root: Path, spawn_id: str) -> str | None:
     _, report_text = read_report_text(project_root, spawn_id)
     return report_text
-
-
-def _load_written_files(project_root: Path, spawn_id: str) -> tuple[str, ...]:
-    try:
-        return read_written_files(project_root, spawn_id)
-    except (FileNotFoundError, OSError):
-        return ()
 
 
 def _session_context_from(
@@ -200,7 +191,6 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
         model=row.model or "",
         harness=row.harness or "",
         report_text=_load_report_text(project_root, row.id),
-        written_files=_load_written_files(project_root, row.id),
         harness_session_id=row.harness_session_id,
         chat_id=row.chat_id,
         work_id=(row.work_id or "").strip() or None,
@@ -321,15 +311,9 @@ def _render_context_ref(ref: ContextRef) -> str:
     else:
         lines.append("No report available.")
 
-    if ref.written_files:
-        lines.append("")
-        lines.append("## Files Modified")
-        lines.extend(f"- {path}" for path in ref.written_files)
-
     lines.append("")
     lines.append("## Explore Further")
     lines.append(f"- Full details: `meridian spawn show {ref.spawn_id}`")
-    lines.append(f"- Read modified files: `meridian spawn files {ref.spawn_id}`")
     if ref.chat_id and ref.chat_id.strip():
         lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
     lines.append("</prior-spawn-context>")

@@ -104,15 +104,12 @@ from .models import (
     SpawnSubagentsOutput,
     SpawnWaitInput,
     SpawnWaitMultiOutput,
-    SpawnWrittenFilesInput,
-    SpawnWrittenFilesOutput,
 )
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
     detail_from_row,
     read_spawn_row,
-    read_written_files,
     resolve_spawn_reference,
     resolve_spawn_references,
 )
@@ -932,49 +929,6 @@ async def spawn_status(
     return await asyncio.to_thread(
         spawn_status_sync, payload, ctx=ctx, sink=sink, prepared=prepared
     )
-
-
-def spawn_files_sync(
-    payload: SpawnWrittenFilesInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnWrittenFilesOutput:
-    _ = (ctx, sink)
-    project_root, runtime_root = _resolve_spawn_read_authority(
-        project_root=payload.project_root,
-        prepared=prepared,
-    )
-    if runtime_root is None:
-        normalized = payload.spawn_id.strip()
-        raise ValueError(f"Spawn '{normalized}' not found")
-    if prepared is not None:
-        spawn_id = resolve_spawn_reference(
-            project_root,
-            payload.spawn_id,
-            runtime_root=runtime_root,
-        )
-    else:
-        spawn_id = resolve_spawn_reference(project_root, payload.spawn_id)
-    row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-    if row is None:
-        raise ValueError(f"Spawn '{spawn_id}' not found")
-    written_files = read_written_files(project_root, spawn_id, runtime_root=runtime_root)
-    return SpawnWrittenFilesOutput(
-        spawn_id=spawn_id,
-        written_files=written_files,
-    )
-
-
-async def spawn_files(
-    payload: SpawnWrittenFilesInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnWrittenFilesOutput:
-    return await asyncio.to_thread(spawn_files_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
 
 
 def spawn_subagents_sync(

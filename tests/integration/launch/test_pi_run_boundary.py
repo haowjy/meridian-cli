@@ -421,7 +421,6 @@ async def test_rpc_post_attempt_boundary(
     from meridian.lib.launch.session_scope import session_scope
     from meridian.lib.launch.streaming_runner import execute_with_streaming
     from meridian.lib.launch.types import PrimarySessionMetadata
-    from meridian.lib.state.artifact_store import LocalStore
 
     root = pi_runtime
     install_boundary_shim(root, shape)
@@ -501,7 +500,6 @@ async def test_rpc_post_attempt_boundary(
                 launch_context=ctx,
                 project_root=root,
                 runtime_root=ctx.runtime_root,
-                artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
                 session_attempt=managed,
             ),
             20,
@@ -584,7 +582,6 @@ async def test_identity_failure_payload_is_identical_at_every_boundary(
     from meridian.lib.core.types import ModelId, SpawnId
     from meridian.lib.launch import streaming_runner
     from meridian.lib.ops.spawn.failure_policy import finalize_launch_failure
-    from meridian.lib.state.artifact_store import LocalStore
 
     root = pi_runtime
     install_shim(root)
@@ -626,7 +623,6 @@ async def test_identity_failure_payload_is_identical_at_every_boundary(
             launch_context=ctx,
             project_root=root,
             runtime_root=ctx.runtime_root,
-            artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
             session_attempt=SessionAttempt(
                 ctx.runtime_root,
                 chat_id,

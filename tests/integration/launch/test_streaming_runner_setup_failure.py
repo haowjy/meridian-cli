@@ -13,7 +13,6 @@ from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import constants as launch_constants
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -45,7 +44,6 @@ async def test_setup_failure_produces_terminal_event(
 ) -> None:
     """When setup raises, execute_with_streaming still writes a terminal event."""
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
 
@@ -79,7 +77,6 @@ async def test_setup_failure_produces_terminal_event(
         request=_build_request(),
         project_root=tmp_path,
         runtime_root=runtime_root,
-        artifacts=artifacts,
         registry=registry,
         clock=fake_clock,
     )
@@ -91,3 +88,6 @@ async def test_setup_failure_produces_terminal_event(
     assert row.terminal.exit_code == launch_constants.DEFAULT_INFRA_EXIT_CODE
     assert row.terminal.error is not None
     assert row.terminal.origin == "runner"
+    assert (runtime_root / "spawns" / str(run.spawn_id) / "stderr.log").read_text(
+        encoding="utf-8"
+    ).endswith("Injected control socket setup failure\n")

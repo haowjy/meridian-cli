@@ -697,12 +697,20 @@ It removes only the retired runner streams (`history.jsonl` and
 terminal, old enough, and have an exact readable native transcript for every
 run source. Unresolved exits, missing transcripts, running spawns, and live
 managed scopes are skipped. Meridian keeps native transcripts, reports,
-lifecycle and control state, and all other spawn files. The command is explicit
+lifecycle and control state, and all other files under each spawn. The command is explicit
 and never runs automatically. `meridian doctor` does not delete these files.
 `meridian doctor --prune` is different: it deletes whole spawn folders idle for
 more than `state.retention_days` (30 by default), including each spawn's
 record, prompt, report and any runner copy. The chats' native transcripts are
 not touched.
+
+## Spawn file listing
+
+`meridian spawn files` is deprecated: no harness produced its manifest, so it
+always returned an empty result. It still prints that empty result, with a
+warning on stderr, and becomes an error in the next minor release. Remove it
+from scripts, including `meridian spawn files <id> | xargs git add`; stage
+changes with `git add` directly.
 
 ## Behavior changes you'll notice
 

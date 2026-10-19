@@ -38,8 +38,6 @@ bare path
       process_scopes.json           — durable process identities
       reaper_cleanup_claim.json     — pending finalize-first cleanup targets
       report.md · stderr.log · params.json · tokens.json
-  artifacts/<spawn-id>/             — auxiliary artifact storage
-
 <context.work root>/<slug>/         ← context-resolved, not repo-local
   __status.json                     — mutable per-work-item metadata
   prompts/ handoffs/ …              — work artifacts
@@ -333,7 +331,7 @@ later individual mutations creates unnecessary contention. Use `write_state_lock
   authority lattice, how finalization interacts with the reaper
 ## Related .context/
 
-- [../../harness/.context/CONTEXT.md](../../harness/.context/CONTEXT.md) — `ArtifactStore` protocol that reads from `artifact_store.py`; `SpawnExtractor` contract
+- [../../harness/.context/CONTEXT.md](../../harness/.context/CONTEXT.md) — `SpawnExtractor` contract and harness-owned native evidence
 - [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — launch pipeline that writes spawn state via `SpawnStore`; composition seam, prepare/bind split
 - [../../platform/.context/CONTEXT.md](../../platform/.context/CONTEXT.md) — `lock_file()`
   implementation details, Windows/POSIX branching

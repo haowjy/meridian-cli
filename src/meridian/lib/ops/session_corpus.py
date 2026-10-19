@@ -22,7 +22,6 @@ def _runtime_has_session_data(runtime_root: Path) -> bool:
         (runtime_root / "sessions.jsonl").is_file()
         or (runtime_root / "history-archives/catalog.jsonl").is_file()
         or any((runtime_root / "spawns").glob("p*"))
-        or any((runtime_root / "artifacts").glob("p*"))
     )
 
 

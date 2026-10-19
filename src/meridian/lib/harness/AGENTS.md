@@ -253,8 +253,8 @@ See [.context/CONTEXT.md](.context/CONTEXT.md) for the full checklist.
 
 ## Anti-Patterns
 
-**Don't access artifact files directly** — use the `ArtifactStore` protocol.
-Direct path access breaks tests that mock artifacts.
+**Don't invent a second per-spawn file store.** Harnesses expose native evidence and
+attempt facts; launch finalization owns `report.md` and `stderr.log` in the spawn directory.
 
 **Don't call adapter methods before `ensure_bootstrap()`** — partial registration
 produces false `ImportError` from the accounting guard.
@@ -275,4 +275,4 @@ uncovered fields are treated as bugs, not warnings.
 ## Related
 
 - `../launch/AGENTS.md` — composition seam that calls into this layer
-- `../state/AGENTS.md` — artifact store that extractors read from
+- `../state/AGENTS.md` — authoritative spawn layout and atomic write invariants

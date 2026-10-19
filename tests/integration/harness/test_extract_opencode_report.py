@@ -10,7 +10,6 @@ from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.launch.extract import enrich_finalize
-from meridian.lib.state.artifact_store import InMemoryStore
 from tests.support.opencode_db import (
     write_opencode_db_session,
     write_opencode_v2_db_session,
@@ -118,7 +117,6 @@ def test_extract_opencode_report_reads_v2_db_final_assistant(tmp_path: Path, mon
         facts=facts,
         extractor=OPENCODE_EXTRACTOR,
         native_key=NativeKey("opencode", str(recorded), session),
-        artifacts=InMemoryStore(),
         spawn_id=SpawnId("p1"),
         log_dir=tmp_path / "run",
     )
@@ -137,7 +135,6 @@ def test_opencode_v1_native_store_supplies_report_when_v1_has_no_turn_event(tmp_
         facts=AttemptFacts(),
         extractor=OPENCODE_EXTRACTOR,
         native_key=NativeKey("opencode", str(db), "ses_v1"),
-        artifacts=InMemoryStore(),
         spawn_id=SpawnId("p1"),
         log_dir=tmp_path / "run",
     )
@@ -177,7 +174,6 @@ def test_v2_missing_join_falls_back_to_stream(tmp_path: Path):
         facts=facts,
         extractor=OPENCODE_EXTRACTOR,
         native_key=NativeKey("opencode", str(tmp_path / "absent.db"), "ses_owned"),
-        artifacts=InMemoryStore(),
         spawn_id=SpawnId("p1"),
         log_dir=tmp_path,
     )
@@ -195,7 +191,6 @@ def test_unreadable_native_db_cannot_break_report_precedence(tmp_path: Path, exp
         facts=facts,
         extractor=OPENCODE_EXTRACTOR,
         native_key=NativeKey("opencode", str(db), "ses_owned"),
-        artifacts=InMemoryStore(),
         spawn_id=SpawnId("p1"),
         log_dir=tmp_path,
     )

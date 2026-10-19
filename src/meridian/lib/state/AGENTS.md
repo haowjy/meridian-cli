@@ -40,8 +40,6 @@ bare path
     process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
     report.md · stderr.log · params.json · tokens.json
-  artifacts/<spawn_id>/             — auxiliary artifact store, not a transcript source
-
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
   __status.json                     — mutable per-work-item metadata; readers accept
                                       absent v as v1, writers do not emit v yet
@@ -311,5 +309,5 @@ It honors `MERIDIAN_HOME` and centralizes home resolution.
 
 ## Related
 
-- `../harness/AGENTS.md` — `ArtifactStore` protocol consumers that read from this layer
+- `../harness/AGENTS.md` — harness-owned native evidence consumed during finalization
 - `../launch/AGENTS.md` — writes spawn state via `SpawnStore` during launch pipeline

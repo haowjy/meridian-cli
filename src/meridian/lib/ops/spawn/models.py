@@ -1154,26 +1154,6 @@ class SpawnDetailOutput(BaseModel):
         return kv_block(pairs) + self._report_suffix()
 
 
-class SpawnWrittenFilesInput(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    spawn_id: str
-    project_root: str | None = None
-
-
-class SpawnWrittenFilesOutput(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    spawn_id: str
-    written_files: tuple[str, ...]
-
-    def format_text(self, ctx: FormatContext | None = None) -> str:
-        _ = ctx
-        if not self.written_files:
-            return ""
-        return "\n".join(self.written_files)
-
-
 class SpawnSubagentsInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -1446,8 +1426,6 @@ __all__ = [
     "SpawnSubagentsOutput",
     "SpawnWaitInput",
     "SpawnWaitMultiOutput",
-    "SpawnWrittenFilesInput",
-    "SpawnWrittenFilesOutput",
     "build_goal_contract_preview",
     "normalize_goal",
 ]

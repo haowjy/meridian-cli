@@ -31,7 +31,6 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope import fallback as process_scope_fallback
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from tests.support.fakes import FakeClock
@@ -511,7 +510,6 @@ async def _execute_with_context(
     request: SpawnRequest,
     project_root: Path,
     runtime_root: Path,
-    artifacts: LocalStore,
     registry: HarnessRegistry,
     execution_cwd: Path | None = None,
     **kwargs: object,
@@ -547,6 +545,5 @@ async def _execute_with_context(
         launch_context=launch_context,
         project_root=project_root,
         runtime_root=runtime_root,
-        artifacts=artifacts,
         **kwargs,
     )

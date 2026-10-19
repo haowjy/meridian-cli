@@ -9,10 +9,9 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
-from meridian.lib.launch.constants import HISTORY_FILENAME, REPORT_FILENAME
+from meridian.lib.launch.constants import REPORT_FILENAME
 from meridian.lib.launch.extract import FinalizeReportKind, enrich_finalize
 from meridian.lib.launch.streaming_runner import StreamingRunConclusion
-from meridian.lib.state.artifact_store import InMemoryStore, make_artifact_key
 
 # p6491: the OpenCode adapter extracted the agent's streamed narration preamble as
 # the "report"; no turn ever completed.
@@ -29,34 +28,17 @@ _PERMISSION_ENVELOPE_REPORT = (
     '"type":"permission.asked"}\n'
 )
 
-# One `permission.asked`, zero `turn.completed` — the hang shape.
-_PERMISSION_HISTORY = (
-    '{"event_type":"permission.asked","timestamp":"2026-09-21T03:25:57.100Z",'
-    '"payload":{"properties":{"permission":"external_directory",'
-    '"patterns":["/home/jimyao/.meridian/ref/opencode/*"]}}}\n'
-)
-
-
-def _seed_spawn(artifacts: InMemoryStore, spawn_id: SpawnId, *, report_text: str) -> None:
-    artifacts.put(
-        make_artifact_key(spawn_id, HISTORY_FILENAME),
-        _PERMISSION_HISTORY.encode("utf-8"),
-    )
-    artifacts.put(
-        make_artifact_key(spawn_id, REPORT_FILENAME),
-        report_text.encode("utf-8"),
-    )
+def _seed_report(spawn_dir: Path, *, report_text: str) -> None:
+    (spawn_dir / REPORT_FILENAME).write_text(report_text, encoding="utf-8")
 
 
 def test_hung_permission_spawn_resolves_cancelled_not_succeeded(tmp_path: Path) -> None:
     """p6491/p6493: a SIGTERM'd permission-hang is not a report-based success."""
 
     spawn_id = SpawnId("p-hung-permission")
-    artifacts = InMemoryStore()
-    _seed_spawn(artifacts, spawn_id, report_text=_PARTIAL_NARRATION_REPORT)
+    _seed_report(tmp_path, report_text=_PARTIAL_NARRATION_REPORT)
 
     extraction = enrich_finalize(
-        artifacts=artifacts,
         extractor=CODEX_EXTRACTOR,
         facts=AttemptFacts(),
         spawn_id=spawn_id,
@@ -79,11 +61,9 @@ def test_permission_envelope_report_is_not_durable_completion(tmp_path: Path) ->
     """p6493: a raw harness event envelope must not classify as completion."""
 
     spawn_id = SpawnId("p-permission-envelope")
-    artifacts = InMemoryStore()
-    _seed_spawn(artifacts, spawn_id, report_text=_PERMISSION_ENVELOPE_REPORT)
+    _seed_report(tmp_path, report_text=_PERMISSION_ENVELOPE_REPORT)
 
     extraction = enrich_finalize(
-        artifacts=artifacts,
         extractor=CODEX_EXTRACTOR,
         facts=AttemptFacts(),
         spawn_id=spawn_id,
@@ -99,10 +79,8 @@ def test_enrich_finalize_marks_synthetic_failure_report_not_durable(
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p-cancel-failure-report")
-    artifacts = InMemoryStore()
 
     extraction = enrich_finalize(
-        artifacts=artifacts,
         extractor=CODEX_EXTRACTOR,
         facts=AttemptFacts(),
         spawn_id=spawn_id,
@@ -110,7 +88,7 @@ def test_enrich_finalize_marks_synthetic_failure_report_not_durable(
         failure_reason="Cursor subprocess exited with code 130.",
     )
 
-    report = artifacts.get(make_artifact_key(spawn_id, REPORT_FILENAME)).decode()
+    report = (tmp_path / REPORT_FILENAME).read_text(encoding="utf-8")
     conclusion = StreamingRunConclusion(
         exit_code=130,
         failure_reason="cancelled",

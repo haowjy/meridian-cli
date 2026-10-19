@@ -14,8 +14,7 @@ mismatch. This ensures the type annotation and the runtime enum never drift.
 
 ## ID Types (`types.py`)
 
-`SpawnId`, `ModelId`, `ChatId`, `HarnessSessionId`, `ArtifactKey`, and
-`SchemaVersion` are `NewType` aliases
+`SpawnId`, `ModelId`, `ChatId`, `HarnessSessionId`, and `SchemaVersion` are `NewType` aliases
 over `str` / `int`. Zero runtime cost; mypy catches pass-the-wrong-id bugs
 statically. Use them on function signatures wherever spawn or model IDs are
 passed — don't accept `str` when you mean `SpawnId`.
