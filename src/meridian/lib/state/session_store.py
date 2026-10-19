@@ -175,6 +175,13 @@ def chat_record(root: Path, chat: str | None) -> SessionRecord | None:
     return records.get(chat)
 
 
+def session_exists(root: Path, chat: str) -> bool:
+    """Return whether the chat has an authoritative session record."""
+
+    normalized = chat.strip()
+    return bool(normalized) and chat_record(root, normalized) is not None
+
+
 def chat_generations(root: Path, chat: str) -> tuple[SessionRecord, ...]:
     return fold_session_generations(chat_rows(root, chat))
 

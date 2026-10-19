@@ -19,7 +19,7 @@ def _python_command(script_path: Path) -> str:
 
 def _context(project_root: Path, runtime_root: Path) -> HookContext:
     return HookContext(
-        event_name="spawn.finalized",
+        event_name="spawn.finished",
         event_id=uuid4(),
         timestamp="2026-04-19T12:00:00+00:00",
         project_root=str(project_root),
@@ -27,6 +27,7 @@ def _context(project_root: Path, runtime_root: Path) -> HookContext:
         spawn_id="p123",
         spawn_status="success",
         spawn_agent="reviewer",
+        spawn_kind="child",
         spawn_model="gpt-5.3-codex",
     )
 
@@ -34,7 +35,7 @@ def _context(project_root: Path, runtime_root: Path) -> HookContext:
 def _external_hook(command: str) -> Hook:
     return Hook(
         name="notify",
-        event="spawn.finalized",
+        event="spawn.finished",
         source="project",
         command=command,
     )
@@ -59,9 +60,11 @@ def test_external_runner_sets_cwd_env_and_json_stdin(tmp_path: Path) -> None:
         "print(os.environ['MERIDIAN_SPAWN_ID'])\n"
         "print(os.environ['MERIDIAN_SPAWN_STATUS'])\n"
         "print(os.environ['MERIDIAN_SPAWN_AGENT'])\n"
+        "print(os.environ['MERIDIAN_SPAWN_KIND'])\n"
         "print(os.environ['MERIDIAN_SPAWN_MODEL'])\n"
         "print(payload['event_name'])\n"
-        "print(payload['spawn']['id'])\n",
+        "print(payload['spawn']['id'])\n"
+        "print(payload['spawn']['kind'])\n",
         encoding="utf-8",
     )
 
@@ -77,14 +80,14 @@ def test_external_runner_sets_cwd_env_and_json_stdin(tmp_path: Path) -> None:
     assert result.stdout is not None
     lines = result.stdout.strip().splitlines()
     assert lines[0] == str(project_root.resolve())
-    assert lines[1] == "spawn.finalized"
+    assert lines[1] == "spawn.finished"
     assert lines[2] == str(context.event_id)
     assert lines[3] == str(project_root.resolve())
     assert lines[4] == str(runtime_root)
     assert lines[5] == "p123"
-    assert lines[6:9] == ["success", "reviewer", "gpt-5.3-codex"]
-    assert lines[9] == "spawn.finalized"
-    assert lines[10] == "p123"
+    assert lines[6:10] == ["success", "reviewer", "child", "gpt-5.3-codex"]
+    assert lines[10] == "spawn.finished"
+    assert lines[11:] == ["p123", "child"]
 
 
 def test_external_runner_captures_nonzero_exit_and_1kb_tails(tmp_path: Path) -> None:

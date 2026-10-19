@@ -19,7 +19,7 @@ def test_hooks_run_creates_no_state_in_unmaterialized_adhoc_place(
     (home / "config.toml").write_text(
         "[[hooks]]\n"
         'name = "manual-test"\n'
-        'event = "spawn.finalized"\n'
+        'event = "spawn.finished"\n'
         'command = "true"\n',
         encoding="utf-8",
     )
@@ -40,7 +40,7 @@ def test_hooks_run_rejects_notify_builtin_without_delivering(tmp_path: Path) -> 
         hooks_run_sync(
             HookRunInput(
                 name="notify",
-                event="spawn.finalized",
+                event="spawn.finished",
                 project_root=tmp_path.as_posix(),
             )
         )
@@ -58,7 +58,7 @@ async def test_mcp_hooks_run_is_read_only_and_omits_identity_created(
     (home / "config.toml").write_text(
         "[[hooks]]\n"
         'name = "manual-test"\n'
-        'event = "spawn.finalized"\n'
+        'event = "spawn.finished"\n'
         'command = "true"\n',
         encoding="utf-8",
     )
@@ -124,7 +124,7 @@ def test_hooks_run_uses_one_same_spec_registration_but_requires_event_for_differ
     (project_root / "meridian.toml").write_text(
         "[[hooks]]\n"
         'name = "different"\n'
-        'event = "spawn.start"\n'
+        'event = "spawn.started"\n'
         'command = "true"\n'
         "[[hooks]]\n"
         'name = "different"\n'

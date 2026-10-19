@@ -8,12 +8,14 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
+from meridian.env_registry import HOOK_PAYLOAD_ENV_KEYS
 from meridian.lib.hooks.types import Hook, HookContext, HookResult
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 
 _TAIL_BYTES = 1024
 _TERM_GRACE_SECONDS = 2.0
 _HOOKS_ENABLED_ENV = "MERIDIAN_HOOKS_ENABLED"
+_HOOK_PAYLOAD_ENV_NAMES = frozenset(HOOK_PAYLOAD_ENV_KEYS.values())
 
 
 def hooks_dispatch_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -94,7 +96,12 @@ class ExternalHookRunner:
                 error="Hook command is required for external execution.",
             )
 
-        env = {**self._env, **context.to_env()}
+        env = {
+            key: value
+            for key, value in self._env.items()
+            if key not in _HOOK_PAYLOAD_ENV_NAMES
+        }
+        env.update(context.to_env())
         env.pop("_MERIDIAN_RUNTIME_DIR", None)
         start = time.monotonic()
         process: subprocess.Popen[bytes] | None = None

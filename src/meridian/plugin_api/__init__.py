@@ -19,26 +19,28 @@ from meridian.plugin_api.state import (
 )
 from meridian.plugin_api.types import (
     NOTIFICATION_EVENTS,
-    FailurePolicy,
     Hook,
     HookContext,
     HookEventName,
     HookOutcome,
     HookResult,
     Notification,
+    SpawnKind,
+    SpawnStatus,
 )
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 __all__ = [
     "NOTIFICATION_EVENTS",
-    "FailurePolicy",
     "Hook",
     "HookContext",
     "HookEventName",
     "HookOutcome",
     "HookResult",
     "Notification",
+    "SpawnKind",
+    "SpawnStatus",
     "__version__",
     "get_project_home",
     "get_user_home",

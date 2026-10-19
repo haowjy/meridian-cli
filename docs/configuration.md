@@ -184,12 +184,13 @@ again can reintroduce those values.
 
 ## Notifications and idle sessions
 
-Every notification is a hook event: `session.responded` (the idle "your turn"
-push), `session.cache_expiring` (the idle cache warning), and `notify.manual`
+Every notification is a hook event: `notify.your_turn` (the idle "your turn"
+push), `notify.cache_expiring` (the idle cache warning), and `notify.manual`
 (`meridian notify`). The built-in `notify` hook delivers them through the
 transports configured in `[notify]`; see
 [Routing and extending notifications](#routing-and-extending-notifications) to
 change where each one goes or add your own channel.
+The `notify.*` prefix means the event carries a notification payload.
 
 ### `[notify]`
 
@@ -283,19 +284,19 @@ names them.
 # Cache warnings go only to ntfy, at top priority
 [[hooks]]
 builtin = "notify"
-event   = "session.cache_expiring"
+event   = "notify.cache_expiring"
 options = { channels = ["ntfy"], priority = 5 }
 
 # No "your turn" push
 [[hooks]]
 builtin = "notify"
-event   = "session.responded"
+event   = "notify.your_turn"
 enabled = false
 ```
 
 **Extension channels.** Any `[[hooks]] command = "..."` row on a notification
 event receives the notification, so a Slack or desktop channel is one row and
-one script. Stdin carries the hook payload (`schema_version` 2) with a
+one script. Stdin carries the hook payload (`schema_version` 3) with a
 `notification` object: `title`, `body`, `priority`, `email`, and `label`
 (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), and
 `attachments` (absolute paths from `meridian notify --attach`). The

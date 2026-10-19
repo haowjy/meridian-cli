@@ -12,28 +12,27 @@ from uuid import UUID
 
 HookEventName = Literal[
     "spawn.created",
-    "spawn.running",
-    "spawn.start",
-    "spawn.finalized",
-    "work.start",
-    "work.started",
+    "spawn.started",
+    "spawn.finished",
+    "work.created",
+    "work.activated",
     "work.done",
-    "session.responded",
-    "session.cache_expiring",
+    "notify.your_turn",
+    "notify.cache_expiring",
     "notify.manual",
 ]
 
 # Events that carry a `HookContext.notification`.
 NOTIFICATION_EVENTS: tuple[HookEventName, ...] = (
-    "session.responded",
-    "session.cache_expiring",
+    "notify.your_turn",
+    "notify.cache_expiring",
     "notify.manual",
 )
-HOOK_CONTEXT_SCHEMA_VERSION = 2
+HOOK_CONTEXT_SCHEMA_VERSION = 3
 
 HookOutcome = Literal["success", "failure", "timeout", "skipped"]
-FailurePolicy = Literal["fail", "warn", "ignore"]
-SpawnStatus = Literal["success", "failure", "cancelled", "timeout", "skipped"]
+SpawnKind = Literal["child", "primary", "streaming"]
+SpawnStatus = Literal["success", "failure", "cancelled", "timeout"]
 
 
 def _default_options() -> dict[str, object]:
@@ -96,7 +95,6 @@ class Hook:
     require_serial: bool = False
     exclude: tuple[str, ...] = ()
     options: Mapping[str, object] = field(default_factory=_default_options)
-    failure_policy: FailurePolicy | None = None
     remote: str | None = None
 
 
@@ -114,6 +112,7 @@ class HookContext:
     spawn_id: str | None = None
     spawn_status: SpawnStatus | None = None
     spawn_agent: str | None = None
+    spawn_kind: SpawnKind | None = None
     spawn_model: str | None = None
     spawn_duration_secs: float | None = None
     spawn_cost_usd: float | None = None
@@ -136,6 +135,7 @@ class HookContext:
         spawn_id: str | None = None,
         spawn_status: SpawnStatus | None = None,
         spawn_agent: str | None = None,
+        spawn_kind: SpawnKind | None = None,
         spawn_model: str | None = None,
         spawn_duration_secs: float | None = None,
         spawn_cost_usd: float | None = None,
@@ -153,6 +153,7 @@ class HookContext:
             spawn_id=spawn_id,
             spawn_status=spawn_status,
             spawn_agent=spawn_agent,
+            spawn_kind=spawn_kind,
             spawn_model=spawn_model,
             spawn_duration_secs=spawn_duration_secs,
             spawn_cost_usd=spawn_cost_usd,
@@ -160,45 +161,6 @@ class HookContext:
             work_id=work_id,
             work_dir=Path(work_dir).as_posix() if work_dir is not None else None,
             notification=notification,
-        )
-
-    @classmethod
-    def from_authority(
-        cls,
-        *,
-        authority: object,
-        event_name: HookEventName,
-        event_id: UUID,
-        timestamp: str,
-        spawn_id: str | None = None,
-        spawn_status: SpawnStatus | None = None,
-        spawn_agent: str | None = None,
-        spawn_model: str | None = None,
-        spawn_duration_secs: float | None = None,
-        spawn_cost_usd: float | None = None,
-        spawn_error: str | None = None,
-        work_id: str | None = None,
-        work_dir: str | Path | None = None,
-    ) -> HookContext:
-        project_root = getattr(authority, "project_root", None)
-        runtime_root = getattr(authority, "runtime_root", None)
-        if project_root is None:
-            raise ValueError("Hook authority is missing project_root.")
-        return cls.from_roots(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            event_name=event_name,
-            event_id=event_id,
-            timestamp=timestamp,
-            spawn_id=spawn_id,
-            spawn_status=spawn_status,
-            spawn_agent=spawn_agent,
-            spawn_model=spawn_model,
-            spawn_duration_secs=spawn_duration_secs,
-            spawn_cost_usd=spawn_cost_usd,
-            spawn_error=spawn_error,
-            work_id=work_id,
-            work_dir=work_dir,
         )
 
     def to_env(self) -> dict[str, str]:
@@ -215,6 +177,7 @@ class HookContext:
             "spawn_id": self.spawn_id,
             "spawn_status": self.spawn_status,
             "spawn_agent": self.spawn_agent,
+            "spawn_kind": self.spawn_kind,
             "spawn_model": self.spawn_model,
             "spawn_duration_secs": (
                 None if self.spawn_duration_secs is None else str(self.spawn_duration_secs)
@@ -240,6 +203,19 @@ class HookContext:
     def to_json(self) -> str:
         """Convert context to JSON for stdin transport."""
 
+        has_spawn_context = any(
+            value is not None
+            for value in (
+                self.spawn_id,
+                self.spawn_status,
+                self.spawn_agent,
+                self.spawn_kind,
+                self.spawn_model,
+                self.spawn_duration_secs,
+                self.spawn_cost_usd,
+                self.spawn_error,
+            )
+        )
         payload = {
             "schema_version": self.schema_version,
             "event_name": self.event_name,
@@ -251,12 +227,13 @@ class HookContext:
                 "id": self.spawn_id,
                 "status": self.spawn_status,
                 "agent": self.spawn_agent,
+                "kind": self.spawn_kind,
                 "model": self.spawn_model,
                 "duration_secs": self.spawn_duration_secs,
                 "cost_usd": self.spawn_cost_usd,
                 "error": self.spawn_error,
             }
-            if self.spawn_id
+            if has_spawn_context
             else None,
             "work": {
                 "id": self.work_id,
@@ -296,12 +273,12 @@ class HookResult:
 __all__ = [
     "HOOK_CONTEXT_SCHEMA_VERSION",
     "NOTIFICATION_EVENTS",
-    "FailurePolicy",
     "Hook",
     "HookContext",
     "HookEventName",
     "HookOutcome",
     "HookResult",
     "Notification",
+    "SpawnKind",
     "SpawnStatus",
 ]

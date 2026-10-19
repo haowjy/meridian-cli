@@ -10,8 +10,8 @@ from meridian.plugin_api.types import HookEventName, Notification
 
 # The hook event each stage's notification travels as.
 STAGE_EVENTS: dict[Literal["push", "warn"], HookEventName] = {
-    "push": "session.responded",
-    "warn": "session.cache_expiring",
+    "push": "notify.your_turn",
+    "warn": "notify.cache_expiring",
 }
 
 

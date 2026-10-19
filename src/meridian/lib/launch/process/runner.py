@@ -64,6 +64,7 @@ from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
 from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
+from meridian.lib.ops.work_attachment import activate_work
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity
 from meridian.lib.state import spawn_store
@@ -80,7 +81,6 @@ from meridian.lib.state.session_store import (
     get_session_active_work_id,
     update_session_claude_config_dir,
     update_session_spawn_id,
-    update_session_work_id,
 )
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 
@@ -734,7 +734,7 @@ def run_harness_process(
     ),
     run_primary_attach_fn: RunPrimaryAttach = run_primary_attach,
     update_session_spawn_id_fn: Callable[..., None] = update_session_spawn_id,
-    update_session_work_id_fn: Callable[..., None] = update_session_work_id,
+    activate_work_fn: Callable[[Path, str, str], None] = activate_work,
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
 ) -> ProcessOutcome:
     """Start session, spawn tracking, launch process, wait for exit."""
@@ -799,12 +799,13 @@ def run_harness_process(
         ) as managed:
             chat_id = managed.chat_id
             attached_work_id = resolve_attached_work_id(
+                project_root=config_root,
                 runtime_root=runtime_root,
                 chat_id=chat_id,
                 explicit_work_id=preview_context.work_id,
                 resume_chat_id=resume_chat_id,
                 get_session_active_work_id_fn=get_session_active_work_id_fn,
-                update_session_work_id_fn=update_session_work_id_fn,
+                activate_work_fn=activate_work_fn,
             )
             identity_error: NativeIdentityError | None = None
             identity_error_phase = "pre_exec"

@@ -244,7 +244,8 @@ Historical multi-ID arrays are ignored on read.
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
-- `session_store.py` — Session event I/O and lease ownership.
+- `session_store.py` — Session event I/O, lease ownership, and the canonical
+  `session_exists()` predicate (a chat record exists; a harness ID is not required).
 - `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars.
 - `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.

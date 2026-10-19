@@ -33,12 +33,13 @@ def resolve_primary_session_mode(context: LaunchContext) -> SessionMode:
 
 def resolve_attached_work_id(
     *,
+    project_root: Path,
     runtime_root: Path,
     chat_id: str,
     explicit_work_id: str | None,
     resume_chat_id: str | None,
     get_session_active_work_id_fn: Callable[[Path, str], str | None],
-    update_session_work_id_fn: Callable[[Path, str, str], None],
+    activate_work_fn: Callable[[Path, str, str], None],
 ) -> str | None:
     preserved_work_id = None
     if explicit_work_id is None and resume_chat_id is not None:
@@ -48,7 +49,7 @@ def resolve_attached_work_id(
     if attached_work_id is None:
         attached_work_id = explicit_work_id or preserved_work_id
         if attached_work_id is not None:
-            update_session_work_id_fn(runtime_root, chat_id, attached_work_id)
+            activate_work_fn(project_root, chat_id, attached_work_id)
     return attached_work_id
 
 

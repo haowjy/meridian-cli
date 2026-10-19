@@ -1,6 +1,6 @@
 # plugin_api/ — Stable External Plugin Surface
 
-The only surface external plugins (and built-in hooks) may import from. Versioned at `2.0.0` — breaking changes require a version bump and migration path. Internal `meridian.lib.*` is not stable; this is.
+The only surface external plugins (and built-in hooks) may import from. Versioned at `3.0.0` — breaking changes require a version bump and migration path. Internal `meridian.lib.*` is not stable; this is.
 
 ## Mental Model
 
@@ -10,7 +10,7 @@ External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `
 
 ## What's Stable Here
 
-- `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `FailurePolicy`, `Notification`, `NOTIFICATION_EVENTS` — the hook contract types. Builtin implementations may set `HookResult.details` to JSON-serializable data and document where their keys surface. `lib/hooks` uses these exact classes, so the payload a hook sees is the one the dispatcher built.
+- `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `SpawnKind`, `SpawnStatus`, `Notification`, `NOTIFICATION_EVENTS` — the hook contract types. Builtin implementations may set `HookResult.details` to JSON-serializable data and document where their keys surface. Core, state, and `lib/hooks` use these exact closed vocabularies and payload classes rather than defining parallel copies.
 - `state.py` — `get_project_home()`, `get_user_home()` — state root access
 - `fs.py` — `file_lock()`, `atomic_write_text()` — cross-platform locking and atomic
   replacement for plugins

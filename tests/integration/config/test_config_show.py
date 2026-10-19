@@ -206,7 +206,7 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
         'source = "git"\n'
         "\n"
         "[[hooks]]\n"
-        'event = "spawn.start"\n'
+        'event = "spawn.started"\n'
         'command = "echo project"\n',
         encoding="utf-8",
     )
@@ -280,7 +280,7 @@ def test_config_show_names_valid_hooks_and_counts_invalid_rows(tmp_path: Path) -
         (None, "hooks = []\n", "user-config", "0 hooks"),
         (
             "hooks = []\n",
-            '[[hooks]]\nname = "user-hook"\nevent = "spawn.start"\ncommand = "echo user"\n',
+            '[[hooks]]\nname = "user-hook"\nevent = "spawn.started"\ncommand = "echo user"\n',
             "file",
             "1 hook (user-hook)",
         ),

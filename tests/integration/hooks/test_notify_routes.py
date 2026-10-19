@@ -72,7 +72,7 @@ def test_idle_records_the_push_as_its_routes_delivered_it(
     (tmp_path / "meridian.toml").write_text(
         "[[hooks]]\n"
         'name = "desk"\n'
-        'event = "session.responded"\n'
+        'event = "notify.your_turn"\n'
         f'command = "exit {exit_code}"\n',
         encoding="utf-8",
     )
@@ -126,7 +126,7 @@ def test_idle_without_injected_config_delivers_despite_an_invalid_hook_row(
         "[[hooks]]\n"
         'name = "broken"\n'
         'command = "true"\n'
-        'event = "spawn.finalized"\n'
+        'event = "spawn.finished"\n'
         'timeout_secs = "abc"\n',
         encoding="utf-8",
     )
@@ -145,7 +145,7 @@ def test_idle_without_injected_config_delivers_despite_an_invalid_hook_row(
         idle.fire("push", harness="example", session="s1", stretch=1, anchor=1)
 
     assert len(delivered) == 1
-    assert delivered[0].startswith("session.responded:[idle] ")
+    assert delivered[0].startswith("notify.your_turn:[idle] ")
     warnings = [
         record.getMessage()
         for record in caplog.records

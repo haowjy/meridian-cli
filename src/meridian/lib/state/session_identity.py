@@ -103,7 +103,7 @@ def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
         return False
     if normalized[1:].isdigit():
         return True
-    return session_store.chat_record(runtime_root, normalized) is not None
+    return session_store.session_exists(runtime_root, normalized)
 
 
 def session_records_for_spawns(
