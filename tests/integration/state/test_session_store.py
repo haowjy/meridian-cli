@@ -14,6 +14,7 @@ import logging
 import multiprocessing
 import os
 import signal
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -318,6 +319,14 @@ def test_unsupported_session_event_version_is_skipped_with_warning(
 
     assert [record.chat_id for record in records] == ["c2"]
     assert "unsupported sessions.jsonl format version 2" in caplog.text
+
+    from meridian.lib.state.history_index import HistoryIndex
+
+    index = HistoryIndex(runtime_root)
+    assert index.sessions() == []
+    with sqlite3.connect(index.path) as db:
+        cursor = db.execute("SELECT extent FROM cursors WHERE source = 'sessions'").fetchone()
+    assert cursor == (0,)
 
 
 def test_start_session_does_not_append_start_event_when_lock_acquire_fails(

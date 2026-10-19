@@ -60,10 +60,11 @@ Work items live under the `[context.work]` root (default
 `work_state.py` — **never** the project repo. See `docs/configuration.md` for
 context-path resolution.
 
-Work metadata reads tolerate and warn about unknown fields. A newer `v` stays
-visible as `requires-newer-meridian`; read projections never replace it with
-directory defaults, and mutations refuse to overwrite it. Malformed metadata
-still projects directory defaults, but always warns with the file path.
+Work metadata reads tolerate, preserve, and warn about unknown fields. A newer `v`
+gets a compatibility marker displayed as `requires-newer-meridian`; it never
+collides with the stored status, and mutations validate every located copy before
+touching disk. Malformed metadata still projects directory defaults, but always
+warns with the file path. Repeated reads warn once per file per command.
 
 ## Spawn State: Per-Spawn Files
 
@@ -143,8 +144,10 @@ lock is busy; the lock gates marker acknowledgement, not the read. Spawn and arc
 catalog projection still require their source locks. Incremental session catch-up
 loads only the working sets for chats touched after its cursor.
 The index file and its sidecars (marker queue, GENERATION, catch-up/database/marker
-locks, init latch) are named by `SCHEMA_VERSION`; a schema bump builds a new file
-from authority and never touches an older build's file. Never migrate in place.
+locks, init latch) are named by both `SCHEMA_VERSION` and the latest supported
+session event version; either change builds a new file from authority and never
+touches an older build's file. An unsupported session row stops cursor advancement.
+Never migrate in place.
 See [.context/history.md](.context/history.md) before changing locks, projection,
 transcript retry behavior, ZIP retention, or restore.
 

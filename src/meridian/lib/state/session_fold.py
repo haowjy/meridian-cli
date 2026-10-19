@@ -55,22 +55,24 @@ class UnsupportedSessionRecords:
             return
         _warn_unsupported_session_versions(path, tuple(sorted(self.versions)))
 
+    def require_supported(self, path: Path) -> None:
+        if not self.versions:
+            return
+        versions = ", ".join(sorted(self.versions))
+        raise ValueError(
+            f"{path}: unsupported sessions.jsonl format version(s) {versions}; "
+            "upgrade Meridian before updating these session records."
+        )
+
 
 def supported_session_event_version(
     payload: Mapping[str, object],
-    unsupported: UnsupportedSessionRecords | None = None,
+    unsupported: UnsupportedSessionRecords,
 ) -> bool:
     version = payload.get("v", 1)
     if type(version) is int and version in SUPPORTED_SESSION_EVENT_VERSIONS:
         return True
-    if unsupported is None:
-        logger.warning(
-            "Skipping record with unsupported sessions.jsonl format version %r; "
-            "upgrade Meridian to read it.",
-            version,
-        )
-    else:
-        unsupported.record(version)
+    unsupported.record(version)
     return False
 
 
@@ -317,7 +319,7 @@ type SessionEvent = (
 
 def parse_event(
     payload: Mapping[str, object],
-    unsupported: UnsupportedSessionRecords | None = None,
+    unsupported: UnsupportedSessionRecords,
 ) -> SessionEvent | None:
     if not supported_session_event_version(payload, unsupported):
         return None

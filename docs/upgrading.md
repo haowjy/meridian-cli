@@ -93,22 +93,30 @@ that version in the file name.
 
 What users may notice:
 
-- Work items whose `__status.json` contains an unknown field keep their stored
-  metadata and warn. A status file from a newer format is listed as
-  `requires-newer-meridian`, warns with its path and asks for an upgrade; commands
-  refuse to overwrite it. Other malformed status files now warn before using
-  directory-derived defaults.
+- Work items whose `__status.json` contains an unknown field keep it through
+  later metadata updates and warn once per file per command. A status file from a
+  newer format is displayed as `requires-newer-meridian`, warns with its path and
+  asks for an upgrade; commands validate every active and archived copy before
+  renaming, deleting, moving, or rewriting anything. Other malformed status files
+  now warn before using directory-derived defaults.
 - `meridian telemetry query` and session replay skip records carrying an
   unsupported `v` and warn instead of interpreting them with the current schema.
-  Idle files from another format keep their previous absent-state behavior but
-  now warn with the file path.
+  Locked session decisions refuse unsupported records in their scope rather than
+  creating a duplicate chat. The disposable history index stops its cursor before
+  an unsupported session row, and its file name includes both the index schema and
+  session format (`history-v10-sessions-v1.sqlite3`) so a format change rebuilds
+  from authority. Idle files are the deliberate exception to refusal: they are
+  short-lived and expected to be absent, and refusing one after a mid-session
+  upgrade would disable idle handling; they keep absent-state behavior and now
+  warn with the file path.
 - `meridian.plugin_api.__version__`, launch-policy snapshot `schema_version`, Pi
   `pi_runtime_meta.json` `schema_version`, and the duplicate native-search SQLite
   schema metadata are removed because no reader used them. Existing files that
   contain these fields remain readable. The legacy native-import marker keeps
   its `schema_version`: released repair readers still require it.
 
-No state migration or index rebuild is required. Work status writers do not emit
+No state migration or manual index rebuild is required. The first indexed read
+builds the new input-versioned file automatically. Work status writers do not emit
 `v` yet, so released strict readers continue to accept files this version writes.
 Rollback support for other state changes remains specific to their topic below.
 
@@ -178,10 +186,10 @@ schema 7 to 10 so an unstopped session generation becomes inactive when a later
 generation of the same chat starts. Schema numbers 8 and 9 are skipped because
 unreleased builds wrote projections in those namespaces.
 
-The first indexed read rebuilds `history-v10.sqlite3` from authority and may
-take longer. Older `history-v7.sqlite3`, `history-v8.sqlite3`, and
-`history-v9.sqlite3` files are left untouched and can be removed after rollback
-is no longer needed.
+The first indexed read rebuilds `history-v10-sessions-v1.sqlite3` from authority
+and may take longer. Older `history-v7.sqlite3`, `history-v8.sqlite3`,
+`history-v9.sqlite3`, and pre-policy `history-v10.sqlite3` files are left untouched
+and can be removed after rollback is no longer needed.
 
 ## Idle compaction removed
 

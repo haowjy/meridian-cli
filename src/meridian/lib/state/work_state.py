@@ -49,6 +49,41 @@ def _warn_newer_work_state(path: str, version: int) -> None:
     )
 
 
+@lru_cache(maxsize=256)
+def _warn_unknown_work_state_fields(path: str, fields: tuple[str, ...]) -> None:
+    logger.warning(
+        "Keeping unknown work item metadata fields.",
+        path=path,
+        fields=fields,
+    )
+
+
+@lru_cache(maxsize=256)
+def _warn_work_state_read_failure(path: str, error: str) -> None:
+    logger.warning(
+        "Unable to read work item metadata; using directory defaults.",
+        path=path,
+        error=error,
+    )
+
+
+@lru_cache(maxsize=256)
+def _warn_work_state_parse_failure(path: str) -> None:
+    logger.warning(
+        "Unable to parse work item metadata; using directory defaults.",
+        path=path,
+    )
+
+
+@lru_cache(maxsize=256)
+def _warn_work_state_validation_failure(path: str, error: str) -> None:
+    logger.warning(
+        "Unable to validate work item metadata; using directory defaults.",
+        path=path,
+        error=error,
+    )
+
+
 def _normalize_worktree_path_text(path: str) -> str:
     """Store worktree filesystem paths with stable POSIX separators."""
 
@@ -56,7 +91,7 @@ def _normalize_worktree_path_text(path: str) -> str:
 
 
 class WorktreeMetadata(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="allow")
 
     path: str | None = None
     branch: str | None = None
@@ -86,6 +121,14 @@ class WorkItem(BaseModel):
     archived_at: str | None = None
     task_dir: str | None = None
     worktree: WorktreeMetadata = Field(default_factory=WorktreeMetadata)
+    stored_state_extras: dict[str, object] = Field(default_factory=dict, exclude=True)
+    metadata_requires_newer_meridian: bool = Field(default=False, exclude=True)
+
+    @property
+    def display_status(self) -> str:
+        if self.metadata_requires_newer_meridian:
+            return REQUIRES_NEWER_MERIDIAN_STATUS
+        return self.status
 
     @property
     def worktree_path(self) -> str | None:
@@ -115,7 +158,7 @@ class WorkItem(BaseModel):
 class StoredWorkItemState(BaseModel):
     """The sole codec for the contents of ``__status.json``."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="allow")
 
     # Readers learn the format before writers emit it. Field exclusion keeps
     # this release's files readable by strict older builds.
@@ -195,15 +238,17 @@ def serialize_work_item_state(state: StoredWorkItemState) -> str:
 
 
 def stored_state_from_item(item: WorkItem) -> StoredWorkItemState:
-    return StoredWorkItemState(
-        status=item.status,
-        description=item.description,
-        goal=item.goal,
-        created_at=item.created_at,
-        archived_at=item.archived_at,
-        task_dir=item.task_dir,
-        worktree=item.worktree,
-    )
+    payload: dict[str, object] = dict(item.stored_state_extras)
+    payload.update({
+        "status": item.status,
+        "description": item.description,
+        "goal": item.goal,
+        "created_at": item.created_at,
+        "archived_at": item.archived_at,
+        "task_dir": item.task_dir,
+        "worktree": item.worktree,
+    })
+    return StoredWorkItemState.model_validate(payload)
 
 
 def _unknown_work_state_fields(payload: dict[str, object]) -> tuple[str, ...]:
@@ -251,24 +296,18 @@ def load_work_item_from_dir(
         worktree=default_worktree or WorktreeMetadata(),
     )
     metadata_path = status_path(work_dir)
+    requires_newer_meridian = False
     try:
         raw_text = metadata_path.read_text(encoding="utf-8")
     except FileNotFoundError:
         stored = fallback
     except OSError as exc:
-        logger.warning(
-            "Unable to read work item metadata; using directory defaults.",
-            path=str(metadata_path),
-            error=str(exc),
-        )
+        _warn_work_state_read_failure(str(metadata_path), str(exc))
         stored = fallback
     else:
         payload = loads_json_object(raw_text)
         if payload is None:
-            logger.warning(
-                "Unable to parse work item metadata; using directory defaults.",
-                path=str(metadata_path),
-            )
+            _warn_work_state_parse_failure(str(metadata_path))
             stored = fallback
         else:
             version = payload.get("v", WORK_STATE_VERSION)
@@ -282,9 +321,9 @@ def load_work_item_from_dir(
                 _warn_newer_work_state(str(metadata_path), version)
                 if not mark_unsupported:
                     raise UnsupportedWorkStateVersion(f"{metadata_path}: {remedy}")
+                requires_newer_meridian = True
                 stored = fallback.model_copy(
                     update={
-                        "status": REQUIRES_NEWER_MERIDIAN_STATUS,
                         "description": remedy,
                         "goal": None,
                     }
@@ -292,23 +331,13 @@ def load_work_item_from_dir(
             else:
                 unknown_fields = _unknown_work_state_fields(payload)
                 if unknown_fields:
-                    logger.warning(
-                        "Ignoring unknown work item metadata fields.",
-                        path=str(metadata_path),
-                        fields=unknown_fields,
-                    )
+                    _warn_unknown_work_state_fields(str(metadata_path), unknown_fields)
                 try:
                     stored = StoredWorkItemState.model_validate(payload)
                 except ValidationError as exc:
-                    logger.warning(
-                        "Unable to validate work item metadata; using directory defaults.",
-                        path=str(metadata_path),
-                        error=str(exc),
-                    )
+                    _warn_work_state_validation_failure(str(metadata_path), str(exc))
                     stored = fallback
-    if stored.status == REQUIRES_NEWER_MERIDIAN_STATUS:
-        projected_status = REQUIRES_NEWER_MERIDIAN_STATUS
-    elif archived:
+    if archived:
         projected_status = "done"
     else:
         projected_status = default_status if stored.status == "done" else stored.status
@@ -321,4 +350,6 @@ def load_work_item_from_dir(
         archived_at=(stored.archived_at or fallback.archived_at) if archived else None,
         task_dir=stored.task_dir,
         worktree=stored.worktree,
+        stored_state_extras=dict(stored.model_extra or {}),
+        metadata_requires_newer_meridian=requires_newer_meridian,
     )

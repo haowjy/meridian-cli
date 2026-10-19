@@ -24,8 +24,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `git-autosync` defaults are `spawn.finished`, `work.activated`, and `work.done`, so it syncs for sessionless `work start` / `work switch` and once before a primary launch with `--work` / `--from` attached. (#687)
 - Explicitly named hooks with impossible conditions are skipped during the compatibility window. Unevented builtin rows enable compatible defaults, keep incompatible defaults as disabled overrides, and error only when none can match. (#687)
 - Spawn event IDs remain stable per spawn and event; work event IDs are now unique per firing. (#687)
-- Compatibility policy: one-minor deprecation for config, CLI, and hook names; cross-build state readers check explicit integer format versions. See [upgrade note](docs/upgrading.md#compatibility-policy-and-state-version-checks).
+- Compatibility policy: one-minor deprecation for config, CLI, and hook names; cross-build state readers check explicit integer format versions, with short-lived idle state as the documented absent-state exception. See [upgrade note](docs/upgrading.md#compatibility-policy-and-state-version-checks).
 - Telemetry queries and session folds skip records from unsupported format versions and warn instead of interpreting them as current data.
+- History index namespaces now include the session event format version, and locked session decisions refuse unsupported rows instead of projecting past them.
 
 ### Fixed
 - `spawn.started` now fires once for spawns persisted initially as `running`, including streaming-serve spawns. (#687)
@@ -33,7 +34,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `spawn.finished` command hooks now receive the persisted terminal error; hook subprocesses no longer inherit stale payload variables for fields absent from the current event. (#687)
 - Invalid hook config can no longer interrupt `work start` after its state mutation; work hook dispatch logs the failure and the operation continues. (#687)
 - An invalid hook row no longer stops spawns: lifecycle dispatch drops it with a warning and valid hooks keep running. (#687)
-- Work items no longer silently lose status, description, and goal when `__status.json` has a future field or version. Unknown fields warn and remain readable; newer versions stay visible and mutation is refused; malformed metadata warns with its path.
+- Work items no longer silently lose status, description, goal, or unknown fields when `__status.json` comes from another build. Unknown fields survive later writes; every active and archived copy is validated before a mutation touches disk; newer versions remain visible and mutations refuse them; malformed metadata warns with its path.
 - Idle state version skew now names the ignored file and explains that another Meridian build wrote it.
 
 ### Upgrade notes

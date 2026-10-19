@@ -278,9 +278,10 @@ provides pure read projections; `work_repository.py` serializes all status and
 directory-namespace mutations behind the stable project-level `work-store.flock`.
 Mutable metadata lives in
 `<context.work root>/<slug>/__status.json`; there is no separate rename-intent file.
-Its reader treats absent `v` as v1 and ignores unknown fields with a warning;
-writers deliberately omit `v` until the next format change. A newer version is
-shown as `requires-newer-meridian`, while mutation paths refuse to overwrite it.
+Its reader treats absent `v` as v1 and preserves unknown fields with a warning;
+writers deliberately omit `v` until the next format change. A newer version gets
+a separate compatibility marker displayed as `requires-newer-meridian`, while the
+single mutation seam validates every active and archived copy before touching disk.
 
 ### WorktreeMetadata
 

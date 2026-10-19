@@ -46,6 +46,7 @@ from meridian.lib.state.session_fold import (
 )
 from meridian.lib.state.session_fold import (
     SessionSettings,
+    UnsupportedSessionRecords,
     fold_session_generations,
     is_historical_generation,
     parse_event,
@@ -158,7 +159,7 @@ def read_session_events(
             )
             if not isinstance(raw_id, str) or raw_id.strip() not in chat_ids:
                 return None
-        return parse_event(payload)
+        return parse_event(payload, UnsupportedSessionRecords())
 
     return read_events(
         paths.sessions_jsonl,
@@ -217,7 +218,10 @@ def get_initial_model_selection(
 ) -> SessionModelSelectionEvent | None:
     """Read a legacy conversation's original value without seeding or replaying attempts."""
     paths = RuntimePaths.from_root_dir(runtime_root)
-    events = read_events(paths.sessions_jsonl, parse_event)
+    events = read_events(
+        paths.sessions_jsonl,
+        lambda payload: parse_event(payload, UnsupportedSessionRecords()),
+    )
     updates: dict[tuple[str, str], list[SessionUpdateEvent]] = {}
     for event in events:
         if isinstance(event, SessionUpdateEvent):
@@ -289,7 +293,10 @@ def get_model_selection(
     seed: ConversationModelSelection | None = None
     seen_invocations: set[str] = set()
     for event, native_id in _bound_model_selections(
-        read_events(paths.sessions_jsonl, parse_event)
+        read_events(
+            paths.sessions_jsonl,
+            lambda payload: parse_event(payload, UnsupportedSessionRecords()),
+        )
     ):
         if event.harness != harness or native_id != harness_session_id:
             continue
@@ -309,7 +316,10 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
         if not runtime_root.is_dir():
             raise FileNotFoundError(runtime_root)
         with lock_file(paths.sessions_flock):
-            events = read_events(paths.sessions_jsonl, parse_event)
+            events = read_events(
+                paths.sessions_jsonl,
+                lambda payload: parse_event(payload, UnsupportedSessionRecords()),
+            )
             source_start = next((
                 start for start in events
                 if isinstance(start, SessionStartEvent)
@@ -453,7 +463,10 @@ def _get_or_create_observed_chat_locked(
 def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
     """All generations, including historical and legacy starts, in source order."""
     return fold_session_generations(
-        read_events(RuntimePaths.from_root_dir(runtime_root).sessions_jsonl, parse_event)
+        read_events(
+            RuntimePaths.from_root_dir(runtime_root).sessions_jsonl,
+            lambda payload: parse_event(payload, UnsupportedSessionRecords()),
+        )
     )
 
 def session_records_for_spawns(

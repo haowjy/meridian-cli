@@ -19,6 +19,7 @@ from meridian.lib.state import session_store as s
 from meridian.lib.state import spawn_store
 from meridian.lib.state.event_store import read_events
 from meridian.lib.state.session_fold import (
+    UnsupportedSessionRecords,
     fold_session_generations,
     parse_event,
     project_session_event,
@@ -69,7 +70,11 @@ def sample(items: list, limit: int | None) -> list:
 
 def compare_corpus(root: Path, writer: Path, *, limit: int | None = None) -> dict[str, int]:
     raw = read_events(root / "sessions.jsonl", lambda row: row)
-    events = [event for row in raw if (event := parse_event(row)) is not None]
+    events = [
+        event
+        for row in raw
+        if (event := parse_event(row, UnsupportedSessionRecords())) is not None
+    ]
     observations = [
         event for row in raw if (event := old._parse_model_observation(row)) is not None
     ]

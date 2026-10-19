@@ -45,11 +45,11 @@ Busy, disk-full, permissions and ordinary I/O errors are not corruption recovery
 
 ## Schema namespace and mixed-version overlap
 
-`SCHEMA_VERSION` (in `history_changes.py`) names one projection namespace:
-`history-index/history-v<N>.sqlite3`, its `.build-v<N>` stage, the
-`history-index/pending-v<N>/` queue with its GENERATION,
-`locks/history-{catchup,database,markers}-v<N>.lock` and the init latch.
-A schema bump builds a fresh file from authority; there is no in-place migration,
+`SCHEMA_VERSION` (in `history_changes.py`) and the latest supported session event
+version name one projection namespace:
+`history-index/history-v<N>-sessions-v<M>.sqlite3`, its correspondingly versioned
+stage, pending queue with GENERATION, catch-up/database/marker locks, and init latch.
+Changing either version builds a fresh file from authority; there is no in-place migration,
 because an older build that is still running (a background runner that outlives
 an upgrade) must keep reading the file it understands. 0.6.7 and earlier use the
 unversioned `history.sqlite3`, `pending/`, locks and latch. This build never opens
@@ -67,6 +67,9 @@ re-reads every active loose spawn and the session-log cursor without a marker, s
 runners that finish and primaries that stop after an upgrade still project. Spawns
 an older build creates after this projection was built, or archive changes it
 makes, need `session index rebuild`. The older index misses this build's writes.
+An unsupported session row stops the older index cursor before that row; it is not
+permanently acknowledged, and the build for that session format gets a different
+namespace and rebuilds from authority.
 
 Rollback: the older build's index is stale after any use of a newer build, and a
 pre-release build of this branch migrated `history.sqlite3` to schema 6 in place.
@@ -217,7 +220,8 @@ Per-operation session reads use `chats_rows`/`chat_rows`/`chat_record`/`chat_gen
 `native_chats`/`native_observations`; they decode only selected rows. Their bodies
 still scan `sessions.jsonl` bytes. Bulk repair/import bindings keep one
 `SessionBindings` snapshot; cross-chat checks require its full (`scope=None`)
-view. Selection and observation dedup run inside the append seam's mutation
+view. Lock-scoped reads that make write decisions refuse unsupported rows in their
+scope. Selection and observation dedup run inside the append seam's mutation
 (shared) → sessions-flock epoch, without nested lock re-entry. The append seam
 consumes lazy row iterators there, so validation and publication are atomic.
 [#418](https://github.com/haowjy/meridian-cli/issues/418) replaces these filtered

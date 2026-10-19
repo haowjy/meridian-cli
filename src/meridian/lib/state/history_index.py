@@ -12,7 +12,7 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -60,6 +60,7 @@ from meridian.lib.state.history_changes import (
 from meridian.lib.state.history_codec import canonical_time, last_activity
 from meridian.lib.state.jsonl import iter_jsonl_file
 from meridian.lib.state.session_fold import (
+    SessionEvent,
     SessionHistoricalEvent,
     SessionRecord,
     SessionStartEvent,
@@ -67,6 +68,7 @@ from meridian.lib.state.session_fold import (
     UnsupportedSessionRecords,
     parse_event,
     project_session_generation,
+    supported_session_event_version,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
@@ -77,6 +79,13 @@ from meridian.lib.state.spawn.repository import (
 from meridian.lib.state.spawn_store import SpawnScan
 
 logger = logging.getLogger(__name__)
+
+
+class _UnsupportedIndexSessionEvent:
+    pass
+
+
+_UNSUPPORTED_INDEX_SESSION_EVENT = _UnsupportedIndexSessionEvent()
 
 INITIALIZATION_TIMEOUT = 15.0
 QUERY_TIMEOUT = 2.0
@@ -343,7 +352,7 @@ def _tail(handle: BinaryIO, extent: int, count: int = 256) -> str:
 
 @dataclass(frozen=True)
 class HistoryIndex:
-    """One schema's projection. Every path it owns is named by ``SCHEMA_VERSION``.
+    """One format's projection. Every owned path names both input and index versions.
 
     A schema bump starts a new file built fresh from authority. Older builds keep
     their own file (0.6.7 and earlier: ``history.sqlite3``), which this build never
@@ -543,13 +552,23 @@ class HistoryIndex:
             dirty_chats: set[str] = set()
             work_chats: set[tuple[str, str]] = set()
             unsupported = UnsupportedSessionRecords()
+
+            def parse_index_event(
+                payload: Mapping[str, object],
+            ) -> SessionEvent | _UnsupportedIndexSessionEvent | None:
+                if not supported_session_event_version(payload, unsupported):
+                    return _UNSUPPORTED_INDEX_SESSION_EVENT
+                return parse_event(payload, unsupported)
+
             for parsed_event, end in iter_jsonl_file(
                 handle,
-                lambda payload: parse_event(payload, unsupported),
+                parse_index_event,
                 path=path,
                 offset=offset,
                 extent=snapshot_extent,
             ):
+                if isinstance(parsed_event, _UnsupportedIndexSessionEvent):
+                    break
                 if isinstance(parsed_event, SessionUpdateEvent) and parsed_event.active_work_id:
                     work_chats.add((parsed_event.active_work_id.strip(), parsed_event.chat_id))
                 if parsed_event is not None:
