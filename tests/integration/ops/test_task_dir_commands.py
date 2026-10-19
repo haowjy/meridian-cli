@@ -17,7 +17,6 @@ from meridian.lib.ops.context import (
     task_dir_sync,
 )
 from meridian.lib.ops.runtime import build_runtime
-from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_lifecycle import WorkTaskDirInput, work_task_dir_sync
 from meridian.lib.state import session_store, work_repository
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
@@ -262,12 +261,7 @@ def test_work_task_dir_ignores_spawn_scope_and_inherited_env(
         model="gpt-5.4",
         chat_id="chat-work",
     )
-    set_session_work_attachment(
-        runtime.authority.runtime_root,
-        project_root=runtime.project_root,
-        chat_id="chat-work",
-        work_id=item.name,
-    )
+    session_store.update_session_work_id(runtime.authority.runtime_root, "chat-work", item.name)
 
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-work")
     monkeypatch.setenv("MERIDIAN_TASK_DIR", inherited.as_posix())

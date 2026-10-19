@@ -23,29 +23,30 @@ def session_exists(runtime_root: Path, chat_id: str) -> bool:
     return session_store.get_session_harness_id(runtime_root, normalized) is not None
 
 
-def set_session_work_attachment(
+def activate_session_work(
     runtime_root: Path,
     *,
     project_root: Path,
     chat_id: str,
-    work_id: str | None,
+    work_id: str,
 ) -> bool:
+    """Choose a work item for a session and publish that activation."""
+
     normalized = chat_id.strip()
     if not session_exists(runtime_root, normalized):
         return False
     session_store.update_session_work_id(runtime_root, normalized, work_id)
-    if work_id is not None:
-        _dispatch_work_activated(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            work_id=work_id,
-        )
-        emit_telemetry(
-            "work",
-            "work.activated",
-            scope="ops.work_attachment",
-            ids={"work_id": work_id, "chat_id": normalized},
-        )
+    _dispatch_work_activated(
+        project_root=project_root,
+        runtime_root=runtime_root,
+        work_id=work_id,
+    )
+    emit_telemetry(
+        "work",
+        "work.activated",
+        scope="ops.work_attachment",
+        ids={"work_id": work_id, "chat_id": normalized},
+    )
     return True
 
 
@@ -75,7 +76,7 @@ def _dispatch_work_activated(
         )
     except Exception:
         logger.exception(
-            "Work hook dispatch failed; work attachment continues.",
+            "Work hook dispatch failed; work activation continues.",
             hook_event="work.activated",
             work_id=work_id,
         )

@@ -11,8 +11,8 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SessionRequest, SpawnRequest, is_exact_continue_session
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.state import session_store
 
-from ..work_attachment import set_session_work_attachment
 from .execute_init import LaunchUserInputError
 
 
@@ -64,17 +64,18 @@ def _resolve_session_continuation(
     # the spawn row and chat row exist.  resolved_continue_fork=True is preserved
     # here so the executor knows a fork is needed.
 
-    return request.session.model_copy(update={
-        "requested_harness_session_id": resolved_continue_harness_session_id,
-        "continue_fork": resolved_continue_fork,
-    })
+    return request.session.model_copy(
+        update={
+            "requested_harness_session_id": resolved_continue_harness_session_id,
+            "continue_fork": resolved_continue_fork,
+        }
+    )
 
 
 @contextmanager
 def _session_execution_context(
     *,
     runtime_root: Path,
-    project_root: Path,
     metadata: PrimarySessionMetadata,
     request: SessionRequest,
     run_agent_name: str | None,
@@ -99,11 +100,8 @@ def _session_execution_context(
         if attached_work_id is None:
             attached_work_id = (inherited_work_id or "").strip() or None
             if attached_work_id is not None:
-                set_session_work_attachment(
-                    runtime_root,
-                    project_root=project_root,
-                    chat_id=managed.chat_id,
-                    work_id=attached_work_id,
+                session_store.update_session_work_id(
+                    runtime_root, managed.chat_id, attached_work_id
                 )
         yield _SessionExecutionContext(
             chat_id=managed.chat_id,

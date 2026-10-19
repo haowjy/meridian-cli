@@ -249,10 +249,10 @@ def launch_primary(
             ),
         )
 
-    from meridian.lib.ops.work_attachment import set_session_work_attachment
+    from meridian.lib.ops.work_attachment import activate_session_work
 
-    def attach_session_work(runtime_root: Path, chat_id: str, work_id: str) -> None:
-        set_session_work_attachment(
+    def activate_primary_work(runtime_root: Path, chat_id: str, work_id: str) -> None:
+        activate_session_work(
             runtime_root,
             project_root=resolved_project_root,
             chat_id=chat_id,
@@ -263,7 +263,7 @@ def launch_primary(
         preview_context,
         harness_registry,
         prepared=prepared,
-        update_session_work_id_fn=attach_session_work,
+        update_session_work_id_fn=activate_primary_work,
     )
     continue_ref = outcome.resolved_harness_session_id.strip() or None
 

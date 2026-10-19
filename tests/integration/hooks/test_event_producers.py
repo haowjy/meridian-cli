@@ -19,14 +19,20 @@ from meridian.lib.hooks.types import (
     Notification,
 )
 from meridian.lib.idle.service import IdleService
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.notify.emit import emit
 from meridian.lib.ops.runtime import resolve_roots
+from meridian.lib.ops.spawn.execute_session import _session_execution_context
 from meridian.lib.ops.work_lifecycle import (
+    WorkClearInput,
     WorkDoneInput,
+    WorkRenameInput,
     WorkStartInput,
     WorkSwitchInput,
+    work_clear_sync,
     work_done_sync,
+    work_rename_sync,
     work_start_sync,
     work_switch_sync,
 )
@@ -144,17 +150,59 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         )
     )
     assert existing.created is False
-    work_done_sync(WorkDoneInput(work_id=created.name, project_root=str(project_root)))
+    activations_before_rename = dispatched.count("work.activated")
+    renamed = work_rename_sync(
+        WorkRenameInput(
+            work_id=created.name,
+            new_name="producer-renamed",
+            chat_id="work-chat",
+            project_root=str(project_root),
+        )
+    )
+    assert (
+        session_store.get_session_active_work_id(work_runtime_root, "work-chat") == renamed.new_name
+    )
+    assert dispatched.count("work.activated") == activations_before_rename
+
+    work_done_sync(WorkDoneInput(work_id=renamed.new_name, project_root=str(project_root)))
     reopened = work_start_sync(
         WorkStartInput(
-            label=created.name,
+            label=renamed.new_name,
             chat_id="work-chat",
             project_root=str(project_root),
         )
     )
     assert reopened.created is False
+
+    activations_before_clear = dispatched.count("work.activated")
+    work_clear_sync(WorkClearInput(chat_id="work-chat", project_root=str(project_root)))
+    assert session_store.get_session_active_work_id(work_runtime_root, "work-chat") is None
+    assert dispatched.count("work.activated") == activations_before_clear
+
     session_store.stop_session(work_runtime_root, "work-chat")
-    work_done_sync(WorkDoneInput(work_id=created.name, project_root=str(project_root)))
+    work_done_sync(WorkDoneInput(work_id=renamed.new_name, project_root=str(project_root)))
+
+    activations_before_child = dispatched.count("work.activated")
+    with _session_execution_context(
+        runtime_root=work_runtime_root,
+        metadata=PrimarySessionMetadata(
+            harness="codex",
+            model="gpt-5.6-luna",
+            agent="coder",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+        ),
+        request=SessionRequest(),
+        run_agent_name="coder",
+        inherited_work_id=renamed.new_name,
+    ) as child_session:
+        assert child_session.work_id == renamed.new_name
+        assert (
+            session_store.get_session_active_work_id(work_runtime_root, child_session.chat_id)
+            == renamed.new_name
+        )
+    assert dispatched.count("work.activated") == activations_before_child
 
     clock = MillisecondClock()
     idle = IdleService(

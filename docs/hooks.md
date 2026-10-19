@@ -37,7 +37,7 @@ manually because it has no notification payload; use `meridian notify` instead.
 | `spawn.started` | observe | A spawn enters `running`, including when its initial persisted state is already `running` |
 | `spawn.finished` | post | A terminal spawn state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted |
 | `work.created` | observe | `meridian work start` creates a new work item |
-| `work.activated` | observe | A session is attached to a work item by `work start`, `work switch`, launch-time `--work`, or inherited spawn work |
+| `work.activated` | observe | A session chooses a work item through `work start`, `work switch`, or a primary launch with `--work` or work carried by `--from` |
 | `work.done` | post | `meridian work done`, or an update to `done`, archives a work item |
 | `notify.your_turn` | observe | The idle service sends its scheduled "your turn" notification |
 | `notify.cache_expiring` | observe | The idle service sends its scheduled prompt-cache warning |
@@ -87,7 +87,7 @@ event   = "spawn.finished"
 | `require_serial` | bool | no | `false` | Block concurrent hook executions |
 | `when.status` | array[str] | no | — | On `spawn.finished`, fire only for these outcomes: `success`, `failure`, `cancelled`, `timeout` (`succeeded`, `failed`, `cancelled`, `timed_out`) |
 | `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
-| `when.kind` | array[str] | no | — | Only fire for these spawn kinds: `child`, `primary`, `streaming` (for notification events, the notifying spawn's kind when known) |
+| `when.kind` | array[str] | no | — | On spawn events, only fire for these kinds: `child`, `primary`, `streaming`; notification events use the notifying spawn's kind when known; work events reject this condition |
 | `exclude` | array[str] | no | — | `git-autosync` file path patterns to leave out of commits and stash around merges |
 | `options.remote` | str | no | — | Git remote URL for `git-autosync` to clone and sync |
 | `options.path` | str | no | — | Local repository for `git-autosync` to initialize and commit without remote sync |
@@ -206,7 +206,7 @@ top-level shorthand, and remote mode wins when a path is also present.
 
 **Default events:** `spawn.finished`, `work.activated`, `work.done`
 
-Because `work.activated` is an attachment event, the default also syncs after
+Because `work.activated` records a session choosing work, the default also syncs after
 `meridian work switch` successfully updates a session.
 
 ```toml

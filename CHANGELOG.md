@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Hook events `work.created` for new work items and `work.activated` for successful session attachments, including `work switch` and launch-time work attachment. (#687)
+- Hook events `work.created` for new work items and `work.activated` when a session chooses work through `work start`, `work switch`, or a primary launch's `--work` / `--from` attachment. (#687)
 - Hook `when.kind` filtering with the shared `child` / `primary` / `streaming` `SpawnKind`; `HookContext.spawn_kind`, `spawn.kind` in JSON, and `MERIDIAN_SPAWN_KIND` expose it to plugins and command hooks. (#687)
 
 ### Removed

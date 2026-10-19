@@ -20,7 +20,7 @@ from meridian.lib.ops.runtime import (
     resolve_roots,
     runtime_context,
 )
-from meridian.lib.ops.work_attachment import set_session_work_attachment
+from meridian.lib.ops.work_attachment import activate_session_work, session_exists
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.spawn_status import overlay_derived
@@ -444,7 +444,7 @@ def work_start_sync(
             work_id=item.name,
             data={"status": item.status},
         )
-    set_session_work_attachment(
+    activate_session_work(
         runtime_state_root,
         project_root=project_root,
         chat_id=chat_id,
@@ -616,7 +616,7 @@ def work_switch_sync(
         chat_id=chat_id,
         new_target=item.name,
     )
-    updated = set_session_work_attachment(
+    updated = activate_session_work(
         runtime_state_root,
         project_root=roots.project_root,
         chat_id=chat_id,
@@ -661,12 +661,7 @@ def work_rename_sync(
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
     current_work_id = session_store.get_session_active_work_id(runtime_state_root, chat_id)
     if current_work_id == old_name:
-        set_session_work_attachment(
-            runtime_state_root,
-            project_root=roots.project_root,
-            chat_id=chat_id,
-            work_id=item.name,
-        )
+        session_store.update_session_work_id(runtime_state_root, chat_id, item.name)
 
     _emit_work_transition(
         "work.renamed",
@@ -689,12 +684,9 @@ def work_clear_sync(
     roots = resolve_roots(payload.project_root)
     runtime_root = roots.runtime_root
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
-    updated = set_session_work_attachment(
-        runtime_root,
-        project_root=roots.project_root,
-        chat_id=chat_id,
-        work_id=None,
-    )
+    updated = session_exists(runtime_root, chat_id)
+    if updated:
+        session_store.update_session_work_id(runtime_root, chat_id, None)
     message = "Cleared active work item." if updated else "No active session; nothing to clear."
     return WorkClearOutput(message=message, warning=warning)
 

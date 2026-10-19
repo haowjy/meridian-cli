@@ -17,8 +17,9 @@ replacement.
 | `session.cache_expiring` | `notify.cache_expiring` |
 
 `work.created` is a separate new event that fires only when `work start`
-creates an item. `work.activated` fires when a session attaches to an item,
-including successful `work switch` and launch-time work attachment. The
+creates an item. `work.activated` fires when a session chooses an item through
+`work start`, `work switch`, or a primary launch with `--work` or work carried
+by `--from`. Inherited child work and attachment maintenance do not fire it. The
 `git-autosync` defaults are now `spawn.finished`, `work.activated`, and
 `work.done`, so switching work items also triggers a sync.
 
