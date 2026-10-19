@@ -26,8 +26,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hook `when.status = ["timeout"]` now matches timed-out spawns (`timed_out` was mapped to nothing, so timeout filters never fired). (#687)
 - `spawn.finished` command hooks now receive the persisted terminal error; hook subprocesses no longer inherit stale payload variables for fields absent from the current event. (#687)
 - Invalid hook config can no longer interrupt `work start` after its state mutation; work hook dispatch logs the failure and the operation continues. (#687)
-- Lifecycle dispatch drops invalid hook rows with one warning while valid spawn hooks continue to run. Work-event publishing now shares one active/archive directory lookup and one hook/telemetry path. (#687)
-- Primary `--work` / `--from` attachment now recognizes a newly created chat before its harness session ID is known. (#687)
+- An invalid hook row no longer stops spawns: lifecycle dispatch drops it with a warning and valid hooks keep running. (#687)
 
 ## [0.10.28] - 2026-10-18
 
