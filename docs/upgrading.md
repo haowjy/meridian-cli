@@ -16,23 +16,51 @@ replacement.
 | `session.responded` | `notify.your_turn` |
 | `session.cache_expiring` | `notify.cache_expiring` |
 
+Rows configured with `spawn.start` or `work.start` were accepted previously but
+never fired. Their replacements, `spawn.started` and `work.activated`, are live
+events, so those rows begin running after migration.
+
 `work.created` is a separate new event that fires only when `work start`
-creates an item. `work.activated` fires when a session chooses an item through
-`work start`, `work switch`, or a primary launch with `--work` or work carried
-by `--from`. Inherited child work and attachment maintenance do not fire it. The
-`git-autosync` defaults are now `spawn.finished`, `work.activated`, and
-`work.done`, so switching work items also triggers a sync.
+creates an item. `work.activated` fires whenever `work start` or `work switch`
+resolves an item, even without a Meridian session, and when a primary launch
+attaches `--work` or work carried by `--from`. Inherited child work, rename
+repointing, and clear do not fire it. The `git-autosync` defaults are now
+`spawn.finished`, `work.activated`, and `work.done`, so switching or starting
+work syncs. A primary launch with attached work performs one synchronous sync
+after creating its session and before starting the harness.
 
 Plugin API 3.0.0 carries the renamed event literal, removes the impossible
-`when.status = ["skipped"]` value, exposes `SpawnKind`, and adds
-`HookContext.spawn_kind`. Command hook payload schema version 3 adds
-`spawn.kind` and `MERIDIAN_SPAWN_KIND`. The new `when.kind` list accepts
-`child`, `primary`, and `streaming`. Config loading rejects `when.status`
-outside `spawn.finished`, and rejects `when.agent` or `when.kind` on work
-events because those rows could never match.
+`when.status = ["skipped"]` value and the inert `failure_policy` config and
+Plugin API fields, exports `SpawnKind` and `SpawnStatus`, and adds
+`HookContext.spawn_kind`. A row that still sets `failure_policy` is rejected;
+hook failures now have their only effective behavior, log and continue.
+Command hook payload schema version 3 adds `spawn.kind` and
+`MERIDIAN_SPAWN_KIND`. The new `when.kind` list accepts `child`, `primary`, and
+`streaming`.
 
-No state migration is needed; update hook configuration and plugin type
-assumptions before upgrading.
+For a row that sets `event`, config loading rejects `when.status` outside
+`spawn.finished`, and rejects `when.agent` or `when.kind` on work events. For an
+unevented builtin row, Meridian instead drops only default events that cannot
+match its `when` conditions and retains the others. For example, an unevented
+`git-autosync` row with `when.status = ["success"]` now registers only for
+`spawn.finished`. It errors, with a prompt to set `event`, only if no default
+event can match.
+
+The corresponding lifecycle/telemetry producer names changed from
+`spawn.queued` to `spawn.created`, `spawn.running` to `spawn.started`, and
+`work.started` to the separate `work.created` and `work.activated` moments.
+Nonterminal spawn moments go to lifecycle observers and hooks, not the sparse
+local `meridian telemetry query` projection; that projection continues to keep
+`spawn.process_exited` plus terminal status events. Work telemetry remains
+best-effort process telemetry, while work and session files are authoritative.
+
+No state migration is needed. Upgrade Meridian first, then run
+`meridian hooks check` and replace each old name it reports. Until the config is
+updated, `hooks check` fails; commands that fire work hooks keep their core
+mutation but log the dispatch config error and cannot run those configured
+hooks. An old binary rejects the new names and the new binary rejects the old
+names, so a config shared with machines on both versions cannot contain one
+compatible name set.
 
 ## Notifications are hook events
 
@@ -84,10 +112,12 @@ With no hook config, delivery is unchanged.
   attachments, it attempts the rest and the route is sent with a warning naming
   every failed file; do not retry the already delivered text. Email remains
   all-or-nothing: one rejected attachment fails that email and its text.
-- **Plugin API 2.0.0.** `HookContext.runtime_root` may be `None`;
-  `HookContext.notification` is new; the hook payload `schema_version` is `2`
-  and carries a `notification` object on notification events. See
-  [plugin-api.md](plugin-api.md).
+- **Plugin API 2.0.0 (historical contract).** `HookContext.runtime_root` became
+  nullable, `HookContext.notification` was added, and hook payload schema 2
+  added the notification object. Those events were then named
+  `session.responded`, `session.cache_expiring`, and `notify.manual`; Plugin API
+  3.0.0 applies the current `notify.*` names and payload schema 3 described in
+  [Hook event names](#hook-event-names).
 
 No state migration is needed.
 

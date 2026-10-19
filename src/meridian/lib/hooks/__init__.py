@@ -15,11 +15,9 @@ if TYPE_CHECKING:
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.hooks.registry import HookRegistry
     from meridian.lib.hooks.types import (
-        DEFAULT_FAILURE_POLICY,
         DEFAULT_TIMEOUTS,
         EVENT_CLASS,
         HOOK_CONTEXT_SCHEMA_VERSION,
-        FailurePolicy,
         Hook,
         HookContext,
         HookEventClass,
@@ -32,13 +30,11 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BUILTIN_HOOKS",
-    "DEFAULT_FAILURE_POLICY",
     "DEFAULT_TIMEOUTS",
     "EVENT_CLASS",
     "HOOK_CONTEXT_SCHEMA_VERSION",
     "HOOK_SOURCE_PRECEDENCE",
     "BuiltinHook",
-    "FailurePolicy",
     "Hook",
     "HookContext",
     "HookDispatcher",
@@ -61,14 +57,12 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "load_hooks_config": ("meridian.lib.hooks.config", "load_hooks_config"),
     "HookDispatcher": ("meridian.lib.hooks.dispatch", "HookDispatcher"),
     "HookRegistry": ("meridian.lib.hooks.registry", "HookRegistry"),
-    "DEFAULT_FAILURE_POLICY": ("meridian.lib.hooks.types", "DEFAULT_FAILURE_POLICY"),
     "DEFAULT_TIMEOUTS": ("meridian.lib.hooks.types", "DEFAULT_TIMEOUTS"),
     "EVENT_CLASS": ("meridian.lib.hooks.types", "EVENT_CLASS"),
     "HOOK_CONTEXT_SCHEMA_VERSION": (
         "meridian.lib.hooks.types",
         "HOOK_CONTEXT_SCHEMA_VERSION",
     ),
-    "FailurePolicy": ("meridian.lib.hooks.types", "FailurePolicy"),
     "Hook": ("meridian.lib.hooks.types", "Hook"),
     "HookContext": ("meridian.lib.hooks.types", "HookContext"),
     "HookEventClass": ("meridian.lib.hooks.types", "HookEventClass"),

@@ -371,7 +371,7 @@ def test_dispatch_pipeline_times_out_then_continues_to_later_hooks(tmp_path: Pat
         assert term_marker.read_text(encoding="utf-8") == "terminated"
 
 
-def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
+def test_dispatch_pipeline_logs_failures_and_completion_metadata(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
@@ -439,7 +439,6 @@ def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
     assert failure_log["hook"] == "fails-first"
     assert failure_log["hook_event"] == "spawn.finished"
     assert failure_log["error"] == "Exited with code 7."
-    assert failure_log["fail_open"] is True
     assert "error_type" in failure_log
     assert success_log["hook"] == "runs-after-failure"
     assert success_log["hook_event"] == "spawn.finished"

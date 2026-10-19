@@ -47,12 +47,12 @@ Override key is `(name, event)`. A higher-priority source row with the same key 
 
 `EVENT_CLASS` maps each event to one of two classes:
 
-| Class | Events | Default failure policy | Fail-open? |
-|-------|--------|----------------------|-----------|
-| `observe` | `spawn.created`, `spawn.started`, `work.created`, `work.activated`, `notify.your_turn`, `notify.cache_expiring`, `notify.manual` | `warn` | Yes |
-| `post` | `spawn.finished`, `work.done` | `warn` | Yes |
+| Class | Events | Default timeout |
+|-------|--------|-----------------|
+| `observe` | `spawn.created`, `spawn.started`, `work.created`, `work.activated`, `notify.your_turn`, `notify.cache_expiring`, `notify.manual` | 30s |
+| `post` | `spawn.finished`, `work.done` | 60s |
 
-Both classes are fail-open: a hook failure logs a warning but does not stop subsequent hooks or the lifecycle event.
+Both classes are fail-open: a hook failure logs a warning but does not stop subsequent hooks or the lifecycle event. There is no per-row failure policy.
 
 ## Plugin API Boundary
 
@@ -69,11 +69,11 @@ Within an event, hooks are sorted by:
 
 ## `HookWhen` Conditions
 
-`when.status` filters `spawn.finished` by terminal status. `when.agent` filters by agent profile name, and `when.kind` filters by the shared `SpawnKind` (`child`, `primary`, `streaming`). Work events reject agent/kind conditions because they carry neither. Conditions are checked before interval throttling.
+`when.status` filters `spawn.finished` by terminal status. `when.agent` filters by agent profile name, and `when.kind` filters by the shared `SpawnKind` (`child`, `primary`, `streaming`). Explicit work events reject agent/kind conditions because they carry neither. An unevented builtin row drops default events that cannot supply its conditions and keeps compatible defaults; it errors only when none remain. Conditions are checked before interval throttling.
 
 ## Context Transport
 
-`HookContext.to_env()` emits `MERIDIAN_HOOK_*`, `MERIDIAN_SPAWN_*`, `MERIDIAN_ACTIVE_WORK_*` env vars. `None` values are omitted (no empty string env vars). External hooks receive both env vars and JSON on stdin — the JSON schema includes a `schema_version` field (`HOOK_CONTEXT_SCHEMA_VERSION = 3`) for forward compatibility. Version 3 renamed lifecycle events and added `spawn.kind` / `MERIDIAN_SPAWN_KIND`; version 2 added the `notification` object and made `runtime_root` nullable.
+`HookContext.to_env()` emits `MERIDIAN_HOOK_*`, `MERIDIAN_PROJECT_DIR`, `MERIDIAN_SPAWN_*`, `MERIDIAN_ACTIVE_WORK_*`, and `MERIDIAN_NOTIFICATION_*` env vars. `None` values are omitted (no empty string env vars). `ExternalHookRunner` first strips every registered hook-payload key from its base environment, so a missing field cannot retain inherited context. External hooks receive both env vars and JSON on stdin — the JSON schema includes a `schema_version` field (`HOOK_CONTEXT_SCHEMA_VERSION = 3`) for forward compatibility. Version 3 renamed lifecycle events and added `spawn.kind` / `MERIDIAN_SPAWN_KIND`; version 2 added the `notification` object and made `runtime_root` nullable.
 
 ## `__init__.py` Lazy Loading
 

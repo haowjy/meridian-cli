@@ -249,10 +249,10 @@ def launch_primary(
             ),
         )
 
-    from meridian.lib.ops.work_attachment import activate_session_work
+    from meridian.lib.ops.work_attachment import activate_work
 
     def activate_primary_work(runtime_root: Path, chat_id: str, work_id: str) -> None:
-        activate_session_work(
+        activate_work(
             runtime_root,
             project_root=resolved_project_root,
             chat_id=chat_id,

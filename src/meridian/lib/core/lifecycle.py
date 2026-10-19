@@ -63,11 +63,11 @@ if TYPE_CHECKING:
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.state.spawn.model import (
         LaunchMode,
-        SpawnKind,
         SpawnOrigin,
         SpawnRecord,
     )
     from meridian.lib.state.spawn.repository import LockedMutationResult
+    from meridian.plugin_api.types import SpawnKind
 
 logger = structlog.get_logger(__name__)
 
@@ -115,30 +115,12 @@ type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 # ---------------------------------------------------------------------------
 
 
-def _event_scope(event_type: str) -> str:
-    """Return event namespace scope used in deterministic event IDs."""
-
-    # Keep spawn event IDs byte-for-byte stable with legacy generation.
-    if event_type.startswith("spawn."):
-        return "spawn"
-    return "event"
-
-
-def generate_lifecycle_event_id(subject_id: str, event_type: str, sequence: int) -> UUID:
-    """Generate stable event ID using UUID v5.
-
-    Stability across retries: same subject_id + event_type + sequence
-    always produces the same UUID.
-    """
-    namespace = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # URL namespace
-    name = f"meridian:{_event_scope(event_type)}:{subject_id}:{event_type}:{sequence}"
-    return uuid.uuid5(namespace, name)
-
-
 def generate_event_id(spawn_id: str, event_type: str, sequence: int) -> UUID:
-    """Backward-compatible wrapper for spawn lifecycle callers."""
+    """Generate a stable spawn-event ID using UUID v5."""
 
-    return generate_lifecycle_event_id(spawn_id, event_type, sequence)
+    namespace = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # URL namespace
+    name = f"meridian:spawn:{spawn_id}:{event_type}:{sequence}"
+    return uuid.uuid5(namespace, name)
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +156,7 @@ class LifecycleEvent:
     # Terminal-only fields (None for non-terminal events)
     status: TerminalSpawnStatus | None = None
     origin: TerminalOrigin | None = None
+    error: str | None = None
 
     outcome_category: TerminalOutcomeCategory | None = None
 
@@ -794,6 +777,7 @@ class SpawnLifecycleService:
         # Terminal-only fields
         status: TerminalSpawnStatus | None = None
         origin: TerminalOrigin | None = None
+        error: str | None = None
         duration_secs: float | None = None
         total_cost_usd: float | None = None
         input_tokens: int | None = None
@@ -810,6 +794,7 @@ class SpawnLifecycleService:
                 status = rec_status
             terminal = record.terminal
             origin = terminal.origin if terminal is not None else None
+            error = terminal.error if terminal is not None else None
             duration_secs = terminal.duration_secs if terminal is not None else None
             total_cost_usd = terminal.total_cost_usd if terminal is not None else None
             input_tokens = terminal.input_tokens if terminal is not None else None
@@ -842,6 +827,7 @@ class SpawnLifecycleService:
             harness=record.harness if record is not None else None,
             status=status,
             origin=origin,
+            error=error,
             outcome_category=outcome_category,
             duration_secs=duration_secs,
             total_cost_usd=total_cost_usd,

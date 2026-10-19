@@ -23,7 +23,7 @@ meridian hooks run sync-notes
 ```
 
 `hooks run` bypasses interval throttling. Registrations with the same name,
-builtin, command, options, timeout and failure policy are one hook: without
+builtin, command, options and timeout are one hook: without
 `--event` it runs once, as its last registered event (an unevented
 `git-autosync` row runs as `work.done`), and `--event` may name any event, as
 for a single-row hook. When those fields differ, use `--event` to select a row. A builtin that only supports notification events cannot run
@@ -33,11 +33,11 @@ manually because it has no notification payload; use `meridian notify` instead.
 
 | Event | Class | Fires when |
 | ----- | ----- | ---------- |
-| `spawn.created` | observe | A persisted spawn is announced to lifecycle observers |
+| `spawn.created` | observe | A spawn record is first written, either queued or already running |
 | `spawn.started` | observe | A spawn enters `running`, including when its initial persisted state is already `running` |
-| `spawn.finished` | post | A terminal spawn state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted |
+| `spawn.finished` | post | A terminal spawn state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted; a later authoritative terminal write can fire it again |
 | `work.created` | observe | `meridian work start` creates a new work item |
-| `work.activated` | observe | A session chooses a work item through `work start`, `work switch`, or a primary launch with `--work` or work carried by `--from` |
+| `work.activated` | observe | `work start` or `work switch` resolves an item, with or without a session, or a primary launch attaches `--work` / `--from` work |
 | `work.done` | post | `meridian work done`, or an update to `done`, archives a work item |
 | `notify.your_turn` | observe | The idle service sends its scheduled "your turn" notification |
 | `notify.cache_expiring` | observe | The idle service sends its scheduled prompt-cache warning |
@@ -48,7 +48,22 @@ Every `notify.*` event carries a
 each one to the built-in `notify` hook unless config routes it; see
 [Builtin: `notify`](#builtin-notify).
 
-Event class affects default timeout and failure policy: `observe` events default to 30s / `warn`; `post` events default to 60s / `warn`.
+Event class affects the default timeout: `observe` events default to 30s and
+`post` events to 60s. Hook failures always log and continue to the next hook;
+they never undo or stop the event that fired them.
+
+`event_id` identifies delivery semantics, not always a physical firing. Spawn
+event IDs are stable for a given spawn and event, so a second
+`spawn.finished` delivery after an authoritative terminal rewrite has the same
+ID and can be deduplicated. Work and notification event IDs are unique for each
+firing, so repeated activations of the same work item remain distinct.
+
+A primary launch with `--work`, or with work inherited through `--from`, fires
+`work.activated` synchronously after its session is created and before the
+harness starts. A hook on that event therefore delays primary startup; the
+default `git-autosync` hook performs one sync before such a launch. Child work
+inheritance, work rename attachment maintenance, and `work clear` do not fire
+the event.
 
 A single hook row can register for multiple events. When a builtin supplies default events and no `event` field is set, one hook registration is created per default event. Setting `event` explicitly overrides this and registers for only that one event.
 
@@ -81,11 +96,10 @@ event   = "spawn.finished"
 | `remote` | str | no | — | `git-autosync` shorthand for `options.remote`; ignored when `options.remote` is set |
 | `enabled` | bool | no | `true` | Set to `false` to disable without removing |
 | `priority` | int | no | `0` | Higher values run first within the same source |
-| `failure_policy` | str | no | builtin default | `fail` \| `warn` \| `ignore` |
 | `timeout_secs` | int | no | builtin default | Max seconds before hook is killed |
 | `interval` | str | no | builtin default | Minimum time between runs, e.g. `30s`, `5m`, `2h` |
 | `require_serial` | bool | no | `false` | Block concurrent hook executions |
-| `when.status` | array[str] | no | — | On `spawn.finished`, fire only for these outcomes: `success`, `failure`, `cancelled`, `timeout` (`succeeded`, `failed`, `cancelled`, `timed_out`) |
+| `when.status` | array[str] | no | — | On `spawn.finished`, fire only for `success`, `failure`, `cancelled`, or `timeout` (matching stored spawn statuses `succeeded`, `failed`, `cancelled`, and `timed_out`) |
 | `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
 | `when.kind` | array[str] | no | — | On spawn events, only fire for these kinds: `child`, `primary`, `streaming`; notification events use the notifying spawn's kind when known; work events reject this condition |
 | `exclude` | array[str] | no | — | `git-autosync` file path patterns to leave out of commits and stash around merges |
@@ -99,8 +113,12 @@ event   = "spawn.finished"
 
 Conditions that an event can never supply are rejected when config loads:
 `when.status` is limited to `spawn.finished`, and work events cannot use
-`when.agent` or `when.kind`. A runtime context that lacks or does not match a
-configured condition skips the hook.
+`when.agent` or `when.kind`. This validation applies directly when the row sets
+`event`. When an unevented builtin row expands across its default events,
+Meridian drops only the defaults that cannot match the condition and keeps the
+rest. If none can match, loading fails and asks the row to set `event`
+explicitly. A runtime context that lacks or does not match a configured
+condition skips the hook.
 
 If you omit `name` for a builtin hook, Meridian names it from the options that
 pick its target: `git-autosync` rows from `remote` or `path`, so rows for
@@ -123,10 +141,54 @@ event   = "spawn.finished"
 Inline commands are fine when they remain short and readable.
 
 Command hooks receive the event context as JSON on stdin (`schema_version` 3)
-and as `MERIDIAN_HOOK_*` and related environment variables. Hooks run even in a
-directory with no Meridian runtime state; only `interval`-throttled hooks skip
-there. `MERIDIAN_HOOKS_ENABLED=false` turns off all hook dispatch, including
+and as `MERIDIAN_HOOK_*`, `MERIDIAN_PROJECT_DIR`, `MERIDIAN_SPAWN_*`,
+`MERIDIAN_ACTIVE_WORK_*`, and `MERIDIAN_NOTIFICATION_*` environment variables.
+Before adding the current payload, Meridian removes every payload variable
+inherited from the caller, so an absent field cannot leak stale spawn, work, or
+notification context. Hooks run even in a directory with no Meridian runtime
+state; only `interval`-throttled hooks skip there.
+`MERIDIAN_HOOKS_ENABLED=false` turns off all hook dispatch, including
 notification delivery.
+
+### JSON stdin payload
+
+Every command hook receives one object like this on standard input:
+
+```json
+{
+  "schema_version": 3,
+  "event_name": "spawn.finished",
+  "event_id": "2bd5e40f-8282-52a6-bfdb-28c456300e53",
+  "timestamp": "2026-10-18T18:42:00+00:00",
+  "project_root": "/workspace/project",
+  "runtime_root": "/home/me/.meridian/projects/example",
+  "spawn": {
+    "id": "p12",
+    "status": "success",
+    "agent": "coder",
+    "kind": "child",
+    "model": "claude-haiku",
+    "duration_secs": 4.2,
+    "cost_usd": 0.01,
+    "error": null
+  },
+  "work": {"id": "hook-event-names", "dir": "/workspace/project/.work"},
+  "notification": null
+}
+```
+
+`spawn`, `work`, and `notification` are `null` when none of their fields is
+known. The `spawn` object is present when any spawn field is known, even if
+`spawn.id` is `null` (for example, a notification labeled with an agent but no
+spawn). Individual unknown fields inside a present block are `null`.
+
+Hook events and `meridian telemetry query` are different projections.
+`spawn.created` and `spawn.started` reach hooks and core lifecycle observers;
+with `MERIDIAN_DEBUG=1`, the debug observer writes them to stderr. The local
+telemetry sink intentionally keeps only `spawn.process_exited` and terminal
+outcome records for spawns. Work activation remains authoritative in work and
+session state; its telemetry envelope is best-effort, like other process
+telemetry.
 
 ## Builtin: `notify`
 
@@ -206,8 +268,10 @@ top-level shorthand, and remote mode wins when a path is also present.
 
 **Default events:** `spawn.finished`, `work.activated`, `work.done`
 
-Because `work.activated` records a session choosing work, the default also syncs after
-`meridian work switch` successfully updates a session.
+The `work.activated` default syncs whenever `work start` or `work switch`
+resolves an item, even from a shell with no active Meridian session. It also
+syncs once before a primary launch whose session attaches work through
+`--work` or `--from`.
 
 ```toml
 [[hooks]]

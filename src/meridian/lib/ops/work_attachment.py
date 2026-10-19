@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import structlog
 
-from meridian.lib.core.lifecycle import generate_lifecycle_event_id, get_hook_dispatcher
+from meridian.lib.core.lifecycle import get_hook_dispatcher
 from meridian.lib.state import session_store, work_repository
 from meridian.lib.state.paths import resolve_work_scratch_dir_for_project
 from meridian.lib.state.work_state import slugify
@@ -23,19 +24,19 @@ def session_exists(runtime_root: Path, chat_id: str) -> bool:
     return session_store.get_session_harness_id(runtime_root, normalized) is not None
 
 
-def activate_session_work(
+def activate_work(
     runtime_root: Path,
     *,
     project_root: Path,
     chat_id: str,
     work_id: str,
 ) -> bool:
-    """Choose a work item for a session and publish that activation."""
+    """Publish an intentional work choice and attach it to a session when possible."""
 
     normalized = chat_id.strip()
-    if not session_exists(runtime_root, normalized):
-        return False
-    session_store.update_session_work_id(runtime_root, normalized, work_id)
+    attached = session_exists(runtime_root, normalized)
+    if attached:
+        session_store.update_session_work_id(runtime_root, normalized, work_id)
     _dispatch_work_activated(
         project_root=project_root,
         runtime_root=runtime_root,
@@ -45,9 +46,12 @@ def activate_session_work(
         "work",
         "work.activated",
         scope="ops.work_attachment",
-        ids={"work_id": work_id, "chat_id": normalized},
+        ids={
+            "work_id": work_id,
+            **({"chat_id": normalized} if attached else {}),
+        },
     )
-    return True
+    return attached
 
 
 def _dispatch_work_activated(
@@ -56,17 +60,17 @@ def _dispatch_work_activated(
     runtime_root: Path,
     work_id: str,
 ) -> None:
-    dispatcher = get_hook_dispatcher(project_root, runtime_root)
-    if dispatcher is None:
-        return
-
     try:
+        dispatcher = get_hook_dispatcher(project_root, runtime_root)
+        if dispatcher is None:
+            return
+
         from meridian.lib.hooks.types import HookContext
 
         dispatcher.fire(
             HookContext(
                 event_name="work.activated",
-                event_id=generate_lifecycle_event_id(work_id, "work.activated", 0),
+                event_id=uuid4(),
                 timestamp=datetime.now(tz=UTC).isoformat(),
                 project_root=str(project_root),
                 runtime_root=str(runtime_root),

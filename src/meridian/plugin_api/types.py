@@ -10,8 +10,6 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from meridian.lib.core.domain import SpawnKind
-
 HookEventName = Literal[
     "spawn.created",
     "spawn.started",
@@ -33,7 +31,7 @@ NOTIFICATION_EVENTS: tuple[HookEventName, ...] = (
 HOOK_CONTEXT_SCHEMA_VERSION = 3
 
 HookOutcome = Literal["success", "failure", "timeout", "skipped"]
-FailurePolicy = Literal["fail", "warn", "ignore"]
+SpawnKind = Literal["child", "primary", "streaming"]
 SpawnStatus = Literal["success", "failure", "cancelled", "timeout"]
 
 
@@ -97,7 +95,6 @@ class Hook:
     require_serial: bool = False
     exclude: tuple[str, ...] = ()
     options: Mapping[str, object] = field(default_factory=_default_options)
-    failure_policy: FailurePolicy | None = None
     remote: str | None = None
 
 
@@ -247,6 +244,19 @@ class HookContext:
     def to_json(self) -> str:
         """Convert context to JSON for stdin transport."""
 
+        has_spawn_context = any(
+            value is not None
+            for value in (
+                self.spawn_id,
+                self.spawn_status,
+                self.spawn_agent,
+                self.spawn_kind,
+                self.spawn_model,
+                self.spawn_duration_secs,
+                self.spawn_cost_usd,
+                self.spawn_error,
+            )
+        )
         payload = {
             "schema_version": self.schema_version,
             "event_name": self.event_name,
@@ -264,7 +274,7 @@ class HookContext:
                 "cost_usd": self.spawn_cost_usd,
                 "error": self.spawn_error,
             }
-            if self.spawn_id
+            if has_spawn_context
             else None,
             "work": {
                 "id": self.work_id,
@@ -304,7 +314,6 @@ class HookResult:
 __all__ = [
     "HOOK_CONTEXT_SCHEMA_VERSION",
     "NOTIFICATION_EVENTS",
-    "FailurePolicy",
     "Hook",
     "HookContext",
     "HookEventName",

@@ -312,7 +312,6 @@ def _same_manual_action(left: Hook, right: Hook) -> bool:
         and left.command == right.command
         and left.options == right.options
         and left.timeout_secs == right.timeout_secs
-        and left.failure_policy == right.failure_policy
     )
 
 

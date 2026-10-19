@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, get_args
@@ -19,11 +20,13 @@ from meridian.lib.hooks.types import (
     Notification,
 )
 from meridian.lib.idle.service import IdleService
+from meridian.lib.launch.process.session import resolve_attached_work_id
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.notify.emit import emit
 from meridian.lib.ops.runtime import resolve_roots
 from meridian.lib.ops.spawn.execute_session import _session_execution_context
+from meridian.lib.ops.work_attachment import activate_work
 from meridian.lib.ops.work_lifecycle import (
     WorkClearInput,
     WorkDoneInput,
@@ -61,13 +64,13 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     project_root.mkdir()
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
 
-    dispatched: list[HookEventName] = []
+    dispatched: list[HookContext] = []
 
     def record_dispatch(
         _dispatcher: HookDispatcher,
         context: HookContext,
     ) -> list[HookResult]:
-        dispatched.append(context.event_name)
+        dispatched.append(context)
         return []
 
     monkeypatch.setattr(HookDispatcher, "fire", record_dispatch)
@@ -92,7 +95,13 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         )
     lifecycle.announce(spawn_id)
     lifecycle.mark_running(spawn_id)
-    lifecycle.finalize(spawn_id, "succeeded", 0, origin="runner")
+    lifecycle.finalize(
+        spawn_id,
+        "failed",
+        1,
+        origin="runner",
+        error="producer failure",
+    )
 
     with LaunchSlot() as launch_lock:
         running_spawn_id = lifecycle.reserve(
@@ -150,7 +159,10 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         )
     )
     assert existing.created is False
-    activations_before_rename = dispatched.count("work.activated")
+    def activation_count() -> int:
+        return sum(context.event_name == "work.activated" for context in dispatched)
+
+    activations_before_rename = activation_count()
     renamed = work_rename_sync(
         WorkRenameInput(
             work_id=created.name,
@@ -162,7 +174,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     assert (
         session_store.get_session_active_work_id(work_runtime_root, "work-chat") == renamed.new_name
     )
-    assert dispatched.count("work.activated") == activations_before_rename
+    assert activation_count() == activations_before_rename
 
     work_done_sync(WorkDoneInput(work_id=renamed.new_name, project_root=str(project_root)))
     reopened = work_start_sync(
@@ -174,15 +186,41 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     )
     assert reopened.created is False
 
-    activations_before_clear = dispatched.count("work.activated")
+    activations_before_clear = activation_count()
     work_clear_sync(WorkClearInput(chat_id="work-chat", project_root=str(project_root)))
     assert session_store.get_session_active_work_id(work_runtime_root, "work-chat") is None
-    assert dispatched.count("work.activated") == activations_before_clear
+    assert activation_count() == activations_before_clear
 
     session_store.stop_session(work_runtime_root, "work-chat")
     work_done_sync(WorkDoneInput(work_id=renamed.new_name, project_root=str(project_root)))
 
-    activations_before_child = dispatched.count("work.activated")
+    session_store.start_session(
+        work_runtime_root,
+        harness="codex",
+        harness_session_id="primary-work-session",
+        model="gpt-5.6-luna",
+        chat_id="primary-work-chat",
+    )
+    primary_work_id = resolve_attached_work_id(
+        runtime_root=work_runtime_root,
+        chat_id="primary-work-chat",
+        explicit_work_id=renamed.new_name,
+        resume_chat_id=None,
+        get_session_active_work_id_fn=session_store.get_session_active_work_id,
+        update_session_work_id_fn=lambda root, chat_id, work_id: activate_work(
+            root,
+            project_root=project_root,
+            chat_id=chat_id,
+            work_id=work_id,
+        ),
+    )
+    assert primary_work_id == renamed.new_name
+    assert (
+        session_store.get_session_active_work_id(work_runtime_root, "primary-work-chat")
+        == renamed.new_name
+    )
+
+    activations_before_child = activation_count()
     with _session_execution_context(
         runtime_root=work_runtime_root,
         metadata=PrimarySessionMetadata(
@@ -202,7 +240,17 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
             session_store.get_session_active_work_id(work_runtime_root, child_session.chat_id)
             == renamed.new_name
         )
-    assert dispatched.count("work.activated") == activations_before_child
+    assert activation_count() == activations_before_child
+
+    session_store.stop_session(work_runtime_root, "primary-work-chat")
+    sessionless = work_start_sync(
+        WorkStartInput(
+            label=renamed.new_name,
+            chat_id="no-such-session",
+            project_root=str(project_root),
+        )
+    )
+    assert sessionless.created is False
 
     clock = MillisecondClock()
     idle = IdleService(
@@ -226,13 +274,36 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
 
     emit(
         "notify.manual",
-        Notification(title="Producer coverage", body="Manual notification"),
+        Notification(
+            title="Producer coverage",
+            body="Manual notification",
+            label={"agent": "coder"},
+        ),
         project_root=project_root,
         env={"MERIDIAN_HOME": str(tmp_path / "home")},
     )
 
-    event_counts = Counter(dispatched)
+    event_counts = Counter(context.event_name for context in dispatched)
     assert event_counts["spawn.started"] == 2
     assert event_counts["work.created"] == 2
-    assert event_counts["work.activated"] == 5
-    assert set(dispatched) == set(EVENT_CLASS) == set(get_args(HookEventName))
+    assert event_counts["work.activated"] == 7
+    assert {context.event_name for context in dispatched} == set(EVENT_CLASS) == set(
+        get_args(HookEventName)
+    )
+
+    work_event_ids = [
+        context.event_id
+        for context in dispatched
+        if context.event_name.startswith("work.")
+    ]
+    assert len(work_event_ids) == len(set(work_event_ids))
+
+    finished = next(
+        context for context in dispatched if context.event_name == "spawn.finished"
+    )
+    assert finished.spawn_error == "producer failure"
+
+    manual = next(context for context in dispatched if context.event_name == "notify.manual")
+    manual_payload = json.loads(manual.to_json())
+    assert manual_payload["spawn"]["id"] is None
+    assert manual_payload["spawn"]["agent"] == "coder"

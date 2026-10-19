@@ -88,11 +88,12 @@ otherwise it is invisible to both surfaces.
 
 **Work item attachment is ops-layer responsibility.** `work_attachment.py:ensure_explicit_work_item()`
 handles `--work` resolution before the spawn row is created.
-`activate_session_work()` owns the user-visible choice made by `work start`,
-`work switch`, or a primary launch attaching `--work` / `--from`; it writes the
-attachment and fires `work.activated` plus matching telemetry. Incidental
-attachment maintenance (child inheritance, rename, and clear) writes through
-`session_store` without publishing an activation. Primary launch injects the
+`activate_work()` owns the user-visible choice made by `work start`, `work
+switch`, or a primary launch attaching `--work` / `--from`; it fires
+`work.activated` plus matching telemetry whether or not a session exists, and
+writes the attachment when one does. Incidental attachment maintenance (child
+inheritance, rename, and clear) writes through `session_store` without
+publishing an activation. Primary launch injects the
 activation operation into the launch runner rather than letting `launch/` own
 hook policy.
 

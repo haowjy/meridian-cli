@@ -16,7 +16,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 ## Key Rules
 
 - **`SpawnStatus` (StrEnum in `domain.py`) is the single status authority.** Lifecycle sets (`ALL_SPAWN_STATUSES`, `ACTIVE_SPAWN_STATUSES`, `TERMINAL_SPAWN_STATUSES`) are derived from a member→`SpawnLifecycleClass` map. `TerminalSpawnStatus` is a `Literal` alias checked at import time to match the terminal members. Do not create parallel status vocabularies or frozensets — use the derived sets.
-- **`SpawnKind` in `domain.py` is shared by persisted spawn state and the plugin API.** Extend that literal rather than creating another child/primary/streaming vocabulary.
+- **`SpawnKind` in `plugin_api/types.py` is shared by core lifecycle and persisted spawn state.** Extend that literal rather than creating another child/primary/streaming vocabulary.
 - **Use `SpawnId`, `ModelId`, `ChatId`, `HarnessSessionId`, `ArtifactKey` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; pyright catches wrong-ID bugs statically. Persisted chat and harness-session fields use Pydantic-aware `Annotated` aliases that normalize blank identities to `None` and enforce non-empty values at every parse boundary.
 - **`RuntimeOverrides`: use `None` to mean "not set", never `""` or `0`.** `resolve(*layers)` returns first-non-None per field. An empty string at a high-precedence layer wins over a meaningful value at a lower one.
 - **The environment registry is the sole declaration of child-process Meridian keys.** `ResolvedContext.child_env_overrides()` produces shared context handles, and the launch bind seam adds registered launch-specific handles such as `_MERIDIAN_HARNESS`; `validate_child_env_keys()` rejects unknown public or internal names.

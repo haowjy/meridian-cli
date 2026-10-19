@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.lifecycle import generate_lifecycle_event_id, get_hook_dispatcher
+from meridian.lib.core.lifecycle import get_hook_dispatcher
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.context import resolve_active_work_scope
@@ -20,7 +21,7 @@ from meridian.lib.ops.runtime import (
     resolve_roots,
     runtime_context,
 )
-from meridian.lib.ops.work_attachment import activate_session_work, session_exists
+from meridian.lib.ops.work_attachment import activate_work, session_exists
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.spawn_status import overlay_derived
@@ -138,17 +139,17 @@ def _dispatch_work_hook_event(
     project_state_dir: Path,
     work_id: str,
 ) -> None:
-    dispatcher = get_hook_dispatcher(project_root, runtime_root)
-    if dispatcher is None:
-        return
-
     try:
+        dispatcher = get_hook_dispatcher(project_root, runtime_root)
+        if dispatcher is None:
+            return
+
         from meridian.lib.hooks.types import HookContext
 
         dispatcher.fire(
             HookContext(
                 event_name=event_name,
-                event_id=generate_lifecycle_event_id(work_id, event_name, 0),
+                event_id=uuid4(),
                 timestamp=datetime.now(tz=UTC).isoformat(),
                 project_root=str(project_root),
                 runtime_root=str(runtime_root),
@@ -444,7 +445,7 @@ def work_start_sync(
             work_id=item.name,
             data={"status": item.status},
         )
-    activate_session_work(
+    activate_work(
         runtime_state_root,
         project_root=project_root,
         chat_id=chat_id,
@@ -616,7 +617,7 @@ def work_switch_sync(
         chat_id=chat_id,
         new_target=item.name,
     )
-    updated = activate_session_work(
+    updated = activate_work(
         runtime_state_root,
         project_root=roots.project_root,
         chat_id=chat_id,

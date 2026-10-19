@@ -18,13 +18,10 @@ from meridian.lib.hooks.interval import IntervalTracker
 from meridian.lib.hooks.registry import HookRegistry
 from meridian.lib.hooks.runner import ExternalHookRunner, hooks_dispatch_enabled
 from meridian.lib.hooks.types import (
-    DEFAULT_FAILURE_POLICY,
     DEFAULT_TIMEOUTS,
     EVENT_CLASS,
-    FailurePolicy,
     Hook,
     HookContext,
-    HookEventClass,
     HookEventName,
     HookResult,
     SpawnStatus,
@@ -165,7 +162,6 @@ class HookDispatcher(LifecycleHook):
             hook_count=len(hooks),
         )
 
-        event_class = EVENT_CLASS[context.event_name]
         results: list[HookResult] = []
         for hook in hooks:
             logger.info(
@@ -197,7 +193,6 @@ class HookDispatcher(LifecycleHook):
                 )
                 continue
 
-            fail_open = self._is_fail_open(event_class, self._resolve_failure_policy(hook))
             log_failure = logger.info if context.notification is not None else logger.warning
             log_failure(
                 "hook_execution_failed",
@@ -207,15 +202,7 @@ class HookDispatcher(LifecycleHook):
                 error=result.error,
                 error_type=self._error_type(result),
                 exit_code=result.exit_code,
-                fail_open=fail_open,
             )
-            if not fail_open:
-                logger.warning(
-                    "hook_dispatch_stopped_on_failure",
-                    hook_event=context.event_name,
-                    failed_hook=hook.name,
-                )
-                break
 
         logger.info(
             "hook_dispatch_finished",
@@ -363,16 +350,6 @@ class HookDispatcher(LifecycleHook):
 
         return not when.agent or context.spawn_agent == when.agent
 
-    def _resolve_failure_policy(self, hook: Hook) -> FailurePolicy:
-        if hook.failure_policy is not None:
-            return hook.failure_policy
-        event_class: HookEventClass = EVENT_CLASS[hook.event]
-        return DEFAULT_FAILURE_POLICY[event_class]
-
-    def _is_fail_open(self, event_class: HookEventClass, policy: FailurePolicy) -> bool:
-        _ = event_class, policy
-        return True
-
     def _build_context(self, event: LifecycleEvent) -> HookContext:
         authority = self._authority
         if authority is not None:
@@ -388,6 +365,7 @@ class HookDispatcher(LifecycleHook):
                 spawn_model=event.model,
                 spawn_duration_secs=event.duration_secs,
                 spawn_cost_usd=event.total_cost_usd,
+                spawn_error=event.error,
                 work_id=event.work_id,
             )
 
@@ -404,6 +382,7 @@ class HookDispatcher(LifecycleHook):
             spawn_model=event.model,
             spawn_duration_secs=event.duration_secs,
             spawn_cost_usd=event.total_cost_usd,
+            spawn_error=event.error,
             work_id=event.work_id,
         )
 
@@ -437,6 +416,5 @@ def _to_plugin_hook(hook: Hook) -> PluginHook:
         require_serial=hook.require_serial,
         exclude=hook.exclude,
         options=hook.options,
-        failure_policy=hook.failure_policy,
         remote=hook.remote,
     )

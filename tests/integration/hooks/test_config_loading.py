@@ -58,8 +58,8 @@ from meridian.lib.hooks.config import load_hooks_config
         ),
         (
             "failure_policy",
-            'event = "spawn.started"\nfailure_policy = "bogus"',
-            "expected one of [fail, ignore, warn], got 'bogus'",
+            'event = "spawn.started"\nfailure_policy = "warn"',
+            "'failure_policy' was removed; hook failures always continue",
         ),
         (
             "timeout_secs",
@@ -117,7 +117,6 @@ def test_hook_config_model_normalizes_closed_values(tmp_path: Path) -> None:
         'event = " spawn.finished "\n'
         'command = "echo normalized"\n'
         'interval = " 5m "\n'
-        'failure_policy = " warn "\n'
         "timeout_secs = 1\n"
         "[hooks.when]\n"
         'status = [" success ", "failure"]\n'
@@ -129,7 +128,6 @@ def test_hook_config_model_normalizes_closed_values(tmp_path: Path) -> None:
 
     assert hook.event == "spawn.finished"
     assert hook.interval == "5m"
-    assert hook.failure_policy == "warn"
     assert hook.timeout_secs == 1
     assert hook.when is not None
     assert hook.when.status == ("success", "failure")
@@ -176,6 +174,56 @@ def test_hook_conditions_reject_events_that_cannot_supply_their_context(
         load_hooks_config(tmp_path)
 
     assert expected in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        'status = ["success"]',
+        'agent = "coder"',
+        'kind = ["child"]',
+    ],
+)
+def test_builtin_default_events_drop_events_the_condition_cannot_match(
+    tmp_path: Path,
+    condition: str,
+) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "filtered-defaults"\n'
+        'builtin = "git-autosync"\n'
+        'options = { path = "." }\n'
+        "[hooks.when]\n"
+        f"{condition}\n",
+        encoding="utf-8",
+    )
+
+    events = {
+        hook.event
+        for hook in load_hooks_config(tmp_path).hooks
+        if hook.name == "filtered-defaults"
+    }
+
+    assert events == {"spawn.finished"}
+
+
+def test_builtin_default_conditions_error_when_no_default_event_can_match(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'builtin = "notify"\n'
+        "[hooks.when]\n"
+        'status = ["success"]\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_hooks_config(tmp_path)
+
+    message = str(exc_info.value)
+    assert "row had no 'event'" in message
+    assert "set 'event' explicitly" in message
 
 
 def test_a_notify_row_replaces_only_its_events_default_route(tmp_path: Path) -> None:

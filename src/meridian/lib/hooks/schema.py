@@ -21,7 +21,6 @@ from pydantic import (
 from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS, BuiltinHook
 from meridian.lib.hooks.types import (
-    FailurePolicy,
     Hook,
     HookEventName,
     HookWhen,
@@ -43,8 +42,7 @@ _REPLACED_HOOK_EVENTS = {
     "session.responded": "notify.your_turn",
     "session.cache_expiring": "notify.cache_expiring",
 }
-_KNOWN_FAILURE_POLICIES = frozenset(get_args(FailurePolicy))
-_KNOWN_SPAWN_KINDS = frozenset(get_args(SpawnKind.__value__))
+_KNOWN_SPAWN_KINDS = frozenset(get_args(SpawnKind))
 _KNOWN_SPAWN_STATUSES = frozenset(get_args(SpawnStatus))
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -81,18 +79,6 @@ def _hook_interval(value: object) -> str | object:
     return normalized
 
 
-def _failure_policy(value: object) -> str | object:
-    normalized = _normalized_string(value)
-    if not isinstance(normalized, str):
-        return normalized
-    if not normalized:
-        raise ValueError("expected non-empty string")
-    if normalized not in _KNOWN_FAILURE_POLICIES:
-        valid = ", ".join(sorted(_KNOWN_FAILURE_POLICIES))
-        raise ValueError(f"expected one of [{valid}], got {normalized!r}")
-    return normalized
-
-
 def _spawn_status(value: object) -> str | object:
     normalized = _normalized_string(value)
     if not isinstance(normalized, str):
@@ -118,7 +104,6 @@ type HookIntervalSpec = Annotated[
     BeforeValidator(_hook_interval),
     StringConstraints(pattern=r"^\d+[smhd]$"),
 ]
-type FailurePolicySpec = Annotated[FailurePolicy, BeforeValidator(_failure_policy)]
 type SpawnKindSpec = Annotated[SpawnKind, BeforeValidator(_spawn_kind)]
 type SpawnStatusSpec = Annotated[SpawnStatus, BeforeValidator(_spawn_status)]
 type PositiveTimeoutSecs = Annotated[int, BeforeValidator(_positive_timeout), Field(gt=0)]
@@ -183,7 +168,6 @@ class HookSpec(BaseModel):
     interval: HookIntervalSpec | None = None
     enabled: bool = True
     priority: int = 0
-    failure_policy: FailurePolicySpec | None = None
     require_serial: bool = False
     when: HookWhenSpec | None = None
     exclude: tuple[NonEmptyString, ...] = ()
@@ -208,9 +192,18 @@ def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
     return tuple(values)
 
 
+def _has_removed_failure_policy(raw_value: object) -> bool:
+    return isinstance(raw_value, Mapping) and "failure_policy" in raw_value
+
+
 def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec:
     """Validate one hook row and emit its unknown-key diagnostics once."""
 
+    if _has_removed_failure_policy(raw_value):
+        raise ValueError(
+            f"Invalid value for '{source}.failure_policy': 'failure_policy' was removed; "
+            "hook failures always continue."
+        )
     warn_unknown_model_keys(raw_value, model=HookSpec, source=source)
     try:
         return HookSpec.model_validate(raw_value)
@@ -265,35 +258,40 @@ def _parse_when(spec: HookWhenSpec | None) -> HookWhen | None:
     )
 
 
-def _validate_when_events(
+def _when_can_match_event(when: HookWhen | None, event: HookEventName) -> bool:
+    if when is None:
+        return True
+    if when.status is not None and event != "spawn.finished":
+        return False
+    return not (event.startswith("work.") and (when.agent is not None or when.kind is not None))
+
+
+def _validate_when_event(
     when: HookWhen | None,
-    events: tuple[HookEventName, ...],
+    event: HookEventName,
     *,
     row_source: str,
 ) -> None:
     if when is None:
         return
 
-    if when.status is not None:
-        unsupported = next((event for event in events if event != "spawn.finished"), None)
-        if unsupported is not None:
-            raise ValueError(
-                f"Invalid value for '{row_source}.when.status': condition is only available "
-                f"for 'spawn.finished', got {unsupported!r}."
-            )
+    if when.status is not None and event != "spawn.finished":
+        raise ValueError(
+            f"Invalid value for '{row_source}.when.status': condition is only available "
+            f"for 'spawn.finished', got {event!r}."
+        )
 
-    work_event = next((event for event in events if event.startswith("work.")), None)
-    if work_event is None:
+    if not event.startswith("work."):
         return
     if when.agent is not None:
         raise ValueError(
             f"Invalid value for '{row_source}.when.agent': condition is unavailable for "
-            f"{work_event!r}."
+            f"{event!r}."
         )
     if when.kind is not None:
         raise ValueError(
             f"Invalid value for '{row_source}.when.kind': condition is unavailable for "
-            f"{work_event!r}."
+            f"{event!r}."
         )
 
 
@@ -340,11 +338,21 @@ def hooks_from_spec(
             raise ValueError(f"Invalid hook config '{row_source}': 'name' is required.")
         name = _synthesize_builtin_hook_name(builtin, options)
 
+    when = _parse_when(spec.when)
     events: tuple[HookEventName, ...]
     if spec.event is not None:
         events = (spec.event,)
+        _validate_when_event(when, spec.event, row_source=row_source)
     elif builtin is not None:
-        events = builtin.default_events
+        events = tuple(
+            event for event in builtin.default_events if _when_can_match_event(when, event)
+        )
+        if not events:
+            raise ValueError(
+                f"Invalid hook config '{row_source}': row had no 'event', and its 'when' "
+                "conditions cannot match any builtin default event; set 'event' explicitly "
+                "to an event that supplies those fields."
+            )
     else:
         raise ValueError(f"Invalid hook config '{row_source}': 'event' is required.")
 
@@ -359,8 +367,6 @@ def hooks_from_spec(
 
     interval = spec.interval or (builtin.default_interval if builtin is not None else None)
 
-    when = _parse_when(spec.when)
-    _validate_when_events(when, events, row_source=row_source)
     return tuple(
         Hook(
             name=name,
@@ -372,7 +378,6 @@ def hooks_from_spec(
             interval=interval,
             enabled=spec.enabled,
             priority=spec.priority,
-            failure_policy=spec.failure_policy,
             require_serial=spec.require_serial,
             when=when,
             exclude=spec.exclude,

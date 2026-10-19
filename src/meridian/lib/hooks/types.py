@@ -11,7 +11,6 @@ from typing import Literal
 from meridian.plugin_api.types import (
     HOOK_CONTEXT_SCHEMA_VERSION,
     NOTIFICATION_EVENTS,
-    FailurePolicy,
     HookContext,
     HookEventName,
     HookOutcome,
@@ -41,11 +40,6 @@ DEFAULT_TIMEOUTS: dict[HookEventClass, int] = {
     "post": 60,
 }
 
-DEFAULT_FAILURE_POLICY: dict[HookEventClass, FailurePolicy] = {
-    "observe": "warn",
-    "post": "warn",
-}
-
 def _default_options() -> dict[str, object]:
     return {}
 
@@ -72,7 +66,6 @@ class Hook:
     interval: str | None = None
     enabled: bool = True
     priority: int = 0
-    failure_policy: FailurePolicy | None = None
     require_serial: bool = False
     when: HookWhen | None = None
     exclude: tuple[str, ...] = ()
@@ -83,12 +76,10 @@ class Hook:
 
 
 __all__ = [
-    "DEFAULT_FAILURE_POLICY",
     "DEFAULT_TIMEOUTS",
     "EVENT_CLASS",
     "HOOK_CONTEXT_SCHEMA_VERSION",
     "NOTIFICATION_EVENTS",
-    "FailurePolicy",
     "Hook",
     "HookContext",
     "HookEventClass",

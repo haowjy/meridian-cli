@@ -13,6 +13,7 @@ from meridian.lib.core.types import (
     SpawnId,
 )
 from meridian.lib.core.util import FormatContext
+from meridian.plugin_api.types import SpawnKind as SpawnKind
 
 
 class SpawnLifecycleClass(StrEnum):
@@ -32,9 +33,6 @@ class SpawnStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     TIMED_OUT = "timed_out"
-
-
-type SpawnKind = Literal["child", "primary", "streaming"]
 
 
 _StatusT = TypeVar("_StatusT", bound=StrEnum)

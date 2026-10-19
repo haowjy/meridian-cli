@@ -5,22 +5,26 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Hook events `work.created` for new work items and `work.activated` when a session chooses work through `work start`, `work switch`, or a primary launch's `--work` / `--from` attachment. (#687)
+- Hook events `work.created` for new work items and `work.activated` whenever `work start` / `work switch` resolves an item or a primary launch attaches `--work` / `--from` work. (#687)
 - Hook `when.kind` filtering with the shared `child` / `primary` / `streaming` `SpawnKind`; `HookContext.spawn_kind`, `spawn.kind` in JSON, and `MERIDIAN_SPAWN_KIND` expose it to plugins and command hooks. (#687)
 
 ### Removed
 - Old hook names `spawn.start`, `spawn.running`, `spawn.finalized`, `work.start`, `work.started`, `session.responded`, and `session.cache_expiring`; config rows are rejected at load with their replacements. See [upgrade note](docs/upgrading.md#hook-event-names). (#687)
 - The unused `gate` hook event class and the impossible `when.status = ["skipped"]` spawn outcome. (#687)
+- The inert hook `failure_policy` config field and Plugin API type/field; a row that still sets it is rejected with a removal diagnostic. (#687)
 
 ### Changed
-- Hook events are `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, and `notify.manual`; the `notify.*` prefix identifies notification-bearing events. Matching telemetry moments use the same names. (#687)
-- Plugin API 3.0.0 carries the event contract changes; command hook context schema version 3 adds spawn kind. (#687)
-- `git-autosync` defaults are `spawn.finished`, `work.activated`, and `work.done`, so it also syncs after `work switch`. (#687)
-- Hook config rejects conditions an event cannot supply: `when.status` outside `spawn.finished`, and `when.agent` / `when.kind` on work events. (#687)
+- Hook events are `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, and `notify.manual`; the `notify.*` prefix identifies notification-bearing events. Lifecycle/telemetry producer names change from `spawn.queued` to `spawn.created`, `spawn.running` to `spawn.started`, and `work.started` to separate `work.created` / `work.activated` moments. (#687)
+- Plugin API 3.0.0 carries the event contract changes and exports the shared `SpawnKind` and `SpawnStatus`; command hook context schema version 3 adds spawn kind. (#687)
+- `git-autosync` defaults are `spawn.finished`, `work.activated`, and `work.done`, so it syncs for sessionless `work start` / `work switch` and once before a primary launch with `--work` / `--from` attached. (#687)
+- Hook config rejects impossible conditions on explicitly named events. Unevented builtin rows instead retain only compatible default events and error only when none can match. (#687)
+- Spawn event IDs remain stable per spawn and event; work event IDs are now unique per firing. (#687)
 
 ### Fixed
 - `spawn.started` now fires once for spawns persisted initially as `running`, including streaming-serve spawns. (#687)
-- Hook `when.status = ["timeout"]` now matches timed-out spawns (`timed_out` was mapped to nothing, so timeout filters never fired).
+- Hook `when.status = ["timeout"]` now matches timed-out spawns (`timed_out` was mapped to nothing, so timeout filters never fired). (#687)
+- `spawn.finished` command hooks now receive the persisted terminal error; hook subprocesses no longer inherit stale payload variables for fields absent from the current event. (#687)
+- Invalid hook config can no longer interrupt `work start` after its state mutation; work hook dispatch logs the failure and the operation continues. (#687)
 
 ## [0.10.28] - 2026-10-18
 
