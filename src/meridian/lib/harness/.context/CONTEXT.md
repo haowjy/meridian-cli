@@ -422,7 +422,9 @@ Tracking rules, all learned from the live event stream:
   `status: "running"`. `shell.created` (command) and `session.created` with the
   primary as `parentID` only announce a candidate, so a shell or child created
   any other way, including one carrying the primary's id in its metadata, is
-  never reported.
+  never reported. Continuing an existing child (`subagent` with `sessionID` and
+  `background: true`) emits no `session.created`, so it is never a candidate:
+  the push may come before its wake, as it did before this tracking existed.
 - Ends: `shell.exited`, `shell.deleted`, the child's own terminal
   `session.execution.*`, the primary's `session.tool.failed` naming it, or the
   primary's synthetic `session.inbox.enqueued` (`payload.metadata.source` of
@@ -433,14 +435,36 @@ Tracking rules, all learned from the live event stream:
   terminal, so they must count as ends, or an interrupted foreground tool would
   hold the push forever (a certain `agent` hold never lifts without another
   turn end).
+- A child waiting on a permission prompt cannot end until the user answers, so
+  it does not count while the prompt is open (a hold would hide the one thing the
+  user has to do). The connection consumes the raw `permission.asked` and
+  `permission.replied` events, so the sensor sees the managed primary's
+  `request/opened` (the ask under `params`, with the asking `sessionID`) and
+  `request/resolved|failed|cancelled` (request id only). A prompt from the child
+  or any descendant counts: `session.created` with a tracked `parentID` maps each
+  descendant to the child it belongs to. A prompt can open before or after the
+  primary's turn end; the snapshot excludes an asking child either way. Only
+  permission prompts are handled; other waits on the user are not.
+- Work that changes while the primary is idle re-arms the push: the sensor emits
+  another `turn_end` (turn id `None`), which the sidecar turns into an `arm` in
+  the same stretch. The new schedule replaces the old one and a stage already
+  sent stays sent. A busy primary does not re-arm, because its own turn end
+  reports the work. Two triggers exist: a prompt opening or closing for a counted
+  child, and a reconnect refresh that dropped work.
 - `/api/event` is live-only and announces each connection with `server.connected`.
-  After a reconnect with named work, the next turn end re-derives from
-  `GET /api/shell` and `GET /api/session?parentID=` and keeps only ids still
-  running; if the server cannot answer it reports nothing and logs one line. The
-  shell listing follows the request's location: `?directory=` is ignored, while
-  the `x-opencode-directory` header and the `location[directory]` query both select
-  it (the sensor uses the query, with the session's own `location.directory`).
-  Starts that fell in the gap cannot be recovered and stay unreported.
+  After a reconnect with named work, the sensor re-derives at once in a
+  background task (no turn end is guaranteed to come): `GET /api/shell` and
+  `GET /api/session?parentID=` keep only ids still running, and the push re-arms
+  if that changed what is reported. If the server cannot answer, it reports
+  nothing and logs one line, since a hold on work that already ended would never
+  lift. The normal path makes no listing request. The shell listing follows the
+  request's location: `?directory=` is ignored, while the `x-opencode-directory`
+  header and the `location[directory]` query both select it (the sensor uses the
+  query, with the session's own `location.directory`). Starts that fell in the gap
+  cannot be recovered and stay unreported; a prompt answered in the gap leaves the
+  child uncounted until it ends.
+- The report holds at most 16 tasks, agents first: an `agent` is the certain
+  hold, so shells never push one out.
 - A fresh `opencode serve` loads its provider catalog on first touch of a
   location; a prompt that races it fails with `provider.no-route`. Touch the
   location (any `GET /api/shell`) before driving a headless session.
