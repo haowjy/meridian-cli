@@ -1,9 +1,146 @@
 # Upgrade notes
 
+## Hook event names
+
+Hook event names now identify the persisted moment when they fire. This release
+opens a one-minor compatibility window: the new binary accepts both the old and
+new names, while warning once for each row that still needs migration.
+
+| Old | New |
+| --- | --- |
+| `spawn.start` | `spawn.started` |
+| `spawn.running` | `spawn.started` |
+| `spawn.finalized` | `spawn.finished` |
+| `work.start` | `work.activated` |
+| `work.started` | `work.activated` |
+| `session.responded` | `notify.your_turn` |
+| `session.cache_expiring` | `notify.cache_expiring` |
+
+Run `meridian hooks check` after upgrading. It exits successfully when these
+are the only findings and lists each deprecated row with its replacement.
+`meridian hooks list` shows the registration on the new event and marks it
+`deprecated`. Rename rows at leisure during this window; the old names stop
+loading in the next minor release.
+
+A row that still uses an old name is registered on the new event, but receives
+its configured old name in `HookContext.event_name`, JSON `event_name`, and
+`MERIDIAN_HOOK_EVENT`. This keeps existing command scripts working while their
+config is migrated. A row configured with the new name receives the new name.
+
+Rows configured with `spawn.start` or `work.start` were accepted previously but
+never fired. They now register on the live `spawn.started` and `work.activated`
+events, so the warning also says that the row will begin running.
+
+`work.created` is a separate new event that fires only when `work start`
+creates an item. `work.activated` fires whenever `work start` or `work switch`
+resolves an item, even without a Meridian session, and when a primary launch
+attaches `--work` or work carried by `--from`. Inherited child work, rename
+repointing, and clear do not fire it. The `git-autosync` defaults are now
+`spawn.finished`, `work.activated`, and `work.done`, so switching or starting
+work syncs. A primary launch with attached work performs one synchronous sync
+after creating its session and before starting the harness.
+
+Hook payload `schema_version` 3 marks this contract change and adds `spawn.kind`
+and `MERIDIAN_SPAWN_KIND`. The Plugin API carries the renamed event literal,
+removes the impossible `when.status = ["skipped"]` value and the inert
+`failure_policy` field/type, exports `SpawnKind` and `SpawnStatus`, and adds
+`HookContext.spawn_kind`. It also removes `HookContext.from_authority`; package
+code that constructed contexts through it should call `HookContext.from_roots`
+with the authority's `project_root` and `runtime_root`. The new `when.kind` list
+accepts `child`, `primary`, and `streaming`.
+
+The corresponding config transitions share the one-minor window:
+
+- `failure_policy` loads with a warning, has no effect, and will be rejected in
+  the next minor release. Hook failures always log and continue.
+- `when.status = ["skipped"]` warns and drops `skipped`; any other status values
+  in the list continue to filter normally. If no status remains, the row is
+  skipped instead of widening to match every status.
+- A row that explicitly names an event but sets a condition that event cannot
+  supply warns that it can never match and is skipped. In the next minor release
+  the same row becomes a config error. Because the skipped row does not register,
+  it no longer shadows a lower-file row with the same name and event.
+
+For an unevented builtin row, Meridian enables only default events that can
+match its `when` conditions. Incompatible defaults remain as disabled
+overrides, so the higher-precedence row still suppresses lower rows with the
+same name and event. For example, an unevented `git-autosync` row with
+`when.status = ["success"]` runs only for `spawn.finished` and disables its
+`work.activated` and `work.done` registrations. It errors, with a prompt to set
+`event`, only if no default event can match.
+
+The corresponding lifecycle/telemetry producer names changed from
+`spawn.queued` to `spawn.created`, `spawn.running` to `spawn.started`, and
+`work.started` to the separate `work.created` and `work.activated` moments.
+Nonterminal spawn moments go to lifecycle observers and hooks, not the sparse
+local `meridian telemetry query` projection; that projection continues to keep
+`spawn.process_exited` plus terminal status events. Work telemetry remains
+best-effort process telemetry, while work and session files are authoritative.
+
+No state migration is needed. On mixed-version machines sharing one config, the
+new binary accepts both name sets during this window, but an old binary still
+rejects the new names. Keep the old names until every machine has upgraded,
+then rename them before the next minor release. Runtime lifecycle dispatch
+continues to drop truly invalid rows while valid and deprecated rows run; work
+commands keep their core mutation even if dispatch setup itself fails.
+
+## Compatibility policy and state version checks
+
+Meridian now keeps renamed config keys, hook names, and CLI flags working with a
+replacement warning for one minor release. State shared across builds uses an
+integer format version where another build can read it; rebuildable indexes put
+that version in the file name.
+
+What users may notice:
+
+- Work items whose `__status.json` contains an unknown field keep it through
+  later metadata updates and warn once per file per command. A status file from a
+  newer format is displayed as `requires-newer-meridian`, warns with its path and
+  asks for an upgrade; commands validate every active and archived copy before
+  renaming, deleting, moving, or rewriting anything. Other malformed status files
+  now warn before using directory-derived defaults.
+- `meridian telemetry query` and session replay skip records carrying an
+  unsupported `v` and warn instead of interpreting them with the current schema.
+  Session writes that read existing records to decide what to append (starting a
+  chat, binding a native session, deduplicating model records, adopting an
+  observed native session) refuse when an unsupported record names the same chat
+  or native session, rather than writing stale state or creating a duplicate
+  chat. Other session updates append without reading the journal. A newer record
+  that names no chat or native session is invisible to those scoped decisions; it
+  refuses only decisions that check every chat, such as repair binds. The
+  one-time native-session import reads only the chats it binds; an unsupported
+  record in one of them defers the import with a message instead of failing the
+  command. The disposable history index skips unsupported session rows, keeps
+  indexing later ones, and remembers the skipped versions so every indexed read
+  warns once per command. Its file name includes both the index schema and
+  session format (`history-v10-sessions-v1.sqlite3`) so a format change rebuilds
+  from authority.
+  Idle files are the deliberate exception to refusal: they are short-lived and
+  expected to be absent, and refusing one after a mid-session upgrade would
+  disable idle handling; they keep absent-state behavior and now warn with the
+  file path.
+- `meridian.plugin_api.__version__` is removed because the API is not installed
+  independently; callers that need a version should use Meridian's package
+  version. Launch-policy snapshot `schema_version`, Pi `pi_runtime_meta.json`
+  `schema_version`, and the duplicate native-search SQLite metadata are removed
+  because their released readers default or ignore them. Existing files that
+  contain these state fields remain readable. The legacy native-import marker
+  keeps its `schema_version`: released repair readers still require it.
+
+No state migration or manual index rebuild is required. The first indexed read
+builds the new input-versioned file automatically. Work status writers do not emit
+`v` yet, so released strict readers continue to accept files this version writes.
+When rolling back to v0.10.29, authority remains readable because this version
+still writes the released work and session shapes. Its old `history-v10.sqlite3`
+was not updated while the newer input-versioned index was active; run
+`meridian session index rebuild --metadata-only` after rollback before relying on
+indexed session discovery. Rollback support for other state changes remains
+specific to their topic below.
+
 ## Notifications are hook events
 
-Idle pushes, cache warnings and `meridian notify` now fire the hook events
-`session.responded`, `session.cache_expiring` and `notify.manual`. A built-in
+Idle pushes, cache warnings and `meridian notify` fire the hook events
+`notify.your_turn`, `notify.cache_expiring` and `notify.manual`. A built-in
 `notify` hook delivers them through the `[notify]` backends, so routing,
 silencing and extra channels are `[[hooks]]` rows; see
 [Routing and extending notifications](configuration.md#routing-and-extending-notifications).
@@ -50,10 +187,12 @@ With no hook config, delivery is unchanged.
   attachments, it attempts the rest and the route is sent with a warning naming
   every failed file; do not retry the already delivered text. Email remains
   all-or-nothing: one rejected attachment fails that email and its text.
-- **Plugin API 2.0.0.** `HookContext.runtime_root` may be `None`;
-  `HookContext.notification` is new; the hook payload `schema_version` is `2`
-  and carries a `notification` object on notification events. See
-  [plugin-api.md](plugin-api.md).
+- **Hook payload schema 2 (historical contract).** `HookContext.runtime_root`
+  became nullable, `HookContext.notification` was added, and hook payload schema
+  2 added the notification object. Those events were then named
+  `session.responded`, `session.cache_expiring`, and `notify.manual`; payload
+  schema 3 applies the current `notify.*` names described in
+  [Hook event names](#hook-event-names).
 
 No state migration is needed.
 
@@ -64,10 +203,10 @@ schema 7 to 10 so an unstopped session generation becomes inactive when a later
 generation of the same chat starts. Schema numbers 8 and 9 are skipped because
 unreleased builds wrote projections in those namespaces.
 
-The first indexed read rebuilds `history-v10.sqlite3` from authority and may
-take longer. Older `history-v7.sqlite3`, `history-v8.sqlite3`, and
-`history-v9.sqlite3` files are left untouched and can be removed after rollback
-is no longer needed.
+The first indexed read rebuilds `history-v10-sessions-v1.sqlite3` from authority
+and may take longer. Older `history-v7.sqlite3`, `history-v8.sqlite3`,
+`history-v9.sqlite3`, and pre-policy `history-v10.sqlite3` files are left untouched
+and can be removed after rollback is no longer needed.
 
 ## Idle compaction removed
 

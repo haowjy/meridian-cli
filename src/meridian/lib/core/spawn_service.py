@@ -57,7 +57,6 @@ from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import (
     APP_LAUNCH_MODE,
     LaunchMode,
-    SpawnKind,
     SpawnOrigin,
     SpawnRecord,
 )
@@ -73,6 +72,7 @@ from meridian.lib.state.spawn_status import (
 )
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
+from meridian.plugin_api.types import SpawnKind
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry

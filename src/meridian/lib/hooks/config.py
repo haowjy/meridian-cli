@@ -44,47 +44,63 @@ class HookConfigLoad:
 
     config: HooksConfig
     errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    def require_valid(self) -> HooksConfig:
+        """Return the config or raise every invalid-row diagnostic."""
+
+        if len(self.errors) == 1:
+            raise HookConfigError(self.errors[0])
+        if self.errors:
+            details = "\n".join(f"- {error}" for error in self.errors)
+            raise HookConfigError(f"Invalid hook rows:\n{details}")
+        return self.config
 
 
 def _hooks_from_payload(
     payload: dict[str, object], *, source: str
-) -> tuple[tuple[Hook, ...], tuple[str, ...]]:
+) -> tuple[tuple[Hook, ...], tuple[str, ...], tuple[str, ...]]:
     hooks: list[Hook] = []
     errors: list[str] = []
+    warnings: list[str] = []
 
     raw_hooks = payload.get("hooks")
     if raw_hooks is None:
-        return tuple(hooks), ()
+        return tuple(hooks), (), ()
 
     try:
         rows = hook_row_values(raw_hooks, source=f"{source}.hooks")
     except ValueError as exc:
-        return (), (str(exc),)
+        return (), (str(exc),), ()
 
     for index, raw_row in enumerate(rows, start=1):
         row_source = f"{source}.hooks[{index}]"
         try:
             spec = normalize_hook_row(raw_row, source=row_source)
-            hooks.extend(
-                hooks_from_spec(
-                    spec,
-                    source=source,
-                    row_source=row_source,
-                )
+            loaded = hooks_from_spec(
+                spec,
+                source=source,
+                row_source=row_source,
             )
+            hooks.extend(loaded.hooks)
+            if loaded.warning is not None:
+                warnings.append(loaded.warning)
         except ValueError as exc:
             errors.append(_named_row_error(raw_row, exc))
-    return tuple(hooks), tuple(errors)
+    return tuple(hooks), tuple(errors), tuple(warnings)
 
 
 def _named_row_error(raw_row: object, exc: ValueError) -> str:
     """Lead with the row's own `name`, when it has one, so users find it."""
 
+    message = str(exc)
+    if message.startswith("hook "):
+        return message
     if isinstance(raw_row, Mapping):
         name = cast("Mapping[str, object]", raw_row).get("name")
         if isinstance(name, str) and name.strip():
-            return f"hook {name.strip()!r}: {exc}"
-    return str(exc)
+            return f"hook {name.strip()!r}: {message}"
+    return message
 
 
 def _apply_name_overrides(hooks: tuple[Hook, ...]) -> tuple[Hook, ...]:
@@ -108,18 +124,24 @@ def load_hooks_config_report(
 
     hooks: list[Hook] = list(_DEFAULT_HOOKS)
     errors: list[str] = []
+    warnings: list[str] = []
     for layer in iter_config_layers(
         project_root,
         authority=authority,
         user_config=user_config,
     ):
-        layer_hooks, layer_errors = _hooks_from_payload(layer.payload, source=layer.name)
+        layer_hooks, layer_errors, layer_warnings = _hooks_from_payload(
+            layer.payload,
+            source=layer.name,
+        )
         hooks.extend(layer_hooks)
         errors.extend(layer_errors)
+        warnings.extend(layer_warnings)
 
     return HookConfigLoad(
         config=HooksConfig(hooks=_apply_name_overrides(tuple(hooks))),
         errors=tuple(errors),
+        warnings=tuple(warnings),
     )
 
 
@@ -136,9 +158,4 @@ def load_hooks_config(
         user_config=user_config,
         authority=authority,
     )
-    if len(report.errors) == 1:
-        raise HookConfigError(report.errors[0])
-    if report.errors:
-        details = "\n".join(f"- {error}" for error in report.errors)
-        raise HookConfigError(f"Invalid hook rows:\n{details}")
-    return report.config
+    return report.require_valid()

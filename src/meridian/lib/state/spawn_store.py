@@ -44,7 +44,6 @@ from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
 )
 from meridian.lib.state.spawn.model import RunBoundaryOutcome as RunBoundaryOutcome
-from meridian.lib.state.spawn.model import SpawnKind as SpawnKind
 from meridian.lib.state.spawn.model import (
     SpawnOrigin as SpawnOrigin,
 )
@@ -81,6 +80,7 @@ from meridian.lib.state.spawn_aggregate import (
     ensure_spawn_staging_dir,
     sync_retirement_parents,
 )
+from meridian.plugin_api.types import SpawnKind
 
 logger = structlog.get_logger(__name__)
 

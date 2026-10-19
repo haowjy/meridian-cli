@@ -19,6 +19,7 @@ from meridian.lib.state.history_changes import (
     HistorySource,
 )
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
+from meridian.lib.state.session_fold import SUPPORTED_SESSION_EVENT_VERSIONS
 
 # 0.6.7 layout: one unversioned file, queue, latch and lock set.
 _LEGACY_GENERATION = "19c39f11-bd07-47be-b2fb-4d18f3e7e945"
@@ -116,7 +117,8 @@ def _finished_spawn(root: Path) -> str:
 
 def test_every_projection_path_is_named_by_the_schema(tmp_path: Path, monkeypatch) -> None:
     index = HistoryIndex(tmp_path)
-    assert index.path.name == f"history-v{SCHEMA_VERSION}.sqlite3"
+    session_version = max(SUPPORTED_SESSION_EVENT_VERSIONS)
+    assert index.path.name == f"history-v{SCHEMA_VERSION}-sessions-v{session_version}.sqlite3"
 
     monkeypatch.setattr(history_changes, "SCHEMA_VERSION", SCHEMA_VERSION + 1)
     changes = HistoryChanges(tmp_path)
@@ -129,7 +131,15 @@ def test_every_projection_path_is_named_by_the_schema(tmp_path: Path, monkeypatc
         changes.directory,
         changes.marker_lock,
     }
-    assert all(f"-v{SCHEMA_VERSION + 1}" in path.name for path in owned)
+    assert all(
+        f"-v{SCHEMA_VERSION + 1}-sessions-v{session_version}" in path.name for path in owned
+    )
+    monkeypatch.setattr(
+        history_changes,
+        "SUPPORTED_SESSION_EVENT_VERSIONS",
+        frozenset({session_version, session_version + 1}),
+    )
+    assert f"-sessions-v{session_version + 1}" in index.path.name
     # Authority is shared by every build; its gate is not versioned.
     assert changes.mutation_lock.name == "history-mutation.lock"
 
@@ -153,7 +163,7 @@ def test_unreleased_projection_rebuilds_in_schema_10_namespace(
 
     index = HistoryIndex(tmp_path)
     assert [row.id for row in index.spawns()] == [key]
-    assert index.path.name == "history-v10.sqlite3"
+    assert index.path.name == "history-v10-sessions-v1.sqlite3"
     assert old_path.exists()
 
 
@@ -184,7 +194,9 @@ def test_initialization_latch_is_scoped_to_this_schema_file(tmp_path: Path) -> N
     index.path.unlink()
     with pytest.raises(HistoryIndexIncomplete, match="initialization failed"):
         index.spawns()
-    assert index.failure_path.name == f"history-index-init-failure-v{SCHEMA_VERSION}.json"
+    assert index.failure_path.name == (
+        f"history-index-init-failure-v{SCHEMA_VERSION}-sessions-v1.json"
+    )
     assert index.failure_path.exists()
     _assert_legacy_untouched(tmp_path, before)
 

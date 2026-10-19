@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from meridian.lib.core.clock import Clock
     from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.launch.types import PrimarySessionMetadata
-    from meridian.lib.state.spawn.model import LaunchMode, SpawnKind
+    from meridian.lib.state.spawn.model import LaunchMode
+    from meridian.plugin_api.types import SpawnKind
 
 
 @dataclass(frozen=True)

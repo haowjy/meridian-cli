@@ -19,6 +19,7 @@ from meridian.cli.output import (
     flush_sink,
 )
 from meridian.cli.output import emit as emit_output
+from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
 
@@ -68,11 +69,12 @@ def get_global_options() -> GlobalOptions:
 def invocation_scope(options: GlobalOptions) -> Generator[None]:
     """Install *options* for one CLI invocation and restore the prior context."""
 
-    token = _GLOBAL_OPTIONS.set(options)
-    try:
-        yield
-    finally:
-        _GLOBAL_OPTIONS.reset(token)
+    with warning_cache_scope():
+        token = _GLOBAL_OPTIONS.set(options)
+        try:
+            yield
+        finally:
+            _GLOBAL_OPTIONS.reset(token)
 
 
 def _resolve_sink(options: GlobalOptions) -> tuple[OutputSink, bool]:

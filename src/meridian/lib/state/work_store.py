@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.lib.state.work_state import (
+    UnsupportedWorkStateVersion,
     WorkItem,
     active_work_dir,
     archived_work_dir,
@@ -52,7 +53,10 @@ def work_item_needs_repair(runtime_root: Path, work_id: str) -> bool:
     work_dir = active_dir or archived_dir
     if work_dir is None:
         return False
-    item = load_work_item_from_dir(work_dir, archived=active_dir is None)
+    try:
+        item = load_work_item_from_dir(work_dir, archived=active_dir is None)
+    except UnsupportedWorkStateVersion:
+        return False
     expected = serialize_work_item_state(stored_state_from_item(item))
     try:
         return status_path(work_dir).read_text(encoding="utf-8") != expected
@@ -69,9 +73,9 @@ def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     active_dir, archived_dir = locate_work_dirs(paths, work_id)
     warn_both_locations(work_id, active_dir, archived_dir)
     if active_dir is not None:
-        return load_work_item_from_dir(active_dir, archived=False)
+        return load_work_item_from_dir(active_dir, archived=False, mark_unsupported=True)
     if archived_dir is not None:
-        return load_work_item_from_dir(archived_dir, archived=True)
+        return load_work_item_from_dir(archived_dir, archived=True, mark_unsupported=True)
     return None
 
 
@@ -87,7 +91,7 @@ def get_active_work_item(
     active_dir = active_work_dir(paths, work_id)
     if not active_dir.is_dir():
         return None
-    return load_work_item_from_dir(active_dir, archived=False)
+    return load_work_item_from_dir(active_dir, archived=False, mark_unsupported=True)
 
 
 def work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
@@ -127,7 +131,7 @@ def list_work_items(runtime_root: Path) -> tuple[list[WorkItem], list[str]]:
                 "Remove one to resolve: "
                 f"active={child}, archive={archived_work_dir(paths, child.name)}"
             )
-        items.append(load_work_item_from_dir(child, archived=False))
+        items.append(load_work_item_from_dir(child, archived=False, mark_unsupported=True))
     return sorted(items, key=lambda item: (item.created_at, item.name)), warnings
 
 
@@ -164,7 +168,7 @@ def list_archived_work_items(
                 f"active={active_work_dir(paths, child.name)}, archive={child}"
             )
             continue
-        items.append(load_work_item_from_dir(child, archived=True))
+        items.append(load_work_item_from_dir(child, archived=True, mark_unsupported=True))
 
     items.sort(
         key=lambda item: (

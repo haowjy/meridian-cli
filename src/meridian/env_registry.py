@@ -214,6 +214,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _hook_payload("MERIDIAN_SPAWN_COST_USD", "Hook spawn cost.", "spawn_cost_usd"),
     _hook_payload("MERIDIAN_SPAWN_DURATION_SECS", "Hook spawn duration.", "spawn_duration_secs"),
     _hook_payload("MERIDIAN_SPAWN_ERROR", "Hook spawn error.", "spawn_error"),
+    _hook_payload("MERIDIAN_SPAWN_KIND", "Hook spawn kind.", "spawn_kind"),
     _hook_payload("MERIDIAN_SPAWN_MODEL", "Hook spawn model.", "spawn_model"),
     _hook_payload("MERIDIAN_SPAWN_STATUS", "Hook spawn status.", "spawn_status"),
     # Public inter-tool signal consumed by mars-agents.

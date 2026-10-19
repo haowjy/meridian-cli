@@ -1,5 +1,6 @@
 """Pi runtime metadata respects the published spawn's lifetime."""
 
+import json
 from pathlib import Path
 
 from meridian.lib.core.types import SpawnId
@@ -23,4 +24,5 @@ def test_pi_metadata_never_recreates_missing_spawn(tmp_path: Path) -> None:
         status="running",
     )
     _write_pi_runtime_metadata_sidecar(runtime_root=tmp_path, spawn_id=spawn_id, payload=payload)
-    assert (tmp_path / "spawns" / str(spawn_id) / "pi_runtime_meta.json").is_file()
+    path = tmp_path / "spawns" / str(spawn_id) / "pi_runtime_meta.json"
+    assert json.loads(path.read_text(encoding="utf-8")) == payload

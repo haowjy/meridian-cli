@@ -7,7 +7,11 @@ from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from meridian.lib.telemetry.reader import discover_segments, read_events
+from meridian.lib.telemetry.reader import (
+    UnsupportedTelemetryRecords,
+    discover_segments,
+    read_events,
+)
 
 _DURATION_RE = re.compile(r"^(\d+)([smhd])$")
 _UNIT_MAP = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
@@ -45,12 +49,22 @@ def query_events(
     all_segments.sort(key=_segment_mtime_or_zero)
 
     count = 0
-    for segment in all_segments:
-        for event in read_events(segment, since_ts=since_ts, domain=domain, ids_filter=ids_filter):
-            yield event
-            count += 1
-            if limit is not None and count >= limit:
-                return
+    unsupported = UnsupportedTelemetryRecords()
+    try:
+        for segment in all_segments:
+            for event in read_events(
+                segment,
+                since_ts=since_ts,
+                domain=domain,
+                ids_filter=ids_filter,
+                unsupported=unsupported,
+            ):
+                yield event
+                count += 1
+                if limit is not None and count >= limit:
+                    return
+    finally:
+        unsupported.warn()
 
 
 def _segment_mtime_or_zero(path: Path) -> float:

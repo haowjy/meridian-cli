@@ -90,7 +90,7 @@ def test_retention_preserves_spawn_owned_segments_for_live_spawns(tmp_path) -> N
     segment = write_segment(
         telemetry_dir,
         "p1.999-0001.jsonl",
-        event="spawn.running",
+        event="spawn.started",
         domain="spawn",
     )
     old_time = time.time() - 10 * 24 * 60 * 60
@@ -111,13 +111,13 @@ def test_retention_preserves_valid_active_segment_beside_quarantined_row(tmp_pat
     valid_segment = write_segment(
         telemetry_dir,
         "p1.999-0001.jsonl",
-        event="spawn.running",
+        event="spawn.started",
         domain="spawn",
     )
     quarantined_segment = write_segment(
         telemetry_dir,
         "p2.999-0001.jsonl",
-        event="spawn.running",
+        event="spawn.started",
         domain="spawn",
     )
     old_time = time.time() - 10 * 24 * 60 * 60
@@ -145,7 +145,7 @@ def test_retention_deletes_spawn_owned_segments_for_stale_spawns(tmp_path) -> No
     segment = write_segment(
         telemetry_dir,
         "p1.999-0001.jsonl",
-        event="spawn.running",
+        event="spawn.started",
         domain="spawn",
     )
     old_time = time.time() - 10 * 24 * 60 * 60
@@ -168,7 +168,7 @@ def test_retention_size_pressure_prefers_legacy_orphan_over_stale_recognized_seg
     active_spawn = write_segment(
         telemetry_dir,
         "p1.999-0001.jsonl",
-        event="spawn.running",
+        event="spawn.started",
         domain="spawn",
     )
     live_cli = write_segment(telemetry_dir, f"cli.{os.getpid()}-0001.jsonl")

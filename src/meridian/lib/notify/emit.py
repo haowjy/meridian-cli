@@ -149,21 +149,31 @@ def emit(
     from meridian.lib.hooks.types import HookContext
 
     runtime_root = _runtime_root(project_root)
+    spawn_id = env.get("MERIDIAN_SPAWN_ID") or None
+    spawn_kind = None
+    if runtime_root is not None and spawn_id is not None:
+        from meridian.lib.state import spawn_store
+
+        spawn = spawn_store.get_spawn(runtime_root, spawn_id)
+        spawn_kind = spawn.kind if spawn is not None else None
     context = HookContext.from_roots(
         project_root=project_root,
         runtime_root=runtime_root,
         event_name=event,
         event_id=uuid4(),
         timestamp=datetime.now(UTC).isoformat(),
-        spawn_id=env.get("MERIDIAN_SPAWN_ID") or None,
+        spawn_id=spawn_id,
         spawn_agent=notification.label.get("agent"),
+        spawn_kind=spawn_kind,
         work_id=notification.label.get("work_id"),
         notification=notification,
     )
     loaded_hooks = load_hooks_config_report(project_root)
-    fallback_warning: str | None = None
+    fallback_warnings = list(loaded_hooks.warnings)
     if loaded_hooks.errors:
-        fallback_warning = "dropped invalid hook rows: " + "; ".join(loaded_hooks.errors)
+        fallback_warnings.append(
+            "dropped invalid hook rows: " + "; ".join(loaded_hooks.errors)
+        )
     dispatcher = HookDispatcher(
         project_root,
         runtime_root,
@@ -175,8 +185,8 @@ def emit(
     )
 
     report = report_from_hooks(event, dispatcher.fire(context))
-    if fallback_warning is not None:
-        report = replace(report, warnings=(*report.warnings, fallback_warning))
+    if fallback_warnings:
+        report = replace(report, warnings=(*report.warnings, *fallback_warnings))
     return report
 
 

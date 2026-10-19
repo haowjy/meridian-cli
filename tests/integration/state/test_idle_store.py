@@ -1,4 +1,8 @@
+import json
+import logging
 from pathlib import Path
+
+import pytest
 
 from meridian.lib.state.idle_store import IdleSchedule, IdleState, IdleStore
 
@@ -45,6 +49,29 @@ def test_idle_store_treats_truncated_file_as_no_stretch(tmp_path: Path) -> None:
 
     assert store.read("example", "native-1") is None
     assert store.list_states() == ()
+
+
+def test_idle_store_warns_when_another_build_wrote_the_version(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = IdleStore(tmp_path / "idle")
+    path = store.path_for("example", "native-1")
+    path.parent.mkdir(parents=True)
+    payload = _state().model_dump(mode="json")
+    payload["v"] = 3
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.state.idle_store"):
+        observed = store.mutate(
+            "example",
+            "native-1",
+            lambda current: (None, current),
+        )
+
+    assert observed is None
+    assert str(path) in caplog.text
+    assert "different Meridian build" in caplog.text
 
 
 def test_idle_store_lazy_gc_removes_state_older_than_seven_days(tmp_path: Path) -> None:

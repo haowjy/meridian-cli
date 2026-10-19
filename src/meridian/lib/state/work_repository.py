@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
 
+from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import utc_now_iso
@@ -98,8 +99,17 @@ def write_state_locked(runtime_root: Path, work_id: str, mutation: _NamespaceMut
         if runtime_root.name == ".meridian"
         else runtime_root
     )
-    with lock_file(lock_root / "work-store.flock", reentrant=False):
+    with (
+        warning_cache_scope(),
+        lock_file(lock_root / "work-store.flock", reentrant=False),
+    ):
         active_dir, archived_dir = locate_work_dirs(paths, work_id)
+        # Validate every copy before the mutation can rename, delete, or rewrite
+        # either directory. Duplicate-location cleanup must not bypass this gate.
+        if active_dir is not None:
+            load_work_item_from_dir(active_dir, archived=False)
+        if archived_dir is not None:
+            load_work_item_from_dir(archived_dir, archived=True)
         result = mutation(paths, active_dir, archived_dir)
         if result.state_write is not None:
             work_dir, item = result.state_write

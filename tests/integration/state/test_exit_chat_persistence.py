@@ -1,5 +1,6 @@
 """Observed identities inherit context; verified exits additionally require a transcript."""
 
+import json
 from functools import partial
 from pathlib import Path
 
@@ -10,6 +11,65 @@ from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord
+
+
+def test_observed_chat_refuses_unsupported_native_scope_without_duplicate(tmp_path: Path):
+    runtime = tmp_path / ".meridian"
+    native_store = str(tmp_path / "native")
+    source = session_store.start_session(
+        runtime,
+        harness="claude",
+        harness_session_id="entry",
+        model="test",
+        native_store=native_store,
+    ).chat_id
+    session_store.stop_session(runtime, source)
+    spawn_store.start_spawn(
+        runtime,
+        spawn_id="p1",
+        chat_id=source,
+        harness="claude",
+        kind="primary",
+        harness_session_id="entry",
+        model="test",
+        agent="",
+        prompt="",
+    )
+    sessions_path = runtime / "sessions.jsonl"
+    with sessions_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "v": 2,
+                    "event": "start",
+                    "chat_id": "c-future",
+                    "kind": "primary",
+                    "harness": "claude",
+                    "harness_session_id": "future-native",
+                    "native_store": native_store,
+                    "model": "test",
+                    "session_instance_id": "future-generation",
+                    "started_at": "2026-10-19T00:00:00Z",
+                }
+            )
+            + "\n"
+        )
+    original = sessions_path.read_bytes()
+
+    with pytest.raises(ValueError, match="unsupported session"):
+        session_store.get_or_create_observed_chat(
+            runtime,
+            source,
+            "claude",
+            native_store,
+            "future-native",
+            spawn_id="p1",
+        )
+
+    assert sessions_path.read_bytes() == original
+    row = spawn_store.get_spawn(runtime, "p1")
+    assert row is not None
+    assert row.current_chat_id is None
 
 
 def test_verified_exit_publishes_only_with_native_proof_on_creation_and_reuse(tmp_path: Path):

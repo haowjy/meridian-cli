@@ -1,5 +1,5 @@
 {
   "name": "meridian-idle",
   "version": "0.1.0",
-  "description": "Senses Claude Code idle time, the work a turn left running, and user return for Meridian: arms the push and cache-expiry warning timers through `meridian idle`."
+  "description": "Senses Claude Code idle time, running work, user return, and still-waiting permission prompts for Meridian through `meridian idle`."
 }

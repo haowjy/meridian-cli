@@ -23,6 +23,7 @@ def _option(name: str, help_text: str) -> Parameter:
 
 HarnessOption = Annotated[str | None, _option("--harness", "Harness id.")]
 SessionOption = Annotated[str, _option("--session", "Native session id.")]
+MessageOption = Annotated[str, _option("--message", "Harness notification text.")]
 StretchOption = Annotated[int, _option("--stretch", "Stretch number.")]
 AnchorOption = Annotated[int, _option("--anchor", "Anchor version.")]
 TtlOption = Annotated[int | None, _option("--ttl", "Detected cache TTL in seconds.")]
@@ -192,6 +193,25 @@ def cmd_idle_return(
         interactive,
         lambda service, normalized: service.return_(harness=normalized, session=session),
         checks=((user_prompt, "--user-prompt is required"),),
+    )
+
+
+@idle_app.command(name="needs-permission")
+def cmd_idle_needs_permission(
+    *,
+    harness: HarnessOption = None,
+    message: MessageOption,
+    interactive: InteractiveOption = False,
+) -> None:
+    """Forward a harness signal that a permission prompt is still waiting."""
+
+    _json(
+        harness,
+        interactive,
+        lambda service, normalized: service.needs_permission(
+            harness=normalized,
+            message=message,
+        ),
     )
 
 

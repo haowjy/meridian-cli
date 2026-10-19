@@ -78,7 +78,12 @@ EVENT_REGISTRY: dict[str, EventDefinition] = {
         "ids": ("request_id", "work_id", "spawn_id"),
     },
     # Work domain.
-    "work.started": {"domain": "work", "concerns": ("operational", "usage"), "ids": ("work_id",)},
+    "work.created": {"domain": "work", "concerns": ("operational", "usage"), "ids": ("work_id",)},
+    "work.activated": {
+        "domain": "work",
+        "concerns": ("operational", "usage"),
+        "ids": ("work_id", "chat_id"),
+    },
     "work.updated": {"domain": "work", "concerns": ("operational",), "ids": ("work_id",)},
     "work.done": {"domain": "work", "concerns": ("operational", "usage"), "ids": ("work_id",)},
     "work.deleted": {"domain": "work", "concerns": ("operational",), "ids": ("work_id",)},

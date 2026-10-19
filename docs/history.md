@@ -11,11 +11,12 @@ transcript alongside lifecycle facts.
 
 ## Index initialization and repair
 
-Each index schema has its own file, `history-index/history-v<N>.sqlite3`, with its
-own pending markers, locks and failure record. The first indexed operation builds a
-missing index automatically from the authoritative files, with a 15-second metadata
-budget and no progress bar. It never upgrades or removes another schema's file, so
-an older background process that survives the reinstall can keep using its index.
+Each index schema and session event format pair has its own file,
+`history-index/history-v<N>-sessions-v<M>.sqlite3`, with its own pending markers,
+locks and failure record. The first indexed operation builds a missing index
+automatically from the authoritative files, with a 15-second metadata budget and
+no progress bar. It never upgrades or removes another format's file, so an older
+background process that survives the reinstall can keep using its index.
 Workspace/global search shares one initialization budget across its roots. These
 cooperative deadlines cannot interrupt a blocked filesystem call. Automatic
 initialization does not warm previews or move history into SQLite.

@@ -249,7 +249,11 @@ def launch_primary(
             ),
         )
 
-    outcome = run_harness_process(preview_context, harness_registry, prepared=prepared)
+    outcome = run_harness_process(
+        preview_context,
+        harness_registry,
+        prepared=prepared,
+    )
     continue_ref = outcome.resolved_harness_session_id.strip() or None
 
     return LaunchResult(

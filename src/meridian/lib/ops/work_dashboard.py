@@ -509,7 +509,7 @@ def work_dashboard_sync(
         items.append(
             WorkDashboardItem(
                 name=work_id,
-                status=item.status if item is not None else "missing",
+                status=item.display_status if item is not None else "missing",
                 goal=item.goal if item is not None else None,
                 task_dir=item.task_dir if item is not None else None,
                 spawns=tuple(
@@ -549,7 +549,7 @@ def work_list_sync(
         items=tuple(
             WorkListItem(
                 name=item.name,
-                status=item.status,
+                status=item.display_status,
                 goal=item.goal,
                 description=item.description,
                 created_at=item.created_at,
@@ -598,7 +598,7 @@ def work_show_sync(
 
     return WorkShowOutput(
         name=item.name,
-        status=item.status,
+        status=item.display_status,
         goal=item.goal,
         description=item.description,
         created_at=item.created_at,

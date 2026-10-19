@@ -4,14 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.models import MeridianConfig, NotifyConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.idle.service import IdleService
 from meridian.lib.notify.channels import REGISTRY
-from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.emit import emit
 from meridian.lib.notify.notice import SessionLabel, manual_notification
 from meridian.lib.state.idle_store import IdleStore
-from meridian.plugin_api.types import Notification
+from tests.support.notifications import RecordingChannel
 
 
 def test_a_notification_reaches_command_hooks_and_its_route(
@@ -72,7 +71,7 @@ def test_idle_records_the_push_as_its_routes_delivered_it(
     (tmp_path / "meridian.toml").write_text(
         "[[hooks]]\n"
         'name = "desk"\n'
-        'event = "session.responded"\n'
+        'event = "notify.your_turn"\n'
         f'command = "exit {exit_code}"\n',
         encoding="utf-8",
     )
@@ -100,24 +99,8 @@ def test_idle_without_injected_config_delivers_despite_an_invalid_hook_row(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    delivered: list[str] = []
-
-    class CaptureChannel:
-        name = "capture"
-        email = False
-
-        def send(
-            self,
-            notification: Notification,
-            cfg: NotifyConfig,
-            *,
-            event: str,
-        ) -> SendResult:
-            _ = cfg
-            delivered.append(f"{event}:{notification.title}")
-            return SendResult(channel=self.name, status="sent")
-
-    monkeypatch.setitem(REGISTRY, "capture", CaptureChannel())
+    capture = RecordingChannel()
+    monkeypatch.setitem(REGISTRY, "capture", capture)
     monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
     monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "capture")
     monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_BACKEND", "none")
@@ -126,7 +109,7 @@ def test_idle_without_injected_config_delivers_despite_an_invalid_hook_row(
         "[[hooks]]\n"
         'name = "broken"\n'
         'command = "true"\n'
-        'event = "spawn.finalized"\n'
+        'event = "spawn.finished"\n'
         'timeout_secs = "abc"\n',
         encoding="utf-8",
     )
@@ -144,8 +127,10 @@ def test_idle_without_injected_config_delivers_despite_an_invalid_hook_row(
     with caplog.at_level(logging.WARNING, logger="meridian.lib.idle.service"):
         idle.fire("push", harness="example", session="s1", stretch=1, anchor=1)
 
-    assert len(delivered) == 1
-    assert delivered[0].startswith("session.responded:[idle] ")
+    assert len(capture.deliveries) == 1
+    event, notification = capture.deliveries[0]
+    assert event == "notify.your_turn"
+    assert notification.title.startswith("[idle] ")
     warnings = [
         record.getMessage()
         for record in caplog.records
@@ -160,24 +145,8 @@ def test_idle_without_injected_config_delivers_despite_an_invalid_hook_row(
 def test_invalid_hook_row_keeps_a_valid_silencing_row_and_warns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    delivered: list[str] = []
-
-    class CaptureChannel:
-        name = "capture"
-        email = False
-
-        def send(
-            self,
-            notification: Notification,
-            cfg: NotifyConfig,
-            *,
-            event: str,
-        ) -> SendResult:
-            _ = cfg
-            delivered.append(f"{event}:{notification.title}")
-            return SendResult(channel=self.name, status="sent")
-
-    monkeypatch.setitem(REGISTRY, "capture", CaptureChannel())
+    capture = RecordingChannel()
+    monkeypatch.setitem(REGISTRY, "capture", capture)
     monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
     monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "capture")
     monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_BACKEND", "none")
@@ -201,7 +170,7 @@ def test_invalid_hook_row_keeps_a_valid_silencing_row_and_warns(
         env={},
     )
 
-    assert delivered == []
+    assert capture.deliveries == []
     assert report.results == ()
     assert any("project.hooks[2]" in warning for warning in report.warnings)
     assert any("not.an.event" in warning for warning in report.warnings)

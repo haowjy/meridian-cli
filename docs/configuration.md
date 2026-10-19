@@ -184,12 +184,14 @@ again can reintroduce those values.
 
 ## Notifications and idle sessions
 
-Every notification is a hook event: `session.responded` (the idle "your turn"
-push), `session.cache_expiring` (the idle cache warning), and `notify.manual`
-(`meridian notify`). The built-in `notify` hook delivers them through the
-transports configured in `[notify]`; see
+Every notification is a hook event: `notify.your_turn` (the idle "your turn"
+push), `notify.cache_expiring` (the idle cache warning),
+`notify.needs_permission` (a still-waiting Claude permission prompt), and
+`notify.manual` (`meridian notify`). The built-in `notify` hook delivers them
+through the transports configured in `[notify]`; see
 [Routing and extending notifications](#routing-and-extending-notifications) to
 change where each one goes or add your own channel.
+The `notify.*` prefix means the event carries a notification payload.
 
 ### `[notify]`
 
@@ -197,7 +199,7 @@ change where each one goes or add your own channel.
 |---|---|---|---|
 | `push_backend` | `"ntfy"` | `MERIDIAN_NOTIFY_PUSH_BACKEND` | `ntfy` or `none` |
 | `email_backend` | `"gmail"` | `MERIDIAN_NOTIFY_EMAIL_BACKEND` | `gmail`, `smtp`, `ntfy`, or `none` |
-| `include_messages` | `true` | `MERIDIAN_NOTIFY_INCLUDE_MESSAGES` | Include the last user and assistant excerpts in idle push and warning notifications |
+| `include_messages` | `true` | `MERIDIAN_NOTIFY_INCLUDE_MESSAGES` | Include idle excerpts and permission-prompt text in notifications |
 | `ntfy_server` | `"https://ntfy.sh"` | `MERIDIAN_NOTIFY_NTFY_SERVER` | Base URL for the ntfy server |
 | `ntfy_topic` | unset | `MERIDIAN_NOTIFY_NTFY_TOPIC` | ntfy topic; an unset topic disables ntfy delivery with a warning |
 | `email_to` | unset | `MERIDIAN_NOTIFY_EMAIL_TO` | Email recipient |
@@ -227,6 +229,9 @@ countdown. Under a minute reads `<1 min until cold`; an elapsed deadline reads
 
 Bodies retain the warning details and message excerpts labelled
 `You` and `Assistant`, without repeating the tmux session.
+Permission notices use `[permission]` followed by the same session headline;
+the body contains the harness notification text. With `include_messages = false`,
+the body is the generic `Permission prompt waiting` instead.
 
 Excerpts are plain text, whitespace-collapsed, and shortened before storage.
 Because they leave the machine through ntfy or email, set
@@ -262,10 +267,10 @@ event (source `default` in `meridian hooks list`), below every config layer. As
 with any hook, a config row with the same name and event replaces it. An
 unnamed `builtin = "notify"` row is named `notify`, so such a row for an event,
 even with `enabled = false`, replaces the default for that event only; one
-without `event` covers all three. A row named anything other than `notify` is
-an additional route alongside the default. If both routes select the same push
-backend, the recipient gets two pushes. To replace rather than add, omit
-`name` or set `name = "notify"`, as in the examples below.
+without `event` covers every notification event. A row named anything other
+than `notify` is an additional route alongside the default. If both routes
+select the same push backend, the recipient gets two pushes. To replace rather
+than add, omit `name` or set `name = "notify"`, as in the examples below.
 
 The `notify` builtin takes two options:
 
@@ -274,28 +279,34 @@ The `notify` builtin takes two options:
 | `channels` | `["push", "email"]` | `"push"` is `push_backend` and `"email"` is `email_backend`; a backend name (`ntfy`, `smtp`, `gmail`, `none`) sends there directly. |
 | `priority` | the notification's | 1–5; overrides the notification's priority |
 
-Unknown options and channel names are config errors. `meridian notify --no-email` and the idle
-push never want email, and the cache warning follows `[idle] warn_email`: such
-a notification skips the email backends (`smtp`, `gmail`) however a route
-names them.
+Unknown options and channel names are config errors. `meridian notify
+--no-email`, the idle push, and the permission notice never want email; the
+cache warning follows `[idle] warn_email`. Such a notification skips the email
+backends (`smtp`, `gmail`) however a route names them.
 
 ```toml
 # Cache warnings go only to ntfy, at top priority
 [[hooks]]
 builtin = "notify"
-event   = "session.cache_expiring"
+event   = "notify.cache_expiring"
 options = { channels = ["ntfy"], priority = 5 }
 
 # No "your turn" push
 [[hooks]]
 builtin = "notify"
-event   = "session.responded"
+event   = "notify.your_turn"
+enabled = false
+
+# Keep idle notices, but silence permission prompts
+[[hooks]]
+builtin = "notify"
+event   = "notify.needs_permission"
 enabled = false
 ```
 
 **Extension channels.** Any `[[hooks]] command = "..."` row on a notification
 event receives the notification, so a Slack or desktop channel is one row and
-one script. Stdin carries the hook payload (`schema_version` 2) with a
+one script. Stdin carries the hook payload (`schema_version` 3) with a
 `notification` object: `title`, `body`, `priority`, `email`, and `label`
 (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), and
 `attachments` (absolute paths from `meridian notify --attach`). The
@@ -326,6 +337,13 @@ Idle handling sends two notices, independently: the waiting push ("your turn")
 and a cache-expiry warning. Meridian does not compact idle sessions; harnesses
 that compact on their own (Claude Code 2.1.299+, Codex, OpenCode, Pi) keep doing
 so, and Meridian leaves those settings alone.
+
+Claude also reports a permission prompt that remains unanswered long enough for
+Claude's own notification to fire. Meridian forwards that signal once as
+`notify.needs_permission`, without reading or writing the idle stretch, holding
+the waiting push, or tracking the answer. Only Claude produces this event today.
+It follows the same `[idle] enabled` switch as the waiting push; a hook row can
+silence only the permission notice.
 
 | Key | Default | Environment variable | Meaning |
 |---|---:|---|---|

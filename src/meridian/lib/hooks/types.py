@@ -11,41 +11,43 @@ from typing import Literal
 from meridian.plugin_api.types import (
     HOOK_CONTEXT_SCHEMA_VERSION,
     NOTIFICATION_EVENTS,
-    FailurePolicy,
     HookContext,
     HookEventName,
     HookOutcome,
     HookResult,
     Notification,
+    SpawnKind,
     SpawnStatus,
 )
 
-HookEventClass = Literal["observe", "post", "gate"]
+HookWhenField = Literal["status", "agent", "kind"]
 
 
-EVENT_CLASS: dict[HookEventName, HookEventClass] = {
-    "spawn.created": "observe",
-    "spawn.running": "observe",
-    "spawn.start": "observe",
-    "spawn.finalized": "post",
-    "work.start": "observe",
-    "work.started": "observe",
-    "work.done": "post",
-    "session.responded": "observe",
-    "session.cache_expiring": "observe",
-    "notify.manual": "observe",
-}
+@dataclass(frozen=True)
+class EventSpec:
+    """Runtime facts supplied by one hook event."""
 
-DEFAULT_TIMEOUTS: dict[HookEventClass, int] = {
-    "observe": 30,
-    "post": 60,
-    "gate": 1,
-}
+    default_timeout_secs: int
+    when_fields: frozenset[HookWhenField]
 
-DEFAULT_FAILURE_POLICY: dict[HookEventClass, FailurePolicy] = {
-    "observe": "warn",
-    "post": "warn",
-    "gate": "fail",
+
+_SPAWN_FIELDS: frozenset[HookWhenField] = frozenset(("agent", "kind"))
+_FINISHED_SPAWN_FIELDS: frozenset[HookWhenField] = frozenset(
+    ("status", "agent", "kind")
+)
+_WORK_FIELDS: frozenset[HookWhenField] = frozenset()
+
+EVENTS: dict[HookEventName, EventSpec] = {
+    "spawn.created": EventSpec(30, _SPAWN_FIELDS),
+    "spawn.started": EventSpec(30, _SPAWN_FIELDS),
+    "spawn.finished": EventSpec(60, _FINISHED_SPAWN_FIELDS),
+    "work.created": EventSpec(30, _WORK_FIELDS),
+    "work.activated": EventSpec(30, _WORK_FIELDS),
+    "work.done": EventSpec(60, _WORK_FIELDS),
+    "notify.your_turn": EventSpec(30, _SPAWN_FIELDS),
+    "notify.cache_expiring": EventSpec(30, _SPAWN_FIELDS),
+    "notify.needs_permission": EventSpec(30, _SPAWN_FIELDS),
+    "notify.manual": EventSpec(30, _SPAWN_FIELDS),
 }
 
 def _default_options() -> dict[str, object]:
@@ -58,6 +60,7 @@ class HookWhen:
 
     status: tuple[SpawnStatus, ...] | None = None
     agent: str | None = None
+    kind: tuple[SpawnKind, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -73,30 +76,32 @@ class Hook:
     interval: str | None = None
     enabled: bool = True
     priority: int = 0
-    failure_policy: FailurePolicy | None = None
     require_serial: bool = False
     when: HookWhen | None = None
     exclude: tuple[str, ...] = ()
     options: Mapping[str, object] = field(default_factory=_default_options)
+    # During the deprecation window, dispatch stays keyed by `event` while this
+    # name is restored only in the payload seen by the configured row.
+    configured_event: str | None = None
+    deprecated: bool = False
     # Legacy field kept for backward compatibility.
     # Builtins should prefer config.options.
     remote: str | None = None
 
 
 __all__ = [
-    "DEFAULT_FAILURE_POLICY",
-    "DEFAULT_TIMEOUTS",
-    "EVENT_CLASS",
+    "EVENTS",
     "HOOK_CONTEXT_SCHEMA_VERSION",
     "NOTIFICATION_EVENTS",
-    "FailurePolicy",
+    "EventSpec",
     "Hook",
     "HookContext",
-    "HookEventClass",
     "HookEventName",
     "HookOutcome",
     "HookResult",
     "HookWhen",
+    "HookWhenField",
     "Notification",
+    "SpawnKind",
     "SpawnStatus",
 ]

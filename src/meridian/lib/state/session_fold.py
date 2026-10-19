@@ -1,15 +1,19 @@
-"""Session event models and silent, deterministic authority projections.
+"""Session event models and deterministic authority projections.
 
 Disk reads and lease ownership belong to session_store; replay accepts events.
 """
 
+import logging
 import uuid
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.logging import warn_once
 from meridian.lib.core.native_identity import BindSource, NativeKey, NativeKeyFields
 from meridian.lib.core.types import (
     HarnessSessionId,
@@ -20,6 +24,61 @@ from meridian.lib.core.types import (
 from meridian.lib.state.native_binding import Conflict, bind
 
 HISTORICAL_GENERATION_PREFIX = "historical-"
+SUPPORTED_SESSION_EVENT_VERSIONS = frozenset({1})
+logger = logging.getLogger(__name__)
+
+
+def _warn_unsupported_session_versions(path: Path, versions: tuple[str, ...]) -> None:
+    version_noun = "version" if len(versions) == 1 else "versions"
+    warn_once(
+        ("session-format", path, versions),
+        lambda: logger.warning(
+            "Skipping records in %s with unsupported sessions.jsonl format %s %s; "
+            "upgrade Meridian to read these records.",
+            path,
+            version_noun,
+            ", ".join(versions),
+        ),
+    )
+
+
+class UnsupportedSessionFormat(ValueError):
+    """A read-then-decide path found sessions.jsonl rows a newer build wrote."""
+
+
+@dataclass
+class UnsupportedSessionRecords:
+    """Collect unsupported versions found during one session-log read."""
+
+    versions: set[str] = field(default_factory=set[str])
+
+    def record(self, version: object) -> None:
+        self.versions.add(repr(version))
+
+    def warn(self, path: Path) -> None:
+        if not self.versions:
+            return
+        _warn_unsupported_session_versions(path, tuple(sorted(self.versions)))
+
+    def require_supported(self, path: Path) -> None:
+        if not self.versions:
+            return
+        versions = ", ".join(sorted(self.versions))
+        raise UnsupportedSessionFormat(
+            f"{path}: unsupported sessions.jsonl format version(s) {versions}; "
+            "upgrade Meridian before updating these session records."
+        )
+
+
+def supported_session_event_version(
+    payload: Mapping[str, object],
+    unsupported: UnsupportedSessionRecords,
+) -> bool:
+    version = payload.get("v", 1)
+    if type(version) is int and version in SUPPORTED_SESSION_EVENT_VERSIONS:
+        return True
+    unsupported.record(version)
+    return False
 
 
 def normalized_generation(generation: str) -> str:
@@ -263,7 +322,12 @@ type SessionEvent = (
 )
 
 
-def parse_event(payload: Mapping[str, object]) -> SessionEvent | None:
+def parse_event(
+    payload: Mapping[str, object],
+    unsupported: UnsupportedSessionRecords,
+) -> SessionEvent | None:
+    if not supported_session_event_version(payload, unsupported):
+        return None
     event_type = payload.get("event")
     try:
         if event_type == "historical_import":

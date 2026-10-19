@@ -38,7 +38,7 @@ from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 
 hook = BUILTIN_HOOKS.get("git-autosync")
 assert hook is not None
-assert hook.default_events == ("spawn.start", "spawn.finalized", "work.started", "work.done")
+assert hook.default_events == ("spawn.finished", "work.activated", "work.done")
 assert hook.requirements == ("git",)
 print("PASS: git-autosync metadata is registered")
 PY
@@ -65,7 +65,7 @@ hook = Hook(
     event="work.done",
     source="project",
     builtin="git-autosync",
-    repo=os.environ["E2E_REMOTE"],
+    remote=os.environ["E2E_REMOTE"],
 )
 context = HookContext(
     event_name="work.done",
@@ -88,7 +88,8 @@ echo "PASS: autosync commit created" || echo "FAIL: autosync commit not created"
 
 ### AUTOSYNC-3. Exclude patterns keep files out of autosync commit [IMPORTANT]
 
-Note: `exclude` only filters newly staged untracked files. It does not block already tracked file modifications from syncing.
+`exclude` leaves matching tracked and untracked changes out of the autosync
+commit and stashes them around a merge.
 
 ```bash
 uv run python - <<'PY'
@@ -111,7 +112,7 @@ hook = Hook(
     event="work.done",
     source="project",
     builtin="git-autosync",
-    repo=os.environ["E2E_REMOTE"],
+    remote=os.environ["E2E_REMOTE"],
     exclude=("*.log", "tmp/"),
 )
 context = HookContext(
@@ -169,7 +170,7 @@ hook = Hook(
     event="work.done",
     source="project",
     builtin="git-autosync",
-    repo=os.environ["E2E_REMOTE"],
+    remote=os.environ["E2E_REMOTE"],
 )
 context = HookContext(
     event_name="work.done",
@@ -217,7 +218,7 @@ hook = Hook(
     event="work.done",
     source="project",
     builtin="git-autosync",
-    repo=os.environ["E2E_REMOTE"],
+    remote=os.environ["E2E_REMOTE"],
 )
 context = HookContext(
     event_name="work.done",
@@ -280,7 +281,7 @@ hook = Hook(
     event="work.done",
     source="project",
     builtin="git-autosync",
-    repo=os.environ["E2E_REMOTE"],
+    remote=os.environ["E2E_REMOTE"],
 )
 context = HookContext(
     event_name="work.done",
