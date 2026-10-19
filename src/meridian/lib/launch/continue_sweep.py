@@ -20,6 +20,10 @@ from meridian.lib.state.spawn.repository import SpawnStateQuarantined, read_stat
 from meridian.lib.state.spawn_status import is_live, legacy_runner_alive
 
 
+def _legacy_live_error(spawn_id: str) -> ValueError:
+    return ValueError(f"{spawn_id} is running under an older meridian; wait, or --fork {spawn_id}")
+
+
 def _acquire_source(runtime_root: Path, spawn_id: str) -> LaunchHandle:
     spawns_dir = runtime_root / "spawns"
     spawn_dir = spawns_dir / spawn_id
@@ -33,9 +37,7 @@ def _acquire_source(runtime_root: Path, spawn_id: str) -> LaunchHandle:
             raise NotFound(f"Spawn '{spawn_id}' not found")
         if not (spawn_dir / "launch.lock").exists():
             if not is_terminal_spawn_status(row.status) and legacy_runner_alive(row):
-                raise ValueError(
-                    f"{spawn_id} is running under an older meridian; wait, or --fork {spawn_id}"
-                )
+                raise _legacy_live_error(spawn_id)
             fd = os.open(
                 spawn_dir / "launch.lock", os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600
             )
@@ -122,7 +124,7 @@ def sweep_before_continue(
             if lock_free is False:
                 raise _busy_owner_error(runtime_root, spawn_id, owner_id)
             if lock_free is None and is_live(runtime_root, owner_id):
-                raise _live_owner_error(spawn_id, owner_id)
+                raise _legacy_live_error(owner_id)
         return
     with ExitStack() as stack:
         handles: list[LaunchHandle] = []

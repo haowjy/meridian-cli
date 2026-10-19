@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Continuing a tracked chat works after history archiving reclaims its last spawn directory. Continue dry-runs now also refuse a live source or successor instead of promising a launch the real continue rejects. (#676)
+- `meridian --continue <chat>` works after history archiving reclaims the chat's last spawn directory. Continue dry-runs now also refuse a live source or successor instead of promising a launch the real continue rejects. (#676)
 
 ### Changed
 - Per-spawn files live only in the spawn dir; runtime `artifacts/` store gone (legacy dirs still pruned). Runner start and guardrail failure text now lands in the spawn's `stderr.log`. (#677)
