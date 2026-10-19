@@ -63,7 +63,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/artifact/` | Detached static-artifact serving over Tailscale (`artifact serve/list/stop/gc`); no daemon — file is authority |
 | `lib/notify/` | Harness-agnostic notification labels, delivery policy, and channel registry |
 | `lib/idle/` | Harness-agnostic idle timeline, guards, persisted state machine, and sensor sidecar |
-| `claude_runtime/` | Bundled Claude Code runtime mods; interactive primaries get `meridian-idle` for idle sensing and core-formatted child-spawn status |
+| `claude_runtime/` | Bundled Claude Code runtime mods; interactive primaries get `meridian-idle` for idle sensing and core-formatted status for spawns running under the session |
 | `pi_runtime/` | Bundled Pi extensions; the fourth bundle, `meridian-idle`, is projected only into primary TUIs |
 | `lib/observability/` | Spawn-scoped JSONL tracing |
 | `lib/telemetry/` | Process telemetry routing, sinks, lifecycle correlation, and retention |

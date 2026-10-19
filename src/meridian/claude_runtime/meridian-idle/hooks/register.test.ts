@@ -295,23 +295,36 @@ test('child status refreshes on spawn-changing events and polls only while visib
   expect(h.statuses).toEqual([childStatus])
   expect(calls(h, 'child-status')).toHaveLength(1)
 
-  await clock.advance(30_000)
+  await clock.advance(60_000)
   expect(calls(h, 'child-status')).toHaveLength(2)
 
   await $.turn.complete(MAIN_TURN)
   await clock.advance(0)
   await $.prompt.submit({ text: 'continue', wait: false, origin: COMPOSER })
   await clock.advance(0)
-  expect(calls(h, 'child-status')).toHaveLength(4)
+  expect(calls(h, 'child-status')).toHaveLength(3)
 
   childStatus = ''
   await $.tool.call({ tool: 'Bash', command: 'meridian spawn wait' })
   await clock.advance(0)
   expect(h.statuses.at(-1)).toBeUndefined()
-  expect(calls(h, 'child-status')).toHaveLength(5)
+  expect(calls(h, 'child-status')).toHaveLength(4)
 
-  await clock.advance(60_000)
-  expect(calls(h, 'child-status')).toHaveLength(5)
+  await clock.advance(120_000)
+  expect(calls(h, 'child-status')).toHaveLength(4)
+})
+
+test('a non-spawn Bash command does not refresh child status', async ($, on) => {
+  const h = host()
+  h.reply['child-status'] = '1 running: p2 coder'
+  const clock = install(on, h)
+  await $.session.start(TUI)
+  await clock.advance(2000)
+
+  await $.tool.call({ tool: 'Bash', command: 'git -C /work/meridian-cli status' })
+  await clock.advance(0)
+
+  expect(calls(h, 'child-status')).toHaveLength(1)
 })
 
 test('child status coalesces concurrent events into one trailing refresh', async ($, on) => {
@@ -328,7 +341,7 @@ test('child status coalesces concurrent events into one trailing refresh', async
   await Promise.resolve()
   expect(calls(h, 'child-status')).toHaveLength(2)
 
-  await $.prompt.submit({ text: 'continue', wait: false, origin: COMPOSER })
+  await $.tool.call({ tool: 'Bash', command: 'meridian spawn cancel p2' })
   h.reply['child-status'] = ''
   pending.resolve(visible)
   await clock.advance(0)
@@ -359,6 +372,49 @@ test('session end rejects a late child status result', async ($, on) => {
   expect(h.statuses).toEqual([visible, undefined])
 })
 
+test('a refresh requested by session restart survives the old generation', async ($, on) => {
+  const h = host()
+  const visible = '1 running: p2 coder'
+  h.reply['child-status'] = visible
+  const clock = install(on, h)
+  await $.session.start(TUI)
+  await clock.advance(2000)
+
+  const pending = deferred<string>()
+  h.reply['child-status'] = () => pending.promise
+  await $.tool.call({ tool: 'Bash', command: 'meridian spawn --bg' })
+  await Promise.resolve()
+  expect(calls(h, 'child-status')).toHaveLength(2)
+
+  await $.session.end({ reason: 'clear' })
+  await $.session.start(TUI)
+  await clock.advance(0)
+  h.reply['child-status'] = visible
+  pending.resolve('stale old-session status')
+  await clock.advance(0)
+
+  expect(calls(h, 'child-status')).toHaveLength(3)
+  expect(h.statuses).toEqual([visible, undefined, visible])
+})
+
+test('a disabled gate prevents child status and clears the line', async ($, on) => {
+  const h = host()
+  const config = deferred<{ enabled: boolean, reason: string }>()
+  h.reply.config = () => config.promise
+  h.reply['child-status'] = '1 running: p2 coder'
+  const clock = install(on, h)
+
+  await $.session.start(TUI)
+  await $.tool.call({ tool: 'Bash', command: 'meridian spawn --bg' })
+  config.resolve({ enabled: false, reason: 'role' })
+  await clock.advance(0)
+
+  expect(calls(h, 'child-status')).toHaveLength(0)
+  expect(h.statuses).toEqual([undefined])
+  await clock.advance(120_000)
+  expect(calls(h, 'child-status')).toHaveLength(0)
+})
+
 test('a failed child status poll preserves the line and retries slowly', async ($, on) => {
   const h = host()
   const visible = '1 running: p2 coder'
@@ -368,12 +424,12 @@ test('a failed child status poll preserves the line and retries slowly', async (
   await clock.advance(2000)
 
   h.reply['child-status'] = () => { throw new Error('temporary failure') }
-  await clock.advance(30_000)
+  await clock.advance(60_000)
   expect(calls(h, 'child-status')).toHaveLength(2)
   expect(h.statuses).toEqual([visible])
 
   h.reply['child-status'] = ''
-  await clock.advance(30_000)
+  await clock.advance(60_000)
   expect(calls(h, 'child-status')).toHaveLength(3)
   expect(h.statuses).toEqual([visible, undefined])
 })

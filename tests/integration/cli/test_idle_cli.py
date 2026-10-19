@@ -409,7 +409,8 @@ def test_idle_child_status_is_scoped_to_an_interactive_primary(
     from meridian.lib.state.launch_lock import LaunchSlot
     from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
-    env = _idle_env(tmp_path)
+    # Interactive adapters share IdleService's fallback: an unset role is primary.
+    env = _idle_env(tmp_path, role=None)
     monkeypatch.setenv("HOME", env["HOME"])
     monkeypatch.setenv("MERIDIAN_HOME", env["MERIDIAN_HOME"])
     project = tmp_path / "project"

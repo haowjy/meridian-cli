@@ -88,8 +88,7 @@ def discover_pending_spawns(
         for row in overlay_derived(runtime_root, candidates)
         if row.status in ACTIVE_SPAWN_STATUSES
     ]
-    pending.sort(key=lambda row: row.id)
-    return pending
+    return list(spawn_store.SpawnScan.ordered(pending, ()).records)
 
 
 def _status_agent_label(agent: str | None) -> str:
@@ -101,19 +100,11 @@ def _status_agent_label(agent: str | None) -> str:
 
 def running_children_status(runtime_root: Path, chat_id: str) -> str:
     """Format the bounded status-line summary for one primary session family."""
-    from meridian.lib.state.session_identity import get_owner_chat_for_session
-
-    owner_chat_id = get_owner_chat_for_session(runtime_root, chat_id) or chat_id
-    children = list(
-        spawn_store.SpawnScan.ordered(
-            [
-                row
-                for row in discover_pending_spawns(runtime_root, owner_chat_id)
-                if (row.kind or "").strip() != "primary"
-            ],
-            (),
-        ).records
-    )
+    children = [
+        row
+        for row in discover_pending_spawns(runtime_root, chat_id)
+        if (row.kind or "").strip() != "primary"
+    ]
     if not children:
         return ""
 

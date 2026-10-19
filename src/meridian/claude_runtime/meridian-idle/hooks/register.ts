@@ -18,7 +18,8 @@ const STAGES: readonly Stage[] = ['push', 'warn']
 const HARNESS = 'claude'
 const COMMAND = 'meridian-idle'
 const CLI_TIMEOUT_MS = 20_000
-const CHILD_STATUS_POLL_MS = 30_000
+const CHILD_STATUS_POLL_MS = 60_000
+const MERIDIAN_SPAWN_COMMAND = /\bmeridian\b(?:\s+-\S+)*\s+spawn\b/
 const LOG_LIMIT = 100
 const EXCERPT_CHAR_CAP = 4_000
 // One JSON argv entry stays below ~50 KiB even if every command code unit needs
@@ -130,6 +131,14 @@ function cancelChildStatusTimer(s: State): void {
   s.childStatusTimer = undefined
 }
 
+function makeInert($: EngineInterface, s: State): void {
+  s.inert = true
+  s.childStatusDirty = false
+  cancelChildStatusTimer(s)
+  s.childStatusVisible = false
+  $.ui.status(undefined)
+}
+
 function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
   const run = s.queue.then(task).catch(() => undefined)
   s.queue = run
@@ -162,7 +171,8 @@ async function childStatusCli($: EngineInterface): Promise<ChildStatusReply> {
       { timeoutMs: CLI_TIMEOUT_MS },
     )
     if (out.exitCode !== 0) {
-      return { error: `exit ${out.exitCode}: ${out.stderr.trim().slice(0, 200)}` }
+      const detail = [out.stdout.trim(), out.stderr.trim()].filter(Boolean).join('; ').slice(0, 200)
+      return { error: `exit ${out.exitCode}${detail ? `: ${detail}` : ''}` }
     }
     return { text: out.stdout.trim() }
   } catch (err) {
@@ -182,6 +192,7 @@ function scheduleChildStatusPoll($: EngineInterface, s: State): void {
 
 async function refreshChildStatus($: EngineInterface, s: State, generation: number): Promise<void> {
   cancelChildStatusTimer(s)
+  if (!(await gate($, s))) return
   const reply = await childStatusCli($)
   if (generation !== s.childStatusGeneration || s.inert) return
   if ('error' in reply) {
@@ -206,7 +217,7 @@ function requestChildStatus($: EngineInterface, s: State): void {
     .catch(err => note($, s, `child status error: ${describeError(err)}`))
     .finally(() => {
       s.childStatusRefresh = undefined
-      if (s.childStatusDirty && generation === s.childStatusGeneration) {
+      if (s.childStatusDirty) {
         requestChildStatus($, s)
       }
     })
@@ -230,7 +241,7 @@ async function checkGate($: EngineInterface, s: State): Promise<boolean> {
     // Loaded after `session.start` (a plugin install or reload that skipped it): ask the host directly.
     try {
       if ((await $.session.surfaces()).length === 0) {
-        s.inert = true
+        makeInert($, s)
         note($, s, 'inert: no surface (print mode)')
         return false
       }
@@ -251,7 +262,7 @@ async function checkGate($: EngineInterface, s: State): Promise<boolean> {
     return false
   }
   if (reply.enabled !== true) {
-    s.inert = true
+    makeInert($, s)
     note($, s, `inert: idle disabled (${typeof reply.reason === 'string' ? reply.reason : 'no reason given'})`)
     return false
   }
@@ -506,7 +517,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     s.startSeen = true
     if (e.isInteractive === false || e.surface === null) {
-      s.inert = true
+      makeInert($, s)
     } else {
       // Off the startup path: `meridian` takes about a second.
       const epoch = s.epoch
@@ -551,7 +562,6 @@ export const register: Register = on => {
     if (!s.inert && isUserOrigin(e.origin)) {
       s.lastUserText = e.text
       userReturned($, s)
-      requestChildStatus($, s)
     }
     return next(e)
   })
@@ -566,18 +576,17 @@ export const register: Register = on => {
     if (!s.inert && e.command !== COMMAND && isUserOrigin(e.origin)) {
       s.lastUserText = `/${e.command}${e.args ? ` ${e.args}` : ''}`
       userReturned($, s)
-      requestChildStatus($, s)
     }
     return next(e)
   })
 
-  // Meridian children are created from Bash. Refresh after it finishes, not after
-  // every Read/Edit/etc., because each CLI startup costs about 0.8 seconds.
+  // Meridian spawns are created and changed through this command seam. Unrelated
+  // Bash calls are common, and each child-status CLI startup costs about 0.8 seconds.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     try {
       return await next(e)
     } finally {
-      requestChildStatus($, s)
+      if (MERIDIAN_SPAWN_COMMAND.test(e.command)) requestChildStatus($, s)
     }
   })
 

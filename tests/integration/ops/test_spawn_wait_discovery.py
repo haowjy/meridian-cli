@@ -112,16 +112,6 @@ def test_discovery_selects_only_the_owners_active_spawns(
     assert {row.id for row in rows} == {primary, legacy_child, continued_child}
 
 
-def test_discovery_preserves_waits_lexical_id_order(tmp_path: Path) -> None:
-    _, root = _runtime(tmp_path)
-    _spawn(root, "p2")
-    _spawn(root, "p10")
-
-    rows = discover_pending_spawns(root, "c-owner")
-
-    assert [row.id for row in rows] == ["p10", "p2"]
-
-
 def test_running_children_status_is_bounded_and_excludes_dead_launches(tmp_path: Path) -> None:
     from meridian.lib.ops.spawn.query import running_children_status
 

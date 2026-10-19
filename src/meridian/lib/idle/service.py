@@ -50,6 +50,15 @@ from meridian.plugin_api.types import HookEventName, Notification
 logger = logging.getLogger(__name__)
 
 
+def resolve_idle_session_role(
+    env: Mapping[str, str], *, interactive: bool
+) -> str | None:
+    """Resolve the role shared by idle policy and interactive adapter surfaces."""
+
+    configured_role = env.get("MERIDIAN_SESSION_ROLE")
+    return "primary" if configured_role is None and interactive else configured_role
+
+
 class NotifySender(Protocol):
     """Emits a notification as its hook event; a seam for tests."""
 
@@ -282,8 +291,7 @@ class IdleService:
         native_idle_hook: NativeIdleHook | None = None,
     ) -> None:
         self.env = dict(os.environ if env is None else env)
-        configured_role = self.env.get("MERIDIAN_SESSION_ROLE")
-        self.role = "primary" if configured_role is None and interactive else configured_role
+        self.role = resolve_idle_session_role(self.env, interactive=interactive)
         self.project_root = project_root or Path(self.env.get("MERIDIAN_PROJECT_DIR", Path.cwd()))
         self.config = config if config is not None else load_config(self.project_root)
         self._now_ms = now_ms

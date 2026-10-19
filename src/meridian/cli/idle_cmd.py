@@ -13,7 +13,7 @@ from cyclopts import Parameter
 from meridian.cli.app_tree import idle_app
 from meridian.cli.invocation import get_global_options
 from meridian.lib.harness.idle_types import BackgroundTask
-from meridian.lib.idle.service import IdleService
+from meridian.lib.idle.service import IdleService, resolve_idle_session_role
 from meridian.lib.state.idle_store import Stage
 
 
@@ -312,9 +312,12 @@ def cmd_idle_status(
 
 @idle_app.command(name="child-status")
 def cmd_idle_child_status(*, interactive: InteractiveOption = False) -> None:
-    """Print active children owned by this primary session for a status line."""
+    """Print spawns running under this primary session for a status line."""
 
-    if not interactive or os.environ.get("MERIDIAN_SESSION_ROLE", "").strip() != "primary":
+    if (
+        not interactive
+        or resolve_idle_session_role(os.environ, interactive=interactive) != "primary"
+    ):
         return
     try:
         from meridian.cli.utils import resolve_cli_project_root

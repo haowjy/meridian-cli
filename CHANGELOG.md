@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Claude TUI primaries show their derived-active Meridian child spawns in a bounded status line, refreshed on spawn-changing events and every 30 seconds only while children remain active.
+- Claude TUI primaries show the derived-active Meridian spawns running under their session in a bounded status line, refreshed on spawn-changing events and every 60 seconds only while spawns remain active.
 
 ### Changed
 - Per-spawn files live only in the spawn dir; runtime `artifacts/` store gone (legacy dirs still pruned). Runner start and guardrail failure text now lands in the spawn's `stderr.log`. (#677)
