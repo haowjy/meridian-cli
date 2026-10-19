@@ -12,7 +12,7 @@ from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import birth_time_unverified
-from meridian.lib.state.launch_lock import Busy, LaunchHandle, NotFound, acquire
+from meridian.lib.state.launch_lock import Busy, LaunchHandle, NotFound, acquire, shared_try
 from meridian.lib.state.liveness import is_process_dead_with_birth
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scope_projection
 from meridian.lib.state.session_store import chat_record
@@ -98,6 +98,15 @@ def _live_owner_error(spawn_id: str, owner_id: str) -> ValueError:
     )
 
 
+def _busy_owner_error(runtime_root: Path, spawn_id: str, owner_id: str) -> ValueError:
+    if _recorded_runner_dead(runtime_root, owner_id):
+        return ValueError(
+            f"{owner_id}'s launch lock is held by a repair or another continue; "
+            "retry in a moment"
+        )
+    return _live_owner_error(spawn_id, owner_id)
+
+
 def sweep_before_continue(
     runtime_root: Path,
     spawn_id: str,
@@ -109,7 +118,10 @@ def sweep_before_continue(
     owner_ids = _owner_ids(runtime_root, spawn_id, chat_id)
     if dry_run:
         for owner_id in owner_ids:
-            if is_live(runtime_root, owner_id):
+            lock_free = shared_try(runtime_root / "spawns" / owner_id / "launch.lock")
+            if lock_free is False:
+                raise _busy_owner_error(runtime_root, spawn_id, owner_id)
+            if lock_free is None and is_live(runtime_root, owner_id):
                 raise _live_owner_error(spawn_id, owner_id)
         return
     with ExitStack() as stack:
@@ -117,13 +129,10 @@ def sweep_before_continue(
         for owner_id in owner_ids:
             try:
                 handles.append(stack.enter_context(_acquire_source(runtime_root, owner_id)))
+            except NotFound:
+                continue
             except Busy as exc:
-                if _recorded_runner_dead(runtime_root, owner_id):
-                    raise ValueError(
-                        f"{owner_id}'s launch lock is held by a repair or another continue; "
-                        "retry in a moment"
-                    ) from exc
-                raise _live_owner_error(spawn_id, owner_id) from exc
+                raise _busy_owner_error(runtime_root, spawn_id, owner_id) from exc
         for handle in handles:
             sweep_scopes(runtime_root, handle)
 
