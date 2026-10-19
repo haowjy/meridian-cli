@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -47,7 +47,7 @@ from meridian.lib.streaming.rearm_window import RearmWindow
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
+    from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
     from meridian.lib.harness.semantics import NormalizedHarnessEvent
     from meridian.lib.streaming.drain_policy import DrainAction
@@ -61,7 +61,7 @@ _BACKEND_DEAD_WHILE_AWAITING_DONE = TerminalEventOutcome(
 )
 
 
-class _ResidentCompletionEvidence:
+class _DescendantCompletionEvidence:
     """Assess the reconciled, transitive persisted descendant tree."""
 
     def __init__(
@@ -126,6 +126,7 @@ class _ResidentCompletionEvidence:
     def validation_complete(self, request: int) -> bool:
         return self._refresh.validated(request)
 
+
 class _ResidentCompletionProfile:
     """Own resident precedence, signals, backend state, deadline, and nudges."""
 
@@ -134,7 +135,8 @@ class _ResidentCompletionProfile:
         *,
         runtime_root: Path,
         spawn_id: SpawnId,
-        resident_backend: ResidentBackendControl,
+        backend: ResidentBackendControl,
+        send_nudge: Callable[[str], Awaitable[None]],
         deadline_seconds: float,
         rearm_budget: int | None,
         clock: Callable[[], float],
@@ -145,7 +147,8 @@ class _ResidentCompletionProfile:
             deadline_seconds=deadline_seconds,
             rearm_budget=rearm_budget,
         )
-        self._resident_backend = resident_backend
+        self._backend = backend
+        self._send_nudge = send_nudge
         self._clock = clock
         self._explicit_hold = False
         self._awaiting_done = False
@@ -208,7 +211,7 @@ class _ResidentCompletionProfile:
             if urgency == "timeout_soon"
             else COMPLETION_NUDGE_MESSAGE
         )
-        await self._resident_backend.begin_followup_turn(message)
+        await self._send_nudge(message)
 
     def stream_exit_decision(
         self,
@@ -322,12 +325,12 @@ class _ResidentCompletionProfile:
     def set_awaiting_done(self, awaiting_done: bool) -> None:
         if awaiting_done == self._awaiting_done:
             return
-        self._resident_backend.set_awaiting_done(awaiting_done)
+        self._backend.set_awaiting_done(awaiting_done)
         self._awaiting_done = awaiting_done
 
     def _resident_health_status(self) -> LivenessDecision:
         try:
-            return self._resident_backend.health_status()
+            return self._backend.health_status()
         except Exception:
             return LivenessDecision.BACKEND_DEAD
 
@@ -363,96 +366,67 @@ class _ResidentCompletionCleanup:
 
 
 class ResidentDrainCoordinator:
-    """Construct and adapt resident collaborators to the drain coordinator protocol."""
+    """Construct and adapt hold collaborators to the drain coordinator protocol."""
 
     def __init__(
         self,
         *,
         coordinator: CompletionCoordinator,
         profile: _ResidentCompletionProfile | NativeTaskHoldProfile,
-        deadline_seconds: float,
-        poll_seconds: float,
     ) -> None:
         self._coordinator = coordinator
         self._profile = profile
-        self.deadline_seconds = deadline_seconds
-        self.poll_seconds = poll_seconds
 
     @classmethod
-    def for_connection(
+    def build(
         cls,
         *,
         runtime_root: Path,
         spawn_id: SpawnId,
-        receiver: HarnessConnection[Any],
-        resident_backend: ResidentBackendControl,
+        send_nudge: Callable[[str], Awaitable[None]],
+        backend: ResidentBackendControl | None,
+        native_evidence: CompletionEvidence | None,
         deadline_seconds: float | None,
         poll_seconds: float | None,
         rearm_budget: int | None,
         cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
     ) -> ResidentDrainCoordinator:
-        del receiver
         resolved_deadline = (
             deadline_seconds if deadline_seconds and deadline_seconds > 0 else 3300.0
         )
         resolved_poll = poll_seconds if poll_seconds and poll_seconds > 0 else 5.0
         clock = time.monotonic
-        profile = _ResidentCompletionProfile(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
-            resident_backend=resident_backend,
-            deadline_seconds=resolved_deadline,
-            rearm_budget=rearm_budget,
-            clock=clock,
-        )
-        coordinator = CompletionCoordinator(
-            evidence=_ResidentCompletionEvidence(
+        evidence: CompletionEvidence
+        profile: _ResidentCompletionProfile | NativeTaskHoldProfile
+        if native_evidence is not None:
+            evidence = native_evidence
+            profile = NativeTaskHoldProfile(
+                runtime_root=runtime_root,
+                spawn_id=spawn_id,
+                send_nudge=send_nudge,
+                poll_seconds=resolved_poll,
+                deadline_seconds=resolved_deadline,
+                rearm_budget=rearm_budget,
+                clock=clock,
+            )
+        elif backend is not None:
+            evidence = _DescendantCompletionEvidence(
                 runtime_root=runtime_root,
                 spawn_id=spawn_id,
                 poll_seconds=resolved_poll,
                 clock=clock,
-            ),
-            profile=profile,
-            cleanup=_ResidentCompletionCleanup(
+            )
+            profile = _ResidentCompletionProfile(
+                runtime_root=runtime_root,
                 spawn_id=spawn_id,
-                cancel_descendants=cancel_descendants,
-            ),
-            clock=clock,
-        )
-        return cls(
-            coordinator=coordinator,
-            profile=profile,
-            deadline_seconds=resolved_deadline,
-            poll_seconds=resolved_poll,
-        )
-
-    @classmethod
-    def for_native_evidence(
-        cls,
-        *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
-        evidence: CompletionEvidence,
-        send_nudge: Callable[[str], Awaitable[None]],
-        deadline_seconds: float | None,
-        poll_seconds: float | None,
-        rearm_budget: int | None,
-        cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
-    ) -> ResidentDrainCoordinator:
-        resolved_deadline = (
-            deadline_seconds if deadline_seconds and deadline_seconds > 0 else 3300.0
-        )
-        resolved_poll = poll_seconds if poll_seconds and poll_seconds > 0 else 5.0
-        clock = time.monotonic
-        profile = NativeTaskHoldProfile(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
-            send_nudge=send_nudge,
-            poll_seconds=resolved_poll,
-            deadline_seconds=resolved_deadline,
-            rearm_budget=rearm_budget,
-            clock=clock,
-        )
+                backend=backend,
+                send_nudge=send_nudge,
+                deadline_seconds=resolved_deadline,
+                rearm_budget=rearm_budget,
+                clock=clock,
+            )
+        else:
+            raise ValueError("a hold needs native evidence or resident backend control")
         coordinator = CompletionCoordinator(
             evidence=evidence,
             profile=profile,
@@ -462,12 +436,7 @@ class ResidentDrainCoordinator:
             ),
             clock=clock,
         )
-        return cls(
-            coordinator=coordinator,
-            profile=profile,
-            deadline_seconds=resolved_deadline,
-            poll_seconds=resolved_poll,
-        )
+        return cls(coordinator=coordinator, profile=profile)
 
     async def start(self) -> None:
         await self._coordinator.start()
@@ -532,4 +501,6 @@ class ResidentDrainCoordinator:
         request: CompletionCleanupRequest,
     ) -> None:
         await self._coordinator.execute_post_publication_cleanup(request)
+
+
 __all__ = ["ResidentDrainCoordinator"]

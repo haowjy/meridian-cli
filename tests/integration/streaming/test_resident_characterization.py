@@ -49,11 +49,12 @@ def _coordinator(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_connection(
+    coordinator = ResidentDrainCoordinator.build(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
-        receiver=connection,
-        resident_backend=connection.resident_backend,
+        send_nudge=connection.resident_backend.begin_followup_turn,
+        backend=connection.resident_backend,
+        native_evidence=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,
         rearm_budget=rearm_budget,

@@ -91,31 +91,24 @@ def build_drain_plan(
 
     resident_backend = receiver.resident_backend
     native_evidence = receiver.completion_evidence()
-    if native_evidence is not None:
-        coordinator = ResidentDrainCoordinator.for_native_evidence(
+    if native_evidence is not None or resident_backend is not None:
+        coordinator = ResidentDrainCoordinator.build(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
-            evidence=native_evidence,
-            send_nudge=_send_completion_nudge,
+            # A resident backend starts its own follow-up turn; other harnesses
+            # take the nudge through the manager's serialized inject.
+            send_nudge=(
+                resident_backend.begin_followup_turn
+                if resident_backend is not None
+                else _send_completion_nudge
+            ),
+            backend=resident_backend,
+            native_evidence=native_evidence,
             deadline_seconds=config.resident_deadline_seconds,
             poll_seconds=config.resident_poll_seconds,
             rearm_budget=config.resident_rearm_budget,
             cancel_descendants=_cancel_descendants,
         )
-    elif resident_backend is not None:
-        coordinator = ResidentDrainCoordinator.for_connection(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
-            receiver=receiver,
-            resident_backend=resident_backend,
-            deadline_seconds=config.resident_deadline_seconds,
-            poll_seconds=config.resident_poll_seconds,
-            rearm_budget=config.resident_rearm_budget,
-            cancel_descendants=_cancel_descendants,
-        )
-    else:
-        coordinator = None
-    if coordinator is not None:
         return DrainPlan(
             coordinator=coordinator,
             policy=SingleTurnDrainPolicy(),
