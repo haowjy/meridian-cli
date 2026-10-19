@@ -247,20 +247,17 @@ async function recover($: EngineInterface, s: State, session: string, epoch: num
 /** Core's name for each kind of host background task. Core decides what each means for the push and the warning. */
 const TASK_KINDS: Record<string, string> = { subagent: 'agent', workflow: 'agent', shell: 'shell', monitor: 'watcher' }
 
-function backgroundCommand(command: string): string {
-  if (command.length <= BACKGROUND_COMMAND_CHAR_CAP) return command
-  // Make a truncated shell unreadable as a certain wake even when a meaningful
-  // option (such as --background) fell beyond the forwarded prefix.
-  return `${command.slice(0, BACKGROUND_COMMAND_CHAR_CAP - 3)}\n;:`
-}
-
 /** The work the main loop left running, as `idle arm --background-tasks` JSON. */
 function backgroundTasks(tasks: BackgroundTask[]): string {
   return JSON.stringify(
-    tasks.slice(0, BACKGROUND_TASK_LIMIT).map(task => ({
-      kind: TASK_KINDS[task.type] ?? 'other',
-      ...(task.type === 'shell' && task.command !== undefined ? { command: backgroundCommand(task.command) } : {}),
-    })),
+    tasks.slice(0, BACKGROUND_TASK_LIMIT).map(task => {
+      const shellCommand = task.type === 'shell' ? task.command : undefined
+      const overCap = shellCommand !== undefined && shellCommand.length > BACKGROUND_COMMAND_CHAR_CAP
+      return {
+        kind: overCap ? 'other' : (TASK_KINDS[task.type] ?? 'other'),
+        ...(shellCommand !== undefined && !overCap ? { command: shellCommand } : {}),
+      }
+    }),
   )
 }
 

@@ -1,11 +1,12 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
-  try {
-    return JSON.parse(await readFile(filePath, "utf-8")) as T;
-  } catch {
-    return fallback;
+/** Missing private state is empty. Present unreadable or invalid JSON is unknown. */
+export async function readPrivateJson(filePath: string): Promise<unknown | undefined> {
+  try { return JSON.parse(await readFile(filePath, "utf8")) as unknown; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
   }
 }
 

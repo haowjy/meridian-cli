@@ -373,10 +373,10 @@ turn left running:
   `quick_turn_push_seconds`.
 - Monitors are ignored.
 
-Otherwise the warning arms after every turn, even while the push is held. Only
-the Claude mod reports running work today, using a bounded snapshot so a large
-task list cannot exceed the operating system's argument limit. Codex, OpenCode,
-and Pi primaries push as if nothing were running.
+Otherwise the warning arms after every turn, even while the push is held.
+Claude and Pi report running work using bounded snapshots so a large task list
+cannot exceed the operating system's argument limit. Codex and OpenCode
+primaries push as if nothing were running.
 
 ### `[harness.<harness>.idle]`
 

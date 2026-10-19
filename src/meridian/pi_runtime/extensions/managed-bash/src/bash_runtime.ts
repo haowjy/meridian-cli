@@ -1,17 +1,24 @@
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 
 import { classifyWorkId } from "../../shared/ids";
 import { runMeridianCommand } from "../../shared/meridian_cli";
 import { admittedWorkIds, readDeliveryReceipts } from "../../shared/delivery_receipts";
+import { readPrivateJson } from "../../shared/json_file";
 import {
   currentSpawnIdFromEnv,
   resolveBashLogsDir,
   resolveBashRecordsPath,
   resolveDeliveryReceiptsPath,
 } from "../../shared/pi_state_paths";
-import { isTerminalBashStatus, parseBashRecordsFile, type BashRecord, type BashStatus } from "../../shared/schemas";
+import {
+  isTerminalBashStatus,
+  isTrackedBackground,
+  parseBashRecordsFile,
+  type BashRecord,
+  type BashStatus,
+} from "../../shared/schemas";
 import { bashOutcome, type BashOutcome, type TaskOutcome } from "../../shared/task_outcome";
 import { BashLogStore, type BashLogPaths, type LogReadResult } from "./bash_log_store";
 import { BashPublication, changeRow, withoutRows, withRow, withRuntimeError, type Published } from "./bash_publication";
@@ -816,13 +823,9 @@ export class BashRuntime {
   }
 
   private async recoverRecords(): Promise<void> {
-    let text: string;
-    try { text = await readFile(this.recordsPath, "utf-8"); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw error;
-    }
-    const file = parseBashRecordsFile(JSON.parse(text));
+    const value = await readPrivateJson(this.recordsPath);
+    if (value === undefined) return;
+    const file = parseBashRecordsFile(value);
     if (!file || file.spawn_id !== this.spawnId) throw new Error("Invalid managed Bash record store; refusing to replace recovery evidence");
     const rows = new Map<string, BashRecord>();
     for (const row of Object.values(file.records)) {
@@ -920,7 +923,7 @@ function shouldResetPingOnActivity(): boolean {
 
 /** A tracked, background, still-running task: the only kind that owes a notification ping. */
 function hasPingLifetime(record: BashRecord): boolean {
-  return record.status === "running" && record.is_background && record.is_tracked;
+  return record.status === "running" && isTrackedBackground(record);
 }
 
 /** Within that lifetime, a task whose one-shot ping has not been claimed. */

@@ -31,6 +31,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Invalid hook config can no longer interrupt `work start` after its state mutation; work hook dispatch logs the failure and the operation continues. (#687)
 - An invalid hook row no longer stops spawns: lifecycle dispatch drops it with a warning and valid hooks keep running. (#687)
 
+## [0.10.29] - 2026-10-19
+
+### Fixed
+- Pi primaries report tracked background managed-bash work to idle policy. A shell that will wake Pi now holds or delays the "your turn" push instead of the push racing it; Pi only forwards host facts, and core still decides what the command means. (#669)
+
 ## [0.10.28] - 2026-10-18
 
 ### Added

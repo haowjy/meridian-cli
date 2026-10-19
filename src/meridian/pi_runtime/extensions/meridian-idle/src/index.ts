@@ -1,6 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { readBashRecords } from "../../shared/bash_records";
 import { runMeridianCommand, type CommandResult } from "../../shared/meridian_cli";
+import { isTrackedBackground } from "../../shared/schemas";
 
 export type MeridianRunner = (
   args: string[],
@@ -32,6 +34,10 @@ type StatusRow = {
 const STAGES: readonly IdleStage[] = ["push", "warn"];
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const EXCERPT_CHAR_CAP = 4_000;
+const BACKGROUND_TASK_LIMIT = 16;
+const BACKGROUND_COMMAND_CHAR_CAP = 512;
+
+type BackgroundTask = { kind: "shell"; command: string } | { kind: "other" };
 
 function capExcerpt(value: string): string | null {
   const capped = value.slice(0, EXCERPT_CHAR_CAP);
@@ -65,6 +71,21 @@ export function messageExcerpts(messages: unknown): {
     }
   }
   return { user, assistant };
+}
+
+async function runningBackgroundTasks(): Promise<BackgroundTask[]> {
+  try {
+    const file = await readBashRecords();
+    return Object.values(file.records)
+      .filter((record) => record.status === "running" && isTrackedBackground(record))
+      .slice(0, BACKGROUND_TASK_LIMIT)
+      .map((record) => record.command.length <= BACKGROUND_COMMAND_CHAR_CAP
+        ? { kind: "shell", command: record.command }
+        : { kind: "other" });
+  } catch (error) {
+    process.stderr.write(`[meridian-idle] running work unavailable: ${String(error)}\n`);
+    return [];
+  }
 }
 
 export class IdleRuntime {
@@ -120,6 +141,10 @@ export class IdleRuntime {
       const provider = ctx.model?.provider;
       if (provider) {
         args.push("--provider", provider);
+      }
+      const backgroundTasks = await runningBackgroundTasks();
+      if (backgroundTasks.length > 0) {
+        args.push(`--background-tasks=${JSON.stringify(backgroundTasks)}`);
       }
       const excerpts = messageExcerpts(messages);
       if (excerpts.user !== null) this.lastUserText = excerpts.user;
