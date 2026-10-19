@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def _warn_unsupported_session_versions(path: Path, versions: tuple[str, ...]) -> None:
     version_noun = "version" if len(versions) == 1 else "versions"
     warn_once(
-        ("session-format", path),
+        ("session-format", path, versions),
         lambda: logger.warning(
             "Skipping records in %s with unsupported sessions.jsonl format %s %s; "
             "upgrade Meridian to read these records.",
@@ -40,6 +40,10 @@ def _warn_unsupported_session_versions(path: Path, versions: tuple[str, ...]) ->
             ", ".join(versions),
         ),
     )
+
+
+class UnsupportedSessionFormat(ValueError):
+    """A read-then-decide path found sessions.jsonl rows a newer build wrote."""
 
 
 @dataclass
@@ -60,7 +64,7 @@ class UnsupportedSessionRecords:
         if not self.versions:
             return
         versions = ", ".join(sorted(self.versions))
-        raise ValueError(
+        raise UnsupportedSessionFormat(
             f"{path}: unsupported sessions.jsonl format version(s) {versions}; "
             "upgrade Meridian before updating these session records."
         )

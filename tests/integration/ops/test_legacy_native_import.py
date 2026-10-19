@@ -602,6 +602,19 @@ def test_deferred_import_backs_off_then_retries_and_clears_note(
     assert not note_path.exists()
 
 
+def test_newer_format_row_in_another_chat_does_not_block_import(
+    homes: tuple[Path, Path],
+) -> None:
+    home, root = homes
+    _chat(root, 1, "claude", "native-id")
+    _claude(home, root, "native-id")
+    _chat(root, 9, "claude", "newer-id", v=2)
+    legacy.maybe_import_legacy_native_sessions(root)
+    marker = json.loads((root / legacy.MARKER).read_text())
+    assert marker["bindings"]["c1"][0] == "native-id"
+    assert not (root / legacy.DEFERRAL_NOTE).exists()
+
+
 def test_shape_invalid_legacy_rows_do_not_break_import(homes: tuple[Path, Path]) -> None:
     home, root = homes
     _chat(root, 1, "claude", "native-id", task_cwd=5)

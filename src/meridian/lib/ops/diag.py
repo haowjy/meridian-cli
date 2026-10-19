@@ -34,6 +34,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
+from meridian.lib.state.session_fold import UnsupportedSessionFormat
 from meridian.lib.state.session_store import cleanup_stale_sessions
 from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -314,19 +315,27 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
     def _run_repairs() -> None:
         from contextlib import suppress
 
+        # A newer build's session rows make these repairs refuse; that is expected
+        # in a mixed-build runtime, so it goes to the debug log, not the user.
         with suppress(Exception):
             from meridian.lib.ops.legacy_native_import import bind_late_legacy_sessions
 
-            bind_late_legacy_sessions(runtime_root)
+            try:
+                bind_late_legacy_sessions(runtime_root)
+            except UnsupportedSessionFormat as exc:
+                logger.debug("legacy_late_bind_skipped", error=str(exc))
         with suppress(Exception):
             from meridian.lib.ops.legacy_native_import import (
                 configured_archive_destination,
                 recover_legacy_pi_sessions,
             )
 
-            recover_legacy_pi_sessions(
-                runtime_root, archive_destination=configured_archive_destination(project_root)
-            )
+            try:
+                recover_legacy_pi_sessions(
+                    runtime_root, archive_destination=configured_archive_destination(project_root)
+                )
+            except UnsupportedSessionFormat as exc:
+                logger.debug("legacy_pi_recovery_skipped", error=str(exc))
         with suppress(Exception):
             dogfood = migrate_dogfood_spawn_rows(runtime_root)
             if dogfood.failed:

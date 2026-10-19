@@ -108,10 +108,13 @@ What users may notice:
   chat. Other session updates append without reading the journal. A newer record
   that names no chat or native session is invisible to those scoped decisions; it
   refuses only decisions that check every chat, such as repair binds. The
-  disposable history index skips unsupported session rows, keeps indexing later
-  ones, and remembers the skipped versions so every indexed read warns once per
-  command. Its file name includes both the index schema and session format
-  (`history-v10-sessions-v1.sqlite3`) so a format change rebuilds from authority.
+  one-time native-session import reads only the chats it binds; an unsupported
+  record in one of them defers the import with a message instead of failing the
+  command. The disposable history index skips unsupported session rows, keeps
+  indexing later ones, and remembers the skipped versions so every indexed read
+  warns once per command. Its file name includes both the index schema and
+  session format (`history-v10-sessions-v1.sqlite3`) so a format change rebuilds
+  from authority.
   Idle files are the deliberate exception to refusal: they are short-lived and
   expected to be absent, and refusing one after a mid-session upgrade would
   disable idle handling; they keep absent-state behavior and now warn with the
