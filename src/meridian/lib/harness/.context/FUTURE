@@ -1,6 +1,3 @@
-- `opencode_idle.py`: During a live OpenCode smoke, switch models and verify
-  that `session.model` follows the active model before summarize; if it lags,
-  source the compaction model from the newest user event's `info.model` (G2 O3).
 - `projections/*`: `ResolvedLaunchSpec.claude_runtime` (formerly `claude_plugin_dirs`) is Claude-only but
   forced a `_DELEGATED_FIELDS` edit in six non-Claude projections, following the
   `disallowed_tools` / `pi_extension_entrypoints` / `opencode_version`
@@ -11,9 +8,11 @@
   `capture_pane(pane, timeout)` in `lib/platform/` (or a harness-level
   `tmux.py`) serves the sensor and the label (thermo F10).
 - `opencode_idle.py`: two dialects (frozen V1, V2) now share
-  `_OpenCodeIdleSensorBase` in one ~700-line module. When V2 grows again,
-  move it to `opencode_v2_idle.py` with the base in `opencode_idle.py`,
+  `_OpenCodeIdleSensorBase` in one module; V2's running-work tracker already
+  lives in `opencode_running_work.py`. When V2 grows again,
+  move the V2 sensor to `opencode_v2_idle.py` with the base in `opencode_idle.py`,
   mirroring the `connections/opencode_http.py` / `opencode_v2_http.py` split.
+  The factory `primary_idle_sensor` must then move too, or it imports V2 in a cycle.
 - `connections/opencode_http.py`: split `events()` into a per-response drain that
   reports its close reason and small outer policies for spawn and primary-observer
   lifetimes; the current shared loop intentionally keeps the review fold bounded.

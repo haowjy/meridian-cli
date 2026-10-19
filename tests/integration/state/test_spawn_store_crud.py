@@ -535,6 +535,7 @@ def test_start_spawn_embeds_launch_policy_snapshot_in_state_json(tmp_path: Path)
     payload = json.loads(state_path.read_text(encoding="utf-8"))
 
     assert payload["launch_policy_snapshot"] == snapshot.model_dump(mode="json")
+    assert "schema_version" not in payload["launch_policy_snapshot"]
     assert not any(
         "launch_policy_snapshot" in path.name
         for path in spawn_dir.iterdir()

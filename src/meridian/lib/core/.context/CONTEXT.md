@@ -98,12 +98,12 @@ the harness selected for the child launch.
 State transitions with post-write observer dispatch:
 
 ```
-start()          → spawn.created
-mark_running()   → spawn.running
-record_exited()  → (no event — sets exit code only)
+start()           → spawn.created (+ spawn.started when initially running)
+mark_running()    → spawn.started on queued→running
+record_exited()   → (no hook event — sets exit code only)
 mark_finalizing() → CAS running→finalizing (no event)
-finalize()       → spawn.finalized
-cancel()         → finalize(status='cancelled')
+finalize()        → spawn.finished
+cancel()          → finalize(status='cancelled')
 ```
 
 `LifecycleHook.on_event(event)` — exceptions are logged but never block

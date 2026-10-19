@@ -1,16 +1,19 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { writeJsonAtomic } from "../../shared/json_file";
+import { resolveBashRecordsPath } from "../../shared/pi_state_paths";
+import type { BashRecord } from "../../shared/schemas";
 import {
   registerMeridianIdleExtension,
   type MeridianRunner,
 } from "./index";
 
 type Handler = (event: any, ctx: ExtensionContext) => Promise<unknown> | unknown;
-type CompactCallbacks = {
-  onComplete?: () => void;
-  onError?: (error: Error) => void;
-};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -36,17 +39,12 @@ function host(run: MeridianRunner) {
 function context() {
   const state = {
     idle: true,
-    pending: false,
-    compact: vi.fn<(options?: CompactCallbacks) => void>(),
   };
   const ctx = {
     cwd: "/work/project",
     model: { provider: "anthropic" },
     sessionManager: { getSessionId: () => "pi-session" },
     isIdle: () => state.idle,
-    hasPendingMessages: () => state.pending,
-    getContextUsage: () => ({ tokens: 42_000, contextWindow: 200_000, percent: 21 }),
-    compact: state.compact,
   } as unknown as ExtensionContext;
   return { ctx, state };
 }
@@ -67,7 +65,7 @@ function flag(args: string[], name: string): string | undefined {
 
 function expectCliContract(calls: string[][]): void {
   expect(calls.every((args) => args.at(-1) === "--interactive")).toBe(true);
-  for (const args of calls.filter((args) => ["arm", "return", "fire", "done"].includes(args[1] ?? ""))) {
+  for (const args of calls.filter((args) => ["arm", "return", "fire"].includes(args[1] ?? ""))) {
     expect(flag(args, "--harness")).toBe("pi");
     expect(flag(args, "--session")).toBe("pi-session");
   }
@@ -76,9 +74,12 @@ function expectCliContract(calls: string[][]): void {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(1_000_000);
+  vi.stubEnv("_MERIDIAN_PI_STATE_DIR", path.join(tmpdir(), `meridian-pi-idle-empty-${process.pid}`));
+  vi.stubEnv("MERIDIAN_SPAWN_ID", "p-test");
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
@@ -98,7 +99,7 @@ describe("meridian idle event mapping", () => {
     ]);
   });
 
-  it("arms every returned deadline and reports a successful compaction", async () => {
+  it("arms every returned deadline and fires push then warn", async () => {
     const run = vi.fn<MeridianRunner>(async (args) => {
       if (args[1] === "config") return commandResult({ enabled: true });
       if (args[1] === "status") return commandResult([]);
@@ -108,44 +109,128 @@ describe("meridian idle event mapping", () => {
           anchor: 8,
           push_at: Date.now() + 10,
           warn_at: Date.now() + 20,
-          compact_at: Date.now() + 30,
         });
       }
-      if (args[1] === "fire") {
-        return commandResult({ decision: args[2] === "compact" ? "act" : "skip" });
-      }
-      return commandResult({});
+      return commandResult({ decision: "act" });
     });
-    const { ctx, state } = context();
+    const { ctx } = context();
     const { handlers } = host(run);
 
     await event(handlers, "session_start", {}, ctx);
     await event(handlers, "agent_end", {}, ctx);
-    await vi.advanceTimersByTimeAsync(30);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => {
+      expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(1);
+    });
+    await vi.advanceTimersByTimeAsync(20);
 
     const calls = run.mock.calls.map(([args]) => args);
     expect(calls.filter((args) => args[1] === "arm")).toEqual([[
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
-      "--provider", "anthropic", "--context-tokens", "42000", "--interactive",
+      "--provider", "anthropic", "--interactive",
     ]]);
-    expect(calls.filter((args) => args[1] === "fire").map((args) => args[2])).toEqual([
-      "push", "warn", "compact",
+    expect(calls.filter((args) => args[1] === "fire")).toEqual([
+      [
+        "idle", "fire", "push", "--harness", "pi", "--session", "pi-session",
+        "--stretch", "7", "--anchor", "8", "--interactive",
+      ],
+      [
+        "idle", "fire", "warn", "--harness", "pi", "--session", "pi-session",
+        "--stretch", "7", "--anchor", "8", "--interactive",
+      ],
     ]);
-    expect(calls.filter((args) => args[1] === "fire" && args[2] === "compact")).toEqual([[
-      "idle", "fire", "compact", "--harness", "pi", "--session", "pi-session",
-      "--stretch", "7", "--anchor", "8",
-      "--context-tokens", "42000", "--interactive",
-    ]]);
-    expect(state.compact).toHaveBeenCalledOnce();
+    expectCliContract(calls);
+  });
 
-    state.compact.mock.calls[0]![0]?.onComplete?.();
-    await vi.waitFor(() => {
-      expect(run).toHaveBeenCalledWith([
-        "idle", "done", "compact", "--harness", "pi", "--session", "pi-session",
-        "--stretch", "7", "--result", "ok", "--interactive",
-      ]);
-    });
-    expectCliContract(run.mock.calls.map(([args]) => args));
+  it("forwards bounded tracked background Bash records and survives unreadable evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meridian-pi-idle-"));
+    vi.stubEnv("_MERIDIAN_PI_STATE_DIR", root);
+    vi.stubEnv("MERIDIAN_SPAWN_ID", "p-parent");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      const recordsPath = resolveBashRecordsPath();
+      await mkdir(path.dirname(recordsPath), { recursive: true });
+      const longCommand = `meridian spawn wait p42 --timeout 30 ${"x".repeat(600)}`;
+      const record = (id: string, command: string, status: BashRecord["status"]): BashRecord => ({
+        bash_id: id,
+        command,
+        cwd: "/work/project",
+        pid: 123,
+        status,
+        is_background: true,
+        is_tracked: true,
+        exit_code: status === "running" ? null : 0,
+        started_at_ms: 1,
+        ended_at_ms: status === "running" ? null : 2,
+        log_path: `${root}/${id}.log`,
+        stdout_log_path: `${root}/${id}.stdout.log`,
+        stderr_log_path: `${root}/${id}.stderr.log`,
+        log_bytes: 0,
+        timeout_min: 55,
+        originating_bash_id: null,
+      });
+      const running = Array.from({ length: 18 }, (_, index) => record(
+        `b-running-${index}`,
+        index === 0 ? longCommand : `sleep ${index}`,
+        "running",
+      ));
+      const detached = {
+        ...record("b-detached", "detached command", "running"),
+        is_tracked: false,
+      };
+      const finished = record("b-finished", "finished command", "exited");
+      await writeJsonAtomic(recordsPath, {
+        v: 1,
+        spawn_id: "p-parent",
+        updated_at_ms: 1,
+        records: Object.fromEntries([detached, ...running, finished].map((row) => [row.bash_id, row])),
+      });
+
+      const run = vi.fn<MeridianRunner>(async (args) => {
+        if (args[1] === "config") return commandResult({ enabled: true });
+        if (args[1] === "status") return commandResult([]);
+        return commandResult({ stretch: 1, anchor: 1 });
+      });
+      const { ctx } = context();
+      const { handlers } = host(run);
+      await event(handlers, "session_start", {}, ctx);
+
+      await event(handlers, "agent_end", {}, ctx);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => {
+        expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(1);
+      });
+
+      const firstArm = run.mock.calls.find(([args]) => args[1] === "arm")![0];
+      const taskArg = firstArm.find((arg) => arg.startsWith("--background-tasks="));
+      expect(taskArg).toBeDefined();
+      const tasks = JSON.parse(taskArg!.slice("--background-tasks=".length)) as Array<{
+        kind: string;
+        command?: string;
+      }>;
+      expect(tasks).toHaveLength(16);
+      expect(tasks.map((task) => task.command)).not.toContain("finished command");
+      expect(tasks.map((task) => task.command)).not.toContain("detached command");
+      expect(tasks.map((task) => task.command)).toContain("sleep 15");
+      expect(tasks[0]).toEqual({ kind: "other" });
+
+      await writeFile(recordsPath, "{", "utf8");
+      await event(handlers, "agent_end", {}, ctx);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => {
+        expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(2);
+      });
+
+      const secondArm = run.mock.calls.filter(([args]) => args[1] === "arm")[1]![0];
+      expect(secondArm.some((arg) => arg.startsWith("--background-tasks="))).toBe(false);
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining(
+        "[meridian-idle] running work unavailable:",
+      ));
+    } finally {
+      stderr.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("extracts excerpts and passes dash-leading text in equals-form argv", async () => {
@@ -174,12 +259,14 @@ describe("meridian idle event mapping", () => {
       ],
     }, ctx);
     await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => {
+      expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(1);
+    });
 
     const arm = run.mock.calls.find(([args]) => args[1] === "arm")?.[0];
     expect(arm).toEqual([
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
       "--provider", "anthropic",
-      "--context-tokens", "42000",
       "--user-text=latest\n prompt", "--assistant-text=- latest answer",
       "--interactive",
     ]);
@@ -209,6 +296,9 @@ describe("meridian idle event mapping", () => {
       ],
     }, ctx);
     await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => {
+      expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(2);
+    });
 
     const arms = run.mock.calls
       .map(([args]) => args)
@@ -294,7 +384,7 @@ describe("meridian idle event mapping", () => {
         }]);
       }
       if (args[1] === "arm") {
-        return commandResult({ stretch: 11, anchor: 12, reason: "compaction-window" });
+        return commandResult({ stretch: 11, anchor: 12, reason: "duplicate-turn" });
       }
       return commandResult({ decision: "skip", reason: "late" });
     });
@@ -303,6 +393,10 @@ describe("meridian idle event mapping", () => {
 
     await event(handlers, "session_start", {}, ctx);
     await event(handlers, "agent_end", {}, ctx);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => {
+      expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(1);
+    });
     await vi.advanceTimersByTimeAsync(100);
 
     const calls = run.mock.calls.map(([args]) => args);
@@ -311,13 +405,12 @@ describe("meridian idle event mapping", () => {
     ]);
     expect(calls.filter((args) => args[1] === "arm")).toEqual([[
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
-      "--provider", "anthropic", "--context-tokens", "42000", "--interactive",
+      "--provider", "anthropic", "--interactive",
     ]]);
     expect(calls.filter((args) => args[1] === "fire").map((args) => args[2])).toEqual(["warn"]);
     expect(calls.filter((args) => args[1] === "fire")[0]).toEqual([
       "idle", "fire", "warn", "--harness", "pi", "--session", "pi-session",
-      "--stretch", "11", "--anchor", "12",
-      "--context-tokens", "42000", "--interactive",
+      "--stretch", "11", "--anchor", "12", "--interactive",
     ]);
     expectCliContract(calls);
   });

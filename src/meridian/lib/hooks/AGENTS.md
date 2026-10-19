@@ -1,27 +1,39 @@
 # lib/hooks — Lifecycle Event Callbacks
 
-Hooks fire at spawn and work lifecycle events for side effects: syncing, notifying, triggering pipelines. They do not modify agent behavior — they observe it.
+Hooks fire at spawn, work and notification events for side effects: syncing, notifying, triggering pipelines. They do not modify agent behavior — they observe it.
+
+Notification events (`notify.your_turn`, `notify.cache_expiring`, `notify.needs_permission`, `notify.manual`) carry `HookContext.notification`. Delivering them is itself a hook: the built-in `notify` routes them to transports, and `config.py` supplies a `notify` row per notification event as the lowest layer (source `default`). An unnamed `builtin = "notify"` row is named `notify`, so a row for an event, even disabled, replaces that event's default by the ordinary `(name, event)` override. Command hooks on these events are the extension channels. A notification's emitter (`lib/notify/emit.py`) reports route failures itself, so the dispatcher logs them at info.
+
+If configured hook rows do not load, runtime notification and lifecycle
+emission drop and name only the invalid rows, then layer every valid row over
+the defaults normally. Direct hook inspection raises all row errors.
 
 ## Mental Model
 
-Users configure hooks in TOML (project or user config). At each lifecycle event (`spawn.created`, `spawn.finalized`, `work.done`, etc.), `HookDispatcher.fire()` loads the hook list for that event, filters by conditions, checks interval throttling, and executes each hook in order. Hooks are either built-in (in-process) or external (subprocess).
+Users configure hooks in TOML (project or user config). At each lifecycle event (`spawn.created`, `spawn.finished`, `work.done`, etc.), `HookDispatcher.fire()` loads the hook list for that event, filters by conditions, checks interval throttling, and executes each hook in order. Hooks are either built-in (in-process) or external (subprocess).
 
-The dispatcher is **fail-open** for `observe` and `post` event classes. A failing hook logs a warning and continues — it never stops subsequent hooks or the lifecycle event itself. Only `gate` class hooks can block (none currently registered).
+The dispatcher is **fail-open**. A failing hook logs a warning and continues —
+it never stops subsequent hooks or the lifecycle event itself.
 
 Config layers in ascending precedence:
 ```
-user (~/.meridian/config.toml) < project (meridian.toml) < local (meridian.local.toml)
+default (Meridian's notify routes) < user (~/.meridian/config.toml) < project (meridian.toml) < local (meridian.local.toml)
 ```
 Override key is `(name, event)` — a higher-priority row with the same key replaces the lower-priority one entirely.
 
 ## Key Rules
 
 - **Fire `HookDispatcher.fire(context)` — don't instantiate the registry or runner directly.** `HookDispatcher.from_application_context(ctx)` is the preferred constructor.
-- **Built-in hooks must import only from `meridian.plugin_api`.** Zero `meridian.lib.*` imports. This keeps built-ins usable as reference implementations for external plugins. If a built-in needs something not in the API, extend the plugin API.
+- **Built-in hooks take general capabilities from `meridian.plugin_api`.** If a built-in needs a general capability not in the API, extend the API. The only `meridian.lib.*` imports are a built-in's tightly coupled companion (`autosync_store`; `notify`'s `lib/notify` transports, lazily); see `builtin/AGENTS.md`.
+- **A builtin is one object owning its metadata**: default events, supported events (`None` means any), interval, Pydantic `options_model` (validated by `schema.py` when the row loads) and `identity_options` (which options name an unnamed row). Adding one = a module in `builtin/` + an entry in `BUILTIN_HOOKS`.
+- **`HookContext`, `HookResult` and `HookEventName` are the plugin API's types**, re-exported from `types.py`. Built-ins receive exactly what the dispatcher builds; never fork a lib copy.
+- **Hooks fire without a runtime root** (an ad-hoc directory), `hooks run` included: only `interval` hooks skip, with nowhere to keep state. A built-in that needs the runtime root checks `context.runtime_root` once in `execute`.
+- **`HookDispatcher(env=...)`** is the environment hooks run in and whose `MERIDIAN_HOOKS_ENABLED` gates them; it defaults to `os.environ`.
 - **`HookContext.to_env()` and `HookContext.to_json()` are the only correct serialization paths.** External subprocess hooks receive both env vars and JSON stdin. `None` values are omitted — no empty-string env vars.
-- **Hook execution order within an event:** source rank (user → project → local) → negative priority → declaration order. This is stable and deterministic. Built-in hooks have no source of their own; a configured builtin row ranks by the file it came from.
-- **Hook rows validate through `schema.py` models.** `HookConfigSection.model_validate` is the production path; single-field constraints (event, interval, timeout, failure policy, status) live on `HookSpec` / `HookWhenSpec` fields. Hand checks after the model are only for multi-field rules (command vs builtin, conditional name/event, builtin defaults and options). Don't add per-field checks outside the model, and don't warn about unknown keys here: config loading already warns once.
-- **`when.status` and `when.agent` conditions** are checked before interval throttling.
+- **Hook execution order within an event:** source rank (default → user → project → local) → negative priority → declaration order. This is stable and deterministic. A configured builtin row ranks by the file it came from.
+- **Hook rows validate only through `config.py` and `schema.py`.** `normalize_hook_row()` is the production model path; `NEXT_MINOR_HOOK_CONFIG_BREAKS` first applies the one-minor warning window, then single-field constraints (event, interval, timeout, status) live on `HookSpec` / `HookWhenSpec` fields. Hand checks after the model are only for multi-field rules, deprecation diagnostics, command vs builtin, conditional name/event, builtin defaults and options. Operational config loading carries hook rows without validating them; hook loading also owns its unknown-key and one-per-row deprecation warnings.
+- **`EVENTS` owns each event's timeout and available `when` fields.** Conditions are checked before interval throttling. During the compatibility window, explicit rows with unavailable fields warn and do not register; unevented builtin rows keep incompatible defaults as disabled override entries so a higher layer still suppresses lower `(name, event)` rows.
+- **`meridian hooks list/check/run` resolve the project from the cwd, never an inherited `MERIDIAN_PROJECT_DIR`** (`ignore_env=True` in `cli/hooks_commands.py`, #178): a spawn's environment must not make `hooks run git-autosync` act on another project's config. Notification emission does follow the session's project; inside a spawn the two can differ by design.
 
 ## Entry Points
 
@@ -30,15 +42,14 @@ Override key is `(name, event)` — a higher-priority row with the same key repl
 - `config.py` — `load_hooks_config(project_root, ...)` with source layering
 - `schema.py` — `HookSpec` parsing, validation, and runtime `Hook` construction
 - `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`
-- `builtin/` — built-in hook implementations (`git_autosync.py` is the primary one)
+- `builtin/` — built-in hook implementations (`git_autosync.py`, and `notify.py` for notification delivery)
 
 ## Anti-Patterns
 
 - Don't import from submodules directly — `from meridian.lib.hooks import HookDispatcher` works via lazy `__getattr__` in `__init__.py`. This avoids circular import issues at startup.
-- Don't set `failure_policy = "fail"` on observe-class hooks without deliberate intent — fail-open is the correct default for observation.
 - Don't use `meridian.local.toml` in version control — it's for machine-specific overrides.
 
 ## Depth
 
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — config layering, event classes, failure behavior, plugin API boundary, context transport schema
+→ [.context/CONTEXT.md](.context/CONTEXT.md) — config layering, per-event facts, failure behavior, plugin API boundary, context transport schema
 → KB: `$MERIDIAN_CONTEXT_KB_DIR/concepts/hooks-and-plugins.md` (see `meridian context kb`)

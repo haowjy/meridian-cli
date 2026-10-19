@@ -1,11 +1,13 @@
 """The disposable projection must replay the same accepted bindings as authority."""
 
 import json
+import logging
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_index import HistoryIndex
@@ -191,6 +193,35 @@ def test_incremental_replay_waits_for_partial_line_then_resumes(tmp_path: Path) 
             "SELECT extent FROM cursors WHERE source = 'sessions'"
         ).fetchone()
     assert cursor == (sessions_path.stat().st_size,)
+
+
+def test_unsupported_row_is_skipped_and_every_indexed_read_warns(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def work(chat_id: str, work_id: str) -> dict:
+        return {
+            "event": "update",
+            "chat_id": chat_id,
+            "session_instance_id": "g1",
+            "active_work_id": work_id,
+        }
+
+    _append(tmp_path, _start("g1", chat_id="c1", harness_session_id="native-1"), work("c1", "wa"))
+    index = HistoryIndex(tmp_path)
+    index.rebuild()
+    _append(tmp_path, {**_start("g1", chat_id="c9", harness_session_id="native-9"), "v": 2})
+    _append(tmp_path, _start("g1", chat_id="c2", harness_session_id="native-2"), work("c2", "wb"))
+
+    # The second read appends nothing: its warning comes from the stored cursor.
+    for _ in range(2):
+        caplog.clear()
+        with (
+            warning_cache_scope(),
+            caplog.at_level(logging.WARNING, logger="meridian.lib.state.session_fold"),
+        ):
+            assert index.work_chat_ids("wb") == {"c2"}
+        assert "unsupported sessions.jsonl format version 2" in caplog.text
 
 
 def test_generated_histories_index_bindings_match_authority(tmp_path: Path, monkeypatch):

@@ -15,7 +15,6 @@ from pydantic import (
 from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
 from meridian.lib.config.models import WorkConfig
 from meridian.lib.config.schema import DynamicSectionDescriptor
-from meridian.lib.hooks.schema import HookConfigSection, HookSpec
 from meridian.lib.utils.json_shapes import is_json_object, is_object_sequence
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -43,7 +42,9 @@ class DynamicConfigSections(BaseModel):
 
     model_config = ConfigDict(frozen=True, strict=True)
 
-    hooks: tuple[HookSpec, ...] | None = None
+    # Hook rows are carried for config inspection, but lib/hooks/config.py is
+    # their sole validation and runtime-loading boundary.
+    hooks: object | None = None
     work: WorkConfig | None = None
     context: dict[str, DynamicContextEntry] | None = None
 
@@ -52,14 +53,14 @@ DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
     "hooks": DynamicSectionDescriptor(
         section_key="hooks",
         merge_kind="replace",
-        model=HookConfigSection,
+        model=None,
         scaffold_lines=(
             "# -- Hook examples -----------------------------------------------------------",
             "# Hooks are dynamic arrays of tables. Keep examples commented until needed.",
             "",
             "# [[hooks]]",
             '# name = "notify-on-failure"',
-            '# event = "spawn.start"',
+            '# event = "spawn.started"',
             '# command = "echo spawn-hook"',
             "# timeout_secs = 30",
             "",

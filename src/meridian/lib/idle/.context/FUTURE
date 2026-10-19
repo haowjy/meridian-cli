@@ -10,15 +10,15 @@
   arm). Declare it on `IdleSensor` (or a `returns_observable` capability) so a
   new adapter cannot get OpenCode semantics silently, and add the missing
   scope test that a busy non-external sensor still pushes (G2-X N3).
-  The cleaner end state splits `IdleSensor` into an actuator (`facts`,
-  `compact`) plus an optional event source: the sidecar polls the store when
-  no event source exists, and Codex stops implementing `on_raw_event` /
-  `events()` as no-ops (thermo p7493).
+  The cleaner end state splits `IdleSensor` into a `busy()` probe plus an
+  optional event source: the sidecar polls the store when no event source
+  exists, and Codex stops implementing `on_raw_event` / `events()` as no-ops
+  (thermo p7493).
 - `service.py`: every transition is already a pure closure
   `IdleState | None -> (IdleState, Result)` handed to `store.mutate`, nested in
   methods that also resolve config, read env and send notices. Lift them into
   `machine.py` as top-level pure functions (`arm`, `close`, `claim`,
-  `record_done`, `mark_failed`) so `IdleService` becomes resolve policy →
+  `mark_failed`) so `IdleService` becomes resolve policy →
   `store.mutate(partial(machine.x, …))` → notify. Preserve arm's shared input-count
   carry; move `fire`'s inline `transient`
   reason set onto `Decision.skip(reason, terminal=…)` so the classification
@@ -33,3 +33,14 @@
   Replace with `sidecar.start(factory, ctx) -> IdleHandle | None`
   (`on_raw_event`, `async stop()`) so the launcher keeps three lines and the
   reporter has one owner (thermo F8, about −40 lines).
+- `service.py` `fire`: a stage is persisted `sent` before the sender runs, so a crash between the claim and the send loses that one notice (at-most-once, pre-existing on main; it keeps the mod and the sidecar from both pushing). If lost pushes show up in practice, add a `sending` state that `recover` resends after a bounded age instead of a plain `sent` claim.
+- `claude_runtime/meridian-idle`: unlike the launcher sidecar, the mod does not
+  check whether the primary is busy before firing a due push. When finishing
+  background work starts a new main-loop turn, a timer can therefore push
+  mid-turn. This predates running-work holds; share a host-busy fact with core
+  rather than adding adapter-local scheduling policy.
+- `claude_runtime/meridian-idle`: a background subagent waiting on a permission
+  prompt holds the push, as on main where the mod skipped the arm while
+  subagents ran. Fix this with a stateless ping on Claude's
+  `classic.Notification` with `notification_type=permission_prompt`, not by
+  tracking prompts and answers ([#684](https://github.com/haowjy/meridian-cli/issues/684)).

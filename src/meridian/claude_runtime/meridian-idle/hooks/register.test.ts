@@ -1,12 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
-import type { AgentInfo, On, SessionCompactResult } from 'claude-code'
+import type { On } from 'claude-code'
 
 type Host = {
   calls: string[][]
-  agents: AgentInfo[]
   reply: Record<string, unknown | ((args: string[]) => unknown)>
-  compactResult: () => SessionCompactResult
-  compactCalls: number
 }
 
 const START = 1_000_000
@@ -17,7 +14,6 @@ const COMPOSER = { kind: 'composer' } as const
 function host(): Host {
   return {
     calls: [],
-    agents: [],
     reply: {
       config: { enabled: true },
       arm: {
@@ -25,19 +21,11 @@ function host(): Host {
         anchor: 1,
         push_at: START + 10_000,
         warn_at: START + 20_000,
-        compact_at: START + 30_000,
       },
       return: { stretch_closed: true },
       fire: { decision: 'act', reason: 'guards-passed' },
-      done: {},
       status: [],
     },
-    compactResult: () => ({
-      messages: [{ role: 'user', text: 'summary', toolUses: [] }],
-      tokensBefore: 120_000,
-      tokensAfter: 30_000,
-    }),
-    compactCalls: 0,
   }
 }
 
@@ -61,17 +49,12 @@ function install(on: On, h: Host) {
   })
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
-  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, tokens: 120_000 }, rateLimits: [] } }))
-  on('agent.list', () => ({ value: h.agents }))
-  on('config.list', () => ({ value: [{ key: 'autoCompact', label: 'Auto-compact', kind: 'boolean', value: true }] as never }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
-  on('session.compact', () => {
-    h.compactCalls += 1
-    return h.compactResult()
-  })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.start', () => ({ turnId: 't1' }))
   on('turn.complete', () => ({ text: '' }))
+  on('classic.Stop', () => ({}))
+  on('classic.Notification', () => ({}))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('command.run', () => ({ text: '' }))
   return clock
@@ -88,7 +71,7 @@ function flag(args: string[], name: string): string | undefined {
 
 function expectCliContract(h: Host): void {
   expect(h.calls.every(args => args.at(-1) === '--interactive')).toBe(true)
-  for (const args of h.calls.filter(args => ['config', 'arm', 'return', 'fire', 'done'].includes(args[0] ?? ''))) {
+  for (const args of h.calls.filter(args => ['config', 'arm', 'return', 'fire'].includes(args[0] ?? ''))) {
     expect(flag(args, '--harness')).toBe('claude')
     if (args[0] !== 'config') expect(flag(args, '--session')).toBe('sess-1')
   }
@@ -107,32 +90,22 @@ test('print mode keeps the mod inert', async ($, on) => {
   expect(h.calls).toEqual([])
 })
 
-test('a completed turn arms every returned deadline and reports a successful compaction', async ($, on) => {
+test('a completed turn arms every returned deadline and fires each at its time', async ($, on) => {
   const h = host()
   const clock = install(on, h)
 
   await $.session.start(TUI)
   await clock.advance(2000)
   await $.turn.complete(MAIN_TURN)
-  await clock.advance(30_000)
+  await clock.advance(20_000)
 
   expect(calls(h, 'arm')).toEqual([
-    [
-      'arm', '--harness', 'claude', '--session', 'sess-1',
-      '--context-tokens', '120000', '--assistant-text=done', '--interactive',
-    ],
+    ['arm', '--harness', 'claude', '--session', 'sess-1', '--assistant-text=done', '--interactive'],
   ])
-  expect(calls(h, 'fire').map(args => args[1])).toEqual(['push', 'warn', 'compact'])
-  expect(calls(h, 'fire')[2]).toEqual([
-    'fire', 'compact', '--harness', 'claude', '--session', 'sess-1',
-    '--stretch', '1', '--anchor', '1', '--agents-running', '0',
-    '--context-tokens', '120000', '--interactive',
+  expect(calls(h, 'fire')).toEqual([
+    ['fire', 'push', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--anchor', '1', '--interactive'],
+    ['fire', 'warn', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--anchor', '1', '--interactive'],
   ])
-  expect(h.compactCalls).toBe(1)
-  expect(calls(h, 'done')).toEqual([[
-    'done', 'compact', '--harness', 'claude', '--session', 'sess-1',
-    '--stretch', '1', '--result', 'ok', '--reason', '120k -> 30k tokens', '--interactive',
-  ]])
   expectCliContract(h)
 })
 
@@ -179,7 +152,7 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
     done: { push: 'sent' },
     schedule: { push_at: START + 10_000, warn_at: START + 20_000 },
   }]
-  h.reply.arm = { stretch: 4, anchor: 3, reason: 'compact-window' }
+  h.reply.arm = { stretch: 4, anchor: 3, reason: 'duplicate-turn' }
   const clock = install(on, h)
 
   await $.session.start(TUI)
@@ -188,10 +161,9 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
   await clock.advance(20_000)
 
   expect(calls(h, 'status')).toEqual([['status', '--json', '--interactive']])
-  expect(calls(h, 'arm')).toEqual([[
-    'arm', '--harness', 'claude', '--session', 'sess-1',
-    '--context-tokens', '120000', '--assistant-text=done', '--interactive',
-  ]])
+  expect(calls(h, 'arm')).toEqual([
+    ['arm', '--harness', 'claude', '--session', 'sess-1', '--assistant-text=done', '--interactive'],
+  ])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
   expect(calls(h, 'fire')[0]).toEqual([
     'fire', 'warn', '--harness', 'claude', '--session', 'sess-1',
@@ -220,4 +192,78 @@ test('arm excerpts use equals-form argv and only apply a safety length cap', asy
   const assistant = arm.find(arg => arg.startsWith('--assistant-text='))
   expect(assistant?.slice('--assistant-text='.length)).toBe(answer.slice(0, 4000))
   expect(assistant).toContain('--assistant-text=- ')
+})
+
+test('arm forwards the work the main loop left running, from its Stop list', async ($, on) => {
+  const h = host()
+  h.reply.arm = { stretch: 1, anchor: 1, warn_at: START + 20_000, push_held: '1 agent(s) running' }
+  const clock = install(on, h)
+  const longCommand = `meridian spawn wait p3 --timeout 60 ${'large inline prompt '.repeat(100)}`
+  const continuedCommand = `${'x'.repeat(508)}\\${'tail'.repeat(10)}`
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.turn.start({ turnId: 't1' } as never)
+  await $.classic.Stop({
+    stop_hook_active: false,
+    background_tasks: [
+      { id: 'a', type: 'subagent', status: 'running', description: 'review' },
+      { id: 'b', type: 'shell', status: 'running', description: 'wait', command: 'meridian spawn wait p3' },
+      { id: 'c', type: 'monitor', status: 'running', description: 'logs' },
+      { id: 'd', type: 'workflow', status: 'running', description: 'plan' },
+      { id: 'e', type: 'shell', status: 'running', description: 'large', command: longCommand },
+      { id: 'f', type: 'shell', status: 'running', description: 'continued', command: continuedCommand },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `extra-${index}`,
+        type: 'monitor' as const,
+        status: 'running' as const,
+        description: 'extra',
+      })),
+    ],
+    session_crons: [],
+  } as never)
+  await $.turn.complete(MAIN_TURN)
+  await clock.advance(0)
+
+  const arm = calls(h, 'arm')[0]
+  const tasksArg = arm.find(arg => arg.startsWith('--background-tasks='))
+  const tasks = JSON.parse(tasksArg?.slice('--background-tasks='.length) ?? '') as Array<Record<string, string>>
+  expect(arm.filter(arg => arg.startsWith('--background-tasks='))).toHaveLength(1)
+  expect(tasks).toHaveLength(16)
+  expect(tasks.slice(0, 4)).toEqual([
+    { kind: 'agent' },
+    { kind: 'shell', command: 'meridian spawn wait p3' },
+    { kind: 'watcher' },
+    { kind: 'agent' },
+  ])
+  expect(tasks[4]).toEqual({ kind: 'other' })
+  expect(tasks[5]).toEqual({ kind: 'other' })
+  expect(arm).toContain('--assistant-text=done')
+  expectCliContract(h)
+})
+
+test('only permission prompts are forwarded and a failing CLI does not fail the hook', async ($, on) => {
+  const h = host()
+  const clock = install(on, h)
+  const message = 'Claude needs your permission to use Bash'
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.classic.Notification({ message, notification_type: 'permission_prompt' } as never)
+  await clock.advance(0)
+
+  expect(calls(h, 'needs-permission')).toEqual([[
+    'needs-permission', '--harness', 'claude', `--message=${message}`, '--interactive',
+  ]])
+
+  await $.classic.Notification({ message: 'Waiting for input', notification_type: 'idle_prompt' } as never)
+  await clock.advance(0)
+  expect(calls(h, 'needs-permission')).toHaveLength(1)
+
+  h.reply['needs-permission'] = () => {
+    throw new Error('meridian failed')
+  }
+  await $.classic.Notification({ message, notification_type: 'permission_prompt' } as never)
+  await clock.advance(0)
+  expect(calls(h, 'needs-permission')).toHaveLength(2)
 })

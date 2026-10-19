@@ -11,12 +11,19 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.config.loader import load_config
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.dispatch import HookDispatcher
 from meridian.lib.hooks.interval import IntervalTracker
 from meridian.lib.hooks.registry import HookRegistry
-from meridian.lib.hooks.types import Hook, HookContext, HookEventName, HookResult
+from meridian.lib.hooks.types import (
+    NOTIFICATION_EVENTS,
+    Hook,
+    HookContext,
+    HookEventName,
+    HookResult,
+)
 from meridian.lib.ops.runtime import (
     resolve_project_authority,
     resolve_runtime_authority_for_read,
@@ -37,14 +44,13 @@ class HookListItem(BaseModel):
     hook_type: str
     source: str
     status: str
-    auto_registered: bool = False
-    registration: str = "config"
 
 
 class HookListOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     hooks: tuple[HookListItem, ...] = ()
+    warnings: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -53,14 +59,13 @@ class HookListOutput(BaseModel):
 
         from meridian.lib.core.formatting import tabular
 
-        rows = [["name", "event", "type", "source", "registration", "status"]]
+        rows = [["name", "event", "type", "source", "status"]]
         rows.extend(
             [
                 item.name,
                 item.event,
                 item.hook_type,
                 item.source,
-                item.registration,
                 item.status,
             ]
             for item in self.hooks
@@ -70,6 +75,8 @@ class HookListOutput(BaseModel):
 
 class HookCheckInput(BaseModel):
     model_config = ConfigDict(frozen=True)
+
+    project_root: str | None = None
 
 
 class HookCheckItem(BaseModel):
@@ -86,6 +93,7 @@ class HookCheckOutput(BaseModel):
 
     ok: bool
     checks: tuple[HookCheckItem, ...] = ()
+    warnings: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -123,6 +131,7 @@ class HookRunResult(BaseModel):
     success: bool
     skipped: bool
     skip_reason: str | None = None
+    warning: str | None = None
     error: str | None = None
     exit_code: int | None = None
     duration_ms: int
@@ -137,6 +146,7 @@ class HookRunOutput(BaseModel):
     event: HookEventName
     result: HookRunResult
     include_output: bool = False
+    warnings: tuple[str, ...] = ()
 
     def to_cli_wire(self) -> dict[str, object]:
         """Project hook outcome, optionally including captured process output."""
@@ -147,9 +157,11 @@ class HookRunOutput(BaseModel):
             "success": self.result.success,
             "skipped": self.result.skipped,
             "skip_reason": self.result.skip_reason,
+            "warning": self.result.warning,
             "error": self.result.error,
             "exit_code": self.result.exit_code,
             "duration_ms": self.result.duration_ms,
+            "warnings": list(self.warnings),
         }
         if self.include_output:
             wire["stdout"] = self.result.stdout
@@ -183,6 +195,7 @@ class HookRunOutput(BaseModel):
                 ("success", str(self.result.success).lower()),
                 ("skipped", str(self.result.skipped).lower()),
                 ("skip_reason", self.result.skip_reason or "-"),
+                ("warning", self.result.warning or "-"),
                 (
                     "exit_code",
                     str(self.result.exit_code) if self.result.exit_code is not None else "-",
@@ -211,6 +224,7 @@ class HookResolveItem(BaseModel):
     interval: str | None = None
     when_status: tuple[str, ...] | None = None
     when_agent: str | None = None
+    when_kind: tuple[str, ...] | None = None
 
 
 class HookResolveOutput(BaseModel):
@@ -218,6 +232,7 @@ class HookResolveOutput(BaseModel):
 
     event: HookEventName
     hooks: tuple[HookResolveItem, ...] = ()
+    warnings: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -233,6 +248,8 @@ class HookResolveOutput(BaseModel):
                 when_parts.append("status=" + ",".join(item.when_status))
             if item.when_agent:
                 when_parts.append(f"agent={item.when_agent}")
+            if item.when_kind:
+                when_parts.append("kind=" + ",".join(item.when_kind))
             rows.append(
                 [
                     item.name,
@@ -275,7 +292,34 @@ def _hook_type(hook: Hook) -> str:
 
 
 def _hook_status(hook: Hook) -> str:
+    if hook.deprecated:
+        return "deprecated" if hook.enabled else "disabled (deprecated)"
     return "enabled" if hook.enabled else "disabled"
+
+
+def _requires_notification(hook: Hook) -> bool:
+    if hook.builtin is None:
+        return False
+    supported_events = BUILTIN_HOOKS[hook.builtin].supported_events
+    return supported_events is not None and all(
+        event in NOTIFICATION_EVENTS for event in supported_events
+    )
+
+
+def _raise_manual_notification_error(hook: Hook) -> None:
+    raise ValueError(
+        f"The {hook.builtin} builtin needs a notification payload and cannot run "
+        "manually; use `meridian notify` instead."
+    )
+
+
+def _same_manual_action(left: Hook, right: Hook) -> bool:
+    return (
+        left.builtin == right.builtin
+        and left.command == right.command
+        and left.options == right.options
+        and left.timeout_secs == right.timeout_secs
+    )
 
 
 def hooks_list_sync(payload: HookListInput) -> HookListOutput:
@@ -287,17 +331,18 @@ def hooks_list_sync(payload: HookListInput) -> HookListOutput:
             event=hook.event,
             hook_type=_hook_type(hook),
             source=hook.source,
-            auto_registered=hook.auto_registered,
-            registration="auto" if hook.auto_registered else "config",
             status=_hook_status(hook),
         )
         for hook in registry.get_all_hooks()
     )
-    return HookListOutput(hooks=hooks)
+    return HookListOutput(hooks=hooks, warnings=registry.get_warnings())
 
 
 def hooks_check_sync(payload: HookCheckInput) -> HookCheckOutput:
-    _ = payload
+    authority = resolve_project_authority(payload.project_root)
+    load_config(authority.project_root, authority=authority)
+    registry = HookRegistry(authority.project_root, authority=authority)
+
     checks: list[HookCheckItem] = []
     all_ok = True
     for name in sorted(BUILTIN_HOOKS):
@@ -313,7 +358,11 @@ def hooks_check_sync(payload: HookCheckInput) -> HookCheckOutput:
             )
         )
 
-    return HookCheckOutput(ok=all_ok, checks=tuple(checks))
+    return HookCheckOutput(
+        ok=all_ok,
+        checks=tuple(checks),
+        warnings=registry.get_warnings(),
+    )
 
 
 def _manual_context(
@@ -321,21 +370,23 @@ def _manual_context(
     hook: Hook,
     event: HookEventName,
     project_root: Path,
-    runtime_root: Path,
+    runtime_root: Path | None,
 ) -> HookContext:
     when = hook.when
     spawn_status = when.status[0] if when and when.status else "success"
     spawn_agent = when.agent if when and when.agent else "manual"
+    spawn_kind = when.kind[0] if when and when.kind else "child"
 
     base = HookContext(
         event_name=event,
         event_id=uuid4(),
         timestamp=datetime.now(UTC).isoformat(),
         project_root=project_root.as_posix(),
-        runtime_root=runtime_root.as_posix(),
+        runtime_root=runtime_root.as_posix() if runtime_root is not None else None,
         spawn_id="manual",
         spawn_status=spawn_status,
         spawn_agent=spawn_agent,
+        spawn_kind=spawn_kind,
         spawn_model="manual",
     )
 
@@ -355,6 +406,7 @@ def _result_to_output(result: HookResult) -> HookRunResult:
         success=result.success,
         skipped=result.skipped,
         skip_reason=result.skip_reason,
+        warning=result.warning,
         error=result.error,
         exit_code=result.exit_code,
         duration_ms=result.duration_ms,
@@ -371,26 +423,54 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
     if not hook_name:
         raise ValueError("Hook name is required.")
 
-    hook = registry.get_hook(hook_name)
-    if hook is None:
+    named_hooks = registry.get_hooks_named(hook_name)
+    if not named_hooks:
         raise ValueError(f"Hook '{hook_name}' not found")
+
+    if all(_requires_notification(hook) for hook in named_hooks):
+        _raise_manual_notification_error(named_hooks[0])
+
+    # Rows that differ only by event are one hook; without --event it runs as
+    # its last registration, like a single-row hook.
+    one_action = all(
+        _same_manual_action(named_hooks[0], candidate) for candidate in named_hooks[1:]
+    )
+    if payload.event is not None:
+        hook = registry.get_hook(hook_name, payload.event)
+        if hook is None:
+            if not one_action:
+                events = ", ".join(candidate.event for candidate in named_hooks)
+                raise ValueError(
+                    f"Hook '{hook_name}' is registered for multiple events [{events}], "
+                    f"but not {payload.event!r}."
+                )
+            hook = named_hooks[-1]
+    elif one_action:
+        hook = named_hooks[-1]
+    else:
+        events = ", ".join(hook.event for hook in named_hooks)
+        raise ValueError(
+            f"Hook '{hook_name}' is registered for multiple events [{events}]; "
+            "pass --event to select one."
+        )
+
+    if _requires_notification(hook):
+        _raise_manual_notification_error(hook)
 
     effective_hook = hook if hook.enabled else replace(hook, enabled=True)
     run_event = payload.event or effective_hook.event
+    if effective_hook.builtin is not None:
+        builtin = BUILTIN_HOOKS[effective_hook.builtin]
+        if builtin.supported_events is not None and run_event not in builtin.supported_events:
+            supported = ", ".join(builtin.supported_events)
+            raise ValueError(
+                f"Builtin hook {builtin.name!r} supports only [{supported}], not {run_event!r}."
+            )
     if run_event != effective_hook.event:
-        effective_hook = replace(effective_hook, event=run_event)
-
-    if authority.runtime_root is None:
-        return HookRunOutput(
-            hook=effective_hook.name,
-            event=effective_hook.event,
-            result=HookRunResult(
-                outcome="skipped",
-                success=True,
-                skipped=True,
-                skip_reason="no_state",
-                duration_ms=0,
-            ),
+        effective_hook = replace(
+            effective_hook,
+            event=run_event,
+            configured_event=None,
         )
 
     dispatcher = HookDispatcher(
@@ -398,7 +478,11 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
         authority.runtime_root,
         authority=authority,
         registry=_SingleHookRegistry(effective_hook),
-        interval_tracker=_BypassIntervalTracker(IntervalTracker(authority.runtime_root)),
+        interval_tracker=(
+            _BypassIntervalTracker(IntervalTracker(authority.runtime_root))
+            if authority.runtime_root is not None
+            else None
+        ),
     )
     context = _manual_context(
         hook=effective_hook,
@@ -417,6 +501,7 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
         event=effective_hook.event,
         result=_result_to_output(result),
         include_output=payload.include_output,
+        warnings=registry.get_warnings(),
     )
 
 
@@ -434,10 +519,15 @@ def hooks_resolve_sync(payload: HookResolveInput) -> HookResolveOutput:
             interval=hook.interval,
             when_status=tuple(hook.when.status) if hook.when and hook.when.status else None,
             when_agent=hook.when.agent if hook.when else None,
+            when_kind=tuple(hook.when.kind) if hook.when and hook.when.kind else None,
         )
         for hook in registry.get_hooks_for_event(payload.event)
     )
-    return HookResolveOutput(event=payload.event, hooks=hooks)
+    return HookResolveOutput(
+        event=payload.event,
+        hooks=hooks,
+        warnings=registry.get_warnings(),
+    )
 
 
 async def hooks_list(payload: HookListInput) -> HookListOutput:

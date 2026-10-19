@@ -14,9 +14,10 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import structlog
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from meridian.lib.hooks.builtin.autosync_store import (
     AUTOSYNC_IGNORE_PATTERNS,
@@ -29,6 +30,7 @@ from meridian.lib.hooks.builtin.autosync_store import (
 from meridian.plugin_api import (
     Hook,
     HookContext,
+    HookEventName,
     HookOutcome,
     HookResult,
 )
@@ -36,6 +38,9 @@ from meridian.plugin_api.fs import atomic_write_text
 from meridian.plugin_api.git import normalize_repo_url, resolve_clone_path
 
 logger = structlog.get_logger(__name__)
+
+type _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
 
 _REQUIREMENTS_TIMEOUT_SECS = 5
 _CLONE_TIMEOUT_SECS = 300
@@ -104,21 +109,39 @@ class _SyncOutcome:
     files_changed: dict[str, int] | None = None
 
 
+class GitAutosyncOptions(BaseModel):
+    """A row's `options`: a remote to clone and sync, or a local `path` to commit."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    remote: _NonEmpty | None = None
+    path: _NonEmpty | None = None
+    conflict_policy: Literal["abort", "leave"] = "abort"
+
+    @model_validator(mode="after")
+    def _remote_or_path(self) -> GitAutosyncOptions:
+        if self.remote is None and self.path is None:
+            raise ValueError("git-autosync requires either 'remote' or 'path'")
+        return self
+
+
 class GitAutosync:
     """Automatically sync a repository to its git remote."""
 
     name: str = "git-autosync"
     requirements: tuple[str, ...] = ("git",)
 
-    # Default events - runs on all four lifecycle events
-    default_events: tuple[str, ...] = (
-        "spawn.start",
-        "spawn.finalized",
-        "work.started",
+    default_events: tuple[HookEventName, ...] = (
+        "spawn.finished",
+        "work.activated",
         "work.done",
     )
+    supported_events: tuple[HookEventName, ...] | None = None
     # No default interval - runs on every event
     default_interval: str | None = None
+    options_model: type[BaseModel] = GitAutosyncOptions
+    # One row per clone: a remote, or a local path.
+    identity_options: tuple[str, ...] = ("remote", "path")
 
     def check_requirements(self) -> tuple[bool, str | None]:
         """Return whether git is available in the environment."""
@@ -151,11 +174,24 @@ class GitAutosync:
         """Execute git autosync for one hook invocation."""
 
         start = time.monotonic()
+        if context.runtime_root is None:
+            return self._result(
+                config,
+                context,
+                _SyncOutcome(
+                    outcome="skipped",
+                    success=True,
+                    skipped=True,
+                    skip_reason="no_runtime_root",
+                ),
+                start=start,
+            )
+        runtime_root = Path(context.runtime_root)
         remote_url = self._resolve_remote_url(config)
 
         # No remote → local-only mode (git init + add + commit, no push)
         if remote_url is None:
-            return self._execute_local(context, config, start)
+            return self._execute_local(context, config, start, runtime_root)
 
         # Resolve clone path using plugin_api
         clone_path = resolve_clone_path(remote_url)
@@ -163,7 +199,7 @@ class GitAutosync:
         try:
             with transaction(
                 clone_path,
-                runtime_root=Path(context.runtime_root),
+                runtime_root=runtime_root,
                 timeout=_LOCK_TIMEOUT_SECS,
             ) as autosync_tx:
                 return self._execute_with_lock(
@@ -298,6 +334,7 @@ class GitAutosync:
         context: HookContext,
         config: Hook,
         start: float,
+        runtime_root: Path,
     ) -> HookResult:
         """Execute local-only sync: git init + add + commit, no fetch/pull/push."""
 
@@ -320,7 +357,7 @@ class GitAutosync:
         try:
             with transaction(
                 local_path,
-                runtime_root=Path(context.runtime_root),
+                runtime_root=runtime_root,
                 timeout=_LOCK_TIMEOUT_SECS,
             ) as autosync_tx:
                 ok, error = self._ensure_local_repo(local_path)
@@ -1009,7 +1046,7 @@ class GitAutosync:
                         )
 
                     if context is not None and has_unresolved_conflict(
-                        Path(clone_path), runtime_root=Path(context.runtime_root)
+                        Path(clone_path), runtime_root=autosync_tx.runtime_root
                     ):
                         if stashed_excludes:
                             self._unstash_excluded_files(clone_path)
@@ -1028,7 +1065,7 @@ class GitAutosync:
 
                     conflict_id = generate_conflict_id()
                     context_name = Path(clone_path).name
-                    event_name = context.event_name if context is not None else "spawn.finalized"
+                    event_name = context.event_name if context is not None else "spawn.finished"
                     spawn_id = context.spawn_id if context is not None else None
 
                     record = ConflictRecord(

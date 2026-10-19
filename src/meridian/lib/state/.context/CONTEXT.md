@@ -60,6 +60,13 @@ reads use the keyed seam in `session_store.py`; multi-chat callers select all
 needed chats in one pass and project the accepted binding and generation.
 Discovery uses the disposable history index; its recency and preview reads
 select the highest-ordinal generation from the same authority.
+An absent event `v` is legacy v1. Events with an unsupported version are
+skipped with a warning rather than being folded as if their shape were current.
+Lock-scoped reads that decide what to append refuse unsupported rows in their chat
+or native-session scope with `UnsupportedSessionFormat`; blind appends never read
+the journal. Paths that run on every command (the one-time import) scope reads to
+the chats they write, so a newer build's rows elsewhere cannot disable an older
+build's commands. Full-snapshot repairs refuse; background runs log that at debug.
 
 A scoped `SessionBindings` snapshot raises `ChatOutsideBindingScope` for chats
 outside its scope; cross-chat repair uniqueness requires `scope=None`.
@@ -73,7 +80,9 @@ existing sessions journal. Its atomic marker records unresolved chats; ordinary
 reads never repair missing keys afterward. Import binds through the same
 `session_binding.py` lock-scoped path as single-session updates. One replay per
 batch avoids quadratic work; the import lock precedes the history-mutation gate
-and sessions lock. Historical restored records stay inert.
+and sessions lock. The locked recheck reads only the chats being bound; an
+unsupported row in one of them defers the import without a marker, like an
+unavailable source. Historical restored records stay inert.
 
 The marker also drives two later, doctor/background-only passes: the late re-bind
 (`late_retries`) for IDs recorded after the import, and the one-shot legacy Pi
@@ -137,6 +146,9 @@ file, so a corrupt sidecar loads as absent and the next write repairs it.
 `mutate_model()` requires the caller's lock and re-reads under it; there is no
 unlocked read-modify-write. A new sidecar adopts this seam rather than hand-rolling
 read, validate, lock and replace.
+Idle state adds one diagnostic to that generic absent-on-invalid contract: if
+the document's `v` names another format, `idle_store.py` warns with the path and
+that a different Meridian build wrote it.
 
 ### JSONL Commit Contract (`jsonl.py`)
 
@@ -271,6 +283,10 @@ provides pure read projections; `work_repository.py` serializes all status and
 directory-namespace mutations behind the stable project-level `work-store.flock`.
 Mutable metadata lives in
 `<context.work root>/<slug>/__status.json`; there is no separate rename-intent file.
+Its reader treats absent `v` as v1 and preserves unknown fields with a warning;
+writers deliberately omit `v` until the next format change. A newer version gets
+a separate compatibility marker displayed as `requires-newer-meridian`, while the
+single mutation seam validates every active and archived copy before touching disk.
 
 ### WorktreeMetadata
 

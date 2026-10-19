@@ -41,12 +41,16 @@ and `lib/catalog/`.
 **File validation and source merging are explicit.** `loader.py` validates each file
 against `MeridianConfig`, then merges user → project → local → env.
 `load_config_with_sources()` retains typed dynamic sections and field provenance for
-inspection; `load_config()` returns its final `MeridianConfig`. Do not add implicit
-Pydantic settings sources (no `pydantic-settings`) or ambient loader state.
+inspection; `load_config()` returns its final `MeridianConfig`. Hook rows displayed
+by `config show` come from the hook owner's load report so their names and invalid-row
+count match hook commands. Do not add implicit
+Pydantic settings sources (no `pydantic-settings`) or ambient loader state. Hook
+rows are carried unvalidated for inspection; `lib/hooks/config.py` is their one
+validation and runtime-loading boundary.
 
-**The models are the only validation path.** Every config shape is a Pydantic model
+**The models are the only validation path.** Every operational config shape is a Pydantic model
 (`models.py`, `harness_models.py`, `history_models.py`) rooted at `MeridianConfig`,
-including `[env]` and the dynamic sections' descriptor models. Field types and
+including `[env]` and the non-hook dynamic sections' descriptor models. Field types and
 validators carry the constraints. Unknown-key warnings come from one
 `extra="allow"` validation pass and its `model_extra` values, with Pydantic owning
 the traversal; never walk annotations separately. `config_silences_extras` is the
@@ -66,7 +70,7 @@ its env vars.
 | Section | Strategy | Effect |
 |---|---|---|
 | `work`, `context`, `env` | `nested_dict` | Keys in higher-precedence file overwrite matching keys; others inherited |
-| `hooks` | `replace` | Entire section from higher-precedence file wins (inspection only; the hook runtime layers by `(name, event)` in `lib/hooks/config.py`, a known disagreement tracked in #569) |
+| `hooks` | `replace` | Retains the highest-precedence raw section for provenance; hook rows themselves are inspected and run through `lib/hooks/config.py` |
 | `workspace` | `external` | Not merged here; workspace config owns it |
 
 **`preserving_edit.py` for in-place config edits.** Direct TOML writes lose comments

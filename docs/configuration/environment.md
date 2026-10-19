@@ -10,9 +10,11 @@ to their role. Public names are stable and fall into four groups:
 - **injected handles** such as `MERIDIAN_PROJECT_DIR`, `MERIDIAN_TASK_DIR`, and
   `MERIDIAN_SPAWN_ID`;
 - **hook payload** names (`MERIDIAN_HOOK_*`, `MERIDIAN_SPAWN_STATUS`,
-  `MERIDIAN_SPAWN_AGENT`, `MERIDIAN_SPAWN_MODEL`,
-  `MERIDIAN_SPAWN_DURATION_SECS`, `MERIDIAN_SPAWN_COST_USD`, and
-  `MERIDIAN_SPAWN_ERROR`); and
+  `MERIDIAN_SPAWN_AGENT`, `MERIDIAN_SPAWN_KIND`, `MERIDIAN_SPAWN_MODEL`,
+  `MERIDIAN_SPAWN_DURATION_SECS`, `MERIDIAN_SPAWN_COST_USD`,
+  `MERIDIAN_SPAWN_ERROR`, and for notification events
+  `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`,
+  `MERIDIAN_NOTIFICATION_PRIORITY`); and
 - **inter-tool signals**, currently `MERIDIAN_MANAGED`.
 
 `_MERIDIAN_*` is repo-internal process plumbing. These values are documented

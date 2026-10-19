@@ -72,7 +72,6 @@ def test_claude_ttl_uses_recorded_store_for_successor_or_none_without_record(
                 "MERIDIAN_PROJECT_DIR": project.as_posix(),
                 "MERIDIAN_SESSION_ROLE": "primary",
             },
-            spawn_reader=lambda: (),
             detect_ttl=detect_ttl,
         )
 

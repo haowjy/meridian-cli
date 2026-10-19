@@ -14,9 +14,9 @@ from meridian.lib.core.types import (
     OptionalPersistedHarnessSessionId,
     normalize_optional_identity,
 )
+from meridian.plugin_api.types import SpawnKind
 
 LaunchMode = Literal["background", "foreground", "app"]
-SpawnKind = Literal["child", "primary", "streaming"]
 BACKGROUND_LAUNCH_MODE: LaunchMode = "background"
 FOREGROUND_LAUNCH_MODE: LaunchMode = "foreground"
 APP_LAUNCH_MODE: LaunchMode = "app"

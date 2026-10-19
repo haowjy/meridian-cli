@@ -8,12 +8,14 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
+from meridian.env_registry import HOOK_PAYLOAD_ENV_KEYS
 from meridian.lib.hooks.types import Hook, HookContext, HookResult
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 
 _TAIL_BYTES = 1024
 _TERM_GRACE_SECONDS = 2.0
 _HOOKS_ENABLED_ENV = "MERIDIAN_HOOKS_ENABLED"
+_HOOK_PAYLOAD_ENV_NAMES = frozenset(HOOK_PAYLOAD_ENV_KEYS.values())
 
 
 def hooks_dispatch_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -64,13 +66,15 @@ def _terminate_process_tree(process: subprocess.Popen[bytes], *, grace_secs: flo
 class ExternalHookRunner:
     """Run one external hook command with context transport and timeout handling."""
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, *, env: Mapping[str, str] | None = None) -> None:
         self._project_root = project_root.expanduser().resolve()
+        # The environment hooks run in, and whose MERIDIAN_HOOKS_ENABLED gates them.
+        self._env = os.environ if env is None else env
 
     def run(self, hook: Hook, context: HookContext, *, timeout_secs: int) -> HookResult:
         """Execute one hook command and return structured result."""
 
-        if not hooks_dispatch_enabled():
+        if not hooks_dispatch_enabled(self._env):
             return HookResult(
                 hook_name=hook.name,
                 event=context.event_name,
@@ -92,7 +96,12 @@ class ExternalHookRunner:
                 error="Hook command is required for external execution.",
             )
 
-        env = {**os.environ, **context.to_env()}
+        env = {
+            key: value
+            for key, value in self._env.items()
+            if key not in _HOOK_PAYLOAD_ENV_NAMES
+        }
+        env.update(context.to_env())
         env.pop("_MERIDIAN_RUNTIME_DIR", None)
         start = time.monotonic()
         process: subprocess.Popen[bytes] | None = None

@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+import logging
+from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness import opencode_idle
+from meridian.lib.harness import opencode_idle, opencode_running_work
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
-from meridian.lib.harness.idle_types import CacheTtl, IdleEvent, IdleSensorContext
+from meridian.lib.harness.idle_types import BackgroundTask, CacheTtl, IdleEvent, IdleSensorContext
+from meridian.lib.harness.permission_broker import PermissionTransition, _transition_to_event
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "opencode_idle"
 SESSION_ID = "ses_ee21d9d97ffeN9m0VxoYy7qFQf"
@@ -24,14 +26,6 @@ class FakeConnection:
 
     def __init__(self, resolved_version: str | None = None) -> None:
         self.resolved_version = resolved_version
-
-
-class FakeClock:
-    def __init__(self, now: float) -> None:
-        self.value = now
-
-    def __call__(self) -> float:
-        return self.value
 
 
 def _context(
@@ -118,28 +112,17 @@ async def _assert_quiet(iterator: AsyncIterator[IdleEvent]) -> None:
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
 
-def _v2_request_stub(
-    *,
-    provider: str,
-    model_id: str,
-    compaction_id: str,
-    on_compact: Callable[[], None],
-) -> opencode_idle.BackendRequest:
+def _v2_request_stub(*, provider: str, model_id: str) -> opencode_idle.BackendRequest:
     async def request(
-        method: str, path: str, payload: Mapping[str, object] | None
+        method: str, path: str, _payload: Mapping[str, object] | None
     ) -> tuple[int, str]:
         session_path = f"/api/session/{V2_SESSION_ID}"
         if (method, path) == ("GET", session_path):
             return 200, json.dumps(
                 {"data": {"id": V2_SESSION_ID, "model": {"providerID": provider, "id": model_id}}}
             )
-        if (method, path) == ("GET", f"{session_path}/message?limit=20&order=desc"):
-            return 200, '{"data":[]}'
-        assert (method, path, payload) == ("POST", f"{session_path}/compact", {})
-        on_compact()
-        return 200, json.dumps(
-            {"data": {"id": compaction_id, "sessionID": V2_SESSION_ID, "type": "compaction"}}
-        )
+        assert (method, path) == ("GET", f"{session_path}/message?limit=20&order=desc")
+        return 200, '{"data":[]}'
 
     return request
 
@@ -222,87 +205,6 @@ async def test_recorded_summarize_never_emits_user_return(tmp_path: Path) -> Non
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
 
-async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
-    tmp_path: Path,
-) -> None:
-    post_started = asyncio.Event()
-    release_post = asyncio.Event()
-
-    async def request(
-        method: str,
-        _path: str,
-        _payload: Mapping[str, object] | None,
-    ) -> tuple[int, str]:
-        if method == "GET":
-            return 200, '{"model":{"providerID":"opencode","id":"big-pickle"}}'
-        post_started.set()
-        await release_post.wait()
-        return 200, "true"
-
-    sensor = opencode_idle.OpenCodeIdleSensor(
-        _context(tmp_path),
-        now=FakeClock(1_791_502_764.0),
-        request=request,
-    )
-    iterator = sensor.events()
-    events = _recorded_events("events-summarize.sse")
-    user_message = next(event for event in events if event.event_type == "message.updated")
-    compaction_part = next(
-        event
-        for event in events
-        if event.event_type == "message.part.updated"
-        and cast("Mapping[str, object]", event.payload["properties"])["part"]
-        and cast(
-            "Mapping[str, object]",
-            cast("Mapping[str, object]", event.payload["properties"])["part"],
-        )["type"]
-        == "compaction"
-    )
-    first_busy = next(
-        event
-        for event in events
-        if event.event_type == "session.status"
-        and cast(
-            "Mapping[str, object]",
-            cast("Mapping[str, object]", event.payload["properties"])["status"],
-        )["type"]
-        == "busy"
-    )
-    final_idle = next(
-        event
-        for event in events
-        if event.event_type == "session.status"
-        and cast(
-            "Mapping[str, object]",
-            cast("Mapping[str, object]", event.payload["properties"])["status"],
-        )["type"]
-        == "idle"
-    )
-    session_idle = next(event for event in events if event.event_type == "session.idle")
-
-    compact = asyncio.create_task(sensor.compact())
-    await post_started.wait()
-    for event in (user_message, first_busy, compaction_part):
-        sensor.on_raw_event(event)
-    sensor.on_raw_event(final_idle)
-    sensor.on_raw_event(session_idle)
-    release_post.set()
-    assert (await compact).result == "ok"
-
-    real_user = next(
-        event
-        for event in _recorded_events("events-normal.sse")
-        if event.event_type == "message.updated"
-    )
-    sensor.on_raw_event(real_user)
-    sensor.on_raw_event(first_busy)
-
-    observed = await asyncio.wait_for(_take(iterator, 2), timeout=0.1)
-    assert [event.kind for event in observed] == ["turn_end", "user_prompt"]
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
-
-
 @pytest.mark.parametrize(
     "terminal_type",
     [
@@ -317,8 +219,6 @@ async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
     request = _v2_request_stub(
         provider="openai",
         model_id="gpt-6-astra",
-        compaction_id="unused",
-        on_compact=lambda: None,
     )
     sensor, iterator = _v2_sensor(tmp_path, request=request)
     events = _recorded_v2_events("events-v2-normal.sse")
@@ -337,13 +237,7 @@ def test_v2_turn_end_parses_wrapped_descending_message_facts() -> None:
     payload = {
         "data": [
             {
-                "info": {
-                    "role": "assistant",
-                    "tokens": {
-                        "input": 10_000,
-                        "cache": {"read": 20_000, "write": 3_000},
-                    },
-                },
+                "info": {"role": "assistant"},
                 "content": "latest answer",
             },
             {"type": "user", "text": "latest"},
@@ -352,23 +246,6 @@ def test_v2_turn_end_parses_wrapped_descending_message_facts() -> None:
         ]
     }
     assert opencode_idle._v2_message_excerpts(payload) == ("latest", "latest answer")
-    assert opencode_idle.v2_message_context_tokens(payload) == 33_000
-
-    compaction = {
-        "data": [
-            {
-                "info": {
-                    "role": "assistant",
-                    "mode": "compaction",
-                    "tokens": {"input": 80_000, "cache": {"read": 0, "write": 0}},
-                }
-            },
-            *payload["data"],
-        ]
-    }
-    assert opencode_idle.v2_message_context_tokens(compaction) is None
-    compaction["data"][0]["info"]["tokens"]["input"] = 0
-    assert opencode_idle.v2_message_context_tokens(compaction) is None
 
 
 async def test_v2_steered_prompt_returns_before_terminal_and_does_not_leak_to_compaction(
@@ -395,10 +272,12 @@ async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
     delivered_id = "msg_v2_user_queued"
     cancelled_id = "msg_v2_user_cancelled"
     sensor.on_raw_event(_v2_raw("session.execution.started"))
+    assert await sensor.busy() is True
     sensor.on_raw_event(_v2_user_enqueued(delivered_id, "follow up after this turn"))
     sensor.on_raw_event(_v2_user_enqueued(cancelled_id, "never mind"))
     sensor.on_raw_event(_v2_raw("session.inbox.cancelled", inboxID=cancelled_id))
     sensor.on_raw_event(_v2_raw("session.execution.succeeded"))
+    assert await sensor.busy() is False
     assert [event.kind for event in await _take(iterator, 3)] == ["user_prompt"] * 2 + ["turn_end"]
     sensor.on_raw_event(_v2_raw("session.execution.started"))
     sensor.on_raw_event(_v2_raw("session.inbox.delivered", inboxID=cancelled_id))
@@ -408,100 +287,363 @@ async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
     await _assert_quiet(iterator)
 
 
+_PROJECT_DIR = "/tmp/project"
+_SHELL_LISTING_PATH = f"/api/shell?location%5Bdirectory%5D={_PROJECT_DIR.replace('/', '%2F')}"
+_CHILD_LISTING_PATH = f"/api/session?parentID={V2_SESSION_ID}&limit=500"
+_ACTIVE_PATH = "/api/session/active"
+
+
+def _v2_global(event_type: str, **payload: object) -> RawHarnessEvent:
+    """An event the stream sends without a session id, such as ``shell.created``."""
+
+    return RawHarnessEvent(
+        event_type=event_type,
+        payload={"type": event_type, **payload},
+        harness_id="opencode",
+    )
+
+
+def _v2_turns(name: str) -> list[list[RawHarnessEvent]]:
+    """A recorded stream cut after each primary terminal; the remainder is the last cut."""
+
+    turns: list[list[RawHarnessEvent]] = [[]]
+    for event in _recorded_v2_events(name):
+        turns[-1].append(event)
+        if (
+            event.event_type in opencode_idle.TERMINAL_EVENTS
+            and event.payload["sessionID"] == V2_SESSION_ID
+        ):
+            turns.append([])
+    return turns
+
+
+async def _turn_end(
+    sensor: opencode_idle.OpenCodeV2IdleSensor,
+    events: list[RawHarnessEvent],
+    iterator: AsyncIterator[IdleEvent] | None = None,
+):
+    """Feed the events, then take the next turn end. Pass the sensor's one stream
+    to keep it open: closing a stream stops the sensor's background re-checks."""
+
+    for event in events:
+        sensor.on_raw_event(event)
+    if iterator is None:
+        iterator = sensor.events()
+    while (idle := await asyncio.wait_for(anext(iterator), timeout=1)).kind != "turn_end":
+        pass
+    return idle
+
+
+def _v2_work_request(
+    *,
+    shells: list[str] | None = None,
+    children: list[dict[str, object]] | None = None,
+    running: bool = False,
+    failing: str | None = None,
+) -> opencode_idle.BackendRequest:
+    async def request(
+        method: str, path: str, _payload: Mapping[str, object] | None
+    ) -> tuple[int, str]:
+        assert method == "GET"
+        if path == failing:
+            return 500, ""
+        session_path = f"/api/session/{V2_SESSION_ID}"
+        if path == session_path:
+            return 200, json.dumps(
+                {"data": {"id": V2_SESSION_ID, "location": {"directory": _PROJECT_DIR}}}
+            )
+        if path == _SHELL_LISTING_PATH:
+            return 200, json.dumps(
+                {"data": [{"id": shell, "status": "running"} for shell in shells or []]}
+            )
+        if path == _CHILD_LISTING_PATH:
+            return 200, json.dumps({"data": children or []})
+        if path == _ACTIVE_PATH:
+            active = {V2_SESSION_ID: {"type": "running"}} if running else {}
+            return 200, json.dumps({"data": active})
+        assert path.startswith(f"{session_path}/message")
+        return 200, '{"data":[]}'
+
+    return request
+
+
+async def test_v2_background_shell_is_reported_at_turn_end_until_its_wake(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, woken, _ = _v2_turns("events-v2-background-shell.sse")
+
+    assert (await _turn_end(sensor, started)).background_tasks == (
+        BackgroundTask(kind="shell", command="sleep 15"),
+    )
+    assert (await _turn_end(sensor, woken)).background_tasks == ()
+
+
+async def test_v2_background_subagent_is_reported_at_turn_end_until_its_wake(
+    tmp_path: Path,
+) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, woken, _ = _v2_turns("events-v2-background-subagent.sse")
+
+    # The child's own foreground shell is not the primary's work.
+    assert (await _turn_end(sensor, started)).background_tasks == (BackgroundTask(kind="agent"),)
+    assert (await _turn_end(sensor, woken)).background_tasks == ()
+
+
+async def test_v2_work_no_tool_named_is_not_reported(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    announced = [
+        event
+        for event in _recorded_v2_events("events-v2-unreferenced-work.sse")
+        if event.event_type in {"shell.created", "session.created"}
+    ]
+
+    # A session shell, a global shell, and a manual child session are all running.
+    assert len(announced) == 3
+    assert (
+        await _turn_end(sensor, [*announced, _v2_raw("session.execution.succeeded")])
+    ).background_tasks == ()
+
+
+async def test_v2_interrupted_foreground_tools_are_not_reported(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    shell_turn, subagent_turn, *_ = _v2_turns("events-v2-interrupted-foreground.sse")
+
+    # The stream ends the turn before it reports the aborted shell or child exiting.
+    assert (await _turn_end(sensor, shell_turn)).background_tasks == ()
+    assert (await _turn_end(sensor, subagent_turn)).background_tasks == ()
+
+
+async def test_v2_reported_work_is_bounded_and_keeps_agents(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    events: list[RawHarnessEvent] = []
+    for number, command in enumerate(["x" * 513, *("sleep 1" for _ in range(16))]):
+        shell_id = f"sh_{number}"
+        events.append(_v2_global("shell.created", info={"id": shell_id, "command": command}))
+        events.append(_v2_raw("session.tool.progress", metadata={"shellID": shell_id}))
+    # The child is named after seventeen shells, yet an agent is the certain hold.
+    events.append(_v2_global("session.created", sessionID="ses_child", parentID=V2_SESSION_ID))
+    events.append(
+        _v2_raw("session.tool.progress", metadata={"sessionID": "ses_child", "status": "running"})
+    )
+
+    tasks = (
+        await _turn_end(sensor, [*events, _v2_raw("session.execution.succeeded")])
+    ).background_tasks
+
+    assert len(tasks) == 16
+    assert tasks[:2] == (BackgroundTask(kind="agent"), BackgroundTask(kind="other"))
+    assert tasks[2:] == (BackgroundTask(kind="shell", command="sleep 1"),) * 14
+
+
+_CHILD_ID = "ses_v2_fixture_child"
+
+
+def _surfaced_request(
+    status: str, request_id: str, session_id: str = _CHILD_ID
+) -> RawHarnessEvent:
+    """A permission request as the managed primary's broker surfaces it to the sensor."""
+
+    transition = PermissionTransition(
+        seq=1,
+        request_id=request_id,
+        request_type="approval",
+        method="permission.asked",
+        payload={"id": request_id, "sessionID": session_id, "action": "shell"},
+        status=cast("Any", status),
+        resolution={"decision": "approve", "reply": "once"} if status == "resolved" else None,
+        error=None,
+        timestamp="2026-10-19T00:00:00Z",
+    )
+    event = _transition_to_event(transition, harness_id="opencode")
+    assert event is not None
+    return event
+
+
+async def test_v2_child_waiting_on_a_permission_prompt_stops_holding_the_push(
+    tmp_path: Path,
+) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, woken, _ = _v2_turns("events-v2-background-subagent.sse")
+
+    assert (await _turn_end(sensor, started)).background_tasks == (BackgroundTask(kind="agent"),)
+
+    # The prompt arrives after the turn end armed the push with the child held.
+    sensor.on_raw_event(_surfaced_request("pending", "per_1"))
+    assert (await _turn_end(sensor, [])).background_tasks == ()
+
+    # Answered: the child runs again and will wake the primary when it ends.
+    sensor.on_raw_event(_surfaced_request("resolved", "per_1"))
+    assert (await _turn_end(sensor, [])).background_tasks == (BackgroundTask(kind="agent"),)
+    assert (await _turn_end(sensor, woken)).background_tasks == ()
+
+
+async def test_v2_prompt_of_a_grandchild_stops_its_ancestor_child_counting(
+    tmp_path: Path,
+) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    await _turn_end(sensor, started)
+
+    sensor.on_raw_event(
+        _v2_global("session.created", sessionID="ses_grandchild", parentID=_CHILD_ID)
+    )
+    sensor.on_raw_event(_surfaced_request("pending", "per_deep", "ses_grandchild"))
+
+    assert (await _turn_end(sensor, [])).background_tasks == ()
+
+
 @pytest.mark.parametrize(
-    ("terminal_type", "expected_result"),
+    ("closing", "is_return"), [("resolved", True), ("failed", False), ("cancelled", False)]
+)
+async def test_v2_every_way_a_prompt_closes_counts_the_child_again_and_an_answer_is_a_return(
+    tmp_path: Path, closing: str, is_return: bool
+) -> None:
+    sensor, events = _v2_sensor(tmp_path)
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    await _turn_end(sensor, started, events)
+    sensor.on_raw_event(_surfaced_request("pending", "per_1"))
+    assert (await _turn_end(sensor, [], events)).background_tasks == ()
+
+    sensor.on_raw_event(_surfaced_request(closing, "per_1"))
+
+    # The user answering is back at the TUI: it closes the idle stretch, and the
+    # re-arm opens a new one held on the child. A prompt that failed or was
+    # cancelled is not the user acting.
+    observed = await _take(events, 2 if is_return else 1)
+    assert [event.kind for event in observed] == (["user_prompt"] if is_return else []) + [
+        "turn_end"
+    ]
+    assert observed[-1].background_tasks == (BackgroundTask(kind="agent"),)
+    await _assert_quiet(events)
+
+
+async def test_v2_prompts_that_change_no_reported_work_do_not_rearm(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    await _turn_end(sensor, started)
+
+    sensor.on_raw_event(_surfaced_request("pending", "per_primary", V2_SESSION_ID))
+    sensor.on_raw_event(_surfaced_request("pending", "per_unknown", "ses_elsewhere"))
+    sensor.on_raw_event(_surfaced_request("resolved", "per_never_opened"))
+    # A busy primary reports the corrected work at its own turn end.
+    sensor.on_raw_event(_v2_raw("session.execution.started"))
+    sensor.on_raw_event(_surfaced_request("pending", "per_while_busy"))
+    ended = await _turn_end(sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")])
+
+    assert (ended.turn_id, ended.background_tasks) == ("evt_own_end", ())
+
+
+async def test_v2_prompt_closed_after_its_child_ended_changes_nothing(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    await _turn_end(sensor, started)
+    sensor.on_raw_event(_surfaced_request("pending", "per_1"))
+    await _turn_end(sensor, [])
+
+    sensor.on_raw_event(_v2_raw("session.execution.succeeded", sessionID=_CHILD_ID))
+    sensor.on_raw_event(_surfaced_request("resolved", "per_1"))
+    ended = await _turn_end(sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")])
+
+    assert (ended.turn_id, ended.background_tasks) == ("evt_own_end", ())
+
+
+@pytest.mark.parametrize(
+    ("request_kwargs", "expected_after"),
     [
-        ("session.execution.succeeded", "ok"),
-        ("session.execution.failed", "failed"),
-        ("session.execution.interrupted", "failed"),
+        ({"shells": ["sh_152d5c83a0014ffNOwmGPo8RO7"]}, None),
+        ({"shells": []}, ()),
+        ({"failing": _SHELL_LISTING_PATH}, ()),
     ],
 )
-async def test_v2_compact_waits_for_matching_recorded_completion(
-    tmp_path: Path, terminal_type: str, expected_result: str
-) -> None:
-    sensor: opencode_idle.OpenCodeV2IdleSensor
-
-    def on_compact() -> None:
-        events = _recorded_v2_events("events-v2-compact.sse")
-        if terminal_type != "session.execution.succeeded":
-            events[-1] = _v2_raw(terminal_type, id=events[-1].payload["id"])
-        for event in events:
-            sensor.on_raw_event(event)
-
-    request = _v2_request_stub(
-        provider="opencode-go",
-        model_id="deepseek-v4.1-flash",
-        compaction_id="msg_v2_compaction",
-        on_compact=on_compact,
-    )
-    sensor, iterator = _v2_sensor(tmp_path, request=request, compact_timeout_seconds=0.1)
-    result = await sensor.compact()
-    assert result.result == expected_result
-    assert result.reason == (None if expected_result == "ok" else terminal_type)
-    assert [event.kind for event in await _take(iterator, 1)] == ["turn_end"]
-    await _assert_quiet(iterator)
-
-
-@pytest.mark.parametrize(
-    ("compaction_status", "expected_result"),
-    [("completed", "ok"), ("failed", "failed")],
-)
-async def test_v2_compact_confirms_durable_completion_after_stream_gap(
+async def test_v2_reconnect_rederives_work_at_once_and_rearms_if_it_changed(
     tmp_path: Path,
-    compaction_status: str,
-    expected_result: str,
+    caplog: pytest.LogCaptureFixture,
+    request_kwargs: dict[str, Any],
+    expected_after: tuple[BackgroundTask, ...] | None,
 ) -> None:
-    compact_posted = False
-    session_path = f"/api/session/{V2_SESSION_ID}"
+    sensor, events = _v2_sensor(tmp_path, request=_v2_work_request(**request_kwargs))
+    started, *_ = _v2_turns("events-v2-background-shell.sse")
+    shell = (BackgroundTask(kind="shell", command="sleep 15"),)
+    assert (await _turn_end(sensor, started, events)).background_tasks == shell
 
-    async def request(
-        method: str, path: str, payload: Mapping[str, object] | None
-    ) -> tuple[int, str]:
-        nonlocal compact_posted
-        if (method, path) == ("GET", session_path):
-            return 200, json.dumps(
-                {
-                    "data": {
-                        "id": V2_SESSION_ID,
-                        "model": {"providerID": "opencode-go", "id": "deepseek-v4.1-flash"},
-                        "outcome": "succeeded" if compact_posted else None,
-                        "time": {"idle": 1_700_000_001_000} if compact_posted else {},
-                    }
-                }
+    # The stream reopened while the shell ran: its end may have fallen in the gap,
+    # and no later turn end is coming to find out.
+    with caplog.at_level(logging.WARNING, logger=opencode_running_work.logger.name):
+        sensor.on_raw_event(_v2_global("server.connected"))
+        if expected_after is not None:
+            assert (await _turn_end(sensor, [], events)).background_tasks == expected_after
+        else:
+            await asyncio.sleep(0.05)
+            ended = await _turn_end(
+                sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")], events
             )
-        if method == "GET" and path == (
-            f"{session_path}/message?limit=20&order=desc&type=compaction"
-        ):
-            return 200, json.dumps(
-                {
-                    "data": [
-                        {
-                            "id": "msg_v2_compaction",
-                            "type": "compaction",
-                            "status": compaction_status,
-                        }
-                    ]
-                }
-            )
-        assert (method, path, payload) == ("POST", f"{session_path}/compact", {})
-        compact_posted = True
-        return 200, json.dumps(
-            {
-                "data": {
-                    "id": "msg_v2_compaction",
-                    "sessionID": V2_SESSION_ID,
-                    "time": {"created": 1_700_000_000_000},
-                    "type": "compaction",
-                }
-            }
-        )
+            assert (ended.turn_id, ended.background_tasks) == ("evt_own_end", shell)
 
-    sensor, _ = _v2_sensor(tmp_path, request=request, compact_timeout_seconds=0.01)
+    assert [
+        record.getMessage().startswith("OpenCode running work") for record in caplog.records
+    ] == ([True] if "failing" in request_kwargs else [])
 
-    result = await sensor.compact()
 
-    assert result.result == expected_result
-    assert result.reason == (None if expected_result == "ok" else "timeout")
+async def test_v2_reconnect_drops_a_child_that_ended_in_the_gap(tmp_path: Path) -> None:
+    child = {"id": _CHILD_ID, "outcome": "succeeded"}
+    sensor, events = _v2_sensor(tmp_path, request=_v2_work_request(children=[child]))
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    assert (await _turn_end(sensor, started, events)).background_tasks == (
+        BackgroundTask(kind="agent"),
+    )
+
+    sensor.on_raw_event(_v2_global("server.connected"))
+
+    assert (await _turn_end(sensor, [], events)).background_tasks == ()
+
+
+async def test_v2_reconnect_reports_a_turn_end_the_closed_stream_swallowed(
+    tmp_path: Path,
+) -> None:
+    # The turn's end fell in the gap: no work is named, and no later event comes.
+    sensor, events = _v2_sensor(tmp_path, request=_v2_work_request(running=False))
+    sensor.on_raw_event(_v2_raw("session.execution.started"))
+    assert await sensor.busy() is True
+
+    sensor.on_raw_event(_v2_global("server.connected"))
+
+    idle = await asyncio.wait_for(anext(events), timeout=1)
+    assert (idle.kind, idle.turn_id, idle.background_tasks) == ("turn_end", None, ())
+    assert await sensor.busy() is False
+    await _assert_quiet(events)
+
+
+async def test_v2_reconnect_finds_a_turn_the_closed_stream_hid_still_running(
+    tmp_path: Path,
+) -> None:
+    # The turn started in the gap, and the shell the last turn end held on ended in
+    # it: the refresh would re-arm a push that could fire inside the running turn.
+    sensor, events = _v2_sensor(tmp_path, request=_v2_work_request(running=True))
+    started, *_ = _v2_turns("events-v2-background-shell.sse")
+    await _turn_end(sensor, started, events)
+    assert await sensor.busy() is False
+
+    sensor.on_raw_event(_v2_global("server.connected"))
+    await asyncio.sleep(0.05)
+
+    # No re-arm came out of the refresh: the next turn end is the turn's own.
+    assert await sensor.busy() is True
+    ended = await _turn_end(sensor, [_v2_raw("session.execution.succeeded", id="evt_end")], events)
+    assert (ended.turn_id, ended.background_tasks) == ("evt_end", ())
+
+
+async def test_v2_first_connection_with_no_work_named_asks_the_server_nothing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A request that fails would log a warning if the sensor made it.
+    sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(failing=_ACTIVE_PATH))
+
+    with caplog.at_level(logging.WARNING, logger=opencode_running_work.logger.name):
+        sensor.on_raw_event(_v2_global("server.connected"))
+        await asyncio.sleep(0.05)
+        ended = await _turn_end(sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")])
+
+    assert (ended.turn_id, ended.background_tasks) == ("evt_own_end", ())
+    assert caplog.records == []
 
 
 @pytest.mark.parametrize(

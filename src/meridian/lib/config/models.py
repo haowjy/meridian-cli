@@ -199,35 +199,6 @@ class IdleConfig(ConfigModel):
             env_vars=("MERIDIAN_IDLE_WARN_EMAIL",),
         ),
     ] = True
-    compact_minutes: Annotated[
-        int,
-        config_field(
-            "idle.compact_minutes",
-            value_kind="int",
-            file_aliases=(file_alias("idle", "compact_minutes"),),
-            env_vars=("MERIDIAN_IDLE_COMPACT_MINUTES",),
-        ),
-        Field(ge=0),
-    ] = 5
-    compact: Annotated[
-        bool,
-        config_field(
-            "idle.compact",
-            value_kind="bool",
-            file_aliases=(file_alias("idle", "compact"),),
-            env_vars=("MERIDIAN_IDLE_COMPACT",),
-        ),
-    ] = True
-    compact_min_growth_tokens: Annotated[
-        int | None,
-        config_field(
-            "idle.compact_min_growth_tokens",
-            value_kind="int",
-            file_aliases=(file_alias("idle", "compact_min_growth_tokens"),),
-            env_vars=("MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS",),
-        ),
-        Field(ge=0),
-    ] = None
     late_fire_tolerance_seconds: Annotated[
         int,
         config_field(
@@ -344,24 +315,18 @@ class NotifyConfig(ConfigModel):
             env_vars=("MERIDIAN_NOTIFY_SMTP_PASSWORD_FILE",),
         ),
     ] = None
-    push_command: Annotated[
-        str | None,
-        config_field(
-            "notify.push_command",
-            value_kind="str",
-            file_aliases=(file_alias("notify", "push_command"),),
-            env_vars=("MERIDIAN_NOTIFY_PUSH_COMMAND",),
-        ),
-    ] = None
-    email_command: Annotated[
-        str | None,
-        config_field(
-            "notify.email_command",
-            value_kind="str",
-            file_aliases=(file_alias("notify", "email_command"),),
-            env_vars=("MERIDIAN_NOTIFY_EMAIL_COMMAND",),
-        ),
-    ] = None
+
+    @field_validator("push_backend", "email_backend")
+    @classmethod
+    def _validate_backend(cls, value: str) -> str:
+        from meridian.lib.notify.channels import normalize_channel_name
+
+        try:
+            return normalize_channel_name(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{exc} See docs/upgrading.md#notifications-are-hook-events."
+            ) from None
 
     @field_validator("smtp_port")
     @classmethod

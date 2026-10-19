@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
 import structlog
 
+from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.lifecycle import LifecycleEvent, LifecycleHook
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.builtin.base import BuiltinHook
@@ -15,23 +18,16 @@ from meridian.lib.hooks.interval import IntervalTracker
 from meridian.lib.hooks.registry import HookRegistry
 from meridian.lib.hooks.runner import ExternalHookRunner, hooks_dispatch_enabled
 from meridian.lib.hooks.types import (
-    DEFAULT_FAILURE_POLICY,
-    DEFAULT_TIMEOUTS,
-    EVENT_CLASS,
-    FailurePolicy,
+    EVENTS,
     Hook,
     HookContext,
-    HookEventClass,
     HookEventName,
     HookResult,
     SpawnStatus,
 )
 from meridian.plugin_api import Hook as PluginHook
-from meridian.plugin_api import HookContext as PluginHookContext
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
     from meridian.lib.service_context import ApplicationContext
 
@@ -69,7 +65,10 @@ class HookDispatcher(LifecycleHook):
         interval_tracker: _IntervalTrackerLike | None = None,
         external_runner: _ExternalRunnerLike | None = None,
         builtin_hooks: Mapping[str, BuiltinHook] | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> None:
+        # The environment hooks run in; MERIDIAN_HOOKS_ENABLED=false there turns them off.
+        self._env = os.environ if env is None else env
         if authority is not None:
             self._project_root = authority.project_root.expanduser().resolve()
             self._runtime_root = (
@@ -77,7 +76,7 @@ class HookDispatcher(LifecycleHook):
                 if authority.runtime_root is not None
                 else None
             )
-            self._authority = authority.model_copy(
+            registry_authority = authority.model_copy(
                 update={
                     "project_root": self._project_root,
                     "runtime_root": self._runtime_root,
@@ -88,16 +87,16 @@ class HookDispatcher(LifecycleHook):
             self._runtime_root = (
                 runtime_root.expanduser().resolve() if runtime_root is not None else None
             )
-            self._authority = None
+            registry_authority = None
         self._registry = registry or HookRegistry(
             self._project_root,
-            authority=self._authority,
+            authority=registry_authority,
         )
         self._interval_tracker = interval_tracker or (
             IntervalTracker(self._runtime_root) if self._runtime_root is not None else None
         )
-        self._external_runner = external_runner or (
-            ExternalHookRunner(self._project_root) if self._runtime_root is not None else None
+        self._external_runner = external_runner or ExternalHookRunner(
+            self._project_root, env=self._env
         )
         self._builtin_hooks = builtin_hooks or BUILTIN_HOOKS
 
@@ -135,17 +134,17 @@ class HookDispatcher(LifecycleHook):
     def on_event(self, event: LifecycleEvent) -> None:
         """LifecycleHook protocol implementation."""
 
-        if self._runtime_root is None:
-            return
         self.fire(self._build_context(event))
 
     def fire(self, context: HookContext) -> list[HookResult]:
-        """Execute hooks registered for one event and return per-hook results."""
+        """Execute hooks registered for one event and return per-hook results.
 
-        if self._runtime_root is None:
-            return []
+        Without a runtime root (an ad-hoc directory nothing has initialized), hooks
+        still run; only interval-throttled ones skip, having nowhere to keep state.
+        A notification's emitter reports its route failures, so they log at info.
+        """
 
-        if not hooks_dispatch_enabled():
+        if not hooks_dispatch_enabled(self._env):
             logger.info(
                 "hook_dispatch_skipped",
                 hook_event=context.event_name,
@@ -162,7 +161,6 @@ class HookDispatcher(LifecycleHook):
             hook_count=len(hooks),
         )
 
-        event_class = EVENT_CLASS.get(context.event_name, "observe")
         results: list[HookResult] = []
         for hook in hooks:
             logger.info(
@@ -194,8 +192,8 @@ class HookDispatcher(LifecycleHook):
                 )
                 continue
 
-            fail_open = self._is_fail_open(event_class, self._resolve_failure_policy(hook))
-            logger.warning(
+            log_failure = logger.info if context.notification is not None else logger.warning
+            log_failure(
                 "hook_execution_failed",
                 hook=hook.name,
                 hook_event=context.event_name,
@@ -203,15 +201,7 @@ class HookDispatcher(LifecycleHook):
                 error=result.error,
                 error_type=self._error_type(result),
                 exit_code=result.exit_code,
-                fail_open=fail_open,
             )
-            if not fail_open:
-                logger.warning(
-                    "hook_dispatch_stopped_on_failure",
-                    hook_event=context.event_name,
-                    failed_hook=hook.name,
-                )
-                break
 
         logger.info(
             "hook_dispatch_finished",
@@ -259,7 +249,7 @@ class HookDispatcher(LifecycleHook):
                 skip_reason="condition_not_met",
             )
 
-        timeout_secs = hook.timeout_secs or DEFAULT_TIMEOUTS[EVENT_CLASS[context.event_name]]
+        timeout_secs = hook.timeout_secs or EVENTS[context.event_name].default_timeout_secs
         if hook.interval:
             if self._interval_tracker is None:
                 return HookResult(
@@ -295,20 +285,23 @@ class HookDispatcher(LifecycleHook):
         *,
         timeout_secs: int,
     ) -> HookResult:
+        payload_context = context
+        if hook.configured_event is not None:
+            # Deprecated config names intentionally stay outside the current
+            # Plugin API literal while this row's payload retains its old value.
+            payload_context = replace(
+                context,
+                event_name=cast("HookEventName", hook.configured_event),
+            )
         try:
             if hook.builtin:
-                result = self._run_builtin(hook, context)
+                result = self._run_builtin(hook, payload_context)
             else:
-                if self._external_runner is None:
-                    return HookResult(
-                        hook_name=hook.name,
-                        event=context.event_name,
-                        outcome="skipped",
-                        success=True,
-                        skipped=True,
-                        skip_reason="no_state",
-                    )
-                result = self._external_runner.run(hook, context, timeout_secs=timeout_secs)
+                result = self._external_runner.run(
+                    hook,
+                    payload_context,
+                    timeout_secs=timeout_secs,
+                )
         except Exception as exc:
             result = HookResult(
                 hook_name=hook.name,
@@ -318,7 +311,7 @@ class HookDispatcher(LifecycleHook):
                 error=str(exc),
             )
 
-        return result
+        return replace(result, hook_name=hook.name, event=context.event_name)
 
     def _run_builtin(self, hook: Hook, context: HookContext) -> HookResult:
         if not hook.builtin:
@@ -352,20 +345,7 @@ class HookDispatcher(LifecycleHook):
                 error=requirements_error,
             )
 
-        result = builtin.execute(_to_plugin_context(context), _to_plugin_hook(hook))
-        return HookResult(
-            hook_name=hook.name,
-            event=context.event_name,
-            outcome=result.outcome,
-            success=result.success,
-            skipped=result.skipped,
-            skip_reason=result.skip_reason,
-            error=result.error,
-            exit_code=result.exit_code,
-            duration_ms=result.duration_ms,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
+        return builtin.execute(context, _to_plugin_hook(hook))
 
     def _check_conditions(self, hook: Hook, context: HookContext) -> bool:
         when = hook.when
@@ -375,38 +355,12 @@ class HookDispatcher(LifecycleHook):
         if when.status and context.spawn_status not in when.status:
             return False
 
+        if when.kind and context.spawn_kind not in when.kind:
+            return False
+
         return not when.agent or context.spawn_agent == when.agent
 
-    def _resolve_failure_policy(self, hook: Hook) -> FailurePolicy:
-        if hook.failure_policy is not None:
-            return hook.failure_policy
-        event_class: HookEventClass = EVENT_CLASS[hook.event]
-        return DEFAULT_FAILURE_POLICY[event_class]
-
-    def _is_fail_open(self, event_class: HookEventClass, policy: FailurePolicy) -> bool:
-        if event_class in ("observe", "post"):
-            return True
-        return policy != "fail"
-
     def _build_context(self, event: LifecycleEvent) -> HookContext:
-        authority = self._authority
-        if authority is not None:
-            return HookContext.from_authority(
-                authority=authority,
-                event_name=cast("HookEventName", event.event_type),
-                event_id=event.event_id,
-                timestamp=event.timestamp.isoformat(),
-                spawn_id=event.spawn_id,
-                spawn_status=_normalize_spawn_status(event.status),
-                spawn_agent=event.agent,
-                spawn_model=event.model,
-                spawn_duration_secs=event.duration_secs,
-                spawn_cost_usd=event.total_cost_usd,
-                work_id=event.work_id,
-            )
-
-        if self._runtime_root is None:
-            raise ValueError("Hook dispatcher context is missing runtime_root.")
         return HookContext.from_roots(
             project_root=self._project_root,
             runtime_root=self._runtime_root,
@@ -414,23 +368,26 @@ class HookDispatcher(LifecycleHook):
             event_id=event.event_id,
             timestamp=event.timestamp.isoformat(),
             spawn_id=event.spawn_id,
-            spawn_status=_normalize_spawn_status(event.status),
+            spawn_status=(
+                _PLUGIN_SPAWN_STATUS.get(event.status) if event.status is not None else None
+            ),
             spawn_agent=event.agent,
+            spawn_kind=event.kind,
             spawn_model=event.model,
             spawn_duration_secs=event.duration_secs,
             spawn_cost_usd=event.total_cost_usd,
+            spawn_error=event.error,
             work_id=event.work_id,
         )
 
 
-def _normalize_spawn_status(value: str | None) -> SpawnStatus | None:
-    if value == "succeeded":
-        return "success"
-    if value == "failed":
-        return "failure"
-    if value in ("success", "failure", "cancelled", "timeout", "skipped"):
-        return value
-    return None
+# Every terminal spawn status maps to a plugin `when.status` value.
+_PLUGIN_SPAWN_STATUS: dict[TerminalSpawnStatus, SpawnStatus] = {
+    "succeeded": "success",
+    "failed": "failure",
+    "cancelled": "cancelled",
+    "timed_out": "timeout",
+}
 
 
 def _to_plugin_hook(hook: Hook) -> PluginHook:
@@ -445,26 +402,5 @@ def _to_plugin_hook(hook: Hook) -> PluginHook:
         require_serial=hook.require_serial,
         exclude=hook.exclude,
         options=hook.options,
-        failure_policy=hook.failure_policy,
         remote=hook.remote,
-    )
-
-
-def _to_plugin_context(context: HookContext) -> PluginHookContext:
-    return PluginHookContext(
-        event_name=context.event_name,
-        event_id=context.event_id,
-        timestamp=context.timestamp,
-        project_root=context.project_root,
-        runtime_root=context.runtime_root,
-        schema_version=context.schema_version,
-        spawn_id=context.spawn_id,
-        spawn_status=context.spawn_status,
-        spawn_agent=context.spawn_agent,
-        spawn_model=context.spawn_model,
-        spawn_duration_secs=context.spawn_duration_secs,
-        spawn_cost_usd=context.spawn_cost_usd,
-        spawn_error=context.spawn_error,
-        work_id=context.work_id,
-        work_dir=context.work_dir,
     )

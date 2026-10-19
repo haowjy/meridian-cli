@@ -290,35 +290,56 @@ See [extensions.md](extensions.md) for the shared CLI and MCP contract.
 ### `meridian notify`
 
 ```text
-meridian notify "<msg>" [--title T] [--no-email] [--priority 1..5] [--json]
+meridian notify "<title>" ["<body>"] [--attach <path>]... [--no-email] [--priority 1..5] [--json]
 ```
 
-Sends one manual notice through the configured push and email backends.
-`--no-email` limits the attempt to push. The command exits 0 when at least one
-backend succeeds, exits 1 when all selected backends fail, and exits 0 with a
-warning when every selected backend is `none`. It does not retry in-process.
-The generated title identifies the tmux session, project, and active work item
-when those values are available.
+Fires the `notify.manual` hook event, which the built-in `notify` hook delivers
+through the configured push and email backends unless config routes it
+elsewhere. The title is one line: what the human needs to decide or see. If the
+first argument contains several lines, the first non-empty line becomes the
+title and the remaining lines are prepended to the optional body; the session
+headline (tmux session, agent, work item) always ends it. `--no-email` keeps it
+off the email backends (`smtp`, `gmail`), however a route names them.
+
+`--attach <path>` (repeatable) sends a file with it: email attaches every file
+to the one message; ntfy, which carries one file per message, sends the text
+and then each file as its own lower-priority message (the server must allow
+attachments, and sets the size limit). Command hooks get the absolute paths in
+`notification.attachments`. A missing or unreadable path fails with exit 2
+before any route runs. Repeating paths that resolve to the same file sends that
+file once. Email attachments are all-or-nothing: if the email provider rejects
+one file (for example, for size), that email and its text fail together. If
+ntfy accepts the text but rejects files, it still attempts every remaining file;
+the route remains sent and warns with every failed file name, and the
+notification text is not retried.
+
+Results list one entry per route, named by its hook (`notify` for the default
+route) plus its successful transports: text renders `notify (ntfy)`, while
+`--json` has a `transports` list per route and adds the session `label`. A
+failed route's error names the transports that failed. Exit 0 when something delivered, when every route
+delivered nothing (backends `none`), or when no route ran (with the warning "no
+notification route ran for notify.manual"); exit 1 when a route failed and none
+delivered. No in-process retry.
 
 ### `meridian idle`
 
 `idle` is an adapter-facing command group. Harness mods and launcher tasks use
-it to report events, ask core whether compaction is safe, and record the result.
-Humans normally use only:
+it to report turn ends and user returns, and to ask core whether a due push or
+cache warning should still be sent. Humans normally use only:
 
 | Command | Description |
 |---|---|
 | `meridian idle status [--json]` | List open idle stretches and their stored schedules |
 | `meridian idle mod-path` | Print the bundled Claude idle mod directory for an external-TUI opt-in |
 
-The adapter subcommands are `config`, `arm`, `return`, `fire`, `done`, and
-`event`; run `meridian idle --help` for their typed contract. Outside-Meridian
-adapters must pass `--interactive` on every call. An explicit spawn role stays
-disabled even with that flag.
+The adapter subcommands are `config`, `arm`, `return`, `needs-permission`,
+`fire`, and `event`; run `meridian idle --help` for their typed contract.
+Outside-Meridian adapters must pass `--interactive` on every call. An explicit
+spawn role stays disabled even with that flag.
 
 See [configuration.md](configuration.md#notifications-and-idle-sessions) for
-notification backends, idle timers, precedence, defaults, safety guards, and
-the Claude opt-in command.
+notification backends, [routing and extension channels](configuration.md#routing-and-extending-notifications), idle timers, how running work affects the push,
+precedence, per-harness defaults, and the Claude opt-in command.
 
 ## Configuration & Diagnostics
 

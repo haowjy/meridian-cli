@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.hooks.config import HOOK_SOURCE_PRECEDENCE, HooksConfig, load_hooks_config
+from meridian.lib.hooks.config import (
+    HOOK_SOURCE_PRECEDENCE,
+    HooksConfig,
+    load_hooks_config_report,
+)
 from meridian.lib.hooks.types import Hook, HookEventName
 
 if TYPE_CHECKING:
@@ -26,12 +30,18 @@ class HookRegistry:
         hooks_config: HooksConfig | None = None,
     ) -> None:
         self._project_root = project_root.expanduser().resolve()
-        self._config = hooks_config or load_hooks_config(
-            self._project_root,
-            user_config=user_config,
-            authority=authority,
-        )
-        self._hooks = {hook.name: hook for hook in self._config.hooks}
+        if hooks_config is None:
+            loaded = load_hooks_config_report(
+                self._project_root,
+                user_config=user_config,
+                authority=authority,
+            )
+            self._config = loaded.require_valid()
+            self._warnings = loaded.warnings
+        else:
+            self._config = hooks_config
+            self._warnings = ()
+        self._hooks = {(hook.name, hook.event): hook for hook in self._config.hooks}
         self._by_event: dict[HookEventName, list[Hook]] = {}
         self._build_event_index()
 
@@ -55,15 +65,25 @@ class HookRegistry:
             by_event[event] = [hook for _, hook in ordered]
         self._by_event = by_event
 
-    def get_hook(self, name: str) -> Hook | None:
-        """Return one hook by name if registered."""
+    def get_hook(self, name: str, event: HookEventName) -> Hook | None:
+        """Return the hook registered for an exact name and event."""
 
-        return self._hooks.get(name)
+        return self._hooks.get((name, event))
+
+    def get_hooks_named(self, name: str) -> list[Hook]:
+        """Return every event-specific hook registered under a name."""
+
+        return [hook for hook in self._config.hooks if hook.name == name]
 
     def get_all_hooks(self) -> list[Hook]:
         """Return all effective hooks after precedence/override resolution."""
 
         return list(self._config.hooks)
+
+    def get_warnings(self) -> tuple[str, ...]:
+        """Return one compatibility warning per deprecated config row."""
+
+        return self._warnings
 
     def get_hooks_for_event(self, event: HookEventName) -> list[Hook]:
         """Return enabled hooks for one event in deterministic execution order."""

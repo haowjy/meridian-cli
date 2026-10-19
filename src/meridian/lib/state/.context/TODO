@@ -1,5 +1,12 @@
 # state/ — must-do follow-ups
 
+- `work_state.py`: on the next work `__status.json` format change, start writing
+  the `v` field that readers already accept (absent means v1). Keep the supported
+  version set explicit and update the upgrade note before changing the writer.
+- `ops/legacy_native_import.py`: stop writing the legacy import report's unused
+  `schema_version` after the released reader that requires it is outside the
+  compatibility window. The current reader already defaults an absent field to 1.
+
 - Versioned ZIP membership/digest recipe and immutable capture descriptor for
   native-transcript.jsonl (native-transcript-capture.md stage 4). Inventory now
   accepts a sealed snapshot as the transcript member; old publisher ZIPs keep

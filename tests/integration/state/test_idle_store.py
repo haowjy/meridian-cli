@@ -1,4 +1,8 @@
+import json
+import logging
 from pathlib import Path
+
+import pytest
 
 from meridian.lib.state.idle_store import IdleSchedule, IdleState, IdleStore
 
@@ -15,14 +19,8 @@ def _state(*, updated_at_ms: int = 0) -> IdleState:
         anchor=3,
         idle_since_ms=1_760_000_000_000,
         ttl_seconds=3600,
-        schedule=IdleSchedule(
-            push_at=1_760_000_060_000,
-            warn_at=1_760_002_700_000,
-            compact_at=1_760_003_300_000,
-        ),
-        done={"push": "sent", "compact": "claimed"},
-        compact_window_until_ms=1_760_003_330_000,
-        expect_compaction_turn=True,
+        schedule=IdleSchedule(push_at=1_760_000_060_000, warn_at=1_760_002_700_000),
+        done={"push": "sent"},
         updated_at_ms=updated_at_ms,
     )
 
@@ -37,7 +35,7 @@ def test_idle_store_round_trips_versioned_json(tmp_path: Path) -> None:
     assert store.read("example", "native-1") == written
     assert store.path_for("example", "native-1").name == "example-native-1.json"
     assert (
-        store.path_for("example", "native-1").read_text(encoding="utf-8").startswith('{\n  "v": 1,')
+        store.path_for("example", "native-1").read_text(encoding="utf-8").startswith('{\n  "v": 2,')
     )
 
 
@@ -51,6 +49,29 @@ def test_idle_store_treats_truncated_file_as_no_stretch(tmp_path: Path) -> None:
 
     assert store.read("example", "native-1") is None
     assert store.list_states() == ()
+
+
+def test_idle_store_warns_when_another_build_wrote_the_version(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = IdleStore(tmp_path / "idle")
+    path = store.path_for("example", "native-1")
+    path.parent.mkdir(parents=True)
+    payload = _state().model_dump(mode="json")
+    payload["v"] = 3
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.state.idle_store"):
+        observed = store.mutate(
+            "example",
+            "native-1",
+            lambda current: (None, current),
+        )
+
+    assert observed is None
+    assert str(path) in caplog.text
+    assert "different Meridian build" in caplog.text
 
 
 def test_idle_store_lazy_gc_removes_state_older_than_seven_days(tmp_path: Path) -> None:

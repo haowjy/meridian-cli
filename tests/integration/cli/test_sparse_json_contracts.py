@@ -318,7 +318,7 @@ def test_hooks_run_json_contract(
         config.write(
         "[[hooks]]\n"
         'name = "projection-test"\n'
-        'event = "spawn.finalized"\n'
+        'event = "spawn.finished"\n'
         'command = "printf hook-output; printf hook-error >&2"\n'
         )
 
@@ -331,6 +331,7 @@ def test_hooks_run_json_contract(
         "success",
         "skipped",
         "skip_reason",
+        "warning",
         "error",
         "exit_code",
         "duration_ms",

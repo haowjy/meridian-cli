@@ -1,32 +1,58 @@
 # Idle Policy Core
 
-This package owns idle timelines, ordered safety guards, stretch transitions,
-notification decisions, and the launcher-hosted sensor loop. It is policy, not
-a harness adapter: **adapters report facts; core decides**.
+This package owns idle timelines, ordered stage guards, stretch transitions,
+notification decisions, and the launcher-hosted sensor loop. The idle timeline
+does two things: the "your turn" push and the cache-expiry warning. Separately,
+it forwards a harness's still-waiting permission signal without touching that
+timeline. Meridian does not compact; harnesses compact on their own. It is
+policy, not a harness adapter: **adapters report facts; core decides**.
 
 ## Invariants
 
 - Never name or branch on a harness here. Harness-specific sensing, TTL
-  detection, environment facts, and compaction mechanisms belong behind the
-  contracts in `../harness/idle_types.py`.
+  detection, and environment facts belong behind the contracts in
+  `../harness/idle_types.py`.
 - `service.py` is the only transition API. Preserve at-most-once stage claims,
-  anchor-versioned timers, explicit user-return priority, and stretch-keyed
-  compaction completion.
-- Keep `timeline.py` and `guards.py` pure. Guard order is behavioral: the first
-  match is the reported reason.
-- Context baselines survive returns and new stretches. Only a trustworthy shrink
-  or the first real turn after Meridian's own successful compaction resets them;
-  absorbed compaction turns never update context. The first arm after a closed
-  stretch with claimed/successful compaction also skips observation: it may be
-  the compaction's own late turn end.
+  anchor-versioned timers, and explicit user-return priority.
+- Keep `timeline.py`, `guards.py` and `wake.py` pure. Guard order is behavioral:
+  the first match is the reported reason.
+- Adapters report the work a turn left running as `BackgroundTask` facts, in the
+  host's own terms mapped to a kind. `wake.py` alone reads them, including
+  Meridian's own CLI grammar. A running agent is certain, and so is a shell
+  whose last command is a foreground spawn creation or `spawn wait`; loops,
+  detached spawns, management commands, and commands followed by more work are
+  maybe. An explicit wait `--timeout`
+  (minutes) replaces the yield deadline. Never classify spawn commands in an
+  adapter. A certain wake holds the push, and the response stays owed
+  (`push_owed_since_ms`) until a push is delivered or the user returns. A known
+  wake before cache expiry drops the warning. The Claude mod forwards native
+  background-task facts; Pi forwards tracked background managed-bash rows as
+  shell facts when the full command fits its bound, or `other` otherwise.
+  The OpenCode 2.x sensor forwards the background shells and subagents its
+  primary's own tools started (the work OpenCode wakes the session for): shell
+  facts bounded the same way, and `agent`. Report only work that wakes the
+  session when it ends; reporting work that never does holds the push for
+  nothing. It stops reporting a subagent that waits on a permission prompt, and
+  arms again with another `turn_end` event when its facts change while the
+  primary is idle (the same stretch with a new anchor; a stage already sent
+  stays sent). Answering that prompt is a `user_prompt` first, so the stretch
+  closes and the re-arm opens a new one. Codex and OpenCode 1.x send none (#669).
+- `wake.py` skips Meridian's top-level value flags through
+  `lib/cli_args.py` `TOP_LEVEL_VALUE_FLAGS`, the table `cli/bootstrap.py`
+  also uses. A new top-level flag that takes a value goes there, or wake.py
+  misreads `meridian <flag> <value> spawn ...`.
 - Authoritative state lives in `../state/idle_store.py`; sidecar timers are
   disposable and reconstructed from that state.
+- A permission notice is stateless: never read or write the idle store, alter a
+  stretch, hold or release the push, track an answer, or correlate tool calls.
 - A primary reopen through Meridian closes any open stretch in the launcher
   before exec. Keep this out of exit hooks (a killed terminal runs none) and
   adapters (engines cannot distinguish reload from resume, and reload recovery
   must keep working).
-- Inject notification delivery. This package constructs `lib/notify.Notice`
-  values and depends on `lib/notify` in the designed one-way direction.
+- Inject notification delivery. This package builds `plugin_api.Notification`
+  values, emits scheduled notices as `STAGE_EVENTS[stage]` and permission
+  notices as `NEEDS_PERMISSION_EVENT` through `lib/notify.emit`, and depends on
+  `lib/notify` in the designed one-way direction.
 - The sidecar is hosted in the primary TUI process. It must contain sensor
   failures, move synchronous service/store work off the launcher event loop,
   and stop before the live connection is torn down. Its liveness follows the
@@ -38,8 +64,6 @@ a harness adapter: **adapters report facts; core decides**.
 
 - CLI argument parsing and human rendering belong in `cli/`; adapter result shapes
   and their wire serialization stay with the service result types.
-- Spawn-store reads for the child guard go through `children.py`, stay read-only,
-  and use derived status so a dead unfinalized child does not block idle.
 - TTL detection reads the chat's launch-recorded native store through the
   session store using `MERIDIAN_CHAT_ID`. Never pass or derive a cwd for
   transcript lookup: agents can `cd`, while the transcript remains filed under

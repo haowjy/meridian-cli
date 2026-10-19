@@ -11,7 +11,7 @@ Design decisions in effect:
 - D5: keep update_spawn public — metadata only, no transition
 - D9: No async — synchronous methods matching spawn_store
 - D12: First-class LifecycleEvent over ad hoc callbacks
-- D13: Metrics may be None on spawn.finalized — fire for persisted terminal writes,
+- D13: Metrics may be None on spawn.finished — fire for persisted terminal writes,
   including authoritative replacement of reconciler terminal state
 
 Import note
@@ -67,8 +67,10 @@ if TYPE_CHECKING:
         SpawnRecord,
     )
     from meridian.lib.state.spawn.repository import LockedMutationResult
+    from meridian.plugin_api.types import SpawnKind
 
 logger = structlog.get_logger(__name__)
+_logged_hook_config_warnings: set[tuple[str, int, str]] = set()
 
 
 def _pid_created_at_epoch(pid: int | None) -> float | None:
@@ -102,7 +104,7 @@ def _locked_mutation_snapshot(outcome: LockedMutationResult) -> SpawnRecord | No
 # Public type aliases
 # ---------------------------------------------------------------------------
 
-EventType = Literal["spawn.created", "spawn.running", "spawn.finalized"]
+EventType = Literal["spawn.created", "spawn.started", "spawn.finished"]
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
 
 
@@ -114,30 +116,12 @@ type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 # ---------------------------------------------------------------------------
 
 
-def _event_scope(event_type: str) -> str:
-    """Return event namespace scope used in deterministic event IDs."""
-
-    # Keep spawn event IDs byte-for-byte stable with legacy generation.
-    if event_type.startswith("spawn."):
-        return "spawn"
-    return "event"
-
-
-def generate_lifecycle_event_id(subject_id: str, event_type: str, sequence: int) -> UUID:
-    """Generate stable event ID using UUID v5.
-
-    Stability across retries: same subject_id + event_type + sequence
-    always produces the same UUID.
-    """
-    namespace = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # URL namespace
-    name = f"meridian:{_event_scope(event_type)}:{subject_id}:{event_type}:{sequence}"
-    return uuid.uuid5(namespace, name)
-
-
 def generate_event_id(spawn_id: str, event_type: str, sequence: int) -> UUID:
-    """Backward-compatible wrapper for spawn lifecycle callers."""
+    """Generate a stable spawn-event ID using UUID v5."""
 
-    return generate_lifecycle_event_id(spawn_id, event_type, sequence)
+    namespace = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # URL namespace
+    name = f"meridian:spawn:{spawn_id}:{event_type}:{sequence}"
+    return uuid.uuid5(namespace, name)
 
 
 # ---------------------------------------------------------------------------
@@ -166,12 +150,14 @@ class LifecycleEvent:
 
     # Execution context (always present)
     agent: str | None
+    kind: SpawnKind
     model: str | None
     harness: str | None
 
     # Terminal-only fields (None for non-terminal events)
     status: TerminalSpawnStatus | None = None
     origin: TerminalOrigin | None = None
+    error: str | None = None
 
     outcome_category: TerminalOutcomeCategory | None = None
 
@@ -263,7 +249,7 @@ class SpawnLifecycleService:
             if record is None:
                 raise ValueError(f"spawn row not found: {spawn_id}")
             self._record = record
-            self._dispatch_spawn_started_events(status=record.status, spawn_id=spawn_id)
+            self._dispatch_spawn_started_events(status=record.status)
 
     def _start_from_reservation(
         self,
@@ -312,19 +298,18 @@ class SpawnLifecycleService:
             record = _spawn_store().get_spawn(self._runtime_root, result_id)
             self._record = record
             if dispatch_events:
-                self._dispatch_spawn_started_events(
-                    status=reservation.status,
-                    spawn_id=str(result_id),
-                )
+                self._dispatch_spawn_started_events(status=reservation.status)
             return str(result_id)
 
-    def _dispatch_spawn_started_events(self, *, status: SpawnStatus, spawn_id: str) -> None:
+    def _dispatch_spawn_started_events(self, *, status: SpawnStatus) -> None:
         assert self._record is not None
-        event = self._build_event("spawn.created", self._record, spawn_id=spawn_id)
+        event = self._build_event("spawn.created", self._record)
         self._dispatch(event)
-        self._emit_telemetry_event("spawn.queued", self._record)
+        self._emit_telemetry_event("spawn.created", self._record)
         if status == "running":
-            self._emit_telemetry_event("spawn.running", self._record)
+            event = self._build_event("spawn.started", self._record)
+            self._dispatch(event)
+            self._emit_telemetry_event("spawn.started", self._record)
 
     def mark_running(
         self,
@@ -335,7 +320,7 @@ class SpawnLifecycleService:
         runner_pid: int | None = None,
         runner_created_at_epoch: float | None = None,
     ) -> None:
-        """Mark a spawn as running and dispatch spawn.running."""
+        """Mark a spawn as running and dispatch spawn.started."""
         with bind_lifecycle_correlation(
             self._correlation(operation="mark_running", spawn_id=spawn_id)
         ):
@@ -356,9 +341,9 @@ class SpawnLifecycleService:
             if self._owns_record(spawn_id) and record is not None:
                 self._record = record
             if isinstance(outcome, Applied) and outcome.before.status != outcome.after.status:
-                event = self._build_event("spawn.running", record, spawn_id=spawn_id)
+                event = self._build_event("spawn.started", outcome.after)
                 self._dispatch(event)
-                self._emit_telemetry_event("spawn.running", record)
+                self._emit_telemetry_event("spawn.started", record)
 
     def record_exited(
         self,
@@ -488,7 +473,7 @@ class SpawnLifecycleService:
         managed_scopes_pending: bool = False,
         clock: Clock | None = None,
     ) -> LockedMutationResult:
-        """Finalize a spawn and dispatch spawn.finalized for persisted terminal writes."""
+        """Finalize a spawn and dispatch spawn.finished for persisted terminal writes."""
         requested_category = self._terminal_outcome_category(
             status=status,
             origin=origin,
@@ -527,7 +512,7 @@ class SpawnLifecycleService:
                     origin=origin,
                     error=error,
                 )
-                event = self._build_event("spawn.finalized", snapshot)
+                event = self._build_event("spawn.finished", snapshot)
                 self._dispatch(event)
                 self._emit_telemetry_event_for_record(
                     f"spawn.{snapshot.status}", snapshot
@@ -659,7 +644,7 @@ class SpawnLifecycleService:
         correlation = self._correlation(
             operation="finalize",
             record=record,
-            event_type="spawn.finalized",
+            event_type="spawn.finished",
             outcome_category=outcome_category,
         )
         return SpawnFailure(
@@ -779,17 +764,12 @@ class SpawnLifecycleService:
     def _build_event(
         self,
         event_type: EventType,
-        record: SpawnRecord | None,
-        *,
-        spawn_id: str | None = None,
+        record: SpawnRecord,
     ) -> LifecycleEvent:
-        resolved_spawn_id = spawn_id or (record.id if record is not None else None)
-        if resolved_spawn_id is None:
-            raise ValueError("spawn_id is required when building an event without a record")
-
         # Terminal-only fields
         status: TerminalSpawnStatus | None = None
         origin: TerminalOrigin | None = None
+        error: str | None = None
         duration_secs: float | None = None
         total_cost_usd: float | None = None
         input_tokens: int | None = None
@@ -800,12 +780,13 @@ class SpawnLifecycleService:
         cost_is_estimate = False
         outcome_category: TerminalOutcomeCategory | None = None
 
-        if event_type == "spawn.finalized" and record is not None:
+        if event_type == "spawn.finished":
             rec_status = record.status
             if is_terminal_spawn_status(rec_status):
                 status = rec_status
             terminal = record.terminal
             origin = terminal.origin if terminal is not None else None
+            error = terminal.error if terminal is not None else None
             duration_secs = terminal.duration_secs if terminal is not None else None
             total_cost_usd = terminal.total_cost_usd if terminal is not None else None
             input_tokens = terminal.input_tokens if terminal is not None else None
@@ -825,18 +806,20 @@ class SpawnLifecycleService:
             )
 
         return LifecycleEvent(
-            event_id=generate_event_id(resolved_spawn_id, event_type, 0),
+            event_id=generate_event_id(record.id, event_type, 0),
             event_type=event_type,
             timestamp=datetime.now(tz=UTC),
-            spawn_id=resolved_spawn_id,
-            parent_id=record.parent_id if record is not None else None,
-            chat_id=record.chat_id if record is not None else None,
-            work_id=record.work_id if record is not None else None,
-            agent=record.agent if record is not None else None,
-            model=record.model if record is not None else None,
-            harness=record.harness if record is not None else None,
+            spawn_id=record.id,
+            parent_id=record.parent_id,
+            chat_id=record.chat_id,
+            work_id=record.work_id,
+            agent=record.agent,
+            kind=record.kind,
+            model=record.model,
+            harness=record.harness,
             status=status,
             origin=origin,
+            error=error,
             outcome_category=outcome_category,
             duration_secs=duration_secs,
             total_cost_usd=total_cost_usd,
@@ -971,14 +954,39 @@ def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatche
 
     try:
         # Imported lazily to avoid lifecycle <-> hooks circular import at module import time.
+        from meridian.lib.hooks.config import load_hooks_config_report
         from meridian.lib.hooks.dispatch import HookDispatcher
-    except Exception:
-        logger.exception(
-            "Failed to import hook dispatcher; continuing without lifecycle hook dispatch."
+        from meridian.lib.hooks.registry import HookRegistry
+
+        loaded_hooks = load_hooks_config_report(project_root)
+        project_key = str(project_root.resolve())
+        for index, warning in enumerate(loaded_hooks.warnings):
+            warning_key = (project_key, index, warning)
+            if warning_key in _logged_hook_config_warnings:
+                continue
+            _logged_hook_config_warnings.add(warning_key)
+            logger.warning(warning)
+        if loaded_hooks.errors:
+            logger.warning(
+                "Dropped invalid hook rows; continuing with valid lifecycle hooks.",
+                error="; ".join(loaded_hooks.errors),
+            )
+        return HookDispatcher(
+            project_root,
+            runtime_root,
+            registry=HookRegistry(project_root, hooks_config=loaded_hooks.config),
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Invalid hook config; continuing without lifecycle hook dispatch.",
+            error=str(exc),
         )
         return None
-
-    return HookDispatcher(project_root, runtime_root)
+    except Exception:
+        logger.exception(
+            "Failed to build hook dispatcher; continuing without lifecycle hook dispatch."
+        )
+        return None
 
 
 def create_lifecycle_service(

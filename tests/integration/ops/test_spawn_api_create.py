@@ -10,11 +10,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import structlog
 from structlog.testing import capture_logs
 
 import meridian.lib.ops.spawn.api as spawn_api
-import meridian.lib.ops.spawn.pre_init as pre_init_module
 import meridian.lib.ops.spawn.prepare as spawn_prepare
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
@@ -324,21 +322,16 @@ def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_
 
     monkeypatch.setattr(spawn_api, "build_create_payload", _raise_build_create_payload)
 
-    saved_logger = pre_init_module.logger
     with capture_logs() as logs:
-        pre_init_module.logger = structlog.get_logger(pre_init_module.__name__)
-        try:
-            result = spawn_api.spawn_create_sync(
-                SpawnCreateInput(
-                    prompt="run",
-                    model="gpt-5.4",
-                    harness="opencode",
-                    project_root=project_root.as_posix(),
-                ),
-                prepared=prepared,
-            )
-        finally:
-            pre_init_module.logger = saved_logger
+        result = spawn_api.spawn_create_sync(
+            SpawnCreateInput(
+                prompt="run",
+                model="gpt-5.4",
+                harness="opencode",
+                project_root=project_root.as_posix(),
+            ),
+            prepared=prepared,
+        )
 
     assert result.status == "failed"
     assert result.error == "pre_init_unexpected_error"

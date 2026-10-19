@@ -13,11 +13,10 @@ from meridian.lib.harness.idle_types import (
     IdleEvent,
     IdleSensor,
     IdleSensorContext,
-    ResolveCompactCosts,
 )
-from meridian.lib.idle.service import ArmResult, AutocompactOffReader, IdleService
+from meridian.lib.idle.service import ArmResult, IdleService
 from meridian.lib.observability import DebugTracer
-from meridian.lib.state.idle_store import CompactResultValue, IdleState, Stage
+from meridian.lib.state.idle_store import IdleState, Stage
 
 
 class SidecarClock(Protocol):
@@ -115,7 +114,6 @@ class _Coordinator:
     harness: str
     error_reporter: SensorErrorReporter
     schedule_task: asyncio.Task[None] | None = None
-    compact_task: asyncio.Task[None] | None = None
     schedule_key: tuple[int, int] | None = None
     session_mismatch_recorded: bool = False
 
@@ -126,16 +124,6 @@ class _Coordinator:
         if task is None:
             return
         task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await task
-
-    async def cancel_compaction(self) -> None:
-        task = self.compact_task
-        self.compact_task = None
-        if task is None:
-            return
-        if not task.done():
-            task.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await task
 
@@ -160,7 +148,6 @@ class _Coordinator:
                 anchor=state.anchor,
                 push_at=None if "push" in state.done else state.schedule.push_at,
                 warn_at=None if "warn" in state.done else state.schedule.warn_at,
-                compact_at=None if "compact" in state.done else state.schedule.compact_at,
             )
         )
 
@@ -170,7 +157,6 @@ class _Coordinator:
         candidates: tuple[tuple[int | None, Stage], ...] = (
             (arm.push_at, "push"),
             (arm.warn_at, "warn"),
-            (arm.compact_at, "compact"),
         )
         stages: list[tuple[int, Stage]] = [
             (deadline, stage) for deadline, stage in candidates if deadline is not None
@@ -180,66 +166,16 @@ class _Coordinator:
             await self.clock.sleep_until_ms(deadline)
             if not self.ctx.tui_alive():
                 return
-            if stage != "compact":
-                if getattr(self.sensor, "external_events", False):
-                    facts = await self.sensor.facts()
-                    if facts.busy:
-                        continue
-                await asyncio.to_thread(
-                    self.service.fire,
-                    stage,
-                    harness=self.harness,
-                    session=self.ctx.harness_session_id,
-                    stretch=arm.stretch,
-                    anchor=arm.anchor,
-                )
+            if getattr(self.sensor, "external_events", False) and await self.sensor.busy():
                 continue
-
-            active_compaction = self.compact_task
-            if active_compaction is not None and not active_compaction.done():
-                await asyncio.shield(active_compaction)
-            facts = await self.sensor.facts()
-            decision = await asyncio.to_thread(
+            await asyncio.to_thread(
                 self.service.fire,
-                "compact",
+                stage,
                 harness=self.harness,
                 session=self.ctx.harness_session_id,
                 stretch=arm.stretch,
                 anchor=arm.anchor,
-                facts=facts,
             )
-            if decision.decision != "act":
-                continue
-            self.compact_task = asyncio.create_task(self._compact_and_done(arm.stretch))
-
-    async def _record_done(
-        self,
-        stretch: int,
-        result: CompactResultValue,
-        detail: str | None,
-    ) -> None:
-        await asyncio.to_thread(
-            self.service.done,
-            "compact",
-            harness=self.harness,
-            session=self.ctx.harness_session_id,
-            stretch=stretch,
-            result=result,
-            detail=detail,
-        )
-
-    async def _compact_and_done(self, stretch: int) -> None:
-        try:
-            result = await self.sensor.compact()
-            await self._record_done(stretch, result.result, result.reason)
-        except asyncio.CancelledError:
-            with suppress(BaseException):
-                await self._record_done(stretch, "failed", "teardown")
-            raise
-        except BaseException as exc:
-            self.error_reporter.record(phase="compact", error=exc)
-            with suppress(BaseException):
-                await self._record_done(stretch, "failed", type(exc).__name__)
 
     async def _drive_safely(self, arm: ArmResult) -> None:
         try:
@@ -311,9 +247,7 @@ async def run(
     clock: SidecarClock | None = None,
     poll_seconds: float = 5.0,
     error_reporter: SensorErrorReporter | None = None,
-    autocompact_off: AutocompactOffReader | None = None,
     detect_ttl: DetectIdleTtl | None = None,
-    compact_costs: ResolveCompactCosts | None = None,
 ) -> None:
     """Drive idle policy until launcher teardown; contain every sensor failure."""
 
@@ -321,9 +255,7 @@ async def run(
     resolved_service = service or IdleService(
         env=ctx.env,
         now_ms=resolved_clock.now_ms,
-        autocompact_off=autocompact_off,
         detect_ttl=detect_ttl,
-        compact_costs=compact_costs,
     )
     resolved_error_reporter = error_reporter or SensorErrorReporter(ctx)
     coordinator = _Coordinator(
@@ -369,11 +301,8 @@ async def run(
         try:
             await coordinator.cancel_schedule()
         finally:
-            try:
-                await coordinator.cancel_compaction()
-            finally:
-                if error_reporter is None:
-                    resolved_error_reporter.close()
+            if error_reporter is None:
+                resolved_error_reporter.close()
 
 
 __all__ = ["SensorErrorReporter", "SidecarClock", "run"]

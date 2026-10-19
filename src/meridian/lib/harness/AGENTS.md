@@ -45,17 +45,21 @@ consuming a field does not cover it for yours.
 per-adapter drift. This is enforcement, not documentation.
 
 Idle integration uses optional `HarnessBundle` ports: `primary_idle_sensor` for
-launcher-hosted Codex/OpenCode sensing, `native_idle_hook` for native callback
-observation plus unconditional downstream delegation, `autocompact_off` for the
-harness-owned compaction guard, and `detect_ttl` where the harness can observe cache
-retention. `compact_costs` reports TTL-specific economics for Claude and
-OpenAI-route economics for Codex and OpenCode V2 without putting harness names
-in policy. Pi leaves the port unset because its measured compactions never pay
-at r = 0.5. OpenCode V1 reports no provider (so no TTL) and no context, so it
-never reaches a priced compact stage. The core passes `detect_ttl` the chat's
-launch-recorded `native_store` from its session record. Keep all native parsing,
-facts, and actuators in
-`*_idle.py`; `lib/idle/` owns policy and state. A primary observer's stream lives
+launcher-hosted Codex/OpenCode sensing (events plus a `busy()` probe),
+`native_idle_hook` for native callback observation plus unconditional
+downstream delegation, and `detect_ttl` where the harness can observe cache
+retention. The core passes `detect_ttl` the chat's launch-recorded
+`native_store` from its session record. Adapters report the work a turn left
+running as `IdleEvent.background_tasks`, but only work that wakes the session
+when it ends: a report holds or delays the push, which is wrong for work that
+never wakes. Claude's mod and Pi's `meridian-idle` report through
+`idle arm --background-tasks`; the OpenCode 2.x sensor reports in-process (the
+shells and subagents its primary's own tools started, tracked by
+`opencode_running_work.py`). Codex and OpenCode 1.x report none: Codex's
+background terminals and subagents do not wake the thread, and the 1.x sensor is
+frozen. Core alone decides what the work means. Keep
+all native parsing and facts in `*_idle.py` and its helpers; `lib/idle/` owns
+policy and state. A primary observer's stream lives
 until the primary closes; spawn streams may end at a reconciled terminal.
 
 ## Two Launch Paths

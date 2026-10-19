@@ -74,13 +74,15 @@ def mutate_model(
     mutation: Callable[[ModelT | None], tuple[ModelT | None, ResultT]],
     *,
     lock: AbstractContextManager[object],
+    read_current: Callable[[], ModelT | None] | None = None,
     indent: int | None = None,
     exclude_none: bool = False,
 ) -> tuple[ModelT | None, ResultT]:
     """Lock, re-read, mutate, and atomically replace one JSON document."""
 
     with lock:
-        updated, result = mutation(read_model(path, model_type))
+        current = read_model(path, model_type) if read_current is None else read_current()
+        updated, result = mutation(current)
         if updated is not None:
             write_model(path, updated, indent=indent, exclude_none=exclude_none)
         return updated, result

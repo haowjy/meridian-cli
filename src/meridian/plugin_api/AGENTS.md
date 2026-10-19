@@ -1,16 +1,19 @@
 # plugin_api/ — Stable External Plugin Surface
 
-The only surface external plugins (and built-in hooks) may import from. Versioned at `1.0.0` — breaking changes require a version bump and migration path. Internal `meridian.lib.*` is not stable; this is.
+The only surface external plugins (and built-in hooks) may import from. Breaking
+changes follow the project's compatibility and migration policy; this package
+does not carry an independent version. Internal `meridian.lib.*` is not stable;
+this is.
 
 ## Mental Model
 
-Built-in hooks in `lib/hooks/builtin/` must import only from here — not from `meridian.lib.*`. This constraint enforces the plugin API as a real boundary. If a built-in needs something not in this package, extend the API rather than breaking the boundary.
+Built-in hooks in `lib/hooks/builtin/` take general capabilities from here, not from `meridian.lib.*`; if one needs a general capability this package lacks, extend the API. Only a built-in's tightly coupled companion (see `lib/hooks/builtin/AGENTS.md`) may be imported directly, and such companions never belong here: nothing in this package imports Meridian's policy or state internals.
 
 External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `meridian.plugin_api`, not from internal modules that may change without notice.
 
 ## What's Stable Here
 
-- `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `FailurePolicy` — the hook contract types
+- `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `SpawnKind`, `SpawnStatus`, `Notification`, `NOTIFICATION_EVENTS` — the hook contract types. Builtin implementations may set `HookResult.details` to JSON-serializable data and document where their keys surface. Core, state, and `lib/hooks` use these exact closed vocabularies and payload classes rather than defining parallel copies.
 - `state.py` — `get_project_home()`, `get_user_home()` — state root access
 - `fs.py` — `file_lock()`, `atomic_write_text()` — cross-platform locking and atomic
   replacement for plugins
@@ -31,11 +34,12 @@ Submodule utilities (`fs`, `git`, `config`) are NOT re-exported from `__init__.p
 ## Key Rules
 
 - `HookContext.to_env()` and `HookContext.to_json()` are the canonical serialization paths. External hooks receive both. Use them; don't build the serialization manually.
-- Breaking this API requires a version bump. Additions are fine; removals or signature changes are breaking.
+- Additions are fine; removals or signature changes follow the compatibility
+  policy in `docs/releasing.md`.
 - Stable wrappers may delegate to dependency-neutral `meridian.lib.platform` primitives.
   They must not depend on `meridian.lib.state` or other policy/state internals.
 
 ## Related
 
 - `../lib/hooks/builtin/` — built-in hooks that use this API as their only import surface
-- `../lib/hooks/` — internal hook dispatch that bridges `HookContext` to `PluginHookContext`
+- `../lib/hooks/` — internal hook dispatch, built on these types

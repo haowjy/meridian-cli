@@ -187,10 +187,6 @@ def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: P
             '[spawn]\ndeny_headless_harnesses = ["claude", ""]\n',
             "Invalid value for 'spawn.deny_headless_harnesses': expected non-empty items.",
         ),
-        (
-            'hooks = "invalid"\n',
-            "Invalid value for 'hooks': expected array[table], got str ('invalid').",
-        ),
     ],
 )
 def test_load_config_reports_invalid_key_and_problem(
@@ -258,7 +254,7 @@ def test_load_config_preserves_unknown_and_deprecated_key_policy(
     assert config.harness.pi.background_tasks.enabled is True
 
 
-def test_config_loader_owns_unknown_hook_key_warning(
+def test_hook_loader_owns_unknown_hook_key_warning(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -267,7 +263,7 @@ def test_config_loader_owns_unknown_hook_key_warning(
     (project_root / "meridian.toml").write_text(
         "[[hooks]]\n"
         'name = "project-hook"\n'
-        'event = "spawn.start"\n'
+        'event = "spawn.started"\n'
         'command = "echo project"\n'
         'bogus = "warn once"\n',
         encoding="utf-8",
@@ -278,7 +274,7 @@ def test_config_loader_owns_unknown_hook_key_warning(
         load_hooks_config(project_root)
 
     assert caplog.messages == [
-        "Ignoring unknown Meridian config key 'hooks[1].bogus'."
+        "Ignoring unknown Meridian config key 'project.hooks[1].bogus'."
     ]
 
 
@@ -317,15 +313,14 @@ def test_malformed_hooks_table_logs_no_unknown_key_warning(
     config_path = project_root / "meridian.toml"
     config_path.write_text("[hooks]\na = 1\n", encoding="utf-8")
 
-    with (
-        caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"),
-        pytest.raises(ValueError) as exc_info,
-    ):
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"):
         load_config(project_root)
 
+    with pytest.raises(ValueError) as exc_info:
+        load_hooks_config(project_root)
+
     assert str(exc_info.value) == (
-        "Invalid value for 'hooks': expected array[table], got dict ({'a': 1}) "
-        f"in '{config_path}'."
+        "Invalid value for 'project.hooks': expected array[table], got dict ({'a': 1})."
     )
     assert caplog.messages == []
 
@@ -451,6 +446,23 @@ def test_load_config_reads_notify_table_with_env_precedence(
     assert env_config.notify.ntfy_topic == "env-topic"
     assert env_config.notify.include_messages is False
     assert env_config.notify.smtp_port == 465
+
+
+def test_load_config_rejects_the_removed_command_notify_backend(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        '[notify]\npush_backend = "command"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_config(project_root)
+
+    error = str(exc_info.value)
+    assert "notify.push_backend" in error
+    assert "command" in error
+    assert "docs/upgrading.md" in error
 
 
 def test_load_config_reads_spawn_deny_headless_harnesses(tmp_path: Path) -> None:

@@ -1,6 +1,11 @@
 """Harness-agnostic notification delivery."""
 
-from meridian.lib.notify.notice import Notice, SessionLabel, manual_notice
-from meridian.lib.notify.service import SendReport, send
+from meridian.lib.notify.emit import RouteReport, RouteResult
+from meridian.lib.notify.notice import SessionLabel, manual_notification
 
-__all__ = ["Notice", "SendReport", "SessionLabel", "manual_notice", "send"]
+__all__ = [
+    "RouteReport",
+    "RouteResult",
+    "SessionLabel",
+    "manual_notification",
+]

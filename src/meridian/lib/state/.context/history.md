@@ -45,11 +45,11 @@ Busy, disk-full, permissions and ordinary I/O errors are not corruption recovery
 
 ## Schema namespace and mixed-version overlap
 
-`SCHEMA_VERSION` (in `history_changes.py`) names one projection namespace:
-`history-index/history-v<N>.sqlite3`, its `.build-v<N>` stage, the
-`history-index/pending-v<N>/` queue with its GENERATION,
-`locks/history-{catchup,database,markers}-v<N>.lock` and the init latch.
-A schema bump builds a fresh file from authority; there is no in-place migration,
+`SCHEMA_VERSION` (in `history_changes.py`) and the latest supported session event
+version name one projection namespace:
+`history-index/history-v<N>-sessions-v<M>.sqlite3`, its correspondingly versioned
+stage, pending queue with GENERATION, catch-up/database/marker locks, and init latch.
+Changing either version builds a fresh file from authority; there is no in-place migration,
 because an older build that is still running (a background runner that outlives
 an upgrade) must keep reading the file it understands. 0.6.7 and earlier use the
 unversioned `history.sqlite3`, `pending/`, locks and latch. This build never opens
@@ -67,6 +67,11 @@ re-reads every active loose spawn and the session-log cursor without a marker, s
 runners that finish and primaries that stop after an upgrade still project. Spawns
 an older build creates after this projection was built, or archive changes it
 makes, need `session index rebuild`. The older index misses this build's writes.
+The older index skips unsupported session rows and keeps projecting later ones, so
+it still discovers its own sessions. The session cursor stores the skipped versions,
+and every catch-up and rebuild warns from it, not only the pass that crossed the
+row. The build for that session format gets a different namespace and rebuilds from
+authority.
 
 Rollback: the older build's index is stale after any use of a newer build, and a
 pre-release build of this branch migrated `history.sqlite3` to schema 6 in place.
@@ -209,16 +214,23 @@ live start must not) run only at append time. Replay must never enforce them: re
 cannot skip a row, so one older-build restore would fail every indexed read and
 rebuild. Replay checks only that an import is inactive, plus the mutation rule. An
 unprefixed restore already appended by an older build bypasses the append guard but
-remains inoperable: operations refuse to continue or fork historical sessions. An unfinished older-build `RestorePlan`
-does not resume; backward compatibility is not supported.
+remains inoperable: operations refuse to continue or fork historical sessions. An
+unfinished older-build `RestorePlan` does not resume because the released plan had
+no persisted resume contract.
 
 Per-operation session reads use `chats_rows`/`chat_rows`/`chat_record`/`chat_generations` and
 `native_chats`/`native_observations`; they decode only selected rows. Their bodies
 still scan `sessions.jsonl` bytes. Bulk repair/import bindings keep one
 `SessionBindings` snapshot; cross-chat checks require its full (`scope=None`)
-view. Selection and observation dedup run inside the append seam's mutation
-(shared) → sessions-flock epoch, without nested lock re-entry. The append seam
-consumes lazy row iterators there, so validation and publication are atomic.
+view. Lock-scoped reads that make write decisions refuse unsupported rows in their
+scope; a newer row naming no chat or native session is never selected by a scoped
+read, so it refuses only full-snapshot decisions. Selection and observation dedup
+run inside the append seam's mutation (shared) → sessions-flock epoch, without
+nested lock re-entry, so validation and publication are atomic. Blind appends do
+not read the journal: appending this build's own format interprets nothing, and
+newer builds read older rows. A per-append compatibility scan was removed because
+it re-read the whole journal under the sessions lock whenever another process had
+appended (~0.25 s at 40k rows, growing with history).
 [#418](https://github.com/haowjy/meridian-cli/issues/418) replaces these filtered
 passes with per-chat journals. `live_observer_for_chat` and capture's spawn-side
 ownership check still scan spawn rows: chat claims cannot find a spawn whose

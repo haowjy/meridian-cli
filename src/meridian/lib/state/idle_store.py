@@ -2,25 +2,38 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from meridian.lib.harness.idle_types import BaselineSource, CompactEval
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.utils.json_shapes import loads_json_object
 
-Stage = Literal["push", "warn", "compact"]
-CompactResultValue = Literal["ok", "failed", "vetoed"]
+Stage = Literal["push", "warn"]
 _RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 _GC_INTERVAL_MS = 60 * 60 * 1000
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
+
+
+# Read, mutation and lazy GC may inspect the same skewed file in one process.
+@lru_cache(maxsize=256)
+def _warn_idle_version_skew(path: Path, version: str) -> None:
+    logger.warning(
+        "Ignoring idle state %s because a different Meridian build wrote "
+        "format version %s (this build supports version 2).",
+        path,
+        version,
+    )
 
 
 class IdleSchedule(BaseModel):
@@ -30,36 +43,10 @@ class IdleSchedule(BaseModel):
 
     push_at: int | None = None
     warn_at: int | None = None
-    compact_at: int | None = None
 
 
 def _empty_done() -> dict[Stage, str]:
     return {}
-
-
-class ContextBaseline(BaseModel):
-    """Trustworthy context observations and the retained growth baseline."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    context_tokens: int | None = Field(default=None, ge=0)
-    baseline_tokens: int | None = Field(default=None, ge=0)
-    baseline_source: BaselineSource = "observed"
-
-    def observe(self, tokens: int | None) -> ContextBaseline:
-        if tokens is None or tokens <= 0:
-            return self
-        baseline, source = self.baseline_tokens, self.baseline_source
-        if baseline is None:
-            baseline = tokens
-        elif self.context_tokens is not None and tokens < self.context_tokens:
-            baseline, source = tokens, "observed"
-        return ContextBaseline(
-            context_tokens=tokens, baseline_tokens=baseline, baseline_source=source
-        )
-
-    def after_compaction(self) -> ContextBaseline:
-        return self.model_copy(update={"baseline_tokens": None, "baseline_source": "compacted"})
 
 
 class IdleState(BaseModel):
@@ -67,7 +54,7 @@ class IdleState(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    v: Literal[1] = 1
+    v: Literal[2] = 2
     harness: str
     session: str
     stretch: int = Field(ge=1)
@@ -78,27 +65,19 @@ class IdleState(BaseModel):
     last_assistant_text: str | None = None
     anchor: int = Field(ge=1)
     idle_since_ms: int | None
-    returned_at_ms: int | None = None
+    # When the user started waiting for a response that no push has answered yet.
+    push_owed_since_ms: int | None = None
     ttl_seconds: int | None = Field(default=None, gt=0)
     ttl_estimated: bool = True
-    context: ContextBaseline = ContextBaseline()
-    compact_eval: CompactEval | None = None
     schedule: IdleSchedule
     done: dict[Stage, str] = Field(default_factory=_empty_done)
-    compact_window_until_ms: int | None = None
-    expect_compaction_turn: bool = False
     updated_at_ms: int
 
     @field_validator("done")
     @classmethod
     def _validate_done(cls, value: dict[Stage, str]) -> dict[Stage, str]:
-        allowed = {
-            "push": {"sent", "failed"},
-            "warn": {"sent", "failed"},
-            "compact": {"claimed", "ok", "failed", "vetoed"},
-        }
         for stage, outcome in value.items():
-            if outcome not in allowed[stage] and not outcome.startswith("skipped:"):
+            if outcome not in {"sent", "failed"} and not outcome.startswith("skipped:"):
                 raise ValueError(f"Invalid {stage} outcome: {outcome!r}")
         return value
 
@@ -158,7 +137,17 @@ class IdleStore:
 
     @staticmethod
     def _read_path(path: Path) -> IdleState | None:
-        return read_model(path, IdleState)
+        state = read_model(path, IdleState)
+        if state is not None:
+            return state
+        try:
+            payload = loads_json_object(path.read_text(encoding="utf-8"))
+        except OSError:
+            return None
+        version = payload.get("v", 2) if payload is not None else 2
+        if type(version) is not int or version != 2:
+            _warn_idle_version_skew(path, repr(version))
+        return None
 
     def mutate(
         self,
@@ -178,6 +167,7 @@ class IdleStore:
             IdleState,
             stamp,
             lock=lock_file(self._lock_path(path)),
+            read_current=lambda: self._read_path(path),
             indent=2,
         )
         if next_state is not None:
@@ -238,8 +228,6 @@ class IdleStore:
 
 
 __all__ = [
-    "CompactResultValue",
-    "ContextBaseline",
     "IdleSchedule",
     "IdleState",
     "IdleStore",

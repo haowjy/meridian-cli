@@ -26,9 +26,7 @@ class HarnessIdleConfig(ConfigModel):
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     enabled: bool = True
-    compact: bool = True
     ttl_seconds: Annotated[int | None, Field(gt=0)] = None
-    compact_min_growth_tokens: Annotated[int | None, Field(ge=0)] = None
 
 
 class HarnessProfileConfig(ConfigModel):
@@ -86,9 +84,7 @@ def harness_idle_model(
     fields: dict[str, Any] = {}
     value_kinds: dict[str, ValueKind] = {
         "enabled": "bool",
-        "compact": "bool",
         "ttl_seconds": "int",
-        "compact_min_growth_tokens": "int",
     }
     for field_name, model_field in HarnessIdleConfig.model_fields.items():
         option = config_field(

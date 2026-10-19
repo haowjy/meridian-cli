@@ -9,21 +9,19 @@ import pytest
 
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.codex_idle import pane_facts
+from meridian.lib.harness.codex_idle import pane_busy
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import (
     CacheTtl,
-    CompactResult,
     DetectIdleTtl,
     IdleEvent,
-    IdleFacts,
     IdleSensorContext,
 )
 from meridian.lib.idle.service import IdleService
 from meridian.lib.idle.sidecar import SidecarClock, run
-from meridian.lib.notify import Notice, SendReport
-from meridian.lib.notify.channels.base import SendResult
+from meridian.lib.notify import RouteReport, RouteResult
 from meridian.lib.state.idle_store import IdleStore
+from meridian.plugin_api.types import HookEventName, Notification
 from tests.support.async_determinism import wait_until
 
 
@@ -51,19 +49,20 @@ class PendingClock(Clock):
 
 class Sender:
     def __init__(self) -> None:
-        self.notices: list[Notice] = []
+        self.notices: list[Notification] = []
 
-    def __call__(self, notice: Notice, cfg: object) -> SendReport:
-        _ = cfg
+    def __call__(
+        self, event: HookEventName, notice: Notification
+    ) -> RouteReport:
+        _ = event
         self.notices.append(notice)
-        return SendReport(results=(SendResult(channel="test", status="sent"),))
+        return RouteReport(results=(RouteResult(route="test", status="sent"),))
 
 
 class Sensor:
     def __init__(self, events: tuple[IdleEvent, ...], alive: list[bool]) -> None:
         self._events = events
         self._alive = alive
-        self.compact_calls = 0
 
     def on_raw_event(self, event: object) -> None:
         _ = event
@@ -75,12 +74,8 @@ class Sensor:
         while self._alive[0]:
             await asyncio.sleep(0.001)
 
-    async def facts(self) -> IdleFacts:
-        return IdleFacts(False, 0, 100_000, False)
-
-    async def compact(self) -> CompactResult:
-        self.compact_calls += 1
-        return CompactResult("ok", "100k → summary")
+    async def busy(self) -> bool:
+        return False
 
 
 class RaisingSensor(Sensor):
@@ -90,31 +85,6 @@ class RaisingSensor(Sensor):
         raise SensorFailure("broken stream")
 
 
-class BlockingCompactionSensor(Sensor):
-    def __init__(self, alive: list[bool]) -> None:
-        super().__init__((), alive)
-        self.compact_started = asyncio.Event()
-        self.release_compact = asyncio.Event()
-        self.compact_cancelled = False
-
-    async def events(self) -> AsyncIterator[IdleEvent]:
-        yield IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1)
-        await self.compact_started.wait()
-        yield IdleEvent("user_prompt", "session-1", None)
-        while self._alive[0]:
-            await asyncio.sleep(0.001)
-
-    async def compact(self) -> CompactResult:
-        self.compact_calls += 1
-        self.compact_started.set()
-        try:
-            await self.release_compact.wait()
-        except asyncio.CancelledError:
-            self.compact_cancelled = True
-            raise
-        return CompactResult("ok", "100k → summary")
-
-
 class ExternalSensor(Sensor):
     external_events = True
 
@@ -122,12 +92,12 @@ class ExternalSensor(Sensor):
 class BusyExternalSensor(ExternalSensor):
     def __init__(self, events: tuple[IdleEvent, ...], alive: list[bool]) -> None:
         super().__init__(events, alive)
-        self.facts_calls = 0
+        self.busy_calls = 0
 
-    async def facts(self) -> IdleFacts:
-        self.facts_calls += 1
+    async def busy(self) -> bool:
+        self.busy_calls += 1
         fixture = Path(__file__).parents[2] / "fixtures" / "codex_idle" / "captures" / "busy.txt"
-        return pane_facts(fixture.read_text(encoding="utf-8"))
+        return pane_busy(fixture.read_text(encoding="utf-8"))
 
 
 class FailingOnceService:
@@ -178,11 +148,10 @@ def policy(
     return (
         IdleService(
             store=store,
-            config=MeridianConfig.model_validate({"idle": {"compact_min_growth_tokens": 0}}),
+            config=MeridianConfig(),
             env={"MERIDIAN_SESSION_ROLE": "primary"},
             now_ms=clock.now_ms,
             notify_sender=sender,
-            spawn_reader=lambda: (),
             detect_ttl=detect_ttl,
         ),
         store,
@@ -190,12 +159,12 @@ def policy(
 
 
 @pytest.mark.asyncio
-async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) -> None:
+async def test_sidecar_drives_idle_push_and_warn(tmp_path: Path) -> None:
     alive = [True]
     clock = Clock()
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
-    sensor = Sensor((IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1),), alive)
+    sensor = Sensor((IdleEvent("turn_end", "session-1", "turn-1"),), alive)
 
     task = asyncio.create_task(
         run(
@@ -207,15 +176,8 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
         )
     )
     await wait_until(
-        lambda: bool(
-            (state := store.read("codex", "session-1")) is not None
-            and state.done.get("compact") == "ok"
-        ),
-        description="compaction completion",
-    )
-    await wait_until(
-        lambda: bool(sender.notices and sender.notices[-1].body.startswith("Compacted")),
-        description="compaction report",
+        lambda: len(sender.notices) == 2,
+        description="warning sent",
     )
     alive[0] = False
     await task
@@ -223,12 +185,10 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
     state = store.read("codex", "session-1")
     assert [notice.body for notice in sender.notices] == [
         "Your turn",
-        "est. 15 min until cold",
-        "Compacted",
+        "est. 15 min until cold: reply to keep it warm",
     ]
-    assert sensor.compact_calls == 1
     assert state is not None
-    assert state.done == {"push": "sent", "warn": "sent", "compact": "ok"}
+    assert state.done == {"push": "sent", "warn": "sent"}
 
 
 @pytest.mark.asyncio
@@ -310,84 +270,7 @@ async def test_sidecar_user_return_cancels_pending_schedule(tmp_path: Path) -> N
 
     state = store.read("codex", "session-1")
     assert sender.notices == []
-    assert sensor.compact_calls == 0
     assert state is not None and state.stretch_open is False
-
-
-@pytest.mark.asyncio
-async def test_sidecar_user_return_does_not_cancel_inflight_compaction(tmp_path: Path) -> None:
-    alive = [True]
-    clock = Clock()
-    sender = Sender()
-    service, store = policy(tmp_path, clock, sender)
-    sensor = BlockingCompactionSensor(alive)
-
-    task = asyncio.create_task(
-        run(
-            sensor,
-            context(tmp_path, alive),
-            service=service,
-            clock=cast("SidecarClock", clock),
-            poll_seconds=0.001,
-        )
-    )
-    await wait_until(sensor.compact_started.is_set, description="compaction start")
-    await wait_until(
-        lambda: bool(
-            (state := store.read("codex", "session-1")) is not None and not state.stretch_open
-        ),
-        description="user return",
-    )
-
-    assert sensor.compact_cancelled is False
-    sensor.release_compact.set()
-    await wait_until(
-        lambda: bool(
-            (state := store.read("codex", "session-1")) is not None
-            and state.done.get("compact") == "ok"
-        ),
-        description="compaction completion",
-    )
-    await wait_until(
-        lambda: bool(sender.notices and sender.notices[-1].body.startswith("Compacted")),
-        description="compaction report",
-    )
-    alive[0] = False
-    await task
-
-    state = store.read("codex", "session-1")
-    assert state is not None
-    assert state.stretch_open is False
-    assert state.done["compact"] == "ok"
-    assert sender.notices[-1].body == "Compacted"
-
-
-@pytest.mark.asyncio
-async def test_sidecar_teardown_cancels_compaction_and_records_failure(tmp_path: Path) -> None:
-    alive = [True]
-    clock = Clock()
-    sender = Sender()
-    service, store = policy(tmp_path, clock, sender)
-    sensor = BlockingCompactionSensor(alive)
-
-    task = asyncio.create_task(
-        run(
-            sensor,
-            context(tmp_path, alive),
-            service=service,
-            clock=cast("SidecarClock", clock),
-            poll_seconds=0.001,
-        )
-    )
-    await wait_until(sensor.compact_started.is_set, description="compaction start")
-    alive[0] = False
-    await task
-
-    state = store.read("codex", "session-1")
-    assert sensor.compact_cancelled is True
-    assert state is not None
-    assert state.done["compact"] == "failed"
-    assert sender.notices[-1].body == "Compaction failed: teardown"
 
 
 @pytest.mark.asyncio
@@ -417,24 +300,23 @@ async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path
         session="session-1",
         implies_return=True,
         turn_id="external-turn",
-        context_tokens=1,
     )
     await wait_until(
         lambda: bool(
             (state := store.read("codex", "session-1")) is not None
             and state.stretch == 2
-            and state.done.get("compact") == "ok"
+            and state.done.get("warn") == "sent"
+            # The stage is claimed before its notice is sent.
+            and len(sender.notices) == 2
         ),
         description="externally written arm completion",
     )
     alive[0] = False
     await task
 
-    assert sensor.compact_calls == 1
     assert [notice.body for notice in sender.notices] == [
         "Your turn",
-        "est. 15 min until cold",
-        "Compacted",
+        "est. 15 min until cold: reply to keep it warm",
     ]
 
 
@@ -458,21 +340,14 @@ async def test_external_event_sensor_skips_push_and_warn_while_busy(tmp_path: Pa
             poll_seconds=0.001,
         )
     )
-    await wait_until(
-        lambda: bool(
-            (state := store.read("codex", "session-1")) is not None
-            and state.done.get("compact") == "skipped:busy"
-        ),
-        description="busy compaction skip",
-    )
+    await wait_until(lambda: sensor.busy_calls == 2, description="both stages checked busy")
     alive[0] = False
     await task
 
     state = store.read("codex", "session-1")
     assert sender.notices == []
-    assert sensor.facts_calls == 3
     assert state is not None
-    assert state.done == {"compact": "skipped:busy"}
+    assert state.done == {}
 
 
 @pytest.mark.asyncio

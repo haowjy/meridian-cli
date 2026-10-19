@@ -29,6 +29,7 @@ from meridian.lib.config.schema import (
 )
 from meridian.lib.config.workspace import WorkspaceFinding
 from meridian.lib.core.util import FormatContext, to_jsonable
+from meridian.lib.hooks.config import DEFAULT_SOURCE, load_hooks_config_report
 from meridian.lib.ops.config_surface import (
     ConfigSurface,
     ConfigSurfaceWorkspace,
@@ -426,12 +427,27 @@ def _dynamic_config_values(surface: ConfigSurface) -> list[ConfigResolvedValue]:
             )
 
     if resolved.hooks is not None:
-        rendered_hook_value: object
-        if not resolved.hooks:
-            rendered_hook_value = "[] (suppressed)"
-        else:
-            names = ", ".join(spec.display_name for spec in resolved.hooks)
-            rendered_hook_value = f"{len(resolved.hooks)} hooks ({names})"
+        report = load_hooks_config_report(
+            surface.project_root,
+            authority=surface.authority,
+            user_config=surface.user_config_path,
+        )
+        configured_names = tuple(
+            dict.fromkeys(
+                hook.name
+                for hook in report.config.hooks
+                if hook.source != DEFAULT_SOURCE
+            )
+        )
+        count = len(configured_names)
+        rendered_hook_value: object = f"{count} hook" + ("" if count == 1 else "s")
+        if configured_names:
+            rendered_hook_value += f" ({', '.join(configured_names)})"
+        if report.errors:
+            invalid_count = len(report.errors)
+            rendered_hook_value += (
+                f"; {invalid_count} invalid row" + ("" if invalid_count == 1 else "s")
+            )
         values.append(
             ConfigResolvedValue(
                 key="hooks",

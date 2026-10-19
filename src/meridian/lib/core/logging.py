@@ -2,8 +2,46 @@
 
 import logging as std_logging
 import sys
+from collections.abc import Callable, Generator, Hashable
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import structlog
+
+_WARNING_KEYS: ContextVar[set[Hashable] | None] = ContextVar(
+    "_WARNING_KEYS",
+    default=None,
+)
+
+
+@contextmanager
+def warning_cache_scope() -> Generator[None]:
+    """Deduplicate keyed warnings within one command or operation."""
+
+    if _WARNING_KEYS.get() is not None:
+        yield
+        return
+    token = _WARNING_KEYS.set(set())
+    try:
+        yield
+    finally:
+        _WARNING_KEYS.reset(token)
+
+
+# Outside any scope the process is the scope: an unscoped loop warns once, not per read.
+_PROCESS_WARNING_KEYS: set[Hashable] = set()
+
+
+def warn_once(key: Hashable, emit: Callable[[], None]) -> None:
+    """Run ``emit`` once for *key* in the current warning scope."""
+
+    seen = _WARNING_KEYS.get()
+    if seen is None:
+        seen = _PROCESS_WARNING_KEYS
+    if key in seen:
+        return
+    seen.add(key)
+    emit()
 
 
 def _level_from_verbosity(verbosity: int) -> int:
@@ -38,5 +76,6 @@ def configure_logging(json_mode: bool = False, verbosity: int = 0) -> None:
         wrapper_class=structlog.make_filtering_bound_logger(level),
         # Route structlog output to stderr so it never pollutes JSON stdout.
         logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
-        cache_logger_on_first_use=True,
+        # Not cached: a module logger must follow a later configure (tests, nested main()).
+        cache_logger_on_first_use=False,
     )

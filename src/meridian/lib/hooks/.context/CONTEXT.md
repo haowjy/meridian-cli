@@ -7,11 +7,11 @@ HookDispatcher.fire(context: HookContext)
   └── HookRegistry.get_hooks_for_event(event)
         ← load_hooks_config(project_root)  [config.py]
               validates each row once as HookSpec  [schema.py]
-              layered: user < project < local
+              layered: default < user < project < local
               override key: (name, event)
   └── for each Hook (ordered by source rank, priority, declaration order):
-        _check_conditions(hook, context)     when.status / when.agent filters
-        IntervalTracker.should_run(name, interval)   throttle check
+        _check_conditions(hook, context)     when.status / when.agent / when.kind filters
+        IntervalTracker.run_if_due(name, interval)   throttle check
         _run_builtin(hook, context)          OR
         ExternalHookRunner.run(hook, context, timeout_secs=...)
   └── returns list[HookResult]
@@ -22,49 +22,65 @@ HookDispatcher.fire(context: HookContext)
 Hook sources in ascending precedence:
 
 ```
-user config  (~/.meridian/config.toml)
+default  (Meridian's own rows: a `notify` route per notification event)
+  ↑ user config  (~/.meridian/config.toml)
   ↑ project config  (meridian.toml)
   ↑ local config  (meridian.local.toml)   ← highest
 ```
 
-There is no builtin layer. `builtin_registry.py` supplies a builtin hook's default
-events, interval and options, which apply only when some config row names that
-builtin.
+The `default` layer holds only the `notify` routes, so notifications deliver
+with no config at all; it overrides like any layer. Each builtin hook object
+(`builtin/`) owns its default events, supported events (`None` means any),
+interval, options model and the options that name an unnamed row; they apply
+only when a row names that builtin.
+Unnamed `notify` rows are all named `notify`, which is how a plain
+`builtin = "notify"` row replaces its event's default.
+
+Runtime emission is fail-open for row errors: notification and lifecycle
+dispatch drop and name invalid rows, keep every valid row, then apply the same
+layering and default overrides as a clean load. Hook inspection commands surface
+all row errors normally. Compatibility-window config is valid: the config report
+emits one warning per affected row, and registrations carry the deprecated
+configured event name separately from the canonical event used for lookup.
+Dropping a deprecated filter value never widens the row to match all: if no
+filter value remains, the row warns and does not register. Lifecycle dispatch
+logs config deprecations once per affected row and process.
 
 Override key is `(name, event)`. A higher-priority source row with the same key replaces the lower-priority row entirely. Use `meridian.local.toml` for machine-specific overrides without committing them.
 
-## Event Classes and Failure Behavior
+## Event Facts and Failure Behavior
 
-`EVENT_CLASS` maps each event to one of three classes:
-
-| Class | Events | Default failure policy | Fail-open? |
-|-------|--------|----------------------|-----------|
-| `observe` | `spawn.created`, `spawn.running`, `spawn.start`, `work.start`, `work.started` | `warn` | Yes |
-| `post` | `spawn.finalized`, `work.done` | `warn` | Yes |
-| `gate` | (none currently registered) | `fail` | No |
-
-`gate` class hooks stop the dispatch loop on failure. `observe` and `post` hooks are always fail-open: a hook failure logs a warning but does not stop subsequent hooks or the lifecycle event. Individual hooks can override with `failure_policy = "fail"`.
+`EVENTS` is the single per-event table. Each row owns its default timeout and
+the `when` fields that event can supply. `spawn.finished` and `work.done` default
+to 60s; every other event defaults to 30s. A hook failure logs a warning but
+does not stop subsequent hooks or the lifecycle event. There is no per-row
+failure policy; the deprecated config key is ignored during its warning window.
 
 ## Plugin API Boundary
 
-**Built-in hooks must import only from `meridian.plugin_api`** — zero imports from `meridian.lib.*`. This is an enforced discipline: the plugin API is a stable boundary that external plugins can also use. If a built-in needs something not in the API, extend the API rather than breaking the boundary.
+**Built-in hooks take general capabilities from `meridian.plugin_api`**, the stable boundary external plugins also use; extend the API rather than reaching into `meridian.lib.*` for those. The exception is a tightly coupled companion a built-in wraps: `git-autosync`'s `autosync_store`, and `notify`'s `lib/notify` transports (imported lazily in `execute`). Those stay out of the plugin API because no external plugin should depend on them.
 
-The dispatcher bridges internal `HookContext` to plugin `PluginHookContext` via `_to_plugin_context()` and `_to_plugin_hook()` in `dispatch.py`. Built-ins see only the plugin surface.
+`HookContext` and `HookResult` are the plugin API's own classes, so built-ins receive the context the dispatcher built; `_to_plugin_hook()` in `dispatch.py` narrows the internal `Hook` row to the plugin `Hook`. Built-ins see only the plugin surface.
 
 ## Hook Execution Order
 
 Within an event, hooks are sorted by:
-1. Source rank (`user` → `project` → `local`, lower = earlier; `HOOK_SOURCE_PRECEDENCE` in `config.py`)
+1. Source rank (`default` → `user` → `project` → `local`, lower = earlier; `HOOK_SOURCE_PRECEDENCE` in `config.py`)
 2. Negative priority (higher `priority` value = earlier execution)
 3. Declaration order (stable sort)
 
 ## `HookWhen` Conditions
 
-`when.status` filters by spawn terminal status (e.g., only fire on `success`). `when.agent` filters by agent profile name. Both are optional; if absent, the hook fires unconditionally for that event. Conditions are checked before interval throttling.
+`when.status` filters `spawn.finished` by terminal status. `when.agent` filters by agent profile name, and `when.kind` filters by the shared `SpawnKind` (`child`, `primary`, `streaming`). During the compatibility window, explicit work events with agent/kind conditions warn and do not register because they carry neither. An unevented builtin row enables compatible defaults and emits disabled overrides for incompatible ones, preserving `(name, event)` suppression across config layers; it errors only when none can match. Conditions are checked before interval throttling.
 
 ## Context Transport
 
-`HookContext.to_env()` emits `MERIDIAN_HOOK_*`, `MERIDIAN_SPAWN_*`, `MERIDIAN_ACTIVE_WORK_*` env vars. `None` values are omitted (no empty string env vars). External hooks receive both env vars and JSON on stdin — the JSON schema includes a `schema_version` field (`HOOK_CONTEXT_SCHEMA_VERSION = 1`) for forward compatibility.
+`HookContext.to_env()` emits `MERIDIAN_HOOK_*`, `MERIDIAN_PROJECT_DIR`, `MERIDIAN_SPAWN_*`, `MERIDIAN_ACTIVE_WORK_*`, and `MERIDIAN_NOTIFICATION_*` env vars. `None` values are omitted (no empty string env vars). `ExternalHookRunner` first strips every registered hook-payload key from its base environment, so a missing field cannot retain inherited context. External hooks receive both env vars and JSON on stdin — the JSON schema includes a `schema_version` field (`HOOK_CONTEXT_SCHEMA_VERSION = 3`) for forward compatibility. Version 3 renamed lifecycle events and added `spawn.kind` / `MERIDIAN_SPAWN_KIND`; version 2 added the `notification` object and made `runtime_root` nullable.
+
+The registry indexes deprecated event rows by their canonical replacement, while
+`Hook.configured_event` restores the old name only for that row's execution
+context. Producers therefore know nothing about config aliases, and current rows
+always receive the current event name.
 
 ## `__init__.py` Lazy Loading
 

@@ -10,6 +10,96 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Removed
 - `meridian spawn files` removed: never had a producer, always empty. (#677)
 
+## [0.11.0] - 2026-10-19
+
+### Added
+- Hook events `work.created` for new work items and `work.activated` whenever `work start` / `work switch` resolves an item or a primary launch attaches `--work` / `--from` work. (#687)
+- Hook `when.kind` filtering with the shared `child` / `primary` / `streaming` `SpawnKind`; `HookContext.spawn_kind`, `spawn.kind` in JSON, and `MERIDIAN_SPAWN_KIND` expose it to plugins and command hooks. (#687)
+- Claude pings you when a main-loop or background-subagent permission prompt is still waiting. The new `notify.needs_permission` hook event routes like other notifications and can be silenced on its own. (#684)
+
+### Deprecated
+- Old hook names `spawn.start`, `spawn.running`, `spawn.finalized`, `work.start`, `work.started`, `session.responded`, and `session.cache_expiring` load on their replacement for one minor release, warn once per row, and preserve the configured name in that row's payload. They will be rejected in the next minor release. See [upgrade note](docs/upgrading.md#hook-event-names). (#687)
+- Hook config `failure_policy` is ignored with a warning for one minor release. Explicitly evented rows with impossible `when` conditions warn and are skipped, and `when.status = ["skipped"]` warns and drops that value without widening an emptied filter to match all; all become config errors in the next minor release. (#687)
+
+### Removed
+- The unused `gate` hook event class and the impossible `"skipped"` Plugin API spawn status. (#687)
+- The inert Plugin API `FailurePolicy` type and hook field. The config key remains temporarily as the deprecated no-op described above. (#687)
+- `HookContext.from_authority`; construct plugin hook contexts with `HookContext.from_roots` instead. (#687)
+- Unread version copies from the plugin API, launch-policy snapshots, Pi runtime metadata, and native-search SQLite metadata. The native-search file name now derives from its schema constant.
+
+### Changed
+- Hook events are `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, and `notify.manual`; the `notify.*` prefix identifies notification-bearing events. Lifecycle/telemetry producer names change from `spawn.queued` to `spawn.created`, `spawn.running` to `spawn.started`, and `work.started` to separate `work.created` / `work.activated` moments. (#687)
+- Hook payload `schema_version` 3 carries the event contract changes and adds spawn kind; the Plugin API exports the shared `SpawnKind` and `SpawnStatus`. (#687)
+- `git-autosync` defaults are `spawn.finished`, `work.activated`, and `work.done`, so it syncs for sessionless `work start` / `work switch` and once before a primary launch with `--work` / `--from` attached. (#687)
+- Explicitly named hooks with impossible conditions are skipped during the compatibility window. Unevented builtin rows enable compatible defaults, keep incompatible defaults as disabled overrides, and error only when none can match. (#687)
+- Spawn event IDs remain stable per spawn and event; work event IDs are now unique per firing. (#687)
+- Compatibility policy: one-minor deprecation for config, CLI, and hook names; cross-build state readers check explicit integer format versions, with short-lived idle state as the documented absent-state exception. See [upgrade note](docs/upgrading.md#compatibility-policy-and-state-version-checks).
+- Telemetry queries and session folds skip records from unsupported format versions and warn instead of interpreting them as current data.
+- History index namespaces now include the session event format version, and the index warns on every read about unsupported session rows it skipped. Session writes that read existing records to decide what to append refuse unsupported rows in their chat or native-session scope instead of writing stale state past them. The one-time native-session import reads only the chats it binds and defers when one has an unsupported row, so a newer build's records do not fail every command.
+
+### Fixed
+- `spawn.started` now fires once for spawns persisted initially as `running`, including streaming-serve spawns. (#687)
+- Hook `when.status = ["timeout"]` now matches timed-out spawns (`timed_out` was mapped to nothing, so timeout filters never fired). (#687)
+- `spawn.finished` command hooks now receive the persisted terminal error; hook subprocesses no longer inherit stale payload variables for fields absent from the current event. (#687)
+- Invalid hook config can no longer interrupt `work start` after its state mutation; work hook dispatch logs the failure and the operation continues. (#687)
+- An invalid hook row no longer stops spawns: lifecycle dispatch drops it with a warning and valid hooks keep running. (#687)
+- Work items no longer silently lose status, description, goal, or unknown fields when `__status.json` comes from another build. Unknown fields survive later writes; every active and archived copy is validated before a mutation touches disk; newer versions remain visible and mutations refuse them; malformed metadata warns with its path.
+- Idle state version skew now names the ignored file and explains that another Meridian build wrote it.
+
+### Upgrade notes
+- Hook config using old event names, `failure_policy`, or impossible `when` conditions keeps loading with one warning per row; run `meridian hooks check` and rename before the next minor release. `git-autosync` now also syncs on `work switch` and before a primary launch with work attached. See [Hook event names](docs/upgrading.md#hook-event-names). (#687)
+- State-version warnings and removed no-op version fields are described in [Compatibility policy and state version checks](docs/upgrading.md#compatibility-policy-and-state-version-checks).
+
+## [0.10.30] - 2026-10-19
+
+### Fixed
+- OpenCode 2.x primaries report the background work their agent started to idle policy. A background `shell` or `subagent` tool run that will wake the session now holds or delays the "your turn" push instead of the push racing the wake. A subagent waiting on a permission prompt is not counted, so the push still goes out while it waits for you; answering it counts as you being back, so a later prompt or the subagent's result pushes again. Shells you start yourself and manually created child sessions never wake it and are not reported. After the event stream reconnects, running work and the agent's own turn are re-checked against the server at once: the push re-arms if the work changed, and a turn end lost while the stream was down is reported instead of leaving the push held for good. Codex and OpenCode 1.x still report none. (#669)
+
+## [0.10.29] - 2026-10-19
+
+### Fixed
+- Pi primaries report tracked background managed-bash work to idle policy. A shell that will wake Pi now holds or delays the "your turn" push instead of the push racing it; Pi only forwards host facts, and core still decides what the command means. (#669)
+
+## [0.10.28] - 2026-10-18
+
+### Added
+- Notifications are hook events: `session.responded` (idle push), `session.cache_expiring` (cache warning), `notify.manual` (`meridian notify`). Built-in `notify` hook delivers; options `channels` (`push`, `email`, or backend name) and `priority`. Default `notify` route per event (source `default`, lowest layer); a same-name row replaces it, and an unnamed `builtin = "notify"` row is named `notify`. Any `command` hook on these events is an extra channel: `notification` object on stdin, `MERIDIAN_NOTIFICATION_TITLE`/`_BODY`/`_PRIORITY` env. See [routing](docs/configuration.md#routing-and-extending-notifications) (#670).
+- `meridian notify --attach <path>` (repeatable): email attaches all files; ntfy sends the text, then one message per file; file messages at priority ≤2; command hooks get the paths in `notification.attachments`. Missing/unreadable path = exit 2 before any route. (#666)
+
+### Removed
+- `command` notify backend, `push_command`/`email_command`, `MERIDIAN_NOTIFY_PUSH_COMMAND`/`_EMAIL_COMMAND`: use a command hook on the notification events. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
+
+### Changed
+- `meridian notify "<title>" ["<body>"]`: title positional, body optional, session headline always ends body. `--title` gone. Results: one per route (`notify` = default route), with successful transports named in text and `transports` in JSON; failed route's error names failed transports; `label` top-level in `--json`. No route ran = warning, exit 0. (#670)
+- `MERIDIAN_HOOKS_ENABLED=false` also silences notifications. Hooks (and `hooks run`) run without project runtime state; only `interval` hooks skip there. (#670)
+- Builtin hook rows validate `options` and supported events against the builtin's own metadata; unknown keys error. `hooks list` drops `registration` column. Unnamed `git-autosync` rows named from `remote`/`path` only. (#670)
+- ntfy `Tags` = event name. Plugin API 2.0.0: `HookContext.runtime_root` may be `None`, `HookContext.notification`, and payload `schema_version` 2. Builtin implementations may set `HookResult.details`; today `notify` sets successful transport names, which surface through `meridian notify` text and JSON reports. See [upgrade note](docs/upgrading.md#notifications-are-hook-events). (#670)
+
+### Fixed
+- Multi-line `meridian notify` input keeps its first non-empty line as the transport-safe title and moves the rest into the body; all notification producers now reject control characters in titles. Duplicate resolved attachment paths are sent once. (#666, #670)
+- ntfy reports a route as delivered when its text POST succeeded but attachment PUTs failed, attempts every remaining file, and warns with every failed file name. Email attachments remain all-or-nothing. (#666)
+- Notification channel and backend names validate while config loads; removed `push_backend = "command"` now points to the upgrade guide. `meridian hooks check` validates the active config. (#670)
+- Invalid hook config no longer silences idle notices: emission drops and names invalid rows while retaining valid silencing and command rows plus ordinary default-route overrides; `meridian notify` reports the warning in text and JSON. `hooks check` names every invalid row. (#670)
+- `--no-email` (and idle push / `warn_email = false`) now skips `smtp`/`gmail` even when a route names them. (#670)
+- A failing notification route is reported once, not also as a hook warning log. (#670)
+- `config show` names each valid hook once and counts invalid rows. `hooks run` treats registrations differing only by event as one hook (runs once as its last registered event, any `--event` allowed), requires `--event` only when command, options, timeout or failure policy differ, preserves builtin event limits, and points notification-only builtins to `meridian notify`. Hook commands continue to follow the current directory instead of an inherited session project. (#670)
+- Logging no longer caches each module logger's first configuration.
+
+## [0.10.27] - 2026-10-18
+
+### Removed
+- Meridian idle compaction, end to end. Idle now sends only the "your turn" push and the cache warning. Gone: `idle.compact`, `idle.compact_minutes`, `idle.compact_min_growth_tokens`, `[harness.<h>.idle] compact`/`compact_min_growth_tokens`, their `MERIDIAN_*IDLE_COMPACT*` env vars, `meridian idle done`, `idle fire` fact flags, `idle arm --context-tokens`, `[compacted]`/`[compaction failed]`/`[compaction skipped]` notices, status COMPACT column. Harness-native compaction (Claude Code 2.1.299+, Codex, OpenCode, Pi) untouched. Old idle state files are dropped; open stretches start fresh. See [upgrade note](docs/upgrading.md#idle-compaction-removed).
+
+### Changed
+- `idle arm` takes `--background-tasks JSON` (`[{"kind": "agent|shell|watcher|other", "command": ...}]`); core decides what running work means. Claude mod forwards the `Stop` hook's background tasks. Codex/OpenCode/Pi report none yet (#669).
+- Cache warning says "reply to keep it warm".
+
+### Fixed
+- Claude primary no longer pushes "waiting on you" while subagents, workflows, or a shell-ending foreground `meridian spawn` creation/wait runs; the turn they wake pushes instead, timed from your last prompt until a push is delivered. Endless loops, spawn management, detached creation, and commands followed by more work only delay the push. Monitors ignored.
+- Running-work detection treats unescaped, unquoted newlines and shell comments as command boundaries and redirections as part of their command. Unknown task kinds become `other`, and Claude bounds task snapshots so oversized lists no longer make the idle arm fail.
+- Explicit `spawn wait --timeout` uses its minutes-valued hard deadline, not the yield interval, when deciding whether the wait keeps the cache warm.
+- A scheduled push replaced by a later turn keeps the original wait owed, so a long-wait response still uses the short push delay.
+
 ## [0.10.26] - 2026-10-18
 
 ### Fixed

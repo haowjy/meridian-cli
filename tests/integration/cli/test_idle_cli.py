@@ -28,7 +28,6 @@ def _idle_env(tmp_path: Path, *, role: str | None = "primary") -> dict[str, str]
         MERIDIAN_NOTIFY_EMAIL_BACKEND="none",
         MERIDIAN_IDLE_PUSH_SECONDS="0",
         MERIDIAN_IDLE_LONG_TURN_SECONDS="0",
-        MERIDIAN_IDLE_COMPACT_MINUTES="1",
         _MERIDIAN_HARNESS="claude",
     )
     if role is not None:
@@ -60,10 +59,7 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
     identity = ("--harness", "claude", "--session", "fake-claude-session")
 
     assert _json_success(tmp_path, env, "idle", "config", "--interactive") == {
-        "compact": True,
-        "compact_minutes": 1,
         "enabled": True,
-        "compact_min_growth_tokens": None,
         "push_seconds": 0,
         "warn_minutes": 15,
     }
@@ -78,14 +74,11 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "--implies-return",
         "--turn-id",
         "turn-1",
-        "--context-tokens",
-        "50000",
     )
     assert isinstance(armed, dict)
-    assert set(armed) == {"stretch", "anchor", "push_at", "compact_at"}
+    assert set(armed) == {"stretch", "anchor", "push_at"}
     assert (armed["stretch"], armed["anchor"]) == (1, 1)
     assert isinstance(armed["push_at"], int)
-    assert isinstance(armed["compact_at"], int)
     assert _json_success(
         tmp_path,
         env,
@@ -97,8 +90,6 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "--implies-return",
         "--turn-id",
         "turn-1",
-        "--context-tokens",
-        "50000",
     ) == {
         "stretch": 1,
         "anchor": 1,
@@ -109,10 +100,8 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
     assert isinstance(status, list) and len(status) == 1
     updated_at_ms = status[0]["updated_at_ms"]
     assert isinstance(updated_at_ms, int)
-    returned_at_ms = status[0]["returned_at_ms"]
-    assert isinstance(returned_at_ms, int)
     assert status[0] == {
-        "v": 1,
+        "v": 2,
         "harness": "claude",
         "session": "fake-claude-session",
         "stretch": 1,
@@ -121,33 +110,19 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "last_input_count": None,
         "anchor": 1,
         "idle_since_ms": armed["push_at"],
-        "returned_at_ms": returned_at_ms,
+        "push_owed_since_ms": armed["push_at"],
         "ttl_seconds": 61,
         "ttl_estimated": True,
-        "context": {
-            "context_tokens": 50_000,
-            "baseline_tokens": 50_000,
-            "baseline_source": "observed",
-        },
-        "compact_eval": None,
-        "schedule": {
-            "push_at": armed["push_at"],
-            "warn_at": None,
-            "compact_at": armed["compact_at"],
-        },
+        "schedule": {"push_at": armed["push_at"], "warn_at": None},
         "done": {},
-        "compact_window_until_ms": None,
-        "expect_compaction_turn": False,
         "updated_at_ms": updated_at_ms,
     }
     human = _run(tmp_path, env, "idle", "status")
     assert human.returncode == 0
     assert human.stderr == ""
     assert human.stdout == (
-        "HARNESS    SESSION                  STRETCH ANCHOR "
-        "COMPACT                                SCHEDULE\n"
-        f"claude     fake-claude-session            1      1 {'-':<38} push={armed['push_at']}, "
-        f"compact={armed['compact_at']}\n"
+        "HARNESS    SESSION                  STRETCH ANCHOR SCHEDULE\n"
+        f"claude     fake-claude-session            1      1 push={armed['push_at']}\n"
     )
 
     assert _json_success(
@@ -162,48 +137,22 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "--anchor",
         "1",
     ) == {"decision": "act", "reason": "guards-passed"}
-    env["MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS"] = "0"
-    compact_fire = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "fire",
-        "compact",
-        *identity,
-        "--stretch",
-        "1",
-        "--anchor",
-        "1",
-        "--context-tokens",
-        "51000",
-    )
-    assert compact_fire == {
-        "decision": "act",
-        "reason": "guards-passed",
-        "detail": "growth 1k >= need 0k (configured)",
-    }
-    assert _json_success(
-        tmp_path, env, "idle", "status", "--json"
-    )[0]["compact_eval"]["verdict"] == "worth-it"
-    assert (
-        _json_success(
-            tmp_path,
-            env,
-            "idle",
-            "done",
-            "compact",
-            *identity,
-            "--stretch",
-            "1",
-            "--result",
-            "vetoed",
-        )
-        == {}
-    )
     assert _json_success(tmp_path, env, "idle", "return", *identity, "--user-prompt") == {
         "stretch_closed": True,
         "was_open": True,
     }
+
+    held = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        *identity,
+        "--ttl",
+        "61",
+        '--background-tasks=[{"kind": "agent"}, {"kind": "shell", "command": "npm run dev"}]',
+    )
+    assert held == {"stretch": 2, "anchor": 1, "push_held": "1 agent(s) running"}
 
 
 @pytest.mark.integration
@@ -224,6 +173,23 @@ def test_idle_status_never_exposes_excerpts_when_messages_are_disabled(tmp_path:
     assert isinstance(status, list) and len(status) == 1
     assert "last_user_text" not in status[0]
     assert "last_assistant_text" not in status[0]
+
+
+@pytest.mark.integration
+def test_idle_arm_treats_unknown_background_task_kind_as_other(tmp_path: Path) -> None:
+    env = _idle_env(tmp_path)
+
+    armed = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        *_IDENTITY,
+        '--background-tasks=[{"kind": "future-kind"}]',
+    )
+
+    assert isinstance(armed, dict)
+    assert set(armed) == {"stretch", "anchor", "push_at"}
 
 
 @pytest.mark.integration
@@ -350,18 +316,6 @@ def test_idle_cli_error_envelopes_and_role_reasons(tmp_path: Path) -> None:
         ((*_FIRE, "--stretch", "0", "--anchor", "1"), "--stretch must be greater than zero"),
         ((*_FIRE, "--stretch", "1", "--anchor", "0"), "--anchor must be greater than zero"),
         (
-            (*_FIRE, "--stretch", "1", "--anchor", "1", "--agents-running=-1"),
-            "--agents-running must not be negative",
-        ),
-        (
-            (*_FIRE, "--stretch", "1", "--anchor", "1", "--context-tokens=-1"),
-            "--context-tokens must not be negative",
-        ),
-        (
-            ("done", "compact", *_IDENTITY, "--stretch", "1", "--result", "maybe"),
-            "--result must be one of: ok, failed, vetoed",
-        ),
-        (
             ("event", "", "--harness", "codex"),
             "idle event requires a payload argument or stdin",
         ),
@@ -444,3 +398,49 @@ def test_idle_mod_path_wire_contract(tmp_path: Path) -> None:
     result = _run(tmp_path, _idle_env(tmp_path), "idle", "mod-path")
     assert (result.returncode, result.stderr) == (0, "")
     assert (Path(result.stdout.strip()) / ".claude-plugin" / "plugin.json").is_file()
+
+
+def test_idle_needs_permission_emits_once_without_idle_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from meridian.lib.notify.channels import REGISTRY
+    from tests.support.notifications import RecordingChannel
+
+    for key in tuple(os.environ):
+        if key.startswith(("MERIDIAN_", "_MERIDIAN_")) or key == "TMUX_PANE":
+            monkeypatch.delenv(key, raising=False)
+    home = tmp_path / "home"
+    project = tmp_path / "checkout"
+    project.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", (home / ".meridian").as_posix())
+    monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "capture")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_BACKEND", "none")
+    monkeypatch.setenv("MERIDIAN_SESSION_ROLE", "primary")
+    monkeypatch.setenv("_MERIDIAN_HARNESS", "claude")
+    capture = RecordingChannel()
+    monkeypatch.setitem(REGISTRY, "capture", capture)
+    monkeypatch.chdir(project)
+
+    from meridian.cli.main import main
+
+    args = [
+        "idle",
+        "needs-permission",
+        "--harness",
+        "claude",
+        "--message",
+        "Claude wants to use Bash",
+        "--interactive",
+    ]
+    with pytest.raises(SystemExit) as first_exit:
+        main(args)
+    assert first_exit.value.code == 0
+    assert json.loads(capsys.readouterr().out) == {}
+    assert len(capture.deliveries) == 1
+    event, notification = capture.deliveries[0]
+    assert event == "notify.needs_permission"
+    assert notification.title == '[permission] claude in project: "checkout"'
+    assert "Claude wants to use Bash" in notification.body
+    assert not (home / ".meridian" / "idle").exists()

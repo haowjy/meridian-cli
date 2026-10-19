@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import time
@@ -8,11 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-import structlog
 from structlog.testing import capture_logs
 
-import meridian.lib.hooks.dispatch as _dispatch_mod
-from meridian.lib.hooks.config import HooksConfig
+from meridian.lib.hooks.config import HooksConfig, load_hooks_config_report
 from meridian.lib.hooks.dispatch import BUILTIN_HOOKS, HookDispatcher
 from meridian.lib.hooks.registry import HookRegistry
 from meridian.lib.hooks.types import Hook, HookContext, HookEventName, HookOutcome, HookResult
@@ -42,7 +41,7 @@ class RecordingExternalRunner:
 class RecordingBuiltin:
     name = "recording"
     requirements = ("git",)
-    default_events = ("spawn.finalized",)
+    default_events = ("spawn.finished",)
     default_interval = None
 
     def __init__(self) -> None:
@@ -64,7 +63,7 @@ class RecordingBuiltin:
         )
 
 
-def _context(event_name: HookEventName = "spawn.finalized") -> HookContext:
+def _context(event_name: HookEventName = "spawn.finished") -> HookContext:
     return HookContext(
         event_name=event_name,
         event_id=uuid4(),
@@ -80,7 +79,7 @@ def _context(event_name: HookEventName = "spawn.finalized") -> HookContext:
 def _result(name: str, *, outcome: HookOutcome = "success") -> HookResult:
     return HookResult(
         hook_name=name,
-        event="spawn.finalized",
+        event="spawn.finished",
         outcome=outcome,
         success=outcome == "success",
         error=None if outcome == "success" else "hook failed",
@@ -103,21 +102,21 @@ def test_dispatch_pipeline_uses_registry_ordering(tmp_path: Path) -> None:
         hooks=(
             Hook(
                 name="local-low",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="local",
                 command="./local-low.sh",
                 priority=0,
             ),
             Hook(
                 name="project-mid",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command="./project-mid.sh",
                 priority=1,
             ),
             Hook(
                 name="user-high",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="user",
                 command="./user-high.sh",
                 priority=10,
@@ -151,21 +150,21 @@ def test_dispatch_pipeline_isolates_failures_and_continues_post_event(tmp_path: 
         hooks=(
             Hook(
                 name="first",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command="./first.sh",
                 priority=10,
             ),
             Hook(
                 name="second",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command="./second.sh",
                 priority=5,
             ),
             Hook(
                 name="third",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command="./third.sh",
                 priority=0,
@@ -199,7 +198,7 @@ def test_dispatch_pipeline_executes_builtin_hook_in_process(tmp_path: Path) -> N
         hooks=(
             Hook(
                 name="builtin-recorder",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=None,
                 builtin="recording",
@@ -218,11 +217,49 @@ def test_dispatch_pipeline_executes_builtin_hook_in_process(tmp_path: Path) -> N
 
     results = dispatcher.fire(_context())
 
-    assert builtin.calls == [("builtin-recorder", "spawn.finalized")]
+    assert builtin.calls == [("builtin-recorder", "spawn.finished")]
     assert len(results) == 1
     assert results[0].outcome == "success"
     assert results[0].stdout == "builtin-ok"
     assert results[0].exit_code == 0
+
+
+def test_deprecated_event_row_receives_its_configured_payload_name(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    payload_path = tmp_path / "payload.json"
+    script = tmp_path / "record_event.py"
+    script.write_text(
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "payload = json.loads(sys.stdin.read())\n"
+        "Path(sys.argv[1]).write_text(json.dumps({\n"
+        "    'json': payload['event_name'],\n"
+        "    'env': os.environ['MERIDIAN_HOOK_EVENT'],\n"
+        "}), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (project_root / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "legacy-consumer"\n'
+        'event = "spawn.finalized"\n'
+        f'command = "{_python_command(script, str(payload_path))}"\n',
+        encoding="utf-8",
+    )
+    loaded = load_hooks_config_report(project_root)
+    registry = HookRegistry(project_root, hooks_config=loaded.config)
+    dispatcher = HookDispatcher(project_root, tmp_path / "state", registry=registry)
+
+    results = dispatcher.fire(_context())
+
+    assert [result.outcome for result in results] == ["success"]
+    assert results[0].event == "spawn.finished"
+    assert json.loads(payload_path.read_text(encoding="utf-8")) == {
+        "json": "spawn.finalized",
+        "env": "spawn.finalized",
+    }
 
 
 def test_dispatch_pipeline_persists_interval_state_across_runs(tmp_path: Path) -> None:
@@ -244,7 +281,7 @@ def test_dispatch_pipeline_persists_interval_state_across_runs(tmp_path: Path) -
         hooks=(
             Hook(
                 name="../../throttled recorder",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_python_command(script, str(marker)),
                 interval="1h",
@@ -283,7 +320,7 @@ def test_dispatch_pipeline_does_not_throttle_after_failed_interval_hook(
     runtime_root = tmp_path / "state"
     hook = Hook(
         name="retry-after-failure",
-        event="spawn.finalized",
+        event="spawn.finished",
         source="project",
         command="./fails.sh",
         interval="1h",
@@ -343,7 +380,7 @@ def test_dispatch_pipeline_times_out_then_continues_to_later_hooks(tmp_path: Pat
         hooks=(
             Hook(
                 name="slow-first",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_exec_python_command(hanging_script, str(term_marker)),
                 timeout_secs=1,
@@ -351,7 +388,7 @@ def test_dispatch_pipeline_times_out_then_continues_to_later_hooks(tmp_path: Pat
             ),
             Hook(
                 name="fast-second",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_python_command(success_script, str(success_marker)),
                 priority=0,
@@ -373,7 +410,7 @@ def test_dispatch_pipeline_times_out_then_continues_to_later_hooks(tmp_path: Pat
         assert term_marker.read_text(encoding="utf-8") == "terminated"
 
 
-def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
+def test_dispatch_pipeline_logs_failures_and_completion_metadata(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
@@ -395,14 +432,14 @@ def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
         hooks=(
             Hook(
                 name="fails-first",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_python_command(fail_script),
                 priority=10,
             ),
             Hook(
                 name="runs-after-failure",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_python_command(success_script, str(success_marker)),
                 priority=0,
@@ -412,15 +449,8 @@ def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
     registry = HookRegistry(project_root, hooks_config=hooks)
     dispatcher = HookDispatcher(project_root, runtime_root, registry=registry)
 
-    # Rebind module-level logger so capture_logs intercepts it even when an
-    # earlier test triggered structlog's cache_logger_on_first_use caching.
-    _saved_logger = _dispatch_mod.logger
     with capture_logs() as logs:
-        _dispatch_mod.logger = structlog.get_logger(_dispatch_mod.__name__)
-        try:
-            results = dispatcher.fire(_context())
-        finally:
-            _dispatch_mod.logger = _saved_logger
+        results = dispatcher.fire(_context())
 
     assert [result.outcome for result in results] == ["failure", "success"]
     assert success_marker.read_text(encoding="utf-8") == "ok"
@@ -446,11 +476,10 @@ def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
     )
 
     assert failure_log["hook"] == "fails-first"
-    assert failure_log["hook_event"] == "spawn.finalized"
+    assert failure_log["hook_event"] == "spawn.finished"
     assert failure_log["error"] == "Exited with code 7."
-    assert failure_log["fail_open"] is True
     assert "error_type" in failure_log
     assert success_log["hook"] == "runs-after-failure"
-    assert success_log["hook_event"] == "spawn.finalized"
+    assert success_log["hook_event"] == "spawn.finished"
     assert isinstance(success_log["duration_ms"], int)
     assert "exit_code" in success_log

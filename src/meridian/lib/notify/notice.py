@@ -1,8 +1,13 @@
-"""Notification values shared by callers and delivery channels."""
+"""Session labels and the `meridian notify` message."""
 
 from __future__ import annotations
 
+import os
+from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
+
+from meridian.plugin_api.types import Notification
 
 
 @dataclass(frozen=True)
@@ -40,42 +45,46 @@ class SessionLabel:
         }
 
 
-@dataclass(frozen=True)
-class Notice:
-    """One message and its delivery policy."""
-
-    title: str
-    body: str
-    priority: int
-    email: bool
-    kind: str
-
-    def __post_init__(self) -> None:
-        if not 1 <= self.priority <= 5:
-            raise ValueError(f"priority must be between 1 and 5, got {self.priority}")
-
-
-def manual_notice(
-    message: str,
+def manual_notification(
+    title: str,
+    body: str | None,
     label: SessionLabel,
     *,
-    title: str | None = None,
     priority: int = 3,
     email: bool = True,
-) -> Notice:
-    """Build a manual notice while preserving its launch description."""
+    attachments: Sequence[Path] = (),
+) -> Notification:
+    """Build a `meridian notify` message; its body always ends with where it came from.
 
-    normalized_title = title.strip() if title and title.strip() else None
-    body_lines = [message]
-    if normalized_title is not None:
-        body_lines.append(label.headline)
-    return Notice(
-        title=normalized_title or label.headline,
-        body="\n".join(line for line in body_lines if line),
+    Every attachment must be a readable file now, before any route runs.
+    """
+
+    files = tuple(dict.fromkeys(path.expanduser().resolve() for path in attachments))
+    for path in files:
+        if not path.is_file() or not os.access(path, os.R_OK):
+            raise ValueError(f"attachment is not a readable file: {path}")
+
+    title_lines = title.splitlines()
+    title_index = next(
+        (index for index, line in enumerate(title_lines) if line.strip()),
+        None,
+    )
+    if title_index is None:
+        notification_title = title.strip()
+        title_detail = ""
+    else:
+        notification_title = title_lines[title_index].strip()
+        title_detail = "\n".join(title_lines[title_index + 1 :]).strip()
+
+    lines = [title_detail, body.strip() if body else "", label.headline]
+    return Notification(
+        title=notification_title,
+        body="\n".join(line for line in lines if line),
         priority=priority,
         email=email,
-        kind="manual",
+        label=label.to_dict(),
+        attachments=tuple(path.as_posix() for path in files),
     )
 
 
-__all__ = ["Notice", "SessionLabel", "manual_notice"]
+__all__ = ["SessionLabel", "manual_notification"]

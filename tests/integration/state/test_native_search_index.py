@@ -10,9 +10,11 @@ from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.native_witness import FileWitness, OpenCodeV1Witness, OpenCodeV2Witness
 from meridian.lib.state.native_search_index import (
     PARSER_VERSION,
+    SCHEMA_VERSION,
     NativeSearchIndex,
     NativeSearchUnavailable,
     TranscriptEntry,
+    native_search_index_path,
     normalize_index_text,
     search_text,
     sqlite_search_supported,
@@ -72,6 +74,10 @@ def test_short_and_nul_queries_scan_and_preserve_exact_predicate(tmp_path: Path)
 
 def test_source_replacement_and_rebuild_remove_old_fts_rows(tmp_path: Path) -> None:
     index = NativeSearchIndex(tmp_path / "index.sqlite3")
+    assert native_search_index_path(tmp_path).name == f"native-search-v{SCHEMA_VERSION}.sqlite3"
+    with sqlite3.connect(index.path) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "meta" not in tables
     key = NativeKey("claude", "/native", "three")
     witness = FileWitness(1, 2, 3, 4)
     index.replace_source(

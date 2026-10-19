@@ -3,11 +3,12 @@
 Lock order: catchup, root mutation gate, database, source, marker gate.
 Markers contain no history facts. A lost acknowledgement only causes replay.
 
-``SCHEMA_VERSION`` names one projection namespace: its SQLite file, this marker
-queue with its GENERATION, the catch-up/database/marker locks and the
-initialization latch. Builds with different schemas never share any of them, so an
-older build that outlives an upgrade keeps a self-consistent projection. Authority
-and its locks (root mutation gate, source locks) stay shared.
+The index schema and session event format together name one projection namespace:
+its SQLite file, this marker queue with its GENERATION, the
+catch-up/database/marker locks and the initialization latch. Builds that project
+different schemas or session formats never share any of them, so an older build
+that outlives an upgrade keeps a self-consistent projection. Authority and its
+locks (root mutation gate, source locks) stay shared.
 """
 
 from __future__ import annotations
@@ -24,14 +25,16 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.session_fold import SUPPORTED_SESSION_EVENT_VERSIONS
 
 # A later chat start now projects every earlier unstopped generation as inactive.
 SCHEMA_VERSION = 10
 
 
 def versioned(stem: str) -> str:
-    """Name a file in this schema's projection namespace."""
-    return f"{stem}-v{SCHEMA_VERSION}"
+    """Name a file in this index-schema and session-format namespace."""
+    session_version = max(SUPPORTED_SESSION_EVENT_VERSIONS)
+    return f"{stem}-v{SCHEMA_VERSION}-sessions-v{session_version}"
 
 
 class HistoryCoordinationError(ValueError):
