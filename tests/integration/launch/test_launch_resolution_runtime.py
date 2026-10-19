@@ -524,13 +524,11 @@ def test_primary_launch_materializes_context_from_work(
         harness_registry,
         *,
         prepared,
-        update_session_work_id_fn,
     ):
         _ = (
             preview_context,
             harness_registry,
             prepared,
-            update_session_work_id_fn,
         )
         return ProcessOutcome(
             command=(),

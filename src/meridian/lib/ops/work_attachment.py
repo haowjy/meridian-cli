@@ -2,88 +2,100 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import structlog
 
 from meridian.lib.core.lifecycle import get_hook_dispatcher
-from meridian.lib.state import session_store, work_repository
-from meridian.lib.state.paths import resolve_work_scratch_dir_for_project
+from meridian.lib.state import session_store, work_repository, work_store
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry import emit_telemetry
 
 logger = structlog.get_logger(__name__)
 
-
-def session_exists(runtime_root: Path, chat_id: str) -> bool:
-    normalized = chat_id.strip()
-    if not normalized:
-        return False
-    return session_store.get_session_harness_id(runtime_root, normalized) is not None
+WorkEventName = Literal["work.created", "work.activated", "work.done"]
 
 
-def activate_work(
-    runtime_root: Path,
-    *,
-    project_root: Path,
-    chat_id: str,
-    work_id: str,
-) -> bool:
-    """Publish an intentional work choice and attach it to a session when possible."""
-
-    normalized = chat_id.strip()
-    attached = session_exists(runtime_root, normalized)
-    if attached:
-        session_store.update_session_work_id(runtime_root, normalized, work_id)
-    _dispatch_work_activated(
-        project_root=project_root,
-        runtime_root=runtime_root,
-        work_id=work_id,
-    )
-    emit_telemetry(
-        "work",
-        "work.activated",
-        scope="ops.work_attachment",
-        ids={
-            "work_id": work_id,
-            **({"chat_id": normalized} if attached else {}),
-        },
-    )
-    return attached
-
-
-def _dispatch_work_activated(
+def publish_work_event(
+    event_name: WorkEventName,
     *,
     project_root: Path,
     runtime_root: Path,
     work_id: str,
+    telemetry_ids: Mapping[str, str] | None = None,
+    data: dict[str, object] | None = None,
 ) -> None:
+    """Publish one work event to hooks and its paired telemetry projection."""
+
     try:
         dispatcher = get_hook_dispatcher(project_root, runtime_root)
-        if dispatcher is None:
-            return
+        if dispatcher is not None:
+            from meridian.lib.hooks.types import HookContext
 
-        from meridian.lib.hooks.types import HookContext
-
-        dispatcher.fire(
-            HookContext(
-                event_name="work.activated",
-                event_id=uuid4(),
-                timestamp=datetime.now(tz=UTC).isoformat(),
-                project_root=str(project_root),
-                runtime_root=str(runtime_root),
-                work_id=work_id,
-                work_dir=str(resolve_work_scratch_dir_for_project(project_root, work_id)),
+            project_state_dir = resolve_project_paths(project_root).root_dir
+            dispatcher.fire(
+                HookContext(
+                    event_name=event_name,
+                    event_id=uuid4(),
+                    timestamp=datetime.now(tz=UTC).isoformat(),
+                    project_root=str(project_root),
+                    runtime_root=str(runtime_root),
+                    work_id=work_id,
+                    work_dir=str(work_store.work_scratch_dir(project_state_dir, work_id)),
+                )
             )
+    except ValueError as exc:
+        logger.error(
+            "Work hook dispatch failed; work transition continues.",
+            hook_event=event_name,
+            work_id=work_id,
+            error=str(exc),
         )
     except Exception:
         logger.exception(
-            "Work hook dispatch failed; work activation continues.",
-            hook_event="work.activated",
+            "Work hook dispatch failed; work transition continues.",
+            hook_event=event_name,
             work_id=work_id,
         )
+
+    emit_telemetry(
+        "work",
+        event_name,
+        scope="ops.work_attachment",
+        ids={"work_id": work_id, **dict(telemetry_ids or {})},
+        data=data,
+    )
+
+
+def activate_work(
+    project_root: Path,
+    chat_id: str,
+    work_id: str,
+    *,
+    runtime_root: Path | None = None,
+) -> None:
+    """Publish an intentional work choice and attach it to a session when possible."""
+
+    if runtime_root is None:
+        from meridian.lib.ops.runtime import resolve_runtime_root
+
+        runtime_root = resolve_runtime_root(project_root)
+    normalized = chat_id.strip()
+    attached = session_store.session_exists(runtime_root, normalized)
+    if attached:
+        session_store.update_session_work_id(runtime_root, normalized, work_id)
+    publish_work_event(
+        "work.activated",
+        project_root=project_root,
+        runtime_root=runtime_root,
+        work_id=work_id,
+        telemetry_ids={"chat_id": normalized} if attached else None,
+    )
 
 
 def ensure_explicit_work_item(runtime_root: Path, work_id: str) -> str:

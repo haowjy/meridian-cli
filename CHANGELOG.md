@@ -17,7 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hook events are `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, and `notify.manual`; the `notify.*` prefix identifies notification-bearing events. Lifecycle/telemetry producer names change from `spawn.queued` to `spawn.created`, `spawn.running` to `spawn.started`, and `work.started` to separate `work.created` / `work.activated` moments. (#687)
 - Plugin API 3.0.0 carries the event contract changes and exports the shared `SpawnKind` and `SpawnStatus`; command hook context schema version 3 adds spawn kind. (#687)
 - `git-autosync` defaults are `spawn.finished`, `work.activated`, and `work.done`, so it syncs for sessionless `work start` / `work switch` and once before a primary launch with `--work` / `--from` attached. (#687)
-- Hook config rejects impossible conditions on explicitly named events. Unevented builtin rows instead retain only compatible default events and error only when none can match. (#687)
+- Hook config rejects impossible conditions on explicitly named events. Unevented builtin rows enable compatible defaults, keep incompatible defaults as disabled overrides, and error only when none can match. (#687)
 - Spawn event IDs remain stable per spawn and event; work event IDs are now unique per firing. (#687)
 
 ### Fixed
@@ -25,6 +25,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hook `when.status = ["timeout"]` now matches timed-out spawns (`timed_out` was mapped to nothing, so timeout filters never fired). (#687)
 - `spawn.finished` command hooks now receive the persisted terminal error; hook subprocesses no longer inherit stale payload variables for fields absent from the current event. (#687)
 - Invalid hook config can no longer interrupt `work start` after its state mutation; work hook dispatch logs the failure and the operation continues. (#687)
+- Lifecycle dispatch drops invalid hook rows with one warning while valid spawn hooks continue to run. Work-event publishing now shares one active/archive directory lookup and one hook/telemetry path. (#687)
+- Primary `--work` / `--from` attachment now recognizes a newly created chat before its harness session ID is known. (#687)
 
 ## [0.10.28] - 2026-10-18
 

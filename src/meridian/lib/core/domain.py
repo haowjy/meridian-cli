@@ -13,7 +13,6 @@ from meridian.lib.core.types import (
     SpawnId,
 )
 from meridian.lib.core.util import FormatContext
-from meridian.plugin_api.types import SpawnKind as SpawnKind
 
 
 class SpawnLifecycleClass(StrEnum):

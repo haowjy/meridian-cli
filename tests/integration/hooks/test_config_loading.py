@@ -184,11 +184,18 @@ def test_hook_conditions_reject_events_that_cannot_supply_their_context(
         'kind = ["child"]',
     ],
 )
-def test_builtin_default_events_drop_events_the_condition_cannot_match(
+def test_builtin_default_conditions_disable_incompatible_override_events(
     tmp_path: Path,
     condition: str,
 ) -> None:
     (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "filtered-defaults"\n'
+        'builtin = "git-autosync"\n'
+        'options = { path = "." }\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "meridian.local.toml").write_text(
         "[[hooks]]\n"
         'name = "filtered-defaults"\n'
         'builtin = "git-autosync"\n'
@@ -199,12 +206,16 @@ def test_builtin_default_events_drop_events_the_condition_cannot_match(
     )
 
     events = {
-        hook.event
+        hook.event: (hook.source, hook.enabled)
         for hook in load_hooks_config(tmp_path).hooks
         if hook.name == "filtered-defaults"
     }
 
-    assert events == {"spawn.finished"}
+    assert events == {
+        "spawn.finished": ("local", True),
+        "work.activated": ("local", False),
+        "work.done": ("local", False),
+    }
 
 
 def test_builtin_default_conditions_error_when_no_default_event_can_match(

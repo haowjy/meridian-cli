@@ -18,8 +18,7 @@ from meridian.lib.hooks.interval import IntervalTracker
 from meridian.lib.hooks.registry import HookRegistry
 from meridian.lib.hooks.runner import ExternalHookRunner, hooks_dispatch_enabled
 from meridian.lib.hooks.types import (
-    DEFAULT_TIMEOUTS,
-    EVENT_CLASS,
+    EVENTS,
     Hook,
     HookContext,
     HookEventName,
@@ -250,7 +249,7 @@ class HookDispatcher(LifecycleHook):
                 skip_reason="condition_not_met",
             )
 
-        timeout_secs = hook.timeout_secs or DEFAULT_TIMEOUTS[EVENT_CLASS[context.event_name]]
+        timeout_secs = hook.timeout_secs or EVENTS[context.event_name].default_timeout_secs
         if hook.interval:
             if self._interval_tracker is None:
                 return HookResult(
@@ -352,31 +351,16 @@ class HookDispatcher(LifecycleHook):
 
     def _build_context(self, event: LifecycleEvent) -> HookContext:
         authority = self._authority
-        if authority is not None:
-            return HookContext.from_authority(
-                authority=authority,
-                event_name=cast("HookEventName", event.event_type),
-                event_id=event.event_id,
-                timestamp=event.timestamp.isoformat(),
-                spawn_id=event.spawn_id,
-                spawn_status=_normalize_spawn_status(event.status),
-                spawn_agent=event.agent,
-                spawn_kind=event.kind,
-                spawn_model=event.model,
-                spawn_duration_secs=event.duration_secs,
-                spawn_cost_usd=event.total_cost_usd,
-                spawn_error=event.error,
-                work_id=event.work_id,
-            )
-
         return HookContext.from_roots(
-            project_root=self._project_root,
-            runtime_root=self._runtime_root,
+            project_root=(authority.project_root if authority is not None else self._project_root),
+            runtime_root=(authority.runtime_root if authority is not None else self._runtime_root),
             event_name=cast("HookEventName", event.event_type),
             event_id=event.event_id,
             timestamp=event.timestamp.isoformat(),
             spawn_id=event.spawn_id,
-            spawn_status=_normalize_spawn_status(event.status),
+            spawn_status=(
+                _PLUGIN_SPAWN_STATUS.get(event.status) if event.status is not None else None
+            ),
             spawn_agent=event.agent,
             spawn_kind=event.kind,
             spawn_model=event.model,
@@ -394,14 +378,6 @@ _PLUGIN_SPAWN_STATUS: dict[TerminalSpawnStatus, SpawnStatus] = {
     "cancelled": "cancelled",
     "timed_out": "timeout",
 }
-
-
-def _normalize_spawn_status(value: str | None) -> SpawnStatus | None:
-    if value in _PLUGIN_SPAWN_STATUS:
-        return _PLUGIN_SPAWN_STATUS[value]
-    if value in ("success", "failure", "cancelled", "timeout"):
-        return value
-    return None
 
 
 def _to_plugin_hook(hook: Hook) -> PluginHook:

@@ -20,24 +20,33 @@ from meridian.plugin_api.types import (
     SpawnStatus,
 )
 
-HookEventClass = Literal["observe", "post"]
+HookWhenField = Literal["status", "agent", "kind"]
 
 
-EVENT_CLASS: dict[HookEventName, HookEventClass] = {
-    "spawn.created": "observe",
-    "spawn.started": "observe",
-    "spawn.finished": "post",
-    "work.created": "observe",
-    "work.activated": "observe",
-    "work.done": "post",
-    "notify.your_turn": "observe",
-    "notify.cache_expiring": "observe",
-    "notify.manual": "observe",
-}
+@dataclass(frozen=True)
+class EventSpec:
+    """Runtime facts supplied by one hook event."""
 
-DEFAULT_TIMEOUTS: dict[HookEventClass, int] = {
-    "observe": 30,
-    "post": 60,
+    default_timeout_secs: int
+    when_fields: frozenset[HookWhenField]
+
+
+_SPAWN_FIELDS: frozenset[HookWhenField] = frozenset(("agent", "kind"))
+_FINISHED_SPAWN_FIELDS: frozenset[HookWhenField] = frozenset(
+    ("status", "agent", "kind")
+)
+_WORK_FIELDS: frozenset[HookWhenField] = frozenset()
+
+EVENTS: dict[HookEventName, EventSpec] = {
+    "spawn.created": EventSpec(30, _SPAWN_FIELDS),
+    "spawn.started": EventSpec(30, _SPAWN_FIELDS),
+    "spawn.finished": EventSpec(60, _FINISHED_SPAWN_FIELDS),
+    "work.created": EventSpec(30, _WORK_FIELDS),
+    "work.activated": EventSpec(30, _WORK_FIELDS),
+    "work.done": EventSpec(60, _WORK_FIELDS),
+    "notify.your_turn": EventSpec(30, _SPAWN_FIELDS),
+    "notify.cache_expiring": EventSpec(30, _SPAWN_FIELDS),
+    "notify.manual": EventSpec(30, _SPAWN_FIELDS),
 }
 
 def _default_options() -> dict[str, object]:
@@ -76,17 +85,17 @@ class Hook:
 
 
 __all__ = [
-    "DEFAULT_TIMEOUTS",
-    "EVENT_CLASS",
+    "EVENTS",
     "HOOK_CONTEXT_SCHEMA_VERSION",
     "NOTIFICATION_EVENTS",
+    "EventSpec",
     "Hook",
     "HookContext",
-    "HookEventClass",
     "HookEventName",
     "HookOutcome",
     "HookResult",
     "HookWhen",
+    "HookWhenField",
     "Notification",
     "SpawnKind",
     "SpawnStatus",

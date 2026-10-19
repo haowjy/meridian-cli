@@ -49,5 +49,5 @@ If you need something from `meridian.lib.*`, that's a signal to extend `meridian
 
 ## Related
 
-→ [../.context/CONTEXT.md](../.context/CONTEXT.md) — plugin API boundary rule, event classes, failure behavior, execution order
+→ [../.context/CONTEXT.md](../.context/CONTEXT.md) — plugin API boundary rule, per-event facts, failure behavior, execution order
 → `../../plugin_api/` — the stable surface all built-ins must import from

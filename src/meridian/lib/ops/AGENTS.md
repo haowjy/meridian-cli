@@ -91,11 +91,13 @@ handles `--work` resolution before the spawn row is created.
 `activate_work()` owns the user-visible choice made by `work start`, `work
 switch`, or a primary launch attaching `--work` / `--from`; it fires
 `work.activated` plus matching telemetry whether or not a session exists, and
-writes the attachment when one does. Incidental attachment maintenance (child
+writes the attachment when `session_store.session_exists()` finds the chat
+record, even before a harness session ID is known. `publish_work_event()` owns
+hook context, active/archive work-directory resolution, and paired telemetry
+for every published work event. Incidental attachment maintenance (child
 inheritance, rename, and clear) writes through `session_store` without
-publishing an activation. Primary launch injects the
-activation operation into the launch runner rather than letting `launch/` own
-hook policy.
+publishing an activation. Primary launch uses the same activation operation as
+the launch runner's default rather than a separate store-write seam.
 
 **Use `structlog.get_logger()`.** Never use stdlib `logging` in ops/ — the logging
 split matters for `capture_library_diagnostics()` at the launch boundary.

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import shlex
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, get_args
+
+from structlog.testing import capture_logs
 
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import SpawnStatus
@@ -13,7 +16,7 @@ from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.hooks.dispatch import HookDispatcher
 from meridian.lib.hooks.types import (
-    EVENT_CLASS,
+    EVENTS,
     HookContext,
     HookEventName,
     HookResult,
@@ -177,6 +180,19 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     assert activation_count() == activations_before_rename
 
     work_done_sync(WorkDoneInput(work_id=renamed.new_name, project_root=str(project_root)))
+    archived_dir = Path(dispatched[-1].work_dir or "")
+    assert dispatched[-1].event_name == "work.done"
+    assert archived_dir.is_dir()
+    work_switch_sync(
+        WorkSwitchInput(
+            work_id=renamed.new_name,
+            chat_id="work-chat",
+            project_root=str(project_root),
+        )
+    )
+    assert dispatched[-1].event_name == "work.activated"
+    assert Path(dispatched[-1].work_dir or "") == archived_dir
+    assert Path(dispatched[-1].work_dir or "").is_dir()
     reopened = work_start_sync(
         WorkStartInput(
             label=renamed.new_name,
@@ -197,22 +213,18 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     session_store.start_session(
         work_runtime_root,
         harness="codex",
-        harness_session_id="primary-work-session",
+        harness_session_id="",
         model="gpt-5.6-luna",
         chat_id="primary-work-chat",
     )
     primary_work_id = resolve_attached_work_id(
+        project_root=project_root,
         runtime_root=work_runtime_root,
         chat_id="primary-work-chat",
         explicit_work_id=renamed.new_name,
         resume_chat_id=None,
         get_session_active_work_id_fn=session_store.get_session_active_work_id,
-        update_session_work_id_fn=lambda root, chat_id, work_id: activate_work(
-            root,
-            project_root=project_root,
-            chat_id=chat_id,
-            work_id=work_id,
-        ),
+        activate_work_fn=activate_work,
     )
     assert primary_work_id == renamed.new_name
     assert (
@@ -286,8 +298,8 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     event_counts = Counter(context.event_name for context in dispatched)
     assert event_counts["spawn.started"] == 2
     assert event_counts["work.created"] == 2
-    assert event_counts["work.activated"] == 7
-    assert {context.event_name for context in dispatched} == set(EVENT_CLASS) == set(
+    assert event_counts["work.activated"] == 8
+    assert {context.event_name for context in dispatched} == set(EVENTS) == set(
         get_args(HookEventName)
     )
 
@@ -307,3 +319,61 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     manual_payload = json.loads(manual.to_json())
     assert manual_payload["spawn"]["id"] is None
     assert manual_payload["spawn"]["agent"] == "coder"
+
+
+def test_spawn_lifecycle_drops_invalid_hook_rows_and_runs_valid_hooks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    runtime_root = tmp_path / "runtime"
+    marker = tmp_path / "valid-hook-fired"
+    project_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    (project_root / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "stale"\n'
+        'event = "spawn.created"\n'
+        'command = "echo stale"\n'
+        'failure_policy = "warn"\n'
+        "\n"
+        "[[hooks]]\n"
+        'name = "valid"\n'
+        'event = "spawn.created"\n'
+        f'command = "printf fired > {shlex.quote(str(marker))}"\n',
+        encoding="utf-8",
+    )
+
+    with capture_logs() as logs:
+        lifecycle = create_lifecycle_service(project_root, runtime_root)
+        with LaunchSlot() as launch_lock:
+            spawn_id = lifecycle.reserve(
+                SpawnReservation(
+                    chat_id="c1",
+                    session_metadata=PrimarySessionMetadata(
+                        harness="codex",
+                        model="gpt-5.6-luna",
+                        agent="coder",
+                        agent_path="",
+                        skills=(),
+                        skill_paths=(),
+                    ),
+                    prompt="exercise tolerant hook loading",
+                    status=SpawnStatus.QUEUED,
+                ),
+                launch_lock=launch_lock,
+            )
+        lifecycle.announce(spawn_id)
+
+    warnings = [log for log in logs if log.get("log_level") == "warning"]
+    assert marker.read_text(encoding="utf-8") == "fired"
+    assert warnings == [
+        {
+            "error": (
+                "hook 'stale': Invalid value for 'project.hooks[1].failure_policy': "
+                "'failure_policy' was removed; hook failures always continue."
+            ),
+            "event": "Dropped invalid hook rows; continuing with valid lifecycle hooks.",
+            "log_level": "warning",
+        }
+    ]

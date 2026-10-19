@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Annotated, get_args
 
 from pydantic import (
@@ -21,9 +21,11 @@ from pydantic import (
 from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS, BuiltinHook
 from meridian.lib.hooks.types import (
+    EVENTS,
     Hook,
     HookEventName,
     HookWhen,
+    HookWhenField,
     SpawnKind,
     SpawnStatus,
 )
@@ -44,6 +46,7 @@ _REPLACED_HOOK_EVENTS = {
 }
 _KNOWN_SPAWN_KINDS = frozenset(get_args(SpawnKind))
 _KNOWN_SPAWN_STATUSES = frozenset(get_args(SpawnStatus))
+_WHEN_FIELDS: tuple[HookWhenField, ...] = ("status", "agent", "kind")
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
@@ -109,50 +112,42 @@ type SpawnStatusSpec = Annotated[SpawnStatus, BeforeValidator(_spawn_status)]
 type PositiveTimeoutSecs = Annotated[int, BeforeValidator(_positive_timeout), Field(gt=0)]
 
 
+def _closed_tuple(allowed: frozenset[str]) -> Callable[[object], object]:
+    def validate(value: object) -> object:
+        values = json_list(value)
+        if values is not None:
+            for item in values:
+                normalized = _normalized_string(item)
+                if (
+                    isinstance(normalized, str)
+                    and normalized
+                    and normalized not in allowed
+                ):
+                    valid = ", ".join(sorted(allowed))
+                    raise ValueError(
+                        f"expected values in [{valid}], got {normalized!r}"
+                    )
+        return tuple(values) if values is not None else value
+
+    return validate
+
+
+type SpawnKindTupleSpec = Annotated[
+    tuple[SpawnKindSpec, ...], BeforeValidator(_closed_tuple(_KNOWN_SPAWN_KINDS))
+]
+type SpawnStatusTupleSpec = Annotated[
+    tuple[SpawnStatusSpec, ...], BeforeValidator(_closed_tuple(_KNOWN_SPAWN_STATUSES))
+]
+
+
 class HookWhenSpec(BaseModel):
     """Validated conditional fields from one hook row."""
 
     model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
 
-    status: tuple[SpawnStatusSpec, ...] | None = None
+    status: SpawnStatusTupleSpec | None = None
     agent: NonEmptyString | None = None
-    kind: tuple[SpawnKindSpec, ...] | None = None
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def _tuple_status(cls, value: object) -> object:
-        values = json_list(value)
-        if values is not None:
-            for item in values:
-                normalized = _normalized_string(item)
-                if (
-                    isinstance(normalized, str)
-                    and normalized
-                    and normalized not in _KNOWN_SPAWN_STATUSES
-                ):
-                    valid = ", ".join(sorted(_KNOWN_SPAWN_STATUSES))
-                    raise ValueError(
-                        f"expected values in [{valid}], got {normalized!r}"
-                    )
-        return tuple(values) if values is not None else value
-
-    @field_validator("kind", mode="before")
-    @classmethod
-    def _tuple_kind(cls, value: object) -> object:
-        values = json_list(value)
-        if values is not None:
-            for item in values:
-                normalized = _normalized_string(item)
-                if (
-                    isinstance(normalized, str)
-                    and normalized
-                    and normalized not in _KNOWN_SPAWN_KINDS
-                ):
-                    valid = ", ".join(sorted(_KNOWN_SPAWN_KINDS))
-                    raise ValueError(
-                        f"expected values in [{valid}], got {normalized!r}"
-                    )
-        return tuple(values) if values is not None else value
+    kind: SpawnKindTupleSpec | None = None
 
 
 class HookSpec(BaseModel):
@@ -258,12 +253,16 @@ def _parse_when(spec: HookWhenSpec | None) -> HookWhen | None:
     )
 
 
-def _when_can_match_event(when: HookWhen | None, event: HookEventName) -> bool:
+def _unsupported_when_field(
+    when: HookWhen | None,
+    event: HookEventName,
+) -> HookWhenField | None:
     if when is None:
-        return True
-    if when.status is not None and event != "spawn.finished":
-        return False
-    return not (event.startswith("work.") and (when.agent is not None or when.kind is not None))
+        return None
+    for field in _WHEN_FIELDS:
+        if getattr(when, field) is not None and field not in EVENTS[event].when_fields:
+            return field
+    return None
 
 
 def _validate_when_event(
@@ -272,27 +271,20 @@ def _validate_when_event(
     *,
     row_source: str,
 ) -> None:
-    if when is None:
+    field = _unsupported_when_field(when, event)
+    if field is None:
         return
 
-    if when.status is not None and event != "spawn.finished":
+    if field == "status":
         raise ValueError(
             f"Invalid value for '{row_source}.when.status': condition is only available "
             f"for 'spawn.finished', got {event!r}."
         )
 
-    if not event.startswith("work."):
-        return
-    if when.agent is not None:
-        raise ValueError(
-            f"Invalid value for '{row_source}.when.agent': condition is unavailable for "
-            f"{event!r}."
-        )
-    if when.kind is not None:
-        raise ValueError(
-            f"Invalid value for '{row_source}.when.kind': condition is unavailable for "
-            f"{event!r}."
-        )
+    raise ValueError(
+        f"Invalid value for '{row_source}.when.{field}': condition is unavailable for "
+        f"{event!r}."
+    )
 
 
 def hooks_from_spec(
@@ -340,14 +332,19 @@ def hooks_from_spec(
 
     when = _parse_when(spec.when)
     events: tuple[HookEventName, ...]
+    enabled_events: frozenset[HookEventName]
     if spec.event is not None:
         events = (spec.event,)
         _validate_when_event(when, spec.event, row_source=row_source)
+        enabled_events = frozenset(events)
     elif builtin is not None:
-        events = tuple(
-            event for event in builtin.default_events if _when_can_match_event(when, event)
+        events = builtin.default_events
+        enabled_events = frozenset(
+            event
+            for event in events
+            if _unsupported_when_field(when, event) is None
         )
-        if not events:
+        if not enabled_events:
             raise ValueError(
                 f"Invalid hook config '{row_source}': row had no 'event', and its 'when' "
                 "conditions cannot match any builtin default event; set 'event' explicitly "
@@ -376,7 +373,7 @@ def hooks_from_spec(
             builtin=spec.builtin,
             timeout_secs=spec.timeout_secs,
             interval=interval,
-            enabled=spec.enabled,
+            enabled=spec.enabled and event in enabled_events,
             priority=spec.priority,
             require_serial=spec.require_serial,
             when=when,

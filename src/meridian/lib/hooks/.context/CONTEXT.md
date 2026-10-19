@@ -36,23 +36,20 @@ only when a row names that builtin.
 Unnamed `notify` rows are all named `notify`, which is how a plain
 `builtin = "notify"` row replaces its event's default.
 
-Notification emission is the one fail-open config consumer: it drops and names
-invalid rows, keeps every valid row, then applies the same layering and default
-overrides as a clean load. Hook commands and other dispatchers surface all row
-errors normally.
+Runtime emission is fail-open for row errors: notification and lifecycle
+dispatch drop and name invalid rows, keep every valid row, then apply the same
+layering and default overrides as a clean load. Hook inspection commands surface
+all row errors normally.
 
 Override key is `(name, event)`. A higher-priority source row with the same key replaces the lower-priority row entirely. Use `meridian.local.toml` for machine-specific overrides without committing them.
 
-## Event Classes and Failure Behavior
+## Event Facts and Failure Behavior
 
-`EVENT_CLASS` maps each event to one of two classes:
-
-| Class | Events | Default timeout |
-|-------|--------|-----------------|
-| `observe` | `spawn.created`, `spawn.started`, `work.created`, `work.activated`, `notify.your_turn`, `notify.cache_expiring`, `notify.manual` | 30s |
-| `post` | `spawn.finished`, `work.done` | 60s |
-
-Both classes are fail-open: a hook failure logs a warning but does not stop subsequent hooks or the lifecycle event. There is no per-row failure policy.
+`EVENTS` is the single per-event table. Each row owns its default timeout and
+the `when` fields that event can supply. `spawn.finished` and `work.done` default
+to 60s; every other event defaults to 30s. A hook failure logs a warning but
+does not stop subsequent hooks or the lifecycle event. There is no per-row
+failure policy.
 
 ## Plugin API Boundary
 
@@ -69,7 +66,7 @@ Within an event, hooks are sorted by:
 
 ## `HookWhen` Conditions
 
-`when.status` filters `spawn.finished` by terminal status. `when.agent` filters by agent profile name, and `when.kind` filters by the shared `SpawnKind` (`child`, `primary`, `streaming`). Explicit work events reject agent/kind conditions because they carry neither. An unevented builtin row drops default events that cannot supply its conditions and keeps compatible defaults; it errors only when none remain. Conditions are checked before interval throttling.
+`when.status` filters `spawn.finished` by terminal status. `when.agent` filters by agent profile name, and `when.kind` filters by the shared `SpawnKind` (`child`, `primary`, `streaming`). Explicit work events reject agent/kind conditions because they carry neither. An unevented builtin row enables compatible defaults and emits disabled overrides for incompatible ones, preserving `(name, event)` suppression across config layers; it errors only when none can match. Conditions are checked before interval throttling.
 
 ## Context Transport
 

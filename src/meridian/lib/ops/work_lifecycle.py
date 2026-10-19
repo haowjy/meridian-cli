@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
-from uuid import uuid4
 
 import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.lifecycle import get_hook_dispatcher
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.context import resolve_active_work_scope
@@ -21,7 +17,7 @@ from meridian.lib.ops.runtime import (
     resolve_roots,
     runtime_context,
 )
-from meridian.lib.ops.work_attachment import activate_work, session_exists
+from meridian.lib.ops.work_attachment import activate_work, publish_work_event
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.spawn_status import overlay_derived
@@ -129,40 +125,6 @@ def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | N
     if not warnings:
         return None
     return "Work item marked done while still referenced by " + "; ".join(warnings) + "."
-
-
-def _dispatch_work_hook_event(
-    *,
-    event_name: Literal["work.created", "work.done"],
-    project_root: Path,
-    runtime_root: Path,
-    project_state_dir: Path,
-    work_id: str,
-) -> None:
-    try:
-        dispatcher = get_hook_dispatcher(project_root, runtime_root)
-        if dispatcher is None:
-            return
-
-        from meridian.lib.hooks.types import HookContext
-
-        dispatcher.fire(
-            HookContext(
-                event_name=event_name,
-                event_id=uuid4(),
-                timestamp=datetime.now(tz=UTC).isoformat(),
-                project_root=str(project_root),
-                runtime_root=str(runtime_root),
-                work_id=work_id,
-                work_dir=str(work_store.work_scratch_dir(project_state_dir, work_id)),
-            )
-        )
-    except Exception:
-        logger.exception(
-            "Work hook dispatch failed; work lifecycle transition continues.",
-            hook_event=event_name,
-            work_id=work_id,
-        )
 
 
 def _emit_work_transition(
@@ -433,23 +395,18 @@ def work_start_sync(
         new_target=item.name,
     )
     if created:
-        _dispatch_work_hook_event(
-            event_name="work.created",
+        publish_work_event(
+            "work.created",
             project_root=project_root,
             runtime_root=runtime_state_root,
-            project_state_dir=project_state_dir,
-            work_id=item.name,
-        )
-        _emit_work_transition(
-            "work.created",
             work_id=item.name,
             data={"status": item.status},
         )
     activate_work(
-        runtime_state_root,
-        project_root=project_root,
-        chat_id=chat_id,
-        work_id=item.name,
+        project_root,
+        chat_id,
+        item.name,
+        runtime_root=runtime_state_root,
     )
     return WorkStartOutput(
         name=item.name,
@@ -488,15 +445,10 @@ def work_update_sync(
             payload.work_id,
             description=payload.description,
         )
-        _dispatch_work_hook_event(
-            event_name="work.done",
+        publish_work_event(
+            "work.done",
             project_root=roots.project_root,
             runtime_root=runtime_state_root,
-            project_state_dir=project_state_dir,
-            work_id=item.name,
-        )
-        _emit_work_transition(
-            "work.done",
             work_id=item.name,
             data={"status": item.status},
         )
@@ -537,15 +489,10 @@ def work_done_sync(
     _require_work_item(project_state_dir, payload.work_id)
 
     item = work_repository.archive_work_item(project_state_dir, payload.work_id)
-    _dispatch_work_hook_event(
-        event_name="work.done",
+    publish_work_event(
+        "work.done",
         project_root=roots.project_root,
         runtime_root=runtime_state_root,
-        project_state_dir=project_state_dir,
-        work_id=item.name,
-    )
-    _emit_work_transition(
-        "work.done",
         work_id=item.name,
         data={"status": item.status},
     )
@@ -617,11 +564,12 @@ def work_switch_sync(
         chat_id=chat_id,
         new_target=item.name,
     )
-    updated = activate_work(
-        runtime_state_root,
-        project_root=roots.project_root,
-        chat_id=chat_id,
-        work_id=item.name,
+    updated = session_store.session_exists(runtime_state_root, chat_id)
+    activate_work(
+        roots.project_root,
+        chat_id,
+        item.name,
+        runtime_root=runtime_state_root,
     )
     message = (
         f"Active work item: {item.name}"
@@ -685,7 +633,7 @@ def work_clear_sync(
     roots = resolve_roots(payload.project_root)
     runtime_root = roots.runtime_root
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
-    updated = session_exists(runtime_root, chat_id)
+    updated = session_store.session_exists(runtime_root, chat_id)
     if updated:
         session_store.update_session_work_id(runtime_root, chat_id, None)
     message = "Cleared active work item." if updated else "No active session; nothing to clear."

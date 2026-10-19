@@ -40,11 +40,13 @@ Command hook payload schema version 3 adds `spawn.kind` and
 
 For a row that sets `event`, config loading rejects `when.status` outside
 `spawn.finished`, and rejects `when.agent` or `when.kind` on work events. For an
-unevented builtin row, Meridian instead drops only default events that cannot
-match its `when` conditions and retains the others. For example, an unevented
-`git-autosync` row with `when.status = ["success"]` now registers only for
-`spawn.finished`. It errors, with a prompt to set `event`, only if no default
-event can match.
+unevented builtin row, Meridian instead enables only default events that can
+match its `when` conditions. Incompatible defaults remain as disabled
+overrides, so the higher-precedence row still suppresses lower rows with the
+same name and event. For example, an unevented `git-autosync` row with
+`when.status = ["success"]` runs only for `spawn.finished` and disables its
+`work.activated` and `work.done` registrations. It errors, with a prompt to set
+`event`, only if no default event can match.
 
 The corresponding lifecycle/telemetry producer names changed from
 `spawn.queued` to `spawn.created`, `spawn.running` to `spawn.started`, and
@@ -56,11 +58,11 @@ best-effort process telemetry, while work and session files are authoritative.
 
 No state migration is needed. Upgrade Meridian first, then run
 `meridian hooks check` and replace each old name it reports. Until the config is
-updated, `hooks check` fails; commands that fire work hooks keep their core
-mutation but log the dispatch config error and cannot run those configured
-hooks. An old binary rejects the new names and the new binary rejects the old
-names, so a config shared with machines on both versions cannot contain one
-compatible name set.
+updated, `hooks check` fails. Runtime lifecycle dispatch drops and warns once
+about invalid rows while valid hooks continue to run; work commands keep their
+core mutation even if dispatch setup itself fails. An old binary rejects the
+new names and the new binary rejects the old names, so a config shared with
+machines on both versions cannot contain one compatible name set.
 
 ## Notifications are hook events
 
