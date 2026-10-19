@@ -162,6 +162,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         )
     )
     assert existing.created is False
+
     def activation_count() -> int:
         return sum(context.event_name == "work.activated" for context in dispatched)
 
@@ -299,20 +300,18 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     assert event_counts["spawn.started"] == 2
     assert event_counts["work.created"] == 2
     assert event_counts["work.activated"] == 8
-    assert {context.event_name for context in dispatched} == set(EVENTS) == set(
-        get_args(HookEventName)
+    assert (
+        {context.event_name for context in dispatched}
+        == set(EVENTS)
+        == set(get_args(HookEventName))
     )
 
     work_event_ids = [
-        context.event_id
-        for context in dispatched
-        if context.event_name.startswith("work.")
+        context.event_id for context in dispatched if context.event_name.startswith("work.")
     ]
     assert len(work_event_ids) == len(set(work_event_ids))
 
-    finished = next(
-        context for context in dispatched if context.event_name == "spawn.finished"
-    )
+    finished = next(context for context in dispatched if context.event_name == "spawn.finished")
     assert finished.spawn_error == "producer failure"
 
     manual = next(context for context in dispatched if context.event_name == "notify.manual")
@@ -333,9 +332,8 @@ def test_spawn_lifecycle_drops_invalid_hook_rows_and_runs_valid_hooks(
     (project_root / "meridian.toml").write_text(
         "[[hooks]]\n"
         'name = "stale"\n'
-        'event = "spawn.created"\n'
+        'event = "not.an.event"\n'
         'command = "echo stale"\n'
-        'failure_policy = "warn"\n'
         "\n"
         "[[hooks]]\n"
         'name = "valid"\n'
@@ -370,8 +368,10 @@ def test_spawn_lifecycle_drops_invalid_hook_rows_and_runs_valid_hooks(
     assert warnings == [
         {
             "error": (
-                "hook 'stale': Invalid value for 'project.hooks[1].failure_policy': "
-                "'failure_policy' was removed; hook failures always continue."
+                "hook 'stale': Invalid value for 'project.hooks[1].event': expected one of "
+                "[notify.cache_expiring, notify.manual, notify.your_turn, spawn.created, "
+                "spawn.finished, spawn.started, work.activated, work.created, work.done], "
+                "got 'not.an.event'."
             ),
             "event": "Dropped invalid hook rows; continuing with valid lifecycle hooks.",
             "log_level": "warning",

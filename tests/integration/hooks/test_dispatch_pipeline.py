@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import time
@@ -10,7 +11,7 @@ from uuid import uuid4
 
 from structlog.testing import capture_logs
 
-from meridian.lib.hooks.config import HooksConfig
+from meridian.lib.hooks.config import HooksConfig, load_hooks_config_report
 from meridian.lib.hooks.dispatch import BUILTIN_HOOKS, HookDispatcher
 from meridian.lib.hooks.registry import HookRegistry
 from meridian.lib.hooks.types import Hook, HookContext, HookEventName, HookOutcome, HookResult
@@ -221,6 +222,44 @@ def test_dispatch_pipeline_executes_builtin_hook_in_process(tmp_path: Path) -> N
     assert results[0].outcome == "success"
     assert results[0].stdout == "builtin-ok"
     assert results[0].exit_code == 0
+
+
+def test_deprecated_event_row_receives_its_configured_payload_name(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    payload_path = tmp_path / "payload.json"
+    script = tmp_path / "record_event.py"
+    script.write_text(
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "payload = json.loads(sys.stdin.read())\n"
+        "Path(sys.argv[1]).write_text(json.dumps({\n"
+        "    'json': payload['event_name'],\n"
+        "    'env': os.environ['MERIDIAN_HOOK_EVENT'],\n"
+        "}), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (project_root / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "legacy-consumer"\n'
+        'event = "spawn.finalized"\n'
+        f'command = "{_python_command(script, str(payload_path))}"\n',
+        encoding="utf-8",
+    )
+    loaded = load_hooks_config_report(project_root)
+    registry = HookRegistry(project_root, hooks_config=loaded.config)
+    dispatcher = HookDispatcher(project_root, tmp_path / "state", registry=registry)
+
+    results = dispatcher.fire(_context())
+
+    assert [result.outcome for result in results] == ["success"]
+    assert results[0].event == "spawn.finished"
+    assert json.loads(payload_path.read_text(encoding="utf-8")) == {
+        "json": "spawn.finalized",
+        "env": "spawn.finalized",
+    }
 
 
 def test_dispatch_pipeline_persists_interval_state_across_runs(tmp_path: Path) -> None:

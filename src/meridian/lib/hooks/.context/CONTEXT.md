@@ -39,7 +39,9 @@ Unnamed `notify` rows are all named `notify`, which is how a plain
 Runtime emission is fail-open for row errors: notification and lifecycle
 dispatch drop and name invalid rows, keep every valid row, then apply the same
 layering and default overrides as a clean load. Hook inspection commands surface
-all row errors normally.
+all row errors normally. Compatibility-window config is valid: the config report
+emits one warning per affected row, and registrations carry the deprecated
+configured event name separately from the canonical event used for lookup.
 
 Override key is `(name, event)`. A higher-priority source row with the same key replaces the lower-priority row entirely. Use `meridian.local.toml` for machine-specific overrides without committing them.
 
@@ -49,7 +51,7 @@ Override key is `(name, event)`. A higher-priority source row with the same key 
 the `when` fields that event can supply. `spawn.finished` and `work.done` default
 to 60s; every other event defaults to 30s. A hook failure logs a warning but
 does not stop subsequent hooks or the lifecycle event. There is no per-row
-failure policy.
+failure policy; the deprecated config key is ignored during its warning window.
 
 ## Plugin API Boundary
 
@@ -66,11 +68,16 @@ Within an event, hooks are sorted by:
 
 ## `HookWhen` Conditions
 
-`when.status` filters `spawn.finished` by terminal status. `when.agent` filters by agent profile name, and `when.kind` filters by the shared `SpawnKind` (`child`, `primary`, `streaming`). Explicit work events reject agent/kind conditions because they carry neither. An unevented builtin row enables compatible defaults and emits disabled overrides for incompatible ones, preserving `(name, event)` suppression across config layers; it errors only when none can match. Conditions are checked before interval throttling.
+`when.status` filters `spawn.finished` by terminal status. `when.agent` filters by agent profile name, and `when.kind` filters by the shared `SpawnKind` (`child`, `primary`, `streaming`). During the compatibility window, explicit work events with agent/kind conditions warn and do not register because they carry neither. An unevented builtin row enables compatible defaults and emits disabled overrides for incompatible ones, preserving `(name, event)` suppression across config layers; it errors only when none can match. Conditions are checked before interval throttling.
 
 ## Context Transport
 
 `HookContext.to_env()` emits `MERIDIAN_HOOK_*`, `MERIDIAN_PROJECT_DIR`, `MERIDIAN_SPAWN_*`, `MERIDIAN_ACTIVE_WORK_*`, and `MERIDIAN_NOTIFICATION_*` env vars. `None` values are omitted (no empty string env vars). `ExternalHookRunner` first strips every registered hook-payload key from its base environment, so a missing field cannot retain inherited context. External hooks receive both env vars and JSON on stdin — the JSON schema includes a `schema_version` field (`HOOK_CONTEXT_SCHEMA_VERSION = 3`) for forward compatibility. Version 3 renamed lifecycle events and added `spawn.kind` / `MERIDIAN_SPAWN_KIND`; version 2 added the `notification` object and made `runtime_root` nullable.
+
+The registry indexes deprecated event rows by their canonical replacement, while
+`Hook.configured_event` restores the old name only for that row's execution
+context. Producers therefore know nothing about config aliases, and current rows
+always receive the current event name.
 
 ## `__init__.py` Lazy Loading
 

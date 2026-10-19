@@ -2,9 +2,9 @@
 
 ## Hook event names
 
-Hook event names now identify the persisted moment when they fire. Replace old
-names as follows; config containing one of them fails to load and names its
-replacement.
+Hook event names now identify the persisted moment when they fire. This release
+opens a one-minor compatibility window: the new binary accepts both the old and
+new names, while warning once for each row that still needs migration.
 
 | Old | New |
 | --- | --- |
@@ -16,9 +16,20 @@ replacement.
 | `session.responded` | `notify.your_turn` |
 | `session.cache_expiring` | `notify.cache_expiring` |
 
+Run `meridian hooks check` after upgrading. It exits successfully when these
+are the only findings and lists each deprecated row with its replacement.
+`meridian hooks list` shows the registration on the new event and marks it
+`deprecated`. Rename rows at leisure during this window; the old names stop
+loading in the next minor release.
+
+A row that still uses an old name is registered on the new event, but receives
+its configured old name in `HookContext.event_name`, JSON `event_name`, and
+`MERIDIAN_HOOK_EVENT`. This keeps existing command scripts working while their
+config is migrated. A row configured with the new name receives the new name.
+
 Rows configured with `spawn.start` or `work.start` were accepted previously but
-never fired. Their replacements, `spawn.started` and `work.activated`, are live
-events, so those rows begin running after migration.
+never fired. They now register on the live `spawn.started` and `work.activated`
+events, so the warning also says that the row will begin running.
 
 `work.created` is a separate new event that fires only when `work start`
 creates an item. `work.activated` fires whenever `work start` or `work switch`
@@ -30,20 +41,25 @@ work syncs. A primary launch with attached work performs one synchronous sync
 after creating its session and before starting the harness.
 
 Plugin API 3.0.0 carries the renamed event literal, removes the impossible
-`when.status = ["skipped"]` value and the inert `failure_policy` config and
-Plugin API fields, exports `SpawnKind` and `SpawnStatus`, and adds
-`HookContext.spawn_kind`. It also removes `HookContext.from_authority`; plugins
-that constructed contexts through it should call `HookContext.from_roots` with
-the authority's `project_root` and `runtime_root`. A row that still sets
-`failure_policy` is rejected;
-hook failures now have their only effective behavior, log and continue.
-Command hook payload schema version 3 adds `spawn.kind` and
-`MERIDIAN_SPAWN_KIND`. The new `when.kind` list accepts `child`, `primary`, and
-`streaming`.
+`when.status = ["skipped"]` value and the inert `failure_policy` Plugin API
+field/type, exports `SpawnKind` and `SpawnStatus`, and adds
+`HookContext.spawn_kind`. It also removes `HookContext.from_authority`; package
+code that constructed contexts through it should call `HookContext.from_roots`
+with the authority's `project_root` and `runtime_root`. Command hook payload
+schema version 3 adds `spawn.kind` and `MERIDIAN_SPAWN_KIND`. The new
+`when.kind` list accepts `child`, `primary`, and `streaming`.
 
-For a row that sets `event`, config loading rejects `when.status` outside
-`spawn.finished`, and rejects `when.agent` or `when.kind` on work events. For an
-unevented builtin row, Meridian instead enables only default events that can
+The corresponding config transitions share the one-minor window:
+
+- `failure_policy` loads with a warning, has no effect, and will be rejected in
+  the next minor release. Hook failures always log and continue.
+- `when.status = ["skipped"]` warns and drops `skipped`; any other status values
+  in the list continue to filter normally.
+- A row that explicitly names an event but sets a condition that event cannot
+  supply warns that it can never match and is skipped. In the next minor release
+  the same row becomes a config error.
+
+For an unevented builtin row, Meridian enables only default events that can
 match its `when` conditions. Incompatible defaults remain as disabled
 overrides, so the higher-precedence row still suppresses lower rows with the
 same name and event. For example, an unevented `git-autosync` row with
@@ -59,13 +75,12 @@ local `meridian telemetry query` projection; that projection continues to keep
 `spawn.process_exited` plus terminal status events. Work telemetry remains
 best-effort process telemetry, while work and session files are authoritative.
 
-No state migration is needed. Upgrade Meridian first, then run
-`meridian hooks check` and replace each old name it reports. Until the config is
-updated, `hooks check` fails. Runtime lifecycle dispatch drops and warns once
-about invalid rows while valid hooks continue to run; work commands keep their
-core mutation even if dispatch setup itself fails. An old binary rejects the
-new names and the new binary rejects the old names, so a config shared with
-machines on both versions cannot contain one compatible name set.
+No state migration is needed. On mixed-version machines sharing one config, the
+new binary accepts both name sets during this window, but an old binary still
+rejects the new names. Keep the old names until every machine has upgraded,
+then rename them before the next minor release. Runtime lifecycle dispatch
+continues to drop truly invalid rows while valid and deprecated rows run; work
+commands keep their core mutation even if dispatch setup itself fails.
 
 ## Notifications are hook events
 

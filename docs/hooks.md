@@ -7,7 +7,7 @@ Hooks let you run commands or builtins automatically when Meridian events fire �
 | Command | Description |
 | ------- | ----------- |
 | `meridian hooks list` | Show all registered hooks and their resolved configuration |
-| `meridian hooks check` | Validate hook config and exit non-zero on errors |
+| `meridian hooks check` | Validate hook config, list migration warnings, and exit non-zero on errors |
 | `meridian hooks run NAME` | Execute a hook manually, bypassing interval throttling |
 | `meridian hooks run NAME --event EVENT` | Execute with a specific event context |
 
@@ -65,6 +65,14 @@ the event.
 
 A single hook row can register for multiple events. When a builtin supplies default events and no `event` field is set, one hook registration is created per default event. Setting `event` explicitly overrides this and registers for only that one event.
 
+During the one-minor event-name migration window, the former names
+`spawn.start`, `spawn.running`, `spawn.finalized`, `work.start`, `work.started`,
+`session.responded`, and `session.cache_expiring` still load. Meridian warns
+once per row, registers it on the replacement event, and marks it `deprecated`
+in `hooks list`; `hooks check` still exits successfully. See the
+[upgrade table](upgrading.md#hook-event-names). The old names will be rejected
+in the next minor release.
+
 ### Telemetry and debug output
 
 Hook events and `meridian telemetry query` are different projections.
@@ -109,7 +117,7 @@ event   = "spawn.finished"
 | `require_serial` | bool | no | `false` | Block concurrent hook executions |
 | `when.status` | array[str] | no | — | On `spawn.finished`, fire only for `success`, `failure`, `cancelled`, or `timeout` (matching stored spawn statuses `succeeded`, `failed`, `cancelled`, and `timed_out`) |
 | `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
-| `when.kind` | array[str] | no | — | On spawn events, only fire for these kinds: `child`, `primary`, `streaming`; notification events use the notifying spawn's kind when known; work events reject this condition |
+| `when.kind` | array[str] | no | — | On spawn events, only fire for these kinds: `child`, `primary`, `streaming`; notification events use the notifying spawn's kind when known; it cannot match work events |
 | `exclude` | array[str] | no | — | `git-autosync` file path patterns to leave out of commits and stash around merges |
 | `options.remote` | str | no | — | Git remote URL for `git-autosync` to clone and sync |
 | `options.path` | str | no | — | Local repository for `git-autosync` to initialize and commit without remote sync |
@@ -119,12 +127,18 @@ event   = "spawn.finished"
 
 `command` and `builtin` are mutually exclusive.
 
-Conditions that an event can never supply are rejected when config loads:
-`when.status` is limited to `spawn.finished`, and work events cannot use
-`when.agent` or `when.kind`. This validation applies directly when the row sets
-`event`. When an unevented builtin row expands across its default events,
-Meridian keeps compatible registrations enabled and records incompatible
-registrations as disabled overrides. Those disabled entries still replace
+`failure_policy` is accepted only for the one-minor migration window. It has no
+effect, produces a warning, and will be rejected in the next minor release;
+hook failures always continue.
+
+Conditions that an event can never supply do not register: `when.status` is
+limited to `spawn.finished`, and work events cannot use `when.agent` or
+`when.kind`. During the migration window, an explicitly evented row warns that
+the condition can never match and is skipped; it becomes a config error in the
+next minor release. `when.status = ["skipped"]` likewise warns and drops that
+value because it never matched. When an unevented builtin row expands across
+its default events, Meridian keeps compatible registrations enabled and records
+incompatible registrations as disabled overrides. Those disabled entries still replace
 lower-precedence rows with the same name and event, so narrowing a higher row
 cannot expose a lower layer's action. If no default can match, loading fails
 and asks the row to set `event` explicitly. A runtime context that lacks or
@@ -160,6 +174,11 @@ event's own context, not the caller's active spawn or work item. Hooks run even
 in a directory with no Meridian runtime state; only `interval`-throttled hooks skip there.
 `MERIDIAN_HOOKS_ENABLED=false` turns off all hook dispatch, including
 notification delivery.
+
+A row configured with a deprecated event name receives that configured name in
+JSON `event_name` and `MERIDIAN_HOOK_EVENT`, even though `hooks list` shows its
+replacement event. Rows configured with current names receive the current name.
+This payload compatibility lasts only for the event-name migration window.
 
 ### JSON stdin payload
 

@@ -169,9 +169,11 @@ def emit(
         notification=notification,
     )
     loaded_hooks = load_hooks_config_report(project_root)
-    fallback_warning: str | None = None
+    fallback_warnings = list(loaded_hooks.warnings)
     if loaded_hooks.errors:
-        fallback_warning = "dropped invalid hook rows: " + "; ".join(loaded_hooks.errors)
+        fallback_warnings.append(
+            "dropped invalid hook rows: " + "; ".join(loaded_hooks.errors)
+        )
     dispatcher = HookDispatcher(
         project_root,
         runtime_root,
@@ -183,8 +185,8 @@ def emit(
     )
 
     report = report_from_hooks(event, dispatcher.fire(context))
-    if fallback_warning is not None:
-        report = replace(report, warnings=(*report.warnings, fallback_warning))
+    if fallback_warnings:
+        report = replace(report, warnings=(*report.warnings, *fallback_warnings))
     return report
 
 

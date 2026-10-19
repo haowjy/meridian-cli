@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.hooks.config import load_hooks_config
+from meridian.lib.hooks.config import load_hooks_config, load_hooks_config_report
+from meridian.lib.ops.hooks import HookListInput, hooks_list_sync
 
 
 @pytest.mark.parametrize(
@@ -17,49 +18,9 @@ from meridian.lib.hooks.config import load_hooks_config
             "got 'bogus'",
         ),
         (
-            "event",
-            'event = "spawn.start"',
-            "'spawn.start' was removed; use 'spawn.started'",
-        ),
-        (
-            "event",
-            'event = "work.start"',
-            "'work.start' was removed; use 'work.activated'",
-        ),
-        (
-            "event",
-            'event = "spawn.running"',
-            "'spawn.running' was removed; use 'spawn.started'",
-        ),
-        (
-            "event",
-            'event = "spawn.finalized"',
-            "'spawn.finalized' was removed; use 'spawn.finished'",
-        ),
-        (
-            "event",
-            'event = "work.started"',
-            "'work.started' was removed; use 'work.activated'",
-        ),
-        (
-            "event",
-            'event = "session.responded"',
-            "'session.responded' was removed; use 'notify.your_turn'",
-        ),
-        (
-            "event",
-            'event = "session.cache_expiring"',
-            "'session.cache_expiring' was removed; use 'notify.cache_expiring'",
-        ),
-        (
             "interval",
             'event = "spawn.started"\ninterval = "soon"',
             "expected interval format '\\d+[smhd]', got 'soon'",
-        ),
-        (
-            "failure_policy",
-            'event = "spawn.started"\nfailure_policy = "warn"',
-            "'failure_policy' was removed; hook failures always continue",
         ),
         (
             "timeout_secs",
@@ -75,10 +36,7 @@ def test_hook_scalar_constraints_are_enforced_by_the_config_model(
     expected: str,
 ) -> None:
     (tmp_path / "meridian.toml").write_text(
-        "[[hooks]]\n"
-        'name = "invalid"\n'
-        'command = "echo invalid"\n'
-        f"{value}\n",
+        f'[[hooks]]\nname = "invalid"\ncommand = "echo invalid"\n{value}\n',
         encoding="utf-8",
     )
 
@@ -135,26 +93,96 @@ def test_hook_config_model_normalizes_closed_values(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("configured", "replacement", "extra_warning"),
+    [
+        ("spawn.start", "spawn.started", "This row will now run"),
+        ("spawn.running", "spawn.started", None),
+        ("spawn.finalized", "spawn.finished", None),
+        ("work.start", "work.activated", "This row will now run"),
+        ("work.started", "work.activated", None),
+        ("session.responded", "notify.your_turn", None),
+        ("session.cache_expiring", "notify.cache_expiring", None),
+    ],
+)
+def test_deprecated_event_names_warn_and_register_on_their_replacement(
+    tmp_path: Path,
+    configured: str,
+    replacement: str,
+    extra_warning: str | None,
+) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "deprecated-event"\n'
+        f'event = "{configured}"\n'
+        'command = "echo deprecated"\n',
+        encoding="utf-8",
+    )
+
+    report = load_hooks_config_report(tmp_path)
+
+    hook = next(hook for hook in report.config.hooks if hook.name == "deprecated-event")
+    assert report.errors == ()
+    assert len(report.warnings) == 1
+    assert f"`{configured}` is deprecated; use `{replacement}`." in report.warnings[0]
+    assert "It will be rejected in the next minor release." in report.warnings[0]
+    if extra_warning is not None:
+        assert extra_warning in report.warnings[0]
+    assert hook.event == replacement
+    assert hook.configured_event == configured
+    assert hook.deprecated is True
+
+    listed = next(
+        item
+        for item in hooks_list_sync(HookListInput(project_root=str(tmp_path))).hooks
+        if item.name == "deprecated-event"
+    )
+    assert listed.event == replacement
+    assert listed.status == "deprecated"
+
+
+def test_deprecated_failure_policy_warns_and_is_ignored(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "old-policy"\n'
+        'event = "spawn.finished"\n'
+        'command = "echo deprecated"\n'
+        'failure_policy = "abort"\n',
+        encoding="utf-8",
+    )
+
+    report = load_hooks_config_report(tmp_path)
+
+    hook = next(hook for hook in report.config.hooks if hook.name == "old-policy")
+    assert report.errors == ()
+    assert len(report.warnings) == 1
+    assert (
+        "`failure_policy` is deprecated; it has no effect and will be rejected "
+        "in the next minor release."
+    ) in report.warnings[0]
+    assert hook.deprecated is True
+
+
+@pytest.mark.parametrize(
     ("event", "condition", "expected"),
     [
         (
             "spawn.started",
             'status = ["success"]',
-            "condition is only available for 'spawn.finished', got 'spawn.started'",
+            "condition is only available for `spawn.finished`, got `spawn.started`",
         ),
         (
             "work.activated",
             'kind = ["child"]',
-            "condition is unavailable for 'work.activated'",
+            "condition is unavailable for `work.activated`",
         ),
         (
             "work.created",
             'agent = "coder"',
-            "condition is unavailable for 'work.created'",
+            "condition is unavailable for `work.created`",
         ),
     ],
 )
-def test_hook_conditions_reject_events_that_cannot_supply_their_context(
+def test_impossible_explicit_conditions_warn_and_skip_the_row(
     tmp_path: Path,
     event: str,
     condition: str,
@@ -170,10 +198,38 @@ def test_hook_conditions_reject_events_that_cannot_supply_their_context(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError) as exc_info:
-        load_hooks_config(tmp_path)
+    report = load_hooks_config_report(tmp_path)
 
-    assert expected in str(exc_info.value)
+    assert report.errors == ()
+    assert len(report.warnings) == 1
+    assert expected in report.warnings[0]
+    assert "the row is skipped" in report.warnings[0]
+    assert all(hook.name != "impossible" for hook in report.config.hooks)
+
+
+def test_deprecated_skipped_status_warns_and_drops_only_that_value(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "old-status"\n'
+        'event = "spawn.finished"\n'
+        'command = "echo deprecated"\n'
+        "[hooks.when]\n"
+        'status = ["success", "skipped"]\n',
+        encoding="utf-8",
+    )
+
+    report = load_hooks_config_report(tmp_path)
+
+    hook = next(hook for hook in report.config.hooks if hook.name == "old-status")
+    assert report.errors == ()
+    assert len(report.warnings) == 1
+    assert '`when.status = ["skipped"]` is deprecated' in report.warnings[0]
+    assert "has been dropped because it never matched" in report.warnings[0]
+    assert hook.when is not None
+    assert hook.when.status == ("success",)
+    assert hook.deprecated is True
 
 
 @pytest.mark.parametrize(
@@ -222,10 +278,7 @@ def test_builtin_default_conditions_error_when_no_default_event_can_match(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "meridian.toml").write_text(
-        "[[hooks]]\n"
-        'builtin = "notify"\n'
-        "[hooks.when]\n"
-        'status = ["success"]\n',
+        '[[hooks]]\nbuiltin = "notify"\n[hooks.when]\nstatus = ["success"]\n',
         encoding="utf-8",
     )
 
@@ -239,10 +292,7 @@ def test_builtin_default_conditions_error_when_no_default_event_can_match(
 
 def test_a_notify_row_replaces_only_its_events_default_route(tmp_path: Path) -> None:
     (tmp_path / "meridian.toml").write_text(
-        "[[hooks]]\n"
-        'builtin = "notify"\n'
-        'event = "notify.cache_expiring"\n'
-        "enabled = false\n",
+        '[[hooks]]\nbuiltin = "notify"\nevent = "notify.cache_expiring"\nenabled = false\n',
         encoding="utf-8",
     )
 
