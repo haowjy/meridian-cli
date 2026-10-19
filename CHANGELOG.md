@@ -39,6 +39,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Idle state version skew now names the ignored file and explains that another Meridian build wrote it.
 
 ### Upgrade notes
+- Hook config using old event names, `failure_policy`, or impossible `when` conditions keeps loading with one warning per row; run `meridian hooks check` and rename before the next minor release. `git-autosync` now also syncs on `work switch` and before a primary launch with work attached. See [Hook event names](docs/upgrading.md#hook-event-names). (#687)
 - State-version warnings and removed no-op version fields are described in [Compatibility policy and state version checks](docs/upgrading.md#compatibility-policy-and-state-version-checks).
 
 ## [0.10.29] - 2026-10-19
