@@ -39,7 +39,7 @@ class UnsupportedWorkStateVersion(ValueError):
 
 def _warn_newer_work_state(path: str, version: int) -> None:
     warn_once(
-        ("work-state", path),
+        ("work-state-newer", path),
         lambda: logger.warning(
             "Work item metadata was written by a newer Meridian build; "
             "upgrade Meridian to read it.",
@@ -52,7 +52,7 @@ def _warn_newer_work_state(path: str, version: int) -> None:
 
 def _warn_unknown_work_state_fields(path: str, fields: tuple[str, ...]) -> None:
     warn_once(
-        ("work-state", path),
+        ("work-state-unknown-fields", path),
         lambda: logger.warning(
             "Keeping unknown work item metadata fields.",
             path=path,
@@ -63,7 +63,7 @@ def _warn_unknown_work_state_fields(path: str, fields: tuple[str, ...]) -> None:
 
 def _warn_work_state_read_failure(path: str, error: str) -> None:
     warn_once(
-        ("work-state", path),
+        ("work-state-read-failure", path),
         lambda: logger.warning(
             "Unable to read work item metadata; using directory defaults.",
             path=path,
@@ -74,7 +74,7 @@ def _warn_work_state_read_failure(path: str, error: str) -> None:
 
 def _warn_work_state_parse_failure(path: str) -> None:
     warn_once(
-        ("work-state", path),
+        ("work-state-parse-failure", path),
         lambda: logger.warning(
             "Unable to parse work item metadata; using directory defaults.",
             path=path,
@@ -84,7 +84,7 @@ def _warn_work_state_parse_failure(path: str) -> None:
 
 def _warn_work_state_validation_failure(path: str, error: str) -> None:
     warn_once(
-        ("work-state", path),
+        ("work-state-validation-failure", path),
         lambda: logger.warning(
             "Unable to validate work item metadata; using directory defaults.",
             path=path,

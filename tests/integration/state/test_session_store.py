@@ -14,7 +14,6 @@ import logging
 import multiprocessing
 import os
 import signal
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -136,27 +135,6 @@ def test_live_session_appends_do_not_replay_the_session_log(
         "model_selection",
         "stop",
     ]
-
-    future = {
-        "v": 2,
-        "event": "update",
-        "chat_id": chat_id,
-        "session_instance_id": record.session_instance_id,
-        "active_work_id": "future-work",
-    }
-    with paths.sessions_jsonl.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(future) + "\n")
-    original = paths.sessions_jsonl.read_bytes()
-    stale = session_store.SessionUpdateEvent(
-        chat_id=chat_id,
-        session_instance_id=record.session_instance_id,
-        active_work_id="stale-work",
-    )
-
-    with pytest.raises(ValueError, match=r"unsupported sessions\.jsonl format"):
-        session_store.append_chat_rows(runtime_root, {chat_id: [stale]})
-
-    assert paths.sessions_jsonl.read_bytes() == original
 
 
 def test_historical_generation_prefix_is_enforced_at_append(tmp_path: Path) -> None:
@@ -340,14 +318,6 @@ def test_unsupported_session_event_version_is_skipped_with_warning(
 
     assert [record.chat_id for record in records] == ["c2"]
     assert "unsupported sessions.jsonl format version 2" in caplog.text
-
-    from meridian.lib.state.history_index import HistoryIndex
-
-    index = HistoryIndex(runtime_root)
-    assert index.sessions() == []
-    with sqlite3.connect(index.path) as db:
-        cursor = db.execute("SELECT extent FROM cursors WHERE source = 'sessions'").fetchone()
-    assert cursor == (0,)
 
 
 def test_start_session_does_not_append_start_event_when_lock_acquire_fails(

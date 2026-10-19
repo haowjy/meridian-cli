@@ -7,13 +7,13 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.logging import warn_once
 from meridian.lib.core.native_identity import BindSource, NativeKey, NativeKeyFields
 from meridian.lib.core.types import (
     HarnessSessionId,
@@ -28,16 +28,17 @@ SUPPORTED_SESSION_EVENT_VERSIONS = frozenset({1})
 logger = logging.getLogger(__name__)
 
 
-# Startup and indexed reads can fold the same journal more than once.
-@lru_cache(maxsize=256)
 def _warn_unsupported_session_versions(path: Path, versions: tuple[str, ...]) -> None:
     version_noun = "version" if len(versions) == 1 else "versions"
-    logger.warning(
-        "Skipping records in %s with unsupported sessions.jsonl format %s %s; "
-        "upgrade Meridian to read these records.",
-        path,
-        version_noun,
-        ", ".join(versions),
+    warn_once(
+        ("session-format", path),
+        lambda: logger.warning(
+            "Skipping records in %s with unsupported sessions.jsonl format %s %s; "
+            "upgrade Meridian to read these records.",
+            path,
+            version_noun,
+            ", ".join(versions),
+        ),
     )
 
 

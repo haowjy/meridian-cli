@@ -66,6 +66,9 @@ Use these rules when changing a stored format, config key, hook name, or CLI fla
   migrate a disposable projection in place.
 - **Adding a version.** Stage versioning for an unversioned format: readers learn
   the field one release before writers emit it.
+- **Dependent fields.** Readers keep unknown fields through rewrites, so a new
+  field whose meaning depends on another field requires bumping `v`: an older
+  build that changes the field it depends on would keep a stale value.
 - **Labels.** Keep the release-label rules above. A deprecation that still accepts
   the old input is not itself a breaking change.
 

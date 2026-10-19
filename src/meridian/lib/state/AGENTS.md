@@ -22,7 +22,8 @@ bare path
   origin.json                       — ad-hoc path attribution and activity only
   sessions.jsonl                    — session events (append-only; absent v means v1,
                                       unsupported versions warn and are skipped by
-                                      reads; writes refuse them in their target scope)
+                                      reads; read-then-append decisions refuse them
+                                      in scope)
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
@@ -147,7 +148,8 @@ loads only the working sets for chats touched after its cursor.
 The index file and its sidecars (marker queue, GENERATION, catch-up/database/marker
 locks, init latch) are named by both `SCHEMA_VERSION` and the latest supported
 session event version; either change builds a new file from authority and never
-touches an older build's file. An unsupported session row stops cursor advancement.
+touches an older build's file. Unsupported session rows are skipped; the cursor
+stores their versions so every indexed read warns.
 Never migrate in place.
 See [.context/history.md](.context/history.md) before changing locks, projection,
 transcript retry behavior, ZIP retention, or restore.

@@ -6,9 +6,7 @@ import re
 import uuid
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from contextlib import ExitStack
-from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
 from typing import IO, Annotated, Literal, NamedTuple
 
 import psutil
@@ -35,7 +33,7 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.json_doc import read_model, write_model
-from meridian.lib.state.jsonl import append_durable_jsonl_lines, iter_jsonl_file
+from meridian.lib.state.jsonl import append_durable_jsonl_lines
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.native_binding import BindOutcome, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
@@ -271,161 +269,6 @@ def native_observations(
     return observations
 
 
-type _SessionFileSignature = tuple[int, int, int, int, int]
-
-
-@dataclass(frozen=True)
-class _SessionCompatibility:
-    signature: _SessionFileSignature | None
-    unscoped_versions: frozenset[str]
-    chat_versions: Mapping[str, frozenset[str]]
-    native_versions: Mapping[str, frozenset[str]]
-
-
-_EMPTY_SESSION_COMPATIBILITY = _SessionCompatibility(None, frozenset(), {}, {})
-_SESSION_COMPATIBILITY_CACHE: dict[Path, _SessionCompatibility] = {}
-_SESSION_COMPATIBILITY_CACHE_LOCK = Lock()
-_SESSION_COMPATIBILITY_CACHE_LIMIT = 128
-
-
-def _session_file_signature(info: os.stat_result) -> _SessionFileSignature:
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-
-
-def _inspect_session_version(
-    payload: dict[str, object],
-    *,
-    unscoped: set[str],
-    chats: dict[str, set[str]],
-    natives: dict[str, set[str]],
-) -> None:
-    unsupported = UnsupportedSessionRecords()
-    if supported_session_event_version(payload, unsupported):
-        return
-
-    versions = unsupported.versions
-    record = _row_record(payload)
-    raw_chat = record.get("chat_id")
-    chat = raw_chat.strip() if isinstance(raw_chat, str) and raw_chat.strip() else None
-    row_native_ids = native_ids(payload)
-    if chat is not None:
-        chats.setdefault(chat, set()).update(versions)
-    for native_id in row_native_ids:
-        natives.setdefault(native_id, set()).update(versions)
-    if chat is None and not row_native_ids:
-        unscoped.update(versions)
-
-
-def _scan_session_compatibility(path: Path) -> _SessionCompatibility:
-    unscoped: set[str] = set()
-    chats: dict[str, set[str]] = {}
-    natives: dict[str, set[str]] = {}
-    try:
-        handle = path.open("rb")
-    except FileNotFoundError:
-        return _EMPTY_SESSION_COMPATIBILITY
-
-    with handle:
-        info = os.fstat(handle.fileno())
-        extent = info.st_size
-
-        def inspect(payload: dict[str, object]) -> None:
-            _inspect_session_version(
-                payload,
-                unscoped=unscoped,
-                chats=chats,
-                natives=natives,
-            )
-
-        offset = 0
-        for _, end_offset in iter_jsonl_file(
-            handle,
-            inspect,
-            path=path,
-            extent=extent,
-        ):
-            offset = end_offset
-
-        # A complete delimiter-less tail becomes committed when the append seam
-        # repairs it, so compatibility must be checked before that repair writes.
-        if offset < extent:
-            handle.seek(offset)
-            raw_tail = handle.read(extent - offset)
-            if raw_tail.strip():
-                try:
-                    decoded: object = json.loads(raw_tail)
-                    payload = json_object(decoded)
-                    if payload is not None:
-                        inspect(payload)
-                except (UnicodeDecodeError, ValueError):
-                    pass
-
-    return _SessionCompatibility(
-        signature=_session_file_signature(info),
-        unscoped_versions=frozenset(unscoped),
-        chat_versions={key: frozenset(value) for key, value in chats.items()},
-        native_versions={key: frozenset(value) for key, value in natives.items()},
-    )
-
-
-def _cached_session_compatibility(path: Path) -> _SessionCompatibility:
-    try:
-        signature = _session_file_signature(path.stat())
-    except FileNotFoundError:
-        signature = None
-
-    with _SESSION_COMPATIBILITY_CACHE_LOCK:
-        cached = _SESSION_COMPATIBILITY_CACHE.get(path)
-        if cached is not None and cached.signature == signature:
-            return cached
-
-    snapshot = _scan_session_compatibility(path)
-    _store_session_compatibility(path, snapshot)
-    return snapshot
-
-
-def _store_session_compatibility(path: Path, snapshot: _SessionCompatibility) -> None:
-    with _SESSION_COMPATIBILITY_CACHE_LOCK:
-        _SESSION_COMPATIBILITY_CACHE.pop(path, None)
-        _SESSION_COMPATIBILITY_CACHE[path] = snapshot
-        if len(_SESSION_COMPATIBILITY_CACHE) > _SESSION_COMPATIBILITY_CACHE_LIMIT:
-            del _SESSION_COMPATIBILITY_CACHE[next(iter(_SESSION_COMPATIBILITY_CACHE))]
-
-
-def _require_supported_session_write(
-    path: Path,
-    snapshot: _SessionCompatibility,
-    *,
-    chats: Collection[str] = (),
-    native_id: str | None = None,
-) -> None:
-    versions = set(snapshot.unscoped_versions)
-    for chat in chats:
-        versions.update(snapshot.chat_versions.get(chat, ()))
-    if native_id is not None:
-        versions.update(snapshot.native_versions.get(native_id, ()))
-    UnsupportedSessionRecords(versions).require_supported(path)
-
-
-def _remember_supported_session_append(
-    path: Path,
-    snapshot: _SessionCompatibility,
-) -> None:
-    try:
-        signature = _session_file_signature(path.stat())
-    except FileNotFoundError:
-        return
-    _store_session_compatibility(
-        path,
-        _SessionCompatibility(
-            signature=signature,
-            unscoped_versions=snapshot.unscoped_versions,
-            chat_versions=snapshot.chat_versions,
-            native_versions=snapshot.native_versions,
-        ),
-    )
-
-
 def append_chat_rows(root: Path, batches: Mapping[str, Iterable[SessionEvent]]) -> None:
     """Validate and durably append a chat batch once, inside one writer epoch.
 
@@ -437,12 +280,6 @@ def append_chat_rows(root: Path, batches: Mapping[str, Iterable[SessionEvent]]) 
         lock_file(HistoryChanges(root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        snapshot = _cached_session_compatibility(paths.sessions_jsonl)
-        _require_supported_session_write(
-            paths.sessions_jsonl,
-            snapshot,
-            chats=batches.keys(),
-        )
         rows: list[BaseModel] = []
         for chat, batch in batches.items():
             for row in batch:
@@ -450,7 +287,6 @@ def append_chat_rows(root: Path, batches: Mapping[str, Iterable[SessionEvent]]) 
                     raise ValueError("Session append names a different chat")
                 rows.append(row)
         _append_session_rows(paths.sessions_jsonl, rows)
-        _remember_supported_session_append(paths.sessions_jsonl, snapshot)
 
 
 def append_native_rows(
@@ -463,17 +299,10 @@ def append_native_rows(
         lock_file(HistoryChanges(root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        snapshot = _cached_session_compatibility(paths.sessions_jsonl)
-        _require_supported_session_write(
-            paths.sessions_jsonl,
-            snapshot,
-            native_id=native_id,
-        )
         batch = list(rows)
         if any(row.harness_session_id != native_id for row in batch):
             raise ValueError("Observation append names a different native session")
         _append_session_rows(paths.sessions_jsonl, batch)
-        _remember_supported_session_append(paths.sessions_jsonl, snapshot)
 
 
 def _native_scope(

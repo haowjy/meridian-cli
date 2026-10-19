@@ -101,15 +101,21 @@ What users may notice:
   now warn before using directory-derived defaults.
 - `meridian telemetry query` and session replay skip records carrying an
   unsupported `v` and warn instead of interpreting them with the current schema.
-  Every locked session append refuses unsupported records in its target chat or
-  native-session scope rather than writing stale state or creating a duplicate
-  chat. The disposable history index stops its cursor before
-  an unsupported session row, and its file name includes both the index schema and
-  session format (`history-v10-sessions-v1.sqlite3`) so a format change rebuilds
-  from authority. Idle files are the deliberate exception to refusal: they are
-  short-lived and expected to be absent, and refusing one after a mid-session
-  upgrade would disable idle handling; they keep absent-state behavior and now
-  warn with the file path.
+  Session writes that read existing records to decide what to append (starting a
+  chat, binding a native session, deduplicating model records, adopting an
+  observed native session) refuse when an unsupported record names the same chat
+  or native session, rather than writing stale state or creating a duplicate
+  chat. Other session updates append without reading the journal. A newer record
+  that names no chat or native session is invisible to those scoped decisions; it
+  refuses only decisions that check every chat, such as repair binds. The
+  disposable history index skips unsupported session rows, keeps indexing later
+  ones, and remembers the skipped versions so every indexed read warns once per
+  command. Its file name includes both the index schema and session format
+  (`history-v10-sessions-v1.sqlite3`) so a format change rebuilds from authority.
+  Idle files are the deliberate exception to refusal: they are short-lived and
+  expected to be absent, and refusing one after a mid-session upgrade would
+  disable idle handling; they keep absent-state behavior and now warn with the
+  file path.
 - `meridian.plugin_api.__version__` is removed because the API is not installed
   independently; callers that need a version should use Meridian's package
   version. Launch-policy snapshot `schema_version`, Pi `pi_runtime_meta.json`

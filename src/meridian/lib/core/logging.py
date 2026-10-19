@@ -28,14 +28,19 @@ def warning_cache_scope() -> Generator[None]:
         _WARNING_KEYS.reset(token)
 
 
+# Outside any scope the process is the scope: an unscoped loop warns once, not per read.
+_PROCESS_WARNING_KEYS: set[Hashable] = set()
+
+
 def warn_once(key: Hashable, emit: Callable[[], None]) -> None:
     """Run ``emit`` once for *key* in the current warning scope."""
 
     seen = _WARNING_KEYS.get()
-    if seen is not None:
-        if key in seen:
-            return
-        seen.add(key)
+    if seen is None:
+        seen = _PROCESS_WARNING_KEYS
+    if key in seen:
+        return
+    seen.add(key)
     emit()
 
 

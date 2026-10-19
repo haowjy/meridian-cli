@@ -67,9 +67,11 @@ re-reads every active loose spawn and the session-log cursor without a marker, s
 runners that finish and primaries that stop after an upgrade still project. Spawns
 an older build creates after this projection was built, or archive changes it
 makes, need `session index rebuild`. The older index misses this build's writes.
-An unsupported session row stops the older index cursor before that row; it is not
-permanently acknowledged, and the build for that session format gets a different
-namespace and rebuilds from authority.
+The older index skips unsupported session rows and keeps projecting later ones, so
+it still discovers its own sessions. The session cursor stores the skipped versions,
+and every catch-up and rebuild warns from it, not only the pass that crossed the
+row. The build for that session format gets a different namespace and rebuilds from
+authority.
 
 Rollback: the older build's index is stale after any use of a newer build, and a
 pre-release build of this branch migrated `history.sqlite3` to schema 6 in place.
@@ -221,14 +223,14 @@ Per-operation session reads use `chats_rows`/`chat_rows`/`chat_record`/`chat_gen
 still scan `sessions.jsonl` bytes. Bulk repair/import bindings keep one
 `SessionBindings` snapshot; cross-chat checks require its full (`scope=None`)
 view. Lock-scoped reads that make write decisions refuse unsupported rows in their
-scope. Selection and observation dedup run inside the append seam's mutation
-(shared) → sessions-flock epoch, without nested lock re-entry. The append seam
-checks the target chat or native-session scope centrally before consuming lazy row
-iterators, so validation and publication are atomic and no direct writer can bypass
-the version gate. Its process-local compatibility snapshot is keyed by the journal's
-device, inode, size, and nanosecond modification/change times, refreshed after its
-own append, and includes a complete delimiter-less tail because append repair would
-commit that tail.
+scope; a newer row naming no chat or native session is never selected by a scoped
+read, so it refuses only full-snapshot decisions. Selection and observation dedup
+run inside the append seam's mutation (shared) → sessions-flock epoch, without
+nested lock re-entry, so validation and publication are atomic. Blind appends do
+not read the journal: appending this build's own format interprets nothing, and
+newer builds read older rows. A per-append compatibility scan was removed because
+it re-read the whole journal under the sessions lock whenever another process had
+appended (~0.25 s at 40k rows, growing with history).
 [#418](https://github.com/haowjy/meridian-cli/issues/418) replaces these filtered
 passes with per-chat journals. `live_observer_for_chat` and capture's spawn-side
 ownership check still scan spawn rows: chat claims cannot find a spawn whose

@@ -26,7 +26,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn event IDs remain stable per spawn and event; work event IDs are now unique per firing. (#687)
 - Compatibility policy: one-minor deprecation for config, CLI, and hook names; cross-build state readers check explicit integer format versions, with short-lived idle state as the documented absent-state exception. See [upgrade note](docs/upgrading.md#compatibility-policy-and-state-version-checks).
 - Telemetry queries and session folds skip records from unsupported format versions and warn instead of interpreting them as current data.
-- History index namespaces now include the session event format version, and every locked session append refuses unsupported rows in its target chat or native-session scope instead of writing stale state past them.
+- History index namespaces now include the session event format version, and the index warns on every read about unsupported session rows it skipped. Session writes that read existing records to decide what to append refuse unsupported rows in their chat or native-session scope instead of writing stale state past them.
 
 ### Fixed
 - `spawn.started` now fires once for spawns persisted initially as `running`, including streaming-serve spawns. (#687)

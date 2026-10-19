@@ -12,7 +12,7 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -60,7 +60,6 @@ from meridian.lib.state.history_changes import (
 from meridian.lib.state.history_codec import canonical_time, last_activity
 from meridian.lib.state.jsonl import iter_jsonl_file
 from meridian.lib.state.session_fold import (
-    SessionEvent,
     SessionHistoricalEvent,
     SessionRecord,
     SessionStartEvent,
@@ -68,7 +67,6 @@ from meridian.lib.state.session_fold import (
     UnsupportedSessionRecords,
     parse_event,
     project_session_generation,
-    supported_session_event_version,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
@@ -79,13 +77,6 @@ from meridian.lib.state.spawn.repository import (
 from meridian.lib.state.spawn_store import SpawnScan
 
 logger = logging.getLogger(__name__)
-
-
-class _UnsupportedIndexSessionEvent:
-    pass
-
-
-_UNSUPPORTED_INDEX_SESSION_EVENT = _UnsupportedIndexSessionEvent()
 
 INITIALIZATION_TIMEOUT = 15.0
 QUERY_TIMEOUT = 2.0
@@ -202,6 +193,8 @@ CURSORS = Table(
     Column("inode", Text),
     Column("extent", Integer),
     Column("tail", Text),
+    # Sorted JSON list of unsupported session versions already passed by the cursor.
+    Column("unsupported", Text),
 )
 
 
@@ -525,6 +518,7 @@ class HistoryIndex:
                 .first()
             )
             offset = 0
+            unsupported = UnsupportedSessionRecords()
             if (
                 cursor
                 and cursor["inode"] == inode
@@ -534,6 +528,7 @@ class HistoryIndex:
                 if cursor["extent"] == snapshot_extent:
                     return  # Nothing appended since the cursor.
                 offset = cursor["extent"]
+                unsupported.versions.update(json.loads(cursor["unsupported"] or "[]"))
             else:
                 db.execute(delete(SESSIONS))
                 db.execute(delete(SESSION_CHATS))
@@ -551,24 +546,13 @@ class HistoryIndex:
             dirty: set[tuple[str, str]] = set()
             dirty_chats: set[str] = set()
             work_chats: set[tuple[str, str]] = set()
-            unsupported = UnsupportedSessionRecords()
-
-            def parse_index_event(
-                payload: Mapping[str, object],
-            ) -> SessionEvent | _UnsupportedIndexSessionEvent | None:
-                if not supported_session_event_version(payload, unsupported):
-                    return _UNSUPPORTED_INDEX_SESSION_EVENT
-                return parse_event(payload, unsupported)
-
             for parsed_event, end in iter_jsonl_file(
                 handle,
-                parse_index_event,
+                lambda payload: parse_event(payload, unsupported),
                 path=path,
                 offset=offset,
                 extent=snapshot_extent,
             ):
-                if isinstance(parsed_event, _UnsupportedIndexSessionEvent):
-                    break
                 if isinstance(parsed_event, SessionUpdateEvent) and parsed_event.active_work_id:
                     work_chats.add((parsed_event.active_work_id.strip(), parsed_event.chat_id))
                 if parsed_event is not None:
@@ -622,7 +606,6 @@ class HistoryIndex:
                         if started_key in changed:
                             ordinals[started_key] = offset
                 offset = end
-            unsupported.warn(path)
             for chat, generation in dirty:
                 record = generations[(chat, generation)][chat]
                 history_id = str(record.history_id) if record.history_id else None
@@ -678,10 +661,23 @@ class HistoryIndex:
                     list(work_chats),
                 )
             db.exec_driver_sql(
-                "INSERT OR REPLACE INTO cursors (source, inode, extent, tail) VALUES "
-                "('sessions', ?, ?, ?)",
-                (inode, offset, _tail(handle, offset)),
+                "INSERT OR REPLACE INTO cursors (source, inode, extent, tail, unsupported) "
+                "VALUES ('sessions', ?, ?, ?, ?)",
+                (
+                    inode,
+                    offset,
+                    _tail(handle, offset),
+                    json.dumps(sorted(unsupported.versions)) if unsupported.versions else None,
+                ),
             )
+
+    def _warn_unsupported_sessions(self, db: Connection) -> None:
+        """Every indexed read repeats the warning for rows the cursor skipped earlier."""
+        stored = db.execute(
+            select(CURSORS.c.unsupported).where(CURSORS.c.source == "sessions")
+        ).scalar()
+        if stored:
+            UnsupportedSessionRecords(set(json.loads(stored))).warn(self.root / "sessions.jsonl")
 
     def _project(self, db: Connection, source: HistorySource) -> bool:
         if source.kind == "spawn":
@@ -860,6 +856,7 @@ class HistoryIndex:
                     raise TimeoutError("History rebuild exhausted its remaining budget")
                 db.execute(text("ANALYZE"))
                 db.commit()
+                self._warn_unsupported_sessions(db)
             # The root gate is already held: ordinary readers must never take it
             # while holding a database gate. Catchup/rebuild share catchup.lock.
             with lock_file(self.database_lock, timeout=_remaining(deadline)):
@@ -1152,6 +1149,7 @@ class HistoryIndex:
                 active += self._reread_unmarked(db, target)
                 for marker in acknowledged:
                     changes.acknowledge(marker)
+                self._warn_unsupported_sessions(db)
                 return IndexCoverage(
                     generation, meta["build"], not pending, tuple(pending), tuple(active), warnings
                 )
