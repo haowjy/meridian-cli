@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -12,7 +13,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import opencode_idle
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
-from meridian.lib.harness.idle_types import CacheTtl, IdleEvent, IdleSensorContext
+from meridian.lib.harness.idle_types import BackgroundTask, CacheTtl, IdleEvent, IdleSensorContext
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "opencode_idle"
 SESSION_ID = "ses_ee21d9d97ffeN9m0VxoYy7qFQf"
@@ -283,6 +284,175 @@ async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
     sensor.on_raw_event(_v2_raw("session.execution.succeeded"))
     assert [event.kind for event in await _take(iterator, 2)] == ["user_prompt", "turn_end"]
     await _assert_quiet(iterator)
+
+
+_PROJECT_DIR = "/tmp/project"
+_SHELL_LISTING_PATH = f"/api/shell?location%5Bdirectory%5D={_PROJECT_DIR.replace('/', '%2F')}"
+_CHILD_LISTING_PATH = f"/api/session?parentID={V2_SESSION_ID}&limit=500"
+
+
+def _v2_global(event_type: str, **payload: object) -> RawHarnessEvent:
+    """An event the stream sends without a session id, such as ``shell.created``."""
+
+    return RawHarnessEvent(
+        event_type=event_type,
+        payload={"type": event_type, **payload},
+        harness_id="opencode",
+    )
+
+
+def _v2_turns(name: str) -> list[list[RawHarnessEvent]]:
+    """A recorded stream cut after each primary terminal; the remainder is the last cut."""
+
+    turns: list[list[RawHarnessEvent]] = [[]]
+    for event in _recorded_v2_events(name):
+        turns[-1].append(event)
+        if (
+            event.event_type in opencode_idle.TERMINAL_EVENTS
+            and event.payload["sessionID"] == V2_SESSION_ID
+        ):
+            turns.append([])
+    return turns
+
+
+async def _turn_end(sensor: opencode_idle.OpenCodeV2IdleSensor, events: list[RawHarnessEvent]):
+    for event in events:
+        sensor.on_raw_event(event)
+    iterator = sensor.events()
+    while (idle := await asyncio.wait_for(anext(iterator), timeout=1)).kind != "turn_end":
+        pass
+    return idle
+
+
+def _v2_work_request(
+    *,
+    shells: list[str] | None = None,
+    children: list[dict[str, object]] | None = None,
+    failing: str | None = None,
+) -> opencode_idle.BackendRequest:
+    async def request(
+        method: str, path: str, _payload: Mapping[str, object] | None
+    ) -> tuple[int, str]:
+        assert method == "GET"
+        if path == failing:
+            return 500, ""
+        session_path = f"/api/session/{V2_SESSION_ID}"
+        if path == session_path:
+            return 200, json.dumps(
+                {"data": {"id": V2_SESSION_ID, "location": {"directory": _PROJECT_DIR}}}
+            )
+        if path == _SHELL_LISTING_PATH:
+            return 200, json.dumps(
+                {"data": [{"id": shell, "status": "running"} for shell in shells or []]}
+            )
+        if path == _CHILD_LISTING_PATH:
+            return 200, json.dumps({"data": children or []})
+        assert path.startswith(f"{session_path}/message")
+        return 200, '{"data":[]}'
+
+    return request
+
+
+async def test_v2_background_shell_is_reported_at_turn_end_until_its_wake(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, woken, _ = _v2_turns("events-v2-background-shell.sse")
+
+    assert (await _turn_end(sensor, started)).background_tasks == (
+        BackgroundTask(kind="shell", command="sleep 15"),
+    )
+    assert (await _turn_end(sensor, woken)).background_tasks == ()
+
+
+async def test_v2_background_subagent_is_reported_at_turn_end_until_its_wake(
+    tmp_path: Path,
+) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, woken, _ = _v2_turns("events-v2-background-subagent.sse")
+
+    # The child's own foreground shell is not the primary's work.
+    assert (await _turn_end(sensor, started)).background_tasks == (BackgroundTask(kind="agent"),)
+    assert (await _turn_end(sensor, woken)).background_tasks == ()
+
+
+async def test_v2_work_no_tool_named_is_not_reported(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    announced = [
+        event
+        for event in _recorded_v2_events("events-v2-unreferenced-work.sse")
+        if event.event_type in {"shell.created", "session.created"}
+    ]
+
+    # A session shell, a global shell, and a manual child session are all running.
+    assert len(announced) == 3
+    assert (
+        await _turn_end(sensor, [*announced, _v2_raw("session.execution.succeeded")])
+    ).background_tasks == ()
+
+
+async def test_v2_interrupted_foreground_tools_are_not_reported(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    shell_turn, subagent_turn, *_ = _v2_turns("events-v2-interrupted-foreground.sse")
+
+    # The stream ends the turn before it reports the aborted shell or child exiting.
+    assert (await _turn_end(sensor, shell_turn)).background_tasks == ()
+    assert (await _turn_end(sensor, subagent_turn)).background_tasks == ()
+
+
+async def test_v2_reported_work_is_bounded(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    events: list[RawHarnessEvent] = []
+    for number, command in enumerate(["x" * 513, *("sleep 1" for _ in range(16))]):
+        shell_id = f"sh_{number}"
+        events.append(_v2_global("shell.created", info={"id": shell_id, "command": command}))
+        events.append(_v2_raw("session.tool.progress", metadata={"shellID": shell_id}))
+
+    tasks = (
+        await _turn_end(sensor, [*events, _v2_raw("session.execution.succeeded")])
+    ).background_tasks
+
+    assert len(tasks) == 16
+    assert tasks[0] == BackgroundTask(kind="other")
+    assert tasks[1:] == (BackgroundTask(kind="shell", command="sleep 1"),) * 15
+
+
+@pytest.mark.parametrize(
+    ("request_kwargs", "expected_kept"),
+    [
+        ({"shells": ["sh_152d5c83a0014ffNOwmGPo8RO7"]}, True),
+        ({"shells": []}, False),
+        ({"failing": _SHELL_LISTING_PATH}, False),
+    ],
+)
+async def test_v2_reconnect_rederives_work_from_the_server(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    request_kwargs: dict[str, Any],
+    expected_kept: bool,
+) -> None:
+    sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(**request_kwargs))
+    started, *_ = _v2_turns("events-v2-background-shell.sse")
+    *tracking, terminal = started
+    # The stream reopened while the shell ran: its end may have fallen in the gap.
+    reopened = [*tracking, _v2_global("server.connected"), terminal]
+
+    with caplog.at_level(logging.WARNING, logger=opencode_idle.logger.name):
+        tasks = (await _turn_end(sensor, reopened)).background_tasks
+
+    assert tasks == ((BackgroundTask(kind="shell", command="sleep 15"),) if expected_kept else ())
+    assert [
+        record.getMessage().startswith("OpenCode running work") for record in caplog.records
+    ] == ([True] if "failing" in request_kwargs else [])
+
+
+async def test_v2_reconnect_drops_a_child_that_ended_in_the_gap(tmp_path: Path) -> None:
+    child = {"id": "ses_v2_fixture_child", "outcome": "succeeded"}
+    sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(children=[child]))
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    *tracking, terminal = started
+
+    assert (
+        await _turn_end(sensor, [*tracking, _v2_global("server.connected"), terminal])
+    ).background_tasks == ()
 
 
 @pytest.mark.parametrize(

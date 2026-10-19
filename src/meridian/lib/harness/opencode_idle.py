@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
@@ -15,13 +16,17 @@ import aiohttp
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import (
+    BackgroundTask,
     CacheTtl,
     IdleEvent,
     IdleSensor,
     IdleSensorContext,
 )
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
+from meridian.lib.harness.opencode_running_work import TERMINAL_EVENTS, RunningWork
 from meridian.lib.utils.json_shapes import json_object
+
+logger = logging.getLogger(__name__)
 
 BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]]
 
@@ -209,20 +214,25 @@ class _OpenCodeIdleSensorBase:
         while True:
             event = await self._events.get()
             if event.kind == "turn_end":
-                provider, (user, assistant) = await asyncio.gather(
+                provider, (user, assistant), background_tasks = await asyncio.gather(
                     self._fetch_provider(),
                     self._fetch_message_facts(),
+                    self._fetch_background_tasks(),
                 )
                 event = replace(
                     event,
                     last_user_text=user,
                     last_assistant_text=assistant,
                     provider=provider,
+                    background_tasks=background_tasks,
                 )
             yield event
 
     async def _fetch_provider(self) -> str | None:
         return None
+
+    async def _fetch_background_tasks(self) -> tuple[BackgroundTask, ...]:
+        return ()
 
     async def _fetch_message_facts(self) -> tuple[str | None, str | None]:
         raise NotImplementedError
@@ -318,15 +328,6 @@ class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
             return None, None
 
 
-_V2_TERMINAL_EVENTS = frozenset(
-    {
-        "session.execution.succeeded",
-        "session.execution.failed",
-        "session.execution.interrupted",
-    }
-)
-
-
 def _v2_inbox_item(event: RawHarnessEvent) -> tuple[str, str] | None:
     if event.event_type != "session.inbox.enqueued":
         return None
@@ -367,6 +368,31 @@ def _v2_session_model(payload: object) -> tuple[str, str] | None:
     return provider, model_id
 
 
+def _v2_session_directory(payload: object) -> str | None:
+    session = _v2_response_data(payload)
+    location = json_object(session.get("location")) if session is not None else None
+    directory = location.get("directory") if location is not None else None
+    return directory if isinstance(directory, str) and directory else None
+
+
+def _v2_listed_running_ids(payload: object, *, shells: bool) -> set[str]:
+    """Ids a V2 listing reports as still running."""
+
+    response = json_object(payload)
+    rows = response.get("data") if response is not None else None
+    if not isinstance(rows, list):
+        raise ValueError("listing has no data array")
+    ids: set[str] = set()
+    for raw_row in cast("list[object]", rows):
+        row = json_object(raw_row)
+        row_id = row.get("id") if row is not None else None
+        # The shell listing holds only running shells; a child session is running
+        # until it has an outcome.
+        if isinstance(row_id, str) and row is not None and (shells or row.get("outcome") is None):
+            ids.add(row_id)
+    return ids
+
+
 def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
     response = json_object(payload)
     messages = response.get("data") if response is not None else None
@@ -389,10 +415,13 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         super().__init__(ctx, request=request)
         self._seen_user_inbox_ids: set[str] = set()
         self._pending_user_inbox_ids: set[str] = set()
+        self._work = RunningWork(ctx.harness_session_id)
 
     def on_raw_event(self, event: RawHarnessEvent) -> None:
         if event.harness_id != self._ctx.harness_id.value:
             return
+        # Shell and child-session events carry another session id, or none.
+        self._work.observe(event)
         if _session_id(event) != self._ctx.harness_session_id:
             return
 
@@ -424,7 +453,7 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
             self._busy = True
             return
 
-        if event.event_type not in _V2_TERMINAL_EVENTS:
+        if event.event_type not in TERMINAL_EVENTS:
             return
 
         self._busy = False
@@ -460,6 +489,44 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
             return model[0] if model is not None else None
         except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
             return None
+
+    async def _fetch_background_tasks(self) -> tuple[BackgroundTask, ...]:
+        return await self._work.snapshot(self._list_running_work)
+
+    async def _get_json(self, path: str) -> object:
+        status, body = await asyncio.wait_for(
+            self._request("GET", path, None), timeout=_GET_TIMEOUT_SECONDS
+        )
+        if status != 200:
+            raise RuntimeError(f"GET {path} returned {status}")
+        return json.loads(body)
+
+    async def _list_running_work(self) -> set[str] | None:
+        """Ids the server lists as running shells and children, or None if it cannot say."""
+
+        session_id = quote(self._ctx.harness_session_id, safe="")
+        try:
+            directory = _v2_session_directory(await self._get_json(f"/api/session/{session_id}"))
+            if directory is None:
+                raise ValueError("session has no location")
+            # The shell listing follows the location, which `location[directory]`
+            # selects; a bare `directory` query is ignored.
+            shells = await self._get_json(
+                f"/api/shell?location%5Bdirectory%5D={quote(directory, safe='')}"
+            )
+            children = await self._get_json(f"/api/session?parentID={session_id}&limit=500")
+            return _v2_listed_running_ids(shells, shells=True) | _v2_listed_running_ids(
+                children, shells=False
+            )
+        except (TimeoutError, OSError, RuntimeError, ValueError, aiohttp.ClientError) as exc:
+            logger.warning(
+                "OpenCode running work not re-derived after a stream reconnect; "
+                "arming without it: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            return None
+
 
 def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
     """Create the sensor hosted by the managed-primary attach launcher."""

@@ -1,0 +1,42 @@
+data: {"id":"evt_152d6363b001oJC1azmhBupitd","created":1792391132731,"type":"session.inbox.enqueued","location":{"directory":"/tmp/project"},"data":{"inboxID":"msg_152d63639001DdZJUX5SLe0Szi","sessionID":"ses_v2_fixture_primary","item":{"type":"user","payload":{"text":"Use your subagent tool exactly once with background set to true. Task: run `sleep 12` in its shell (foreground), then reply `finished`. Do NOT wait for it. End your turn with the word done."},"delivery":"steer"}},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":81,"version":1}}
+
+data: {"id":"evt_152d6363e0014VHOVbAjvaiM6p","created":1792391132734,"type":"session.execution.started","data":{"sessionID":"ses_v2_fixture_primary"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":82,"version":1}}
+
+data: {"id":"evt_152d6364a001H4mv7HJBsJYwss","created":1792391132746,"type":"session.inbox.delivered","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_primary","inboxID":"msg_152d63639001DdZJUX5SLe0Szi"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":83,"version":1}}
+
+data: {"id":"evt_152d651d300191SZ73922TubFJ","created":1792391139795,"type":"session.tool.called","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_primary","assistantMessageID":"msg_152d636500010hK9vgapSWOgzh","id":"call_00_qg270pfztnig9ukpylpmey7r","input":{"agent":"general","description":"Run sleep 12","prompt":"Call your shell tool exactly once with the command `sleep 12` (foreground, not background). After it completes, reply with the single word: finished","background":true},"executed":false},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":89,"version":1}}
+
+data: {"id":"evt_152d651dd001e4RV9J2Sj20vCm","created":1792391139805,"type":"session.created","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_child","slug":"swift-sailor","version":"2.0.29","projectID":"project","parentID":"ses_v2_fixture_primary","location":{"directory":"/tmp/project"},"subpath":"","title":"Run sleep 12","agent":"general","model":{"id":"deepseek-v4.1-flash-free","providerID":"opencode","variant":"default"}},"durable":{"aggregateID":"ses_v2_fixture_child","seq":0,"version":1}}
+
+data: {"id":"evt_152d651de00154XAbRehm8sV0I","created":1792391139806,"type":"session.tool.progress","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_primary","assistantMessageID":"msg_152d636500010hK9vgapSWOgzh","id":"call_00_qg270pfztnig9ukpylpmey7r","metadata":{"sessionID":"ses_v2_fixture_child","status":"running"}}}
+
+data: {"id":"evt_152d651df0024IMOwZe22K8JYW","created":1792391139807,"type":"session.inbox.enqueued","location":{"directory":"/tmp/project"},"data":{"inboxID":"msg_152d651df001P7tcWSn9bf2ZXU","sessionID":"ses_v2_fixture_child","item":{"type":"user","payload":{"text":"You are a subagent spawned by another session.\nCall your shell tool exactly once with the command `sleep 12` (foreground, not background). After it completes, reply with the single word: finished"},"delivery":"steer"}},"durable":{"aggregateID":"ses_v2_fixture_child","seq":1,"version":1}}
+
+data: {"id":"evt_152d651e3001QvpXfpZETl8UQh","created":1792391139811,"type":"session.tool.success","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_primary","assistantMessageID":"msg_152d636500010hK9vgapSWOgzh","id":"call_00_qg270pfztnig9ukpylpmey7r","content":[{"type":"text","text":"The subagent is working in the background (sessionID: ses_v2_fixture_child). You will be notified automatically when it finishes.\nDO NOT sleep, poll for progress, ask the subagent for status, or duplicate this subagent's work; avoid working with the same files or topics it is using.\nWork on non-overlapping tasks, or briefly tell the user what you launched and end your response."}],"metadata":{"sessionID":"ses_v2_fixture_child","status":"running","truncated":false},"executed":false},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":91,"version":2}}
+
+data: {"id":"evt_152d651f8001QP3zTJKbit8DwH","created":1792391139832,"type":"session.execution.started","data":{"sessionID":"ses_v2_fixture_child"},"durable":{"aggregateID":"ses_v2_fixture_child","seq":2,"version":1}}
+
+data: {"id":"evt_152d651fd001CV9RnI1ulSHyIk","created":1792391139837,"type":"session.inbox.delivered","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_child","inboxID":"msg_152d651df001P7tcWSn9bf2ZXU"},"durable":{"aggregateID":"ses_v2_fixture_child","seq":4,"version":1}}
+
+data: {"id":"evt_152d667e5002oUFrsXOIuESlYk","created":1792391145445,"type":"session.execution.succeeded","data":{"sessionID":"ses_v2_fixture_primary"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":98,"version":1}}
+
+data: {"id":"evt_152d66c01001NcpSfu0VzP6qiO","created":1792391146497,"type":"session.tool.called","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_child","assistantMessageID":"msg_152d65200001hcJ94dtIms5p5j","id":"call_00_llzlwasyzz029qznb3cako0i","input":{"command":"sleep 12"},"executed":false},"durable":{"aggregateID":"ses_v2_fixture_child","seq":10,"version":1}}
+
+data: {"id":"evt_152d66c09001a4EBXOhcRYdl7N","created":1792391146505,"type":"shell.created","location":{"directory":"/tmp/project"},"data":{"info":{"id":"sh_152d66c07001OZN7QfqkvoYOM1","status":"running","command":"sleep 12","cwd":"/tmp/project","shell":"/usr/bin/bash","file":"/tmp/opencode/shell/project/sh_152d66c07001OZN7QfqkvoYOM1.out","metadata":{"sessionID":"ses_v2_fixture_child"},"time":{"started":1792391146503}}}}
+
+data: {"id":"evt_152d66c090026L0IcbgnenvL1J","created":1792391146505,"type":"session.tool.progress","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_child","assistantMessageID":"msg_152d65200001hcJ94dtIms5p5j","id":"call_00_llzlwasyzz029qznb3cako0i","metadata":{"shellID":"sh_152d66c07001OZN7QfqkvoYOM1"}}}
+
+data: {"id":"evt_152d69aec001Ke7aESnMZ7Q4nw","created":1792391158508,"type":"session.tool.success","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_child","assistantMessageID":"msg_152d65200001hcJ94dtIms5p5j","id":"call_00_llzlwasyzz029qznb3cako0i","content":[{"type":"text","text":"(no output)"}],"metadata":{"status":"completed","truncated":false,"exit":0},"executed":false},"durable":{"aggregateID":"ses_v2_fixture_child","seq":12,"version":2}}
+
+data: {"id":"evt_152d69af5001XZavjT7aZWecNb","created":1792391158517,"type":"shell.exited","location":{"directory":"/tmp/project"},"data":{"id":"sh_152d66c07001OZN7QfqkvoYOM1","exit":0,"status":"exited"}}
+
+data: {"id":"evt_152d69f50001RrrQ3RzbZkATp2","created":1792391159632,"type":"session.execution.succeeded","data":{"sessionID":"ses_v2_fixture_child"},"durable":{"aggregateID":"ses_v2_fixture_child","seq":19,"version":1}}
+
+data: {"id":"evt_152d69f530013I0ydy296BaDWT","created":1792391159635,"type":"session.inbox.enqueued","location":{"directory":"/tmp/project"},"data":{"inboxID":"msg_152d651e1001MrbGtG2S7MKcIb","sessionID":"ses_v2_fixture_primary","item":{"type":"synthetic","payload":{"text":"<subagent sessionID=\"ses_v2_fixture_child\" state=\"completed\" description=\"Run sleep 12\">\nfinished\n</subagent>","description":"Run sleep 12","metadata":{"source":"subagent","childID":"ses_v2_fixture_child","agent":"General","state":"completed"}},"delivery":"steer"}},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":99,"version":1}}
+
+data: {"id":"evt_152d69f55001Drbklva2nm59Zo","created":1792391159637,"type":"session.execution.started","data":{"sessionID":"ses_v2_fixture_primary"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":100,"version":1}}
+
+data: {"id":"evt_152d69f5a001K2uSESj3qFe0Yu","created":1792391159642,"type":"session.inbox.delivered","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_primary","inboxID":"msg_152d651e1001MrbGtG2S7MKcIb"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":101,"version":1}}
+
+data: {"id":"evt_152d6a42a001pgv2OGfciXsQsL","created":1792391160874,"type":"session.execution.succeeded","data":{"sessionID":"ses_v2_fixture_primary"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":107,"version":1}}
+
