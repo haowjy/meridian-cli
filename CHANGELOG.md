@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-19
+
 ### Added
 - Hook events `work.created` for new work items and `work.activated` whenever `work start` / `work switch` resolves an item or a primary launch attaches `--work` / `--from` work. (#687)
 - Hook `when.kind` filtering with the shared `child` / `primary` / `streaming` `SpawnKind`; `HookContext.spawn_kind`, `spawn.kind` in JSON, and `MERIDIAN_SPAWN_KIND` expose it to plugins and command hooks. (#687)
