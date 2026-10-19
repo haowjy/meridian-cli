@@ -444,25 +444,50 @@ Tracking rules, all learned from the live event stream:
   or any descendant counts: `session.created` with a tracked `parentID` maps each
   descendant to the child it belongs to. A prompt can open before or after the
   primary's turn end; the snapshot excludes an asking child either way. Only
-  permission prompts are handled; other waits on the user are not.
+  permission prompts are handled; other waits on the user are not. Answering a
+  prompt the tracker recorded (`request/resolved`, not `failed` or `cancelled`) is
+  the user acting in the TUI without sending a message, so the sensor emits
+  `user_prompt` before the re-arm: the answer closes the idle stretch and the
+  re-arm opens a new one, held on the child. Without it the stretch stays open, a
+  push already sent stays sent, and a later prompt or the wake turn's end never
+  pushes again.
 - Work that changes while the primary is idle re-arms the push: the sensor emits
   another `turn_end` (turn id `None`), which the sidecar turns into an `arm` in
   the same stretch. The new schedule replaces the old one and a stage already
   sent stays sent. A busy primary does not re-arm, because its own turn end
-  reports the work. Two triggers exist: a prompt opening or closing for a counted
-  child, and a reconnect refresh that dropped work.
+  reports the work. Three triggers exist: a prompt opening or closing for a
+  counted child, a reconnect re-check that changed the reported work, and a
+  reconnect that finds the primary's turn ended unseen. A re-arm sets
+  `idle_since_ms` anew, so the cache-expiry warning and the remaining-cache
+  figure count from the re-arm rather than the real turn end and drift later by
+  the re-arm delay; this affects only `openai`, whose TTL is an estimate.
 - `/api/event` is live-only and announces each connection with `server.connected`.
-  After a reconnect with named work, the sensor re-derives at once in a
-  background task (no turn end is guaranteed to come): `GET /api/shell` and
-  `GET /api/session?parentID=` keep only ids still running, and the push re-arms
-  if that changed what is reported. If the server cannot answer, it reports
-  nothing and logs one line, since a hold on work that already ended would never
-  lift. The normal path makes no listing request. The shell listing follows the
-  request's location: `?directory=` is ignored, while the `x-opencode-directory`
-  header and the `location[directory]` query both select it (the sensor uses the
-  query, with the session's own `location.directory`). Starts that fell in the gap
-  cannot be recovered and stay unreported; a prompt answered in the gap leaves the
-  child uncounted until it ends.
+  On every reconnect (the sensor has already seen the stream; the first
+  connection makes no request) it re-checks, in a background task that stops
+  with the sensor, what the closed stream may have hidden, since no turn end is
+  guaranteed to come:
+  - The primary's own turn: `GET /api/session/active` lists the sessions whose
+    turn the server is running; absent ones are inactive. If the sensor thought
+    the primary busy and the server says idle, the terminal event fell in the gap:
+    it corrects busy and emits the missed `turn_end`, with the work as just
+    re-checked. Without it a wake turn lost in a gap leaves the sensor busy for
+    good, which suppresses every re-arm. If the server runs a turn the sensor
+    missed starting, busy is set so the work re-check cannot arm a push inside it.
+    A snapshot the stream outdated meanwhile (it reported the primary starting or
+    ending) is ignored. If the request fails, the observed state stays and one
+    line is logged.
+  - The work, only when something is named: `GET /api/shell` and
+    `GET /api/session?parentID=` keep only ids still running, and the push
+    re-arms if that changed what is reported. If the server cannot answer, it
+    reports nothing and logs one line, since a hold on work that already ended
+    would never lift.
+  The normal path makes no request. The shell listing follows the request's
+  location: `?directory=` is ignored, while the `x-opencode-directory` header and
+  the `location[directory]` query both select it (the sensor uses the query, with
+  the session's own `location.directory`). Starts that fell in the gap cannot be
+  recovered and stay unreported; a prompt answered in the gap leaves the child
+  uncounted until it ends; a whole turn (prompt and end) inside the gap leaves no
+  trace to find.
 - The report holds at most 16 tasks, agents first: an `agent` is the certain
   hold, so shells never push one out.
 - A fresh `opencode serve` loads its provider catalog on first touch of a
