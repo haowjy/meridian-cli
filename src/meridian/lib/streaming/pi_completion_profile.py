@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Protocol
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
-from meridian.lib.state.spawn_signals import consume_resident_signals
+from meridian.lib.state.spawn_signals import consume_spawn_signal
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CompletionDirectives,
@@ -151,7 +151,7 @@ class PiCompletionProfile:
             and self.last_successful_terminal is not None
             and not self._done_requested
         ):
-            self._done_requested = consume_resident_signals(self.runtime_root, self.spawn_id).done
+            self._done_requested = consume_spawn_signal(self.runtime_root, self.spawn_id, "done")
         return CompletionDirectives(done=self._done_requested)
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:

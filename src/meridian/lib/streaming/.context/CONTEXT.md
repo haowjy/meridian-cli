@@ -18,7 +18,8 @@ DrainPlan
   ├─ policy: DrainPolicy
   ├─ aux_wake / handle_aux_wake
   ├─ finalizer
-  └─ teardown: DrainSessionTeardown
+  ├─ teardown: DrainSessionTeardown
+  └─ accepted_signals: done/rearm kinds the coordinator consumes
 
 SpawnSession
   ├─ connection: HarnessConnection   ← live harness connection
@@ -95,7 +96,17 @@ Claude's hold has no descendant source yet. Native tasks and the pending follow-
 result are diagnostic blockers, not policy flags carried through assessments.
 Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux wakes. Plain streaming harnesses
 intentionally run with
-`DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence
+`DrainPlan(coordinator=None)`.
+
+Each plan declares `accepted_signals`: hold plans consume `done` and `rearm`, Pi only
+`done` (it has no rearm window and leaves `rearm.signal` alone), and the plain plan
+neither. Which plan a spawn gets depends on the live connection (OpenCode probes its
+binary and picks v1 resident or v2 plain), so no table keyed on the harness id can
+know it. `SpawnManager.start_spawn` therefore persists the set on the spawn row as
+`completion_signals` right after selecting the plan, before the drain starts, and `meridian spawn done` /
+`rearm` check it under the published-artifact lock before writing. An absent field
+means the plan isn't chosen yet or the runner predates the field; the CLI writes the
+signal and says delivery is unconfirmed. There is no public no-op coordinator class — absence
 of a coordinator is the plain path.
 
 The factory also owns application-service construction for descendant cancellation

@@ -115,6 +115,7 @@ def build_drain_plan(
             raw_terminal_frames_authoritative=False,
             aux_wake=coordinator,
             handle_aux_wake=coordinator.handle_aux_wake,
+            accepted_signals=frozenset({"done", "rearm"}),
         )
 
     if receiver.harness_id is HarnessId.PI:
@@ -142,9 +143,12 @@ def build_drain_plan(
                 spawn_id=spawn_id,
                 emit_event=emit_event,
             ),
+            # Pi has no rearm window: quiescence, not a deadline, ends its wait.
+            accepted_signals=frozenset({"done"}),
         )
 
-    # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline.
+    # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline and
+    # consume no completion signals.
     return DrainPlan()
 
 

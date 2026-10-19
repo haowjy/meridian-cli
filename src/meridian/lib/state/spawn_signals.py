@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.spawn.model import SpawnRecord, SpawnSignalKind
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
-
-SpawnSignalKind = Literal["done", "rearm"]
 
 
 @dataclass(frozen=True)
@@ -34,8 +33,13 @@ def write_spawn_signal(
     runtime_root: Path,
     spawn_id: SpawnId | str,
     kind: SpawnSignalKind,
+    *,
+    can_write: Callable[[SpawnRecord], bool] | None = None,
 ) -> bool:
-    """Write an idempotent signal while its published spawn still exists."""
+    """Write an idempotent signal while its published spawn still exists.
+
+    ``can_write`` sees the published row under the same lock as the write.
+    """
 
     timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return mutate_published_spawn_artifact(
@@ -45,6 +49,7 @@ def write_spawn_signal(
             spawn_signal_path(runtime_root, spawn_id, kind),
             f"{timestamp}\n",
         ),
+        can_mutate=can_write,
     )
 
 

@@ -1,5 +1,29 @@
 # Upgrade notes
 
+## Completion signal reporting
+
+`meridian spawn done` and `meridian spawn rearm` now refuse, with exit code 1,
+when nothing will read the signal: a primary session, a spawn that is no longer
+running, a spawn with no completion hold (Cursor, OpenCode 2.x and other plain
+plans), `rearm` on Pi, and `rearm` after the rearm budget is spent. Scripts that
+relied on these commands always succeeding will now see the failure.
+
+To know which signals a spawn reads, its runner records them on the spawn row as
+`completion_signals` once it has chosen how to wait for completion. A spawn
+started by an older runner has no such field; the commands still write the
+signal and say that delivery is unconfirmed.
+
+**Older builds reject the new field.** Spawn state refuses unknown fields, so
+0.11.0 and earlier quarantine every spawn row this version writes; the key is
+present, as `null`, even on rows with no plan. Their `meridian spawn show`
+reports the row as quarantined, and `meridian spawn list` can fail building its
+history index. An older Codex, OpenCode or Pi parent still waiting for its
+children reads a quarantined child as unreadable evidence: it waits until its
+deadline, then times out or fails. Before upgrading, let
+active spawns finish or stop them, and don't run an older build against the same
+runtime afterwards. Rollback is not an in-place downgrade: restore pre-upgrade
+runtime state, which does not contain spawns created after the upgrade.
+
 ## Hook event names
 
 Hook event names now identify the persisted moment when they fire. This release

@@ -21,6 +21,7 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
@@ -66,7 +67,7 @@ from meridian.lib.state.primary_meta import (
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_signals import SpawnSignalKind, write_spawn_signal
-from meridian.lib.state.spawn_status import overlay_derived
+from meridian.lib.state.spawn_status import overlay_derived, read_derived
 from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
@@ -1106,6 +1107,40 @@ def _resolve_signal_spawn_id(
     return resolved_spawn_id
 
 
+def _signal_refusal(row: SpawnRecord, kind: SpawnSignalKind) -> str | None:
+    """Return why nothing will consume ``kind`` for this lock-consistent row."""
+
+    label = f"{row.id} ({row.harness})" if row.harness else row.id
+    if row.kind == "primary":
+        return (
+            f"Spawn {label} is a primary session; `meridian spawn {kind}` applies only "
+            "to child spawns."
+        )
+    if is_terminal_spawn_status(row.status) or row.status == SpawnStatus.FINALIZING:
+        return (
+            f"Spawn {label} is no longer running (status: {row.status}); "
+            f"nothing will read a {kind} signal."
+        )
+    accepted = row.completion_signals
+    if accepted is not None and kind not in accepted:
+        if not accepted:
+            return (
+                f"Spawn {label} has no completion hold, so nothing reads "
+                f"`meridian spawn {kind}`; it finishes when its turn ends."
+            )
+        commands = " or ".join(f"`meridian spawn {item}`" for item in accepted)
+        return f"Spawn {label} does not consume {kind} signals; it accepts only {commands}."
+    if kind == "rearm":
+        snapshot = row.launch_policy_snapshot
+        budget = None if snapshot is None else snapshot.execution_policy.resident_rearm_budget
+        if budget is not None and row.resident_rearm_count >= budget:
+            return (
+                f"Spawn {label} has used its rearm budget ({row.resident_rearm_count}/{budget}), "
+                "so its completion window can't be extended. Run `meridian spawn done` to finish."
+            )
+    return None
+
+
 def _spawn_signal_sync(
     payload: SpawnSignalInput,
     *,
@@ -1132,8 +1167,24 @@ def _spawn_signal_sync(
             spawn_id=payload.spawn_id,
             ctx=ctx,
         )
-        if not write_spawn_signal(runtime_root, resolved_spawn_id, kind):
-            raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
+        refusal: str | None = None
+        reported = False
+
+        def consumer_reads_signal(stored: SpawnRecord) -> bool:
+            # Decided under the published-artifact lock that guards the write.
+            nonlocal refusal, reported
+            row = read_derived(runtime_root, stored.id) or stored
+            refusal = _signal_refusal(row, kind)
+            reported = row.completion_signals is not None
+            return refusal is None
+
+        if not write_spawn_signal(
+            runtime_root,
+            resolved_spawn_id,
+            kind,
+            can_write=consumer_reads_signal,
+        ):
+            raise ValueError(refusal or f"Spawn '{resolved_spawn_id}' not found")
     except ValueError as exc:
         return SpawnActionOutput(
             command=command,
@@ -1142,11 +1193,18 @@ def _spawn_signal_sync(
             error=str(exc),
             exit_code=1,
         )
+    message = f"Spawn {kind} signal written."
+    if not reported:
+        message = (
+            f"Spawn {kind} signal written; delivery unconfirmed: {resolved_spawn_id} has not "
+            "reported which signals it reads (it may still be starting, or its runner "
+            "predates signal reporting)."
+        )
     return SpawnActionOutput(
         command=command,
         status="succeeded",
         spawn_id=resolved_spawn_id,
-        message=f"Spawn {kind} signal written.",
+        message=message,
     )
 
 

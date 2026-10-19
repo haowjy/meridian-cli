@@ -25,6 +25,7 @@ _LAUNCH_MODE_VALUES: frozenset[LaunchMode] = frozenset(
 )
 
 SpawnOrigin = Literal["runner", "launcher", "launch_failure", "cancel", "reconciler"]
+SpawnSignalKind = Literal["done", "rearm"]
 PersistedSpawnStatus = SpawnStatus | Literal["unknown"]
 _AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
     "runner",
@@ -146,6 +147,9 @@ class SpawnStateFields(BaseModel):
     runner_pid: int | None = None
     runner_created_at_epoch: float | None = None
     resident_rearm_count: int = 0
+    #: Signals the runner's chosen drain plan consumes. ``None``: no plan chosen
+    #: yet, or a runner that predates this field.
+    completion_signals: tuple[SpawnSignalKind, ...] | None = None
     status: PersistedSpawnStatus = "unknown"
     started_at: str | None = None
     last_attempt_exited_at: str | None = None
@@ -205,6 +209,7 @@ __all__ = [
     "SpawnKind",
     "SpawnOrigin",
     "SpawnRecord",
+    "SpawnSignalKind",
     "SpawnStateFields",
     "TerminalFacts",
     "TerminalSpawnStatus",

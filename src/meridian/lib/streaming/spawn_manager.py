@@ -189,6 +189,13 @@ class SpawnManager:
             )
             if resolved_policy is not None:
                 drain_plan = drain_plan.with_policy(resolved_policy)
+            # Declare once, before any event drains, which `spawn done`/`rearm`
+            # signals this plan consumes; the CLI refuses the rest.
+            spawn_store.update_spawn(
+                self._runtime_root,
+                spawn_id,
+                completion_signals=tuple(sorted(drain_plan.accepted_signals)),
+            )
             drain_task = asyncio.create_task(
                 self._drain_loop(
                     spawn_id,
