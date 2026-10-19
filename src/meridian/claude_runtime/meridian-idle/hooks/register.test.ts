@@ -3,7 +3,8 @@ import type { On } from 'claude-code'
 
 type Host = {
   calls: string[][]
-  reply: Record<string, unknown | ((args: string[]) => unknown)>
+  reply: Record<string, unknown | ((args: string[]) => unknown | Promise<unknown>)>
+  statuses: (string | undefined)[]
 }
 
 const START = 1_000_000
@@ -14,6 +15,7 @@ const COMPOSER = { kind: 'composer' } as const
 function host(): Host {
   return {
     calls: [],
+    statuses: [],
     reply: {
       config: { enabled: true },
       arm: {
@@ -25,6 +27,7 @@ function host(): Host {
       return: { stretch_closed: true },
       fire: { decision: 'act', reason: 'guards-passed' },
       status: [],
+      'child-status': '',
     },
   }
 }
@@ -32,15 +35,16 @@ function host(): Host {
 function install(on: On, h: Host) {
   const clock = mock.clock(on, { now: START })
   mock.store(on)
-  on('process.run', (_$, e) => {
+  on('process.run', async (_$, e) => {
     const args = e.argv.slice(2)
     h.calls.push([...args])
     const reply = h.reply[args[0] ?? '']
-    const body = typeof reply === 'function' ? reply(args) : reply
+    const body = typeof reply === 'function' ? await reply(args) : reply
+    const stdout = args[0] === 'child-status' ? String(body ?? '') : JSON.stringify(body)
     return {
       value: {
         exitCode: 0,
-        stdout: JSON.stringify(body) + '\n',
+        stdout: stdout + '\n',
         stderr: '',
         isStdoutTruncated: false,
         isStderrTruncated: false,
@@ -50,6 +54,10 @@ function install(on: On, h: Host) {
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('ui.status', (_$, e) => {
+    h.statuses.push(e.text)
+    return { value: undefined }
+  })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.start', () => ({ turnId: 't1' }))
   on('turn.complete', () => ({ text: '' }))
@@ -57,6 +65,8 @@ function install(on: On, h: Host) {
   on('classic.Notification', () => ({}))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('command.run', () => ({ text: '' }))
+  on('tool.call', () => ({ result: 'ok' }))
+  on('session.end', () => ({ sessionId: 'sess-1' }))
   return clock
 }
 
@@ -67,6 +77,12 @@ function calls(h: Host, command: string): string[][] {
 function flag(args: string[], name: string): string | undefined {
   const at = args.indexOf(name)
   return at < 0 ? undefined : args[at + 1]
+}
+
+function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(done => { resolve = done })
+  return { promise, resolve }
 }
 
 function expectCliContract(h: Host): void {
@@ -266,4 +282,98 @@ test('only permission prompts are forwarded and a failing CLI does not fail the 
   await $.classic.Notification({ message, notification_type: 'permission_prompt' } as never)
   await clock.advance(0)
   expect(calls(h, 'needs-permission')).toHaveLength(2)
+})
+
+test('child status refreshes on spawn-changing events and polls only while visible', async ($, on) => {
+  const h = host()
+  let childStatus = '2 running: p2 coder, p3 reviewer'
+  h.reply['child-status'] = () => childStatus
+  const clock = install(on, h)
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  expect(h.statuses).toEqual([childStatus])
+  expect(calls(h, 'child-status')).toHaveLength(1)
+
+  await clock.advance(30_000)
+  expect(calls(h, 'child-status')).toHaveLength(2)
+
+  await $.turn.complete(MAIN_TURN)
+  await clock.advance(0)
+  await $.prompt.submit({ text: 'continue', wait: false, origin: COMPOSER })
+  await clock.advance(0)
+  expect(calls(h, 'child-status')).toHaveLength(4)
+
+  childStatus = ''
+  await $.tool.call({ tool: 'Bash', command: 'meridian spawn wait' })
+  await clock.advance(0)
+  expect(h.statuses.at(-1)).toBeUndefined()
+  expect(calls(h, 'child-status')).toHaveLength(5)
+
+  await clock.advance(60_000)
+  expect(calls(h, 'child-status')).toHaveLength(5)
+})
+
+test('child status coalesces concurrent events into one trailing refresh', async ($, on) => {
+  const h = host()
+  const visible = '1 running: p2 coder'
+  h.reply['child-status'] = visible
+  const clock = install(on, h)
+  await $.session.start(TUI)
+  await clock.advance(2000)
+
+  const pending = deferred<string>()
+  h.reply['child-status'] = () => pending.promise
+  await $.tool.call({ tool: 'Bash', command: 'meridian spawn --bg' })
+  await Promise.resolve()
+  expect(calls(h, 'child-status')).toHaveLength(2)
+
+  await $.prompt.submit({ text: 'continue', wait: false, origin: COMPOSER })
+  h.reply['child-status'] = ''
+  pending.resolve(visible)
+  await clock.advance(0)
+
+  expect(calls(h, 'child-status')).toHaveLength(3)
+  expect(h.statuses).toEqual([visible, visible, undefined])
+})
+
+test('session end rejects a late child status result', async ($, on) => {
+  const h = host()
+  const visible = '1 running: p2 coder'
+  h.reply['child-status'] = visible
+  const clock = install(on, h)
+  await $.session.start(TUI)
+  await clock.advance(2000)
+
+  const pending = deferred<string>()
+  h.reply['child-status'] = () => pending.promise
+  await $.tool.call({ tool: 'Bash', command: 'meridian spawn --bg' })
+  await Promise.resolve()
+  expect(calls(h, 'child-status')).toHaveLength(2)
+
+  await $.session.end({ reason: 'user_exit' })
+  pending.resolve('2 running: p2 coder, p3 reviewer')
+  await clock.advance(0)
+
+  expect(calls(h, 'child-status')).toHaveLength(2)
+  expect(h.statuses).toEqual([visible, undefined])
+})
+
+test('a failed child status poll preserves the line and retries slowly', async ($, on) => {
+  const h = host()
+  const visible = '1 running: p2 coder'
+  h.reply['child-status'] = visible
+  const clock = install(on, h)
+  await $.session.start(TUI)
+  await clock.advance(2000)
+
+  h.reply['child-status'] = () => { throw new Error('temporary failure') }
+  await clock.advance(30_000)
+  expect(calls(h, 'child-status')).toHaveLength(2)
+  expect(h.statuses).toEqual([visible])
+
+  h.reply['child-status'] = ''
+  await clock.advance(30_000)
+  expect(calls(h, 'child-status')).toHaveLength(3)
+  expect(h.statuses).toEqual([visible, undefined])
 })

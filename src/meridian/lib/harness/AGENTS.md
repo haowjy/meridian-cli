@@ -233,7 +233,8 @@ Interactive Claude primaries receive the bundled
 `../../claude_runtime/meridian-idle/` mod. Pi primaries receive the fourth
 bundled extension, `../../pi_runtime/extensions/meridian-idle/`; spawned Pi RPC
 sessions do not. Those runtimes translate native events into the same core idle
-contract rather than owning policy.
+contract rather than owning policy. The Claude mod also displays the bounded
+child-spawn line returned by core; it does not inspect Meridian state itself.
 
 Primary TUI injection routes through `HarnessBundle.primary_inbox`; see the
 [primary inbox contract](.context/CONTEXT.md#primary-inbox-injection).

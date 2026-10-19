@@ -101,7 +101,8 @@ replay the model turn.
   `execute_runner.py` (blocking path), `execute_session.py` (session management).
   Import from `execute.py` only — do not import `execute_*` modules from outside `ops/spawn/`.
 - `prepare.py` — `build_create_payload()` → `SpawnCreateArtifacts` (compose once; dry-run bind for `cli_command`).
-- `query.py` — `resolve_spawn_reference()` and spawn-record reads.
+- `query.py` — spawn-record reads, `resolve_spawn_reference()`, and indexed,
+  derived-active owner discovery shared by no-arg wait and status surfaces.
 - `context_ref.py` — `resolve_context_ref()` for `-f` references.
 - `failure_policy.py` — depth guard, depth limit helpers.
 

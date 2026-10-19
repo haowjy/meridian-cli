@@ -400,6 +400,62 @@ def test_idle_mod_path_wire_contract(tmp_path: Path) -> None:
     assert (Path(result.stdout.strip()) / ".claude-plugin" / "plugin.json").is_file()
 
 
+@pytest.mark.integration
+def test_idle_child_status_is_scoped_to_an_interactive_primary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.state import session_store, spawn_store
+    from meridian.lib.state.launch_lock import LaunchSlot
+    from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+
+    env = _idle_env(tmp_path)
+    monkeypatch.setenv("HOME", env["HOME"])
+    monkeypatch.setenv("MERIDIAN_HOME", env["MERIDIAN_HOME"])
+    project = tmp_path / "project"
+    project.mkdir()
+    runtime_root = resolve_project_runtime_root_for_write(project)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="claude",
+        harness_session_id="native-primary",
+        native_store="",
+        model="haiku",
+        kind="primary",
+        spawn_id="p1",
+    ).chat_id
+    env.update(
+        MERIDIAN_PROJECT_DIR=project.as_posix(),
+        MERIDIAN_CHAT_ID=chat_id,
+        MERIDIAN_SPAWN_ID="p1",
+    )
+
+    with LaunchSlot() as launch_lock:
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p2",
+            chat_id="c-child",
+            owner_chat_id=chat_id,
+            model="haiku",
+            agent="coder",
+            harness="claude",
+            prompt="child",
+            launch_lock=launch_lock,
+        )
+
+        shown = _run(project, env, "idle", "child-status", "--interactive")
+        assert (shown.returncode, shown.stderr, shown.stdout) == (
+            0,
+            "",
+            "1 running: p2 coder\n",
+        )
+
+        env["MERIDIAN_SESSION_ROLE"] = "spawn"
+        inert = _run(project, env, "idle", "child-status", "--interactive")
+        assert (inert.returncode, inert.stderr, inert.stdout) == (0, "", "")
+
+
 def test_idle_needs_permission_emits_once_without_idle_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

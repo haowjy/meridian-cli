@@ -1,15 +1,18 @@
 """SQL-scoped no-argument spawn-wait discovery."""
 
 import json
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
 
-import meridian.lib.ops.spawn.api as spawn_api
+import meridian.lib.ops.spawn.query as spawn_query
 import meridian.lib.state.history_index as history_index
 from meridian.lib.core.types import HarnessId
 from meridian.lib.ops.session_archive import archive_history, materialize_native_history
+from meridian.lib.ops.spawn.query import discover_pending_spawns
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import SpawnKind, SpawnRecord
 from tests.support.resident_drain import start_row
@@ -104,9 +107,70 @@ def test_discovery_selects_only_the_owners_active_spawns(
 
     monkeypatch.setattr(SpawnRecord, "model_validate_json", reject_unrelated_candidate)
 
-    rows = spawn_api._discover_pending_spawns(root, "c-owner")
+    rows = discover_pending_spawns(root, "c-owner")
 
     assert {row.id for row in rows} == {primary, legacy_child, continued_child}
+
+
+def test_discovery_preserves_waits_lexical_id_order(tmp_path: Path) -> None:
+    _, root = _runtime(tmp_path)
+    _spawn(root, "p2")
+    _spawn(root, "p10")
+
+    rows = discover_pending_spawns(root, "c-owner")
+
+    assert [row.id for row in rows] == ["p10", "p2"]
+
+
+def test_running_children_status_is_bounded_and_excludes_dead_launches(tmp_path: Path) -> None:
+    from meridian.lib.ops.spawn.query import running_children_status
+
+    _, root = _runtime(tmp_path)
+    with ExitStack() as stack:
+        primary_lock = stack.enter_context(LaunchSlot())
+        _ = spawn_store.start_spawn(
+            root,
+            spawn_id="p1",
+            chat_id="c-owner",
+            model="test",
+            agent="primary",
+            harness="claude",
+            kind="primary",
+            prompt="primary",
+            launch_lock=primary_lock,
+        )
+        agents = ("coder", "reviewer with a very long profile name", "", "probe")
+        for index, agent in enumerate(agents, start=2):
+            launch_lock = stack.enter_context(LaunchSlot())
+            _ = spawn_store.start_spawn(
+                root,
+                spawn_id=f"p{index}",
+                chat_id=f"c{index}",
+                owner_chat_id="c-owner",
+                model="test",
+                agent=agent,
+                harness="claude",
+                prompt="child",
+                launch_lock=launch_lock,
+            )
+
+        # Stored-active with a released runner lock derives to failed and is omitted.
+        with LaunchSlot() as dead_lock:
+            _ = spawn_store.start_spawn(
+                root,
+                spawn_id="p6",
+                chat_id="c6",
+                owner_chat_id="c-owner",
+                model="test",
+                agent="dead",
+                harness="claude",
+                prompt="dead child",
+                launch_lock=dead_lock,
+            )
+
+        assert running_children_status(root, "c-owner") == (
+            "4 running: p2 coder, p3 reviewer with a very..., p4, +1 more"
+        )
 
 
 def test_nested_discovery_reaches_live_child_through_archived_ancestor(
@@ -130,7 +194,7 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
     start_row(root, "p3", HarnessId.CODEX, "p2")
     spawn_store.mark_finalizing(root, "p3")
 
-    rows = spawn_api._discover_pending_spawns(
+    rows = discover_pending_spawns(
         root,
         "c-owner",
         exclude_spawn_id="p1",
@@ -159,7 +223,7 @@ def test_discovery_rereads_terminal_authority_for_active_index_row(
         lambda self, **kwargs: (stale_active_row,),
     )
 
-    rows = spawn_api._discover_pending_spawns(root, "c-owner")
+    rows = discover_pending_spawns(root, "c-owner")
 
     assert rows == []
 
@@ -175,8 +239,8 @@ def test_discovery_does_not_use_the_unfiltered_spawn_scan(
     def reject_unfiltered_scan(*args: object, **kwargs: object) -> None:
         raise AssertionError("no-arg wait discovery loaded the global spawn scan")
 
-    monkeypatch.setattr(spawn_api, "indexed_spawn_scan", reject_unfiltered_scan)
+    monkeypatch.setattr(spawn_query, "indexed_spawn_scan", reject_unfiltered_scan)
 
-    rows = spawn_api._discover_pending_spawns(root, "c-owner")
+    rows = discover_pending_spawns(root, "c-owner")
 
     assert [row.id for row in rows] == [spawn_id]

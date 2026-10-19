@@ -162,6 +162,7 @@ _GROUP_HELP: dict[str, GroupHelp] = {
             "done",
             "event",
             "status",
+            "child-status",
             "mod-path",
         ),
     ),

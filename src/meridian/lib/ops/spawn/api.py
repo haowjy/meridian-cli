@@ -109,6 +109,7 @@ from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
     detail_from_row,
+    discover_pending_spawns,
     read_spawn_row,
     resolve_spawn_reference,
     resolve_spawn_references,
@@ -1416,7 +1417,7 @@ def _resolve_wait_targets(
 
     self_spawn_id = str(ctx.spawn_id) if ctx.spawn_id else None
     try:
-        pending = _discover_pending_spawns(
+        pending = discover_pending_spawns(
             runtime_root,
             chat_id,
             exclude_spawn_id=self_spawn_id,
@@ -1426,62 +1427,6 @@ def _resolve_wait_targets(
     except history_index.HistoryIndexBusy:
         return _WaitTargetDiscovery(discovery_pending=True)
     return _WaitTargetDiscovery(tuple(row.id for row in pending))
-
-
-def _discover_pending_spawns(
-    runtime_root: Path,
-    chat_id: str,
-    *,
-    exclude_spawn_id: str | None = None,
-    only_descendants_of: str | None = None,
-    deadline: float | None = None,
-) -> list[SpawnRecord]:
-    """Discover this owner's active spawns, or only the caller's transitive subtree.
-
-    The index selects membership; lifecycle decisions re-read authority. Recursive
-    traversal retains terminal and archived ancestry so it cannot lose grandchildren.
-    """
-    from meridian.lib.state.session_identity import spawn_matches_owner_chat
-
-    index = history_index.HistoryIndex(runtime_root)
-    if only_descendants_of is not None:
-        selected_ids = {
-            projection[0]
-            for projection in index.descendant_projection(
-                only_descendants_of,
-                active_only=True,
-                deadline=deadline,
-            )
-        }
-    else:
-        selected_ids = {
-            row.id
-            for row in index.spawns(
-                owner_chat_id=chat_id,
-                status=set(ACTIVE_SPAWN_STATUSES),
-                deadline=deadline,
-            )
-        }
-
-    candidates: list[SpawnRecord] = []
-    for spawn_id in selected_ids:
-        if spawn_id == exclude_spawn_id:
-            continue
-        row = spawn_store.get_spawn(runtime_root, spawn_id)
-        if row is None:
-            # Retirement can race the projection query just as it can race wait polling.
-            continue
-        # Nested callers are scoped by subtree, not owner, matching main.
-        if only_descendants_of is None and not spawn_matches_owner_chat(row, chat_id):
-            continue
-        candidates.append(row)
-
-    pending: list[SpawnRecord] = []
-    for row in overlay_derived(runtime_root, candidates):
-        if row.status in ACTIVE_SPAWN_STATUSES:
-            pending.append(row)
-    pending.sort(key=lambda row: row.id)
-    return pending
 
 
 def _emit_wait_set(

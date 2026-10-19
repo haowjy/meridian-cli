@@ -5,11 +5,11 @@ import re
 from pathlib import Path
 from typing import NamedTuple, cast
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import pi_lifecycle, session_store, spawn_store
+from meridian.lib.state import history_index, pi_lifecycle, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived, read_derived
@@ -22,13 +22,108 @@ _SPAWN_REFERENCE_STATUS_FILTERS: dict[str, tuple[str, ...] | None] = {
     "@last-completed": ("succeeded",),
 }
 _RUNNING_LOG_MESSAGE_LIMIT = 120
+_STATUS_CHILD_LIMIT = 3
+_STATUS_AGENT_LIMIT = 24
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
+
+
 class _PiCleanupTelemetry(NamedTuple):
     status: str | None
     phase: str | None
     reason: str | None
     error: str | None
+
+
+def discover_pending_spawns(
+    runtime_root: Path,
+    owner_chat_id: str,
+    *,
+    exclude_spawn_id: str | None = None,
+    only_descendants_of: str | None = None,
+    deadline: float | None = None,
+) -> list[SpawnRecord]:
+    """Discover active owner spawns or only one caller's transitive subtree.
+
+    The index selects membership; lifecycle decisions reread authority. Recursive
+    traversal retains terminal and archived ancestry so it cannot lose grandchildren.
+    """
+    from meridian.lib.state.session_identity import spawn_matches_owner_chat
+
+    index = history_index.HistoryIndex(runtime_root)
+    if only_descendants_of is not None:
+        selected_ids = {
+            projection[0]
+            for projection in index.descendant_projection(
+                only_descendants_of,
+                active_only=True,
+                deadline=deadline,
+            )
+        }
+    else:
+        selected_ids = {
+            row.id
+            for row in index.spawns(
+                owner_chat_id=owner_chat_id,
+                status=set(ACTIVE_SPAWN_STATUSES),
+                deadline=deadline,
+            )
+        }
+
+    candidates: list[SpawnRecord] = []
+    for spawn_id in selected_ids:
+        if spawn_id == exclude_spawn_id:
+            continue
+        row = spawn_store.get_spawn(runtime_root, spawn_id)
+        if row is None:
+            # Retirement can race the projection query just as it can race wait polling.
+            continue
+        # Nested callers are scoped by subtree, not owner, matching main.
+        if only_descendants_of is None and not spawn_matches_owner_chat(row, owner_chat_id):
+            continue
+        candidates.append(row)
+
+    pending = [
+        row
+        for row in overlay_derived(runtime_root, candidates)
+        if row.status in ACTIVE_SPAWN_STATUSES
+    ]
+    pending.sort(key=lambda row: row.id)
+    return pending
+
+
+def _status_agent_label(agent: str | None) -> str:
+    label = " ".join((agent or "").split())
+    if len(label) <= _STATUS_AGENT_LIMIT:
+        return label
+    return f"{label[: _STATUS_AGENT_LIMIT - 3].rstrip()}..."
+
+
+def running_children_status(runtime_root: Path, chat_id: str) -> str:
+    """Format the bounded status-line summary for one primary session family."""
+    from meridian.lib.state.session_identity import get_owner_chat_for_session
+
+    owner_chat_id = get_owner_chat_for_session(runtime_root, chat_id) or chat_id
+    children = list(
+        spawn_store.SpawnScan.ordered(
+            [
+                row
+                for row in discover_pending_spawns(runtime_root, owner_chat_id)
+                if (row.kind or "").strip() != "primary"
+            ],
+            (),
+        ).records
+    )
+    if not children:
+        return ""
+
+    shown: list[str] = []
+    for row in children[:_STATUS_CHILD_LIMIT]:
+        agent = _status_agent_label(row.agent)
+        shown.append(f"{row.id} {agent}" if agent else row.id)
+    hidden = len(children) - len(shown)
+    suffix = f", +{hidden} more" if hidden else ""
+    return f"{len(children)} running: {', '.join(shown)}{suffix}"
 
 
 def _select_latest_spawn_id(

@@ -310,6 +310,27 @@ def cmd_idle_status(
         _fail(exc)
 
 
+@idle_app.command(name="child-status")
+def cmd_idle_child_status(*, interactive: InteractiveOption = False) -> None:
+    """Print active children owned by this primary session for a status line."""
+
+    if not interactive or os.environ.get("MERIDIAN_SESSION_ROLE", "").strip() != "primary":
+        return
+    try:
+        from meridian.cli.utils import resolve_cli_project_root
+        from meridian.lib.core.context import RuntimeContext
+        from meridian.lib.ops.spawn.query import running_children_status
+
+        context = RuntimeContext.from_environment(project_root=resolve_cli_project_root())
+        if context.runtime_root is None or not context.chat_id:
+            return
+        text = running_children_status(context.runtime_root, context.chat_id)
+        if text:
+            print(text)
+    except Exception as exc:
+        _fail(exc)
+
+
 @idle_app.command(name="mod-path")
 def cmd_idle_mod_path() -> None:
     """Print the bundled Claude idle mod directory."""

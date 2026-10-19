@@ -2,12 +2,14 @@ import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude
 
 // Meridian's Claude idle sensor.
 //
-// This module senses three things and hands every decision to `meridian idle`:
+// This module senses four things and hands every decision to `meridian idle`:
 //   idle    a main-loop turn finished        -> `idle arm` with the work still running, then one timer per stage
 //   return  the user typed or sent something -> `idle return`, timers cancelled
 //   permission  Claude still awaits approval -> `idle needs-permission`, with no state change
-// Notifications belong to core; this file never sends one, reads
-// meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
+//   children  events that may change spawns  -> `idle child-status`, displayed under the prompt
+// Notifications and child-status wording belong to core; this file never sends
+// a notification, reads Meridian config or env, or writes under `~/.meridian`.
+// Only the child summary reaches the pinned UI status; diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request.
 
 type Stage = 'push' | 'warn'
@@ -16,6 +18,7 @@ const STAGES: readonly Stage[] = ['push', 'warn']
 const HARNESS = 'claude'
 const COMMAND = 'meridian-idle'
 const CLI_TIMEOUT_MS = 20_000
+const CHILD_STATUS_POLL_MS = 30_000
 const LOG_LIMIT = 100
 const EXCERPT_CHAR_CAP = 4_000
 // One JSON argv entry stays below ~50 KiB even if every command code unit needs
@@ -56,6 +59,14 @@ type State = {
   lastUserText: string | undefined
   /** The main loop's in-flight background work, from the `Stop` that precedes its `turn.complete`. */
   stopTasks: BackgroundTask[] | undefined
+  /** Slow completion poll, present only while the last successful child status was nonempty. */
+  childStatusTimer: Timer | undefined
+  /** One CLI query at a time; events during it set dirty and force one trailing query. */
+  childStatusRefresh: Promise<void> | undefined
+  childStatusDirty: boolean
+  childStatusVisible: boolean
+  /** Invalidates late queries when the session ends or changes conversation. */
+  childStatusGeneration: number
 }
 
 function newState(): State {
@@ -71,6 +82,11 @@ function newState(): State {
     log: [],
     lastUserText: undefined,
     stopTasks: undefined,
+    childStatusTimer: undefined,
+    childStatusRefresh: undefined,
+    childStatusDirty: false,
+    childStatusVisible: false,
+    childStatusGeneration: 0,
   }
 }
 
@@ -109,6 +125,11 @@ function cancelTimers(s: State): void {
   s.timers = []
 }
 
+function cancelChildStatusTimer(s: State): void {
+  s.childStatusTimer?.cancel()
+  s.childStatusTimer = undefined
+}
+
 function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
   const run = s.queue.then(task).catch(() => undefined)
   s.queue = run
@@ -129,6 +150,66 @@ async function cli($: EngineInterface, s: State, args: string[]): Promise<unknow
   } catch (err) {
     return { error: describeError(err) }
   }
+}
+
+type ChildStatusReply = { text: string } | { error: string }
+
+/** Successful empty stdout means there are no children; failures must not clear the last good line. */
+async function childStatusCli($: EngineInterface): Promise<ChildStatusReply> {
+  try {
+    const out = await $.process.run(
+      ['meridian', 'idle', 'child-status', '--interactive'],
+      { timeoutMs: CLI_TIMEOUT_MS },
+    )
+    if (out.exitCode !== 0) {
+      return { error: `exit ${out.exitCode}: ${out.stderr.trim().slice(0, 200)}` }
+    }
+    return { text: out.stdout.trim() }
+  } catch (err) {
+    return { error: describeError(err) }
+  }
+}
+
+function scheduleChildStatusPoll($: EngineInterface, s: State): void {
+  cancelChildStatusTimer(s)
+  if (!s.childStatusVisible || s.inert) return
+  const generation = s.childStatusGeneration
+  s.childStatusTimer = $.clock.after(CHILD_STATUS_POLL_MS, () => {
+    s.childStatusTimer = undefined
+    if (generation === s.childStatusGeneration) requestChildStatus($, s)
+  })
+}
+
+async function refreshChildStatus($: EngineInterface, s: State, generation: number): Promise<void> {
+  cancelChildStatusTimer(s)
+  const reply = await childStatusCli($)
+  if (generation !== s.childStatusGeneration || s.inert) return
+  if ('error' in reply) {
+    note($, s, `child status failed: ${reply.error}`)
+  } else {
+    // Claude keeps a named blank plugin row for ""; undefined removes the pin.
+    $.ui.status(reply.text || undefined)
+    s.childStatusVisible = reply.text !== ''
+  }
+  scheduleChildStatusPoll($, s)
+}
+
+function requestChildStatus($: EngineInterface, s: State): void {
+  if (s.inert) return
+  s.childStatusDirty = true
+  cancelChildStatusTimer(s)
+  if (s.childStatusRefresh !== undefined) return
+
+  const generation = s.childStatusGeneration
+  s.childStatusDirty = false
+  s.childStatusRefresh = refreshChildStatus($, s, generation)
+    .catch(err => note($, s, `child status error: ${describeError(err)}`))
+    .finally(() => {
+      s.childStatusRefresh = undefined
+      if (s.childStatusDirty && generation === s.childStatusGeneration) {
+        requestChildStatus($, s)
+      }
+    })
 }
 
 /** The error text of a `cli` result, or undefined when it succeeded. */
@@ -387,6 +468,7 @@ async function startTask($: EngineInterface, s: State, epoch: number): Promise<v
   } catch (err) {
     note($, s, `recover error: ${describeError(err)}`)
   }
+  requestChildStatus($, s)
 }
 
 // -- /meridian-idle --------------------------------------------------------
@@ -452,6 +534,7 @@ export const register: Register = on => {
       const tasks = s.stopTasks
       s.stopTasks = undefined
       void enqueue(s, () => armTask($, s, epoch, e.answer, tasks))
+      requestChildStatus($, s)
     }
     return next(e)
   })
@@ -468,6 +551,7 @@ export const register: Register = on => {
     if (!s.inert && isUserOrigin(e.origin)) {
       s.lastUserText = e.text
       userReturned($, s)
+      requestChildStatus($, s)
     }
     return next(e)
   })
@@ -482,14 +566,30 @@ export const register: Register = on => {
     if (!s.inert && e.command !== COMMAND && isUserOrigin(e.origin)) {
       s.lastUserText = `/${e.command}${e.args ? ` ${e.args}` : ''}`
       userReturned($, s)
+      requestChildStatus($, s)
     }
     return next(e)
+  })
+
+  // Meridian children are created from Bash. Refresh after it finishes, not after
+  // every Read/Edit/etc., because each CLI startup costs about 0.8 seconds.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    try {
+      return await next(e)
+    } finally {
+      requestChildStatus($, s)
+    }
   })
 
   on('session.end', async ($, e, next) => {
     s.epoch += 1
     cancelTimers(s)
     s.armed = undefined
+    s.childStatusGeneration += 1
+    s.childStatusDirty = false
+    cancelChildStatusTimer(s)
+    s.childStatusVisible = false
+    $.ui.status(undefined)
     return next(e)
   })
 }
