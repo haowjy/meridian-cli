@@ -24,7 +24,12 @@ from meridian.lib.harness.idle_types import (
 )
 from meridian.lib.idle.excerpts import trim_turn_excerpts
 from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
-from meridian.lib.idle.messages import STAGE_EVENTS, stage_notice
+from meridian.lib.idle.messages import (
+    NEEDS_PERMISSION_EVENT,
+    STAGE_EVENTS,
+    needs_permission_notice,
+    stage_notice,
+)
 from meridian.lib.idle.timeline import Schedule, push_delay, schedule
 from meridian.lib.idle.wake import expected_wake
 from meridian.lib.notify import RouteReport
@@ -533,6 +538,25 @@ class IdleService:
             self._clear_push_owed(harness, session, stretch)
         elif not ok:
             self._mark_notification_failed(harness, session, stretch, stage)
+
+    def needs_permission(
+        self,
+        *,
+        harness: str,
+        message: str,
+    ) -> None:
+        """Forward one harness permission signal without touching idle state."""
+
+        if not self.config_for(harness).enabled:
+            return
+        notice = needs_permission_notice(
+            message,
+            build_session_label(environ=self.env),
+            include_messages=self._notify_config().include_messages,
+        )
+        report = self._notify_sender(NEEDS_PERMISSION_EVENT, notice)
+        for warning in report.warnings:
+            logger.warning("permission notification delivery warning: %s", warning)
 
     def _emit(
         self, event: HookEventName, notification: Notification

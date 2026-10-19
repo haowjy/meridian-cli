@@ -12,9 +12,9 @@ from meridian.lib.ops.hooks import HookListInput, hooks_list_sync
         (
             "event",
             'event = "bogus"',
-            "expected one of [notify.cache_expiring, notify.manual, notify.your_turn, "
-            "spawn.created, spawn.finished, spawn.started, work.activated, work.created, "
-            "work.done], "
+            "expected one of [notify.cache_expiring, notify.manual, notify.needs_permission, "
+            "notify.your_turn, spawn.created, spawn.finished, spawn.started, "
+            "work.activated, work.created, work.done], "
             "got 'bogus'",
         ),
         (
@@ -324,6 +324,7 @@ def test_a_notify_row_replaces_only_its_events_default_route(tmp_path: Path) -> 
 
     assert routes == {
         ("notify.cache_expiring", "project", False),
+        ("notify.needs_permission", "default", True),
         ("notify.your_turn", "default", True),
         ("notify.manual", "default", True),
     }

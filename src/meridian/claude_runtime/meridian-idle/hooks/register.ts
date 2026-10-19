@@ -2,10 +2,11 @@ import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude
 
 // Meridian's Claude idle sensor.
 //
-// This module senses two things and hands every decision to `meridian idle`:
+// This module senses three things and hands every decision to `meridian idle`:
 //   idle    a main-loop turn finished        -> `idle arm` with the work still running, then one timer per stage
 //   return  the user typed or sent something -> `idle return`, timers cancelled
-// Push and warn notifications belong to core; this file never sends one, reads
+//   permission  Claude still awaits approval -> `idle needs-permission`, with no state change
+// Notifications belong to core; this file never sends one, reads
 // meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request.
 
@@ -329,6 +330,20 @@ async function returnTask($: EngineInterface, s: State, sessionId: Promise<strin
   }
 }
 
+// -- permission prompt -----------------------------------------------------
+
+async function needsPermissionTask($: EngineInterface, s: State, message: string): Promise<void> {
+  try {
+    const reply = await cli($, s, [
+      'needs-permission', '--harness', HARNESS, `--message=${message}`,
+    ])
+    const problem = failure(reply)
+    if (problem !== undefined) note($, s, `needs-permission failed: ${problem}`)
+  } catch (err) {
+    note($, s, `needs-permission error: ${describeError(err)}`)
+  }
+}
+
 /** The user is back. Cancels timers at once (synchronously), then closes the stretch in core. */
 function userReturned($: EngineInterface, s: State): void {
   s.epoch += 1
@@ -437,6 +452,14 @@ export const register: Register = on => {
       const tasks = s.stopTasks
       s.stopTasks = undefined
       void enqueue(s, () => armTask($, s, epoch, e.answer, tasks))
+    }
+    return next(e)
+  })
+
+  on('classic.Notification', async ($, e, next) => {
+    if (!s.inert && e.notification_type === 'permission_prompt') {
+      // This signal is independent of the idle timeline: do not queue it behind state calls.
+      void needsPermissionTask($, s, e.message)
     }
     return next(e)
   })

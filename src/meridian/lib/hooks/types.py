@@ -46,6 +46,7 @@ EVENTS: dict[HookEventName, EventSpec] = {
     "work.done": EventSpec(60, _WORK_FIELDS),
     "notify.your_turn": EventSpec(30, _SPAWN_FIELDS),
     "notify.cache_expiring": EventSpec(30, _SPAWN_FIELDS),
+    "notify.needs_permission": EventSpec(30, _SPAWN_FIELDS),
     "notify.manual": EventSpec(30, _SPAWN_FIELDS),
 }
 

@@ -41,6 +41,7 @@ manually because it has no notification payload; use `meridian notify` instead.
 | `work.done` | 60s | `meridian work done`, or an update to `done`, archives a work item |
 | `notify.your_turn` | 30s | The idle service sends its scheduled "your turn" notification |
 | `notify.cache_expiring` | 30s | The idle service sends its scheduled prompt-cache warning |
+| `notify.needs_permission` | 30s | Claude reports a permission prompt that is still waiting |
 | `notify.manual` | 30s | `meridian notify` emits its notification |
 
 Every `notify.*` event carries a
@@ -218,7 +219,8 @@ spawn). Individual unknown fields inside a present block are `null`.
 `[notify]`. Options `channels` (default `["push", "email"]`, or backend names
 such as `ntfy`) and `priority` (1–5) pick where and how loud.
 
-**Default events:** `notify.your_turn`, `notify.cache_expiring`, `notify.manual`
+**Default events:** `notify.your_turn`, `notify.cache_expiring`,
+`notify.needs_permission`, `notify.manual`
 
 The `notify` builtin accepts only those notification events; configuring it on
 another event is a hook config error.
@@ -241,6 +243,9 @@ builtin = "notify"
 event   = "notify.your_turn"
 enabled = false
 ```
+
+Use the same row with `event = "notify.needs_permission"` to silence only
+Claude's still-waiting permission notice.
 
 A `command` hook on a notification event is an extra channel: it gets the
 `notification` object on stdin and `MERIDIAN_NOTIFICATION_TITLE`, `_BODY`, and
