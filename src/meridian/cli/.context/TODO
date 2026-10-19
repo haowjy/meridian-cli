@@ -1,0 +1,4 @@
+- Remove the deprecated `meridian spawn files` stub (`_spawn_files_deprecated` in
+  `spawn.py`) in the minor release after the one that deprecated it. It never
+  listed files; it stays one minor so scripts piping it to `xargs git add` keep
+  working while they're updated.

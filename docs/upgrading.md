@@ -706,8 +706,11 @@ not touched.
 
 ## Spawn file listing
 
-The spawn file-listing command was removed: no harness produced its manifest,
-so it always returned an empty result.
+`meridian spawn files` is deprecated: no harness produced its manifest, so it
+always returned an empty result. It still prints that empty result, with a
+warning on stderr, and becomes an error in the next minor release. Remove it
+from scripts, including `meridian spawn files <id> | xargs git add`; stage
+changes with `git add` directly.
 
 ## Behavior changes you'll notice
 
