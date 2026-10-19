@@ -28,7 +28,15 @@ policy, not a harness adapter: **adapters report facts; core decides**.
   wake before cache expiry drops the warning. The Claude mod forwards native
   background-task facts; Pi forwards tracked background managed-bash rows as
   shell facts when the full command fits its bound, or `other` otherwise.
-  Codex and OpenCode send none (#669).
+  The OpenCode 2.x sensor forwards the background shells and subagents its
+  primary's own tools started (the work OpenCode wakes the session for): shell
+  facts bounded the same way, and `agent`. Report only work that wakes the
+  session when it ends; reporting work that never does holds the push for
+  nothing. It stops reporting a subagent that waits on a permission prompt, and
+  arms again with another `turn_end` event when its facts change while the
+  primary is idle (the same stretch with a new anchor; a stage already sent
+  stays sent). Answering that prompt is a `user_prompt` first, so the stretch
+  closes and the re-arm opens a new one. Codex and OpenCode 1.x send none (#669).
 - `wake.py` skips Meridian's top-level value flags through
   `lib/cli_args.py` `TOP_LEVEL_VALUE_FLAGS`, the table `cli/bootstrap.py`
   also uses. A new top-level flag that takes a value goes there, or wake.py

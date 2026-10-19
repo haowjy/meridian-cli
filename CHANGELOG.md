@@ -42,6 +42,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hook config using old event names, `failure_policy`, or impossible `when` conditions keeps loading with one warning per row; run `meridian hooks check` and rename before the next minor release. `git-autosync` now also syncs on `work switch` and before a primary launch with work attached. See [Hook event names](docs/upgrading.md#hook-event-names). (#687)
 - State-version warnings and removed no-op version fields are described in [Compatibility policy and state version checks](docs/upgrading.md#compatibility-policy-and-state-version-checks).
 
+## [0.10.30] - 2026-10-19
+
+### Fixed
+- OpenCode 2.x primaries report the background work their agent started to idle policy. A background `shell` or `subagent` tool run that will wake the session now holds or delays the "your turn" push instead of the push racing the wake. A subagent waiting on a permission prompt is not counted, so the push still goes out while it waits for you; answering it counts as you being back, so a later prompt or the subagent's result pushes again. Shells you start yourself and manually created child sessions never wake it and are not reported. After the event stream reconnects, running work and the agent's own turn are re-checked against the server at once: the push re-arms if the work changed, and a turn end lost while the stream was down is reported instead of leaving the push held for good. Codex and OpenCode 1.x still report none. (#669)
+
 ## [0.10.29] - 2026-10-19
 
 ### Fixed
