@@ -54,10 +54,12 @@ The corresponding config transitions share the one-minor window:
 - `failure_policy` loads with a warning, has no effect, and will be rejected in
   the next minor release. Hook failures always log and continue.
 - `when.status = ["skipped"]` warns and drops `skipped`; any other status values
-  in the list continue to filter normally.
+  in the list continue to filter normally. If no status remains, the row is
+  skipped instead of widening to match every status.
 - A row that explicitly names an event but sets a condition that event cannot
   supply warns that it can never match and is skipped. In the next minor release
-  the same row becomes a config error.
+  the same row becomes a config error. Because the skipped row does not register,
+  it no longer shadows a lower-file row with the same name and event.
 
 For an unevented builtin row, Meridian enables only default events that can
 match its `when` conditions. Incompatible defaults remain as disabled

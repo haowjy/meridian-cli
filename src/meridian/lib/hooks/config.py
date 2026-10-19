@@ -93,11 +93,14 @@ def _hooks_from_payload(
 def _named_row_error(raw_row: object, exc: ValueError) -> str:
     """Lead with the row's own `name`, when it has one, so users find it."""
 
+    message = str(exc)
+    if message.startswith("hook "):
+        return message
     if isinstance(raw_row, Mapping):
         name = cast("Mapping[str, object]", raw_row).get("name")
         if isinstance(name, str) and name.strip():
-            return f"hook {name.strip()!r}: {exc}"
-    return str(exc)
+            return f"hook {name.strip()!r}: {message}"
+    return message
 
 
 def _apply_name_overrides(hooks: tuple[Hook, ...]) -> tuple[Hook, ...]:

@@ -10,7 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Deprecated
 - Old hook names `spawn.start`, `spawn.running`, `spawn.finalized`, `work.start`, `work.started`, `session.responded`, and `session.cache_expiring` load on their replacement for one minor release, warn once per row, and preserve the configured name in that row's payload. They will be rejected in the next minor release. See [upgrade note](docs/upgrading.md#hook-event-names). (#687)
-- Hook config `failure_policy` is ignored with a warning for one minor release. Explicitly evented rows with impossible `when` conditions warn and are skipped, and `when.status = ["skipped"]` warns and drops that value; all become config errors in the next minor release. (#687)
+- Hook config `failure_policy` is ignored with a warning for one minor release. Explicitly evented rows with impossible `when` conditions warn and are skipped, and `when.status = ["skipped"]` warns and drops that value without widening an emptied filter to match all; all become config errors in the next minor release. (#687)
 
 ### Removed
 - The unused `gate` hook event class and the impossible `"skipped"` Plugin API spawn status. (#687)

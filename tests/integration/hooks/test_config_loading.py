@@ -216,7 +216,21 @@ def test_deprecated_skipped_status_warns_and_drops_only_that_value(
         'event = "spawn.finished"\n'
         'command = "echo deprecated"\n'
         "[hooks.when]\n"
-        'status = ["success", "skipped"]\n',
+        'status = ["success", "skipped"]\n'
+        "\n"
+        "[[hooks]]\n"
+        'name = "only-old-spawn-status"\n'
+        'event = "spawn.finished"\n'
+        'command = "echo never"\n'
+        "[hooks.when]\n"
+        'status = ["skipped"]\n'
+        "\n"
+        "[[hooks]]\n"
+        'name = "only-old-work-status"\n'
+        'event = "work.done"\n'
+        'command = "echo never"\n'
+        "[hooks.when]\n"
+        'status = ["skipped"]\n',
         encoding="utf-8",
     )
 
@@ -224,12 +238,18 @@ def test_deprecated_skipped_status_warns_and_drops_only_that_value(
 
     hook = next(hook for hook in report.config.hooks if hook.name == "old-status")
     assert report.errors == ()
-    assert len(report.warnings) == 1
+    assert len(report.warnings) == 3
     assert '`when.status = ["skipped"]` is deprecated' in report.warnings[0]
     assert "has been dropped because it never matched" in report.warnings[0]
     assert hook.when is not None
     assert hook.when.status == ("success",)
     assert hook.deprecated is True
+    assert all(
+        hook.name not in {"only-old-spawn-status", "only-old-work-status"}
+        for hook in report.config.hooks
+    )
+    for warning in report.warnings[1:]:
+        assert "the row is skipped because it could never match" in warning
 
 
 @pytest.mark.parametrize(

@@ -42,6 +42,9 @@ layering and default overrides as a clean load. Hook inspection commands surface
 all row errors normally. Compatibility-window config is valid: the config report
 emits one warning per affected row, and registrations carry the deprecated
 configured event name separately from the canonical event used for lookup.
+Dropping a deprecated filter value never widens the row to match all: if no
+filter value remains, the row warns and does not register. Lifecycle dispatch
+logs config deprecations once per affected row and process.
 
 Override key is `(name, event)`. A higher-priority source row with the same key replaces the lower-priority row entirely. Use `meridian.local.toml` for machine-specific overrides without committing them.
 

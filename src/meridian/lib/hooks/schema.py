@@ -51,7 +51,6 @@ class HookConfigDeprecationWindow:
     newly_live_events: frozenset[str]
     ignored_fields: frozenset[str]
     removed_status_values: frozenset[str]
-    impossible_explicit_when: bool
 
 
 # Flip this table's mode to "error" in the next minor release. The metadata
@@ -70,7 +69,6 @@ NEXT_MINOR_HOOK_CONFIG_BREAKS = HookConfigDeprecationWindow(
     newly_live_events=frozenset(("spawn.start", "work.start")),
     ignored_fields=frozenset(("failure_policy",)),
     removed_status_values=frozenset(("skipped",)),
-    impossible_explicit_when=True,
 )
 
 
@@ -79,6 +77,7 @@ class _DeprecationIssue:
     source: str
     warning: str
     error: str
+    prevents_registration: bool = False
 
 
 @dataclass(frozen=True)
@@ -297,15 +296,25 @@ def _prepare_deprecated_row(
                     f'"{value}"'
                     for value in sorted(NEXT_MINOR_HOOK_CONFIG_BREAKS.removed_status_values)
                 )
+                emptied_filter = not retained_statuses
+                warning = (
+                    f"`when.status = [{removed}]` is deprecated and has been dropped "
+                    "because it never matched. It will be rejected in the next minor "
+                    "release."
+                )
+                if emptied_filter:
+                    # A compatibility drop must not widen a filter into match-all.
+                    warning = (
+                        f"`when.status = [{removed}]` is deprecated; the row is skipped "
+                        "because it could never match. It will be rejected in the next "
+                        "minor release."
+                    )
                 issues.append(
                     _DeprecationIssue(
                         source=f"{source}.when.status",
-                        warning=(
-                            f"`when.status = [{removed}]` is deprecated and has been dropped "
-                            "because it never matched. It will be rejected in the next minor "
-                            "release."
-                        ),
+                        warning=warning,
                         error=f"when.status values [{removed}] were removed",
+                        prevents_registration=emptied_filter,
                     )
                 )
         prepared["when"] = prepared_when
@@ -431,7 +440,9 @@ def _deprecation_warning(
         return None
     if NEXT_MINOR_HOOK_CONFIG_BREAKS.mode == "error":
         issue = issues[0]
-        raise ValueError(f"Invalid value for '{issue.source}': {issue.error}.")
+        raise ValueError(
+            f"hook {hook_name!r}: Invalid value for '{issue.source}': {issue.error}."
+        )
     return f"hook {hook_name!r}: " + " ".join(issue.warning for issue in issues)
 
 
@@ -485,21 +496,20 @@ def hooks_from_spec(
     enabled_events: frozenset[HookEventName]
     if spec.event is not None:
         events = (spec.event,)
-        if NEXT_MINOR_HOOK_CONFIG_BREAKS.impossible_explicit_when:
-            impossible = _impossible_when_issue(
-                when,
-                spec.event,
-                row_source=row_source,
+        impossible = _impossible_when_issue(
+            when,
+            spec.event,
+            row_source=row_source,
+        )
+        if impossible is not None:
+            deprecations.append(impossible)
+            return HookRowLoad(
+                hooks=(),
+                warning=_deprecation_warning(
+                    hook_name=name,
+                    issues=tuple(deprecations),
+                ),
             )
-            if impossible is not None:
-                deprecations.append(impossible)
-                return HookRowLoad(
-                    hooks=(),
-                    warning=_deprecation_warning(
-                        hook_name=name,
-                        issues=tuple(deprecations),
-                    ),
-                )
         enabled_events = frozenset(events)
     elif builtin is not None:
         events = builtin.default_events
@@ -523,6 +533,15 @@ def hooks_from_spec(
                 f"Invalid value for '{row_source}.event': builtin {builtin.name!r} supports only "
                 f"[{supported}], got {unsupported[0]!r}."
             )
+
+    if any(issue.prevents_registration for issue in deprecations):
+        return HookRowLoad(
+            hooks=(),
+            warning=_deprecation_warning(
+                hook_name=name,
+                issues=tuple(deprecations),
+            ),
+        )
 
     interval = spec.interval or (builtin.default_interval if builtin is not None else None)
 
