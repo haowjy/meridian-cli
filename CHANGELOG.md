@@ -7,6 +7,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - `meridian --continue <chat>` works after history archiving reclaims the chat's last spawn directory. Continue dry-runs now also refuse a live source or successor instead of promising a launch the real continue rejects. (#676)
 
+## [0.11.1] - 2026-10-19
+
 ### Changed
 - Per-spawn files live only in the spawn dir; runtime `artifacts/` store gone (legacy dirs still pruned). Runner start and guardrail failure text now lands in the spawn's `stderr.log`. (#677)
 
