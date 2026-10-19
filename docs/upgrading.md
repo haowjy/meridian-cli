@@ -110,11 +110,13 @@ What users may notice:
   short-lived and expected to be absent, and refusing one after a mid-session
   upgrade would disable idle handling; they keep absent-state behavior and now
   warn with the file path.
-- `meridian.plugin_api.__version__`, launch-policy snapshot `schema_version`, Pi
-  `pi_runtime_meta.json` `schema_version`, and the duplicate native-search SQLite
-  schema metadata are removed because no reader used them. Existing files that
-  contain these fields remain readable. The legacy native-import marker keeps
-  its `schema_version`: released repair readers still require it.
+- `meridian.plugin_api.__version__` is removed because the API is not installed
+  independently; callers that need a version should use Meridian's package
+  version. Launch-policy snapshot `schema_version`, Pi `pi_runtime_meta.json`
+  `schema_version`, and the duplicate native-search SQLite metadata are removed
+  because their released readers default or ignore them. Existing files that
+  contain these state fields remain readable. The legacy native-import marker
+  keeps its `schema_version`: released repair readers still require it.
 
 No state migration or manual index rebuild is required. The first indexed read
 builds the new input-versioned file automatically. Work status writers do not emit

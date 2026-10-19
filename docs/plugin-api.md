@@ -4,6 +4,8 @@
 It exposes only the symbols intended for external use.
 
 Install meridian-cli and import from this package directly — do not import from internal submodules.
+The plugin API has no independent version; use `meridian.__version__` when code
+needs the installed Meridian release version.
 
 ```python
 from meridian.plugin_api import Hook, HookContext, HookResult, HookOutcome, SpawnStatus
