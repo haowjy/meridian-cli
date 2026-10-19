@@ -34,6 +34,9 @@ class SpawnStatus(StrEnum):
     TIMED_OUT = "timed_out"
 
 
+type SpawnKind = Literal["child", "primary", "streaming"]
+
+
 _StatusT = TypeVar("_StatusT", bound=StrEnum)
 
 

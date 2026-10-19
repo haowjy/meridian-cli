@@ -48,11 +48,11 @@ def test_hooks_commands_follow_cwd_instead_of_inherited_project_root(
     cwd_project.mkdir()
     inherited_project.mkdir()
     (cwd_project / "meridian.toml").write_text(
-        '[[hooks]]\nname = "from-cwd"\nevent = "spawn.finalized"\ncommand = "true"\n',
+        '[[hooks]]\nname = "from-cwd"\nevent = "spawn.finished"\ncommand = "true"\n',
         encoding="utf-8",
     )
     (inherited_project / "meridian.toml").write_text(
-        '[[hooks]]\nname = "from-env"\nevent = "spawn.finalized"\ncommand = "true"\n',
+        '[[hooks]]\nname = "from-env"\nevent = "spawn.finished"\ncommand = "true"\n',
         encoding="utf-8",
     )
 
@@ -197,7 +197,7 @@ def test_hooks_run_creates_no_state_without_materialized_state(
     (meridian_home / "config.toml").write_text(
         "[[hooks]]\n"
         'name = "manual-test"\n'
-        'event = "spawn.finalized"\n'
+        'event = "spawn.finished"\n'
         'command = "true"\n',
         encoding="utf-8",
     )

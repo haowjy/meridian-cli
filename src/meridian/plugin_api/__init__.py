@@ -26,6 +26,7 @@ from meridian.plugin_api.types import (
     HookOutcome,
     HookResult,
     Notification,
+    SpawnKind,
 )
 
 __version__ = "3.0.0"
@@ -39,6 +40,7 @@ __all__ = [
     "HookOutcome",
     "HookResult",
     "Notification",
+    "SpawnKind",
     "__version__",
     "get_project_home",
     "get_user_home",

@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.domain import SpawnKind, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import (
     OptionalPersistedChatId,
@@ -16,7 +16,6 @@ from meridian.lib.core.types import (
 )
 
 LaunchMode = Literal["background", "foreground", "app"]
-SpawnKind = Literal["child", "primary", "streaming"]
 BACKGROUND_LAUNCH_MODE: LaunchMode = "background"
 FOREGROUND_LAUNCH_MODE: LaunchMode = "foreground"
 APP_LAUNCH_MODE: LaunchMode = "app"

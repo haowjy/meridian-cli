@@ -88,6 +88,10 @@ otherwise it is invisible to both surfaces.
 
 **Work item attachment is ops-layer responsibility.** `work_attachment.py:ensure_explicit_work_item()`
 handles `--work` resolution before the spawn row is created.
+`set_session_work_attachment()` is the sole production mutation path for a
+session's active work item; successful non-null attachments fire
+`work.activated` and matching telemetry. Primary launch injects this operation
+into the launch runner rather than letting `launch/` own hook policy.
 
 **Use `structlog.get_logger()`.** Never use stdlib `logging` in ops/ — the logging
 split matters for `capture_library_diagnostics()` at the launch boundary.

@@ -10,7 +10,7 @@ External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `
 
 ## What's Stable Here
 
-- `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `FailurePolicy`, `Notification`, `NOTIFICATION_EVENTS` — the hook contract types. Builtin implementations may set `HookResult.details` to JSON-serializable data and document where their keys surface. `lib/hooks` uses these exact classes, so the payload a hook sees is the one the dispatcher built.
+- `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `FailurePolicy`, `SpawnKind`, `Notification`, `NOTIFICATION_EVENTS` — the hook contract types. Builtin implementations may set `HookResult.details` to JSON-serializable data and document where their keys surface. `lib/hooks` uses these exact classes, so the payload a hook sees is the one the dispatcher built.
 - `state.py` — `get_project_home()`, `get_user_home()` — state root access
 - `fs.py` — `file_lock()`, `atomic_write_text()` — cross-platform locking and atomic
   replacement for plugins

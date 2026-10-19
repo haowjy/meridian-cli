@@ -94,9 +94,9 @@ def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:
 def test_generate_lifecycle_event_id_supports_non_spawn_events() -> None:
     expected = uuid.uuid5(
         uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
-        "meridian:event:w1:work.started:0",
+        "meridian:event:w1:work.activated:0",
     )
-    assert generate_lifecycle_event_id("w1", "work.started", 0) == expected
+    assert generate_lifecycle_event_id("w1", "work.activated", 0) == expected
 
 
 def test_failure_sentinel_write_failure_does_not_block_finalize(
@@ -179,7 +179,7 @@ def test_finalize_dispatches_hooks_after_terminal_state_is_persisted(tmp_path: P
 
     service.finalize(spawn_id, "succeeded", 0, origin="runner")
 
-    assert snapshot_hook.snapshots[-1] == ("spawn.finalized", "succeeded", "runner")
+    assert snapshot_hook.snapshots[-1] == ("spawn.finished", "succeeded", "runner")
 
 
 def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:

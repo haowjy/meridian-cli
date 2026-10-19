@@ -132,7 +132,7 @@ def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | N
 
 def _dispatch_work_hook_event(
     *,
-    event_name: Literal["work.started", "work.done"],
+    event_name: Literal["work.created", "work.done"],
     project_root: Path,
     runtime_root: Path,
     project_state_dir: Path,
@@ -431,18 +431,24 @@ def work_start_sync(
         chat_id=chat_id,
         new_target=item.name,
     )
-    set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
-    _dispatch_work_hook_event(
-        event_name="work.started",
+    if created:
+        _dispatch_work_hook_event(
+            event_name="work.created",
+            project_root=project_root,
+            runtime_root=runtime_state_root,
+            project_state_dir=project_state_dir,
+            work_id=item.name,
+        )
+        _emit_work_transition(
+            "work.created",
+            work_id=item.name,
+            data={"status": item.status},
+        )
+    set_session_work_attachment(
+        runtime_state_root,
         project_root=project_root,
-        runtime_root=runtime_state_root,
-        project_state_dir=project_state_dir,
+        chat_id=chat_id,
         work_id=item.name,
-    )
-    _emit_work_transition(
-        "work.started",
-        work_id=item.name,
-        data={"status": item.status, "created": created},
     )
     return WorkStartOutput(
         name=item.name,
@@ -610,7 +616,12 @@ def work_switch_sync(
         chat_id=chat_id,
         new_target=item.name,
     )
-    updated = set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
+    updated = set_session_work_attachment(
+        runtime_state_root,
+        project_root=roots.project_root,
+        chat_id=chat_id,
+        work_id=item.name,
+    )
     message = (
         f"Active work item: {item.name}"
         if updated
@@ -650,7 +661,12 @@ def work_rename_sync(
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
     current_work_id = session_store.get_session_active_work_id(runtime_state_root, chat_id)
     if current_work_id == old_name:
-        set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
+        set_session_work_attachment(
+            runtime_state_root,
+            project_root=roots.project_root,
+            chat_id=chat_id,
+            work_id=item.name,
+        )
 
     _emit_work_transition(
         "work.renamed",
@@ -670,10 +686,12 @@ def work_clear_sync(
     ctx: RuntimeContext | None = None,
 ) -> WorkClearOutput:
     warning = _work_warning(ctx)
-    runtime_root = resolve_roots(payload.project_root).runtime_root
+    roots = resolve_roots(payload.project_root)
+    runtime_root = roots.runtime_root
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
     updated = set_session_work_attachment(
         runtime_root,
+        project_root=roots.project_root,
         chat_id=chat_id,
         work_id=None,
     )

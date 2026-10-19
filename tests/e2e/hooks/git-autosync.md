@@ -38,7 +38,7 @@ from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 
 hook = BUILTIN_HOOKS.get("git-autosync")
 assert hook is not None
-assert hook.default_events == ("spawn.finalized", "work.started", "work.done")
+assert hook.default_events == ("spawn.finished", "work.activated", "work.done")
 assert hook.requirements == ("git",)
 print("PASS: git-autosync metadata is registered")
 PY

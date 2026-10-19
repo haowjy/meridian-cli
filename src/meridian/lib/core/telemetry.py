@@ -138,7 +138,7 @@ class StartupPhaseEmitter:
 class SpawnEventCounter:
     """Thread-safe monotonic counter per spawn.
 
-    Allocated at spawn.queued time and passed to StartupPhaseEmitter
+    Allocated at spawn.created time and passed to StartupPhaseEmitter
     so all event sources share one counter.
     """
 
@@ -190,8 +190,8 @@ def release_spawn_sequence(spawn_id: SpawnId | str) -> None:
 # Event names for core state transitions
 CORE_EVENTS = frozenset(
     {
-        "spawn.queued",
-        "spawn.running",
+        "spawn.created",
+        "spawn.started",
         "spawn.process_exited",
         "spawn.finalizing",
         *(f"spawn.{status}" for status in TERMINAL_SPAWN_STATUSES),

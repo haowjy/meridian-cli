@@ -23,7 +23,8 @@ print(api.__version__)  # "3.0.0"
 | `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name |
 | `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `details` |
 | `HookOutcome` | `"success"` \| `"failure"` \| `"timeout"` \| `"skipped"` |
-| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.running`, `spawn.finalized`, `work.started`, `work.done`, `session.responded`, `session.cache_expiring`, `notify.manual` |
+| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, `notify.manual` |
+| `SpawnKind` | Spawn kind literal — `"child"` \| `"primary"` \| `"streaming"` |
 | `NOTIFICATION_EVENTS` | The three notification events, which carry `HookContext.notification` |
 | `Notification` | One notice — `title`, `body`, `priority` (1–5), `email`, `label` (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), `attachments` (absolute file paths) |
 | `FailurePolicy` | `"fail"` \| `"warn"` \| `"ignore"` |
@@ -44,19 +45,20 @@ arbitrary `details`.
 | `timestamp` | `str` (ISO 8601) | all events |
 | `project_root` | `str` | all events |
 | `runtime_root` | `str \| None` | all events; `None` in a directory with no Meridian runtime state |
-| `schema_version` | `int` (currently `2`) | all events |
-| `spawn_id` | `str \| None` | spawn events |
-| `spawn_status` | `str \| None` | `spawn.finalized` |
-| `spawn_agent` | `str \| None` | spawn events |
+| `schema_version` | `int` (currently `3`) | all events |
+| `spawn_id` | `str \| None` | spawn events; notification events when the notifying spawn is known |
+| `spawn_status` | `str \| None` | `spawn.finished` |
+| `spawn_agent` | `str \| None` | spawn events; notification events when known |
+| `spawn_kind` | `SpawnKind \| None` | spawn events; notification events when the notifying spawn is known |
 | `spawn_model` | `str \| None` | spawn events |
-| `spawn_duration_secs` | `float \| None` | `spawn.finalized` |
-| `spawn_cost_usd` | `float \| None` | `spawn.finalized` |
-| `spawn_error` | `str \| None` | `spawn.finalized` (on failure) |
+| `spawn_duration_secs` | `float \| None` | `spawn.finished` |
+| `spawn_cost_usd` | `float \| None` | `spawn.finished` |
+| `spawn_error` | `str \| None` | `spawn.finished` (on failure) |
 | `work_id` | `str \| None` | work events |
 | `work_dir` | `str \| None` | work events |
 | `notification` | `Notification \| None` | notification events |
 
-`HookContext.to_env()` returns a `dict[str, str]` of `MERIDIAN_HOOK_*` and related environment variables (notification events add `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`, `MERIDIAN_NOTIFICATION_PRIORITY`). Shell-command hooks receive these automatically. `HookContext.to_json()` returns the context as a JSON string (passed via stdin for stdin-transport hooks).
+`HookContext.to_env()` returns a `dict[str, str]` of `MERIDIAN_HOOK_*` and related environment variables, including `MERIDIAN_SPAWN_KIND` when known (notification events add `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`, `MERIDIAN_NOTIFICATION_PRIORITY`). Shell-command hooks receive these automatically. `HookContext.to_json()` returns the context as a JSON string (passed via stdin for stdin-transport hooks).
 
 ## State Helpers
 
@@ -117,7 +119,7 @@ A minimal custom hook registered via `command`:
 [[hooks]]
 name    = "spawn-done-alert"
 command = "notify-send 'spawn done'"
-event   = "spawn.finalized"
+event   = "spawn.finished"
 ```
 
 **Shell behavior:** The `command` string is passed to `sh -c`. For non-trivial

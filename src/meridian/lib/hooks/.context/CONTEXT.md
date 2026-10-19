@@ -10,7 +10,7 @@ HookDispatcher.fire(context: HookContext)
               layered: default < user < project < local
               override key: (name, event)
   └── for each Hook (ordered by source rank, priority, declaration order):
-        _check_conditions(hook, context)     when.status / when.agent filters
+        _check_conditions(hook, context)     when.status / when.agent / when.kind filters
         IntervalTracker.run_if_due(name, interval)   throttle check
         _run_builtin(hook, context)          OR
         ExternalHookRunner.run(hook, context, timeout_secs=...)
@@ -45,15 +45,14 @@ Override key is `(name, event)`. A higher-priority source row with the same key 
 
 ## Event Classes and Failure Behavior
 
-`EVENT_CLASS` maps each event to one of three classes:
+`EVENT_CLASS` maps each event to one of two classes:
 
 | Class | Events | Default failure policy | Fail-open? |
 |-------|--------|----------------------|-----------|
-| `observe` | `spawn.created`, `spawn.running`, `work.started`, `session.responded`, `session.cache_expiring`, `notify.manual` | `warn` | Yes |
-| `post` | `spawn.finalized`, `work.done` | `warn` | Yes |
-| `gate` | (none currently registered) | `fail` | No |
+| `observe` | `spawn.created`, `spawn.started`, `work.created`, `work.activated`, `notify.your_turn`, `notify.cache_expiring`, `notify.manual` | `warn` | Yes |
+| `post` | `spawn.finished`, `work.done` | `warn` | Yes |
 
-`gate` class hooks stop the dispatch loop on failure. `observe` and `post` hooks are always fail-open: a hook failure logs a warning but does not stop subsequent hooks or the lifecycle event. Individual hooks can override with `failure_policy = "fail"`.
+Both classes are fail-open: a hook failure logs a warning but does not stop subsequent hooks or the lifecycle event.
 
 ## Plugin API Boundary
 
@@ -70,11 +69,11 @@ Within an event, hooks are sorted by:
 
 ## `HookWhen` Conditions
 
-`when.status` filters by spawn terminal status (e.g., only fire on `success`). `when.agent` filters by agent profile name. Both are optional; if absent, the hook fires unconditionally for that event. Conditions are checked before interval throttling.
+`when.status` filters `spawn.finished` by terminal status. `when.agent` filters by agent profile name, and `when.kind` filters by the shared `SpawnKind` (`child`, `primary`, `streaming`). Work events reject agent/kind conditions because they carry neither. Conditions are checked before interval throttling.
 
 ## Context Transport
 
-`HookContext.to_env()` emits `MERIDIAN_HOOK_*`, `MERIDIAN_SPAWN_*`, `MERIDIAN_ACTIVE_WORK_*` env vars. `None` values are omitted (no empty string env vars). External hooks receive both env vars and JSON on stdin — the JSON schema includes a `schema_version` field (`HOOK_CONTEXT_SCHEMA_VERSION = 2`) for forward compatibility. Version 2 added the `notification` object (and `MERIDIAN_NOTIFICATION_TITLE/BODY/PRIORITY`) and made `runtime_root` nullable.
+`HookContext.to_env()` emits `MERIDIAN_HOOK_*`, `MERIDIAN_SPAWN_*`, `MERIDIAN_ACTIVE_WORK_*` env vars. `None` values are omitted (no empty string env vars). External hooks receive both env vars and JSON on stdin — the JSON schema includes a `schema_version` field (`HOOK_CONTEXT_SCHEMA_VERSION = 3`) for forward compatibility. Version 3 renamed lifecycle events and added `spawn.kind` / `MERIDIAN_SPAWN_KIND`; version 2 added the `notification` object and made `runtime_root` nullable.
 
 ## `__init__.py` Lazy Loading
 

@@ -131,10 +131,9 @@ class GitAutosync:
     name: str = "git-autosync"
     requirements: tuple[str, ...] = ("git",)
 
-    # Not `spawn.running`: a sync there would delay every spawn start.
     default_events: tuple[HookEventName, ...] = (
-        "spawn.finalized",
-        "work.started",
+        "spawn.finished",
+        "work.activated",
         "work.done",
     )
     supported_events: tuple[HookEventName, ...] | None = None
@@ -1066,7 +1065,7 @@ class GitAutosync:
 
                     conflict_id = generate_conflict_id()
                     context_name = Path(clone_path).name
-                    event_name = context.event_name if context is not None else "spawn.finalized"
+                    event_name = context.event_name if context is not None else "spawn.finished"
                     spawn_id = context.spawn_id if context is not None else None
 
                     record = ConflictRecord(

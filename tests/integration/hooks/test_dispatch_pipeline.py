@@ -40,7 +40,7 @@ class RecordingExternalRunner:
 class RecordingBuiltin:
     name = "recording"
     requirements = ("git",)
-    default_events = ("spawn.finalized",)
+    default_events = ("spawn.finished",)
     default_interval = None
 
     def __init__(self) -> None:
@@ -62,7 +62,7 @@ class RecordingBuiltin:
         )
 
 
-def _context(event_name: HookEventName = "spawn.finalized") -> HookContext:
+def _context(event_name: HookEventName = "spawn.finished") -> HookContext:
     return HookContext(
         event_name=event_name,
         event_id=uuid4(),
@@ -78,7 +78,7 @@ def _context(event_name: HookEventName = "spawn.finalized") -> HookContext:
 def _result(name: str, *, outcome: HookOutcome = "success") -> HookResult:
     return HookResult(
         hook_name=name,
-        event="spawn.finalized",
+        event="spawn.finished",
         outcome=outcome,
         success=outcome == "success",
         error=None if outcome == "success" else "hook failed",
@@ -101,21 +101,21 @@ def test_dispatch_pipeline_uses_registry_ordering(tmp_path: Path) -> None:
         hooks=(
             Hook(
                 name="local-low",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="local",
                 command="./local-low.sh",
                 priority=0,
             ),
             Hook(
                 name="project-mid",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command="./project-mid.sh",
                 priority=1,
             ),
             Hook(
                 name="user-high",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="user",
                 command="./user-high.sh",
                 priority=10,
@@ -149,21 +149,21 @@ def test_dispatch_pipeline_isolates_failures_and_continues_post_event(tmp_path: 
         hooks=(
             Hook(
                 name="first",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command="./first.sh",
                 priority=10,
             ),
             Hook(
                 name="second",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command="./second.sh",
                 priority=5,
             ),
             Hook(
                 name="third",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command="./third.sh",
                 priority=0,
@@ -197,7 +197,7 @@ def test_dispatch_pipeline_executes_builtin_hook_in_process(tmp_path: Path) -> N
         hooks=(
             Hook(
                 name="builtin-recorder",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=None,
                 builtin="recording",
@@ -216,7 +216,7 @@ def test_dispatch_pipeline_executes_builtin_hook_in_process(tmp_path: Path) -> N
 
     results = dispatcher.fire(_context())
 
-    assert builtin.calls == [("builtin-recorder", "spawn.finalized")]
+    assert builtin.calls == [("builtin-recorder", "spawn.finished")]
     assert len(results) == 1
     assert results[0].outcome == "success"
     assert results[0].stdout == "builtin-ok"
@@ -242,7 +242,7 @@ def test_dispatch_pipeline_persists_interval_state_across_runs(tmp_path: Path) -
         hooks=(
             Hook(
                 name="../../throttled recorder",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_python_command(script, str(marker)),
                 interval="1h",
@@ -281,7 +281,7 @@ def test_dispatch_pipeline_does_not_throttle_after_failed_interval_hook(
     runtime_root = tmp_path / "state"
     hook = Hook(
         name="retry-after-failure",
-        event="spawn.finalized",
+        event="spawn.finished",
         source="project",
         command="./fails.sh",
         interval="1h",
@@ -341,7 +341,7 @@ def test_dispatch_pipeline_times_out_then_continues_to_later_hooks(tmp_path: Pat
         hooks=(
             Hook(
                 name="slow-first",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_exec_python_command(hanging_script, str(term_marker)),
                 timeout_secs=1,
@@ -349,7 +349,7 @@ def test_dispatch_pipeline_times_out_then_continues_to_later_hooks(tmp_path: Pat
             ),
             Hook(
                 name="fast-second",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_python_command(success_script, str(success_marker)),
                 priority=0,
@@ -393,14 +393,14 @@ def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
         hooks=(
             Hook(
                 name="fails-first",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_python_command(fail_script),
                 priority=10,
             ),
             Hook(
                 name="runs-after-failure",
-                event="spawn.finalized",
+                event="spawn.finished",
                 source="project",
                 command=_python_command(success_script, str(success_marker)),
                 priority=0,
@@ -437,11 +437,11 @@ def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
     )
 
     assert failure_log["hook"] == "fails-first"
-    assert failure_log["hook_event"] == "spawn.finalized"
+    assert failure_log["hook_event"] == "spawn.finished"
     assert failure_log["error"] == "Exited with code 7."
     assert failure_log["fail_open"] is True
     assert "error_type" in failure_log
     assert success_log["hook"] == "runs-after-failure"
-    assert success_log["hook_event"] == "spawn.finalized"
+    assert success_log["hook_event"] == "spawn.finished"
     assert isinstance(success_log["duration_ms"], int)
     assert "exit_code" in success_log

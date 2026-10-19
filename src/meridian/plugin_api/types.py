@@ -10,28 +10,31 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
+from meridian.lib.core.domain import SpawnKind
+
 HookEventName = Literal[
     "spawn.created",
-    "spawn.running",
-    "spawn.finalized",
-    "work.started",
+    "spawn.started",
+    "spawn.finished",
+    "work.created",
+    "work.activated",
     "work.done",
-    "session.responded",
-    "session.cache_expiring",
+    "notify.your_turn",
+    "notify.cache_expiring",
     "notify.manual",
 ]
 
 # Events that carry a `HookContext.notification`.
 NOTIFICATION_EVENTS: tuple[HookEventName, ...] = (
-    "session.responded",
-    "session.cache_expiring",
+    "notify.your_turn",
+    "notify.cache_expiring",
     "notify.manual",
 )
-HOOK_CONTEXT_SCHEMA_VERSION = 2
+HOOK_CONTEXT_SCHEMA_VERSION = 3
 
 HookOutcome = Literal["success", "failure", "timeout", "skipped"]
 FailurePolicy = Literal["fail", "warn", "ignore"]
-SpawnStatus = Literal["success", "failure", "cancelled", "timeout", "skipped"]
+SpawnStatus = Literal["success", "failure", "cancelled", "timeout"]
 
 
 def _default_options() -> dict[str, object]:
@@ -112,6 +115,7 @@ class HookContext:
     spawn_id: str | None = None
     spawn_status: SpawnStatus | None = None
     spawn_agent: str | None = None
+    spawn_kind: SpawnKind | None = None
     spawn_model: str | None = None
     spawn_duration_secs: float | None = None
     spawn_cost_usd: float | None = None
@@ -134,6 +138,7 @@ class HookContext:
         spawn_id: str | None = None,
         spawn_status: SpawnStatus | None = None,
         spawn_agent: str | None = None,
+        spawn_kind: SpawnKind | None = None,
         spawn_model: str | None = None,
         spawn_duration_secs: float | None = None,
         spawn_cost_usd: float | None = None,
@@ -151,6 +156,7 @@ class HookContext:
             spawn_id=spawn_id,
             spawn_status=spawn_status,
             spawn_agent=spawn_agent,
+            spawn_kind=spawn_kind,
             spawn_model=spawn_model,
             spawn_duration_secs=spawn_duration_secs,
             spawn_cost_usd=spawn_cost_usd,
@@ -171,6 +177,7 @@ class HookContext:
         spawn_id: str | None = None,
         spawn_status: SpawnStatus | None = None,
         spawn_agent: str | None = None,
+        spawn_kind: SpawnKind | None = None,
         spawn_model: str | None = None,
         spawn_duration_secs: float | None = None,
         spawn_cost_usd: float | None = None,
@@ -191,6 +198,7 @@ class HookContext:
             spawn_id=spawn_id,
             spawn_status=spawn_status,
             spawn_agent=spawn_agent,
+            spawn_kind=spawn_kind,
             spawn_model=spawn_model,
             spawn_duration_secs=spawn_duration_secs,
             spawn_cost_usd=spawn_cost_usd,
@@ -213,6 +221,7 @@ class HookContext:
             "spawn_id": self.spawn_id,
             "spawn_status": self.spawn_status,
             "spawn_agent": self.spawn_agent,
+            "spawn_kind": self.spawn_kind,
             "spawn_model": self.spawn_model,
             "spawn_duration_secs": (
                 None if self.spawn_duration_secs is None else str(self.spawn_duration_secs)
@@ -249,6 +258,7 @@ class HookContext:
                 "id": self.spawn_id,
                 "status": self.spawn_status,
                 "agent": self.spawn_agent,
+                "kind": self.spawn_kind,
                 "model": self.spawn_model,
                 "duration_secs": self.spawn_duration_secs,
                 "cost_usd": self.spawn_cost_usd,
@@ -301,5 +311,6 @@ __all__ = [
     "HookOutcome",
     "HookResult",
     "Notification",
+    "SpawnKind",
     "SpawnStatus",
 ]

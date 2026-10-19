@@ -220,6 +220,7 @@ class HookResolveItem(BaseModel):
     interval: str | None = None
     when_status: tuple[str, ...] | None = None
     when_agent: str | None = None
+    when_kind: tuple[str, ...] | None = None
 
 
 class HookResolveOutput(BaseModel):
@@ -242,6 +243,8 @@ class HookResolveOutput(BaseModel):
                 when_parts.append("status=" + ",".join(item.when_status))
             if item.when_agent:
                 when_parts.append(f"agent={item.when_agent}")
+            if item.when_kind:
+                when_parts.append("kind=" + ",".join(item.when_kind))
             rows.append(
                 [
                     item.name,
@@ -362,6 +365,7 @@ def _manual_context(
     when = hook.when
     spawn_status = when.status[0] if when and when.status else "success"
     spawn_agent = when.agent if when and when.agent else "manual"
+    spawn_kind = when.kind[0] if when and when.kind else "child"
 
     base = HookContext(
         event_name=event,
@@ -372,6 +376,7 @@ def _manual_context(
         spawn_id="manual",
         spawn_status=spawn_status,
         spawn_agent=spawn_agent,
+        spawn_kind=spawn_kind,
         spawn_model="manual",
     )
 
@@ -500,6 +505,7 @@ def hooks_resolve_sync(payload: HookResolveInput) -> HookResolveOutput:
             interval=hook.interval,
             when_status=tuple(hook.when.status) if hook.when and hook.when.status else None,
             when_agent=hook.when.agent if hook.when else None,
+            when_kind=tuple(hook.when.kind) if hook.when and hook.when.kind else None,
         )
         for hook in registry.get_hooks_for_event(payload.event)
     )

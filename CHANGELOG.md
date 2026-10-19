@@ -4,14 +4,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Hook events `work.created` for new work items and `work.activated` for successful session attachments, including `work switch` and launch-time work attachment. (#687)
+- Hook `when.kind` filtering with the shared `child` / `primary` / `streaming` `SpawnKind`; `HookContext.spawn_kind`, `spawn.kind` in JSON, and `MERIDIAN_SPAWN_KIND` expose it to plugins and command hooks. (#687)
+
 ### Removed
-- Dead hook event names `spawn.start` and `work.start`; config rows using them are rejected at load and point to `spawn.running` and `work.started`. See [upgrade note](docs/upgrading.md#hook-start-event-names). (#687)
+- Old hook names `spawn.start`, `spawn.running`, `spawn.finalized`, `work.start`, `work.started`, `session.responded`, and `session.cache_expiring`; config rows are rejected at load with their replacements. See [upgrade note](docs/upgrading.md#hook-event-names). (#687)
+- The unused `gate` hook event class and the impossible `when.status = ["skipped"]` spawn outcome. (#687)
 
 ### Changed
-- Plugin API 3.0.0 removes `spawn.start` and `work.start` from `HookEventName`. (#687)
-- `git-autosync` default events: dead `spawn.start` dropped (not moved to `spawn.running`); sync timing unchanged. (#687)
+- Hook events are `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, and `notify.manual`; the `notify.*` prefix identifies notification-bearing events. Matching telemetry moments use the same names. (#687)
+- Plugin API 3.0.0 carries the event contract changes; command hook context schema version 3 adds spawn kind. (#687)
+- `git-autosync` defaults are `spawn.finished`, `work.activated`, and `work.done`, so it also syncs after `work switch`. (#687)
+- Hook config rejects conditions an event cannot supply: `when.status` outside `spawn.finished`, and `when.agent` / `when.kind` on work events. (#687)
 
 ### Fixed
+- `spawn.started` now fires once for spawns persisted initially as `running`, including streaming-serve spawns. (#687)
 - Hook `when.status = ["timeout"]` now matches timed-out spawns (`timed_out` was mapped to nothing, so timeout filters never fired).
 
 ## [0.10.28] - 2026-10-18

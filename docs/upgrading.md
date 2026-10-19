@@ -1,22 +1,42 @@
 # Upgrade notes
 
-## Hook start event names
+## Hook event names
 
-The hook events `spawn.start` and `work.start` never had producers and are no
-longer accepted. Replace them with `spawn.running` and `work.started`,
-respectively. Hook config containing either removed name now fails to load and
-names its replacement. The `git-autosync` builtin drops `spawn.start` from its
-default events instead of moving to `spawn.running`; it syncs when spawns
-finish and work items start or finish, as it already did.
+Hook event names now identify the persisted moment when they fire. Replace old
+names as follows; config containing one of them fails to load and names its
+replacement.
 
-Plugin API 3.0.0 removes the two dead literals from `HookEventName`. No state
-migration is needed; update hook configuration and plugin type assumptions
-before upgrading.
+| Old | New |
+| --- | --- |
+| `spawn.start` | `spawn.started` |
+| `spawn.running` | `spawn.started` |
+| `spawn.finalized` | `spawn.finished` |
+| `work.start` | `work.activated` |
+| `work.started` | `work.activated` |
+| `session.responded` | `notify.your_turn` |
+| `session.cache_expiring` | `notify.cache_expiring` |
+
+`work.created` is a separate new event that fires only when `work start`
+creates an item. `work.activated` fires when a session attaches to an item,
+including successful `work switch` and launch-time work attachment. The
+`git-autosync` defaults are now `spawn.finished`, `work.activated`, and
+`work.done`, so switching work items also triggers a sync.
+
+Plugin API 3.0.0 carries the renamed event literal, removes the impossible
+`when.status = ["skipped"]` value, exposes `SpawnKind`, and adds
+`HookContext.spawn_kind`. Command hook payload schema version 3 adds
+`spawn.kind` and `MERIDIAN_SPAWN_KIND`. The new `when.kind` list accepts
+`child`, `primary`, and `streaming`. Config loading rejects `when.status`
+outside `spawn.finished`, and rejects `when.agent` or `when.kind` on work
+events because those rows could never match.
+
+No state migration is needed; update hook configuration and plugin type
+assumptions before upgrading.
 
 ## Notifications are hook events
 
-Idle pushes, cache warnings and `meridian notify` now fire the hook events
-`session.responded`, `session.cache_expiring` and `notify.manual`. A built-in
+Idle pushes, cache warnings and `meridian notify` fire the hook events
+`notify.your_turn`, `notify.cache_expiring` and `notify.manual`. A built-in
 `notify` hook delivers them through the `[notify]` backends, so routing,
 silencing and extra channels are `[[hooks]]` rows; see
 [Routing and extending notifications](configuration.md#routing-and-extending-notifications).

@@ -57,7 +57,7 @@ def _hooks_run(
         HookEventName | None,
         Parameter(
             name="--event",
-            help="Optional event context to simulate (for example: spawn.finalized).",
+            help="Optional event context to simulate (for example: spawn.finished).",
         ),
     ] = None,
     verbose: Annotated[

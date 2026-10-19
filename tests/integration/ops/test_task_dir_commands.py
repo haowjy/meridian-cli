@@ -264,6 +264,7 @@ def test_work_task_dir_ignores_spawn_scope_and_inherited_env(
     )
     set_session_work_attachment(
         runtime.authority.runtime_root,
+        project_root=runtime.project_root,
         chat_id="chat-work",
         work_id=item.name,
     )

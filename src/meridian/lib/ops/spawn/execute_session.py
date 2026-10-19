@@ -11,8 +11,8 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SessionRequest, SpawnRequest, is_exact_continue_session
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
-from meridian.lib.state.session_store import update_session_work_id
 
+from ..work_attachment import set_session_work_attachment
 from .execute_init import LaunchUserInputError
 
 
@@ -74,6 +74,7 @@ def _resolve_session_continuation(
 def _session_execution_context(
     *,
     runtime_root: Path,
+    project_root: Path,
     metadata: PrimarySessionMetadata,
     request: SessionRequest,
     run_agent_name: str | None,
@@ -98,7 +99,12 @@ def _session_execution_context(
         if attached_work_id is None:
             attached_work_id = (inherited_work_id or "").strip() or None
             if attached_work_id is not None:
-                update_session_work_id(runtime_root, managed.chat_id, attached_work_id)
+                set_session_work_attachment(
+                    runtime_root,
+                    project_root=project_root,
+                    chat_id=managed.chat_id,
+                    work_id=attached_work_id,
+                )
         yield _SessionExecutionContext(
             chat_id=managed.chat_id,
             work_id=attached_work_id,

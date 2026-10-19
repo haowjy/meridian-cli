@@ -34,15 +34,16 @@ manually because it has no notification payload; use `meridian notify` instead.
 | Event | Class | Fires when |
 | ----- | ----- | ---------- |
 | `spawn.created` | observe | A persisted spawn is announced to lifecycle observers |
-| `spawn.running` | observe | A spawn's persisted lifecycle state changes to `running` |
-| `spawn.finalized` | post | A terminal spawn state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted |
-| `work.started` | observe | `meridian work start` creates, reopens, or attaches to a work item |
+| `spawn.started` | observe | A spawn enters `running`, including when its initial persisted state is already `running` |
+| `spawn.finished` | post | A terminal spawn state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted |
+| `work.created` | observe | `meridian work start` creates a new work item |
+| `work.activated` | observe | A session is attached to a work item by `work start`, `work switch`, launch-time `--work`, or inherited spawn work |
 | `work.done` | post | `meridian work done`, or an update to `done`, archives a work item |
-| `session.responded` | observe | The idle service sends its scheduled "your turn" notification |
-| `session.cache_expiring` | observe | The idle service sends its scheduled prompt-cache warning |
+| `notify.your_turn` | observe | The idle service sends its scheduled "your turn" notification |
+| `notify.cache_expiring` | observe | The idle service sends its scheduled prompt-cache warning |
 | `notify.manual` | observe | `meridian notify` emits its notification |
 
-The last three are notification events: their context carries a
+Every `notify.*` event carries a
 `notification` (title, body, priority, email, session label, attachment paths). Meridian routes
 each one to the built-in `notify` hook unless config routes it; see
 [Builtin: `notify`](#builtin-notify).
@@ -66,7 +67,7 @@ remote  = "git@github.com:team/docs.git"
 [[hooks]]
 name    = "run-tests"
 command = "make test"
-event   = "spawn.finalized"
+event   = "spawn.finished"
 ```
 
 ### Hook Schema
@@ -84,8 +85,9 @@ event   = "spawn.finalized"
 | `timeout_secs` | int | no | builtin default | Max seconds before hook is killed |
 | `interval` | str | no | builtin default | Minimum time between runs, e.g. `30s`, `5m`, `2h` |
 | `require_serial` | bool | no | `false` | Block concurrent hook executions |
-| `when.status` | array[str] | no | — | Only fire when the spawn ends with one of these: `success`, `failure`, `cancelled`, `timeout` (`succeeded`, `failed`, `cancelled`, `timed_out`), or `skipped` |
+| `when.status` | array[str] | no | — | On `spawn.finished`, fire only for these outcomes: `success`, `failure`, `cancelled`, `timeout` (`succeeded`, `failed`, `cancelled`, `timed_out`) |
 | `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
+| `when.kind` | array[str] | no | — | Only fire for these spawn kinds: `child`, `primary`, `streaming` (for notification events, the notifying spawn's kind when known) |
 | `exclude` | array[str] | no | — | `git-autosync` file path patterns to leave out of commits and stash around merges |
 | `options.remote` | str | no | — | Git remote URL for `git-autosync` to clone and sync |
 | `options.path` | str | no | — | Local repository for `git-autosync` to initialize and commit without remote sync |
@@ -94,6 +96,11 @@ event   = "spawn.finalized"
 | `options.priority` | int | no | notice's | `notify` only: 1–5 priority override |
 
 `command` and `builtin` are mutually exclusive.
+
+Conditions that an event can never supply are rejected when config loads:
+`when.status` is limited to `spawn.finished`, and work events cannot use
+`when.agent` or `when.kind`. A runtime context that lacks or does not match a
+configured condition skips the hook.
 
 If you omit `name` for a builtin hook, Meridian names it from the options that
 pick its target: `git-autosync` rows from `remote` or `path`, so rows for
@@ -110,12 +117,12 @@ use a script file instead of embedding it in TOML:
 [[hooks]]
 name    = "check"
 command = "./scripts/check.sh"
-event   = "spawn.finalized"
+event   = "spawn.finished"
 ```
 
 Inline commands are fine when they remain short and readable.
 
-Command hooks receive the event context as JSON on stdin (`schema_version` 2)
+Command hooks receive the event context as JSON on stdin (`schema_version` 3)
 and as `MERIDIAN_HOOK_*` and related environment variables. Hooks run even in a
 directory with no Meridian runtime state; only `interval`-throttled hooks skip
 there. `MERIDIAN_HOOKS_ENABLED=false` turns off all hook dispatch, including
@@ -127,7 +134,7 @@ notification delivery.
 `[notify]`. Options `channels` (default `["push", "email"]`, or backend names
 such as `ntfy`) and `priority` (1–5) pick where and how loud.
 
-**Default events:** `session.responded`, `session.cache_expiring`, `notify.manual`
+**Default events:** `notify.your_turn`, `notify.cache_expiring`, `notify.manual`
 
 The `notify` builtin accepts only those notification events; configuring it on
 another event is a hook config error.
@@ -147,7 +154,7 @@ default instead.
 # Silence the "your turn" push
 [[hooks]]
 builtin = "notify"
-event   = "session.responded"
+event   = "notify.your_turn"
 enabled = false
 ```
 
@@ -197,7 +204,10 @@ conflict_policy = "leave"
 `options.path` selects local commit-only mode. `options.remote` overrides the
 top-level shorthand, and remote mode wins when a path is also present.
 
-**Default events:** `spawn.finalized`, `work.started`, `work.done`
+**Default events:** `spawn.finished`, `work.activated`, `work.done`
+
+Because `work.activated` is an attachment event, the default also syncs after
+`meridian work switch` successfully updates a session.
 
 ```toml
 [[hooks]]

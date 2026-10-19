@@ -42,7 +42,7 @@ def test_interval_hook_executes_once_when_two_processes_observe_it_due(
         "from meridian.lib.hooks.types import Hook, HookContext\n"
         "project_root, runtime_root, ready_dir, start_file, hook_script, runs_dir = "
         "map(Path, sys.argv[1:])\n"
-        "hook = Hook(name='shared-hook', event='spawn.finalized', source='project', "
+        "hook = Hook(name='shared-hook', event='spawn.finished', source='project', "
         "command=subprocess.list2cmdline([sys.executable, str(hook_script), str(runs_dir)]), "
         "interval='1h')\n"
         "registry = HookRegistry(project_root, hooks_config=HooksConfig(hooks=(hook,)))\n"
@@ -52,7 +52,7 @@ def test_interval_hook_executes_once_when_two_processes_observe_it_due(
         "    if time.monotonic() >= deadline:\n"
         "        raise TimeoutError('parent did not release workers')\n"
         "    time.sleep(0.01)\n"
-        "context = HookContext(event_name='spawn.finalized', event_id=uuid4(), "
+        "context = HookContext(event_name='spawn.finished', event_id=uuid4(), "
         "timestamp='2026-04-20T00:00:00+00:00', project_root=str(project_root), "
         "runtime_root=str(runtime_root), spawn_id='p1', spawn_status='success')\n"
         "HookDispatcher(project_root, runtime_root, registry=registry).fire(context)\n",

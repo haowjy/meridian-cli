@@ -147,6 +147,7 @@ async def _prepare_execution_handoff(
         session_context = local_stack.enter_context(
             _session_execution_context(
                 runtime_root=runtime_root,
+                project_root=project_paths.project_root,
                 metadata=session_metadata,
                 request=resolved_session,
                 run_agent_name=resolved_agent_name,

@@ -358,6 +358,9 @@ class HookDispatcher(LifecycleHook):
         if when.status and context.spawn_status not in when.status:
             return False
 
+        if when.kind and context.spawn_kind not in when.kind:
+            return False
+
         return not when.agent or context.spawn_agent == when.agent
 
     def _resolve_failure_policy(self, hook: Hook) -> FailurePolicy:
@@ -367,9 +370,8 @@ class HookDispatcher(LifecycleHook):
         return DEFAULT_FAILURE_POLICY[event_class]
 
     def _is_fail_open(self, event_class: HookEventClass, policy: FailurePolicy) -> bool:
-        if event_class in ("observe", "post"):
-            return True
-        return policy != "fail"
+        _ = event_class, policy
+        return True
 
     def _build_context(self, event: LifecycleEvent) -> HookContext:
         authority = self._authority
@@ -382,6 +384,7 @@ class HookDispatcher(LifecycleHook):
                 spawn_id=event.spawn_id,
                 spawn_status=_normalize_spawn_status(event.status),
                 spawn_agent=event.agent,
+                spawn_kind=event.kind,
                 spawn_model=event.model,
                 spawn_duration_secs=event.duration_secs,
                 spawn_cost_usd=event.total_cost_usd,
@@ -397,6 +400,7 @@ class HookDispatcher(LifecycleHook):
             spawn_id=event.spawn_id,
             spawn_status=_normalize_spawn_status(event.status),
             spawn_agent=event.agent,
+            spawn_kind=event.kind,
             spawn_model=event.model,
             spawn_duration_secs=event.duration_secs,
             spawn_cost_usd=event.total_cost_usd,
@@ -416,7 +420,7 @@ _PLUGIN_SPAWN_STATUS: dict[TerminalSpawnStatus, SpawnStatus] = {
 def _normalize_spawn_status(value: str | None) -> SpawnStatus | None:
     if value in _PLUGIN_SPAWN_STATUS:
         return _PLUGIN_SPAWN_STATUS[value]
-    if value in ("success", "failure", "cancelled", "timeout", "skipped"):
+    if value in ("success", "failure", "cancelled", "timeout"):
         return value
     return None
 

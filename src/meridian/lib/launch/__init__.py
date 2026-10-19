@@ -249,7 +249,22 @@ def launch_primary(
             ),
         )
 
-    outcome = run_harness_process(preview_context, harness_registry, prepared=prepared)
+    from meridian.lib.ops.work_attachment import set_session_work_attachment
+
+    def attach_session_work(runtime_root: Path, chat_id: str, work_id: str) -> None:
+        set_session_work_attachment(
+            runtime_root,
+            project_root=resolved_project_root,
+            chat_id=chat_id,
+            work_id=work_id,
+        )
+
+    outcome = run_harness_process(
+        preview_context,
+        harness_registry,
+        prepared=prepared,
+        update_session_work_id_fn=attach_session_work,
+    )
     continue_ref = outcome.resolved_harness_session_id.strip() or None
 
     return LaunchResult(

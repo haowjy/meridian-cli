@@ -25,6 +25,7 @@ from meridian.lib.hooks.types import (
     Hook,
     HookEventName,
     HookWhen,
+    SpawnKind,
     SpawnStatus,
 )
 from meridian.lib.utils.json_shapes import json_list
@@ -34,10 +35,16 @@ _HOOK_NAME_COMPONENT_PATTERN = re.compile(r"[^a-z0-9._-]+")
 _HOOK_NAME_REPEATED_DASH_PATTERN = re.compile(r"-+")
 _KNOWN_HOOK_EVENTS = frozenset(get_args(HookEventName))
 _REPLACED_HOOK_EVENTS = {
-    "spawn.start": "spawn.running",
-    "work.start": "work.started",
+    "spawn.start": "spawn.started",
+    "spawn.running": "spawn.started",
+    "spawn.finalized": "spawn.finished",
+    "work.start": "work.activated",
+    "work.started": "work.activated",
+    "session.responded": "notify.your_turn",
+    "session.cache_expiring": "notify.cache_expiring",
 }
 _KNOWN_FAILURE_POLICIES = frozenset(get_args(FailurePolicy))
+_KNOWN_SPAWN_KINDS = frozenset(get_args(SpawnKind.__value__))
 _KNOWN_SPAWN_STATUSES = frozenset(get_args(SpawnStatus))
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -95,6 +102,10 @@ def _spawn_status(value: object) -> str | object:
     return normalized
 
 
+def _spawn_kind(value: object) -> str | object:
+    return _normalized_string(value)
+
+
 def _positive_timeout(value: object) -> object:
     if isinstance(value, int) and not isinstance(value, bool) and value <= 0:
         raise ValueError(f"expected int > 0, got {value!r}")
@@ -108,6 +119,7 @@ type HookIntervalSpec = Annotated[
     StringConstraints(pattern=r"^\d+[smhd]$"),
 ]
 type FailurePolicySpec = Annotated[FailurePolicy, BeforeValidator(_failure_policy)]
+type SpawnKindSpec = Annotated[SpawnKind, BeforeValidator(_spawn_kind)]
 type SpawnStatusSpec = Annotated[SpawnStatus, BeforeValidator(_spawn_status)]
 type PositiveTimeoutSecs = Annotated[int, BeforeValidator(_positive_timeout), Field(gt=0)]
 
@@ -119,6 +131,7 @@ class HookWhenSpec(BaseModel):
 
     status: tuple[SpawnStatusSpec, ...] | None = None
     agent: NonEmptyString | None = None
+    kind: tuple[SpawnKindSpec, ...] | None = None
 
     @field_validator("status", mode="before")
     @classmethod
@@ -133,6 +146,24 @@ class HookWhenSpec(BaseModel):
                     and normalized not in _KNOWN_SPAWN_STATUSES
                 ):
                     valid = ", ".join(sorted(_KNOWN_SPAWN_STATUSES))
+                    raise ValueError(
+                        f"expected values in [{valid}], got {normalized!r}"
+                    )
+        return tuple(values) if values is not None else value
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _tuple_kind(cls, value: object) -> object:
+        values = json_list(value)
+        if values is not None:
+            for item in values:
+                normalized = _normalized_string(item)
+                if (
+                    isinstance(normalized, str)
+                    and normalized
+                    and normalized not in _KNOWN_SPAWN_KINDS
+                ):
+                    valid = ", ".join(sorted(_KNOWN_SPAWN_KINDS))
                     raise ValueError(
                         f"expected values in [{valid}], got {normalized!r}"
                     )
@@ -223,12 +254,47 @@ def _parse_when(spec: HookWhenSpec | None) -> HookWhen | None:
     if spec is None:
         return None
 
-    if spec.status is None and spec.agent is None:
+    status = spec.status or None
+    kind = spec.kind or None
+    if status is None and spec.agent is None and kind is None:
         return None
     return HookWhen(
-        status=spec.status,
+        status=status,
         agent=spec.agent,
+        kind=kind,
     )
+
+
+def _validate_when_events(
+    when: HookWhen | None,
+    events: tuple[HookEventName, ...],
+    *,
+    row_source: str,
+) -> None:
+    if when is None:
+        return
+
+    if when.status is not None:
+        unsupported = next((event for event in events if event != "spawn.finished"), None)
+        if unsupported is not None:
+            raise ValueError(
+                f"Invalid value for '{row_source}.when.status': condition is only available "
+                f"for 'spawn.finished', got {unsupported!r}."
+            )
+
+    work_event = next((event for event in events if event.startswith("work.")), None)
+    if work_event is None:
+        return
+    if when.agent is not None:
+        raise ValueError(
+            f"Invalid value for '{row_source}.when.agent': condition is unavailable for "
+            f"{work_event!r}."
+        )
+    if when.kind is not None:
+        raise ValueError(
+            f"Invalid value for '{row_source}.when.kind': condition is unavailable for "
+            f"{work_event!r}."
+        )
 
 
 def hooks_from_spec(
@@ -294,6 +360,7 @@ def hooks_from_spec(
     interval = spec.interval or (builtin.default_interval if builtin is not None else None)
 
     when = _parse_when(spec.when)
+    _validate_when_events(when, events, row_source=row_source)
     return tuple(
         Hook(
             name=name,

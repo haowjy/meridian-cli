@@ -2,7 +2,7 @@
 
 Hooks fire at spawn, work and notification events for side effects: syncing, notifying, triggering pipelines. They do not modify agent behavior — they observe it.
 
-Notification events (`session.responded`, `session.cache_expiring`, `notify.manual`) carry `HookContext.notification`. Delivering them is itself a hook: the built-in `notify` routes them to transports, and `config.py` supplies a `notify` row per notification event as the lowest layer (source `default`). An unnamed `builtin = "notify"` row is named `notify`, so a row for an event, even disabled, replaces that event's default by the ordinary `(name, event)` override. Command hooks on these events are the extension channels. A notification's emitter (`lib/notify/emit.py`) reports route failures itself, so the dispatcher logs them at info.
+Notification events (`notify.your_turn`, `notify.cache_expiring`, `notify.manual`) carry `HookContext.notification`. Delivering them is itself a hook: the built-in `notify` routes them to transports, and `config.py` supplies a `notify` row per notification event as the lowest layer (source `default`). An unnamed `builtin = "notify"` row is named `notify`, so a row for an event, even disabled, replaces that event's default by the ordinary `(name, event)` override. Command hooks on these events are the extension channels. A notification's emitter (`lib/notify/emit.py`) reports route failures itself, so the dispatcher logs them at info.
 
 If configured hook rows do not load, notification emission drops and names only
 the invalid rows, then layers every valid row over the defaults normally. Direct
@@ -12,9 +12,9 @@ silencing or command rows.
 
 ## Mental Model
 
-Users configure hooks in TOML (project or user config). At each lifecycle event (`spawn.created`, `spawn.finalized`, `work.done`, etc.), `HookDispatcher.fire()` loads the hook list for that event, filters by conditions, checks interval throttling, and executes each hook in order. Hooks are either built-in (in-process) or external (subprocess).
+Users configure hooks in TOML (project or user config). At each lifecycle event (`spawn.created`, `spawn.finished`, `work.done`, etc.), `HookDispatcher.fire()` loads the hook list for that event, filters by conditions, checks interval throttling, and executes each hook in order. Hooks are either built-in (in-process) or external (subprocess).
 
-The dispatcher is **fail-open** for `observe` and `post` event classes. A failing hook logs a warning and continues — it never stops subsequent hooks or the lifecycle event itself. Only `gate` class hooks can block (none currently registered).
+The dispatcher is **fail-open** for both event classes, `observe` and `post`. A failing hook logs a warning and continues — it never stops subsequent hooks or the lifecycle event itself.
 
 Config layers in ascending precedence:
 ```
@@ -33,7 +33,7 @@ Override key is `(name, event)` — a higher-priority row with the same key repl
 - **`HookContext.to_env()` and `HookContext.to_json()` are the only correct serialization paths.** External subprocess hooks receive both env vars and JSON stdin. `None` values are omitted — no empty-string env vars.
 - **Hook execution order within an event:** source rank (default → user → project → local) → negative priority → declaration order. This is stable and deterministic. A configured builtin row ranks by the file it came from.
 - **Hook rows validate only through `config.py` and `schema.py`.** `normalize_hook_row()` is the production model path; single-field constraints (event, interval, timeout, failure policy, status) live on `HookSpec` / `HookWhenSpec` fields. Hand checks after the model are only for multi-field rules (command vs builtin, conditional name/event, builtin defaults and options). Operational config loading carries hook rows without validating them; hook loading also owns their unknown-key warning.
-- **`when.status` and `when.agent` conditions** are checked before interval throttling.
+- **`when.status`, `when.agent`, and `when.kind` conditions** are checked before interval throttling. Schema validation rejects conditions an event can never supply: status outside `spawn.finished`, or agent/kind on work events.
 - **`meridian hooks list/check/run` resolve the project from the cwd, never an inherited `MERIDIAN_PROJECT_DIR`** (`ignore_env=True` in `cli/hooks_commands.py`, #178): a spawn's environment must not make `hooks run git-autosync` act on another project's config. Notification emission does follow the session's project; inside a spawn the two can differ by design.
 
 ## Entry Points

@@ -11,7 +11,7 @@ Design decisions in effect:
 - D5: keep update_spawn public — metadata only, no transition
 - D9: No async — synchronous methods matching spawn_store
 - D12: First-class LifecycleEvent over ad hoc callbacks
-- D13: Metrics may be None on spawn.finalized — fire for persisted terminal writes,
+- D13: Metrics may be None on spawn.finished — fire for persisted terminal writes,
   including authoritative replacement of reconciler terminal state
 
 Import note
@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.state.spawn.model import (
         LaunchMode,
+        SpawnKind,
         SpawnOrigin,
         SpawnRecord,
     )
@@ -102,7 +103,7 @@ def _locked_mutation_snapshot(outcome: LockedMutationResult) -> SpawnRecord | No
 # Public type aliases
 # ---------------------------------------------------------------------------
 
-EventType = Literal["spawn.created", "spawn.running", "spawn.finalized"]
+EventType = Literal["spawn.created", "spawn.started", "spawn.finished"]
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
 
 
@@ -166,6 +167,7 @@ class LifecycleEvent:
 
     # Execution context (always present)
     agent: str | None
+    kind: SpawnKind
     model: str | None
     harness: str | None
 
@@ -322,9 +324,11 @@ class SpawnLifecycleService:
         assert self._record is not None
         event = self._build_event("spawn.created", self._record, spawn_id=spawn_id)
         self._dispatch(event)
-        self._emit_telemetry_event("spawn.queued", self._record)
+        self._emit_telemetry_event("spawn.created", self._record)
         if status == "running":
-            self._emit_telemetry_event("spawn.running", self._record)
+            event = self._build_event("spawn.started", self._record, spawn_id=spawn_id)
+            self._dispatch(event)
+            self._emit_telemetry_event("spawn.started", self._record)
 
     def mark_running(
         self,
@@ -335,7 +339,7 @@ class SpawnLifecycleService:
         runner_pid: int | None = None,
         runner_created_at_epoch: float | None = None,
     ) -> None:
-        """Mark a spawn as running and dispatch spawn.running."""
+        """Mark a spawn as running and dispatch spawn.started."""
         with bind_lifecycle_correlation(
             self._correlation(operation="mark_running", spawn_id=spawn_id)
         ):
@@ -356,9 +360,9 @@ class SpawnLifecycleService:
             if self._owns_record(spawn_id) and record is not None:
                 self._record = record
             if isinstance(outcome, Applied) and outcome.before.status != outcome.after.status:
-                event = self._build_event("spawn.running", record, spawn_id=spawn_id)
+                event = self._build_event("spawn.started", record, spawn_id=spawn_id)
                 self._dispatch(event)
-                self._emit_telemetry_event("spawn.running", record)
+                self._emit_telemetry_event("spawn.started", record)
 
     def record_exited(
         self,
@@ -488,7 +492,7 @@ class SpawnLifecycleService:
         managed_scopes_pending: bool = False,
         clock: Clock | None = None,
     ) -> LockedMutationResult:
-        """Finalize a spawn and dispatch spawn.finalized for persisted terminal writes."""
+        """Finalize a spawn and dispatch spawn.finished for persisted terminal writes."""
         requested_category = self._terminal_outcome_category(
             status=status,
             origin=origin,
@@ -527,7 +531,7 @@ class SpawnLifecycleService:
                     origin=origin,
                     error=error,
                 )
-                event = self._build_event("spawn.finalized", snapshot)
+                event = self._build_event("spawn.finished", snapshot)
                 self._dispatch(event)
                 self._emit_telemetry_event_for_record(
                     f"spawn.{snapshot.status}", snapshot
@@ -659,7 +663,7 @@ class SpawnLifecycleService:
         correlation = self._correlation(
             operation="finalize",
             record=record,
-            event_type="spawn.finalized",
+            event_type="spawn.finished",
             outcome_category=outcome_category,
         )
         return SpawnFailure(
@@ -800,7 +804,7 @@ class SpawnLifecycleService:
         cost_is_estimate = False
         outcome_category: TerminalOutcomeCategory | None = None
 
-        if event_type == "spawn.finalized" and record is not None:
+        if event_type == "spawn.finished" and record is not None:
             rec_status = record.status
             if is_terminal_spawn_status(rec_status):
                 status = rec_status
@@ -833,6 +837,7 @@ class SpawnLifecycleService:
             chat_id=record.chat_id if record is not None else None,
             work_id=record.work_id if record is not None else None,
             agent=record.agent if record is not None else None,
+            kind=record.kind if record is not None else "child",
             model=record.model if record is not None else None,
             harness=record.harness if record is not None else None,
             status=status,

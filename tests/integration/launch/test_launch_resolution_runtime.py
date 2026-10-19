@@ -519,8 +519,19 @@ def test_primary_launch_materializes_context_from_work(
 
     from meridian.lib.launch.process import ProcessOutcome
 
-    def fake_run_harness_process(preview_context, harness_registry, *, prepared):
-        _ = (preview_context, harness_registry, prepared)
+    def fake_run_harness_process(
+        preview_context,
+        harness_registry,
+        *,
+        prepared,
+        update_session_work_id_fn,
+    ):
+        _ = (
+            preview_context,
+            harness_registry,
+            prepared,
+            update_session_work_id_fn,
+        )
         return ProcessOutcome(
             command=(),
             exit_code=0,

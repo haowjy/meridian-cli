@@ -17,33 +17,33 @@ from meridian.plugin_api.types import (
     HookOutcome,
     HookResult,
     Notification,
+    SpawnKind,
     SpawnStatus,
 )
 
-HookEventClass = Literal["observe", "post", "gate"]
+HookEventClass = Literal["observe", "post"]
 
 
 EVENT_CLASS: dict[HookEventName, HookEventClass] = {
     "spawn.created": "observe",
-    "spawn.running": "observe",
-    "spawn.finalized": "post",
-    "work.started": "observe",
+    "spawn.started": "observe",
+    "spawn.finished": "post",
+    "work.created": "observe",
+    "work.activated": "observe",
     "work.done": "post",
-    "session.responded": "observe",
-    "session.cache_expiring": "observe",
+    "notify.your_turn": "observe",
+    "notify.cache_expiring": "observe",
     "notify.manual": "observe",
 }
 
 DEFAULT_TIMEOUTS: dict[HookEventClass, int] = {
     "observe": 30,
     "post": 60,
-    "gate": 1,
 }
 
 DEFAULT_FAILURE_POLICY: dict[HookEventClass, FailurePolicy] = {
     "observe": "warn",
     "post": "warn",
-    "gate": "fail",
 }
 
 def _default_options() -> dict[str, object]:
@@ -56,6 +56,7 @@ class HookWhen:
 
     status: tuple[SpawnStatus, ...] | None = None
     agent: str | None = None
+    kind: tuple[SpawnKind, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -96,5 +97,6 @@ __all__ = [
     "HookResult",
     "HookWhen",
     "Notification",
+    "SpawnKind",
     "SpawnStatus",
 ]

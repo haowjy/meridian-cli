@@ -60,7 +60,7 @@ DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
             "",
             "# [[hooks]]",
             '# name = "notify-on-failure"',
-            '# event = "spawn.running"',
+            '# event = "spawn.started"',
             '# command = "echo spawn-hook"',
             "# timeout_secs = 30",
             "",
