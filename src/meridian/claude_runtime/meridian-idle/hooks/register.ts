@@ -6,10 +6,10 @@ import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude
 //   idle    a main-loop turn finished        -> `idle arm` with the work still running, then one timer per stage
 //   return  the user typed or sent something -> `idle return`, timers cancelled
 //   permission  Claude still awaits approval -> `idle needs-permission`, with no state change
-//   children  events that may change spawns  -> `idle child-status`, displayed under the prompt
+//   spawns  events that may change spawns  -> `idle child-status`, displayed under the prompt
 // Notifications and child-status wording belong to core; this file never sends
 // a notification, reads Meridian config or env, or writes under `~/.meridian`.
-// Only the child summary reaches the pinned UI status; diagnostics go to the
+// Only the spawn summary reaches the pinned UI status; diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request.
 
 type Stage = 'push' | 'warn'
@@ -19,7 +19,7 @@ const HARNESS = 'claude'
 const COMMAND = 'meridian-idle'
 const CLI_TIMEOUT_MS = 20_000
 const CHILD_STATUS_POLL_MS = 60_000
-const MERIDIAN_SPAWN_COMMAND = /\bmeridian\b(?:\s+-\S+)*\s+spawn\b/
+const MERIDIAN_SPAWN_COMMAND = /\bmeridian\b(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+spawn\b/
 const LOG_LIMIT = 100
 const EXCERPT_CHAR_CAP = 4_000
 // One JSON argv entry stays below ~50 KiB even if every command code unit needs
@@ -66,8 +66,6 @@ type State = {
   childStatusRefresh: Promise<void> | undefined
   childStatusDirty: boolean
   childStatusVisible: boolean
-  /** Invalidates late queries when the session ends or changes conversation. */
-  childStatusGeneration: number
 }
 
 function newState(): State {
@@ -87,7 +85,6 @@ function newState(): State {
     childStatusRefresh: undefined,
     childStatusDirty: false,
     childStatusVisible: false,
-    childStatusGeneration: 0,
   }
 }
 
@@ -161,46 +158,28 @@ async function cli($: EngineInterface, s: State, args: string[]): Promise<unknow
   }
 }
 
-type ChildStatusReply = { text: string } | { error: string }
-
-/** Successful empty stdout means there are no children; failures must not clear the last good line. */
-async function childStatusCli($: EngineInterface): Promise<ChildStatusReply> {
-  try {
-    const out = await $.process.run(
-      ['meridian', 'idle', 'child-status', '--interactive'],
-      { timeoutMs: CLI_TIMEOUT_MS },
-    )
-    if (out.exitCode !== 0) {
-      const detail = [out.stdout.trim(), out.stderr.trim()].filter(Boolean).join('; ').slice(0, 200)
-      return { error: `exit ${out.exitCode}${detail ? `: ${detail}` : ''}` }
-    }
-    return { text: out.stdout.trim() }
-  } catch (err) {
-    return { error: describeError(err) }
-  }
-}
-
 function scheduleChildStatusPoll($: EngineInterface, s: State): void {
   cancelChildStatusTimer(s)
   if (!s.childStatusVisible || s.inert) return
-  const generation = s.childStatusGeneration
   s.childStatusTimer = $.clock.after(CHILD_STATUS_POLL_MS, () => {
     s.childStatusTimer = undefined
-    if (generation === s.childStatusGeneration) requestChildStatus($, s)
+    requestChildStatus($, s)
   })
 }
 
-async function refreshChildStatus($: EngineInterface, s: State, generation: number): Promise<void> {
+async function refreshChildStatus($: EngineInterface, s: State): Promise<void> {
   cancelChildStatusTimer(s)
   if (!(await gate($, s))) return
-  const reply = await childStatusCli($)
-  if (generation !== s.childStatusGeneration || s.inert) return
-  if ('error' in reply) {
-    note($, s, `child status failed: ${reply.error}`)
+  // The line is keyed by process env, not Claude's mutable session id, so it stays valid across /clear.
+  const reply = await cli($, s, ['child-status'])
+  if (s.inert) return
+  const problem = failure(reply)
+  if (problem !== undefined || !isRecord(reply) || typeof reply.line !== 'string') {
+    note($, s, `child status failed: ${problem ?? 'unexpected reply'}`)
   } else {
     // Claude keeps a named blank plugin row for ""; undefined removes the pin.
-    $.ui.status(reply.text || undefined)
-    s.childStatusVisible = reply.text !== ''
+    $.ui.status(reply.line || undefined)
+    s.childStatusVisible = reply.line !== ''
   }
   scheduleChildStatusPoll($, s)
 }
@@ -211,9 +190,8 @@ function requestChildStatus($: EngineInterface, s: State): void {
   cancelChildStatusTimer(s)
   if (s.childStatusRefresh !== undefined) return
 
-  const generation = s.childStatusGeneration
   s.childStatusDirty = false
-  s.childStatusRefresh = refreshChildStatus($, s, generation)
+  s.childStatusRefresh = refreshChildStatus($, s)
     .catch(err => note($, s, `child status error: ${describeError(err)}`))
     .finally(() => {
       s.childStatusRefresh = undefined
@@ -594,11 +572,6 @@ export const register: Register = on => {
     s.epoch += 1
     cancelTimers(s)
     s.armed = undefined
-    s.childStatusGeneration += 1
-    s.childStatusDirty = false
-    cancelChildStatusTimer(s)
-    s.childStatusVisible = false
-    $.ui.status(undefined)
     return next(e)
   })
 }

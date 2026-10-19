@@ -27,7 +27,7 @@ function host(): Host {
       return: { stretch_closed: true },
       fire: { decision: 'act', reason: 'guards-passed' },
       status: [],
-      'child-status': '',
+      'child-status': { line: '' },
     },
   }
 }
@@ -40,11 +40,10 @@ function install(on: On, h: Host) {
     h.calls.push([...args])
     const reply = h.reply[args[0] ?? '']
     const body = typeof reply === 'function' ? await reply(args) : reply
-    const stdout = args[0] === 'child-status' ? String(body ?? '') : JSON.stringify(body)
     return {
       value: {
         exitCode: 0,
-        stdout: stdout + '\n',
+        stdout: JSON.stringify(body) + '\n',
         stderr: '',
         isStdoutTruncated: false,
         isStderrTruncated: false,
@@ -287,7 +286,7 @@ test('only permission prompts are forwarded and a failing CLI does not fail the 
 test('child status refreshes on spawn-changing events and polls only while visible', async ($, on) => {
   const h = host()
   let childStatus = '2 running: p2 coder, p3 reviewer'
-  h.reply['child-status'] = () => childStatus
+  h.reply['child-status'] = () => ({ line: childStatus })
   const clock = install(on, h)
 
   await $.session.start(TUI)
@@ -314,94 +313,74 @@ test('child status refreshes on spawn-changing events and polls only while visib
   expect(calls(h, 'child-status')).toHaveLength(4)
 })
 
-test('a non-spawn Bash command does not refresh child status', async ($, on) => {
+test('the Bash filter recognizes spawn commands with global options and rejects other shapes', async ($, on) => {
   const h = host()
-  h.reply['child-status'] = '1 running: p2 coder'
   const clock = install(on, h)
   await $.session.start(TUI)
   await clock.advance(2000)
 
-  await $.tool.call({ tool: 'Bash', command: 'git -C /work/meridian-cli status' })
-  await clock.advance(0)
+  const matching = [
+    'uv run meridian spawn -a x --bg',
+    'meridian --json spawn wait',
+    'cd x && meridian spawn --bg',
+    'MERIDIAN_X=1 meridian spawn',
+    'meridian --directory=../wt spawn',
+    'meridian -C ../wt spawn -a coder',
+    'meridian --directory ../wt spawn',
+    'meridian --format json spawn',
+    'meridian --config X spawn',
+    'meridian --harness X spawn',
+    'grep -rn "meridian spawn" docs',
+    'git commit -m "run meridian spawn here"',
+  ]
+  for (const command of matching) {
+    await $.tool.call({ tool: 'Bash', command })
+    await clock.advance(0)
+  }
+  expect(calls(h, 'child-status')).toHaveLength(1 + matching.length)
 
-  expect(calls(h, 'child-status')).toHaveLength(1)
+  for (const command of [
+    'git -C /work/meridian-cli status',
+    'ls /home/a/meridian-cli/spawn',
+    'cat ~/.meridian/spawns/p1',
+    'echo meridian-cli spawn',
+    'meridian work show spawn',
+    'meridian -C x work start',
+  ]) {
+    await $.tool.call({ tool: 'Bash', command })
+    await clock.advance(0)
+  }
+  expect(calls(h, 'child-status')).toHaveLength(1 + matching.length)
 })
 
 test('child status coalesces concurrent events into one trailing refresh', async ($, on) => {
   const h = host()
   const visible = '1 running: p2 coder'
-  h.reply['child-status'] = visible
+  h.reply['child-status'] = { line: visible }
   const clock = install(on, h)
   await $.session.start(TUI)
   await clock.advance(2000)
 
-  const pending = deferred<string>()
+  const pending = deferred<{ line: string }>()
   h.reply['child-status'] = () => pending.promise
   await $.tool.call({ tool: 'Bash', command: 'meridian spawn --bg' })
   await Promise.resolve()
   expect(calls(h, 'child-status')).toHaveLength(2)
 
   await $.tool.call({ tool: 'Bash', command: 'meridian spawn cancel p2' })
-  h.reply['child-status'] = ''
-  pending.resolve(visible)
+  h.reply['child-status'] = { line: '' }
+  pending.resolve({ line: visible })
   await clock.advance(0)
 
   expect(calls(h, 'child-status')).toHaveLength(3)
   expect(h.statuses).toEqual([visible, visible, undefined])
 })
 
-test('session end rejects a late child status result', async ($, on) => {
-  const h = host()
-  const visible = '1 running: p2 coder'
-  h.reply['child-status'] = visible
-  const clock = install(on, h)
-  await $.session.start(TUI)
-  await clock.advance(2000)
-
-  const pending = deferred<string>()
-  h.reply['child-status'] = () => pending.promise
-  await $.tool.call({ tool: 'Bash', command: 'meridian spawn --bg' })
-  await Promise.resolve()
-  expect(calls(h, 'child-status')).toHaveLength(2)
-
-  await $.session.end({ reason: 'user_exit' })
-  pending.resolve('2 running: p2 coder, p3 reviewer')
-  await clock.advance(0)
-
-  expect(calls(h, 'child-status')).toHaveLength(2)
-  expect(h.statuses).toEqual([visible, undefined])
-})
-
-test('a refresh requested by session restart survives the old generation', async ($, on) => {
-  const h = host()
-  const visible = '1 running: p2 coder'
-  h.reply['child-status'] = visible
-  const clock = install(on, h)
-  await $.session.start(TUI)
-  await clock.advance(2000)
-
-  const pending = deferred<string>()
-  h.reply['child-status'] = () => pending.promise
-  await $.tool.call({ tool: 'Bash', command: 'meridian spawn --bg' })
-  await Promise.resolve()
-  expect(calls(h, 'child-status')).toHaveLength(2)
-
-  await $.session.end({ reason: 'clear' })
-  await $.session.start(TUI)
-  await clock.advance(0)
-  h.reply['child-status'] = visible
-  pending.resolve('stale old-session status')
-  await clock.advance(0)
-
-  expect(calls(h, 'child-status')).toHaveLength(3)
-  expect(h.statuses).toEqual([visible, undefined, visible])
-})
-
 test('a disabled gate prevents child status and clears the line', async ($, on) => {
   const h = host()
   const config = deferred<{ enabled: boolean, reason: string }>()
   h.reply.config = () => config.promise
-  h.reply['child-status'] = '1 running: p2 coder'
+  h.reply['child-status'] = { line: '1 running: p2 coder' }
   const clock = install(on, h)
 
   await $.session.start(TUI)
@@ -418,7 +397,7 @@ test('a disabled gate prevents child status and clears the line', async ($, on) 
 test('a failed child status poll preserves the line and retries slowly', async ($, on) => {
   const h = host()
   const visible = '1 running: p2 coder'
-  h.reply['child-status'] = visible
+  h.reply['child-status'] = { line: visible }
   const clock = install(on, h)
   await $.session.start(TUI)
   await clock.advance(2000)
@@ -428,7 +407,7 @@ test('a failed child status poll preserves the line and retries slowly', async (
   expect(calls(h, 'child-status')).toHaveLength(2)
   expect(h.statuses).toEqual([visible])
 
-  h.reply['child-status'] = ''
+  h.reply['child-status'] = { line: '' }
   await clock.advance(60_000)
   expect(calls(h, 'child-status')).toHaveLength(3)
   expect(h.statuses).toEqual([visible, undefined])

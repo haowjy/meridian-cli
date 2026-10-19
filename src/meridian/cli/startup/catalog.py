@@ -456,7 +456,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_rootless(("idle", "fire"), "Claim an idle stage.", default_output_mode="json"),
     _write_rootless(("idle", "event"), "Handle a harness idle event.", default_output_mode="json"),
     _read_rootless(("idle", "status"), "Show open idle stretches."),
-    _read_rootless(("idle", "child-status"), "Show this primary's active child spawns."),
+    _read_rootless(
+        ("idle", "child-status"),
+        "Show spawns running under this session.",
+        default_output_mode="json",
+    ),
     _read_rootless(("idle", "mod-path"), "Print the bundled Claude idle mod path."),
     _read_rootless(("qi",), "Show inline knowledge for current path."),
     _read_rootless(("qi", "list"), "List all inline knowledge locations."),

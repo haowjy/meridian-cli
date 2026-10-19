@@ -15,7 +15,7 @@ that common flag for readability.
 |---|---|---|
 | `session.start` (TUI only) | `meridian idle config --harness claude` | Stays inert unless the role gate and the config say `enabled`. Under `claude -p` (`isInteractive === false`, no surface) it never calls Meridian. |
 | `session.start`, after a reload or resume | `meridian idle status --json` | Rebuilds timers from the stored schedule of this session's open stretch, skipping stages already done. |
-| `session.start`; a main `turn.complete`; completion of a Bash command matching `\bmeridian\b(?:\s+-\S+)*\s+spawn\b` | `meridian idle child-status` | Core selects the derived-active, non-primary spawns owned by this session's chat and returns a bounded line such as `2 running: p123 coder, p124 reviewer`. The mod puts it in `$.ui.status`; successful empty output clears the line. Unrelated Bash, Read, and Edit calls do not pay for a Meridian startup. |
+| `session.start`; a main `turn.complete`; completion of a Bash command matching `\bmeridian\b(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+spawn\b` | `meridian idle child-status` | Core selects the derived-active, non-primary spawns owned by this session's chat and returns JSON containing a bounded line such as `2 running: p123 coder, p124 reviewer`. The mod puts the line in `$.ui.status`; a successful empty line clears it. Unrelated Bash, Read, and Edit calls do not pay for a Meridian startup. |
 | `turn.complete` without `agentId` | `meridian idle arm --harness claude --session <id> [--background-tasks=<json>] [--user-text=...] [--assistant-text=...]` | A main-loop turn ended. Core resolves the recorded native transcript store through the inherited `MERIDIAN_CHAT_ID`; the mod never derives it from the session's mutable cwd. The mod sends the last composer prompt and the event's answer as notification excerpts; injected origins and system reminders are excluded. `--background-tasks` forwards a bounded prefix of the `background_tasks` from the `classic.Stop` that precedes the turn's end, each as `{kind, command?}`: subagents and workflows are `agent`, monitors `watcher`, and shells are `shell` when their full command fits the bound or `other` otherwise. Core alone decides what they mean: it holds the push while work that wakes the session runs (that turn arms again), delays it for other tasks, and drops the warning when a `spawn wait` yields before the cache goes cold. A new or re-anchored schedule returns absolute `push_at` / `warn_at` (and `push_held` with the reason, for the log); an absorbed arm keeps matching timers or recovers them from `status`. |
 | `classic.Notification` with `notification_type = "permission_prompt"` | `meridian idle needs-permission --harness claude --message <text>` | Claude reports that a main-loop or background-subagent permission prompt is still unanswered. Meridian forwards one stateless `notify.needs_permission` notice; other notification types are ignored. |
 | `prompt.submit` or `command.run` with origin `composer` (or `bridge`, the user's phone) | `meridian idle return --harness claude --session <id> --user-prompt` | The user is back. Timers are cancelled first, synchronously. |
@@ -27,7 +27,8 @@ triggers, Stop-hook continuations) are not returns.
 
 The mod never sends a notification, reads Meridian files or `MERIDIAN_*`
 variables, writes under `~/.meridian`, or prints into the transcript. Its only
-persistent UI is the core-produced child line passed to `$.ui.status`, which is
+persistent UI is the core-produced line for spawns running under the session,
+passed to `$.ui.status`, which is
 separate from the user's configured `statusLine`. Its own diagnostics live in
 the plugin's `$.store` under the key `log` (last 100 lines).
 

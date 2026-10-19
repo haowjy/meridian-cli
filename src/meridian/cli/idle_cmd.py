@@ -6,7 +6,7 @@ import json
 import os
 import sys
 from collections.abc import Callable
-from typing import Annotated, Never, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Never, Protocol, cast
 
 from cyclopts import Parameter
 
@@ -15,6 +15,13 @@ from meridian.cli.invocation import get_global_options
 from meridian.lib.harness.idle_types import BackgroundTask
 from meridian.lib.idle.service import IdleService, resolve_idle_session_role
 from meridian.lib.state.idle_store import Stage
+
+if TYPE_CHECKING:
+    from meridian.lib.state.spawn.model import SpawnRecord
+
+
+_STATUS_SPAWN_LIMIT = 3
+_STATUS_AGENT_LIMIT = 24
 
 
 def _option(name: str, help_text: str) -> Parameter:
@@ -312,26 +319,46 @@ def cmd_idle_status(
 
 @idle_app.command(name="child-status")
 def cmd_idle_child_status(*, interactive: InteractiveOption = False) -> None:
-    """Print spawns running under this primary session for a status line."""
+    """Print the status-line JSON for spawns running under this session."""
 
     if (
         not interactive
         or resolve_idle_session_role(os.environ, interactive=interactive) != "primary"
     ):
+        _emit_json({"line": ""})
         return
     try:
         from meridian.cli.utils import resolve_cli_project_root
         from meridian.lib.core.context import RuntimeContext
-        from meridian.lib.ops.spawn.query import running_children_status
+        from meridian.lib.ops.spawn.query import discover_pending_spawns
 
         context = RuntimeContext.from_environment(project_root=resolve_cli_project_root())
         if context.runtime_root is None or not context.chat_id:
+            _emit_json({"line": ""})
             return
-        text = running_children_status(context.runtime_root, context.chat_id)
-        if text:
-            print(text)
+        spawns = [
+            row
+            for row in discover_pending_spawns(context.runtime_root, context.chat_id)
+            if (row.kind or "").strip() != "primary"
+        ]
+        _emit_json({"line": _format_running_spawns(spawns)})
     except Exception as exc:
         _fail(exc)
+
+
+def _format_running_spawns(spawns: list[SpawnRecord]) -> str:
+    if not spawns:
+        return ""
+
+    shown: list[str] = []
+    for row in spawns[:_STATUS_SPAWN_LIMIT]:
+        agent = " ".join((row.agent or "").split())
+        if len(agent) > _STATUS_AGENT_LIMIT:
+            agent = f"{agent[: _STATUS_AGENT_LIMIT - 3].rstrip()}..."
+        shown.append(f"{row.id} {agent}" if agent else row.id)
+    hidden = len(spawns) - len(shown)
+    suffix = f", +{hidden} more" if hidden else ""
+    return f"{len(spawns)} running: {', '.join(shown)}{suffix}"
 
 
 @idle_app.command(name="mod-path")

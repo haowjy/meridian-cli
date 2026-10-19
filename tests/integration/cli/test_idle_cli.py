@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -432,29 +433,62 @@ def test_idle_child_status_is_scoped_to_an_interactive_primary(
         MERIDIAN_SPAWN_ID="p1",
     )
 
-    with LaunchSlot() as launch_lock:
+    with ExitStack() as stack:
+        primary_lock = stack.enter_context(LaunchSlot())
         spawn_store.start_spawn(
             runtime_root,
-            spawn_id="p2",
-            chat_id="c-child",
-            owner_chat_id=chat_id,
+            spawn_id="p1",
+            chat_id=chat_id,
             model="haiku",
-            agent="coder",
+            agent="primary",
             harness="claude",
-            prompt="child",
-            launch_lock=launch_lock,
+            kind="primary",
+            prompt="primary",
+            launch_lock=primary_lock,
         )
+        agents = ("coder", "reviewer with a very long profile name", "", "probe")
+        for index, agent in enumerate(agents, start=2):
+            launch_lock = stack.enter_context(LaunchSlot())
+            spawn_store.start_spawn(
+                runtime_root,
+                spawn_id=f"p{index}",
+                chat_id=f"c{index}",
+                owner_chat_id=chat_id,
+                model="haiku",
+                agent=agent,
+                harness="claude",
+                prompt="spawn",
+                launch_lock=launch_lock,
+            )
+
+        # Stored-active with a released runner lock derives to failed and is omitted.
+        with LaunchSlot() as dead_lock:
+            spawn_store.start_spawn(
+                runtime_root,
+                spawn_id="p6",
+                chat_id="c6",
+                owner_chat_id=chat_id,
+                model="haiku",
+                agent="dead",
+                harness="claude",
+                prompt="dead spawn",
+                launch_lock=dead_lock,
+            )
 
         shown = _run(project, env, "idle", "child-status", "--interactive")
-        assert (shown.returncode, shown.stderr, shown.stdout) == (
+        assert (shown.returncode, shown.stderr, json.loads(shown.stdout)) == (
             0,
             "",
-            "1 running: p2 coder\n",
+            {"line": "4 running: p2 coder, p3 reviewer with a very..., p4, +1 more"},
         )
 
         env["MERIDIAN_SESSION_ROLE"] = "spawn"
         inert = _run(project, env, "idle", "child-status", "--interactive")
-        assert (inert.returncode, inert.stderr, inert.stdout) == (0, "", "")
+        assert (inert.returncode, inert.stderr, json.loads(inert.stdout)) == (
+            0,
+            "",
+            {"line": ""},
+        )
 
 
 def test_idle_needs_permission_emits_once_without_idle_state(

@@ -1,7 +1,6 @@
 """SQL-scoped no-argument spawn-wait discovery."""
 
 import json
-from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -12,7 +11,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.ops.session_archive import archive_history, materialize_native_history
 from meridian.lib.ops.spawn.query import discover_pending_spawns
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import SpawnKind, SpawnRecord
 from tests.support.resident_drain import start_row
@@ -110,57 +108,6 @@ def test_discovery_selects_only_the_owners_active_spawns(
     rows = discover_pending_spawns(root, "c-owner")
 
     assert {row.id for row in rows} == {primary, legacy_child, continued_child}
-
-
-def test_running_children_status_is_bounded_and_excludes_dead_launches(tmp_path: Path) -> None:
-    from meridian.lib.ops.spawn.query import running_children_status
-
-    _, root = _runtime(tmp_path)
-    with ExitStack() as stack:
-        primary_lock = stack.enter_context(LaunchSlot())
-        _ = spawn_store.start_spawn(
-            root,
-            spawn_id="p1",
-            chat_id="c-owner",
-            model="test",
-            agent="primary",
-            harness="claude",
-            kind="primary",
-            prompt="primary",
-            launch_lock=primary_lock,
-        )
-        agents = ("coder", "reviewer with a very long profile name", "", "probe")
-        for index, agent in enumerate(agents, start=2):
-            launch_lock = stack.enter_context(LaunchSlot())
-            _ = spawn_store.start_spawn(
-                root,
-                spawn_id=f"p{index}",
-                chat_id=f"c{index}",
-                owner_chat_id="c-owner",
-                model="test",
-                agent=agent,
-                harness="claude",
-                prompt="child",
-                launch_lock=launch_lock,
-            )
-
-        # Stored-active with a released runner lock derives to failed and is omitted.
-        with LaunchSlot() as dead_lock:
-            _ = spawn_store.start_spawn(
-                root,
-                spawn_id="p6",
-                chat_id="c6",
-                owner_chat_id="c-owner",
-                model="test",
-                agent="dead",
-                harness="claude",
-                prompt="dead child",
-                launch_lock=dead_lock,
-            )
-
-        assert running_children_status(root, "c-owner") == (
-            "4 running: p2 coder, p3 reviewer with a very..., p4, +1 more"
-        )
 
 
 def test_nested_discovery_reaches_live_child_through_archived_ancestor(

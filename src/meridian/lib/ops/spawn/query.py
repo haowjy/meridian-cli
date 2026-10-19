@@ -22,8 +22,6 @@ _SPAWN_REFERENCE_STATUS_FILTERS: dict[str, tuple[str, ...] | None] = {
     "@last-completed": ("succeeded",),
 }
 _RUNNING_LOG_MESSAGE_LIMIT = 120
-_STATUS_CHILD_LIMIT = 3
-_STATUS_AGENT_LIMIT = 24
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
 
@@ -89,32 +87,6 @@ def discover_pending_spawns(
         if row.status in ACTIVE_SPAWN_STATUSES
     ]
     return list(spawn_store.SpawnScan.ordered(pending, ()).records)
-
-
-def _status_agent_label(agent: str | None) -> str:
-    label = " ".join((agent or "").split())
-    if len(label) <= _STATUS_AGENT_LIMIT:
-        return label
-    return f"{label[: _STATUS_AGENT_LIMIT - 3].rstrip()}..."
-
-
-def running_children_status(runtime_root: Path, chat_id: str) -> str:
-    """Format the bounded status-line summary for one primary session family."""
-    children = [
-        row
-        for row in discover_pending_spawns(runtime_root, chat_id)
-        if (row.kind or "").strip() != "primary"
-    ]
-    if not children:
-        return ""
-
-    shown: list[str] = []
-    for row in children[:_STATUS_CHILD_LIMIT]:
-        agent = _status_agent_label(row.agent)
-        shown.append(f"{row.id} {agent}" if agent else row.id)
-    hidden = len(children) - len(shown)
-    suffix = f", +{hidden} more" if hidden else ""
-    return f"{len(children)} running: {', '.join(shown)}{suffix}"
 
 
 def _select_latest_spawn_id(
