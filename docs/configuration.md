@@ -373,9 +373,11 @@ turn left running:
 - Monitors are ignored.
 
 Otherwise the warning arms after every turn, even while the push is held.
-Claude and Pi report running work using bounded snapshots so a large task list
-cannot exceed the operating system's argument limit. Codex and OpenCode
-primaries push as if nothing were running.
+Claude, Pi, and OpenCode 2.x report running work using bounded snapshots so a
+large task list cannot exceed the operating system's argument limit. OpenCode
+reports only the shells and subagents its agent started in the background, the
+work it wakes the session for; a shell you start yourself is not reported. Codex
+and OpenCode 1.x primaries push as if nothing were running.
 
 ### `[harness.<harness>.idle]`
 

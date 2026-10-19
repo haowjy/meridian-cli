@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- OpenCode 2.x primaries report the background work their agent started to idle policy. A background `shell` or `subagent` tool run that will wake the session now holds or delays the "your turn" push instead of the push racing the wake. Shells you start yourself and manually created child sessions never wake it and are not reported. After the event stream reconnects, running work is re-checked against the server. Codex and OpenCode 1.x still report none. (#669)
+
 ## [0.10.29] - 2026-10-19
 
 ### Fixed

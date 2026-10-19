@@ -392,6 +392,59 @@ fixing it is out of scope unless trivial. New work targets V2. Because V2 migrat
 a V1 DB in place and keeps the V1 tables, a V1 *fallback* after a V2-first install
 needs a separate data root (`OPENCODE_DB`/`XDG_DATA_HOME`).
 
+### OpenCode: Background Work That Wakes the Session
+
+The idle push is held only for work OpenCode will resume the session for, so the
+V2 sensor (`opencode_idle.py`, tracker in `opencode_running_work.py`) reports a
+narrower set than "everything running". Source: OpenCode v2.0.29, checked on
+v2.0.32.
+
+| Work | Wakes the primary? | Why |
+|---|---|---|
+| Agent `shell` tool, `background: true` | Yes | Its completion observer calls `sessions.synthetic` without overriding `resume` ([`tool/plugin/shell.ts`](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/tool/plugin/shell.ts#L157-L188)). |
+| `subagent` tool, `background: true` | Yes | `SubagentCompletion.deliver` adds `resume: false` only on an explicit override ([`subagent-completion.ts`](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/session/subagent-completion.ts#L21-L46)). |
+| `POST /api/session/:id/shell` | **No** | Completion calls `synthetic(..., resume: false)`, hard-coded, and the request body has no `resume` field ([`session.ts`](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/session/session.ts#L179-L222), [protocol](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/protocol/src/groups/session.ts#L480-L496)). |
+| `POST /api/shell` | **No** | A standalone location-scoped shell with no session notification ([`groups/shell.ts`](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/protocol/src/groups/shell.ts#L8-L37)). |
+| A child session made through `POST /api/session` with `parentID` | **No** | Only the `subagent` tool attaches the completion observer; a plain child that finishes never restarts its parent. |
+
+The two non-waking shell routes are deliberate upstream behavior, not a bug to
+route around. Do not report those shells (or add a Meridian-side wake prompt) to
+make them look like running work: the push would hold for work that never
+resumes the session. Live canaries on v2.0.29 with the free
+`opencode/deepseek-v4.1-flash-free` model agree: both agent tools wake the
+parent (a new `session.execution.started` 3–5 ms after the shell exits or the
+child ends, no input); `POST /api/shell` does not.
+
+Tracking rules, all learned from the live event stream:
+
+- Only work a tool event of the primary names counts: `session.tool.progress`
+  with `metadata.shellID` or with a child `metadata.sessionID` and
+  `status: "running"`. `shell.created` (command) and `session.created` with the
+  primary as `parentID` only announce a candidate, so a shell or child created
+  any other way, including one carrying the primary's id in its metadata, is
+  never reported.
+- Ends: `shell.exited`, `shell.deleted`, the child's own terminal
+  `session.execution.*`, the primary's `session.tool.failed` naming it, or the
+  primary's synthetic `session.inbox.enqueued` (`payload.metadata.source` of
+  `shell` or `subagent`).
+- An interrupted turn emits its terminal event **before** the aborted foreground
+  shell or child ends (`shell.exited` and the child's terminal arrive 2–4 ms
+  later). `shell.deleted` and the parent's `session.tool.failed` precede the
+  terminal, so they must count as ends, or an interrupted foreground tool would
+  hold the push forever (a certain `agent` hold never lifts without another
+  turn end).
+- `/api/event` is live-only and announces each connection with `server.connected`.
+  After a reconnect with named work, the next turn end re-derives from
+  `GET /api/shell` and `GET /api/session?parentID=` and keeps only ids still
+  running; if the server cannot answer it reports nothing and logs one line. The
+  shell listing follows the request's location: `?directory=` is ignored, while
+  the `x-opencode-directory` header and the `location[directory]` query both select
+  it (the sensor uses the query, with the session's own `location.directory`).
+  Starts that fell in the gap cannot be recovered and stay unreported.
+- A fresh `opencode serve` loads its provider catalog on first touch of a
+  location; a prompt that races it fails with `provider.no-route`. Touch the
+  location (any `GET /api/shell`) before driving a headless session.
+
 ### Cursor: Subprocess-Only, Read-Only stdout
 
 Cursor is unmaintained. Keep it building and its existing tests passing; don't extend it
