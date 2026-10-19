@@ -1,0 +1,20 @@
+data: {"id":"evt_152daa7550017nNBLq59rYJky6","created":1792391423829,"type":"shell.created","location":{"directory":"/tmp/project"},"data":{"info":{"id":"sh_152daa752001y16TU505bPREnm","status":"running","command":"sleep 6","cwd":"/tmp/project","shell":"/usr/bin/bash","file":"/tmp/opencode/shell/project/sh_152daa752001y16TU505bPREnm.out","metadata":{"sessionID":"ses_v2_fixture_primary","background":true},"time":{"started":1792391423826}}}}
+
+data: {"id":"evt_152dabed5001IUp2X296AY9rsv","created":1792391429845,"type":"session.inbox.enqueued","location":{"directory":"/tmp/project"},"data":{"inboxID":"msg_152dabed40010ElMxl0jIPGKjj","sessionID":"ses_v2_fixture_primary","item":{"type":"synthetic","payload":{"text":"The following shell command was executed by the user:\n<shell id=\"sh_152daa752001y16TU505bPREnm\" state=\"completed\" command=\"sleep 6\">\n(no output)\n</shell>","metadata":{"source":"shell","shellID":"sh_152daa752001y16TU505bPREnm","state":"completed","truncated":false,"exit":0}},"delivery":"steer"}},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":110,"version":1}}
+
+data: {"id":"evt_152dabed8001CzVwxZS4qpN2ux","created":1792391429848,"type":"shell.exited","location":{"directory":"/tmp/project"},"data":{"id":"sh_152daa752001y16TU505bPREnm","exit":0,"status":"exited"}}
+
+data: {"id":"evt_152dabee0001YanI7BKjtBRZ4H","created":1792391429857,"type":"shell.created","location":{"directory":"/tmp/project"},"data":{"info":{"id":"sh_152dabedf001beAD0JQzdvagT3","status":"running","command":"sleep 5","cwd":"/tmp/project","shell":"/usr/bin/bash","file":"/tmp/opencode/shell/project/sh_152dabedf001beAD0JQzdvagT3.out","metadata":{"sessionID":"ses_v2_fixture_primary"},"time":{"started":1792391429855}}}}
+
+data: {"id":"evt_152dabeec001Op8zS9YCeI6Svz","created":1792391429868,"type":"session.created","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_manual_child","slug":"crisp-orchid","version":"2.0.29","projectID":"project","parentID":"ses_v2_fixture_primary","location":{"directory":"/tmp/project"},"subpath":"","title":"manual child"},"durable":{"aggregateID":"ses_v2_fixture_manual_child","seq":0,"version":1}}
+
+data: {"id":"evt_152dabf04001QKA4MAZz8hEJR1","created":1792391429892,"type":"session.inbox.enqueued","location":{"directory":"/tmp/project"},"data":{"inboxID":"msg_152dabf030017e191Wmqu55Xr1","sessionID":"ses_v2_fixture_manual_child","item":{"type":"user","payload":{"text":"reply with the single word OK, do not call tools"},"delivery":"steer"}},"durable":{"aggregateID":"ses_v2_fixture_manual_child","seq":1,"version":1}}
+
+data: {"id":"evt_152dabf060014qKegKmhOx660Q","created":1792391429894,"type":"session.execution.started","data":{"sessionID":"ses_v2_fixture_manual_child"},"durable":{"aggregateID":"ses_v2_fixture_manual_child","seq":2,"version":1}}
+
+data: {"id":"evt_152dabf12001tUNHKMD028NYdq","created":1792391429906,"type":"session.inbox.delivered","location":{"directory":"/tmp/project"},"data":{"sessionID":"ses_v2_fixture_manual_child","inboxID":"msg_152dabf030017e191Wmqu55Xr1"},"durable":{"aggregateID":"ses_v2_fixture_manual_child","seq":4,"version":1}}
+
+data: {"id":"evt_152dac2ec002jJYoqxsLWdQr6x","created":1792391430892,"type":"session.execution.succeeded","data":{"sessionID":"ses_v2_fixture_manual_child"},"durable":{"aggregateID":"ses_v2_fixture_manual_child","seq":12,"version":1}}
+
+data: {"id":"evt_152dad26b001b4WwuFogN7ZDjF","created":1792391434859,"type":"shell.exited","location":{"directory":"/tmp/project"},"data":{"id":"sh_152dabedf001beAD0JQzdvagT3","exit":0,"status":"exited"}}
+
