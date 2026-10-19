@@ -119,7 +119,12 @@ What users may notice:
 No state migration or manual index rebuild is required. The first indexed read
 builds the new input-versioned file automatically. Work status writers do not emit
 `v` yet, so released strict readers continue to accept files this version writes.
-Rollback support for other state changes remains specific to their topic below.
+When rolling back to v0.10.29, authority remains readable because this version
+still writes the released work and session shapes. Its old `history-v10.sqlite3`
+was not updated while the newer input-versioned index was active; run
+`meridian session index rebuild --metadata-only` after rollback before relying on
+indexed session discovery. Rollback support for other state changes remains
+specific to their topic below.
 
 ## Notifications are hook events
 
