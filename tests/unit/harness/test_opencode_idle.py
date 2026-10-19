@@ -10,10 +10,11 @@ from typing import Any, cast
 import pytest
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness import opencode_idle
+from meridian.lib.harness import opencode_idle, opencode_running_work
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.idle_types import BackgroundTask, CacheTtl, IdleEvent, IdleSensorContext
+from meridian.lib.harness.permission_broker import PermissionTransition, _transition_to_event
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "opencode_idle"
 SESSION_ID = "ses_ee21d9d97ffeN9m0VxoYy7qFQf"
@@ -398,61 +399,191 @@ async def test_v2_interrupted_foreground_tools_are_not_reported(tmp_path: Path) 
     assert (await _turn_end(sensor, subagent_turn)).background_tasks == ()
 
 
-async def test_v2_reported_work_is_bounded(tmp_path: Path) -> None:
+async def test_v2_reported_work_is_bounded_and_keeps_agents(tmp_path: Path) -> None:
     sensor, _ = _v2_sensor(tmp_path)
     events: list[RawHarnessEvent] = []
     for number, command in enumerate(["x" * 513, *("sleep 1" for _ in range(16))]):
         shell_id = f"sh_{number}"
         events.append(_v2_global("shell.created", info={"id": shell_id, "command": command}))
         events.append(_v2_raw("session.tool.progress", metadata={"shellID": shell_id}))
+    # The child is named after seventeen shells, yet an agent is the certain hold.
+    events.append(_v2_global("session.created", sessionID="ses_child", parentID=V2_SESSION_ID))
+    events.append(
+        _v2_raw("session.tool.progress", metadata={"sessionID": "ses_child", "status": "running"})
+    )
 
     tasks = (
         await _turn_end(sensor, [*events, _v2_raw("session.execution.succeeded")])
     ).background_tasks
 
     assert len(tasks) == 16
-    assert tasks[0] == BackgroundTask(kind="other")
-    assert tasks[1:] == (BackgroundTask(kind="shell", command="sleep 1"),) * 15
+    assert tasks[:2] == (BackgroundTask(kind="agent"), BackgroundTask(kind="other"))
+    assert tasks[2:] == (BackgroundTask(kind="shell", command="sleep 1"),) * 14
+
+
+_CHILD_ID = "ses_v2_fixture_child"
+
+
+def _surfaced_request(
+    status: str, request_id: str, session_id: str = _CHILD_ID
+) -> RawHarnessEvent:
+    """A permission request as the managed primary's broker surfaces it to the sensor."""
+
+    transition = PermissionTransition(
+        seq=1,
+        request_id=request_id,
+        request_type="approval",
+        method="permission.asked",
+        payload={"id": request_id, "sessionID": session_id, "action": "shell"},
+        status=cast("Any", status),
+        resolution={"decision": "approve", "reply": "once"} if status == "resolved" else None,
+        error=None,
+        timestamp="2026-10-19T00:00:00Z",
+    )
+    event = _transition_to_event(transition, harness_id="opencode")
+    assert event is not None
+    return event
+
+
+async def test_v2_child_waiting_on_a_permission_prompt_stops_holding_the_push(
+    tmp_path: Path,
+) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, woken, _ = _v2_turns("events-v2-background-subagent.sse")
+
+    assert (await _turn_end(sensor, started)).background_tasks == (BackgroundTask(kind="agent"),)
+
+    # The prompt arrives after the turn end armed the push with the child held.
+    sensor.on_raw_event(_surfaced_request("pending", "per_1"))
+    assert (await _turn_end(sensor, [])).background_tasks == ()
+
+    # Answered: the child runs again and will wake the primary when it ends.
+    sensor.on_raw_event(_surfaced_request("resolved", "per_1"))
+    assert (await _turn_end(sensor, [])).background_tasks == (BackgroundTask(kind="agent"),)
+    assert (await _turn_end(sensor, woken)).background_tasks == ()
+
+
+async def test_v2_prompt_of_a_grandchild_stops_its_ancestor_child_counting(
+    tmp_path: Path,
+) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    await _turn_end(sensor, started)
+
+    sensor.on_raw_event(
+        _v2_global("session.created", sessionID="ses_grandchild", parentID=_CHILD_ID)
+    )
+    sensor.on_raw_event(_surfaced_request("pending", "per_deep", "ses_grandchild"))
+
+    assert (await _turn_end(sensor, [])).background_tasks == ()
+
+
+@pytest.mark.parametrize("closing", ["resolved", "failed", "cancelled"])
+async def test_v2_every_way_a_prompt_closes_counts_the_child_again(
+    tmp_path: Path, closing: str
+) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    await _turn_end(sensor, started)
+    sensor.on_raw_event(_surfaced_request("pending", "per_1"))
+    assert (await _turn_end(sensor, [])).background_tasks == ()
+
+    sensor.on_raw_event(_surfaced_request(closing, "per_1"))
+
+    assert (await _turn_end(sensor, [])).background_tasks == (BackgroundTask(kind="agent"),)
+
+
+async def test_v2_prompts_that_change_no_reported_work_do_not_rearm(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    await _turn_end(sensor, started)
+
+    sensor.on_raw_event(_surfaced_request("pending", "per_primary", V2_SESSION_ID))
+    sensor.on_raw_event(_surfaced_request("pending", "per_unknown", "ses_elsewhere"))
+    sensor.on_raw_event(_surfaced_request("resolved", "per_never_opened"))
+    # A busy primary reports the corrected work at its own turn end.
+    sensor.on_raw_event(_v2_raw("session.execution.started"))
+    sensor.on_raw_event(_surfaced_request("pending", "per_while_busy"))
+    ended = await _turn_end(sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")])
+
+    assert (ended.turn_id, ended.background_tasks) == ("evt_own_end", ())
+
+
+async def test_v2_prompt_closed_after_its_child_ended_changes_nothing(tmp_path: Path) -> None:
+    sensor, _ = _v2_sensor(tmp_path)
+    started, *_ = _v2_turns("events-v2-background-subagent.sse")
+    await _turn_end(sensor, started)
+    sensor.on_raw_event(_surfaced_request("pending", "per_1"))
+    await _turn_end(sensor, [])
+
+    sensor.on_raw_event(_v2_raw("session.execution.succeeded", sessionID=_CHILD_ID))
+    sensor.on_raw_event(_surfaced_request("resolved", "per_1"))
+    ended = await _turn_end(sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")])
+
+    assert (ended.turn_id, ended.background_tasks) == ("evt_own_end", ())
 
 
 @pytest.mark.parametrize(
-    ("request_kwargs", "expected_kept"),
+    ("request_kwargs", "expected_after"),
     [
-        ({"shells": ["sh_152d5c83a0014ffNOwmGPo8RO7"]}, True),
-        ({"shells": []}, False),
-        ({"failing": _SHELL_LISTING_PATH}, False),
+        ({"shells": ["sh_152d5c83a0014ffNOwmGPo8RO7"]}, None),
+        ({"shells": []}, ()),
+        ({"failing": _SHELL_LISTING_PATH}, ()),
     ],
 )
-async def test_v2_reconnect_rederives_work_from_the_server(
+async def test_v2_reconnect_rederives_work_at_once_and_rearms_if_it_changed(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
     request_kwargs: dict[str, Any],
-    expected_kept: bool,
+    expected_after: tuple[BackgroundTask, ...] | None,
 ) -> None:
     sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(**request_kwargs))
     started, *_ = _v2_turns("events-v2-background-shell.sse")
-    *tracking, terminal = started
-    # The stream reopened while the shell ran: its end may have fallen in the gap.
-    reopened = [*tracking, _v2_global("server.connected"), terminal]
+    shell = (BackgroundTask(kind="shell", command="sleep 15"),)
+    assert (await _turn_end(sensor, started)).background_tasks == shell
 
-    with caplog.at_level(logging.WARNING, logger=opencode_idle.logger.name):
-        tasks = (await _turn_end(sensor, reopened)).background_tasks
+    # The stream reopened while the shell ran: its end may have fallen in the gap,
+    # and no later turn end is coming to find out.
+    with caplog.at_level(logging.WARNING, logger=opencode_running_work.logger.name):
+        sensor.on_raw_event(_v2_global("server.connected"))
+        if expected_after is not None:
+            assert (await _turn_end(sensor, [])).background_tasks == expected_after
+        else:
+            await asyncio.sleep(0.05)
+            ended = await _turn_end(
+                sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")]
+            )
+            assert (ended.turn_id, ended.background_tasks) == ("evt_own_end", shell)
 
-    assert tasks == ((BackgroundTask(kind="shell", command="sleep 15"),) if expected_kept else ())
     assert [
         record.getMessage().startswith("OpenCode running work") for record in caplog.records
     ] == ([True] if "failing" in request_kwargs else [])
 
 
 async def test_v2_reconnect_drops_a_child_that_ended_in_the_gap(tmp_path: Path) -> None:
-    child = {"id": "ses_v2_fixture_child", "outcome": "succeeded"}
+    child = {"id": _CHILD_ID, "outcome": "succeeded"}
     sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(children=[child]))
     started, *_ = _v2_turns("events-v2-background-subagent.sse")
-    *tracking, terminal = started
+    assert (await _turn_end(sensor, started)).background_tasks == (BackgroundTask(kind="agent"),)
 
-    assert (
-        await _turn_end(sensor, [*tracking, _v2_global("server.connected"), terminal])
-    ).background_tasks == ()
+    sensor.on_raw_event(_v2_global("server.connected"))
+
+    assert (await _turn_end(sensor, [])).background_tasks == ()
+
+
+async def test_v2_first_connection_with_no_work_named_asks_the_server_nothing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A listing that fails would log a warning if the sensor asked for it.
+    sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(failing=_SHELL_LISTING_PATH))
+
+    with caplog.at_level(logging.WARNING, logger=opencode_running_work.logger.name):
+        sensor.on_raw_event(_v2_global("server.connected"))
+        await asyncio.sleep(0.05)
+        ended = await _turn_end(sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")])
+
+    assert (ended.turn_id, ended.background_tasks) == ("evt_own_end", ())
+    assert caplog.records == []
 
 
 @pytest.mark.parametrize(

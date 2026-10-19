@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
@@ -23,14 +22,22 @@ from meridian.lib.harness.idle_types import (
     IdleSensorContext,
 )
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
-from meridian.lib.harness.opencode_running_work import TERMINAL_EVENTS, RunningWork
+from meridian.lib.harness.opencode_running_work import RunningWork
 from meridian.lib.utils.json_shapes import json_object
 
-logger = logging.getLogger(__name__)
+# The primary's turn ends: the execution outcomes of its own session.
+TERMINAL_EVENTS = frozenset(
+    {
+        "session.execution.succeeded",
+        "session.execution.failed",
+        "session.execution.interrupted",
+    }
+)
 
 BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]]
 
 _GET_TIMEOUT_SECONDS = 10.0
+_GET_ERRORS = (TimeoutError, OSError, RuntimeError, ValueError)
 
 # D5/D7: the backend TTL is unknown; mirror the Codex harness's estimate.
 _PROVIDER_TTLS = {"openai": CacheTtl(1800, estimated=True)}
@@ -210,6 +217,23 @@ class _OpenCodeIdleSensorBase:
             )
         )
 
+    async def _get_json(self, path: str) -> object:
+        """GET a JSON body from the backend.
+
+        Raises TimeoutError, OSError, RuntimeError (a non-200 status or a client
+        error) or ValueError (a body that is not JSON).
+        """
+
+        try:
+            status, body = await asyncio.wait_for(
+                self._request("GET", path, None), timeout=_GET_TIMEOUT_SECONDS
+            )
+        except aiohttp.ClientError as exc:
+            raise RuntimeError(f"GET {path} failed: {exc}") from exc
+        if status != 200:
+            raise RuntimeError(f"GET {path} returned {status}")
+        return json.loads(body)
+
     async def events(self) -> AsyncIterator[IdleEvent]:
         while True:
             event = await self._events.get()
@@ -317,14 +341,8 @@ class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
     async def _fetch_message_facts(self) -> tuple[str | None, str | None]:
         session_id = quote(self._ctx.harness_session_id, safe="")
         try:
-            status, body = await asyncio.wait_for(
-                self._request("GET", f"/session/{session_id}/message?limit=20", None),
-                timeout=_GET_TIMEOUT_SECONDS,
-            )
-            if status != 200:
-                return None, None
-            return message_excerpts(json.loads(body))
-        except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
+            return message_excerpts(await self._get_json(f"/session/{session_id}/message?limit=20"))
+        except _GET_ERRORS:
             return None, None
 
 
@@ -368,31 +386,6 @@ def _v2_session_model(payload: object) -> tuple[str, str] | None:
     return provider, model_id
 
 
-def _v2_session_directory(payload: object) -> str | None:
-    session = _v2_response_data(payload)
-    location = json_object(session.get("location")) if session is not None else None
-    directory = location.get("directory") if location is not None else None
-    return directory if isinstance(directory, str) and directory else None
-
-
-def _v2_listed_running_ids(payload: object, *, shells: bool) -> set[str]:
-    """Ids a V2 listing reports as still running."""
-
-    response = json_object(payload)
-    rows = response.get("data") if response is not None else None
-    if not isinstance(rows, list):
-        raise ValueError("listing has no data array")
-    ids: set[str] = set()
-    for raw_row in cast("list[object]", rows):
-        row = json_object(raw_row)
-        row_id = row.get("id") if row is not None else None
-        # The shell listing holds only running shells; a child session is running
-        # until it has an outcome.
-        if isinstance(row_id, str) and row is not None and (shells or row.get("outcome") is None):
-            ids.add(row_id)
-    return ids
-
-
 def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
     response = json_object(payload)
     messages = response.get("data") if response is not None else None
@@ -416,12 +409,19 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self._seen_user_inbox_ids: set[str] = set()
         self._pending_user_inbox_ids: set[str] = set()
         self._work = RunningWork(ctx.harness_session_id)
+        self._refreshes: set[asyncio.Task[None]] = set()
 
     def on_raw_event(self, event: RawHarnessEvent) -> None:
         if event.harness_id != self._ctx.harness_id.value:
             return
         # Shell and child-session events carry another session id, or none.
-        self._work.observe(event)
+        signal = self._work.observe(event)
+        if signal == "changed":
+            self._rearm()
+        elif signal == "reopened":
+            refresh = asyncio.create_task(self._refresh_work())
+            self._refreshes.add(refresh)
+            refresh.add_done_callback(self._refreshes.discard)
         if _session_id(event) != self._ctx.harness_session_id:
             return
 
@@ -459,73 +459,39 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self._busy = False
         self._emit("turn_end", turn_id=_event_id(event))
 
+    def _rearm(self) -> None:
+        """Arm the push again with the work as it stands, after it changed while idle.
+
+        The new arm replaces the schedule of the last turn end; a push already sent
+        stays sent. A busy primary ends its turn soon and reports the work then.
+        """
+
+        if not self._busy:
+            self._emit("turn_end")
+
+    async def _refresh_work(self) -> None:
+        if await self._work.refresh(self._get_json):
+            self._rearm()
+
     async def _fetch_message_facts(self) -> tuple[str | None, str | None]:
         session_id = quote(self._ctx.harness_session_id, safe="")
         try:
-            status, body = await asyncio.wait_for(
-                self._request(
-                    "GET",
-                    f"/api/session/{session_id}/message?limit=20&order=desc",
-                    None,
-                ),
-                timeout=_GET_TIMEOUT_SECONDS,
+            return _v2_message_excerpts(
+                await self._get_json(f"/api/session/{session_id}/message?limit=20&order=desc")
             )
-            if status != 200:
-                return None, None
-            return _v2_message_excerpts(json.loads(body))
-        except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
+        except _GET_ERRORS:
             return None, None
 
     async def _fetch_provider(self) -> str | None:
         session_id = quote(self._ctx.harness_session_id, safe="")
         try:
-            status, body = await asyncio.wait_for(
-                self._request("GET", f"/api/session/{session_id}", None),
-                timeout=_GET_TIMEOUT_SECONDS,
-            )
-            if status != 200:
-                return None
-            model = _v2_session_model(json.loads(body))
-            return model[0] if model is not None else None
-        except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
+            model = _v2_session_model(await self._get_json(f"/api/session/{session_id}"))
+        except _GET_ERRORS:
             return None
+        return model[0] if model is not None else None
 
     async def _fetch_background_tasks(self) -> tuple[BackgroundTask, ...]:
-        return await self._work.snapshot(self._list_running_work)
-
-    async def _get_json(self, path: str) -> object:
-        status, body = await asyncio.wait_for(
-            self._request("GET", path, None), timeout=_GET_TIMEOUT_SECONDS
-        )
-        if status != 200:
-            raise RuntimeError(f"GET {path} returned {status}")
-        return json.loads(body)
-
-    async def _list_running_work(self) -> set[str] | None:
-        """Ids the server lists as running shells and children, or None if it cannot say."""
-
-        session_id = quote(self._ctx.harness_session_id, safe="")
-        try:
-            directory = _v2_session_directory(await self._get_json(f"/api/session/{session_id}"))
-            if directory is None:
-                raise ValueError("session has no location")
-            # The shell listing follows the location, which `location[directory]`
-            # selects; a bare `directory` query is ignored.
-            shells = await self._get_json(
-                f"/api/shell?location%5Bdirectory%5D={quote(directory, safe='')}"
-            )
-            children = await self._get_json(f"/api/session?parentID={session_id}&limit=500")
-            return _v2_listed_running_ids(shells, shells=True) | _v2_listed_running_ids(
-                children, shells=False
-            )
-        except (TimeoutError, OSError, RuntimeError, ValueError, aiohttp.ClientError) as exc:
-            logger.warning(
-                "OpenCode running work not re-derived after a stream reconnect; "
-                "arming without it: %s: %s",
-                type(exc).__name__,
-                exc,
-            )
-            return None
+        return self._work.tasks()
 
 
 def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
