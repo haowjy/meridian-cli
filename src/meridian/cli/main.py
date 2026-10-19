@@ -76,6 +76,7 @@ from meridian.cli.startup.help import render_root_help
 from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
+from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.launch.cwd import WorkTaskDirMissing
 from meridian.lib.telemetry import emit_telemetry
 
@@ -985,7 +986,9 @@ def _directory_env_scope(
 def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point used by `meridian` and `python -m meridian`."""
 
-    with meridian_managed_env_default():
+    # Bootstrap and dispatch enter separate invocation scopes; one warning cache
+    # spans both so a command warns once per key.
+    with meridian_managed_env_default(), warning_cache_scope():
         _main_impl(argv=argv)
 
 
