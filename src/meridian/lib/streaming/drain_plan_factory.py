@@ -90,8 +90,8 @@ def build_drain_plan(
         return await service.cancel_descendants(root_id)
 
     resident_backend = receiver.resident_backend
-    native_evidence = receiver.completion_evidence()
-    if native_evidence is not None or resident_backend is not None:
+    native = receiver.native_task_source()
+    if native is not None or resident_backend is not None:
         coordinator = ResidentDrainCoordinator.build(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
@@ -103,7 +103,7 @@ def build_drain_plan(
                 else _send_completion_nudge
             ),
             backend=resident_backend,
-            native_evidence=native_evidence,
+            native=native,
             deadline_seconds=config.resident_deadline_seconds,
             poll_seconds=config.resident_poll_seconds,
             rearm_budget=config.resident_rearm_budget,

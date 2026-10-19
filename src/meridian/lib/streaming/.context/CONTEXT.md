@@ -45,7 +45,7 @@ The implementation is split by responsibility:
 - `drain_teardown.py` — harness-neutral plan-owned async connection-stop contract
 - `pi_drain_teardown.py` — Pi cleanup-phase connection-stop policy
 - `spawn_session.py` — `SpawnSession` and `DrainOutcome` carriers
-- `resident_drain.py` — resident-backend descendant waiting and done-nudge model
+- `resident_drain.py` — `HoldEvidence`, resident done-nudge model, hold builder
 - `pi_drain.py` — Pi spawned-session quiescence coordinator
 - `pi_lifecycle_tracker.py` — validation for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi quiescence inputs
@@ -83,13 +83,16 @@ parent, clear its signals, or drive its activity transitions.
 `drain_plan_factory.build_drain_plan()` returns the whole drain-loop configuration
 for one active spawn. `SpawnManager._select_drain_plan()` only supplies manager-owned
 capabilities and delegates to it. There are three completion profiles: resident,
-native-task hold, and Pi. Native completion evidence selects the native-task profile;
-otherwise resident backend control selects the resident profile. Both use
-`ResidentDrainCoordinator` and compose `RearmWindow` for signals, absolute deadlines,
-and budgeted rearm. Pi keeps its separate child-wave windows. Claude's connection
-supplies `harness/claude_drain.py` evidence; it owns snapshot parsing, not policy.
-Native tasks and the pending follow-up result are diagnostic blockers, not policy
-flags carried through assessments.
+native-task hold, and Pi. A native task source selects the native-task profile;
+otherwise resident backend control selects the resident profile. Both are built by
+`ResidentDrainCoordinator.build`, read one `HoldEvidence`, and compose `RearmWindow`
+for signals, absolute deadlines, and budgeted rearm. Pi keeps its separate child-wave
+windows. Claude's connection supplies `harness/claude_drain.py`'s
+`ClaudeNativeTaskSource`; it owns snapshot parsing, not policy, and reports only
+blockers and a generation. `HoldEvidence` merges that source with persisted
+descendants: `unknown` descendants dominate, otherwise either source's blockers hold.
+Claude's hold has no descendant source yet. Native tasks and the pending follow-up
+result are diagnostic blockers, not policy flags carried through assessments.
 Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux wakes. Plain streaming harnesses
 intentionally run with
 `DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence

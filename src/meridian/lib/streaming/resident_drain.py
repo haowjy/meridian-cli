@@ -1,8 +1,9 @@
-"""Resident completion collaborators and their drain construction wrapper."""
+"""Hold evidence, resident policy, cleanup, and the hold drain adapter."""
 
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,10 +19,11 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionCleanupRequest,
     CompletionDirectives,
     CompletionEvaluation,
-    CompletionEvidence,
     CompletionState,
+    DiagnosticBlocker,
     EvidenceEventDecision,
     EvidenceFailure,
+    NativeTaskSource,
     NudgeUrgency,
     ProfileDecision,
     ProfileExitDecision,
@@ -61,39 +63,38 @@ _BACKEND_DEAD_WHILE_AWAITING_DONE = TerminalEventOutcome(
 )
 
 
-class _DescendantCompletionEvidence:
-    """Assess the reconciled, transitive persisted descendant tree."""
+class HoldEvidence:
+    """Merge persisted-descendant evidence with an optional native task source.
+
+    Unreadable descendants dominate and carry their failure; otherwise the hold
+    is blocked while either source has blockers. Native facts update with the
+    stream, so success validation waits only on a fresh descendant read.
+    Descendants are absent only for Claude, which does not yet wait on them.
+    """
 
     def __init__(
         self,
         *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
-        poll_seconds: float,
-        clock: Callable[[], float],
+        descendants: DescendantRefreshOwner | None,
+        native: NativeTaskSource | None,
     ) -> None:
-        self._poll_seconds = poll_seconds
-        self._clock = clock
-        self._descendant_evidence = ReconciledDescendantEvidence(
-            runtime_root=runtime_root,
-            root_spawn_id=spawn_id,
-        )
-        self._refresh = DescendantRefreshOwner(
-            self._descendant_evidence,
-            poll_seconds=poll_seconds,
-            clock=clock,
-        )
+        self._descendants = descendants
+        self._native = native
 
     async def start(self) -> None:
-        self._refresh.start()
+        if self._descendants is not None:
+            self._descendants.start()
 
     async def stop(self) -> None:
-        await self._refresh.stop()
+        if self._descendants is not None:
+            await self._descendants.stop()
 
     async def observe_event(
         self, event: RawHarnessEvent, transition: str | None
     ) -> EvidenceEventDecision:
-        del event, transition
+        del transition
+        if self._native is not None:
+            self._native.observe_event(event)
         return EvidenceEventDecision()
 
     def note_event_delivered(
@@ -104,27 +105,45 @@ class _DescendantCompletionEvidence:
 
     async def assess(self, trigger: AssessmentTrigger, state: CompletionState) -> WorkAssessment:
         del trigger, state
-        self._refresh.ensure_due()
-        return self._refresh.assessment
+        native_blockers = () if self._native is None else self._native.blockers
+        generation = 0 if self._native is None else self._native.generation
+        if self._descendants is None:
+            descendant_blockers: tuple[DiagnosticBlocker, ...] = ()
+        else:
+            self._descendants.ensure_due()
+            descendants = self._descendants.assessment
+            generation += descendants.generation
+            if descendants.disposition == "unknown":
+                return replace(descendants, generation=generation)
+            descendant_blockers = descendants.blockers
+        blockers = descendant_blockers + native_blockers
+        return WorkAssessment(
+            disposition="blocked" if blockers else "ready",
+            blockers=blockers,
+            generation=generation,
+        )
 
     def next_due_at(self) -> float | None:
-        return self._refresh.next_due_at
+        return None if self._descendants is None else self._descendants.next_due_at
 
     async def handle_due(self) -> EvidenceEventDecision:
-        self._refresh.ensure_due()
+        if self._descendants is not None:
+            self._descendants.ensure_due()
         return EvidenceEventDecision()
 
     def wants_aux_wake(self) -> bool:
-        return self._refresh.wants_wake
+        return self._descendants is not None and self._descendants.wants_wake
 
     async def wait_for_change(self) -> None:
-        await self._refresh.wait()
+        if self._descendants is None:
+            raise RuntimeError("native-only hold evidence has no auxiliary wake source")
+        await self._descendants.wait()
 
     def request_validation(self) -> int:
-        return self._refresh.request()
+        return 0 if self._descendants is None else self._descendants.request()
 
     def validation_complete(self, request: int) -> bool:
-        return self._refresh.validated(request)
+        return self._descendants is None or self._descendants.validated(request)
 
 
 class _ResidentCompletionProfile:
@@ -385,7 +404,7 @@ class ResidentDrainCoordinator:
         spawn_id: SpawnId,
         send_nudge: Callable[[str], Awaitable[None]],
         backend: ResidentBackendControl | None,
-        native_evidence: CompletionEvidence | None,
+        native: NativeTaskSource | None,
         deadline_seconds: float | None,
         poll_seconds: float | None,
         rearm_budget: int | None,
@@ -396,10 +415,11 @@ class ResidentDrainCoordinator:
         )
         resolved_poll = poll_seconds if poll_seconds and poll_seconds > 0 else 5.0
         clock = time.monotonic
-        evidence: CompletionEvidence
         profile: _ResidentCompletionProfile | NativeTaskHoldProfile
-        if native_evidence is not None:
-            evidence = native_evidence
+        if native is not None:
+            # Claude keeps its native-task profile, without descendants, until
+            # the two hold profiles merge.
+            evidence = HoldEvidence(descendants=None, native=native)
             profile = NativeTaskHoldProfile(
                 runtime_root=runtime_root,
                 spawn_id=spawn_id,
@@ -410,11 +430,16 @@ class ResidentDrainCoordinator:
                 clock=clock,
             )
         elif backend is not None:
-            evidence = _DescendantCompletionEvidence(
-                runtime_root=runtime_root,
-                spawn_id=spawn_id,
-                poll_seconds=resolved_poll,
-                clock=clock,
+            evidence = HoldEvidence(
+                descendants=DescendantRefreshOwner(
+                    ReconciledDescendantEvidence(
+                        runtime_root=runtime_root,
+                        root_spawn_id=spawn_id,
+                    ),
+                    poll_seconds=resolved_poll,
+                    clock=clock,
+                ),
+                native=None,
             )
             profile = _ResidentCompletionProfile(
                 runtime_root=runtime_root,
@@ -426,7 +451,7 @@ class ResidentDrainCoordinator:
                 clock=clock,
             )
         else:
-            raise ValueError("a hold needs native evidence or resident backend control")
+            raise ValueError("a hold needs a native task source or resident backend control")
         coordinator = CompletionCoordinator(
             evidence=evidence,
             profile=profile,

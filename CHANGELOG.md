@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Build Codex/OpenCode resident holds and Claude native-task holds through one `ResidentDrainCoordinator.build`; the resident nudge is passed in as `begin_followup_turn`. No behavior change.
+- Build Codex/OpenCode resident holds and Claude native-task holds through one `ResidentDrainCoordinator.build` over one `HoldEvidence`. Claude's connection now exposes a narrow `native_task_source()` (blockers and a generation) instead of a full completion-evidence object. No behavior change.
 - Per-spawn files live only in the spawn dir; runtime `artifacts/` store gone (legacy dirs still pruned). Runner start and guardrail failure text now lands in the spawn's `stderr.log`. (#677)
 
 ### Deprecated

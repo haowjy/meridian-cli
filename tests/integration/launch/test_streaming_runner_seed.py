@@ -72,7 +72,7 @@ class _ClaudeSeedPersistenceConnection:
     def observe_event_semantics(self, semantics: object) -> None:
         _ = semantics
 
-    def completion_evidence(self) -> None:
+    def native_task_source(self) -> None:
         return None
 
     @property
@@ -153,7 +153,7 @@ class _UnboundOpenCodeConnection:
     def observe_event_semantics(self, semantics: object) -> None:
         _ = semantics
 
-    def completion_evidence(self) -> None:
+    def native_task_source(self) -> None:
         return None
 
     @property
@@ -227,7 +227,7 @@ class _OpenCodeConnectSessionConnection:
     def observe_event_semantics(self, semantics: object) -> None:
         _ = semantics
 
-    def completion_evidence(self) -> None:
+    def native_task_source(self) -> None:
         return None
 
     @property

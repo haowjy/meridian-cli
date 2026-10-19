@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
-from meridian.lib.harness.claude_drain import ClaudeCompletionEvidence
+from meridian.lib.harness.claude_drain import ClaudeNativeTaskSource
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -66,8 +66,8 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     flag that does not exist in current Claude CLI releases.
     """
 
-    def completion_evidence(self) -> ClaudeCompletionEvidence:
-        return ClaudeCompletionEvidence()
+    def native_task_source(self) -> ClaudeNativeTaskSource:
+        return ClaudeNativeTaskSource()
 
     _CAPABILITIES = ConnectionCapabilities(
         mid_turn_injection="queue",

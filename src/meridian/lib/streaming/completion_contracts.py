@@ -221,6 +221,20 @@ class CompletionEvidence(Protocol):
     async def wait_for_change(self) -> None: ...
 
 
+class NativeTaskSource(Protocol):
+    """Harness-native background-task facts read from the connection's own events."""
+
+    def observe_event(self, event: RawHarnessEvent) -> None: ...
+
+    @property
+    def blockers(self) -> tuple[DiagnosticBlocker, ...]: ...
+
+    @property
+    def generation(self) -> int:
+        """Monotonic count of observed snapshot changes."""
+        ...
+
+
 class CompletionProfile(Protocol):
     def allows_evaluation_without_candidate(self) -> bool:
         """Return policy that is pure and stable for the coordinator's lifetime."""
@@ -276,6 +290,7 @@ __all__ = [
     "EvidenceActivity",
     "EvidenceEventDecision",
     "EvidenceFailure",
+    "NativeTaskSource",
     "NudgeUrgency",
     "ProfileAction",
     "ProfileDecision",

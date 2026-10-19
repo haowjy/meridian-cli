@@ -54,7 +54,7 @@ def _coordinator(
         spawn_id=SpawnId("p1"),
         send_nudge=connection.resident_backend.begin_followup_turn,
         backend=connection.resident_backend,
-        native_evidence=None,
+        native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,
         rearm_budget=rearm_budget,

@@ -19,12 +19,14 @@ plain/resident/Pi choice and injects manager capabilities for event emission,
 serialized injection, and application-service descendant cleanup into both Pi and
 resident policy. Drain collaborators must not construct application services.
 
-**Do not key resident behavior off harness ids.** The connection supplies completion
-evidence independently of backend control. Resident backend control selects
-Codex/OpenCode descendant evidence. Claude instead
-supplies native-task evidence and serialized stdin injection without backend liveness
-capabilities. Select the profile once from these capabilities; evidence reports facts,
-while profiles own hold, done/rearm, deadline and nudge policy.
+**Do not key resident behavior off harness ids.** A connection exposes a native task
+source (`native_task_source()`) independently of resident backend control. Both feed
+one `HoldEvidence(descendants, native)` built by `ResidentDrainCoordinator.build`:
+resident backend control selects persisted-descendant evidence and nudges through
+`begin_followup_turn`; Claude supplies its native task source, nudged through
+serialized inject, and does not yet wait on descendants. Select the profile once from
+these capabilities; evidence reports facts, while profiles own hold, done/rearm,
+deadline and nudge policy.
 
 ## Completion and Absolute Timeout Models
 
@@ -144,7 +146,8 @@ session drains that keep the harness alive across turns.
 - `pi_drain.py` — Pi evidence/cleanup collaborators and drain-protocol adapter
 - `pi_work_ledger.py` — sole mutable owner of Pi-private disk blockers; exposes
   immutable categorized snapshots
-- `resident_drain.py` — resident evidence/profile/cleanup and drain-protocol adapter
+- `resident_drain.py` — `HoldEvidence`, resident profile, cleanup, and the hold
+  coordinator builder/adapter
 - `native_hold_profile.py` — native-task hold and closing-result policy
 - `rearm_window.py` — shared resident/native signal, deadline, and rearm budget
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events

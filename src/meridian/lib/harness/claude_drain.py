@@ -1,4 +1,4 @@
-"""Claude's native background-task evidence for the shared resident drain."""
+"""Claude's native background-task source for the shared hold."""
 
 from __future__ import annotations
 
@@ -6,21 +6,20 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from meridian.lib.streaming.completion_contracts import (
-    DiagnosticBlocker,
-    EvidenceEventDecision,
-    WorkAssessment,
-)
+from meridian.lib.streaming.completion_contracts import DiagnosticBlocker
 from meridian.lib.utils.json_shapes import json_list, json_object
 
 logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import RawHarnessEvent
-    from meridian.lib.streaming.completion_contracts import AssessmentTrigger, CompletionState
+
+_AWAITING_FOLLOWUP_RESULT = (
+    DiagnosticBlocker(source="native_task", code="awaiting_followup_result"),
+)
 
 
-class ClaudeCompletionEvidence:
+class ClaudeNativeTaskSource:
     """Hold through the empty snapshot until Claude supplies its follow-up result."""
 
     def __init__(self) -> None:
@@ -28,16 +27,7 @@ class ClaudeCompletionEvidence:
         self._generation = 0
         self._task_blockers: tuple[DiagnosticBlocker, ...] = ()
 
-    async def start(self) -> None:
-        pass
-
-    async def stop(self) -> None:
-        pass
-
-    async def observe_event(
-        self, event: RawHarnessEvent, transition: str | None
-    ) -> EvidenceEventDecision:
-        del transition
+    def observe_event(self, event: RawHarnessEvent) -> None:
         if (
             event.event_type == "system"
             and event.payload.get("subtype") == "background_tasks_changed"
@@ -69,37 +59,13 @@ class ClaudeCompletionEvidence:
         elif event.event_type == "result":
             self._hold = bool(self._task_blockers)
             self._generation += 1
-        return EvidenceEventDecision()
 
-    def note_event_delivered(
-        self, event: RawHarnessEvent, state: CompletionState
-    ) -> EvidenceEventDecision:
-        return EvidenceEventDecision()
+    @property
+    def blockers(self) -> tuple[DiagnosticBlocker, ...]:
+        if self._hold and not self._task_blockers:
+            return _AWAITING_FOLLOWUP_RESULT
+        return self._task_blockers
 
-    async def assess(self, trigger: AssessmentTrigger, state: CompletionState) -> WorkAssessment:
-        blockers = self._task_blockers
-        if self._hold and not blockers:
-            blockers = (DiagnosticBlocker(source="native_task", code="awaiting_followup_result"),)
-        return WorkAssessment(
-            disposition="blocked" if blockers else "ready",
-            blockers=blockers,
-            generation=self._generation,
-        )
-
-    def request_validation(self) -> int:
+    @property
+    def generation(self) -> int:
         return self._generation
-
-    def validation_complete(self, request: int) -> bool:
-        return True  # Native evidence updates synchronously as stream events arrive.
-
-    def next_due_at(self) -> None:
-        return None
-
-    async def handle_due(self) -> EvidenceEventDecision:
-        return EvidenceEventDecision()
-
-    def wants_aux_wake(self) -> bool:
-        return False
-
-    async def wait_for_change(self) -> None:
-        raise RuntimeError("Claude completion evidence has no auxiliary wake source")
