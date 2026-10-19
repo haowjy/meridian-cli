@@ -29,7 +29,7 @@ uv run meridian hooks list --format text
 cat > "$SCRATCH/meridian.toml" << 'EOF'
 [[hooks]]
 name = "json-test-hook"
-event = "spawn.finalized"
+event = "spawn.finished"
 command = "echo json"
 EOF
 
@@ -52,7 +52,7 @@ uv run meridian hooks check --format text
 cat > "$SCRATCH/meridian.toml" << 'EOF'
 [[hooks]]
 name = "manual-hook"
-event = "spawn.finalized"
+event = "spawn.finished"
 command = "echo manual-run"
 EOF
 

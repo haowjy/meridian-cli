@@ -12,6 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Old hook names `spawn.start`, `spawn.running`, `spawn.finalized`, `work.start`, `work.started`, `session.responded`, and `session.cache_expiring`; config rows are rejected at load with their replacements. See [upgrade note](docs/upgrading.md#hook-event-names). (#687)
 - The unused `gate` hook event class and the impossible `when.status = ["skipped"]` spawn outcome. (#687)
 - The inert hook `failure_policy` config field and Plugin API type/field; a row that still sets it is rejected with a removal diagnostic. (#687)
+- `HookContext.from_authority`; construct plugin hook contexts with `HookContext.from_roots` instead. (#687)
 
 ### Changed
 - Hook events are `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, and `notify.manual`; the `notify.*` prefix identifies notification-bearing events. Lifecycle/telemetry producer names change from `spawn.queued` to `spawn.created`, `spawn.running` to `spawn.started`, and `work.started` to separate `work.created` / `work.activated` moments. (#687)

@@ -32,7 +32,10 @@ after creating its session and before starting the harness.
 Plugin API 3.0.0 carries the renamed event literal, removes the impossible
 `when.status = ["skipped"]` value and the inert `failure_policy` config and
 Plugin API fields, exports `SpawnKind` and `SpawnStatus`, and adds
-`HookContext.spawn_kind`. A row that still sets `failure_policy` is rejected;
+`HookContext.spawn_kind`. It also removes `HookContext.from_authority`; plugins
+that constructed contexts through it should call `HookContext.from_roots` with
+the authority's `project_root` and `runtime_root`. A row that still sets
+`failure_policy` is rejected;
 hook failures now have their only effective behavior, log and continue.
 Command hook payload schema version 3 adds `spawn.kind` and
 `MERIDIAN_SPAWN_KIND`. The new `when.kind` list accepts `child`, `primary`, and

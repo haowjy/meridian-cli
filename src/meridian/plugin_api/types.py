@@ -163,47 +163,6 @@ class HookContext:
             notification=notification,
         )
 
-    @classmethod
-    def from_authority(
-        cls,
-        *,
-        authority: object,
-        event_name: HookEventName,
-        event_id: UUID,
-        timestamp: str,
-        spawn_id: str | None = None,
-        spawn_status: SpawnStatus | None = None,
-        spawn_agent: str | None = None,
-        spawn_kind: SpawnKind | None = None,
-        spawn_model: str | None = None,
-        spawn_duration_secs: float | None = None,
-        spawn_cost_usd: float | None = None,
-        spawn_error: str | None = None,
-        work_id: str | None = None,
-        work_dir: str | Path | None = None,
-    ) -> HookContext:
-        project_root = getattr(authority, "project_root", None)
-        runtime_root = getattr(authority, "runtime_root", None)
-        if project_root is None:
-            raise ValueError("Hook authority is missing project_root.")
-        return cls.from_roots(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            event_name=event_name,
-            event_id=event_id,
-            timestamp=timestamp,
-            spawn_id=spawn_id,
-            spawn_status=spawn_status,
-            spawn_agent=spawn_agent,
-            spawn_kind=spawn_kind,
-            spawn_model=spawn_model,
-            spawn_duration_secs=spawn_duration_secs,
-            spawn_cost_usd=spawn_cost_usd,
-            spawn_error=spawn_error,
-            work_id=work_id,
-            work_dir=work_dir,
-        )
-
     def to_env(self) -> dict[str, str]:
         """Convert context to MERIDIAN_* environment variables."""
 

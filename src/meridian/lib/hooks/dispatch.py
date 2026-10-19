@@ -76,7 +76,7 @@ class HookDispatcher(LifecycleHook):
                 if authority.runtime_root is not None
                 else None
             )
-            self._authority = authority.model_copy(
+            registry_authority = authority.model_copy(
                 update={
                     "project_root": self._project_root,
                     "runtime_root": self._runtime_root,
@@ -87,10 +87,10 @@ class HookDispatcher(LifecycleHook):
             self._runtime_root = (
                 runtime_root.expanduser().resolve() if runtime_root is not None else None
             )
-            self._authority = None
+            registry_authority = None
         self._registry = registry or HookRegistry(
             self._project_root,
-            authority=self._authority,
+            authority=registry_authority,
         )
         self._interval_tracker = interval_tracker or (
             IntervalTracker(self._runtime_root) if self._runtime_root is not None else None
@@ -350,10 +350,9 @@ class HookDispatcher(LifecycleHook):
         return not when.agent or context.spawn_agent == when.agent
 
     def _build_context(self, event: LifecycleEvent) -> HookContext:
-        authority = self._authority
         return HookContext.from_roots(
-            project_root=(authority.project_root if authority is not None else self._project_root),
-            runtime_root=(authority.runtime_root if authority is not None else self._runtime_root),
+            project_root=self._project_root,
+            runtime_root=self._runtime_root,
             event_name=cast("HookEventName", event.event_type),
             event_id=event.event_id,
             timestamp=event.timestamp.isoformat(),
