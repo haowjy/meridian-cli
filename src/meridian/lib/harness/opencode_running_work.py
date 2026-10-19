@@ -9,7 +9,8 @@ event of the primary named counts; the stream announces everything else too.
 
 A child that waits on a permission prompt does not count while the prompt is open:
 it cannot finish until the user answers, so holding the "your turn" push for it
-would hide the one thing the user has to do.
+would hide the one thing the user has to do. Answering the prompt is the user acting
+in the TUI, so it counts as their return.
 
 This module owns "what work is running": the stream events that tell, and the
 server listings that re-check after the stream was closed.
@@ -20,7 +21,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import NamedTuple, cast
 from urllib.parse import quote
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
@@ -37,10 +38,17 @@ BACKGROUND_COMMAND_CHAR_CAP = 512
 # (a non-200 status or a client error) or ValueError (a body that is not JSON).
 GetJson = Callable[[str], Awaitable[object]]
 
-# What `observe` asks the host to do: `changed` re-arms the idle push because the
-# reported work just changed; `reopened` means the stream reconnected with work
-# named, so `refresh` must re-check it against the server.
-Signal = Literal["changed", "reopened"]
+
+class Effect(NamedTuple):
+    """What an event asks the host to do about the idle push."""
+
+    # The reported work just changed, so the push must be armed again.
+    changed: bool = False
+    # The user answered a child's permission prompt: they are back at the TUI.
+    answered: bool = False
+
+
+NO_EFFECT = Effect()
 
 # An execution outcome: it ends a child session (the sensor's own turn end is
 # `opencode_idle.TERMINAL_EVENTS`, the same three events).
@@ -150,17 +158,16 @@ class RunningWork:
         self._open_asks: dict[str, str] = {}
         self._directory: str | None = None
 
-    def observe(self, event: RawHarnessEvent) -> Signal | None:
+    def observe(self, event: RawHarnessEvent) -> Effect:
         payload = event.payload
         event_type = event.event_type
         session_id = _text(payload.get("sessionID"))
-        if event_type == "server.connected":
-            # Every connection announces itself, the first included.
-            return "reopened" if self._named() else None
         if event_type == "request/opened":
             return self._ask_opened(payload)
         if event_type in _ASK_CLOSED:
-            return self._ask_closed(_text(payload.get("request_id")))
+            return self._ask_closed(
+                _text(payload.get("request_id")), answered=event_type == "request/resolved"
+            )
         if event_type == "shell.created":
             info = json_object(payload.get("info"))
             shell_id = _text(info.get("id")) if info is not None else None
@@ -174,7 +181,7 @@ class RunningWork:
         elif event_type in _EXECUTION_ENDED:
             self._end(session_id)
         elif session_id != self._session_id:
-            return None
+            return NO_EFFECT
         elif event_type == "session.tool.progress":
             work_id = _tool_work_id(event, running=True)
             live = self._live.get(work_id) if work_id is not None else None
@@ -186,7 +193,7 @@ class RunningWork:
             self._end(_tool_work_id(event, running=False))
         elif event_type == "session.inbox.enqueued":
             self._end(_synthetic_work_id(event))
-        return None
+        return NO_EFFECT
 
     def _session_created(self, session_id: str | None, parent_id: str | None) -> None:
         if session_id is None:
@@ -197,24 +204,24 @@ class RunningWork:
         elif parent_id is not None and parent_id in self._owner:
             self._owner[session_id] = self._owner[parent_id]
 
-    def _ask_opened(self, payload: dict[str, object]) -> Signal | None:
+    def _ask_opened(self, payload: dict[str, object]) -> Effect:
         params = json_object(payload.get("params"))
         request_id = _text(payload.get("request_id"))
         asking = _text(params.get("sessionID")) if params is not None else None
         child = self._owner.get(asking) if asking is not None else None
         if request_id is None or child is None:
-            return None
+            return NO_EFFECT
         counted = self._counts(child)
         self._open_asks[request_id] = child
-        return "changed" if counted != self._counts(child) else None
+        return Effect(changed=counted != self._counts(child))
 
-    def _ask_closed(self, request_id: str | None) -> Signal | None:
+    def _ask_closed(self, request_id: str | None, *, answered: bool) -> Effect:
         child = self._open_asks.get(request_id) if request_id is not None else None
         if request_id is None or child is None:
-            return None
+            return NO_EFFECT
         counted = self._counts(child)
         del self._open_asks[request_id]
-        return "changed" if counted != self._counts(child) else None
+        return Effect(changed=counted != self._counts(child), answered=answered)
 
     def _end(self, work_id: str | None) -> None:
         if work_id is None or self._live.pop(work_id, None) is None:
@@ -241,12 +248,14 @@ class RunningWork:
     async def refresh(self, get_json: GetJson) -> bool:
         """Drop what ended while the stream was closed; True if the reported work changed.
 
-        Keeps only the ids the server still lists as running. When it cannot say,
-        nothing is reported instead of guessing: a hold on work that already ended
-        would never lift. Starts that fell in the gap stay unreported, since only a
-        tool event can name them.
+        Asks the server only when work is named. Keeps only the ids it still lists as
+        running. When it cannot say, nothing is reported instead of guessing: a hold
+        on work that already ended would never lift. Starts that fell in the gap stay
+        unreported, since only a tool event can name them.
         """
 
+        if not self._named():
+            return False
         before = self.tasks()
         known = set(self._live)
         running = await self._list_running(get_json)

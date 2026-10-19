@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
@@ -33,6 +34,8 @@ TERMINAL_EVENTS = frozenset(
         "session.execution.interrupted",
     }
 )
+
+logger = logging.getLogger(__name__)
 
 BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]]
 
@@ -386,6 +389,14 @@ def _v2_session_model(payload: object) -> tuple[str, str] | None:
     return provider, model_id
 
 
+def _v2_session_running(payload: object, session_id: str) -> bool:
+    response = json_object(payload)
+    active = json_object(response.get("data")) if response is not None else None
+    if active is None:
+        raise ValueError("active sessions listing has no data object")
+    return session_id in active
+
+
 def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
     response = json_object(payload)
     messages = response.get("data") if response is not None else None
@@ -409,19 +420,28 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self._seen_user_inbox_ids: set[str] = set()
         self._pending_user_inbox_ids: set[str] = set()
         self._work = RunningWork(ctx.harness_session_id)
-        self._refreshes: set[asyncio.Task[None]] = set()
+        # Once the sensor has seen the stream, another `server.connected` is a
+        # reconnect; the first connection announces itself too.
+        self._streaming = False
+        # How many times the stream reported the primary's execution starting or ending.
+        self._busy_reports = 0
+        self._resyncs: set[asyncio.Task[None]] = set()
 
     def on_raw_event(self, event: RawHarnessEvent) -> None:
         if event.harness_id != self._ctx.harness_id.value:
             return
+        reconnected = self._streaming and event.event_type == "server.connected"
+        self._streaming = True
+        if reconnected:
+            resync = asyncio.create_task(self._resync())
+            self._resyncs.add(resync)
+            resync.add_done_callback(self._resyncs.discard)
         # Shell and child-session events carry another session id, or none.
-        signal = self._work.observe(event)
-        if signal == "changed":
+        effect = self._work.observe(event)
+        if effect.answered:
+            self._emit("user_prompt")
+        if effect.changed:
             self._rearm()
-        elif signal == "reopened":
-            refresh = asyncio.create_task(self._refresh_work())
-            self._refreshes.add(refresh)
-            refresh.add_done_callback(self._refreshes.discard)
         if _session_id(event) != self._ctx.harness_session_id:
             return
 
@@ -450,14 +470,18 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
             self._emit("user_prompt")
 
         if event.event_type == "session.execution.started":
-            self._busy = True
+            self._report_busy(True)
             return
 
         if event.event_type not in TERMINAL_EVENTS:
             return
 
-        self._busy = False
+        self._report_busy(False)
         self._emit("turn_end", turn_id=_event_id(event))
+
+    def _report_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self._busy_reports += 1
 
     def _rearm(self) -> None:
         """Arm the push again with the work as it stands, after it changed while idle.
@@ -469,9 +493,52 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         if not self._busy:
             self._emit("turn_end")
 
-    async def _refresh_work(self) -> None:
-        if await self._work.refresh(self._get_json):
+    async def _resync(self) -> None:
+        """Re-check what the closed stream may have hidden.
+
+        Work may have ended, and the primary's own turn may have ended or started:
+        a terminal event that fell in the gap would leave the sensor busy for good,
+        and no later turn end comes to correct it.
+        """
+
+        reports = self._busy_reports
+        changed, running = await asyncio.gather(
+            self._work.refresh(self._get_json), self._fetch_running()
+        )
+        # A report from the stream since then is newer than this snapshot.
+        if running is not None and running != self._busy and reports == self._busy_reports:
+            self._busy = running
+            if not running:
+                # The missed turn end, with the work as just refreshed.
+                self._emit("turn_end")
+                return
+        if changed:
             self._rearm()
+
+    async def _fetch_running(self) -> bool | None:
+        """Whether the server is running the primary's turn; None when it cannot say."""
+
+        try:
+            return _v2_session_running(
+                await self._get_json("/api/session/active"), self._ctx.harness_session_id
+            )
+        except _GET_ERRORS as exc:
+            logger.warning(
+                "OpenCode primary's turn not re-derived after a stream reconnect; "
+                "keeping the observed state: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            return None
+
+    async def events(self) -> AsyncIterator[IdleEvent]:
+        try:
+            async for event in super().events():
+                yield event
+        finally:
+            # The sidecar cancelling or closing the stream is the sensor's stop.
+            for resync in self._resyncs:
+                resync.cancel()
 
     async def _fetch_message_facts(self) -> tuple[str | None, str | None]:
         session_id = quote(self._ctx.harness_session_id, safe="")

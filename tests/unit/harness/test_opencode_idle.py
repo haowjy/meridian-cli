@@ -290,6 +290,7 @@ async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
 _PROJECT_DIR = "/tmp/project"
 _SHELL_LISTING_PATH = f"/api/shell?location%5Bdirectory%5D={_PROJECT_DIR.replace('/', '%2F')}"
 _CHILD_LISTING_PATH = f"/api/session?parentID={V2_SESSION_ID}&limit=500"
+_ACTIVE_PATH = "/api/session/active"
 
 
 def _v2_global(event_type: str, **payload: object) -> RawHarnessEvent:
@@ -316,10 +317,18 @@ def _v2_turns(name: str) -> list[list[RawHarnessEvent]]:
     return turns
 
 
-async def _turn_end(sensor: opencode_idle.OpenCodeV2IdleSensor, events: list[RawHarnessEvent]):
+async def _turn_end(
+    sensor: opencode_idle.OpenCodeV2IdleSensor,
+    events: list[RawHarnessEvent],
+    iterator: AsyncIterator[IdleEvent] | None = None,
+):
+    """Feed the events, then take the next turn end. Pass the sensor's one stream
+    to keep it open: closing a stream stops the sensor's background re-checks."""
+
     for event in events:
         sensor.on_raw_event(event)
-    iterator = sensor.events()
+    if iterator is None:
+        iterator = sensor.events()
     while (idle := await asyncio.wait_for(anext(iterator), timeout=1)).kind != "turn_end":
         pass
     return idle
@@ -329,6 +338,7 @@ def _v2_work_request(
     *,
     shells: list[str] | None = None,
     children: list[dict[str, object]] | None = None,
+    running: bool = False,
     failing: str | None = None,
 ) -> opencode_idle.BackendRequest:
     async def request(
@@ -348,6 +358,9 @@ def _v2_work_request(
             )
         if path == _CHILD_LISTING_PATH:
             return 200, json.dumps({"data": children or []})
+        if path == _ACTIVE_PATH:
+            active = {V2_SESSION_ID: {"type": "running"}} if running else {}
+            return 200, json.dumps({"data": active})
         assert path.startswith(f"{session_path}/message")
         return 200, '{"data":[]}'
 
@@ -478,19 +491,29 @@ async def test_v2_prompt_of_a_grandchild_stops_its_ancestor_child_counting(
     assert (await _turn_end(sensor, [])).background_tasks == ()
 
 
-@pytest.mark.parametrize("closing", ["resolved", "failed", "cancelled"])
-async def test_v2_every_way_a_prompt_closes_counts_the_child_again(
-    tmp_path: Path, closing: str
+@pytest.mark.parametrize(
+    ("closing", "is_return"), [("resolved", True), ("failed", False), ("cancelled", False)]
+)
+async def test_v2_every_way_a_prompt_closes_counts_the_child_again_and_an_answer_is_a_return(
+    tmp_path: Path, closing: str, is_return: bool
 ) -> None:
-    sensor, _ = _v2_sensor(tmp_path)
+    sensor, events = _v2_sensor(tmp_path)
     started, *_ = _v2_turns("events-v2-background-subagent.sse")
-    await _turn_end(sensor, started)
+    await _turn_end(sensor, started, events)
     sensor.on_raw_event(_surfaced_request("pending", "per_1"))
-    assert (await _turn_end(sensor, [])).background_tasks == ()
+    assert (await _turn_end(sensor, [], events)).background_tasks == ()
 
     sensor.on_raw_event(_surfaced_request(closing, "per_1"))
 
-    assert (await _turn_end(sensor, [])).background_tasks == (BackgroundTask(kind="agent"),)
+    # The user answering is back at the TUI: it closes the idle stretch, and the
+    # re-arm opens a new one held on the child. A prompt that failed or was
+    # cancelled is not the user acting.
+    observed = await _take(events, 2 if is_return else 1)
+    assert [event.kind for event in observed] == (["user_prompt"] if is_return else []) + [
+        "turn_end"
+    ]
+    assert observed[-1].background_tasks == (BackgroundTask(kind="agent"),)
+    await _assert_quiet(events)
 
 
 async def test_v2_prompts_that_change_no_reported_work_do_not_rearm(tmp_path: Path) -> None:
@@ -537,21 +560,21 @@ async def test_v2_reconnect_rederives_work_at_once_and_rearms_if_it_changed(
     request_kwargs: dict[str, Any],
     expected_after: tuple[BackgroundTask, ...] | None,
 ) -> None:
-    sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(**request_kwargs))
+    sensor, events = _v2_sensor(tmp_path, request=_v2_work_request(**request_kwargs))
     started, *_ = _v2_turns("events-v2-background-shell.sse")
     shell = (BackgroundTask(kind="shell", command="sleep 15"),)
-    assert (await _turn_end(sensor, started)).background_tasks == shell
+    assert (await _turn_end(sensor, started, events)).background_tasks == shell
 
     # The stream reopened while the shell ran: its end may have fallen in the gap,
     # and no later turn end is coming to find out.
     with caplog.at_level(logging.WARNING, logger=opencode_running_work.logger.name):
         sensor.on_raw_event(_v2_global("server.connected"))
         if expected_after is not None:
-            assert (await _turn_end(sensor, [])).background_tasks == expected_after
+            assert (await _turn_end(sensor, [], events)).background_tasks == expected_after
         else:
             await asyncio.sleep(0.05)
             ended = await _turn_end(
-                sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")]
+                sensor, [_v2_raw("session.execution.succeeded", id="evt_own_end")], events
             )
             assert (ended.turn_id, ended.background_tasks) == ("evt_own_end", shell)
 
@@ -562,20 +585,57 @@ async def test_v2_reconnect_rederives_work_at_once_and_rearms_if_it_changed(
 
 async def test_v2_reconnect_drops_a_child_that_ended_in_the_gap(tmp_path: Path) -> None:
     child = {"id": _CHILD_ID, "outcome": "succeeded"}
-    sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(children=[child]))
+    sensor, events = _v2_sensor(tmp_path, request=_v2_work_request(children=[child]))
     started, *_ = _v2_turns("events-v2-background-subagent.sse")
-    assert (await _turn_end(sensor, started)).background_tasks == (BackgroundTask(kind="agent"),)
+    assert (await _turn_end(sensor, started, events)).background_tasks == (
+        BackgroundTask(kind="agent"),
+    )
 
     sensor.on_raw_event(_v2_global("server.connected"))
 
-    assert (await _turn_end(sensor, [])).background_tasks == ()
+    assert (await _turn_end(sensor, [], events)).background_tasks == ()
+
+
+async def test_v2_reconnect_reports_a_turn_end_the_closed_stream_swallowed(
+    tmp_path: Path,
+) -> None:
+    # The turn's end fell in the gap: no work is named, and no later event comes.
+    sensor, events = _v2_sensor(tmp_path, request=_v2_work_request(running=False))
+    sensor.on_raw_event(_v2_raw("session.execution.started"))
+    assert await sensor.busy() is True
+
+    sensor.on_raw_event(_v2_global("server.connected"))
+
+    idle = await asyncio.wait_for(anext(events), timeout=1)
+    assert (idle.kind, idle.turn_id, idle.background_tasks) == ("turn_end", None, ())
+    assert await sensor.busy() is False
+    await _assert_quiet(events)
+
+
+async def test_v2_reconnect_finds_a_turn_the_closed_stream_hid_still_running(
+    tmp_path: Path,
+) -> None:
+    # The turn started in the gap, and the shell the last turn end held on ended in
+    # it: the refresh would re-arm a push that could fire inside the running turn.
+    sensor, events = _v2_sensor(tmp_path, request=_v2_work_request(running=True))
+    started, *_ = _v2_turns("events-v2-background-shell.sse")
+    await _turn_end(sensor, started, events)
+    assert await sensor.busy() is False
+
+    sensor.on_raw_event(_v2_global("server.connected"))
+    await asyncio.sleep(0.05)
+
+    # No re-arm came out of the refresh: the next turn end is the turn's own.
+    assert await sensor.busy() is True
+    ended = await _turn_end(sensor, [_v2_raw("session.execution.succeeded", id="evt_end")], events)
+    assert (ended.turn_id, ended.background_tasks) == ("evt_end", ())
 
 
 async def test_v2_first_connection_with_no_work_named_asks_the_server_nothing(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # A listing that fails would log a warning if the sensor asked for it.
-    sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(failing=_SHELL_LISTING_PATH))
+    # A request that fails would log a warning if the sensor made it.
+    sensor, _ = _v2_sensor(tmp_path, request=_v2_work_request(failing=_ACTIVE_PATH))
 
     with caplog.at_level(logging.WARNING, logger=opencode_running_work.logger.name):
         sensor.on_raw_event(_v2_global("server.connected"))
