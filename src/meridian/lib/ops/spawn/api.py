@@ -2317,7 +2317,12 @@ def spawn_continue_sync(
         raise NativeSessionUnavailable(resolved_spawn_id, "unbound")
 
     _reject_continue_policy_overrides(payload)
-    sweep_before_continue(runtime_root, resolved_spawn_id, dry_run=payload.dry_run)
+    sweep_before_continue(
+        runtime_root,
+        resolved_spawn_id,
+        chat_id=resolved_reference.source_chat_id,
+        dry_run=payload.dry_run,
+    )
     create_input = _build_continue_create_input(
         payload=payload,
         source_spawn=source_spawn,
