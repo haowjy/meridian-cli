@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-20
+
 ### Fixed
 - `meridian --continue <chat>` works after history archiving reclaims the chat's last spawn directory. Continue dry-runs now also refuse a live source or successor instead of promising a launch the real continue rejects. (#676)
 
