@@ -11,6 +11,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian spawn done` / `rearm` refuse, exit 1, instead of reporting "signal written" when nothing will read the signal: a primary session, a spawn that is no longer running, a spawn with no completion hold (Cursor, OpenCode 2.x and other plain plans), `rearm` on Pi, and `rearm` once the rearm budget is spent. A spawn whose runner hasn't reported yet still gets the signal, with a note that delivery is unconfirmed.
 - Pi child spawns read only `done.signal`; a stray `rearm.signal` is no longer deleted and ignored.
 - Build Codex/OpenCode resident holds and Claude native-task holds through one `ResidentDrainCoordinator.build` over one `HoldEvidence`. Claude's connection now exposes a narrow `native_task_source()` (blockers and a generation) instead of a full completion-evidence object. No behavior change.
+
+## [0.11.1] - 2026-10-19
+
+### Changed
 - Per-spawn files live only in the spawn dir; runtime `artifacts/` store gone (legacy dirs still pruned). Runner start and guardrail failure text now lands in the spawn's `stderr.log`. (#677)
 
 ### Deprecated
