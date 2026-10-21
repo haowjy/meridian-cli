@@ -230,8 +230,9 @@ blocked). Enter itself still asks `session_reentry.py` for a fresh decision.
 Type-to-search is always on, so printable keys feed the filter. The filter has one
 definition: `session_list`'s `query`, matched in the history index before LIMIT.
 Typing re-runs that query after a 150 ms debounce, and the body shows `loading…` until
-the answer for the current status, sort and text lands; the TUI never re-filters rows
-itself. Space always opens
+the answer for the current status, sort and text lands; the TUI never matches filter
+text against rows itself. (`/` results are different: they narrow the loaded rows to
+the chats the transcript search matched.) Space always opens
 the detail view and never filters. `l` opens lineage only while the filter is
 empty (it is text afterwards); Ctrl-L always does. A worker preload thread imports
 the cyclic transcript/search/lineage ops once before any lane runs: concurrent

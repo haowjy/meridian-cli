@@ -104,6 +104,9 @@ replay the model turn.
 - `query.py` — `resolve_spawn_reference()` and spawn-record reads.
 - `context_ref.py` — `resolve_context_ref()` turns a `--from` ref (spawn or chat) into a
   `ContextRef`. `prepare.py` calls it once per spawn; launch only renders the result.
+  A spawn's `--from` stays in `context_refs` and is not copied onto
+  `SessionRequest.context_from_*`: lineage covers primary sessions only (see
+  `cli/.context/CONTEXT.md`, session browse).
 - `failure_policy.py` — depth guard, depth limit helpers.
 
 ## Anti-Patterns

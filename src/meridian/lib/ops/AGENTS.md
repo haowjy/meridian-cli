@@ -108,7 +108,9 @@ split matters for `capture_library_diagnostics()` at the launch boundary.
 
 **Session references go through `ops/reference.py`.** `resolve_session_reference()`
 → `ResolvedSessionReference` handles spawn IDs (`p123`), chat IDs, and bare
-references. All `--from` / `-f` operations route through this.
+references for `--continue`/`--fork` targets. `--from` refs resolve separately,
+once, through `ops/spawn/context_ref.resolve_context_ref()`; `-f` files resolve in
+`launch/reference.py`.
 
 **Choose spawn status by the operation's intent.** Follow
 `spawn/AGENTS.md#stored-vs-derived-status`; archive and destruction select stored
