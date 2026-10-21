@@ -17,7 +17,7 @@ import pytest
 from meridian.cli.browse.tui import run_browse_picker
 from meridian.cli.session_cmd import _exec_decision
 from meridian.lib.ops.session_list import SessionListOutput, SessionListRow
-from meridian.lib.ops.session_reentry import Resume
+from meridian.lib.ops.session_reentry import Resume, StartFrom
 from tests.conftest import posix_only
 
 
@@ -42,6 +42,7 @@ def test_picker_restores_terminal_before_exec_successor(tmp_path: Path) -> None:
                         activity_at=now,
                         live=False,
                         reentry=Resume("c1"),
+                        start_from=StartFrom("c1"),
                         agent="coder",
                         model="gpt",
                         work_label="handoff-probe",

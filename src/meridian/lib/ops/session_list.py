@@ -13,7 +13,13 @@ from meridian.lib.core.formatting import relative_time, tabular
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_ids
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
-from meridian.lib.ops.session_reentry import Blocked, SessionReentryDecision, decide_reentry
+from meridian.lib.ops.session_reentry import (
+    Blocked,
+    SessionReentryDecision,
+    StartFromDecision,
+    decide_reentry,
+    decide_start_from,
+)
 from meridian.lib.state import session_store
 from meridian.lib.state.history_index import BrowsePage, HistoryIndex
 from meridian.lib.state.idle_store import IdleState, IdleStore
@@ -48,6 +54,8 @@ class SessionListRow(BaseModel):
     cache_deadline: float | None = None
     activity_at: str
     reentry: SessionReentryDecision
+    # The third re-entry action, independent of ``reentry``: `--from` reads recorded state only.
+    start_from: StartFromDecision
     agent: str
     model: str
     work_label: str
@@ -276,6 +284,7 @@ def session_list_sync(
                     if record.terminal
                     else record.started_at or "",
                     reentry=Blocked(f"archived history; read with meridian session log {ref}"),
+                    start_from=Blocked(f"archived history; read with meridian session log {ref}"),
                     agent=record.agent or "",
                     model=models.get((harness, native_id or ""), record.model or ""),
                     work_label=record.work_id or "",
@@ -288,6 +297,7 @@ def session_list_sync(
         fallback = record.stopped_at or record.started_at
         last_turn, cache_deadline = _turn_metadata(record.harness, fallback, live, idle)
 
+        row_model = models.get((record.harness, record.harness_session_id or ""), record.model)
         rows.append(
             SessionListRow(
                 chat_id=record.chat_id,
@@ -310,8 +320,14 @@ def session_list_sync(
                         and record.native_key() is not None
                     ),
                 ),
+                start_from=decide_start_from(
+                    chat_id=record.chat_id,
+                    # Not ``recorded_harness_sessions``: that excludes historical records,
+                    # which `--from` still reads.
+                    has_harness_session=bool((record.harness_session_id or "").strip()),
+                ),
                 agent=record.agent,
-                model=models.get((record.harness, record.harness_session_id or ""), record.model),
+                model=row_model,
                 work_label=record.active_work_id or "",
                 task_cwd=record.task_cwd or record.execution_cwd or "",
             )

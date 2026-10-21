@@ -17,7 +17,7 @@ from prompt_toolkit.output import DummyOutput
 from meridian.cli.browse.lanes import Lanes
 from meridian.cli.browse.tui import run_browse_picker
 from meridian.lib.ops.session_list import SessionListOutput, SessionListRow
-from meridian.lib.ops.session_reentry import Blocked, Resume
+from meridian.lib.ops.session_reentry import Blocked, Resume, StartFrom
 from meridian.lib.state import session_store
 
 
@@ -28,6 +28,7 @@ def _listing() -> SessionListOutput:
             chat_id=chat_id,
             activity_at=now,
             reentry=Resume(chat_id),
+            start_from=StartFrom(chat_id),
             agent="coder",
             model="gpt",
             work_label=work,

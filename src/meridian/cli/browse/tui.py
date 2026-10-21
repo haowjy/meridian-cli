@@ -7,6 +7,7 @@ import importlib
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from prompt_toolkit.application import Application
@@ -32,7 +33,14 @@ from meridian.cli.browse.model import (
 from meridian.cli.browse.transcript import TranscriptWindow
 from meridian.lib.ops.session_lineage import SessionLineageOutput
 from meridian.lib.ops.session_list import SessionListInput, SessionListOutput, SessionListRow
-from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, SessionReentryDecision
+from meridian.lib.ops.session_reentry import (
+    Blocked,
+    Fork,
+    Launch,
+    Resume,
+    SessionReentryDecision,
+    StartFromLaunch,
+)
 
 if TYPE_CHECKING:
     from prompt_toolkit.input import Input
@@ -41,6 +49,32 @@ if TYPE_CHECKING:
 _TYPING_DEBOUNCE = 0.15
 
 type View = ListState | DetailState | LineageState
+
+
+@dataclass
+class StartPrompt:
+    """Start-from's one-line prompt: the launch inputs fixed when it opened, and the text typed."""
+
+    chat_id: str
+    agent: str
+    model: str
+    work_id: str
+    text: str = ""
+
+    def type(self, value: str) -> None:
+        self.text += value
+
+    def paste(self, value: str) -> None:
+        self.text += " ".join(value.split())
+
+    def backspace(self) -> None:
+        self.text = self.text[:-1]
+
+    def launch(self) -> StartFromLaunch:
+        return StartFromLaunch(
+            self.chat_id, self.agent, self.model, self.work_id, self.text.strip()
+        )
+
 
 _STYLE = Style.from_dict(
     {
@@ -92,7 +126,8 @@ class _Browser:
         self.list = ListState(listing, status, sort)
         self.stack: list[DetailState | LineageState] = []
         self.interrupted = False
-        self.app: Application[SessionReentryDecision | None] | None = None
+        self.prompt: StartPrompt | None = None
+        self.app: Application[Launch | None] | None = None
         ready = threading.Event()
         self.lanes = Lanes(self._on_ui_loop, ready)
         threading.Thread(target=_preload, args=(ready,), daemon=True).start()
@@ -133,7 +168,7 @@ class _Browser:
     def body_height(self) -> int:
         return max(1, self.size()[1] - self.header_height() - 1)
 
-    def exit(self, result: SessionReentryDecision | None) -> None:
+    def exit(self, result: Launch | None) -> None:
         assert self.app is not None
         self.app.exit(result=result)
 
@@ -341,6 +376,28 @@ class _Browser:
         else:
             self.exit(decision)
 
+    def begin_start_from(self) -> None:
+        """`n`: open the prompt line for a fresh session that reads the focused chat."""
+        view = self.view
+        assert not isinstance(view, LineageState)  # `n` is bound only in list and detail
+        target = self.chat_in_focus()
+        if target is None:
+            return
+        chat_id, row = target
+        if row is None:
+            view.message = f"{chat_id}: not in this project's index"
+            return
+        if isinstance(row.start_from, Blocked):
+            view.message = f"{chat_id}: {row.start_from.reason}"
+            return
+        # The model on screen: detail refreshes it, the list row is kept current by set_model.
+        model = view.model if isinstance(view, DetailState) else row.model
+        self.prompt = StartPrompt(chat_id, row.agent, model, row.work_label)
+
+    def launch_start_from(self) -> None:
+        assert self.prompt is not None
+        self.exit(self.prompt.launch())
+
     def open_lineage_of_focus(self) -> None:
         target = self.chat_in_focus()
         if target is not None:
@@ -349,9 +406,11 @@ class _Browser:
 
 def _bindings(browser: _Browser) -> KeyBindings:
     bindings = KeyBindings()
-    in_list = Condition(lambda: isinstance(browser.view, ListState))
-    in_detail = Condition(lambda: isinstance(browser.view, DetailState))
-    in_lineage = Condition(lambda: isinstance(browser.view, LineageState))
+    prompting = Condition(lambda: browser.prompt is not None)
+    idle = ~prompting
+    in_list = Condition(lambda: isinstance(browser.view, ListState)) & idle
+    in_detail = Condition(lambda: isinstance(browser.view, DetailState)) & idle
+    in_lineage = Condition(lambda: isinstance(browser.view, LineageState)) & idle
     searching_input = Condition(
         lambda: isinstance(browser.view, ListState) and browser.view.search_mode == "input"
     )
@@ -375,7 +434,9 @@ def _bindings(browser: _Browser) -> KeyBindings:
     @bindings.add("enter", eager=True)
     def _(_event: KeyPressEvent) -> None:
         view = browser.view
-        if isinstance(view, ListState) and view.search_mode == "input":
+        if browser.prompt is not None:
+            browser.launch_start_from()
+        elif isinstance(view, ListState) and view.search_mode == "input":
             browser.start_search()
         elif isinstance(view, ListState) and view.focus is not None:
             view.focus = None
@@ -385,7 +446,9 @@ def _bindings(browser: _Browser) -> KeyBindings:
     @bindings.add("escape", eager=True)
     def _(_event: KeyPressEvent) -> None:
         view = browser.view
-        if not isinstance(view, ListState):
+        if browser.prompt is not None:
+            browser.prompt = None
+        elif not isinstance(view, ListState):
             browser.back()
         elif view.search_mode != "off":
             browser.lanes.cancel("search")
@@ -401,6 +464,30 @@ def _bindings(browser: _Browser) -> KeyBindings:
     @bindings.add("c-l", filter=in_list | in_detail)
     def _(_event: KeyPressEvent) -> None:
         browser.open_lineage_of_focus()
+
+    @bindings.add("c-n", filter=in_list | in_detail)
+    def _(_event: KeyPressEvent) -> None:
+        browser.begin_start_from()
+
+    @bindings.add("n", filter=in_detail)
+    def _(_event: KeyPressEvent) -> None:
+        browser.begin_start_from()
+
+    @bindings.add("backspace", filter=prompting)
+    def _(_event: KeyPressEvent) -> None:
+        assert browser.prompt is not None
+        browser.prompt.backspace()
+
+    @bindings.add(Keys.Any, filter=prompting)
+    def _(event: KeyPressEvent) -> None:
+        assert browser.prompt is not None
+        if len(event.data) == 1 and event.data.isprintable():
+            browser.prompt.type(event.data)
+
+    @bindings.add(Keys.BracketedPaste, filter=prompting)
+    def _(event: KeyPressEvent) -> None:
+        assert browser.prompt is not None
+        browser.prompt.paste(event.data)
 
     # list
     for key, delta in (("up", -1), ("down", 1), ("home", -(10**9)), ("end", 10**9)):
@@ -450,6 +537,8 @@ def _bindings(browser: _Browser) -> KeyBindings:
                 browser.open_detail(*target)
         elif value == "l" and not state.filter_text:
             browser.open_lineage_of_focus()
+        elif value == "n" and not state.filter_text:
+            browser.begin_start_from()
         elif value == "/" and state.search_mode == "off":
             state.focus = None
             state.search_mode = "input"
@@ -507,7 +596,7 @@ def run_browse_picker(
     sort: Sort = "updated",
     input: Input | None = None,
     output: Output | None = None,
-) -> Resume | Fork | None:
+) -> Launch | None:
     """Run the full-screen picker and return only safe re-entry decisions."""
 
     browser = _Browser(
@@ -537,6 +626,8 @@ def run_browse_picker(
 
     def footer():
         view, (width, _) = browser.view, browser.size()
+        if browser.prompt is not None:
+            return render.start_prompt_footer(browser.prompt.chat_id, browser.prompt.text, width)
         if isinstance(view, ListState):
             return render.list_footer(view, width)
         if isinstance(view, DetailState):
@@ -554,7 +645,7 @@ def run_browse_picker(
             Window(FormattedTextControl(footer), height=1, wrap_lines=False),
         )
     )
-    app: Application[SessionReentryDecision | None] = Application(
+    app: Application[Launch | None] = Application(
         layout=Layout(root),
         key_bindings=_bindings(browser),
         full_screen=True,
@@ -571,7 +662,7 @@ def run_browse_picker(
         browser.lanes.close()
     if browser.interrupted:
         raise SystemExit(130)
-    return decision if isinstance(decision, (Resume, Fork)) else None
+    return decision if isinstance(decision, (Resume, Fork, StartFromLaunch)) else None
 
 
 __all__ = ["run_browse_picker"]

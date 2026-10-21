@@ -226,6 +226,22 @@ Rows carry no live marker or live-first order; each row's `reentry` (decided in
 `session_list_sync`) is what makes a running session fork rather than resume, and
 the footer's Enter hint reads it (`enter fork`, `enter resume`, or nothing when
 blocked). Enter itself still asks `session_reentry.py` for a fresh decision.
+
+Start-from is the third re-entry action (`StartFrom`, kind `start-from`, in `session_reentry.py`).
+Each row carries only its eligibility as `start_from` (`chat_id` + `kind`, like `Resume`/`Fork`),
+separate from `reentry` because it does not depend on liveness: `--from` reads recorded state
+only, so running, stopped and restored historical chats all qualify; only a row with no recorded
+harness session (and archived-history rows) is blocked. `n` (Ctrl-N once a filter exists, same
+rule as `l`) in the list or detail view opens a one-line `StartPrompt` in the footer, built from
+the row's agent and work item and the model on screen (detail's refreshed `view.model`, else
+`row.model`); Enter returns a `StartFromLaunch` with the typed text, Esc cancels. The picker
+returns a `Launch` (`Resume | Fork | StartFromLaunch`); `session_cmd._exec_decision` is the single
+argv builder for all three and renders start-from as
+`--from <chat> --agent=<a> [--model=] [--work=] [--prompt=]`.
+`--opt=value` keeps a prompt such as `-x fix` from parsing as a flag; `--agent` is always
+present because omitting it would select the configured default profile for an agentless source.
+The values are used as shown (no re-read at Enter): the launch's own `--from` resolver
+is the validity check.
 `/` searches the transcripts of the rows the Status view shows.
 Type-to-search is always on, so printable keys feed the filter. The filter has one
 definition: `session_list`'s `query`, matched in the history index before LIMIT.

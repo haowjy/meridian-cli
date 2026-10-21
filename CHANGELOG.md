@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `session browse` start-from: `n` (Ctrl-N once a filter is typed) on a list row or in the transcript view opens a one-line prompt; Enter launches a fresh primary session with `--from <chat>` plus the optional text, inheriting the row's agent, last-used model and work item. Works on running and stopped sessions. `--plain --format json` rows gain `start_from` (`kind` `start-from` or `blocked`).
+
 ## [0.11.7] - 2026-10-21
 
 ### Fixed
