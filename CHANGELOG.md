@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- OpenCode gets Meridian's composed prompt (profile, loaded skills, report/context sections) on every path and version, once. Delivered as a config agent `meridian-<profile>` reading the spawn's `system-prompt.md`, selected on every session, resumes included. Before: OpenCode 2 got nothing, OpenCode 1 spawns/primaries got it twice, black-box fallback got none.
+- OpenCode 2 black-box fallback starts: no rejected `--model` flag, runs `--standalone` so launch config and `OPENCODE_DB` apply. Also starts when `opencode --version` fails.
+- Runtime path OpenCode `{file:}` can't name (`}`, `"`, `\`, control chars) fails launch with clear error instead of opaque config rejection.
+
+### Removed
+- OpenCode native-agent model-conflict relaunch and `ConnectionConfig.system`: unreachable with Meridian's own agent selected.
+
 ## [0.11.5] - 2026-10-21
 
 ### Upgrade notes
