@@ -74,6 +74,11 @@ Projectors translate the resolved spec into argv/env or transport payloads. Spli
 launch modes only when their protocols differ. Declare `_PROJECTED_FIELDS` and
 `_DELEGATED_FIELDS`, and run `check_projection_drift()` at module import.
 
+A projector either applies a profile's `tools`, `sandbox`, and `approval` or drops
+them without a warning. Record which in the
+[Permissions by harness](agent-profiles.md#permissions-by-harness) table when you
+add a harness.
+
 Define passthrough policy per flag: model overrides can be last-wins, but identity,
 transport mode, and managed extension selectors must not silently contradict
 Meridian's launch. Keep native skill, context-file, and prompt-template discovery
