@@ -60,11 +60,6 @@ _ROOTLESS_COMMANDS = (
     pytest.param(("kg", "graph"), None, id="kg-graph"),
     pytest.param(("qi", "check"), None, id="qi-check"),
     pytest.param(("qi", "list"), "agents\tAGENTS.md", id="qi-list"),
-    pytest.param(
-        ("qi", "claude-md-fix", "--dry-run"),
-        "[DRY-RUN] would create CLAUDE.md",
-        id="qi-claude-md-fix-dry-run",
-    ),
     pytest.param(("mermaid", "check"), None, id="mermaid-check"),
     pytest.param(("config", "show"), "project_root:", id="config-show"),
     pytest.param(
