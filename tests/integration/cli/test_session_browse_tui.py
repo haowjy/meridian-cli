@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
@@ -26,7 +27,6 @@ def _listing() -> SessionListOutput:
         SessionListRow(
             chat_id=chat_id,
             activity_at=now,
-            live=False,
             reentry=Resume(chat_id),
             agent="coder",
             model="gpt",
@@ -38,7 +38,31 @@ def _listing() -> SessionListOutput:
     return SessionListOutput(rows=rows, total_count=2)
 
 
-def test_headless_picker_filters_then_activates_visible_row(tmp_path) -> None:
+def test_headless_picker_filters_then_activates_visible_row(tmp_path, monkeypatch) -> None:
+    """Typing re-runs the session_list query; Enter acts on the row that query returned."""
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    project_id = "session-browse-query"
+    (project_root / "meridian.toml").write_text(
+        f'[project]\nid = "{project_id}"\n', encoding="utf-8"
+    )
+    meridian_home = tmp_path / "meridian-home"
+    runtime_root = meridian_home / "projects" / project_id
+    runtime_root.mkdir(parents=True)
+    monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
+    for work, session_id in (
+        ("alpha", "11111111-1111-4111-8111-111111111111"),
+        ("beta", "22222222-2222-4222-8222-222222222222"),
+    ):
+        chat_id = session_store.start_session(
+            runtime_root,
+            harness="codex",
+            harness_session_id=session_id,
+            model="gpt-5.4",
+            kind="primary",
+        ).chat_id
+        session_store.update_session_work_id(runtime_root, chat_id, work)
+        session_store.stop_session(runtime_root, chat_id)
     selected: list[str] = []
 
     def resolve(chat_id: str):
@@ -46,10 +70,19 @@ def test_headless_picker_filters_then_activates_visible_row(tmp_path) -> None:
         return Resume(chat_id)
 
     with create_pipe_input() as pipe:
-        pipe.send_text("beta\r")
+
+        def keys() -> None:
+            pipe.send_text("beta")
+            time.sleep(1.5)  # past the typing debounce and the query
+            pipe.send_text("\r")
+            time.sleep(5)
+            with contextlib.suppress(Exception):
+                pipe.send_text("\x03")  # fail instead of hanging if Enter found no row
+
+        threading.Thread(target=keys, daemon=True).start()
         decision = run_browse_picker(
             _listing(),
-            tmp_path.as_posix(),
+            project_root.as_posix(),
             resolve,
             input=pipe,
             output=DummyOutput(),
