@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, cast
 
@@ -18,6 +19,16 @@ WorkspaceApplicability = Literal[
 WorkspaceProjectionDiagnosticCode = Literal["workspace_opencode_parent_env_suppressed"]
 
 OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT"
+
+
+def dump_opencode_config_content(config: Mapping[str, object]) -> str:
+    """Serialize ``OPENCODE_CONFIG_CONTENT``; every producer of it must use this.
+
+    OpenCode expands ``{file:<path>}`` references on the raw text before parsing it, so
+    a non-ASCII path must stay raw: a JSON ``\\u`` escape is looked up as literal path text.
+    """
+
+    return json.dumps(config, separators=(",", ":"), ensure_ascii=False)
 
 
 class WorkspaceProjectionDiagnostic(BaseModel):
@@ -78,7 +89,7 @@ def _merge_opencode_workspace_config(
         external_directory[pattern] = "allow"
     permission["external_directory"] = external_directory
     merged["permission"] = permission
-    return json.dumps(merged, separators=(",", ":"))
+    return dump_opencode_config_content(merged)
 
 
 def project_workspace_roots(
@@ -121,5 +132,6 @@ __all__ = [
     "WorkspaceApplicability",
     "WorkspaceProjectionDiagnostic",
     "WorkspaceProjectionDiagnosticCode",
+    "dump_opencode_config_content",
     "project_workspace_roots",
 ]

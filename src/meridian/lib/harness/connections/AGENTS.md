@@ -32,7 +32,10 @@ Transports differ at the wire level:
   bound `OPENCODE_CONFIG_CONTENT` as given: the prompt (default config agent) and a
   fresh session's `model` are projected at launch bind, so `ConnectionConfig` carries
   no system prompt and neither transport sends a message-level `system`; the V2
-  transport only folds in V2 permissions. V1 creation uses
+  transport only folds in V2 permissions. `default_agent` never reaches a resumed
+  session, so both transports select `spec.agent_name` explicitly: on session
+  create, on V2 resume (`POST /api/session/{id}/agent`), and in every V1 message
+  payload (replacing the replayed agent). V1 creation uses
   `{providerID, id}`; a fresh session's initial prompt carries `{providerID, modelID}`.
   On V1 resume the native committed model is retained and an explicit model is
   rejected with `HarnessCapabilityMismatch` (V2 applies it via `POST /api/session/{id}/model`).

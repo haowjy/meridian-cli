@@ -12,6 +12,7 @@ from meridian.lib.harness.projections._guards import (
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.constants import BASE_COMMAND_OPENCODE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.workspace_projection import dump_opencode_config_content
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +38,10 @@ _SESSION_PAYLOAD_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-_MESSAGE_FIELDS: frozenset[str] = frozenset({"model"})
 _REFERENCE_FIELDS: frozenset[str] = frozenset({"reference_items"})
 
 _ACCOUNTED_FIELDS: frozenset[str] = (
-    _SERVE_COMMAND_FIELDS | _SESSION_PAYLOAD_FIELDS | _MESSAGE_FIELDS | _REFERENCE_FIELDS
+    _SERVE_COMMAND_FIELDS | _SESSION_PAYLOAD_FIELDS | _REFERENCE_FIELDS
 )
 _PROJECTED_FIELDS: frozenset[str] = _ACCOUNTED_FIELDS
 # ``appended_system_prompt`` is delivered at launch bind as a config agent
@@ -329,7 +329,7 @@ def merge_opencode_v2_permission_config(
         *_order_opencode_v2_rules_broad_first(_resolve_opencode_v2_rule_collisions(rules)),
         *inherited_external_directory,
     ]
-    return json.dumps(config, separators=(",", ":"))
+    return dump_opencode_config_content(config)
 
 
 def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[str, object]:
@@ -384,7 +384,6 @@ _check_projection_drift(
 __all__ = [
     "_ACCOUNTED_FIELDS",
     "_DELEGATED_FIELDS",
-    "_MESSAGE_FIELDS",
     "_PROJECTED_FIELDS",
     "_REFERENCE_FIELDS",
     "_SERVE_COMMAND_FIELDS",

@@ -25,8 +25,8 @@ without updating the corresponding projector → startup failure.
 - **OpenCode** (`project_opencode_subprocess.py` + `project_opencode_streaming.py`):
   workspace projection goes through `OPENCODE_CONFIG_CONTENT` env var (JSON), not flags.
   `project_opencode_config.py` shapes the same variable at bind: default agent for the
-  composed prompt plus top-level `model`. V2's bare TUI takes no `--model` and runs
-  `--standalone`.
+  composed prompt plus top-level `model`. V2's bare TUI takes no `--model` or `--agent`
+  and runs `--standalone`; everywhere else `spec.agent_name` goes out as `--agent`.
 - **Permission flags** (`permission_flags.py`): shared across all projectors.
   `resolve_permission_flags()` is called inside each projector — not a separate pipeline step.
 

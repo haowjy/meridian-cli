@@ -147,15 +147,17 @@ reaching projection. If you catch this, something in the adapter pipeline is wro
 
 ### OpenCode Streaming: Split Across Multiple Field Sets
 
-`project_opencode_streaming.py` projects spec fields into four distinct destinations:
+`project_opencode_streaming.py` projects spec fields into three distinct destinations:
 
 - `_SERVE_COMMAND_FIELDS` → CLI flags for `opencode serve` command
 - `_SESSION_PAYLOAD_FIELDS` → JSON body of the POST `/session` request
-- `_MESSAGE_FIELDS` → POST `/message` body fields (e.g., `model`)
 - `_REFERENCE_FIELDS` → rendered reference blocks in the session payload
 
-The `_PROJECTED_FIELDS` frozenset is the union of all four. The drift guard validates
+The `_PROJECTED_FIELDS` frozenset is the union of all three. The drift guard validates
 the union, not each sub-group individually — the separation is for internal routing only.
+The V1 connection also writes `model` and `agent` into its POST `/message` bodies, but
+those come from the same `model` and `agent_name` spec fields, so no separate set accounts
+for them.
 `appended_system_prompt` is in `_DELEGATED_FIELDS` here and in the subprocess projector:
 launch bind delivers it as an OpenCode config agent through `project_opencode_config.py`,
 so neither projection places it.

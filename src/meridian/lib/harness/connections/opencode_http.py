@@ -203,6 +203,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._state: ConnectionState = "created"
         self._spawn_id: SpawnId | None = None
         self._config: ConnectionConfig | None = None
+        # Meridian's default agent, selected on every message: V1 replays a session's
+        # last message agent, so ``default_agent`` never reaches a resumed session.
+        self._agent_name: str | None = None
         self._process: asyncio.subprocess.Process | None = None
         self._client: aiohttp.ClientSession | None = None
         self._stderr_handle: BufferedWriter | None = None
@@ -560,6 +563,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         validate_prompt_size(config)
 
         self._config = config
+        self._agent_name = spec.agent_name
         self._spawn_id = config.spawn_id
         self._tracer = config.debug_tracer
         self._liveness.reset()
@@ -1218,11 +1222,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             if model is not None:
                 provider, model_id = opencode_model_parts(model)
                 payload["model"] = {"providerID": provider, "modelID": model_id}
+            if self._agent_name:
+                payload["agent"] = self._agent_name
         else:
             native = await self._native_json(f"/session/{self._require_session_id()}")
             native = cast("dict[str, object]", native) if isinstance(native, dict) else {}
             choice = native.get("model")
-            agent = native.get("agent")
+            agent = self._agent_name or native.get("agent")
             if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
                 messages = await self._native_json(f"/session/{self._require_session_id()}/message")
                 if isinstance(messages, list):
@@ -1245,7 +1251,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                                 "providerID": latest.get("providerID"),
                                 "variant": latest.get("variant", "default"),
                             }
-                            agent = info.get("agent")
+                            agent = self._agent_name or info.get("agent")
                         break
             if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
                 raise HarnessCapabilityMismatch(

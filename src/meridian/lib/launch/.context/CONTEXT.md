@@ -234,7 +234,7 @@ and real connection read `binding.environment.final_env`, preview and execution
 select the same backend. Capture agrees through schema detection, not the env var.
 
 The same step projects OpenCode's prompt and model: after `build_env_plan()`,
-bind calls `harness.project_launch_env()` with the spec, the profile name, the
+bind calls `harness.project_launch_env()` with the spec, the
 `system-prompt.md` path and the bound env, and merges the returned overrides into
 the final env and `bind_env_overrides`. It runs after workspace projection, so the
 workspace's `external_directory` grants and any inherited config keys are
@@ -529,7 +529,7 @@ per-request system field on v2, so `bind_launch_context()` asks the adapter
 (`project_launch_env()`) for child env that carries the appended prompt. OpenCode
 answers with `OPENCODE_CONFIG_CONTENT` holding a default agent whose prompt is
 `{file:<spawn-log-dir>/system-prompt.md}` (see the harness
-[OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-and-model-delivery)).
+[OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)).
 Every OpenCode launch inherits it, so loaded skills reach the agent with the rest
 of the prompt. The file is written by `write_projection_artifacts()`, which every
 runner must call between bind and launch — primary, spawn, and

@@ -112,19 +112,24 @@ values are bound; Pi uses it for agent and session directories and to default
 policy remains in `env_overrides()`.
 
 **OpenCode receives Meridian's prompt as a config agent, once, from bind.**
-`OpenCodeAdapter.project_launch_env()` (called by `bind_launch_context`) adds an agent
+`OpenCodeAdapter.resolve_launch_spec()` decides the agent id once
+(`ResolvedLaunchSpec.agent_name`, set exactly when the appended prompt is non-empty).
+`project_launch_env()` (called by `bind_launch_context`) then adds that agent
 `meridian-<profile>` to the child's `OPENCODE_CONFIG_CONTENT`: `mode: primary`,
 `prompt: {file:<spawn-log-dir>/system-prompt.md}`, selected by `default_agent`, plus a
 top-level `model` for a fresh session. Streaming spawn, managed primary and the
-bare-TUI fallback inherit the bound env, so none has its own channel. V2 has no
+bare-TUI fallback inherit the bound env, so none has its own prompt channel. V2 has no
 message-level system field and ignores `instructions`; it normalizes V1's
 `agent.<id>.prompt` shape, so both versions share one config. Projection places no
-prompt anywhere else (`appended_system_prompt` is delegated, not projected). The
-file must exist before OpenCode starts: a missing `{file:}` target fails the whole
-config, so every runner calls `write_projection_artifacts()` first, and the adapter
-references the file only when the appended prompt is non-empty. V2's bare TUI runs
-`--standalone`; otherwise it attaches to the shared background service, which never
-sees the launch env. Detail: [.context/CONTEXT.md](.context/CONTEXT.md#opencode-prompt-and-model-delivery).
+prompt anywhere else (`appended_system_prompt` is delegated, not projected).
+`default_agent` does not reach a resumed session, so every surface that opens or
+resumes one also selects `agent_name` explicitly (V2 create and switch-agent, V1
+message payloads, `--agent`). The file must exist before OpenCode starts: a missing
+`{file:}` target fails the whole config, so every runner calls
+`write_projection_artifacts()` first. A prompt path `{file:}` cannot name (`}`, `"`,
+`\`, control characters) fails the launch. V2's bare TUI runs `--standalone`;
+otherwise it attaches to the shared background service, which never sees the launch
+env. Detail: [.context/CONTEXT.md](.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
 
 **Pi usage is per assistant message.** Fold each `message_end` increment once;
 `agent_end.messages` is repeated history. Unknown usage operands leave totals

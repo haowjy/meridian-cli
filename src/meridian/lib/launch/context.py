@@ -1924,7 +1924,6 @@ def bind_launch_context(
     # system-prompt.md is written before launch whenever the appended prompt is non-empty.
     harness_launch_env = harness.project_launch_env(
         spec=spec,
-        agent=resolved_agent,
         system_prompt_path=system_prompt_path,
         env=env,
     )

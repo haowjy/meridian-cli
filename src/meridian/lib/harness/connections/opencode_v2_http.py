@@ -283,6 +283,10 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             if status in self._SUCCESS_STATUSES:
                 session_id = _v2_session_id(body)
                 if session_id and session_id.strip() == continue_session_id:
+                    # A resumed session keeps its stored agent and model; ``default_agent``
+                    # only covers sessions with none, so select Meridian's agent here.
+                    if spec.agent_name:
+                        await self._switch_session_agent(continue_session_id, spec.agent_name)
                     if spec.model:
                         await self._switch_session_model(continue_session_id, spec.model)
                     return continue_session_id
@@ -319,26 +323,36 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             f"body={summarize_body(body)}"
         )
 
+    async def _switch_session_agent(self, session_id: str, agent: str) -> None:
+        """Select ``agent`` for a resumed session's subsequent turns."""
+
+        await self._post_session_switch(session_id, "agent", {"agent": agent})
+
     async def _switch_session_model(self, session_id: str, model: str) -> None:
         """Apply the resolved model to a resumed session.
 
-        The server resets the variant to default when omitted, and unknown routes
-        fall through to an SPA ``200 text/html`` response, so success requires a
-        non-HTML content type.
+        The server resets the variant to default when omitted.
         """
 
         projected = project_opencode_model(model, id_field="id")
-        if projected is None:
-            return
+        if projected is not None:
+            await self._post_session_switch(session_id, "model", {"model": projected})
+
+    async def _post_session_switch(
+        self, session_id: str, route: str, payload: dict[str, object]
+    ) -> None:
+        # Unknown routes fall through to an SPA ``200 text/html`` response, so success
+        # requires a non-HTML content type.
         status, body, content_type = await self._post_json(
-            f"/api/session/{session_id}/model",
-            {"model": projected},
+            f"/api/session/{session_id}/{route}",
+            payload,
             skip_body_on_statuses=self._SUCCESS_STATUSES,
         )
         if status in self._SUCCESS_STATUSES and "text/html" not in content_type:
             return
         raise HarnessCapabilityMismatch(
-            f"OpenCode V2 session model switch failed: status={status} body={summarize_body(body)}"
+            f"OpenCode V2 session {route} switch failed: "
+            f"status={status} body={summarize_body(body)}"
         )
 
     async def _post_session_message(

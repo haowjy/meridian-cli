@@ -106,7 +106,7 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         },
     ]
     assert preview.projected_content.channel_manifest() == {
-        "system_instruction": "system-field",
+        "system_instruction": "config-agent",
         "user_task_prompt": "user-turn",
         "task_context": "user-turn",
     }

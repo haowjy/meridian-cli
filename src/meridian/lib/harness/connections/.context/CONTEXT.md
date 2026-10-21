@@ -280,10 +280,13 @@ their values with `<redacted>` before writing to history.
 ### OpenCode model and startup ownership
 
 A fresh explicit model rides the bound config's top-level `model` (projected at
-launch bind, see [OpenCode prompt and model delivery](../../.context/CONTEXT.md#opencode-prompt-and-model-delivery));
+launch bind, see [OpenCode prompt, agent and model delivery](../../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery));
 the connection adds no launch-local override. Meridian's default config agent has no
 model, so a native agent's model cannot shadow the selection and there is no
-backend replacement. The V1 transport still validates available providers and the
+backend replacement. The agent id is different: a resumed V1 session replays its last
+message's agent and a resumed V2 session keeps its stored one, so the connection
+selects `spec.agent_name` itself where it creates or resumes a session (V2
+create/switch-agent, every V1 message payload). The V1 transport still validates available providers and the
 effective config `model` before creating a session; V2 runs no inspection. One
 startup deadline covers launch, readiness, inspection and session creation; rejected
 configuration fails without black-box fallback.

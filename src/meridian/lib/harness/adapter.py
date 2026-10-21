@@ -382,7 +382,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         self,
         *,
         spec: ResolvedLaunchSpec,
-        agent: str | None,
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]: ...
@@ -707,7 +706,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         self,
         *,
         spec: ResolvedLaunchSpec,
-        agent: str | None,
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
@@ -716,7 +714,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         ``system_prompt_path`` holds the appended prompt whenever
         ``spec.appended_system_prompt`` is non-empty; ``env`` is the child env as bound.
         """
-        _ = spec, agent, system_prompt_path, env
+        _ = spec, system_prompt_path, env
         return {}
 
     def prepare_prelaunch(

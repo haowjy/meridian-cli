@@ -145,9 +145,10 @@ def project_opencode_spec_to_cli_args(
 
     command: list[str] = list(base_command)
 
-    # V2's bare TUI rejects ``--model`` (a fresh session's model rides the bound
-    # config) and otherwise attaches to the shared background service, which never
-    # sees this launch's env (config content, OPENCODE_DB).
+    # V2's bare TUI rejects ``--model`` and ``--agent`` (a fresh session's model and
+    # default agent ride the bound config) and otherwise attaches to the shared
+    # background service, which never sees this launch's env (config content,
+    # OPENCODE_DB). A resumed V2 session therefore keeps its stored agent here.
     v2_tui = spec.interactive and spec.opencode_version == "v2"
     if v2_tui:
         command.append("--standalone")
@@ -168,8 +169,9 @@ def project_opencode_spec_to_cli_args(
         else:
             command.extend(("--variant", normalized_effort))
 
-    if spec.agent_name:
-        command.extend(("--agent", spec.agent_name))
+    agent_arg = None if v2_tui else spec.agent_name
+    if agent_arg is not None:
+        command.extend(("--agent", agent_arg))
 
     has_continue_session = bool(harness_session_id)
     has_continue_fork = has_continue_session and spec.continue_fork
@@ -187,7 +189,7 @@ def project_opencode_spec_to_cli_args(
     )
     _log_collision_if_needed(
         managed_flag="--agent",
-        has_managed_value=bool(spec.agent_name),
+        has_managed_value=agent_arg is not None,
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(

@@ -39,11 +39,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
-from meridian.lib.harness.opencode_backend import (
-    detect_opencode_version,
-    normalize_version_preference,
-    resolve_opencode_version,
-)
+from meridian.lib.harness.opencode_backend import resolve_opencode_version
 from meridian.lib.harness.opencode_idle import (
     detect_ttl,
     primary_idle_sensor,
@@ -157,17 +153,17 @@ def resolve_opencode_subprocess_spec(
 ) -> ResolvedLaunchSpec:
     """Resolve version-dependent argv using the launch environment; projection stays pure.
 
-    Two projections need a positively identified version: the resume-with-model guard
-    and the bare TUI's ``--standalone`` (V2 only).
+    Two projections branch on the version: the resume-with-model guard and the bare
+    TUI's V2-only flags. Both take the managed connection's decision, including its
+    V2 default when the binary cannot be probed, so the fallback never disagrees
+    with the transport it replaces.
     """
     resumes_with_model = bool(spec.continue_session_id) and spec.model is not None
     if not spec.interactive and not resumes_with_model:
         return spec
-    preference = normalize_version_preference(spec.opencode_version)
-    if preference in ("v1", "v2"):
-        return spec.model_copy(update={"opencode_version": preference})
-    # Unknown versions forward the flag; only a positively identified V1 rejects it.
-    return spec.model_copy(update={"opencode_version": detect_opencode_version(env=env)})
+    return spec.model_copy(
+        update={"opencode_version": resolve_opencode_version(spec.opencode_version, env=env)}
+    )
 
 
 def project_opencode_primary_preview(
@@ -202,7 +198,14 @@ def project_opencode_primary_preview(
         )
         bootstrap_path = f"/session/{spec.continue_session_id}" if continuing else "/session"
     steps = (
-        ("Preserve the existing native session's committed agent/model.",)
+        (
+            "Keep the existing native session's committed model; "
+            + (
+                "select Meridian's agent on it."
+                if spec.agent_name
+                else "keep its committed agent."
+            ),
+        )
         if continuing
         else (*probe_step,)
         if spec.model
@@ -419,9 +422,14 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
-            # OpenCode does not support native meridian agents; agent body is
-            # delivered via system prompt composition instead.
-            agent_name=None,
+            # The one place Meridian's default agent is decided. Bind emits the agent
+            # and its ``{file:}`` prompt exactly when this is set, and every surface
+            # that opens or resumes a session selects it explicitly.
+            agent_name=(
+                meridian_agent_id(run.agent)
+                if (run.appended_system_prompt or "").strip()
+                else None
+            ),
             skills=(),
         )
 
@@ -458,7 +466,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             user_turn_content=user_turn,
             reference_routing=reference_routing,
             channels=ProjectionChannels(
-                system_instruction="system-field" if system_prompt.strip() else "none",
+                system_instruction="config-agent" if system_prompt.strip() else "none",
                 user_task_prompt="user-turn",
                 task_context="user-turn",
             ),
@@ -474,18 +482,17 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         *,
         spec: ResolvedLaunchSpec,
-        agent: str | None,
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        # The prompt file exists exactly when the appended prompt is non-empty
-        # (``write_projection_artifacts``); a missing ``{file:}`` fails OpenCode's
-        # whole config. A continued session keeps its committed model.
-        has_prompt = bool((spec.appended_system_prompt or "").strip())
+        # ``spec.agent_name`` is set exactly when the appended prompt is non-empty,
+        # which is when ``write_projection_artifacts`` writes the prompt file; a
+        # missing ``{file:}`` target fails OpenCode's whole config. A continued
+        # session keeps its committed model.
         config = project_opencode_launch_config(
             env.get(OPENCODE_CONFIG_CONTENT_ENV),
-            agent_id=meridian_agent_id(agent),
-            prompt_file=system_prompt_path if has_prompt else None,
+            agent_id=spec.agent_name,
+            prompt_file=system_prompt_path,
             model=None if spec.continue_session_id else spec.model,
         )
         return {} if config is None else {OPENCODE_CONFIG_CONTENT_ENV: config}

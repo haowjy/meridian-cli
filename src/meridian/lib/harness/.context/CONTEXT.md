@@ -348,37 +348,61 @@ native TUI, matching V1's dropped override. The projection functions live in
 `projections/project_opencode_streaming.py`; the server's own V1→V2 translation
 does not handle flat scoped keys correctly, which is why Meridian compiles them.
 
-### OpenCode: Prompt and Model Delivery
+### OpenCode: Prompt, Agent and Model Delivery
 
-Bind projects the composed prompt and the model into `OPENCODE_CONFIG_CONTENT`;
-no launch path or connection shapes either. `project_opencode_config.py` builds
-the JSON, `OpenCodeAdapter.project_launch_env()` is the seam (the base adapter's
-default is a no-op), and every other key in the inherited config survives.
+Bind projects the composed prompt and a fresh session's model into
+`OPENCODE_CONFIG_CONTENT`; no launch path or connection writes the prompt itself.
+`project_opencode_config.py` builds the JSON, `OpenCodeAdapter.project_launch_env()` is
+the seam (the base adapter's default is a no-op), and every other key in the inherited
+config survives. The prompt, the agent id and the model travel on separate channels,
+each with one owner:
 
-- **Agent.** `agent.meridian-<profile>` (`meridian` alone without a profile) with
-  `mode: primary` and `prompt: {file:<spawn-log-dir>/system-prompt.md}`, chosen by
-  `default_agent`. The id is readable in the TUI and prefixed so it never merges
-  into a user's agent and inherits their model. The agent carries no `model`: V2
-  ignores it.
-- **One shape for both versions.** V1 reads `agent.<id>.prompt`; V2's config
-  normalization maps it to `agents.<id>.system`. Replacing the base prompt keeps
-  AGENTS.md, OpenCode's skill listing and the environment block (probed on both
-  versions).
-- **Model.** Top-level config `model`, set only for a fresh session (a continued
-  session keeps its committed model). It is the only model channel the V2 bare TUI
-  has (`--model` is rejected), so the subprocess projector drops `--model` for a
-  V2 TUI and keeps it elsewhere (`opencode run`, V1's TUI). Effort has no working
-  V2 channel.
-- **Condition.** The `{file:}` reference is emitted only when the appended prompt
-  is non-empty, the same condition under which `write_projection_artifacts()`
-  writes the file. Substitution is single-pass: literal `{file:..}` / `{env:..}`
-  text inside the prompt arrives untouched.
+- **Prompt: config, once, from bind.** `agent.meridian-<profile>` (`meridian` alone
+  without a profile) with `mode: primary` and
+  `prompt: {file:<spawn-log-dir>/system-prompt.md}`. The id is readable in the TUI and
+  prefixed so it never merges into a user's agent and inherits their model. The agent
+  carries no `model`: V2 ignores it. V1 reads `agent.<id>.prompt`; V2's config
+  normalization maps it to `agents.<id>.system`, so both versions share one shape.
+  Replacing the base prompt keeps AGENTS.md, OpenCode's skill listing and the
+  environment block (probed on both versions).
+- **Agent id: decided once on `ResolvedLaunchSpec.agent_name`.**
+  `resolve_launch_spec()` sets it to the id exactly when the appended prompt is
+  non-empty, which is when `write_projection_artifacts()` writes the file. Bind emits
+  the agent and its `{file:}` reference iff `agent_name` is set, so the id and the file
+  condition cannot disagree. `default_agent` names it for sessions the user opens later
+  in the TUI, but it only covers sessions with no agent of their own: a resumed V1
+  session replays its last message's agent, and a V2 session keeps its stored agent
+  (probed: resuming a session committed to `build` delivered no prompt). So every
+  surface that opens or resumes a session selects the agent explicitly:
+  `POST /session` / `POST /api/session` (`agent`, both versions store it on the
+  session); on a V2 resume, `POST /api/session/{id}/agent`; V1 message payloads
+  (`agent` on the fresh message and on every follow-up, replacing the replayed one);
+  `opencode run` / V1 TUI `--agent`. The V2 bare TUI has no `--agent`: a fresh session
+  takes `default_agent`, but a resumed one in that fallback keeps its stored agent and
+  gets no Meridian prompt.
+- **Model.** Top-level config `model` for a fresh session; a continued session keeps
+  its committed model. Session create (V2) and the V1 fresh message also carry it
+  explicitly, and V2 resume switches it via `POST /api/session/{id}/model` only for an
+  explicit `--model` override. The config key is the only channel the V2 bare TUI has
+  (`--model` is rejected), so the subprocess projector drops `--model` for a V2 TUI
+  and keeps it elsewhere (`opencode run`, V1's TUI). Effort has no working V2 channel.
+- **Path limits.** OpenCode expands `{file:}` on the raw config text before parsing it,
+  stopping at the first `}` and treating `"`, `\` and control characters as literal
+  path text. A prompt path containing any of them fails the launch with
+  `HarnessCapabilityMismatch` naming the path and characters; there is no second
+  delivery channel for the edge. Non-ASCII paths work only because every producer of
+  the variable serializes through `dump_opencode_config_content()` (raw UTF-8): a JSON
+  `\u` escape is looked up as literal text, so a re-serializer that escapes
+  non-ASCII (the V2 permission merge runs after bind) would break the file lookup.
+  Substitution is single-pass: literal `{file:..}` / `{env:..}` text inside the prompt
+  arrives untouched.
 - **Bare TUI needs `--standalone` on V2.** Without it the TUI is a client of the
   shared `opencode serve --service` process, which was configured by whoever
   started it: the launch env (config content, `OPENCODE_DB`) never applies.
   `resolve_opencode_subprocess_spec` resolves the version for interactive launches
-  so the projector can add the flag for a positively identified V2 only (V1 rejects
-  unknown flags).
+  with the managed connection's resolver (including its V2 default when the probe
+  fails), so the fallback never disagrees with the transport it replaces; V1 rejects
+  `--standalone`.
 - **Rejected:** a plugin `context` hook (V2-only, ships code that must load),
   session instruction entries (experimental, no black-box coverage), and repairing
   `instructions` (the V2 loader ignores it upstream).
@@ -394,8 +418,8 @@ env as `MERIDIAN_HARNESS_OPENCODE_VERSION` at launch bind (see
 [launch context](../../launch/.context/CONTEXT.md)), so TOML config reaches the
 connection and dry-run preview instead of being silently ignored. The same
 preference is carried on `ResolvedLaunchSpec.opencode_version`: the non-interactive
-subprocess projector rejects resume-with-model only for a known V1, keeps
-`--model` for V2, and forwards when the preference is `auto` and the probe fails.
+subprocess projector rejects resume-with-model only for a known V1 and keeps
+`--model` for V2; a failed `auto` probe resolves to V2, as in the connection.
 All version probes require an explicit environment, including executable `PATH`
 lookup. The bundle's optional `resolve_subprocess_spec` port runs adapter-owned
 environment-dependent resolution before the pure argv projector; OpenCode uses it
