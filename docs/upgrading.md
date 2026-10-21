@@ -45,7 +45,7 @@ transcripts, so nothing is lost; `Space` opens the full transcript.
 `session browse --plain --format json` rows drop `live`, `historical`,
 `native_status` and `history_id`. `reentry.kind` (`resume`, `fork` or `blocked`)
 replaces `live` as what Enter does; an archived row's `chat_id` is its history id.
-The plain table columns are now STALE, TMUX, AGENT, AGE, WORK. For
+The plain table columns are now STALE, TMUX, AGENT, IDLE (time since last turn), WORK. For
 `--include-archives` see [below](#session-browse---include-archives).
 
 **Rolling back**

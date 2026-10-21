@@ -79,7 +79,7 @@ _WORK_MIN = 6
 
 
 def _fit(rows: tuple[SessionListRow, ...], budget: int) -> _Layout:
-    """Lay out TMUX, AGENT, AGE and WORK in ``budget`` columns.
+    """Lay out TMUX, AGENT, IDLE and WORK in ``budget`` columns.
 
     Narrow terminals shrink WORK first, then drop the ``(model)`` part, then AGENT.
     """
@@ -102,7 +102,7 @@ def _fit(rows: tuple[SessionListRow, ...], budget: int) -> _Layout:
 
 
 def _cells(row: SessionListRow, layout: _Layout) -> str:
-    """TMUX, AGENT, AGE and WORK cells of one row."""
+    """TMUX, AGENT, IDLE and WORK cells of one row."""
 
     parts = [cell(row.tmux_target or "", layout.tmux)]
     if layout.agent:
@@ -116,7 +116,7 @@ def _cell_headers(layout: _Layout) -> str:
     parts = [cell("TMUX", layout.tmux)]
     if layout.agent:
         parts.append(cell("AGENT", layout.agent))
-    parts.append(cell("AGE", _AGE_WIDTH, right=True))
+    parts.append(cell("IDLE", _AGE_WIDTH, right=True))
     parts.append(clip("WORK", layout.work))
     return _GAP.join(parts)
 
@@ -268,7 +268,7 @@ _EDGE_WIDTH = 4
 
 
 def _lineage_layout(nodes: tuple[LineageNode, ...], width: int) -> tuple[int, _Layout]:
-    """Width of the CHAT tree cell and the shared TMUX/AGENT/AGE/WORK layout."""
+    """Width of the CHAT tree cell and the shared TMUX/AGENT/IDLE/WORK layout."""
 
     rows = tuple(n.row for n in nodes if n.row is not None)
     tree = max([len("CHAT"), *(len(n.prefix) + len(n.chat_id) for n in nodes)])

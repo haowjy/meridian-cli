@@ -80,7 +80,7 @@ class SessionListOutput(BaseModel):
         if not self.rows:
             return "no primary sessions"
 
-        rows = [["STALE", "TMUX", "AGENT", "AGE", "WORK"]]
+        rows = [["STALE", "TMUX", "AGENT", "IDLE", "WORK"]]
         rows.extend(
             [
                 "⚠" if row.stale else "",

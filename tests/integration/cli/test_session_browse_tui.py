@@ -207,14 +207,14 @@ def test_plain_browse_and_bare_continue_are_identical(tmp_path) -> None:
     assert browse.returncode == bare.returncode == 0
     assert "Imported native sessions for 0 of 1 existing chats" in browse.stderr
     assert bare.stderr == ""
-    assert re.sub(r"\b\d+[smhd]\b", "AGE", browse.stdout) == re.sub(
-        r"\b\d+[smhd]\b", "AGE", bare.stdout
+    assert re.sub(r"\b\d+[smhd]\b", "IDLE", browse.stdout) == re.sub(
+        r"\b\d+[smhd]\b", "IDLE", bare.stdout
     )
     assert browse.stdout.splitlines()[0].split() == [
         "STALE",
         "TMUX",
         "AGENT",
-        "AGE",
+        "IDLE",
         "WORK",
     ]
 
@@ -256,5 +256,5 @@ def test_plain_browse_keeps_unbound_chat_visible(tmp_path) -> None:
 
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
-    assert lines[0].split() == ["STALE", "TMUX", "AGENT", "AGE", "WORK"]
+    assert lines[0].split() == ["STALE", "TMUX", "AGENT", "IDLE", "WORK"]
     assert len(lines) == 3  # both chats, bound and unbound; ids no longer appear in rows
