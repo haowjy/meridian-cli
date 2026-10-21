@@ -149,6 +149,7 @@ class _Browser:
         """
         state = self.list
         state.begin_reload()
+        self.lanes.cancel("search")  # a late search must not reinstate the old scope
         payload = SessionListInput(
             project_root=self._project_root,
             limit=self._limit,

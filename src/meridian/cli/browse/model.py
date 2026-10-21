@@ -94,7 +94,9 @@ class ListState:
         return moved
 
     def begin_reload(self) -> None:
+        """Query inputs changed: stop any transcript search, which belonged to the old scope."""
         self.pending = True
+        self.leave_search()
 
     def replace_listing(self, listing: SessionListOutput) -> None:
         self.listing = listing
