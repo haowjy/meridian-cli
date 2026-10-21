@@ -157,9 +157,7 @@ def test_search_worker_does_not_open_next_transcript_after_cancellation(
             opened.append(chat_id)
             yield SubsetSearchStep(chat_id, matched=False)
 
-    monkeypatch.setattr(
-        "meridian.lib.ops.session_search.iter_session_subset_search", iter_steps
-    )
+    monkeypatch.setattr("meridian.lib.ops.session_search.iter_session_subset_search", iter_steps)
     active = True
     posted: list[object] = []
 
@@ -273,4 +271,13 @@ def test_plain_browse_keeps_unbound_chat_visible(tmp_path) -> None:
     assert result.returncode == 0, result.stderr
     assert bound in result.stdout
     assert unbound in result.stdout
-    assert "unbound" in result.stdout
+    assert result.stdout.splitlines()[0].split() == [
+        "LIVE",
+        "STALE",
+        "TMUX",
+        "WORK",
+        "AGENT",
+        "MODEL",
+        "AGE",
+        "C-ID",
+    ]

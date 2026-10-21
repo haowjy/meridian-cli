@@ -405,17 +405,13 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
             record = record.model_copy(
                 update={"created_at": existing.created_at or existing.started_at}
             )
-            record = with_key(record, outcome.key).model_copy(
-                update={
-                    field: getattr(existing, field) or getattr(record, field)
-                    for field in (
-                        "forked_from_chat_id",
-                        "forked_from_history_id",
-                        "context_from_chat_id",
-                        "context_from_history_id",
+            record = with_key(record, outcome.key)
+            for prefix in ("forked_from", "context_from"):
+                parent_fields = (f"{prefix}_chat_id", f"{prefix}_history_id")
+                if any(getattr(existing, field) is not None for field in parent_fields):
+                    record = record.model_copy(
+                        update={field: getattr(existing, field) for field in parent_fields}
                     )
-                }
-            )
         records[record.chat_id] = record
         return True
     existing = records.get(event.chat_id)
@@ -565,17 +561,7 @@ def project_session_generation(
     if isinstance(event, SessionStartEvent):
         if not applied:
             return ()
-        event = with_key(event, records[chat_id].key_fields()).model_copy(
-            update={
-                field: getattr(records[chat_id], field)
-                for field in (
-                    "forked_from_chat_id",
-                    "forked_from_history_id",
-                    "context_from_chat_id",
-                    "context_from_history_id",
-                )
-            }
-        )
+        event = with_key(event, records[chat_id].key_fields())
     elif isinstance(event, SessionUpdateEvent) and not applied:
         existing = records.get(chat_id)
         if existing is not None and isinstance(
@@ -604,7 +590,18 @@ def project_session_generation(
     rows = generations.setdefault((chat_id, generation), {})
     if project_session_event(rows, event):
         if isinstance(event, SessionStartEvent):
-            rows[chat_id] = records[chat_id]
+            rows[chat_id] = rows[chat_id].model_copy(
+                update={
+                    field: getattr(records[chat_id], field)
+                    for field in (
+                        "created_at",
+                        "forked_from_chat_id",
+                        "forked_from_history_id",
+                        "context_from_chat_id",
+                        "context_from_history_id",
+                    )
+                }
+            )
         changed.append((chat_id, generation))
         current = rows[chat_id]
         if current.record_mode == "live" and current.stopped_at is None:

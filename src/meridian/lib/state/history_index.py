@@ -1641,7 +1641,7 @@ class HistoryIndex:
                     *(
                         (browse.c.live.desc(), browse.c.activity.desc(), browse.c.tie.desc())
                         if sort == "updated"
-                        else (browse.c.created.desc(), browse.c.tie.desc())
+                        else (func.julianday(browse.c.created).desc(), browse.c.tie.desc())
                     )
                 )
                 .limit(limit)
@@ -1674,10 +1674,13 @@ class HistoryIndex:
             return [
                 tuple(row)
                 for row in db.exec_driver_sql(
-                    "WITH RECURSIVE tree(chat) AS (SELECT ? UNION "
-                    "SELECT parent FROM session_lineage JOIN tree ON child = chat UNION "
-                    "SELECT child FROM session_lineage JOIN tree ON parent = chat) "
-                    "SELECT child, kind, parent, history_id FROM session_lineage "
+                    "WITH RECURSIVE edges AS (SELECT * FROM session_lineage AS edge "
+                    "WHERE NOT EXISTS (SELECT 1 FROM session_chats "
+                    "WHERE chat = edge.parent AND json_extract(record_json, '$.kind') = 'spawn')), "
+                    "tree(chat) AS (SELECT ? UNION "
+                    "SELECT parent FROM edges JOIN tree ON child = chat UNION "
+                    "SELECT child FROM edges JOIN tree ON parent = chat) "
+                    "SELECT child, kind, parent, history_id FROM edges "
                     "WHERE child IN tree ORDER BY child, kind",
                     (chat_id,),
                 )

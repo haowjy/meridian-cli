@@ -131,9 +131,7 @@ def test_every_projection_path_is_named_by_the_schema(tmp_path: Path, monkeypatc
         changes.directory,
         changes.marker_lock,
     }
-    assert all(
-        f"-v{SCHEMA_VERSION + 1}-sessions-v{session_version}" in path.name for path in owned
-    )
+    assert all(f"-v{SCHEMA_VERSION + 1}-sessions-v{session_version}" in path.name for path in owned)
     monkeypatch.setattr(
         history_changes,
         "SUPPORTED_SESSION_EVENT_VERSIONS",
@@ -145,7 +143,7 @@ def test_every_projection_path_is_named_by_the_schema(tmp_path: Path, monkeypatc
 
 
 @pytest.mark.parametrize("old_schema", [8, 9])
-def test_unreleased_projection_rebuilds_in_schema_10_namespace(
+def test_unreleased_projection_rebuilds_in_current_namespace(
     tmp_path: Path, old_schema: int
 ) -> None:
     old_path = tmp_path / "history-index" / f"history-v{old_schema}.sqlite3"
@@ -163,7 +161,7 @@ def test_unreleased_projection_rebuilds_in_schema_10_namespace(
 
     index = HistoryIndex(tmp_path)
     assert [row.id for row in index.spawns()] == [key]
-    assert index.path.name == "history-v10-sessions-v1.sqlite3"
+    assert index.path.name == f"history-v{SCHEMA_VERSION}-sessions-v1.sqlite3"
     assert old_path.exists()
 
 

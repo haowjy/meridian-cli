@@ -1,7 +1,8 @@
 """Generated replay golden, recorded from ae9a7c2a before the binding rewrite.
 
-The digest covers complete serialized generation and chat records, not a subset
-of fields. No real journal data is retained. Regenerate the reference only from
+The digest covers the baseline serialized generation and chat fields. New
+metadata absent from that baseline is excluded; its reference digest stays fixed.
+No real journal data is retained. Regenerate the reference only from
 the baseline, never from the implementation under test.
 """
 
@@ -20,7 +21,17 @@ from tests.support.session_corpus import generated_session_events
 
 def _dump(records: tuple[s.SessionRecord, ...]) -> list[dict[str, object]]:
     return [
-        record.model_dump(mode="json", exclude={"launch_policy_snapshot"}) for record in records
+        record.model_dump(
+            mode="json",
+            exclude={
+                "launch_policy_snapshot",
+                "created_at",
+                "tmux_target",
+                "context_from_chat_id",
+                "context_from_history_id",
+            },
+        )
+        for record in records
     ]
 
 
@@ -141,8 +152,12 @@ def _spelling_variant_rows() -> list[str]:
         ),
         # Escaped-control padding (\t), compact writer spacing.
         json.dumps(
-            {"event": "update", "chat_id": "c4\t", "session_instance_id": "g4",
-             "active_work_id": "tab"},
+            {
+                "event": "update",
+                "chat_id": "c4\t",
+                "session_instance_id": "g4",
+                "active_work_id": "tab",
+            },
             separators=(",", ":"),
         ),
         # Spaced keys and an ensure_ascii \u-escaped no-break-space pad.
@@ -150,8 +165,12 @@ def _spelling_variant_rows() -> list[str]:
         ' "spawn_id" : "p4"}',
         # Raw UTF-8 ideographic-space pad (ensure_ascii=False writer).
         json.dumps(
-            {"event": "update", "chat_id": "c4\u3000", "session_instance_id": "g4",
-             "claude_config_dir": "/cfg"},
+            {
+                "event": "update",
+                "chat_id": "c4\u3000",
+                "session_instance_id": "g4",
+                "claude_config_dir": "/cfg",
+            },
             ensure_ascii=False,
         ),
         # Escapes spelling the value and the key itself.
@@ -161,13 +180,22 @@ def _spelling_variant_rows() -> list[str]:
         '{"event":"update","chat_id":"c2","chat_id":" c4 ","session_instance_id":"g4",'
         '"active_work_id":"dup"}',
         json.dumps(
-            {"event": "update", "chat_id": " c1 ", "session_instance_id": "a",
-             "active_work_id": "padded"}
+            {
+                "event": "update",
+                "chat_id": " c1 ",
+                "session_instance_id": "a",
+                "active_work_id": "padded",
+            }
         ),
         json.dumps({"event": "historical_import", "record": padded_history}),
         json.dumps(
-            {"event": "model_observation", "harness": "codex", "harness_session_id": "n4",
-             "observed_model_token": "m", "recorded_at": "0"}
+            {
+                "event": "model_observation",
+                "harness": "codex",
+                "harness_session_id": "n4",
+                "observed_model_token": "m",
+                "recorded_at": "0",
+            }
         ),
     ]
 
