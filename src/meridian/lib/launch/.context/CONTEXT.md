@@ -233,13 +233,11 @@ is registered child-injectable in `env_registry.py`. Because both dry-run previe
 and real connection read `binding.environment.final_env`, preview and execution
 select the same backend. Capture agrees through schema detection, not the env var.
 
-The same step projects OpenCode's prompt and model: after `build_env_plan()`,
-bind calls `harness.project_launch_env()` with the spec, the
+The same step lets the harness project config into the child env: after
+`build_env_plan()`, bind calls `harness.project_launch_env()` with the spec, the
 `system-prompt.md` path and the bound env, and merges the returned overrides into
-the final env and `bind_env_overrides`. It runs after workspace projection, so the
-workspace's `external_directory` grants and any inherited config keys are
-preserved. The base adapter returns nothing; only OpenCode uses it.
-
+the final env. Only OpenCode uses it (prompt, model and workspace grants; see the
+harness [OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)).
 
 ### Agent Inventory Prompt
 
@@ -354,18 +352,18 @@ documented config-precedence rule that CLI flags always win.
 
 ### Workspace Projection
 
-`workspace_projection.py` owns `project_workspace_roots()` and
-`OPENCODE_CONFIG_CONTENT_ENV`. Keeping this dependency-light module in `launch/`
-prevents `harness` bootstrap from importing back into a partially initialized
-harness package. It depends only on `core.types`, never on harness internals;
-`harness/opencode.py` and `harness/connections/opencode_v2_http.py` import the env constant from here.
+`workspace_projection.py` owns `project_workspace_roots()`, the per-harness
+applicability that the config surface reports and bind's `task_cwd_not_projected`
+check reads. Claude and Codex project roots as `--add-dir` args; OpenCode reports
+`active` but projects nothing here: `OpenCodeAdapter.project_launch_env()` turns
+`spec.projected_roots` into `external_directory` grants in the one config it builds.
 
 Two steps inside `bind_launch_context()`:
 
 1. **Gate**: `resolve_workspace_snapshot_for_launch()` raises on `"invalid"` workspace.
    `"none"` and `"present"` pass through.
-2. **Projection**: `project_workspace_roots()` maps roots per harness — Claude/Codex get
-   `--add-dir` args; OpenCode gets `OPENCODE_CONFIG_CONTENT` env override (deep-merged).
+2. **Projection**: `project_workspace_roots()` reports per-harness applicability for
+   the roots (see above).
 
 Roots include workspace roots, git context clone roots, context projection roots
 (work, kb, extras), task cwd when task cwd is external, runtime root, and system
@@ -524,17 +522,10 @@ reaches the agent only through composition. Claude reads the appended prompt fro
 writes from the full appended prompt, not `projected.system_prompt`: post-projection
 additions such as the source-edit-directory instruction live only there.
 
-Delivery is the harness's job, and OpenCode's happens in bind: it has no
-per-request system field on v2, so `bind_launch_context()` asks the adapter
-(`project_launch_env()`) for child env that carries the appended prompt. OpenCode
-answers with `OPENCODE_CONFIG_CONTENT` holding a default agent whose prompt is
-`{file:<spawn-log-dir>/system-prompt.md}` (see the harness
-[OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)).
-Every OpenCode launch inherits it, so loaded skills reach the agent with the rest
-of the prompt. The file is written by `write_projection_artifacts()`, which every
-runner must call between bind and launch — primary, spawn, and
-`meridian streaming serve`. A runner that skipped it would hand OpenCode a missing
-`{file:}` target, which fails the whole config. Don't add a skill channel here.
+Delivery is the harness's job. OpenCode's happens in bind, where `project_launch_env()`
+puts the appended prompt in the child env as a config agent reading `system-prompt.md`
+(see the harness [OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)),
+so loaded skills reach the agent with the rest of the prompt. Don't add a skill channel here.
 
 ## Patterns
 

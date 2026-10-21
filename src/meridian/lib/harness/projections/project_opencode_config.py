@@ -1,31 +1,26 @@
-"""OpenCode launch config projected at bind: Meridian's default agent and model.
+"""OpenCode child config projected at bind: workspace grants, default agent, model.
 
-OpenCode has no per-request system field that both major versions honor, so the
-composed prompt rides ``OPENCODE_CONFIG_CONTENT`` as a primary agent whose prompt
-is ``{file:<system-prompt.md>}`` and which ``default_agent`` selects. Every launch
-path (streaming spawn, managed primary, bare-TUI fallback) inherits the bound
-child env, so none needs its own delivery channel.
+The one producer of ``OPENCODE_CONFIG_CONTENT`` at bind; the V2 connection's permission
+merge re-serializes it and must use ``dump_opencode_config_content``. The composed prompt
+rides this config as a primary agent whose prompt is ``{file:<system-prompt.md>}``;
+``default_agent`` selects it only for sessions with no committed agent, so each surface
+that opens or resumes a session selects ``ResolvedLaunchSpec.agent_name`` itself. The agent
+carries no ``model``: V2 ignores it, so the model is the top-level config ``model``.
 
-V1's ``agent.<id>.prompt`` shape is the single shape for both versions: V2
-normalizes it to ``agents.<id>.system``. The agent carries no ``model`` because
-V2 ignores it; the model is the top-level config ``model``.
-
-``default_agent`` only covers sessions that have no committed agent. A resumed V1
-session replays its last message's agent and a V2 session keeps its stored agent, so
-each surface that opens or resumes a session also selects the agent explicitly
-(``ResolvedLaunchSpec.agent_name``).
+Why this channel, and what each surface selects: ``harness/.context/CONTEXT.md``.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.harness.projections.project_opencode_streaming import opencode_model_parts
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
-from meridian.lib.launch.workspace_projection import dump_opencode_config_content
+
+OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT"
 
 _AGENT_ID_PREFIX = "meridian"
 _UNSAFE_AGENT_ID_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
@@ -35,6 +30,25 @@ _UNSAFE_AGENT_ID_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 # cannot be named, and OpenCode rejects the whole config (HTTP 500) when it tries. Lone
 # surrogates are the undecodable bytes of a non-UTF-8 path, which OpenCode reads as text.
 _UNNAMEABLE_PATH_CHARS = re.compile(r'[}"\\\x00-\x1f\ud800-\udfff]')
+
+
+def dump_opencode_config_content(config: Mapping[str, object]) -> str:
+    """Serialize ``OPENCODE_CONFIG_CONTENT``; every writer of it must use this.
+
+    OpenCode expands ``{file:<path>}`` references on the raw text before parsing it, so
+    a non-ASCII path must stay raw: a JSON ``\\u`` escape is looked up as literal path text.
+    """
+
+    return json.dumps(config, separators=(",", ":"), ensure_ascii=False)
+
+
+def opencode_model_parts(model: str) -> tuple[str, str]:
+    provider, separator, model_id = model.partition("/")
+    if not separator or not provider.strip() or not model_id.strip():
+        raise HarnessCapabilityMismatch(
+            "OpenCode requires a provider-qualified model: provider/model"
+        )
+    return provider, model_id
 
 
 def meridian_agent_id(profile: str | None) -> str:
@@ -56,26 +70,52 @@ def _file_reference(prompt_file: Path) -> str:
     return f"{{file:{path}}}"
 
 
+def _permission_rules(raw: object) -> dict[str, object]:
+    """Expand native scalar actions without losing last-match rule ordering."""
+    if isinstance(raw, str) and raw in {"allow", "deny", "ask"}:
+        return {"*": raw}
+    if isinstance(raw, dict):
+        return dict(cast("dict[str, object]", raw))
+    raise HarnessCapabilityMismatch(
+        "OpenCode permissions must be an action or an ordered rule object"
+    )
+
+
+def _grant_external_directories(config: dict[str, object], roots: tuple[Path, ...]) -> None:
+    permission = _permission_rules(config.get("permission", {}))
+    external_directory = _permission_rules(permission.get("external_directory", {}))
+    for root in roots:
+        pattern = root.as_posix() + "/**"
+        external_directory.pop(pattern, None)
+        external_directory[pattern] = "allow"
+    permission["external_directory"] = external_directory
+    config["permission"] = permission
+
+
 def project_opencode_launch_config(
     raw: str | None,
     *,
+    roots: tuple[Path, ...],
     agent_id: str | None,
     prompt_file: Path,
     model: str | None,
 ) -> str | None:
-    """Return config content carrying the default agent and model, or None if neither applies.
+    """Return config content carrying roots, default agent and model, or None if none applies.
 
-    The agent and its ``prompt_file`` prompt are emitted exactly when ``agent_id`` is
-    set. Every other key in ``raw`` survives. ``prompt_file`` must exist before OpenCode
-    starts: a missing ``{file:}`` target fails the whole config.
+    ``roots`` get ``external_directory`` grants. The agent and its ``prompt_file`` prompt
+    are emitted exactly when ``agent_id`` is set. Every other key in ``raw`` survives.
+    ``prompt_file`` must exist before OpenCode starts: a missing ``{file:}`` target fails
+    the whole config.
     """
 
-    if agent_id is None and model is None:
+    if not roots and agent_id is None and model is None:
         return None
     parsed: object = json.loads(raw) if raw and raw.strip() else {}
     if not isinstance(parsed, dict):
         raise HarnessCapabilityMismatch("OpenCode config content must be a JSON object")
     config = dict(cast("dict[str, object]", parsed))
+    if roots:
+        _grant_external_directories(config, roots)
     if model is not None:
         opencode_model_parts(model)
         config["model"] = model
@@ -91,4 +131,10 @@ def project_opencode_launch_config(
     return dump_opencode_config_content(config)
 
 
-__all__ = ["meridian_agent_id", "project_opencode_launch_config"]
+__all__ = [
+    "OPENCODE_CONFIG_CONTENT_ENV",
+    "dump_opencode_config_content",
+    "meridian_agent_id",
+    "opencode_model_parts",
+    "project_opencode_launch_config",
+]

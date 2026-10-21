@@ -709,10 +709,11 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        """Env overrides that deliver the bound prompt and model through harness config.
+        """Env overrides that deliver the bound prompt, model and roots through harness config.
 
-        ``system_prompt_path`` holds the appended prompt whenever
-        ``spec.appended_system_prompt`` is non-empty; ``env`` is the child env as bound.
+        ``system_prompt_path`` is where the appended prompt is written, after bind and
+        before launch, whenever ``spec.appended_system_prompt`` is non-empty; ``env`` is
+        the child env as bound.
         """
         _ = spec, system_prompt_path, env
         return {}

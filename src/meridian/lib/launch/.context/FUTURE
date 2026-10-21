@@ -37,3 +37,11 @@
   resolved skill names to Mars as extra skills, duplicating the profile's own
   loads (Mars dedupes, so it is harmless). Pass only the source's caller-requested
   extras once the snapshot records them separately.
+- `system-prompt.md` is a launch input (Claude's `prompt_file_path`, OpenCode's
+  `{file:}` agent prompt) but `write_projection_artifacts()` writes it, and each
+  caller must run it after the spawn is persisted. Bind cannot own the write:
+  `SpawnService.prepare()` binds before `lifecycle.start()` publishes the spawn dir,
+  and `atomic_publish_dir` refuses an existing dir (a bind-time write failed 15
+  streaming tests). To make it structural, have bind return the launch files and let
+  `start_spawn` write them into the staged dir before publishing, or start the spawn
+  before bind and roll the row back on composition failure.

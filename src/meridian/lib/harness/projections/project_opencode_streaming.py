@@ -9,10 +9,13 @@ from typing import Literal, cast
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections.project_opencode_config import (
+    dump_opencode_config_content,
+    opencode_model_parts,
+)
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.constants import BASE_COMMAND_OPENCODE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.workspace_projection import dump_opencode_config_content
 
 logger = logging.getLogger(__name__)
 
@@ -120,15 +123,6 @@ def project_opencode_spec_to_serve_command(
         command.extend(spec.extra_args)
 
     return command
-
-
-def opencode_model_parts(model: str) -> tuple[str, str]:
-    provider, separator, model_id = model.partition("/")
-    if not separator or not provider.strip() or not model_id.strip():
-        raise HarnessCapabilityMismatch(
-            "OpenCode requires a provider-qualified model: provider/model"
-        )
-    return provider, model_id
 
 
 def project_opencode_model(

@@ -111,25 +111,12 @@ values are bound; Pi uses it for agent and session directories and to default
 `PI_CACHE_RETENTION=long` only for interactive primaries, while forced adapter
 policy remains in `env_overrides()`.
 
-**OpenCode receives Meridian's prompt as a config agent, once, from bind.**
-`OpenCodeAdapter.resolve_launch_spec()` decides the agent id once
-(`ResolvedLaunchSpec.agent_name`, set exactly when the appended prompt is non-empty).
-`project_launch_env()` (called by `bind_launch_context`) then adds that agent
-`meridian-<profile>` to the child's `OPENCODE_CONFIG_CONTENT`: `mode: primary`,
-`prompt: {file:<spawn-log-dir>/system-prompt.md}`, selected by `default_agent`, plus a
-top-level `model` for a fresh session. Streaming spawn, managed primary and the
-bare-TUI fallback inherit the bound env, so none has its own prompt channel. V2 has no
-message-level system field and ignores `instructions`; it normalizes V1's
-`agent.<id>.prompt` shape, so both versions share one config. Projection places no
-prompt anywhere else (`appended_system_prompt` is delegated, not projected).
-`default_agent` does not reach a resumed session, so every surface that opens or
-resumes one also selects `agent_name` explicitly (V2 create and switch-agent, V1
-message payloads, `--agent`). The file must exist before OpenCode starts: a missing
-`{file:}` target fails the whole config, so every runner calls
-`write_projection_artifacts()` first. A prompt path `{file:}` cannot name (`}`, `"`,
-`\`, control characters) fails the launch. V2's bare TUI runs `--standalone`;
-otherwise it attaches to the shared background service, which never sees the launch
-env. Detail: [.context/CONTEXT.md](.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
+**OpenCode's prompt, model and workspace grants ride `OPENCODE_CONFIG_CONTENT`, built once
+at bind by `OpenCodeAdapter.project_launch_env()`; connections never write the prompt.**
+`ResolvedLaunchSpec.agent_name` names Meridian's agent exactly when there is a prompt, and
+every surface that opens or resumes a session must select it, because `default_agent`
+misses resumed sessions. Detail:
+[.context/CONTEXT.md](.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
 
 **Pi usage is per assistant message.** Fold each `message_end` increment once;
 `agent_end.messages` is repeated history. Unknown usage operands leave totals

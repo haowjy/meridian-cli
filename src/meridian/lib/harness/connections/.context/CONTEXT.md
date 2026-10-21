@@ -41,10 +41,6 @@ A rejected inject is annotated as control-action response evidence, persisted, a
 reported to the injector without becoming a terminal event for the running spawn.
 Initial-prompt rejection remains spawn-fatal.
 
-**`opencode_v2_http.py` imports `OPENCODE_CONFIG_CONTENT_ENV` from
-`meridian.lib.launch.workspace_projection`** to preserve the required bootstrap
-dependency direction; see [launch context](../../../launch/.context/CONTEXT.md).
-
 ## Contracts
 
 ### HarnessConnection ABC
@@ -279,17 +275,15 @@ their values with `<redacted>` before writing to history.
 
 ### OpenCode model and startup ownership
 
-A fresh explicit model rides the bound config's top-level `model` (projected at
-launch bind, see [OpenCode prompt, agent and model delivery](../../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery));
-the connection adds no launch-local override. Meridian's default config agent has no
-model, so a native agent's model cannot shadow the selection and there is no
-backend replacement. The agent id is different: a resumed V1 session replays its last
-message's agent and a resumed V2 session keeps its stored one, so the connection
-selects `spec.agent_name` itself where it creates or resumes a session (V2
-create/switch-agent, every V1 message payload). The V1 transport still validates available providers and the
-effective config `model` before creating a session; V2 runs no inspection. One
-startup deadline covers launch, readiness, inspection and session creation; rejected
-configuration fails without black-box fallback.
+Connections add no launch-local model or prompt override: both ride the bound
+`OPENCODE_CONFIG_CONTENT` (see [OpenCode prompt, agent and model
+delivery](../../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)), and
+Meridian's default config agent carries no model, so a native agent's model cannot
+shadow the selection and there is no backend replacement. The V1 transport still
+validates available providers and the effective config `model` before creating a
+session; V2 runs no inspection. One startup deadline covers launch, readiness,
+inspection and session creation; rejected configuration fails without black-box
+fallback.
 The existing lifecycle gate spans initial process publication through connected
 state. Failure cleanup retains this gate even if its foreground wait expires;
 stop/new start cannot cross unfinished publication or mutate old cleanup's fields.

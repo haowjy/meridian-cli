@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.types import HarnessId
 
@@ -17,18 +15,6 @@ WorkspaceApplicability = Literal[
     "ignored:no_roots",
 ]
 WorkspaceProjectionDiagnosticCode = Literal["workspace_opencode_parent_env_suppressed"]
-
-OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT"
-
-
-def dump_opencode_config_content(config: Mapping[str, object]) -> str:
-    """Serialize ``OPENCODE_CONFIG_CONTENT``; every producer of it must use this.
-
-    OpenCode expands ``{file:<path>}`` references on the raw text before parsing it, so
-    a non-ASCII path must stay raw: a JSON ``\\u`` escape is looked up as literal path text.
-    """
-
-    return json.dumps(config, separators=(",", ":"), ensure_ascii=False)
 
 
 class WorkspaceProjectionDiagnostic(BaseModel):
@@ -48,7 +34,6 @@ class ProjectionResult(BaseModel):
 
     applicability: WorkspaceApplicability
     args: tuple[str, ...] = ()
-    env_overrides: dict[str, str] = Field(default_factory=dict)
     diagnostics: tuple[WorkspaceProjectionDiagnostic, ...] = ()
 
 
@@ -59,44 +44,10 @@ def _project_claude_workspace_args(roots: tuple[Path, ...]) -> tuple[str, ...]:
     return tuple(projected)
 
 
-def _permission_rules(raw: object) -> dict[str, object]:
-    """Expand native scalar actions without losing last-match rule ordering."""
-    if isinstance(raw, str) and raw in {"allow", "deny", "ask"}:
-        return {"*": raw}
-    if isinstance(raw, dict):
-        return dict(cast("dict[str, object]", raw))
-    raise ValueError("OpenCode permissions must be an action or an ordered rule object")
-
-
-def _merge_opencode_workspace_config(
-    *,
-    roots: tuple[Path, ...],
-    parent_opencode_config_content: str | None,
-) -> str:
-    parent_raw = (parent_opencode_config_content or "").strip()
-    merged: dict[str, object] = {}
-    if parent_raw:
-        parsed: object = json.loads(parent_raw)
-        if not isinstance(parsed, dict):
-            raise ValueError("OPENCODE_CONFIG_CONTENT must be a JSON object")
-        merged = dict(cast("dict[str, object]", parsed))
-
-    permission = _permission_rules(merged.get("permission", {}))
-    external_directory = _permission_rules(permission.get("external_directory", {}))
-    for root in roots:
-        pattern = root.as_posix() + "/**"
-        external_directory.pop(pattern, None)
-        external_directory[pattern] = "allow"
-    permission["external_directory"] = external_directory
-    merged["permission"] = permission
-    return dump_opencode_config_content(merged)
-
-
 def project_workspace_roots(
     *,
     harness_id: HarnessId,
     roots: tuple[Path, ...],
-    parent_opencode_config_content: str | None = None,
 ) -> ProjectionResult:
     """Project workspace roots for one harness launch/inspection pass."""
 
@@ -113,25 +64,16 @@ def project_workspace_roots(
         )
 
     if harness_id == HarnessId.OPENCODE:
-        return ProjectionResult(
-            applicability="active",
-            env_overrides={
-                OPENCODE_CONFIG_CONTENT_ENV: _merge_opencode_workspace_config(
-                    roots=roots,
-                    parent_opencode_config_content=parent_opencode_config_content,
-                )
-            },
-        )
+        # Roots become ``external_directory`` grants in ``OpenCodeAdapter.project_launch_env``.
+        return ProjectionResult(applicability="active")
 
     return ProjectionResult(applicability="unsupported:requires_config_generation")
 
 
 __all__ = [
-    "OPENCODE_CONFIG_CONTENT_ENV",
     "ProjectionResult",
     "WorkspaceApplicability",
     "WorkspaceProjectionDiagnostic",
     "WorkspaceProjectionDiagnosticCode",
-    "dump_opencode_config_content",
     "project_workspace_roots",
 ]

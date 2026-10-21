@@ -60,7 +60,7 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
-from meridian.lib.harness.projections.project_opencode_streaming import opencode_model_parts
+from meridian.lib.harness.projections.project_opencode_config import opencode_model_parts
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )

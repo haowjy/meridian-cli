@@ -37,6 +37,7 @@ from meridian.lib.core.telemetry import (
 )
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
+from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
@@ -54,7 +55,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.paths import RuntimePaths, resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import (
     APP_LAUNCH_MODE,
     LaunchMode,
@@ -499,6 +500,15 @@ class SpawnApplicationService:
             raise RuntimeError(
                 f"Reserved spawn ID {final_spawn_id} but persisted {persisted_spawn_id}"
             )
+        # The spawn dir exists only now, and the bound launch may reference files in it
+        # (``system-prompt.md``), so a prepared spawn is launchable without caller help.
+        write_projection_artifacts(
+            log_dir=resolve_spawn_log_dir(
+                launch_ctx.project_root, persisted_spawn_id, runtime_root=self._runtime_root
+            ),
+            launch_context=launch_ctx,
+            surface="spawn",
+        )
 
         # SEAM-3: Project ConnectionConfig from LaunchContext
         harness_id = HarnessId(resolved_harness)

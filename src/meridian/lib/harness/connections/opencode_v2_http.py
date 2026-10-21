@@ -48,6 +48,7 @@ from meridian.lib.harness.connections.opencode_http import (
     permission_liveness_key,
     summarize_body,
 )
+from meridian.lib.harness.projections.project_opencode_config import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.harness.projections.project_opencode_streaming import (
     merge_opencode_v2_permission_config,
     project_opencode_model,
@@ -55,7 +56,6 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
     resolve_spawn_log_dir,

@@ -30,3 +30,14 @@
 - OpenCode 2 has no effort channel that reaches the request: config parses
   `provider/model#variant` and agent `model.variant`, but probes saw no reasoning field
   in provider requests. Revisit when upstream wires variants through.
+- `opencode.py` / `connections/opencode_v2_http.py`: the V2 permission merge still
+  rewrites `OPENCODE_CONFIG_CONTENT` at connection launch, so the config has two
+  writers (bind's hook, then the connection) and the OpenCode version is resolved in
+  four places (primary preview, subprocess spec, idle sensor, connection dispatcher).
+  Resolve the concrete version once at bind (carry `v1`/`v2` on
+  `spec.opencode_version`; keep the preference only for dry-run, which must stay
+  probe-free), fold the permission merge into `project_launch_env()`, and drop the
+  duplicate probes and the connection-time config write. While there, check whether V2
+  `opencode run` receives tool permissions at all: `env.py` gives it only
+  `OPENCODE_PERMISSION`, which V2 ignores, so a non-interactive V2 spawn may run
+  without the profile's tool policy. Unprobed.

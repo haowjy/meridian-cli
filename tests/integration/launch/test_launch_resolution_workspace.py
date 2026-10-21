@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.harness.projections.project_opencode_config import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchRuntime,
     SpawnRequest,
 )
-from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.plugin_api.git import resolve_clone_path
 from tests.support.launch import build_launch_context
 
@@ -231,8 +231,8 @@ def test_named_workspace_roots_project_through_opencode_launch_context(
     )
 
     runtime_root = tmp_path / ".meridian"
-    bind_env = preview.binding.environment.bind_env_overrides
-    payload = json.loads(bind_env[OPENCODE_CONFIG_CONTENT_ENV])
+    final_env = preview.binding.environment.final_env
+    payload = json.loads(final_env[OPENCODE_CONFIG_CONTENT_ENV])
     external_dirs = payload["permission"]["external_directory"]
     assert external_dirs[docs_root.as_posix() + "/**"] == "allow"
     assert external_dirs[runtime_root.as_posix() + "/**"] == "allow"
@@ -284,8 +284,8 @@ def test_opencode_workspace_projection_merges_parent_env(
 
     warning_codes = {warning.code for warning in preview.warnings}
     runtime_root = tmp_path / ".meridian"
-    bind_env = preview.binding.environment.bind_env_overrides
-    payload = json.loads(bind_env[OPENCODE_CONFIG_CONTENT_ENV])
+    final_env = preview.binding.environment.final_env
+    payload = json.loads(final_env[OPENCODE_CONFIG_CONTENT_ENV])
     external_dirs = payload["permission"]["external_directory"]
     assert external_dirs[shared_root.as_posix() + "/**"] == "allow"
     assert external_dirs[runtime_root.as_posix() + "/**"] == "allow"
@@ -349,7 +349,7 @@ def test_opencode_workspace_preserves_native_denials_and_rule_order(
         dry_run=True,
     )
     projected = json.loads(
-        preview.binding.environment.bind_env_overrides[OPENCODE_CONFIG_CONTENT_ENV]
+        preview.binding.environment.final_env[OPENCODE_CONFIG_CONTENT_ENV]
     )["permission"]
     if permission == "deny":
         assert list(projected) == ["*", "external_directory"]

@@ -22,11 +22,7 @@ from meridian.lib.core.spawn_lifecycle import parse_terminal_status
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.registry import get_default_harness_registry, get_harness_bundle
-from meridian.lib.launch.artifact_io import (
-    LifecycleLog,
-    record_identity_failure,
-    write_projection_artifacts,
-)
+from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.native_run import bind_entry, conclude_native_run
 from meridian.lib.launch.process.session import build_session_metadata
@@ -41,7 +37,6 @@ from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import resolve_spawn_log_dir
 
 
 async def streaming_serve(
@@ -116,12 +111,6 @@ async def streaming_serve(
         spawn_id = prepared.spawn_id
         connection_config = prepared.connection_config
         launch_ctx = prepared.launch_context
-        # The bound OpenCode config references system-prompt.md; write it before launch.
-        write_projection_artifacts(
-            log_dir=resolve_spawn_log_dir(project_root, spawn_id, runtime_root=runtime_root),
-            launch_context=launch_ctx,
-            surface="spawn",
-        )
 
         # Now create debug tracer with actual spawn_id if requested
         if debug:

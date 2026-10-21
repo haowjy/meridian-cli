@@ -365,6 +365,7 @@ def test_launch_config_preserves_unrelated_native_configuration() -> None:
     projected = json.loads(
         project_opencode_launch_config(
             json.dumps(config),
+            roots=(),
             agent_id="meridian-coder",
             prompt_file=Path("/spawns/p1/system-prompt.md"),
             model="openai/selected",

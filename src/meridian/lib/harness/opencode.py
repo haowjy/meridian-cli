@@ -60,11 +60,12 @@ from meridian.lib.harness.passthrough.opencode import (
 )
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.project_opencode_config import (
+    OPENCODE_CONFIG_CONTENT_ENV,
     meridian_agent_id,
+    opencode_model_parts,
     project_opencode_launch_config,
 )
 from meridian.lib.harness.projections.project_opencode_streaming import (
-    opencode_model_parts,
     project_opencode_spec_to_serve_command,
     project_opencode_spec_to_session_payload,
 )
@@ -93,7 +94,6 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
@@ -485,12 +485,12 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        # ``spec.agent_name`` is set exactly when the appended prompt is non-empty,
-        # which is when ``write_projection_artifacts`` writes the prompt file; a
-        # missing ``{file:}`` target fails OpenCode's whole config. A continued
-        # session keeps its committed model.
+        # ``spec.agent_name`` is set exactly when the appended prompt is non-empty, which
+        # is when the runner writes ``system-prompt.md`` after bind (a missing ``{file:}``
+        # target fails OpenCode's whole config). A continued session keeps its model.
         config = project_opencode_launch_config(
             env.get(OPENCODE_CONFIG_CONTENT_ENV),
+            roots=spec.projected_roots,
             agent_id=spec.agent_name,
             prompt_file=system_prompt_path,
             model=None if spec.continue_session_id else spec.model,
