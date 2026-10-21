@@ -170,14 +170,12 @@ class _HoldProfile:
         self._confirmation_turn_started = False
         self._confirmation_failed = False
         self._rearmed = False
-        self._normal_nudge_sent = False
-        self._timeout_nudge_sent = False
         self._next_nudge_at: float | None = None
         self._confirmation_grace_at: float | None = None
         self._blockers: tuple[DiagnosticBlocker, ...] = ()
 
     def allows_evaluation_without_candidate(self) -> bool:
-        return False
+        return self._rearmed
 
     def consume_directives(
         self,
@@ -194,7 +192,7 @@ class _HoldProfile:
         return self._evaluate_wait(context)
 
     def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
-        if decision.action not in {"wait", "stabilize", "complete"}:
+        if decision.action not in {"wait", "stabilize", "complete", "abandon_candidate"}:
             return None
         return self._window.deadline_for(now)
 
@@ -223,6 +221,8 @@ class _HoldProfile:
         )
 
     def should_defer_close(self, state: CompletionState) -> bool:
+        if self._rearmed:
+            return True
         return (
             state.candidate is not None
             and state.assessment is not None
@@ -231,18 +231,19 @@ class _HoldProfile:
                 blocker.source == "persisted_descendant"
                 for blocker in state.assessment.blockers
             )
-            and self._resident_health_status() == LivenessDecision.CONTINUE
         )
 
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
-        del assessment
-        if self._timeout_nudge_sent or state.deadline_at is None:
-            reminder_at = None
-        elif self._normal_nudge_sent:
-            reminder_at = state.deadline_at - self._window.nudge_interval
-        else:
-            reminder_at = self._next_nudge_at
-        due = [value for value in (self._confirmation_grace_at, reminder_at) if value is not None]
+        del state, assessment
+        # One candidate gets one confirmation injection. A rearm schedules the
+        # next attempt independently; it is not a reminder for the rejected
+        # candidate.
+        next_attempt_at = None if self._confirmation_requested else self._next_nudge_at
+        due = [
+            value
+            for value in (self._confirmation_grace_at, next_attempt_at)
+            if value is not None
+        ]
         return min(due) if due else None
 
     def next_directive_poll_at(self) -> None:
@@ -251,11 +252,6 @@ class _HoldProfile:
     async def send_nudge(self, urgency: NudgeUrgency) -> None:
         self._confirmation_requested = True
         self._confirmation_failed = False
-        self._rearmed = False
-        if urgency == "timeout_soon":
-            self._timeout_nudge_sent = True
-        else:
-            self._normal_nudge_sent = True
         self._next_nudge_at = None
         self._confirmation_grace_at = self._clock() + self._confirmation_grace_seconds
         if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
@@ -282,7 +278,6 @@ class _HoldProfile:
         if self._confirmation_requested:
             self._confirmation_turn_started = True
             self._confirmation_grace_at = None
-        self._rearmed = False
 
     def clear(self) -> None:
         self.set_awaiting_done(False)
@@ -291,8 +286,6 @@ class _HoldProfile:
         self._confirmation_turn_started = False
         self._confirmation_failed = False
         self._rearmed = False
-        self._normal_nudge_sent = False
-        self._timeout_nudge_sent = False
         self._next_nudge_at = None
         self._confirmation_grace_at = None
         self._blockers = ()
@@ -328,18 +321,23 @@ class _HoldProfile:
             return ProfileDecision(action="fail", outcome=outcome)
         if context.directives.rearm:
             self._mark_rearmed(context.now)
-            if not context.directives.done:
-                self._enter_wait()
-                return ProfileDecision(
-                    action="wait",
-                    emit_turn_boundary=True,
-                    reset_deadline=True,
-                )
+            self._enter_wait()
+            return ProfileDecision(
+                action="abandon_candidate",
+                emit_turn_boundary=True,
+                reset_deadline=True,
+            )
         if context.directives.done:
             if context.assessment.disposition == "unknown":
                 self._enter_wait()
                 return ProfileDecision(action="wait", emit_turn_boundary=True)
             return self._propose_success(outcome, context.now)
+        if context.deadline_expired:
+            self.clear()
+            return self._window.timeout_decision()
+        # A successful event after rearm is the next completion candidate.
+        self._rearmed = False
+        self._next_nudge_at = None
         if context.assessment.disposition == "unknown":
             self._enter_wait()
             return ProfileDecision(action="wait", emit_turn_boundary=True)
@@ -357,10 +355,32 @@ class _HoldProfile:
 
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
         candidate = context.candidate
-        assert candidate is not None
         rearmed = context.directives.rearm
         if rearmed:
             self._mark_rearmed(context.now)
+            self._enter_wait()
+            return ProfileDecision(action="abandon_candidate", reset_deadline=True)
+        confirmation_grace_expired = (
+            self._confirmation_grace_at is not None
+            and context.now >= self._confirmation_grace_at
+            and not self._confirmation_turn_started
+        )
+        if confirmation_grace_expired:
+            self._confirmation_grace_at = None
+            self._confirmation_failed = True
+        if candidate is None:
+            if context.deadline_expired:
+                self.clear()
+                return self._window.timeout_decision()
+            if context.active_turn:
+                return ProfileDecision(action="wait")
+            nudge = (
+                self._window.nudge_urgency(context)
+                if context.profile_timer_due and not self._confirmation_requested
+                else None
+            )
+            self._enter_wait()
+            return ProfileDecision(action="wait", nudge=nudge)
         if context.directives.done:
             if context.assessment.disposition == "unknown":
                 if context.deadline_expired:
@@ -373,33 +393,17 @@ class _HoldProfile:
                             error="resident_evidence_unreadable",
                         ),
                     )
-                return ProfileDecision(action="wait", reset_deadline=rearmed)
-            if context.active_turn and (not context.deadline_expired or rearmed):
-                return ProfileDecision(action="wait", reset_deadline=rearmed)
+                return ProfileDecision(action="wait")
+            if context.active_turn and not context.deadline_expired:
+                return ProfileDecision(action="wait")
             return self._propose_success(candidate, context.now)
-        if context.deadline_expired and not rearmed:
-            if (
-                context.assessment.disposition == "ready"
-                and self._confirmation_requested
-                and not context.active_turn
-            ):
-                return self._propose_success(candidate, context.now)
+        if context.deadline_expired:
             self.clear()
             return self._window.timeout_decision()
-        if rearmed:
-            return ProfileDecision(action="wait", reset_deadline=True)
         if context.active_turn:
             return ProfileDecision(action="wait")
         if context.assessment.disposition == "unknown":
             return ProfileDecision(action="wait")
-        confirmation_grace_expired = (
-            self._confirmation_grace_at is not None
-            and context.now >= self._confirmation_grace_at
-            and not self._confirmation_turn_started
-        )
-        if confirmation_grace_expired:
-            self._confirmation_grace_at = None
-            self._confirmation_failed = True
         if not self._confirmation_requested and not self._rearmed:
             self._enter_wait()
             return ProfileDecision(action="wait", nudge="normal")
@@ -410,19 +414,14 @@ class _HoldProfile:
         if confirmation_grace_expired:
             self._enter_wait()
             return ProfileDecision(action="wait")
-        nudge = self._window.nudge_urgency(context) if context.profile_timer_due else None
-        if nudge is not None and self._normal_nudge_sent:
-            nudge = "timeout_soon"
         self._enter_wait()
-        return ProfileDecision(action="wait", nudge=nudge)
+        return ProfileDecision(action="wait")
 
     def _mark_rearmed(self, now: float) -> None:
         self._confirmation_requested = False
         self._confirmation_turn_started = False
         self._confirmation_failed = False
         self._rearmed = True
-        self._normal_nudge_sent = False
-        self._timeout_nudge_sent = False
         self._next_nudge_at = now + self._window.nudge_interval
         self._confirmation_grace_at = None
 
@@ -609,6 +608,10 @@ class ResidentDrainCoordinator:
 
     def next_timeout(self) -> float | None:
         return self._coordinator.next_timeout()
+
+    @property
+    def pending_outcome(self) -> TerminalEventOutcome | None:
+        return self._coordinator.pending_outcome
 
     async def handle_timeout(self) -> DrainLoopDecision:
         return await self._coordinator.handle_timeout()

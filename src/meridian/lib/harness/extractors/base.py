@@ -82,6 +82,12 @@ class AttemptFold:
         self.facts.set_text(text)
         self.text_source = source
 
+    def capture_completion_candidate(self) -> None:
+        self.facts.capture_completion_candidate()
+
+    def clear_completion_candidate(self) -> None:
+        self.facts.clear_completion_candidate()
+
     def fold_stdout(self, path: Path, harness_id: str) -> None:
         """Captured black-box JSONL uses exactly the live fold and isolation boundary."""
         with path.open("rb") as stream:

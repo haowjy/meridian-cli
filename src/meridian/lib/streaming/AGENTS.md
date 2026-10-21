@@ -45,7 +45,7 @@ Native-task activity never renews the deadline. Explicit done authorizes complet
 with leftover native tasks; managed-scope teardown stops them. A successful completion
 candidate gets one best-effort confirmation turn: `done` accepts, `rearm` opens another
 window, and silence accepts only after evidence is ready. The default completion window
-is the spawning harness's configured wait-yield interval unless
+is the calling harness's configured wait-yield interval unless
 `timeouts.resident_deadline_seconds` overrides it.
 
 For all three profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute

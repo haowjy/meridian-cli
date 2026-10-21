@@ -258,6 +258,8 @@ class SpawnManager:
         drain_loop = SpawnDrainLoop(
             sessions=self._sessions,
             run_event_hooks=self._run_event_hooks,
+            capture_report_candidate=self._capture_report_candidate,
+            clear_report_candidate=self._clear_report_candidate,
             publish_terminal=self._publish_terminal,
             fan_out_event=self._fan_out_event,
             fan_out_turn_boundary=self._fan_out_turn_boundary,
@@ -745,6 +747,18 @@ class SpawnManager:
     def _run_event_hooks(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         """Run inline hooks; callers own fan-out and delivery policy."""
         run_event_hooks(tuple(self._event_hooks.get(spawn_id, ())), event)
+
+    def _capture_report_candidate(self, spawn_id: SpawnId) -> None:
+        for hook in self._event_hooks.get(spawn_id, ()):
+            capture = getattr(hook, "capture_completion_candidate", None)
+            if callable(capture):
+                capture()
+
+    def _clear_report_candidate(self, spawn_id: SpawnId) -> None:
+        for hook in self._event_hooks.get(spawn_id, ()):
+            clear = getattr(hook, "clear_completion_candidate", None)
+            if callable(clear):
+                clear()
 
     async def shutdown(
         self,

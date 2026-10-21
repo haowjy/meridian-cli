@@ -420,7 +420,11 @@ async def test_done_signal_is_honored_with_tracked_child_outstanding(
     coordinator = await awaiting_done_coordinator(tmp_path, connection)
 
     write_spawn_signal(tmp_path, "p1", "done")
-    requested = await coordinator.handle_timeout()
+    requested = await coordinator.handle_terminal_event(
+        resident_event(HarnessId.OPENCODE, "agent_end", {}),
+        TerminalEventOutcome(status="succeeded", exit_code=0),
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
     decision = await _after_refresh(coordinator)
 
     assert requested.recorded_outcome is None

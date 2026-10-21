@@ -519,6 +519,10 @@ class PiDrainCoordinator:
     def next_timeout(self) -> float | None:
         return self._coordinator.next_timeout()
 
+    @property
+    def pending_outcome(self) -> TerminalEventOutcome | None:
+        return self._coordinator.pending_outcome
+
     async def observe_event(
         self, event: NormalizedHarnessEvent
     ) -> NormalizedHarnessEvent | None:

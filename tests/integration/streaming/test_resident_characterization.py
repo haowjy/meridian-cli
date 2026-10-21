@@ -151,11 +151,11 @@ async def test_terminal_cancel_wins_over_done_and_outstanding_descendant(
 
 
 @pytest.mark.asyncio
-async def test_terminal_done_overrides_rearm_and_persisted_descendant(
+async def test_terminal_rearm_overrides_done_and_rejects_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Current done override accepts success despite an active persisted child."""
+    """Rearm wins a coincident done and abandons the current candidate."""
     coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     clock.advance(1.0)
@@ -163,12 +163,14 @@ async def test_terminal_done_overrides_rearm_and_persisted_descendant(
     write_spawn_signal(tmp_path, "p1", "rearm")
 
     requested = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    decision = await _after_refresh(coordinator)
 
     assert requested.recorded_outcome is None
-    assert decision.recorded_outcome == _SUCCESS
     assert requested.emit_turn_boundary is True
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
+    assert coordinator.pending_outcome is None
+    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+    assert row is not None
+    assert row.resident_rearm_count == 1
+    assert connection.fake_resident_backend.awaiting_done_values == [True]
     assert connection.fake_resident_backend.injected_messages == []
 
 

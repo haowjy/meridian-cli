@@ -1937,7 +1937,6 @@ def spawn_wait_sync(
 
             now = time.monotonic()
             if checkpoint_deadline is not None and now >= checkpoint_deadline:
-                pending_ids = tuple(sorted(pending))
                 checkpoint_rows: list[SpawnRecord] = []
                 for spawn_id in spawn_ids:
                     if spawn_id in completed_rows:
@@ -1955,6 +1954,25 @@ def spawn_wait_sync(
                     )
                     for row in checkpoint_rows
                 )
+                pending_ids = tuple(
+                    sorted(
+                        detail.spawn_id
+                        for detail in checkpoint_details
+                        if not _spawn_is_terminal(detail.status)
+                    )
+                )
+                _update_pi_wait_observation(
+                    runtime_root=runtime_root,
+                    parent_spawn_id=parent_wait_observer_id,
+                    waiting_remove=spawn_ids,
+                    observed_add=tuple(
+                        detail.spawn_id
+                        for detail in checkpoint_details
+                        if _spawn_is_terminal(detail.status)
+                    ),
+                )
+                if not pending_ids:
+                    return _build_wait_multi_output(checkpoint_details)
                 tree_rows = overlay_derived(
                     runtime_root,
                     spawn_store.list_spawns(runtime_root).records,
@@ -1972,16 +1990,6 @@ def spawn_wait_sync(
                     for spawn_id, descendants in checkpoint_descendants.items()
                     if descendants
                 }
-                _update_pi_wait_observation(
-                    runtime_root=runtime_root,
-                    parent_spawn_id=parent_wait_observer_id,
-                    waiting_remove=spawn_ids,
-                    observed_add=tuple(
-                        detail.spawn_id
-                        for detail in checkpoint_details
-                        if _spawn_is_terminal(detail.status)
-                    ),
-                )
                 return SpawnWaitMultiOutput(
                     spawns=checkpoint_details,
                     total_runs=len(spawn_ids),

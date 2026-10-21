@@ -4,7 +4,7 @@
 
 `meridian spawn done` and `meridian spawn rearm` now refuse, with exit code 1,
 when nothing will read the signal: a primary session, a spawn that is no longer
-running, a spawn with no completion hold (Cursor, OpenCode 2.x and other plain
+running, a spawn with no completion hold (Cursor and other plain
 plans), `rearm` on Pi, and `rearm` after the rearm budget is spent. Scripts that
 relied on these commands always succeeding will now see the failure.
 

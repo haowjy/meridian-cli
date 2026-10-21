@@ -41,6 +41,11 @@ PublishTerminal = Callable[
 FanOutEvent = Callable[[SpawnId, "NormalizedHarnessEvent"], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
 RunEventHooks = Callable[[SpawnId, RawHarnessEvent], None]
+UpdateReportCandidate = Callable[[SpawnId], None]
+
+
+def _ignore_report_candidate(spawn_id: SpawnId) -> None:
+    del spawn_id
 
 
 class SpawnDrainLoop:
@@ -51,12 +56,16 @@ class SpawnDrainLoop:
         *,
         sessions: dict[SpawnId, SpawnSession],
         run_event_hooks: RunEventHooks,
+        capture_report_candidate: UpdateReportCandidate | None = None,
+        clear_report_candidate: UpdateReportCandidate | None = None,
         publish_terminal: PublishTerminal,
         fan_out_event: FanOutEvent,
         fan_out_turn_boundary: FanOutTurnBoundary,
     ) -> None:
         self._sessions = sessions
         self._run_event_hooks = run_event_hooks
+        self._capture_report_candidate = capture_report_candidate or _ignore_report_candidate
+        self._clear_report_candidate = clear_report_candidate or _ignore_report_candidate
         self._publish_terminal = publish_terminal
         self._fan_out_event = fan_out_event
         self._fan_out_turn_boundary = fan_out_turn_boundary
@@ -177,12 +186,31 @@ class SpawnDrainLoop:
 
                 if event_outcome is not None:
                     action = policy.classify(event_outcome)
+                    had_candidate = bool(
+                        coordinator is not None
+                        and getattr(coordinator, "pending_outcome", None) is not None
+                    )
+                    captured_candidate = (
+                        coordinator is not None
+                        and not had_candidate
+                        and action.terminate
+                        and event_outcome.status == "succeeded"
+                    )
+                    if captured_candidate:
+                        self._capture_report_candidate(spawn_id)
                     terminal_decision = await _handle_terminal_event(
                         coordinator,
                         event,
                         event_outcome,
                         action,
                     )
+                    if (
+                        coordinator is not None
+                        and terminal_decision.recorded_outcome is None
+                        and getattr(coordinator, "pending_outcome", None) is None
+                        and (had_candidate or captured_candidate)
+                    ):
+                        self._clear_report_candidate(spawn_id)
                     if terminal_decision.recorded_outcome is not None:
                         recorded_terminal_outcome = terminal_decision.recorded_outcome
                         break

@@ -83,17 +83,17 @@ parent, clear its signals, or drive its activity transitions.
 
 `drain_plan_factory.build_drain_plan()` returns the whole drain-loop configuration
 for one active spawn. `SpawnManager._select_drain_plan()` only supplies manager-owned
-capabilities and delegates to it. There are three completion profiles: resident,
-native-task hold, and Pi. A native task source selects the native-task profile;
-otherwise resident backend control selects the resident profile. Both are built by
-`ResidentDrainCoordinator.build`, read one `HoldEvidence`, and compose `RearmWindow`
-for signals, absolute deadlines, and budgeted rearm. Pi keeps its separate child-wave
-windows. Claude's connection supplies `harness/claude_drain.py`'s
+capabilities and delegates to it. There are two completion profiles: the shared
+resident/native-task hold and Pi. A native task source or resident backend selects
+the shared hold. It is built by `ResidentDrainCoordinator.build`, reads one
+`HoldEvidence`, and composes `RearmWindow` for signals, absolute deadlines, and
+budgeted rearm. Pi keeps its separate child-wave windows. Claude's connection supplies
+`harness/claude_drain.py`'s
 `ClaudeNativeTaskSource`; it owns snapshot parsing, not policy, and reports only
 blockers and a generation. `HoldEvidence` merges that source with persisted
-descendants: `unknown` descendants dominate, otherwise either source's blockers hold.
-Claude's hold has no descendant source yet. Native tasks and the pending follow-up
-result are diagnostic blockers, not policy flags carried through assessments.
+descendants for every hold: `unknown` descendants dominate, otherwise either source's
+blockers hold. Native tasks and the pending follow-up result are diagnostic blockers,
+not policy flags carried through assessments.
 Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux wakes. Plain streaming harnesses
 intentionally run with
 `DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence
@@ -101,8 +101,8 @@ of a coordinator is the plain path.
 
 Each plan declares `accepted_signals`: hold plans consume `done` and `rearm`, Pi only
 `done` (it has no rearm window and leaves `rearm.signal` alone), and the plain plan
-neither. Which plan a spawn gets depends on the live connection (OpenCode probes its
-binary and picks v1 resident or v2 plain), so no table keyed on the harness id can
+neither. Which plan a spawn gets depends on the live connection, so no table keyed on
+the harness id can
 know it. `SpawnManager.start_spawn` therefore writes the set to
 `spawns/<id>/accepted-signals.json` right after selecting the plan, before the drain
 starts, and `meridian spawn done` / `rearm` read it under the published-artifact lock

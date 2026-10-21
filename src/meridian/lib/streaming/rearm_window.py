@@ -37,10 +37,16 @@ class RearmWindow:
 
     def consume_directives(self) -> CompletionDirectives:
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
+        rearmed = self._grant_rearm(signals.rearm)
+        if rearmed:
+            # Rearm rejects the current candidate, including an older sticky
+            # done request or a done signal delivered in the same poll.
+            self._done_requested = False
+            return CompletionDirectives(rearm=True)
         self._done_requested = self._done_requested or signals.done
         return CompletionDirectives(
             done=self._done_requested,
-            rearm=self._grant_rearm(signals.rearm),
+            rearm=False,
         )
 
     def clear(self) -> None:

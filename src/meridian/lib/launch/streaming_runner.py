@@ -898,7 +898,7 @@ async def execute_with_streaming(
         )
         resident_deadline_seconds = resolve_resident_deadline_seconds(
             config_snapshot=launch_context.runtime.config_snapshot,
-            harness_id=launch_context.harness.id,
+            harness_id=os.getenv("_MERIDIAN_HARNESS") or launch_context.harness.id,
         )
         resident_poll_seconds = resolve_resident_poll_seconds(
             config_snapshot=launch_context.runtime.config_snapshot,
