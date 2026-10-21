@@ -366,13 +366,18 @@ async def test_expired_deadline_beats_freshly_ready_tree(
     cleanup_calls: list[SpawnId] = []
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
-    decision = await coordinator.handle_timeout()
-    assert decision.recorded_outcome is not None
-    assert decision.recorded_outcome.status == "timed_out"
-    assert decision.recorded_outcome.exit_code == 1
-    assert decision.recorded_outcome.error == "resident_deadline_expired"
+    terminal_at_deadline = await coordinator.handle_terminal_event(
+        _EVENT,
+        _SUCCESS,
+        _TERMINATE,
+    )
+    outcome = terminal_at_deadline.recorded_outcome
+    assert outcome is not None
+    assert outcome.status == "timed_out"
+    assert outcome.exit_code == 1
+    assert outcome.error == "resident_deadline_expired"
     assert cleanup_calls == []
-    await _execute_latched_cleanup(coordinator, decision.recorded_outcome)
+    await _execute_latched_cleanup(coordinator, outcome)
     assert cleanup_calls == [SpawnId("p1")]
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
@@ -558,31 +563,36 @@ async def test_intentional_stream_close_refuses_blocked_resident_outcome(
 
 
 @pytest.mark.asyncio
-async def test_short_deadline_nudge_cadence_and_urgency(
+async def test_one_confirmation_injection_per_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A due nudge is ordinary at half-window, urgent if delivery is delayed."""
-    for delay, urgent in (
-        (10.0, False),
-        (19.0, True),
-    ):
-        root = tmp_path / str(delay)
-        coordinator, connection, clock = _coordinator(root, monkeypatch, deadline_seconds=20.0)
-        try:
-            write_spawn_signal(root, SpawnId("p1"), "rearm")
-            terminal = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-            assert terminal.emit_turn_boundary
-            await coordinator.wait_for_aux_wake()
-            await coordinator.handle_aux_wake()
-            clock.advance(9.0)
-            await coordinator.handle_timeout()
-            assert not connection.fake_resident_backend.injected_messages
-            clock.advance(delay - 9.0)
-            await coordinator.handle_timeout()
-            assert len(connection.fake_resident_backend.injected_messages) == 1
-            message = connection.fake_resident_backend.injected_messages[0]
-            assert "meridian spawn done" in message
-            assert ("expires soon" in message) is urgent
-        finally:
-            await coordinator.stop()
+    coordinator, connection, clock = _coordinator(
+        tmp_path,
+        monkeypatch,
+        deadline_seconds=20.0,
+    )
+    try:
+        first = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+        assert first.emit_turn_boundary
+        await coordinator.wait_for_aux_wake()
+        assert (await coordinator.handle_aux_wake()).recorded_outcome is None
+        assert len(connection.fake_resident_backend.injected_messages) == 1
+
+        write_spawn_signal(tmp_path, SpawnId("p1"), "rearm")
+        assert (await coordinator.handle_timeout()).recorded_outcome is None
+        for _ in range(3):
+            clock.advance(2.0)
+            assert (await coordinator.handle_timeout()).recorded_outcome is None
+        assert len(connection.fake_resident_backend.injected_messages) == 1
+
+        second = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+        assert second.emit_turn_boundary
+        await coordinator.wait_for_aux_wake()
+        assert (await coordinator.handle_aux_wake()).recorded_outcome is None
+        assert len(connection.fake_resident_backend.injected_messages) == 2
+        for _ in range(3):
+            assert (await coordinator.after_event()).recorded_outcome is None
+        assert len(connection.fake_resident_backend.injected_messages) == 2
+    finally:
+        await coordinator.stop()

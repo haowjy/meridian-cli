@@ -240,6 +240,8 @@ class CompletionProfile(Protocol):
         """Return policy that is pure and stable for the coordinator's lifetime."""
         ...
 
+    def refresh_deadline_after_event(self) -> bool: ...
+
     def consume_directives(
         self,
         state: CompletionState,

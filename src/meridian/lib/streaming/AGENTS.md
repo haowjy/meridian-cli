@@ -48,7 +48,7 @@ window, and silence accepts only after evidence is ready. The default completion
 is the calling harness's configured wait-yield interval unless
 `timeouts.resident_deadline_seconds` overrides it.
 
-For all three profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
+For both profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
 ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
 defaults to `None`; resident rearms and Pi waves cannot reset it.
 

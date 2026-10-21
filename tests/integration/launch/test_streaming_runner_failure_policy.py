@@ -158,16 +158,23 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
+    resolved_harnesses: list[HarnessId | str | None] = []
     _ResidentDeadlineConnection.starts = 0
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
         lambda _harness_id, _transport_id=TransportId.STREAMING: _ResidentDeadlineConnection,
     )
+    def _resolve_deadline(*, config_snapshot, harness_id):  # type: ignore[no-untyped-def]
+        del config_snapshot
+        resolved_harnesses.append(harness_id)
+        return 0.01
+
+    monkeypatch.setenv("_MERIDIAN_HARNESS", HarnessId.CLAUDE.value)
     monkeypatch.setattr(
         streaming_runner_module,
         "resolve_resident_deadline_seconds",
-        lambda *, config_snapshot, harness_id: 0.01,
+        _resolve_deadline,
     )
     monkeypatch.setattr(
         streaming_runner_module,
@@ -223,6 +230,7 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
     row = spawn_store.get_spawn(runtime_root, parent_id)
     assert exit_code == 1
     assert _ResidentDeadlineConnection.starts == 1
+    assert resolved_harnesses == [HarnessId.CLAUDE.value]
     assert row is not None
     assert row.status == "timed_out"
     assert row.terminal.exit_code == 1

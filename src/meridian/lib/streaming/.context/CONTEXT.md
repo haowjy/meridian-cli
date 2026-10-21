@@ -46,7 +46,7 @@ The implementation is split by responsibility:
 - `drain_teardown.py` — harness-neutral plan-owned async connection-stop contract
 - `pi_drain_teardown.py` — Pi cleanup-phase connection-stop policy
 - `spawn_session.py` — `SpawnSession` and `DrainOutcome` carriers
-- `resident_drain.py` — `HoldEvidence`, resident done-nudge model, hold builder
+- `resident_drain.py` — `HoldEvidence`, shared candidate confirmation/rearm policy, hold builder
 - `pi_drain.py` — Pi spawned-session quiescence coordinator
 - `pi_lifecycle_tracker.py` — validation for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi quiescence inputs

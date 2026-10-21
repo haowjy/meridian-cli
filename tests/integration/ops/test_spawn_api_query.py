@@ -504,7 +504,7 @@ def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) 
         )
 
 
-def test_spawn_wait_fail_fast_uses_one_snapshot_when_pending_spawn_finishes(
+def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -557,7 +557,6 @@ def test_spawn_wait_fail_fast_uses_one_snapshot_when_pending_spawn_finishes(
             SpawnWaitInput(
                 project_root=project_root.as_posix(),
                 spawn_ids=(str(failed_id), str(finishing_id)),
-                fail_fast=True,
                 yield_after_secs=0,
             )
         )

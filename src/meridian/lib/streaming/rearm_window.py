@@ -11,11 +11,8 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     CompletionDirectives,
-    CompletionEvaluation,
-    NudgeUrgency,
     ProfileDecision,
 )
-from meridian.lib.streaming.completion_nudge import COMPLETION_NUDGE_INTERVAL_SECONDS
 
 
 class RearmWindow:
@@ -32,8 +29,6 @@ class RearmWindow:
         spawn = spawn_store.get_spawn(runtime_root, spawn_id)
         self._rearm_count = spawn.resident_rearm_count if spawn is not None else 0
         self._done_requested = False
-        # Short configured windows must offer a rearm opportunity before expiry.
-        self.nudge_interval = min(COMPLETION_NUDGE_INTERVAL_SECONDS, deadline_seconds / 2)
 
     def consume_directives(self) -> CompletionDirectives:
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
@@ -77,10 +72,3 @@ class RearmWindow:
             self._runtime_root, self._spawn_id, resident_rearm_count=self._rearm_count,
         )
         return True
-
-    def nudge_urgency(self, context: CompletionEvaluation) -> NudgeUrgency:
-        deadline_at = context.state.deadline_at
-        remaining = None if deadline_at is None else deadline_at - context.now
-        if remaining is not None and remaining < self.nudge_interval:
-            return "timeout_soon"
-        return "normal"

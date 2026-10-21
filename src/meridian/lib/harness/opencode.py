@@ -76,6 +76,7 @@ from meridian.lib.harness.semantics import (
     EventSemantics,
     HarnessSemantics,
     TerminalEventOutcome,
+    TerminalOutcomeCause,
     connection_closed_outcome,
     stringify_terminal_error,
 )
@@ -533,7 +534,10 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
 def _resolve_opencode_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
-        return connection_closed_outcome(event)
+        return connection_closed_outcome(
+            event,
+            cause=TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE,
+        )
     if event.event_type == "session.execution.failed":
         detail = event.payload.get("error") or event.payload.get("message")
         return TerminalEventOutcome(

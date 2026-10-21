@@ -123,6 +123,9 @@ class PiCompletionProfile:
     def allows_evaluation_without_candidate(self) -> bool:
         return True
 
+    def refresh_deadline_after_event(self) -> bool:
+        return True
+
     def bind_cleanup(self, cleanup: PiCompletionCleanupPort) -> None:
         self._cleanup = cleanup
 

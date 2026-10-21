@@ -254,8 +254,16 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     assert connection.fake_resident_backend.injected_messages == []
 
     clock.advance(270.0)
-    nudged = await coordinator.handle_timeout()
-    assert nudged.recorded_outcome is None
+    assert (await coordinator.handle_timeout()).recorded_outcome is None
+    assert connection.fake_resident_backend.injected_messages == []
+
+    coordinator.observe_activity_transition("turn_active")
+    next_candidate = await coordinator.handle_terminal_event(
+        resident_event(HarnessId.CODEX, "turn/completed", {}),
+        terminal,
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
+    assert next_candidate.emit_turn_boundary is True
     assert len(connection.fake_resident_backend.injected_messages) == 1
     injected = connection.fake_resident_backend.injected_messages[0]
     assert "meridian spawn done" in injected
@@ -266,7 +274,12 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     await coordinator.handle_aux_wake()
 
     assert coordinator.next_timeout() == pytest.approx(5.0)
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
+    assert connection.fake_resident_backend.awaiting_done_values == [
+        True,
+        False,
+        True,
+        False,
+    ]
 
     write_spawn_signal(tmp_path, "p1", "done")
     requested = await coordinator.handle_timeout()
@@ -280,6 +293,8 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     assert decision.recorded_outcome == terminal
     assert coordinator.next_timeout() is None
     assert connection.fake_resident_backend.awaiting_done_values == [
+        True,
+        False,
         True,
         False,
         True,

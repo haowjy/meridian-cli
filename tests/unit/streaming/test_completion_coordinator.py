@@ -135,6 +135,9 @@ class _Profile:
     def allows_evaluation_without_candidate(self) -> bool:
         return self.candidate_free
 
+    def refresh_deadline_after_event(self) -> bool:
+        return False
+
     def consume_directives(
         self, state: CompletionState, trigger: AssessmentTrigger
     ) -> CompletionDirectives:

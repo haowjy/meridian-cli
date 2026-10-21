@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from meridian.lib.harness.semantics import TerminalOutcomeCause
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -173,7 +174,7 @@ class CompletionCoordinator:
         decision = await self._evidence.observe_event(event, transition)
         if (
             not decision.duplicate_canonical_event
-            and self._profile.allows_evaluation_without_candidate()
+            and self._profile.refresh_deadline_after_event()
         ):
             self._refresh_profile_deadline()
         return None if decision.duplicate_canonical_event else normalized_event
@@ -209,7 +210,14 @@ class CompletionCoordinator:
             # Refresh even when outstanding work defers termination: profile
             # deadlines must start at this boundary, not a later timeout wake.
             return await self._evaluate_terminal(outcome, action)
-        return await self._evaluate_terminal(outcome, action, assess=False)
+        return await self._evaluate_terminal(
+            outcome,
+            action,
+            assess=(
+                self._candidate is not None
+                and outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
+            ),
+        )
 
     async def handle_timeout(self) -> DrainLoopDecision:
         return await self._evaluate_wait("timeout")
