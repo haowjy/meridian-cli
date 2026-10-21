@@ -213,6 +213,7 @@ transcript once (reload only when the session generation changes) and refreshes 
 shown model through `session_model_refresh_sync`; `l` loads lineage plus the
 nodes' rows through `session_list_sync(chat_ids=...)`.
 
+Rows carry no live marker or live-first order; `row.live` exists only so re-entry forks a running session.
 Type-to-search is always on, so printable keys feed the filter. Space always opens
 the detail view and never filters. `l` opens lineage only while the filter is
 empty (it is text afterwards); Ctrl-L always does. A worker preload thread imports

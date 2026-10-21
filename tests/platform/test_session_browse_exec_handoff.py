@@ -60,8 +60,7 @@ def test_picker_restores_terminal_before_exec_successor(tmp_path: Path) -> None:
 
             def exec_successor(_executable: str, _argv: list[str]) -> None:
                 code = (
-                    "import termios; "
-                    "print('SUCCESSOR=' + repr(termios.tcgetattr(0)), flush=True)"
+                    "import termios; print('SUCCESSOR=' + repr(termios.tcgetattr(0)), flush=True)"
                 )
                 os.execv(sys.executable, [sys.executable, "-c", code])
 
@@ -90,7 +89,7 @@ def test_picker_restores_terminal_before_exec_successor(tmp_path: Path) -> None:
                 except OSError:
                     chunk = b""
                 output.extend(chunk)
-                if not sent_enter and b"c1" in output:
+                if not sent_enter and b"handoff-probe" in output:
                     os.write(master_fd, b"\r")
                     sent_enter = True
             waited_pid, status = os.waitpid(child_pid, os.WNOHANG)

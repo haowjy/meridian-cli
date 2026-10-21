@@ -1406,14 +1406,18 @@ class HistoryIndex:
         self,
         *,
         limit: int,
-        live_chat_ids: set[str],
         status: Literal["active", "archived"] | None = None,
         sort: Literal["updated", "created"] = "updated",
         chat_ids: set[str] | None = None,
+        exclude_chat_ids: set[str] | None = None,
     ) -> tuple[list[SessionRecord | SpawnRecord], int]:
-        """Select picker records; ``chat_ids`` addresses live chats and overrides ``status``."""
+        """Select picker records ordered by indexed activity or creation.
+
+        ``chat_ids`` addresses specific chats and overrides ``status``;
+        ``exclude_chat_ids`` drops chats the caller orders itself (running sessions, whose
+        indexed activity is their start time).
+        """
         newer = SESSIONS.alias("newer")
-        live_expr = SESSIONS.c.chat.in_(sorted(live_chat_ids)) if live_chat_ids else literal(0)
         archive_created = (
             select(
                 func.coalesce(
@@ -1445,7 +1449,6 @@ class HistoryIndex:
                     func.nullif(func.json_extract(SESSIONS.c.record_json, "$.created_at"), ""),
                     func.json_extract(SESSIONS.c.record_json, "$.started_at"),
                 ).label("created"),
-                live_expr.label("live"),
                 func.cast(func.substr(SESSIONS.c.chat, 2), Integer).label("tie"),
             ).where(
                 SESSIONS.c.kind == "primary",
@@ -1462,7 +1465,6 @@ class HistoryIndex:
                 literal("archive").label("source"),
                 RECORDS.c.activity,
                 func.coalesce(archive_created, RECORDS.c.started).label("created"),
-                literal(0).label("live"),
                 literal(0).label("tie"),
             ).where(RECORDS.c.archive_id.is_not(None), RECORDS.c.kind == "primary"),
         ).cte("browse")
@@ -1475,19 +1477,26 @@ class HistoryIndex:
                 )
                 .cte("addressed")
             )
-        elif status is not None:
-            browse = (
-                select(browse)
-                .where(browse.c.source == ("archive" if status == "archived" else "session"))
-                .cte("scoped")
-            )
+        else:
+            conditions: list[ColumnElement[bool]] = []
+            if status is not None:
+                conditions.append(
+                    browse.c.source == ("archive" if status == "archived" else "session")
+                )
+            if exclude_chat_ids:
+                chat = func.json_extract(browse.c.record_json, "$.chat_id")
+                conditions.append(
+                    or_(browse.c.source != "session", chat.not_in(sorted(exclude_chat_ids)))
+                )
+            if conditions:
+                browse = select(browse).where(*conditions).cte("scoped")
         with self.query() as db:
             total = db.execute(select(func.count()).select_from(browse)).scalar() or 0
             rows = db.execute(
                 select(browse.c.record_json, browse.c.source)
                 .order_by(
                     *(
-                        (browse.c.live.desc(), browse.c.activity.desc(), browse.c.tie.desc())
+                        (browse.c.activity.desc(), browse.c.tie.desc())
                         if sort == "updated"
                         else (func.julianday(browse.c.created).desc(), browse.c.tie.desc())
                     )

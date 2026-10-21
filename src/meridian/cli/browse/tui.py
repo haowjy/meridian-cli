@@ -42,7 +42,6 @@ type View = ListState | DetailState | LineageState
 _STYLE = Style.from_dict(
     {
         "selected": "reverse",
-        "live": "fg:ansigreen",
         "stale": "fg:ansiyellow",
         "hint": "fg:ansibrightblack",
         "columns": "bold fg:ansibrightblack",

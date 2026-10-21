@@ -31,8 +31,6 @@ def _age(row: SessionListRow) -> str:
 
 
 def _status_glyph(row: SessionListRow) -> tuple[str, str]:
-    if row.live:
-        return "●", "class:live"
     if row.stale:
         return "⚠", "class:stale"
     return " ", ""
@@ -186,7 +184,6 @@ def _stamp(iso: str) -> str:
 
 def detail_header(state: DetailState, width: int) -> StyleAndTextTuples:
     row = state.row
-    live = " ● live" if row is not None and row.live else ""
     harness = row.harness if row is not None else ""
     tmux = (row.tmux_target if row else None) or "-"
     work = (row.work_label if row else "") or "-"
@@ -208,7 +205,7 @@ def detail_header(state: DetailState, width: int) -> StyleAndTextTuples:
         return out
 
     lines: list[StyleAndTextTuples] = [
-        [("bold", f" {state.chat_id}"), ("", f"  {harness}"), ("class:live", live)],
+        [("bold", f" {state.chat_id}"), ("", f"  {harness}")],
         pair(("tmux", tmux), ("work", work)),
         pair(("agent", agent), ("model", model)),
         pair(("created", created), ("last turn", last)),

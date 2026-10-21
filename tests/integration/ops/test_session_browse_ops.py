@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import meridian.lib.ops.session_list as session_list_module
@@ -8,6 +9,7 @@ from meridian.lib.ops.session_list import SessionListInput, session_list_sync
 from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, resolve_session_reentry
 from meridian.lib.ops.session_search import iter_session_subset_search
 from meridian.lib.state import primary_meta, session_store, spawn_store, work_repository
+from meridian.lib.state.idle_store import IdleState
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
 
 
@@ -53,7 +55,7 @@ def _write_codex_rollout(*, home: Path, project_root: Path, session_id: str, tex
     )
 
 
-def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> None:
+def test_session_list_is_primary_only_ordered_by_activity_and_capped(tmp_path: Path) -> None:
     project_root, runtime_root = _project_roots(tmp_path)
     project_state_dir = resolve_project_paths(project_root).root_dir
     work_repository.create_work_item(project_state_dir, "browse-feature")
@@ -100,6 +102,55 @@ def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> N
     assert row.reentry == Fork(live_chat)
     assert row.work_label == "browse-feature"
     assert "(1 of 2 shown — use --limit to see more)" in output.format_text()
+
+
+def test_running_session_is_ordered_by_last_turn_not_start(tmp_path: Path, monkeypatch) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    now = ["2026-09-01T00:00:00Z"]
+    monkeypatch.setattr(session_store, "utc_now_iso", lambda: now[0])
+    running = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="44444444-4444-4444-8444-444444444444",
+        model="gpt",
+        kind="primary",
+    ).chat_id  # started 00:00, still running
+    now[0] = "2026-09-01T01:00:00Z"
+    stopped = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="55555555-5555-4555-8555-555555555555",
+        model="gpt",
+        kind="primary",
+    ).chat_id  # started 01:00
+    now[0] = "2026-09-01T02:00:00Z"
+    session_store.stop_session(runtime_root, stopped)
+
+    class _Idle:
+        turn_ms = 0
+
+        def read(self, harness: str, session: str):
+            if not session.startswith("4"):
+                return None
+            return IdleState.model_construct(
+                idle_since_ms=self.turn_ms, ttl_seconds=None, harness=harness, session=session
+            )
+
+    idle = _Idle()
+    monkeypatch.setattr(session_list_module, "IdleStore", lambda: idle)
+    try:
+        # Last turn 03:00 beats the stopped session's 02:00 although the start was 00:00.
+        idle.turn_ms = 3 * 3_600_000 + int(datetime(2026, 9, 1, tzinfo=UTC).timestamp() * 1000)
+        recent = session_list_sync(SessionListInput(project_root=project_root.as_posix(), limit=1))
+        assert [row.chat_id for row in recent.rows] == [running]
+        assert recent.total_count == 2
+
+        # Last turn 01:30 sorts below the stopped session; the cap still counts both.
+        idle.turn_ms = 90 * 60_000 + int(datetime(2026, 9, 1, tzinfo=UTC).timestamp() * 1000)
+        older = session_list_sync(SessionListInput(project_root=project_root.as_posix(), limit=2))
+        assert [row.chat_id for row in older.rows] == [stopped, running]
+    finally:
+        session_store.stop_session(runtime_root, running)
 
 
 def test_session_list_breaks_equal_timestamp_ties_by_chat_id(tmp_path: Path, monkeypatch) -> None:

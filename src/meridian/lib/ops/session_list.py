@@ -57,9 +57,7 @@ class SessionListRow(BaseModel):
 
     @property
     def stale(self) -> bool:
-        return (
-            not self.live and self.cache_deadline is not None and time.time() > self.cache_deadline
-        )
+        return self.cache_deadline is not None and time.time() > self.cache_deadline
 
     @property
     def filter_text(self) -> str:
@@ -90,18 +88,15 @@ class SessionListOutput(BaseModel):
         if not self.rows:
             return "no primary sessions"
 
-        rows = [["LIVE", "STALE", "TMUX", "WORK", "AGENT", "MODEL", "AGE", "C-ID"]]
+        rows = [["STALE", "TMUX", "WORK", "AGENT", "MODEL", "AGE"]]
         rows.extend(
             [
-                "●" if row.live else "",
                 "⚠" if row.stale else "",
                 row.tmux_target or "",
                 row.work_label,
                 row.agent,
                 row.model,
                 relative_time(row.last_turn_at or row.activity_at).removesuffix(" ago"),
-                row.chat_id
-                + (" [ZIP]" if row.archived else " [historical]" if row.historical else ""),
             ]
             for row in self.rows
         )
@@ -130,6 +125,68 @@ def _turn_metadata(
     return last_turn, anchor + ttl
 
 
+def _epoch(iso: str) -> float:
+    try:
+        parsed = datetime.fromisoformat(iso.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).timestamp()
+
+
+def _chat_number(chat_id: str) -> int:
+    digits = chat_id.removeprefix("c")
+    return int(digits) if digits.isdigit() else 0
+
+
+def _recent_by_last_turn(
+    index: HistoryIndex,
+    limit: int,
+    live_chat_ids: set[str],
+    idle_store: IdleStore,
+    idle_states: dict[tuple[str, str], IdleState | None],
+) -> tuple[list[session_store.SessionRecord | SpawnRecord], int]:
+    """Active sessions by last activity before LIMIT.
+
+    The index orders stopped sessions by stop time. A running session's indexed activity is
+    its start, which would sink it below recently stopped ones, so the (few) running
+    sessions are fetched whole, placed by their last turn from the idle file, and merged.
+    """
+
+    stopped, stopped_total = index.recent_sessions(
+        limit=limit, status="active", exclude_chat_ids=live_chat_ids
+    )
+    running = (
+        index.recent_sessions(limit=len(live_chat_ids), chat_ids=live_chat_ids)[0]
+        if live_chat_ids
+        else []
+    )
+    keyed: list[tuple[float, int, session_store.SessionRecord | SpawnRecord]] = []
+    for record in running:
+        if isinstance(record, SpawnRecord):
+            continue
+        key = (record.harness, record.harness_session_id or "")
+        if record.harness and record.harness_session_id and key not in idle_states:
+            idle_states[key] = idle_store.read(*key)
+        last_turn, _ = _turn_metadata(
+            record.harness, record.stopped_at or record.started_at, True, idle_states.get(key)
+        )
+        keyed.append((_epoch(last_turn), _chat_number(record.chat_id), record))
+    for record in stopped:
+        if isinstance(record, SpawnRecord):
+            activity = record.terminal.finished_at if record.terminal else record.started_at
+            keyed.append((_epoch(activity or ""), 0, record))
+        else:
+            keyed.append(
+                (
+                    _epoch(record.stopped_at or record.started_at),
+                    _chat_number(record.chat_id),
+                    record,
+                )
+            )
+    keyed.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [record for _, _, record in keyed[:limit]], stopped_total + len(running)
+
+
 def _work_label(runtime_root: Path, paths: ProjectPaths, work_id: str) -> str:
     item = work_store.get_work_item(runtime_root, work_id, paths=paths)
     return item.name if item is not None else work_id
@@ -155,13 +212,19 @@ def session_list_sync(
         )
     }
     index = HistoryIndex(roots.runtime_root)
-    visible_records, total_count = index.recent_sessions(
-        limit=payload.limit,
-        live_chat_ids=live_chat_ids,
-        status=payload.status,
-        sort=payload.sort,
-        chat_ids=set(payload.chat_ids) if payload.chat_ids is not None else None,
-    )
+    idle_store = IdleStore()
+    idle_states: dict[tuple[str, str], IdleState | None] = {}
+    if payload.chat_ids is None and payload.status == "active" and payload.sort == "updated":
+        visible_records, total_count = _recent_by_last_turn(
+            index, payload.limit, live_chat_ids, idle_store, idle_states
+        )
+    else:
+        visible_records, total_count = index.recent_sessions(
+            limit=payload.limit,
+            status=payload.status,
+            sort=payload.sort,
+            chat_ids=set(payload.chat_ids) if payload.chat_ids is not None else None,
+        )
     archived_metadata = index.archived_session_metadata(
         {str(record.history_id) for record in visible_records if isinstance(record, SpawnRecord)}
     )
@@ -176,8 +239,8 @@ def session_list_sync(
         if record.harness_session_id
     )
     models = index.last_executed_models(identities)
-    idle_store = IdleStore()
-    idle_states = {key: idle_store.read(*key) for key in identities}
+    for key in identities - idle_states.keys():
+        idle_states[key] = idle_store.read(*key)
 
     recorded_harness_sessions = recover_recorded_chat_harness_session_ids(
         roots.runtime_root,
