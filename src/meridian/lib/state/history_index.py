@@ -218,7 +218,8 @@ def _metadata_match(
     """A browse row's displayed metadata contains ``needle`` (lowercase).
 
     ``session_json`` is the session record that owns the tmux target and native identity:
-    the record itself for a session, the archive receipt's session for an archive.
+    the record itself for a session, the archive receipt's session for an archive (NULL
+    when the archive has no receipt).
     """
 
     def field(json: ColumnElement[str], *paths: str) -> ColumnElement[str]:
@@ -237,9 +238,11 @@ def _metadata_match(
         .concat(" ")
         .concat(field(record_json, "$.task_cwd", "$.execution_cwd"))
     )
+    # An archive without a receipt shows the model observed for its own record's identity.
+    identity = func.coalesce(session_json, record_json)
     observed = exists().where(
-        MODEL_OBSERVATIONS.c.harness == field(session_json, "$.harness"),
-        MODEL_OBSERVATIONS.c.session == field(session_json, "$.harness_session_id"),
+        MODEL_OBSERVATIONS.c.harness == field(identity, "$.harness"),
+        MODEL_OBSERVATIONS.c.session == field(identity, "$.harness_session_id"),
         func.instr(func.lower(MODEL_OBSERVATIONS.c.model), needle) > 0,
     )
     return or_(func.instr(haystack, needle) > 0, observed)
