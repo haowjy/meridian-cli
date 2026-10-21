@@ -22,12 +22,17 @@ from meridian.lib.state.session_fold import SessionRecord
 from meridian.lib.state.session_store import SessionModelObservationEvent, record_model_observation
 
 
+_BEST_EFFORT_TAIL_BYTES = 1 << 20
+
+
 @dataclass(frozen=True)
 class NativeModelReadContext:
     """Source-session paths a reader needs to locate the native store."""
 
     native_store: str | None = None
     project_root: str | None = None
+    # Scan only the last N bytes of a JSONL history; a model set earlier is missed.
+    tail_bytes: int | None = None
 
 
 def _nested_str(payload: object, *keys: str) -> str | None:
@@ -43,10 +48,18 @@ def _nested_str(payload: object, *keys: str) -> str | None:
     return None
 
 
-def _iter_json_objects(path: Path) -> Iterator[dict[str, object]]:
+def _iter_json_objects(path: Path, tail_bytes: int | None) -> Iterator[dict[str, object]]:
     try:
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
+        with path.open("rb") as handle:
+            if tail_bytes is not None:
+                size = handle.seek(0, 2)
+                if size > tail_bytes:
+                    handle.seek(size - tail_bytes)
+                    handle.readline()  # drop the partial line the seek landed in
+                else:
+                    handle.seek(0)
+            for raw in handle:
+                line = raw.decode("utf-8", errors="ignore")
                 stripped = line.strip()
                 if not stripped:
                     continue
@@ -93,7 +106,7 @@ def read_last_executed_model(
                 )
             last: str | None = None
             fallback: str | None = None
-            for payload in _iter_json_objects(native):
+            for payload in _iter_json_objects(native, context.tail_bytes):
                 event_type = payload.get("type")
                 if harness == "claude" and event_type == "assistant":
                     last = _nested_str(payload, "message", "model") or last
@@ -115,8 +128,14 @@ def read_last_executed_model(
     return None
 
 
-def observe_session_model(runtime_root: Path, record: SessionRecord) -> str | None:
-    """Record the native session's last executed model; return it, or ``None`` if unreadable."""
+def observe_session_model(
+    runtime_root: Path, record: SessionRecord, *, best_effort: bool = False
+) -> str | None:
+    """Record the native session's last executed model; return it, or ``None`` if unreadable.
+
+    ``best_effort`` never waits: it reads only the history tail and skips the write
+    (raising ``FileLockTimeout``) when an authority lock is contended.
+    """
 
     key = record.native_key()
     if key is None or record.record_mode == "historical":
@@ -125,7 +144,9 @@ def observe_session_model(runtime_root: Path, record: SessionRecord) -> str | No
         record.harness,
         key.session_id,
         context=NativeModelReadContext(
-            native_store=record.native_store, project_root=record.control_root
+            native_store=record.native_store,
+            project_root=record.control_root,
+            tail_bytes=_BEST_EFFORT_TAIL_BYTES if best_effort else None,
         ),
     )
     if token is not None:
@@ -137,6 +158,7 @@ def observe_session_model(runtime_root: Path, record: SessionRecord) -> str | No
                 observed_model_token=token,
                 recorded_at=utc_now_iso(),
             ),
+            lock_timeout=0 if best_effort else None,
         )
     return token
 

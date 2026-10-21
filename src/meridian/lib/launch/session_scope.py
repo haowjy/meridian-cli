@@ -227,15 +227,16 @@ def session_scope(
     finally:
         try:
             _stop_session(runtime_root, resolved_chat_id)
-            if kind == "primary":
-                # Browse shows the last-used model; a mid-session switch is only visible in the
-                # native history. Never let this affect shutdown.
-                with suppress(Exception):
-                    record = chat_record(runtime_root, resolved_chat_id)
-                    if record is not None:
-                        observe_session_model(runtime_root, record)
         finally:
             _reclaim_session_scopes(runtime_root, resolved_chat_id)
+        if kind == "primary":
+            # Browse shows the last-used model; a mid-session switch is only visible in the
+            # native history. Runs after reclamation and never waits on a lock: a missed
+            # observation is fine, delayed shutdown is not.
+            with suppress(Exception):
+                record = chat_record(runtime_root, resolved_chat_id)
+                if record is not None:
+                    observe_session_model(runtime_root, record, best_effort=True)
 
 
 __all__ = ["SessionAttempt", "session_scope"]

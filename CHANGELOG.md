@@ -19,7 +19,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Session listing resolves project paths once, not once per work item.
 - Format-v1 idle state files are read (last turn and TTL kept) instead of ignored.
 - `--from` records the chat and history of the context it actually used, not the continuation target.
-- A primary session records its last executed model when it stops, so browse shows the last-used model for sessions never continued or opened.
+- A primary session records its last executed model when it stops (after scope cleanup, best effort: never waits on a lock, reads only the history tail), so browse shows the last-used model for sessions never continued or opened.
 
 ## [0.11.4] - 2026-10-21
 

@@ -293,11 +293,13 @@ def append_native_rows(
     root: Path,
     native_id: str,
     rows: Iterable[SessionModelObservationEvent],
+    *,
+    lock_timeout: float | None = None,
 ) -> None:
     paths = RuntimePaths.from_root_dir(root)
     with (
-        lock_file(HistoryChanges(root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
+        lock_file(HistoryChanges(root).mutation_lock, mode="shared", timeout=lock_timeout),
+        lock_file(paths.sessions_flock, timeout=lock_timeout),
     ):
         batch = list(rows)
         if any(row.harness_session_id != native_id for row in batch):
@@ -1072,13 +1074,20 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
     return recorded
 
 
-def record_model_observation(runtime_root: Path, event: SessionModelObservationEvent) -> bool:
+def record_model_observation(
+    runtime_root: Path,
+    event: SessionModelObservationEvent,
+    *,
+    lock_timeout: float | None = None,
+) -> bool:
     """Durably append an executed-model observation; false means already recorded.
 
     Independent of intent: this fact keys on ``(harness, harness_session_id)`` and
     may exist for native sessions Meridian did not start, so no matching
     ``SessionStartEvent`` generation is required. Dedupes against the latest
-    observation for the identity to keep the JSONL bounded.
+    observation for the identity to keep the JSONL bounded. ``lock_timeout=0`` makes
+    every lock acquisition one non-blocking attempt and raises ``FileLockTimeout`` on
+    contention.
     """
 
     recorded = False
@@ -1098,10 +1107,12 @@ def record_model_observation(runtime_root: Path, event: SessionModelObservationE
             recorded = True
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared"):
+    with lock_file(paths.project_lifetime_flock, mode="shared", timeout=lock_timeout):
         if not runtime_root.is_dir():
             raise FileNotFoundError(runtime_root)
-        append_native_rows(runtime_root, event.harness_session_id, rows())
+        append_native_rows(
+            runtime_root, event.harness_session_id, rows(), lock_timeout=lock_timeout
+        )
     return recorded
 
 
