@@ -24,6 +24,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.launch.resolve import parse_duration_seconds
+from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE
@@ -152,10 +153,12 @@ def build_create_payload(
                 work_id=ambient_work_id,
             )
         )
+        # The one place a spawn's ``--from`` is resolved; launch only carries the refs.
+        context_refs = tuple(resolve_context_ref(project_root, ref) for ref in payload.context_from)
         launch_resolution = resolve_launch_inputs(
             authority_root=project_root,
             project_state_dir=project_state_dir,
-            context_from=payload.context_from,
+            context_refs=context_refs,
             reference_files=tuple(str(path) for path in payload.files),
             explicit_task_dir=payload.task_dir,
             explicit_work_id=explicit_work_id,
@@ -189,7 +192,7 @@ def build_create_payload(
                     (payload.session.requested_harness_session_id or "").strip() or None
                 ),
             }),
-            context_from=payload.context_from,
+            context_refs=context_refs,
             reference_files=tuple(path.as_posix() for path in launch_resolution.reference_files),
             template_vars=parsed_template_vars,
             goal=payload.goal,

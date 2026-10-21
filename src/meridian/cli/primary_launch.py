@@ -370,7 +370,6 @@ def run_primary_launch(
             pinned_context="",
             supplemental_prompt_documents=supplemental_prompt_documents,
             include_bootstrap_documents=include_bootstrap_documents,
-            context_from=fork_resolution.resolved_context_from,
             context_refs=context_sources,
             reference_files=reference_files,
             prompt=prompt,

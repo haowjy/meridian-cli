@@ -118,9 +118,7 @@ class SpawnRequest(BaseModel):
     session: SessionRequest = Field(default_factory=SessionRequest)
 
     # Context plumbing
-    context_from: tuple[str, ...] = ()
-    # Refs a caller already resolved (primary launch); composition resolves ``context_from``
-    # itself only when this is empty.
+    # ``--from`` refs, resolved once at the request boundary (cli or spawn prepare).
     context_refs: tuple[ContextRef, ...] = ()
     reference_files: tuple[str, ...] = ()
     template_vars: dict[str, str] = Field(default_factory=_empty_template_vars)

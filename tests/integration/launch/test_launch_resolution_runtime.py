@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import meridian.lib.harness.cursor as cursor_harness
+from meridian.lib.core.context_ref import SpawnContextRef, context_ref_values
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import (
     HarnessRegistry,
@@ -22,7 +23,6 @@ from meridian.lib.launch.plan import (
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, SessionRequest, SpawnRequest
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
-from meridian.lib.ops.spawn import context_ref
 from meridian.lib.state import work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from tests.support.fixtures import write_agent
@@ -129,11 +129,25 @@ def test_build_primary_spawn_request_only_uses_synthetic_prompt_when_required(
         assert spawn_request.primary_prompt_is_synthetic is False
 
 
+def _prior(spawn_id: str = "p999", work_id: str | None = None) -> SpawnContextRef:
+    """A resolved ``--from`` ref, as the cli or spawn prepare hands it to launch."""
+    return SpawnContextRef(
+        spawn_id=spawn_id,
+        status="succeeded",
+        agent="coder",
+        desc="prior task",
+        model="gpt-5.4-mini",
+        harness="codex",
+        report_text="prior context",
+        work_id=work_id,
+    )
+
+
 def test_build_primary_spawn_request_uses_context_as_initial_prompt() -> None:
     request = LaunchRequest(
         model="test-model",
         harness=HarnessId.CODEX.value,
-        context_from=("p123",),
+        context_refs=(_prior(),),
     )
 
     spawn_request = build_primary_spawn_request(request=request)
@@ -146,12 +160,12 @@ def test_build_primary_spawn_request_copies_context_from() -> None:
     request = LaunchRequest(
         model="test-model",
         harness=HarnessId.CLAUDE.value,
-        context_from=("p123",),
+        context_refs=(_prior(),),
     )
 
     spawn_request = build_primary_spawn_request(request=request)
 
-    assert spawn_request.context_from == ("p123",)
+    assert spawn_request.context_refs == (_prior(),)
 
 
 @pytest.mark.parametrize(
@@ -282,30 +296,13 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
     )
     write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4")
 
-    def _resolve_context_ref(_root: Path, _ref: str) -> object:
-        return object()
-
-    def _resolved_context_ref_value(_ref: object) -> str:
-        return "p999"
-
-    def _render_context_refs(_refs: object) -> str:
-        return '<prior-spawn-context spawn="p999">prior context</prior-spawn-context>'
-
-    monkeypatch.setattr(context_ref, "resolve_context_ref", _resolve_context_ref)
-    monkeypatch.setattr(context_ref, "resolved_context_ref_value", _resolved_context_ref_value)
-    monkeypatch.setattr(
-        context_ref,
-        "render_context_refs",
-        _render_context_refs,
-    )
-
     preview = build_launch_context(
         spawn_id="dry-run-primary-from",
         request=build_primary_spawn_request(
             request=LaunchRequest(
                 model="claude-sonnet-4",
                 agent="dev-orchestrator",
-                context_from=("p123",),
+                context_refs=(_prior(),),
             )
         ),
         runtime=build_primary_launch_runtime(project_root=tmp_path),
@@ -316,7 +313,7 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
     assert preview.projected_content is not None
     assert "prior context" in preview.projected_content.user_turn_content
     assert "prior context" not in preview.projected_content.system_prompt
-    assert preview.resolved_request.context_from == ("p999",)
+    assert context_ref_values(preview.resolved_request.context_refs) == ("p999",)
 
 
 def test_codex_primary_projection_omits_synthetic_user_turn_without_input(
@@ -504,19 +501,6 @@ def test_primary_launch_materializes_context_from_work(
         harness=HarnessId.CODEX,
     )
 
-    def fake_resolve_context_ref(_root: Path, _ref: str) -> context_ref.SpawnContextRef:
-        return context_ref.SpawnContextRef(
-            spawn_id="p123",
-            status="succeeded",
-            agent="coder",
-            desc="prior task",
-            model="gpt-5.4-mini",
-            harness="codex",
-            work_id="inherited-work",
-        )
-
-    monkeypatch.setattr(context_ref, "resolve_context_ref", fake_resolve_context_ref)
-
     from meridian.lib.launch.process import ProcessOutcome
 
     def fake_run_harness_process(
@@ -553,7 +537,7 @@ def test_primary_launch_materializes_context_from_work(
         request=PrimaryLaunchRequest(
             model="gpt-5.4-mini",
             harness=HarnessId.CODEX.value,
-            context_from=("p123",),
+            context_refs=(_prior("p123", "inherited-work"),),
             dry_run=False,
         ),
         harness_registry=get_default_harness_registry(),
@@ -578,26 +562,13 @@ def test_primary_launch_explicit_work_precedence_over_context_from(
         harness=HarnessId.CODEX,
     )
 
-    def fake_resolve_context_ref(_root: Path, _ref: str) -> context_ref.SpawnContextRef:
-        return context_ref.SpawnContextRef(
-            spawn_id="p123",
-            status="succeeded",
-            agent="coder",
-            desc="prior task",
-            model="gpt-5.4-mini",
-            harness="codex",
-            work_id="from-work",
-        )
-
-    monkeypatch.setattr(context_ref, "resolve_context_ref", fake_resolve_context_ref)
-
     result = launch_primary(
         project_root=project_root,
         request=PrimaryLaunchRequest(
             model="gpt-5.4-mini",
             harness=HarnessId.CODEX.value,
             work_id="explicit-work",
-            context_from=("p123",),
+            context_refs=(_prior("p123", "from-work"),),
             dry_run=True,
         ),
         harness_registry=get_default_harness_registry(),
@@ -820,19 +791,6 @@ def test_opencode_from_creates_fresh_session_with_context_in_prompt(
     )
     write_agent(tmp_path, name="dev-orchestrator", model="openai/gpt-5.5")
 
-    def _resolve_context_ref(_root: Path, _ref: str) -> object:
-        return object()
-
-    def _resolved_context_ref_value(_ref: object) -> str:
-        return "p999"
-
-    def _render_context_refs(_refs: object) -> str:
-        return '<prior-spawn-context spawn="p999">prior context</prior-spawn-context>'
-
-    monkeypatch.setattr(context_ref, "resolve_context_ref", _resolve_context_ref)
-    monkeypatch.setattr(context_ref, "resolved_context_ref_value", _resolved_context_ref_value)
-    monkeypatch.setattr(context_ref, "render_context_refs", _render_context_refs)
-
     preview = build_launch_context(
         spawn_id="dry-run-opencode-from",
         request=build_primary_spawn_request(
@@ -840,7 +798,7 @@ def test_opencode_from_creates_fresh_session_with_context_in_prompt(
                 model="openai/gpt-5.5",
                 harness=HarnessId.OPENCODE.value,
                 agent="dev-orchestrator",
-                context_from=("p123",),
+                context_refs=(_prior(),),
             )
         ),
         runtime=build_primary_launch_runtime(project_root=tmp_path),

@@ -14,6 +14,7 @@ import structlog
 from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import resolve_task_cwd
@@ -344,7 +345,7 @@ def execute_spawn_background(
             logger.warning("Failed to write params.json", spawn_id=spawn_id_text, exc_info=True)
 
         warning = request.warning
-        context_from_resolved = request.context_from
+        context_from_resolved = context_ref_values(request.context_refs)
         launch_command = _build_background_worker_command(
             runtime_root=context.runtime_root,
             spawn_id=context.spawn.spawn_id,
@@ -543,7 +544,7 @@ def execute_spawn_blocking(
             on_spawn_id(spawn_id_text)
 
         warning = request.warning
-        context_from_resolved = request.context_from
+        context_from_resolved = context_ref_values(request.context_refs)
 
         try:
             execution_cwd_str = initial_execution_cwd

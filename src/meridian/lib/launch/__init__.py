@@ -128,7 +128,6 @@ def launch_primary(
     launch_resolution = resolve_launch_inputs(
         authority_root=resolved_project_root,
         project_state_dir=project_state_dir,
-        context_from=request.context_from,
         context_refs=request.context_refs,
         reference_files=request.reference_files,
         explicit_task_dir=request.task_dir,
