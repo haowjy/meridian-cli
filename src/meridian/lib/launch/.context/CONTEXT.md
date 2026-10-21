@@ -407,8 +407,14 @@ test injection; in production it always points to `reclaim_session_owned_scopes_
 
 ### User-Turn Context Threading
 
-`resolve_task_context_inputs()` in `context.py` is the single seam for assembling
-user-turn context blocks from `--from` refs and `-f` reference files:
+`--from` is resolved once, at the request boundary, into `ContextRef`s:
+`cli/primary_launch.py` for primary launches and `ops/spawn/prepare.py` for
+spawns (both through `ops/spawn/context_ref.resolve_context_ref`). The request
+carries only `context_refs`. Launch never resolves a ref; it renders them with
+`core/context_ref.render_context_refs`.
+
+`resolve_task_context_inputs()` in `context.py` is the single seam that turns
+`context_refs` and `-f` reference files into user-turn context blocks:
 
 The full four-mode session-initiation model and its rationale live at
 `$MERIDIAN_CONTEXT_KB_DIR/concepts/session-initiation.md` (see `meridian context kb`).
@@ -419,13 +425,13 @@ This code-local note records only the launch seam and the fields it threads.
 class TaskContextInputs:
     reference_items: tuple[ReferenceItem, ...]
     prior_output: str
-    resolved_context_from: tuple[str, ...]
 
 def resolve_task_context_inputs(
     *,
-    context_from: tuple[str, ...],
+    context_refs: tuple[ContextRef, ...],
     reference_files: tuple[str, ...],
-    project_root: Path,
+    authority_root: Path,
+    reference_anchor: Path,
 ) -> TaskContextInputs: ...
 ```
 
@@ -440,10 +446,15 @@ this function so both launch paths receive the same user-turn context inputs.
 3. -p / --prompt-file    (current_request text)
 ```
 
-**`LaunchRequest.context_from`** carries the resolved set of prior-context refs
-(from `--from` on both spawn and primary surfaces). It is populated by the CLI layer
-from `ForkModeResolution.resolved_context_from` and passed through to
-`SpawnRequest.context_from` via `build_primary_spawn_request()` in `plan.py`.
+**`SpawnRequest.prompt` is always the caller's raw prompt.** Every prepare composes
+from the request's inputs (`prompt`, `context_refs`, `reference_files`,
+`template_vars`); the composed text lives on the output side
+(`PreparedLaunchContent.final_prompt`, `prompt_payload.user_turn_content`, and
+after bind `binding.run_params.prompt`). The background worker and a session
+change in `execute_runner` both prepare the persisted request again, so writing
+the composed text back into `prompt` renders prior context and references twice.
+Values for metadata come from `context_ref_values(request.context_refs)`; nothing
+keeps a second string copy of the refs.
 
 **Do not unify `_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()`.**
 Only the user-turn context resolution step is shared. The two projections differ in

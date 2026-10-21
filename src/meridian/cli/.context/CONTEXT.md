@@ -180,7 +180,8 @@ ForkModeResolution
   fork_fresh_ref: str | None    — resolved --fork-fresh ref
   is_fork: bool                 — True if either fork flag present
   is_fresh: bool                — True if --fork-fresh was used
-  resolved_context_from: tuple[str, ...]  — resolved --from refs
+  resolved_context_from: tuple[str, ...]  — --from refs, bare sentinel expanded
+                                           (primary_launch resolves them to ContextRefs)
 ```
 
 ### Pipeline Position
