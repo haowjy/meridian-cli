@@ -13,12 +13,12 @@ from meridian.lib.launch.env import (
     inherit_child_env,
     merge_env_overrides,
 )
+from meridian.lib.launch.permissions import resolve_permission_pipeline
 from meridian.lib.safety.permissions import (
     PermissionConfig,
     ToolsPermissionResolver,
     build_permission_config,
     compile_tools_to_opencode_permission,
-    resolve_permission_pipeline,
 )
 
 _MERIDIAN_RUNTIME_KEYS = (

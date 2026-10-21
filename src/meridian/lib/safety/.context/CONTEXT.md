@@ -58,19 +58,16 @@ plus `opencode_permission_override`, the OpenCode permission JSON compiled from
 |---|---|---|
 | `tools` is `None` | `TieredPermissionResolver` | `()` — harness derives from sandbox/approval |
 | `tools` is a `ToolsField` | `ToolsPermissionResolver` | Claude `--allowedTools` / `--disallowedTools` from `compile_tools_to_claude_flags`; OpenCode JSON from `opencode_permission_json()` |
-| Explicit unsafe opt-out | `UnsafeNoOpPermissionResolver` | `()` + warning log |
 
 **`tools` is the abstract `ToolsField`** (`lib/tools.py`): a map from capability
-(or scoped `bash(rg *)` key) to `allow` / `deny` / `ask`, or the `allow` / `deny`
-shorthand. Each harness compiles it differently: Claude flags treat `ask` as
+(or scoped `bash(rg *)` key) to `allow` / `deny` / `ask`. Each harness compiles it differently: Claude flags treat `ask` as
 `allow` (no flag expresses it), OpenCode keeps `ask`, and Codex ignores the map
 except for `infer_codex_sandbox_from_tools`. Profiles reach this type through
 `launch/bundle_adapter.py`, which rebuilds it from Mars's `tools.allowed` /
 `tools.disallowed` lists, so a profile never produces `ask`.
 
-**`resolve_permission_pipeline()` in this module** is a re-export shim that delegates
-to `lib/launch/permissions.py`. The launch layer owns the actual pipeline.
-`PermissionConfig` and the resolver types live here.
+**`resolve_permission_pipeline()` lives in `lib/launch/permissions.py`**; the launch
+layer owns the pipeline. `PermissionConfig` and the resolver types live here.
 
 **Known gaps.** Mars lowers tool names to the target harness's native names before
 Meridian sees them (Codex `exec_command` / `apply_patch`, Claude `Bash` / `Edit`),
@@ -88,7 +85,6 @@ User-facing behavior is in `docs/agent-profiles.md#permissions-by-harness`.
 
 The dependency graph must remain:
 - `budget.py` → `harness.common` (lazy only)
-- `permissions.py` → `launch.permissions` (re-export only)
 
 Do not add direct top-level imports between these modules and `harness.*` or `launch.*`.
 The lazy import in `extract_cost_usd_from_json_line` is load-bearing.

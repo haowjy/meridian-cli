@@ -179,7 +179,6 @@ class LaunchRuntime(BaseModel):
     composition_surface: LaunchCompositionSurface = LaunchCompositionSurface.DIRECT
     config_snapshot: dict[str, object] = Field(default_factory=_empty_config_snapshot)
     runtime_override_snapshot: dict[str, object] | None = None
-    unsafe_no_permissions: bool = False
     debug: bool = False
     runtime_root: str
     config_root: str | None = None

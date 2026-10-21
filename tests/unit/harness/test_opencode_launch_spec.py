@@ -11,7 +11,7 @@ from __future__ import annotations
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 
 
 def _resolve(**overrides: object) -> ResolvedLaunchSpec:
@@ -19,7 +19,7 @@ def _resolve(**overrides: object) -> ResolvedLaunchSpec:
     params.update(overrides)
     return OpenCodeAdapter().resolve_launch_spec(
         SpawnParams(**params),
-        UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        TieredPermissionResolver(config=PermissionConfig()),
     )
 
 

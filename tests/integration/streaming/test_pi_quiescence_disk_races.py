@@ -18,7 +18,6 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import pi_drain as pi_drain_module
@@ -620,7 +619,6 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 

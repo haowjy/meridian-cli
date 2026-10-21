@@ -32,7 +32,6 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.platform.launch_gate import ProcessIdentity
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
@@ -116,7 +115,6 @@ def test_run_primary_attach_preserves_startup_failure_cause(
             task_cwd=tmp_path,
             env={},
             spec=ResolvedLaunchSpec(
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
             process_launcher=lambda **_kwargs: (1, None),
         )
@@ -231,7 +229,6 @@ def test_opencode_streaming_logs_effort_warning_without_failure(
         ResolvedLaunchSpec(
             model="google/gemini-2.5-pro",
             effort="medium",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 

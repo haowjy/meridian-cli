@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.tools import ToolAction, ToolsField, resolve_tool_action, tools_field_to_map
-
-logger = logging.getLogger(__name__)
-
 
 type SandboxMode = Literal[
     "default",
@@ -60,46 +56,6 @@ class PermissionConfig(BaseModel):
     approval: ApprovalMode = "default"
     # Optional OpenCode permission map JSON derived from ToolsField.
     opencode_permission_override: str | None = None
-
-
-def _install_readonly_permission_field(field_name: str) -> None:
-    def _get(instance: PermissionConfig) -> object:
-        return instance.__dict__[field_name]
-
-    def _set(instance: PermissionConfig, value: object) -> None:
-        _ = instance, value
-        raise TypeError(f"PermissionConfig is frozen; cannot mutate '{field_name}'.")
-
-    setattr(PermissionConfig, field_name, property(_get, _set))
-
-
-for _field_name in (
-    "sandbox",
-    "approval",
-    "opencode_permission_override",
-):
-    _install_readonly_permission_field(_field_name)
-
-
-class UnsafeNoOpPermissionResolver(BaseModel):
-    """Explicit unsafe opt-out resolver with no permission enforcement."""
-
-    model_config = ConfigDict(frozen=True)
-
-    def __init__(self, *, _suppress_warning: bool = False, **data: object) -> None:
-        super().__init__(**data)
-        if not _suppress_warning:
-            logger.warning(
-                "UnsafeNoOpPermissionResolver constructed; "
-                "no permission enforcement will be applied"
-            )
-
-    @property
-    def config(self) -> PermissionConfig:
-        return PermissionConfig()
-
-    def resolve_flags(self) -> tuple[str, ...]:
-        return ()
 
 
 def _parse_approval_value(raw: str) -> ApprovalMode:
@@ -317,29 +273,3 @@ def build_permission_resolver(
             fallback_config=permission_config,
         )
     return TieredPermissionResolver(config=permission_config)
-
-
-def resolve_permission_pipeline(
-    *,
-    sandbox: str | None,
-    tools: ToolsField | None = None,
-    approval: str = "default",
-    unsafe_no_permissions: bool = False,
-) -> tuple[
-    PermissionConfig,
-    (
-        TieredPermissionResolver
-        | ToolsPermissionResolver
-        | UnsafeNoOpPermissionResolver
-    ),
-]:
-    """Compatibility wrapper for the stage-owned launch permission resolver."""
-
-    from meridian.lib.launch.permissions import resolve_permission_pipeline as _resolve
-
-    return _resolve(
-        sandbox=sandbox,
-        tools=tools,
-        approval=approval,
-        unsafe_no_permissions=unsafe_no_permissions,
-    )

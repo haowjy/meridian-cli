@@ -17,7 +17,6 @@ from meridian.lib.harness.connections.opencode_http import permission_liveness_k
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
 class _TestableOpenCodeV2Connection(OpenCodeV2Connection):
@@ -68,7 +67,6 @@ def _spec(
         prompt="hello",
         model=model,
         continue_session_id=continue_session_id,
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
 

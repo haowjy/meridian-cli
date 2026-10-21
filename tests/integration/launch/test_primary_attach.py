@@ -37,7 +37,6 @@ from meridian.lib.launch.process.primary_attach import (
 )
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk, record_scope
 from meridian.lib.state.spawn_store import start_spawn
 
@@ -170,7 +169,6 @@ def _build_config(
 def _build_spec() -> ResolvedLaunchSpec:
     return ResolvedLaunchSpec(
         prompt="hello",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         interactive=True,
     )
 

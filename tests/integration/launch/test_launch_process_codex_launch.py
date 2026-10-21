@@ -41,7 +41,6 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.platform.launch_gate import ProcessIdentity
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import get_spawn, list_spawns
 from tests.support.launch import (
@@ -137,7 +136,6 @@ def test_codex_managed_attach_does_not_override_remote_permissions(
         prompt="",
         user_turn_content=prompt,
         projected_roots=(tmp_path / "sibling",),
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     command = CodexPassthrough().build_tui_command(connection, spec)("thread-123")

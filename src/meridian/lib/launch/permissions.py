@@ -12,7 +12,6 @@ from meridian.lib.safety.permissions import (
     PermissionConfig,
     TieredPermissionResolver,
     ToolsPermissionResolver,
-    UnsafeNoOpPermissionResolver,
     build_permission_config,
     build_permission_resolver,
     compile_tools_to_opencode_permission,
@@ -27,28 +26,7 @@ from meridian.lib.tools import (
     tools_field_to_map,
 )
 
-PermissionResolverImpl = (
-    TieredPermissionResolver
-    | ToolsPermissionResolver
-    | UnsafeNoOpPermissionResolver
-)
-
-CLAUDE_NATIVE_DELEGATION_TOOLS: frozenset[str] = frozenset(
-    {
-        "Agent",
-        "TaskCreate",
-        "TaskGet",
-        "TaskList",
-        "TaskOutput",
-        "TaskStop",
-        "TaskUpdate",
-    }
-)
-"""Native Claude Code delegation tools denied by default in managed spawns.
-
-These tools let a Claude agent spin up sub-agents outside Meridian's tracking
-and policy enforcement. Profiles can opt out per tool via `tools:`.
-"""
+PermissionResolverImpl = TieredPermissionResolver | ToolsPermissionResolver
 
 
 _NESTED_CLAUDE_DELEGATION_CAPABILITIES: frozenset[str] = frozenset({"agent", "task"})
@@ -217,12 +195,8 @@ def resolve_permission_pipeline(
     sandbox: str | None,
     tools: ToolsField | None = None,
     approval: str = "default",
-    unsafe_no_permissions: bool = False,
 ) -> tuple[PermissionConfig, PermissionResolverImpl]:
     """Resolve a permission config and concrete resolver for one launch request."""
-
-    if unsafe_no_permissions:
-        return PermissionConfig(), UnsafeNoOpPermissionResolver()
 
     config = build_permission_config(sandbox, approval=approval)
     opencode_override = _resolve_opencode_override(tools=tools)
@@ -241,7 +215,6 @@ def resolve_permission_pipeline(
 
 
 __all__ = [
-    "CLAUDE_NATIVE_DELEGATION_TOOLS",
     "PermissionResolverImpl",
     "compute_nested_claude_deny_additions",
     "project_has_claude_agent_copy",

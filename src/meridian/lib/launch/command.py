@@ -85,14 +85,11 @@ def _base_command(adapter: SubprocessHarness, *, interactive: bool) -> tuple[str
 def build_launch_argv(
     *,
     adapter: SubprocessHarness,
-    run_inputs: SpawnParams,
-    perms: PermissionResolver,
     projected_spec: ResolvedLaunchSpec,
     env: Mapping[str, str],
 ) -> tuple[str, ...]:
     """Stage-owned subprocess argv assembly from one resolved launch spec."""
 
-    _ = run_inputs, perms
     return tuple(
         project_subprocess_spec(
             adapter.id,

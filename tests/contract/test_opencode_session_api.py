@@ -15,9 +15,6 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
     HarnessCapabilityMismatch,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import (
-    UnsafeNoOpPermissionResolver,
-)
 from tests.support.async_determinism import AsyncDeterminism
 
 
@@ -100,7 +97,6 @@ async def test_create_session_uses_spec_model_not_connection_config(tmp_path) ->
         ResolvedLaunchSpec(
             prompt="hello",
             model="openai/spec-model",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
@@ -116,7 +112,6 @@ async def test_create_session_omits_model_fields_when_launch_spec_model_is_none(
     await connection._create_session(
         ResolvedLaunchSpec(
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
@@ -135,7 +130,6 @@ async def test_create_session_forwards_agent_and_skills_from_opencode_launch_spe
             model="openai/gpt-5.3-codex",
             agent_name="worker",
             skills=("skill-a", "skill-b"),
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
@@ -152,7 +146,6 @@ async def test_create_session_raises_when_continue_fork_requested() -> None:
         model="openai/gpt-5.3-codex",
         continue_session_id="sess-parent",
         continue_fork=True,
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     with pytest.raises(HarnessCapabilityMismatch, match="continue_fork"):
@@ -167,7 +160,6 @@ async def test_create_session_forwards_mcp_tools_in_payload() -> None:
         prompt="hello",
         model="openrouter/gpt-4o-mini",
         mcp_tools=("tool-a=echo a", "tool-b=echo b"),
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     await connection._create_session(spec)
@@ -190,7 +182,6 @@ async def test_session_creation_does_not_replay_when_projected_payload_hangs(
             ResolvedLaunchSpec(
                 model="openai/gpt-5.5",
                 agent_name="prober",
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
             timeout_seconds=1.0,
         )
@@ -225,7 +216,6 @@ async def test_create_session_with_retry_fresh_retries_then_succeeds(
     spec = ResolvedLaunchSpec(
         prompt="hello",
         model="openai/gpt-5.3-codex",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     session_id = await connection._create_session_with_retry(spec, timeout_seconds=1.0)
@@ -248,7 +238,6 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
     spec = ResolvedLaunchSpec(
         prompt="hello",
         continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     session_id = await connection._create_session_with_retry(spec, timeout_seconds=1.0)
@@ -264,7 +253,6 @@ async def test_v1_resume_with_explicit_model_fails_loudly() -> None:
         prompt="hello",
         model="openai/gpt-5.3-codex",
         continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     with pytest.raises(HarnessCapabilityMismatch, match="cannot switch the model"):
@@ -281,7 +269,6 @@ async def test_v1_resume_without_model_still_verifies_and_resumes() -> None:
     spec = ResolvedLaunchSpec(
         prompt="hello",
         continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     assert await connection._create_session(spec) == "sess-parent"
@@ -293,7 +280,6 @@ async def test_create_session_uses_native_nested_model_and_never_drops_it():
     spec = ResolvedLaunchSpec(
         prompt="hello",
         model="openai/gpt-test",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
     connection = _TestableOpenCodeConnection(responses=[(200, {"id": "native"}, "")])
     assert await connection._create_session(spec) == "native"
@@ -314,7 +300,6 @@ async def test_rejected_or_uncertain_session_creation_never_replays_empty_payloa
             await connection._create_session_with_retry(
                 ResolvedLaunchSpec(
                     model="openai/selected",
-                    permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
                 ),
                 timeout_seconds=1,
             )

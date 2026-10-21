@@ -9,14 +9,12 @@ from meridian.lib.harness.projections.project_pi_native_tui import (
     project_pi_native_tui_spec_to_cli_args,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
 def _spec(**overrides: object) -> ResolvedLaunchSpec:
     values: dict[str, object] = {
         "interactive": True,
         "prompt": "Reply exactly: hello",
-        "permission_resolver": UnsafeNoOpPermissionResolver(_suppress_warning=True),
         "native_identity": NativeIdentity("pi", "create", "/tmp/pi", "new-id", None, None),
     }
     values.update(overrides)

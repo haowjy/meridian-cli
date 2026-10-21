@@ -87,7 +87,6 @@ from .cwd import LaunchDirectoryContext
 from .env import build_env_plan, undo_direnv
 from .env import merge_env_overrides as _merge_env_overrides
 from .permissions import (
-    CLAUDE_NATIVE_DELEGATION_TOOLS,
     project_has_claude_agent_copy,
     resolve_claude_native_agent_permission_request,
     resolve_nested_claude_permission_request,
@@ -525,7 +524,6 @@ def materialize_launch_artifacts(
     sandbox: str | None = None,
     tools: ToolsField | None = None,
     approval: str | None = None,
-    unsafe_no_permissions: bool = False,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
     claude_native_agents_enabled: bool = False,
     allow_builtin_agents: bool = False,
@@ -582,7 +580,6 @@ def materialize_launch_artifacts(
         sandbox=sandbox,
         tools=tools,
         approval=approval or "default",
-        unsafe_no_permissions=unsafe_no_permissions,
     )
     spec = resolve_launch_spec_stage(adapter=harness, run_inputs=run_params, perms=perms)
     if harness.id == HarnessId.CLAUDE:
@@ -1740,7 +1737,6 @@ def bind_launch_context(
     if (
         runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
         and harness.id == HarnessId.CLAUDE
-        and CLAUDE_NATIVE_DELEGATION_TOOLS
     ):
         tools = resolve_nested_claude_permission_request(
             tools=resolved_request.tools,
@@ -1833,7 +1829,6 @@ def bind_launch_context(
         sandbox=resolved_request.execution_policy.sandbox,
         tools=resolved_request.tools,
         approval=resolved_request.execution_policy.approval,
-        unsafe_no_permissions=runtime.unsafe_no_permissions,
         pi_harness_profile=pi_harness_profile,
         claude_native_agents_enabled=claude_native_agents_enabled,
         allow_builtin_agents=allow_builtin_agents,
@@ -1946,8 +1941,6 @@ def bind_launch_context(
     if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
         argv = build_launch_argv(
             adapter=harness,
-            run_inputs=run_params,
-            perms=perms,
             projected_spec=spec,
             env=env,
         )

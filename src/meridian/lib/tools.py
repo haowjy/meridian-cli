@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Literal, cast
+from typing import Literal
 
 type ToolAction = Literal["allow", "deny", "ask"]
-type ToolsField = Literal["allow", "deny"] | dict[str, ToolAction]
+type ToolsField = dict[str, ToolAction]
 
 _TOOL_ACTIONS: frozenset[ToolAction] = frozenset({"allow", "deny", "ask"})
-_TOOLS_SHORTHAND_ACTIONS: frozenset[Literal["allow", "deny"]] = frozenset({"allow", "deny"})
 
 
 def normalize_tool_action(raw: object, *, source: str) -> ToolAction:
@@ -42,39 +40,11 @@ def normalize_tool_key(raw: object, *, source: str) -> str:
     return f"{capability}{scoped}"
 
 
-def parse_tools_field(raw: object, *, source: str) -> ToolsField | None:
-    """Parse the abstract tools field from frontmatter content."""
-
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        normalized = raw.strip().lower()
-        if normalized in _TOOLS_SHORTHAND_ACTIONS:
-            return normalized
-        allowed = ", ".join(sorted(_TOOLS_SHORTHAND_ACTIONS))
-        raise ValueError(f"Invalid tools value for '{source}': expected one of {allowed}.")
-    if isinstance(raw, Mapping):
-        normalized_map: dict[str, ToolAction] = {}
-        typed_raw = cast("Mapping[object, object]", raw)
-        for raw_key, raw_value in typed_raw.items():
-            key = normalize_tool_key(raw_key, source=source)
-            normalized_map[key] = normalize_tool_action(raw_value, source=f"{source}.{key}")
-        return normalized_map
-    raise ValueError(
-        f"Invalid tools value for '{source}': expected 'allow'/'deny' or a mapping."
-    )
-
-
 def tools_field_to_map(tools: ToolsField | None) -> dict[str, ToolAction]:
-    """Return a concrete tools map.
-
-    Shorthand forms become ``{\"*\": \"allow\"}`` / ``{\"*\": \"deny\"}``.
-    """
+    """Return a mutable copy of the tools map (empty for ``None``)."""
 
     if tools is None:
         return {}
-    if isinstance(tools, str):
-        return {"*": tools}
     return dict(tools)
 
 

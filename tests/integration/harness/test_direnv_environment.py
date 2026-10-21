@@ -21,7 +21,7 @@ from meridian.lib.launch.env import build_harness_child_env, undo_direnv
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.plan import build_primary_launch_runtime, build_primary_spawn_request
 from meridian.lib.launch.types import LaunchRequest
-from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
+from meridian.lib.safety.permissions import PermissionConfig
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
@@ -175,7 +175,6 @@ def test_opencode_probes_use_bound_path_and_environment(
     spec = ResolvedLaunchSpec(
         harness=HarnessId.OPENCODE,
         model="anthropic/claude-sonnet-4", continue_session_id="session-review",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
     if surface == "connection":
         config = ConnectionConfig(

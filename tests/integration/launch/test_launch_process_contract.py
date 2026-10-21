@@ -33,7 +33,6 @@ from meridian.lib.launch.process.primary_attach import PrimaryAttachError
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.platform.launch_gate import ProcessIdentity
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Bound, Conflict
 
@@ -188,7 +187,6 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         child_env={},
         launch_spec=ResolvedLaunchSpec(
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             interactive=True,
         ),
         command=("codex",),
@@ -262,7 +260,6 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
         child_env={},
         launch_spec=ResolvedLaunchSpec(
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             interactive=True,
         ),
         command=("claude",),

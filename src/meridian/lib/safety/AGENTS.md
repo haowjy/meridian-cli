@@ -46,7 +46,6 @@ level creates a circular import at load time.
 |---|---|
 | Neither list provided | `TieredPermissionResolver` — harness derives from sandbox/approval |
 | `tools` provided | `ToolsPermissionResolver` (abstract ToolsField compiled per harness) |
-| Explicit unsafe opt-out | `UnsafeNoOpPermissionResolver` + warning |
 
 Tools compilation preserves scoped patterns where the target harness supports them
 (notably OpenCode) and projects Claude capability aliases to tool names.

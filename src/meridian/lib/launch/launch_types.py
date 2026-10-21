@@ -12,13 +12,13 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
 from meridian.lib.core.native_identity import NativeIdentity
+from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 
 if TYPE_CHECKING:
     from meridian.lib.core.types import HarnessId
     from meridian.lib.harness.adapter import SpawnParams
     from meridian.lib.launch.composition import ComposedLaunchContent, ProjectedContent
     from meridian.lib.launch.reference import ReferenceItem
-    from meridian.lib.safety.permissions import PermissionConfig
 
 
 class TerminalSurfaceMode(StrEnum):
@@ -89,8 +89,8 @@ class ResolvedLaunchSpec(BaseModel):
     continue_fork: bool = False
     native_identity: NativeIdentity | None = None
 
-    # Permissions
-    permission_resolver: PermissionResolver
+    # Permissions: defaults to no tool rules and default sandbox/approval.
+    permission_resolver: PermissionResolver = TieredPermissionResolver(config=PermissionConfig())
 
     # Passthrough args forwarded verbatim to the harness process.
     extra_args: tuple[str, ...] = ()
