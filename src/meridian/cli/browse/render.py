@@ -199,7 +199,7 @@ def detail_header(state: DetailState, width: int) -> StyleAndTextTuples:
     row = state.row
     harness = row.harness if row is not None else ""
     tmux = (row.tmux_target if row else None) or "-"
-    work = (row.work_label) or "-"
+    work = (row.work_label if row else None) or "-"
     agent = (row.agent if row else "") or "-"
     model = state.model or (row.model if row else "") or "-"
     created = _stamp(row.created_at) if row is not None and row.created_at else "-"
