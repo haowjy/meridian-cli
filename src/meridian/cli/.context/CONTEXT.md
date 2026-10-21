@@ -213,6 +213,14 @@ transcript once (reload only when the session generation changes) and refreshes 
 shown model through `session_model_refresh_sync`; `l` loads lineage plus the
 nodes' rows through `session_list_sync(chat_ids=...)`.
 
+Lineage is a tree of primary sessions only. Browse lists `kind == "primary"`
+sessions, the history index writes `session_lineage` edges only for primary chats,
+and the edge query drops edges whose parent is a spawn chat. So a spawn's `--from`
+is not recorded on its session start event: nothing could read it there. A spawn's
+`--from` shows in its create output (`context_from_resolved`) and its
+`starting-prompt.md`. Recording it would only pay off with spawn rows in browse,
+which is a product change.
+
 Rows carry no live marker or live-first order; each row's `reentry` (decided in
 `session_list_sync`) is what makes a running session fork rather than resume, and
 the footer's Enter hint reads it (`enter fork`, `enter resume`, or nothing when
