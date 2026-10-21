@@ -157,7 +157,9 @@ same exact adapter resolver, with no ambient-store fallback.
 `model_observation.observe_session_model` is the only writer of model observations
 (primary stop, continue, and the browse detail view all call it). It stores the raw
 native model token; a caller that launches with it maps it to a routable model
-itself. Do not call `session_store.record_model_observation` from anywhere else. OpenCode's
+itself. Do not call `session_store.record_model_observation` from anywhere else: a
+second writer is how continue once stored a mapped id beside the raw ones, and
+readers cannot tell the two apart. OpenCode's
 newly recorded store is its resolved database path, including `OPENCODE_DB`.
 Claude trampoline successors travel in `PostExit` and persist in `run_boundary`,
 never through the entry-ID return, chat binding, or exit
