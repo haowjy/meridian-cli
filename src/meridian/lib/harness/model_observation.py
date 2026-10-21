@@ -15,7 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.core.types import HarnessSessionId
 from meridian.lib.harness import opencode_transcript
+from meridian.lib.state.event_store import utc_now_iso
+from meridian.lib.state.session_fold import SessionRecord
+from meridian.lib.state.session_store import SessionModelObservationEvent, record_model_observation
 
 
 @dataclass(frozen=True)
@@ -111,7 +115,34 @@ def read_last_executed_model(
     return None
 
 
+def observe_session_model(runtime_root: Path, record: SessionRecord) -> str | None:
+    """Record the native session's last executed model; return it, or ``None`` if unreadable."""
+
+    key = record.native_key()
+    if key is None or record.record_mode == "historical":
+        return None
+    token = read_last_executed_model(
+        record.harness,
+        key.session_id,
+        context=NativeModelReadContext(
+            native_store=record.native_store, project_root=record.control_root
+        ),
+    )
+    if token is not None:
+        record_model_observation(
+            runtime_root,
+            SessionModelObservationEvent(
+                harness=record.harness,
+                harness_session_id=HarnessSessionId(key.session_id),
+                observed_model_token=token,
+                recorded_at=utc_now_iso(),
+            ),
+        )
+    return token
+
+
 __all__ = [
     "NativeModelReadContext",
+    "observe_session_model",
     "read_last_executed_model",
 ]

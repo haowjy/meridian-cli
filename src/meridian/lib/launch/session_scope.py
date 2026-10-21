@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal
 from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
+from meridian.lib.harness.model_observation import observe_session_model
 from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.platform.tmux import resolve_tmux_target
@@ -27,6 +28,7 @@ from meridian.lib.state.session_store import (
     SessionModelSelectionEvent,
     SessionRecord,
     StartedSession,
+    chat_record,
     record_model_selection,
     start_session,
     stop_session,
@@ -225,6 +227,13 @@ def session_scope(
     finally:
         try:
             _stop_session(runtime_root, resolved_chat_id)
+            if kind == "primary":
+                # Browse shows the last-used model; a mid-session switch is only visible in the
+                # native history. Never let this affect shutdown.
+                with suppress(Exception):
+                    record = chat_record(runtime_root, resolved_chat_id)
+                    if record is not None:
+                        observe_session_model(runtime_root, record)
         finally:
             _reclaim_session_scopes(runtime_root, resolved_chat_id)
 

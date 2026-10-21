@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- `meridian session browse` rewritten. Header shows Status (Active/Archived) and Sort (Updated/Created); Tab focuses them, left/right change them and re-query. Rows: stale-cache `⚠`, tmux target, work, agent, last-used model, age since last turn. No live marker and no live-first order: Updated orders by last activity, with a running session placed by its last turn. Type to search (substring over tmux, work, agent, model, chat id, cwd); `/` still searches transcripts. Space opens a full-screen transcript view (loaded once, scroll older entries, model refreshed on open, chat id in the header); `l` or Ctrl-L opens the fork/`--from` lineage tree; Enter on a lineage node opens it.
+- `meridian session browse` rewritten. Header shows Status (Active/Archived) and Sort (Updated/Created); Tab focuses them, left/right change them and re-query. Rows: stale-cache `⚠` (unknown, so absent, for a running session with no idle record), tmux target, `agent (model)` with the last-used model, age since last turn, work (last, takes the remaining width). No live marker and no live-first order: Updated orders by last activity, with a running session placed by its last turn. Type to search (substring over tmux, work, agent, model, chat id, cwd); `/` still searches transcripts. Space opens a full-screen transcript view (loaded once, scroll older entries, model refreshed on open, chat id in the header); `l` or Ctrl-L opens the fork/`--from` lineage tree; Enter on a lineage node opens it.
 - `session browse --plain` drops the LIVE and C-ID columns. Columns now STALE, TMUX, AGENT (shown as `agent (model)`), AGE, WORK, with WORK last and truncated first on narrow terminals; `⚠` also marks running sessions past their cache TTL.
 - `session index` status and rebuild no longer report cached previews.
 - Session commands load operations only in their handlers. Lightweight command declarations avoid importing the entire operation registry; managed work lookup uses the history index.
@@ -17,6 +17,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Old-format idle state files no longer print a version warning on every listing. Only a write that would replace one warns.
 - Session listing resolves project paths once, not once per work item.
+- Format-v1 idle state files are read (last turn and TTL kept) instead of ignored.
+- `--from` records the chat and history of the context it actually used, not the continuation target.
+- A primary session records its last executed model when it stops, so browse shows the last-used model for sessions never continued or opened.
 
 ## [0.11.4] - 2026-10-21
 
