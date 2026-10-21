@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from meridian.lib.ops.session_transcript import ParsedSessionTranscript
 
 PAGE = 24
-_MAX_ENTRY_LINES = 60
 
 type Line = tuple[str, str]  # (style class, text)
 
@@ -90,15 +89,15 @@ class TranscriptWindow:
 
 
 def entry_lines(entry: SessionLogEntry, width: int) -> list[Line]:
-    """Role heading, wrapped content, and a blank separator for one entry."""
+    """Role heading, all wrapped content, and a blank separator for one entry.
+
+    Cached per (entry, width) by the caller; the body paints only the visible slice.
+    """
     body = max(10, width - 2)
     lines: list[Line] = [(f"class:role-{entry.role}", entry.role)]
     wrapped: list[str] = []
     for raw in entry.content.splitlines() or [""]:
         wrapped.extend(textwrap.wrap(raw, body, drop_whitespace=False) or [""])
-    if len(wrapped) > _MAX_ENTRY_LINES:
-        omitted = len(wrapped) - _MAX_ENTRY_LINES
-        wrapped = [*wrapped[:_MAX_ENTRY_LINES], f"… {omitted} more lines"]
     lines.extend(("", f"  {clip(line, body)}") for line in wrapped)
     lines.append(("", ""))
     return lines
