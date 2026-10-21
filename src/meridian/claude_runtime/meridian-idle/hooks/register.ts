@@ -433,9 +433,10 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A subagent's run raises no turn.start, so this is always the main loop.
+  // Subagent, teammate and compaction-fork turns raise turn.start too, with agentId set. Only the main loop's
+  // start retires the Stop list that its own turn.complete will use.
   on('turn.start', async ($, e, next) => {
-    s.stopTasks = undefined
+    if (e.agentId === undefined) s.stopTasks = undefined
     return next(e)
   })
 

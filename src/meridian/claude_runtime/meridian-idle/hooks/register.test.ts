@@ -242,6 +242,29 @@ test('arm forwards the work the main loop left running, from its Stop list', asy
   expectCliContract(h)
 })
 
+test('a subagent turn starting between the Stop and turn.complete does not drop the Stop list', async ($, on) => {
+  const h = host()
+  h.reply.arm = { stretch: 1, anchor: 1, warn_at: START + 20_000, push_held: '1 agent(s) running' }
+  const clock = install(on, h)
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.classic.Stop({
+    stop_hook_active: false,
+    background_tasks: [{ id: 'a', type: 'subagent', status: 'running', description: 'review' }],
+    session_crons: [],
+  } as never)
+  // A background subagent's run, then a compaction fork, start before the main loop's turn completes.
+  await $.turn.start({ text: 'review the diff', turnId: 'a1', agentId: 'agent-1' })
+  await $.turn.start({ text: 'summarize', turnId: 'a2', agentId: 'fork-1' })
+  await $.turn.complete(MAIN_TURN)
+  await clock.advance(0)
+
+  const tasksArg = calls(h, 'arm')[0]?.find(arg => arg.startsWith('--background-tasks='))
+  expect(JSON.parse(tasksArg?.slice('--background-tasks='.length) ?? 'null')).toEqual([{ kind: 'agent' }])
+})
+
 test('only permission prompts are forwarded and a failing CLI does not fail the hook', async ($, on) => {
   const h = host()
   const clock = install(on, h)
