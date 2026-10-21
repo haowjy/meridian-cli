@@ -12,6 +12,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi child spawns read only `done.signal`; a stray `rearm.signal` is no longer deleted and ignored.
 - Claude, Codex, and OpenCode resident children now share one completion hold: they wait for Meridian descendants as well as harness-native background work, then get one best-effort `done` / `rearm` confirmation turn. A silent or unavailable confirmation accepts only when no work remains. The default completion window now matches the calling harness's configured `wait_yield_seconds` (50 minutes for Claude and Codex) unless `timeouts.resident_deadline_seconds` overrides it.
 
+## [0.11.2] - 2026-10-20
+
+### Fixed
+- `meridian --continue <chat>` works after history archiving reclaims the chat's last spawn directory. Continue dry-runs now also refuse a live source or successor instead of promising a launch the real continue rejects. (#676)
+
 ## [0.11.1] - 2026-10-19
 
 ### Changed

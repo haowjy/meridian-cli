@@ -255,12 +255,11 @@ def test_continue_refuses_live_source(runtime: Runtime, primary: bool, dry_run: 
     harness, worker = runtime.started()
     process = runtime.cli(*continue_args(primary, dry_run=dry_run))
     code = process.wait(timeout=30)
-    assert (code == 0) == dry_run
+    assert code != 0
     assert alive(harness) and alive(worker)
     assert not (runtime.root / "runtime/spawns/p2").exists(), "preview/refusal wrote a new row"
     assert not (runtime.root / "p2.pid").exists()
-    if not dry_run:
-        assert "still running" in (runtime.root / "cli-1.log").read_text()
+    assert "still running" in (runtime.root / "cli-1.log").read_text()
 
 
 @pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
@@ -329,6 +328,33 @@ def test_continue_ignores_pruned_successor(runtime: Runtime) -> None:
         (runtime.root / "p3.exit").touch()
 
     assert process.wait(timeout=30) == 0
+
+
+def test_primary_continue_after_source_archive(runtime: Runtime) -> None:
+    parent = runtime.cli("spawn", "-m", "haiku", "-p", "hold", "--bg")
+    assert parent.wait(timeout=30) == 0
+    runtime.started()
+    (runtime.root / "p1.exit").touch()
+    wait = runtime.cli("spawn", "wait", "p1")
+    assert wait.wait(timeout=30) == 0
+
+    archive = runtime.cli(
+        "session", "archive", "c1", "--destination", str(runtime.root / "archive"), "--apply"
+    )
+    assert archive.wait(timeout=30) == 0
+    assert not (runtime.root / "runtime/spawns/p1").exists()
+
+    dry_run = runtime.cli("--continue", "c1", "--dry-run")
+    assert dry_run.wait(timeout=30) == 0
+    assert b" --resume " in (runtime.root / "cli-3.log").read_bytes()
+
+    continued = runtime.cli("--continue", "c1")
+    harness_marker = runtime.root / "p2.pid"
+    until(lambda: continued.poll() is not None or harness_marker.exists())
+    assert harness_marker.exists(), (runtime.root / "cli-4.log").read_text(errors="replace")
+    runtime.started("p2")
+    (runtime.root / "p2.exit").touch()
+    assert continued.wait(timeout=30) == 0
 
 
 def test_continue_of_superseded_spawn_sweeps_dead_successor(runtime: Runtime) -> None:
@@ -487,7 +513,7 @@ def test_continue_io_bound(
         for number in range(4, count + 1):
             (root / "spawns" / f"p{number}").mkdir(exist_ok=True)
         before = probe.count("read")
-        sweep_before_continue(root, f"p{source}")
+        sweep_before_continue(root, f"p{source}", chat_id=f"c{source}")
         assert probe.count("scan") == 0
         assert probe.count("read") - before == 1 + int(legacy)
         assert all(call.args[1] == f"p{source}" for call in probe.calls("read")[before:])
