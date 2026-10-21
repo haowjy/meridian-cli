@@ -25,6 +25,13 @@ from meridian.lib.state.native_binding import Conflict, bind
 
 HISTORICAL_GENERATION_PREFIX = "historical-"
 SUPPORTED_SESSION_EVENT_VERSIONS = frozenset({1})
+# Lineage belongs to the chat, not a generation: the first start event that sets a pair
+# keeps it across continuations. Each pair moves together.
+_CHAT_LINEAGE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("forked_from_chat_id", "forked_from_history_id"),
+    ("context_from_chat_id", "context_from_history_id"),
+)
+_CHAT_OWNED_FIELDS = ("created_at", *(field for pair in _CHAT_LINEAGE_FIELDS for field in pair))
 logger = logging.getLogger(__name__)
 
 
@@ -406,8 +413,7 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
                 update={"created_at": existing.created_at or existing.started_at}
             )
             record = with_key(record, outcome.key)
-            for prefix in ("forked_from", "context_from"):
-                parent_fields = (f"{prefix}_chat_id", f"{prefix}_history_id")
+            for parent_fields in _CHAT_LINEAGE_FIELDS:
                 if any(getattr(existing, field) is not None for field in parent_fields):
                     record = record.model_copy(
                         update={field: getattr(existing, field) for field in parent_fields}
@@ -592,14 +598,7 @@ def project_session_generation(
         if isinstance(event, SessionStartEvent):
             rows[chat_id] = rows[chat_id].model_copy(
                 update={
-                    field: getattr(records[chat_id], field)
-                    for field in (
-                        "created_at",
-                        "forked_from_chat_id",
-                        "forked_from_history_id",
-                        "context_from_chat_id",
-                        "context_from_history_id",
-                    )
+                    field: getattr(records[chat_id], field) for field in _CHAT_OWNED_FIELDS
                 }
             )
         changed.append((chat_id, generation))
