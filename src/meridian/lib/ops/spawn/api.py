@@ -1628,7 +1628,7 @@ def _emit_wait_set(
     sink.status("\n".join(lines))
 
 
-def _build_wait_multi_output(
+def build_wait_multi_output(
     results: tuple[SpawnDetailOutput, ...],
     *,
     fail_fast: bool = False,
@@ -1675,6 +1675,7 @@ def settle_spawn_rows(
     runtime_root: Path,
     include_report_body: bool,
     observation_parent_id: str | None = None,
+    report_body_max_bytes: int | None = None,
 ) -> tuple[SpawnDetailOutput, ...]:
     """Build ordered details and atomically settle any explicit-wait observation."""
 
@@ -1685,6 +1686,7 @@ def settle_spawn_rows(
             row=rows_by_id[spawn_id],
             include_report_body=include_report_body,
             runtime_root=runtime_root,
+            report_body_max_bytes=report_body_max_bytes,
         )
         for spawn_id in spawn_ids
         if spawn_id in rows_by_id
@@ -1939,7 +1941,7 @@ def spawn_wait_sync(
                 observation_parent_id=parent_wait_observer_id,
             )
             observation_settled = True
-            return _build_wait_multi_output(details)
+            return build_wait_multi_output(details)
 
         failed_rows = tuple(
             row
@@ -1964,8 +1966,8 @@ def spawn_wait_sync(
                 )
             )
             if not pending_ids:
-                return _build_wait_multi_output(details)
-            return _build_wait_multi_output(
+                return build_wait_multi_output(details)
+            return build_wait_multi_output(
                 details,
                 fail_fast=True,
                 pending_ids=pending_ids,
@@ -1990,7 +1992,7 @@ def spawn_wait_sync(
                 )
             )
             if not pending_ids:
-                return _build_wait_multi_output(checkpoint_details)
+                return build_wait_multi_output(checkpoint_details)
             tree_rows = overlay_derived(
                 runtime_root,
                 spawn_store.list_spawns(runtime_root).records,

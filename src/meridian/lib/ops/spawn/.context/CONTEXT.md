@@ -39,6 +39,31 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   primary session. This prevents a nested spawn's `wait` from blocking on the entire chat tree.
 - If `MERIDIAN_CHAT_ID` is absent, raises `ValueError` (not in a session)
 
+## Idle Spawn Delivery Contract
+
+`owed.py` owns the hidden Claude runtime protocol:
+
+- `spawn collect --exclude p1,p2` returns exactly one JSON object with
+  `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. It never
+  consumes. Index discovery is parent-scoped; polling re-reads only still-owed
+  authority rows with derived status.
+- Owed membership is background direct children of all primary generations for
+  `MERIDIAN_CHAT_ID`, minus consumption read across those same generations and
+  minus `--exclude`. Birth-verified explicit-wait leases skip a child without
+  letting the collector exit early.
+- An initially ready result returns the ready terminal subset. Otherwise the fixed
+  owed set settles together. A final consumption/lease check precedes return.
+- The delivery renderer admits at most 32 results and 64 KiB of valid UTF-8. It
+  reserves each identity/outcome and `meridian spawn show <id>` lookup before
+  sharing the remaining bytes among report bodies.
+- `spawn ack <ids...>` writes those IDs under the caller's current primary and
+  returns exactly `{acked: [...]}`. Reading across the chat is what makes an ack
+  written after resume consume a child of an earlier primary.
+
+Both commands use `observed-spawns.json`, the same state as explicit `spawn wait`.
+The collector retries index contention and malformed owned authority internally,
+and exits cleanly when its parent PID changes.
+
 ## Cancel-All Identity Model
 
 `SpawnCancelAllInput` does not carry a `chat_id` field. Caller identity is derived via

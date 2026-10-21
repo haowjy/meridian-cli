@@ -1,6 +1,7 @@
 """Spawn operation input/output models and shared lightweight helpers."""
 
 import shlex
+from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
@@ -11,6 +12,10 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_termina
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
+
+SPAWN_DELIVERY_MAX_BYTES = 64 * 1024
+SPAWN_DELIVERY_MAX_MEMBERS = 32
+_SPAWN_DELIVERY_SEPARATOR = "\n\n"
 
 
 def _empty_template_vars() -> dict[str, str]:
@@ -821,6 +826,7 @@ class SpawnDetailOutput(BaseModel):
     report_path: str | None
     report_summary: str | None
     report_body: str | None
+    report_body_truncated: bool = False
     harness_session_id: str | None = None
     pi_lifecycle_phase: str | None = None
     pi_cleanup_status: str | None = None
@@ -992,6 +998,41 @@ class SpawnDetailOutput(BaseModel):
         if effective_ctx.verbosity > 0:
             return self._format_verbose_text(always_show_transcript=True)
         return self._format_compact_text()
+
+    def delivery_frame(self) -> "_SpawnDeliveryFrame":
+        """Build the bounded wait-renderer frame for this spawn."""
+
+        outcome: list[str] = []
+        if self.duration_secs is not None:
+            outcome.append(f"{self.duration_secs:.1f}s")
+        if self.exit_code is not None:
+            outcome.append(f"exit {self.exit_code}")
+        if self.failure_reason is not None:
+            outcome.append("result error")
+        outcome_suffix = f" ({', '.join(outcome)})" if outcome else ""
+
+        details = [f"Worker: {self.model} ({self.harness})"]
+        if self.failure_reason is not None:
+            details.append(f"Failure: {self.failure_reason}")
+        if self._has_distinct_task_cwd():
+            details.append(self._task_dir_line())
+        details.append("")
+        details.append(
+            self._normalized_report_body()
+            or "No durable report content was published."
+        )
+        if self.report_body_truncated:
+            details.append(
+                "[Report excerpt truncated; use the lookup command below for the rest.]"
+            )
+        return _SpawnDeliveryFrame(
+            prefix=f"{self.spawn_id} {self.status}{outcome_suffix}",
+            detail="\n".join(details),
+            truncation_notice=(
+                "[Optional spawn details truncated to fit the delivery budget.]"
+            ),
+            lookup=f"meridian spawn show {self.spawn_id}",
+        )
 
     def _format_compact_text(self) -> str:
         status_str = self._status_for_compact_or_moderate()
@@ -1268,9 +1309,17 @@ class SpawnWaitMultiOutput(BaseModel):
     status: str | None = None
     exit_code: int | None = None
 
-    def format_text(self, ctx: FormatContext | None = None) -> str:
+    def format_text(
+        self,
+        ctx: FormatContext | None = None,
+        *,
+        max_bytes: int | None = None,
+        max_members: int = SPAWN_DELIVERY_MAX_MEMBERS,
+    ) -> str:
         """Render waited spawns, expanding report content when available."""
         effective_ctx = ctx or FormatContext()
+        if max_bytes is not None:
+            return self._format_bounded_text(max_bytes=max_bytes, max_members=max_members)
         if self.checkpoint:
             return self._format_checkpoint_text()
         if self.fail_fast:
@@ -1311,6 +1360,48 @@ class SpawnWaitMultiOutput(BaseModel):
         if not report_sections:
             return table
         return f"{table}\n\n" + "\n\n".join(report_sections)
+
+    def _format_bounded_text(self, *, max_bytes: int, max_members: int) -> str:
+        """Render fair per-spawn excerpts while reserving every outcome and lookup."""
+
+        if max_bytes <= 0:
+            raise ValueError("Spawn delivery byte budget must be positive")
+        if max_members <= 0:
+            raise ValueError("Spawn delivery member budget must be positive")
+        members = self.spawns[:max_members]
+        if not members:
+            return ""
+
+        frames = tuple(spawn.delivery_frame() for spawn in members)
+        mandatory_bytes = tuple(_utf8_len(frame.mandatory()) for frame in frames)
+        separator_bytes = _utf8_len(_SPAWN_DELIVERY_SEPARATOR)
+        required = sum(mandatory_bytes) + separator_bytes * (len(frames) - 1)
+        if required > max_bytes:
+            raise ValueError("Spawn delivery identities exceed the byte budget")
+
+        rendered: list[str] = []
+        rendered_bytes = 0
+        remaining_mandatory = sum(mandatory_bytes)
+        for index, (frame, frame_mandatory_bytes) in enumerate(
+            zip(frames, mandatory_bytes, strict=True)
+        ):
+            leading_separator_bytes = separator_bytes if index else 0
+            remaining_mandatory -= frame_mandatory_bytes
+            remaining_members = len(frames) - index
+            remaining_separator_bytes = (remaining_members - 1) * separator_bytes
+            optional_bytes = (
+                max_bytes
+                - rendered_bytes
+                - leading_separator_bytes
+                - frame_mandatory_bytes
+                - remaining_mandatory
+                - remaining_separator_bytes
+            )
+            frame_budget = frame_mandatory_bytes + optional_bytes // remaining_members
+            member_text = frame.render(frame_budget)
+            rendered.append(member_text)
+            rendered_bytes += leading_separator_bytes + _utf8_len(member_text)
+        return _SPAWN_DELIVERY_SEPARATOR.join(rendered)
 
     def _format_checkpoint_text(self) -> str:
         if self.checkpoint_elapsed_secs is None:
@@ -1414,7 +1505,43 @@ class SpawnWaitMultiOutput(BaseModel):
         return self.to_cli_wire()
 
 
+@dataclass(frozen=True)
+class _SpawnDeliveryFrame:
+    prefix: str
+    detail: str
+    truncation_notice: str
+    lookup: str
+
+    def mandatory(self) -> str:
+        return f"{self.prefix}\n{self.truncation_notice}\n{self.lookup}"
+
+    def render(self, max_bytes: int) -> str:
+        full = f"{self.prefix}\n{self.detail}\n{self.lookup}"
+        if _utf8_len(full) <= max_bytes:
+            return full
+        detail_prefix = f"{self.prefix}\n"
+        suffix = f"\n{self.truncation_notice}\n{self.lookup}"
+        detail_budget = max_bytes - _utf8_len(detail_prefix) - _utf8_len(suffix)
+        if detail_budget < 0:
+            raise ValueError("Spawn delivery identity exceeds its reserved byte budget")
+        detail = _truncate_utf8(self.detail, detail_budget).rstrip()
+        return f"{detail_prefix}{detail}{suffix}"
+
+
+def _utf8_len(value: str) -> int:
+    return len(value.encode("utf-8"))
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> str:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
 __all__ = [
+    "SPAWN_DELIVERY_MAX_BYTES",
+    "SPAWN_DELIVERY_MAX_MEMBERS",
     "SpawnActionOutput",
     "SpawnCancelInput",
     "SpawnContinueInput",
