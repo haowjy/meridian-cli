@@ -134,14 +134,15 @@ class DetailState:
     top: int | None = None
     message: str | None = None
     _lines: dict[tuple[int, int], list[Line]] = field(default_factory=lambda: {})
-    # Flattened lines for one (window, width, lo, hi); a repaint or scroll step reuses them.
-    _flat: tuple[tuple[int, int, int, int], list[Line]] | None = None
+    # Flattened lines for one (width, lo, hi); a repaint or scroll step reuses them. Loading
+    # older entries always moves ``lo``.
+    _flat: tuple[tuple[int, int, int], list[Line]] | None = None
 
     def lines(self, width: int) -> list[Line]:
         window = self.window
         if window is None:
             return []
-        key = (id(window), width, window.lo, window.hi)
+        key = (width, window.lo, window.hi)
         if self._flat is not None and self._flat[0] == key:
             return self._flat[1]
         out: list[Line] = []
