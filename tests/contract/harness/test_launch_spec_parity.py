@@ -15,7 +15,7 @@ from meridian.lib.harness.projections.project_codex_common import (
     [
         ("default", None),
         ("auto", "on-request"),
-        ("confirm", "untrusted"),
+        ("confirm", "on-request"),
         ("yolo", "never"),
     ],
 )

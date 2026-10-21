@@ -299,7 +299,7 @@ A *spawn* is an agent Meridian launches with `meridian spawn`; a *primary* is th
 | Harness | `tools` | `sandbox` | `approval` |
 |---|---|---|---|
 | **Claude**, spawn and primary | `deny` removes the tool. `allow` only skips the prompt for it; tools you don't list stay available | No effect | `confirm` asks (permission mode `default`). `auto` approves file edits and asks for other tools. `never` skips every permission check. `default` leaves Claude's own default |
-| **Codex**, spawn and primary | No effect, except `web: allow`, which turns on Codex web search | Applied. With `tools` set and `sandbox` unset, Codex launches `read-only` | `auto` lets Codex decide when to ask (`on-request`). `never` stops Codex asking; the sandbox still applies. `confirm` fails to launch (see below) |
+| **Codex**, spawn and primary | No effect, except `web: allow`, which turns on Codex web search | Applied. With `tools` set and `sandbox` unset, Codex launches `read-only` | `auto` lets Codex decide when to ask (`on-request`). `never` stops Codex asking; the sandbox still applies. `confirm` is the same as `auto`: Codex has no stricter mode |
 | **OpenCode**, spawn | Applied. Denied tools are removed from the model's tool list | No effect | No effect |
 | **OpenCode**, primary | No effect: the TUI uses OpenCode's own permissions | No effect | No effect |
 | **Pi**, spawn and primary | No effect | No effect | No effect |
@@ -311,7 +311,7 @@ Things the table implies:
 
 - **Denying `edit` does not make an agent read-only.** It removes the edit tools, and a shell command can still write a file. A sandbox stops that: `sandbox: read-only` on Codex and Cursor. Claude and OpenCode have no sandbox here, so deny `bash` too. Nothing restricts writes on Pi.
 - **On Claude, only some `tools` names reach Claude intact.** One-word tools (`bash`, `read`, `edit`, `write`, `glob`, `grep`, `agent`) work. Tools that are two words in Claude (`web`, `web_fetch`, `ask_user`) reach it with the wrong capitalization: `web: deny` becomes `Websearch`, which is not Claude's `WebSearch`, so Claude prints `Permission deny rule "Websearch" matches no known tool` and the tool stays available. Meridian also denies Claude's own sub-agent tools (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) on every launch, and the `agent` and `task` tools in spawns unless the profile allows them, so delegation goes through `meridian spawn`.
-- **On Codex, `confirm` fails.** Meridian passes `approval_policy="untrusted"`, and Codex 0.163.0 exits at startup with `approval_policy = "untrusted" is no longer supported`. Use `auto` or `never` on Codex.
+- **On Codex, `confirm` is no stricter than `auto`.** Codex 0.163 accepts only `on-request` and `never`, so both `confirm` and `auto` launch with `on-request`, where the model decides when to ask.
 - **On Codex, set `sandbox` whenever `tools` is set.** The inferred sandbox is `read-only` whatever `tools` allows, so a profile that allows `bash` and `edit` still cannot write.
 - **OpenCode primaries ignore `tools`.** The same profile restricts an OpenCode spawn and not an OpenCode primary session.
 

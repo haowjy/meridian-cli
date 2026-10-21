@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Iterable
 from typing import cast
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.launch_types import PermissionResolver
 from meridian.lib.safety.permissions import PermissionConfig
-
-logger = logging.getLogger(__name__)
 
 
 def _coerce_permission_flags(raw: object) -> tuple[str, ...]:
@@ -39,30 +36,16 @@ def _permission_flags_for_harness(
         # Pi permissions are mediated through extension UI hooks, not CLI flags.
         return ()
 
+    # Codex projects approval and sandbox itself (``project_codex_common``).
     # New harness families that need approval/sandbox projection belong here.
+    if harness_id != HarnessId.CLAUDE:
+        return ()
     if config.approval in ("yolo", "never"):
-        if harness_id == HarnessId.CLAUDE:
-            return ("--dangerously-skip-permissions",)
-        if harness_id == HarnessId.CODEX:
-            return ("--dangerously-bypass-approvals-and-sandbox",)
-        return ()
-
+        return ("--dangerously-skip-permissions",)
     if config.approval == "auto":
-        if harness_id == HarnessId.CLAUDE:
-            return ("--permission-mode", "acceptEdits")
-        if harness_id == HarnessId.CODEX:
-            return ("--full-auto",)
-        return ()
-
+        return ("--permission-mode", "acceptEdits")
     if config.approval == "confirm":
-        if harness_id == HarnessId.CLAUDE:
-            return ("--permission-mode", "default")
-        if harness_id == HarnessId.CODEX:
-            return ("--ask-for-approval", "untrusted")
-        return ()
-
-    if harness_id == HarnessId.CODEX and config.sandbox != "default":
-        return ("--sandbox", config.sandbox)
+        return ("--permission-mode", "default")
     return ()
 
 
@@ -90,10 +73,7 @@ def resolve_permission_flags(
     )
     resolver_flags = _coerce_permission_flags(permission_resolver.resolve_flags())
     if harness_id != HarnessId.CLAUDE:
-        stripped = _strip_claude_tool_flags(resolver_flags)
-        if harness_id == HarnessId.CODEX and stripped != resolver_flags:
-            logger.debug("Codex projection ignored Claude tool permission flags.")
-        resolver_flags = stripped
+        resolver_flags = _strip_claude_tool_flags(resolver_flags)
     base_flags.extend(resolver_flags)
     return tuple(base_flags)
 

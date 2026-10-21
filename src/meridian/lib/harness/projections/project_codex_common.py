@@ -10,7 +10,9 @@ from meridian.lib.harness.projections.projection_errors import HarnessCapability
 _APPROVAL_POLICY_BY_MODE: dict[str, str | None] = {
     "default": None,
     "auto": "on-request",
-    "confirm": "untrusted",
+    # Codex 0.163 accepts only ``on-request`` and ``never``; ``untrusted`` is rejected
+    # at startup, so ``confirm`` cannot be stricter than ``auto`` here.
+    "confirm": "on-request",
     "never": "never",
     "yolo": "never",
 }
