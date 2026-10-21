@@ -123,6 +123,38 @@ class _AttemptRuntime:
     identity_error: NativeIdentityError | None = None
 
 
+@dataclass
+class _AttemptEventObserver:
+    """Keep report-candidate controls attached while folding budget evidence."""
+
+    fold: AttemptFold | None
+    budget_tracker: LiveBudgetTracker | None
+    attempt_facts: AttemptFacts | None
+    budget_breach_holder: list[BudgetBreach | None]
+    budget_signal: asyncio.Event
+
+    def __call__(self, event: RawHarnessEvent) -> None:
+        # Fold/budget hooks run before subscriber fan-out, so dropped or delayed
+        # subscriber events cannot hide a typed cumulative budget breach.
+        try:
+            if self.fold is not None:
+                self.fold(event)
+        finally:
+            if self.budget_tracker is not None and self.attempt_facts is not None:
+                breach = self.budget_tracker.observe_usage(self.attempt_facts.usage)
+                if breach is not None and self.budget_breach_holder[0] is None:
+                    self.budget_breach_holder[0] = breach
+                    self.budget_signal.set()
+
+    def capture_completion_candidate(self) -> None:
+        if self.fold is not None:
+            self.fold.capture_completion_candidate()
+
+    def clear_completion_candidate(self) -> None:
+        if self.fold is not None:
+            self.fold.clear_completion_candidate()
+
+
 class StartupPhaseTimeout(TimeoutError):
     """The backend boot/connection/session-handshake phase exceeded its bound."""
 
@@ -569,7 +601,7 @@ async def _run_streaming_attempt(
     lifecycle_service: SpawnLifecycleService,
     runner_phase: list[str] | None = None,
     on_running: Callable[[HarnessConnection[Any]], None] | None = None,
-    event_hook: Callable[[RawHarnessEvent], None] | None = None,
+    event_hook: AttemptFold | None = None,
     attempt_facts: AttemptFacts | None = None,
 ) -> _AttemptRuntime:
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
@@ -583,18 +615,13 @@ async def _run_streaming_attempt(
     budget_signal = asyncio.Event()
     budget_breach_holder: list[BudgetBreach | None] = [None]
 
-    def observe_event(event: RawHarnessEvent) -> None:
-        # Fold/budget hooks run before subscriber fan-out, so dropped or delayed
-        # subscriber events cannot hide a typed cumulative budget breach.
-        try:
-            if event_hook is not None:
-                event_hook(event)
-        finally:
-            if budget_tracker is not None and attempt_facts is not None:
-                breach = budget_tracker.observe_usage(attempt_facts.usage)
-                if breach is not None and budget_breach_holder[0] is None:
-                    budget_breach_holder[0] = breach
-                    budget_signal.set()
+    observe_event = _AttemptEventObserver(
+        fold=event_hook,
+        budget_tracker=budget_tracker,
+        attempt_facts=attempt_facts,
+        budget_breach_holder=budget_breach_holder,
+        budget_signal=budget_signal,
+    )
     last_event_at: list[float] = [asyncio.get_running_loop().time()]
     terminal_event_future: asyncio.Future[TerminalEventOutcome] = (
         asyncio.get_running_loop().create_future()
