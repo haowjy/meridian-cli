@@ -121,6 +121,9 @@ def _turn_metadata(
     ttl = idle.ttl_seconds if idle and idle.ttl_seconds else _DEFAULT_CACHE_TTL_SECONDS.get(harness)
     if not fallback or ttl is None:
         return last_turn, None
+    if idle_at is None and live:
+        # No sensor data for a running session: staleness is unknown, not "since it started".
+        return last_turn, None
     anchor = idle_at if idle_at is not None else datetime.fromisoformat(fallback).timestamp()
     return last_turn, anchor + ttl
 
