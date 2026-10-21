@@ -16,6 +16,7 @@ from meridian.cli.browse.model import (
 from meridian.cli.browse.text import cell, clip
 from meridian.lib.core.formatting import relative_time
 from meridian.lib.ops.session_list import SessionListRow
+from meridian.lib.ops.session_reentry import Fork, Resume
 
 if TYPE_CHECKING:
     from prompt_toolkit.formatted_text import StyleAndTextTuples
@@ -34,6 +35,17 @@ def _status_glyph(row: SessionListRow) -> tuple[str, str]:
     if row.stale:
         return "⚠", "class:stale"
     return " ", ""
+
+
+def _enter_hint(row: SessionListRow | None) -> str:
+    """What Enter does to ``row``: a running session forks, a blocked one offers nothing."""
+    if row is None:
+        return ""
+    if isinstance(row.reentry, Fork):
+        return "enter fork  "
+    if isinstance(row.reentry, Resume):
+        return "enter resume  "
+    return ""
 
 
 def _lines(lines: list[StyleAndTextTuples]) -> StyleAndTextTuples:
@@ -177,12 +189,13 @@ def list_footer(state: ListState, width: int) -> StyleAndTextTuples:
     if state.search_mode == "input":
         hint = "enter search transcripts  esc cancel"
     elif state.search_mode != "off":
-        hint = "enter resume  space view  esc back"
+        hint = f"{_enter_hint(state.highlighted)}space view  esc back"
     elif state.focus is not None:
         hint = "←/→ change  tab next  esc done"
     else:
         lineage = "ctrl-l" if state.filter_text else "l"  # `l` is text once a filter has begun
-        hint = f"enter resume  space view  {lineage} lineage  tab filters  / transcripts  esc quit"
+        enter = _enter_hint(state.highlighted)
+        hint = f"{enter}space view  {lineage} lineage  tab filters  / transcripts  esc quit"
     return [("class:hint", clip(hint, width))]
 
 
@@ -249,7 +262,7 @@ def detail_body(state: DetailState, width: int, height: int) -> StyleAndTextTupl
 def detail_footer(state: DetailState, width: int) -> StyleAndTextTuples:
     if state.message:
         return [("class:error", clip(state.message, width))]
-    hint = "↑/↓ pgup/pgdn home/end scroll  enter resume  l lineage  esc back"
+    hint = f"↑/↓ pgup/pgdn home/end scroll  {_enter_hint(state.row)}l lineage  esc back"
     return [("class:hint", clip(hint, width))]
 
 

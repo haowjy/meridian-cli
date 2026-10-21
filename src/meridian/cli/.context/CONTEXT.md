@@ -214,7 +214,10 @@ shown model through `session_model_refresh_sync`; `l` loads lineage plus the
 nodes' rows through `session_list_sync(chat_ids=...)`.
 
 Rows carry no live marker or live-first order; each row's `reentry` (decided in
-`session_list_sync`) is what makes a running session fork rather than resume.
+`session_list_sync`) is what makes a running session fork rather than resume, and
+the footer's Enter hint reads it (`enter fork`, `enter resume`, or nothing when
+blocked). Enter itself still asks `session_reentry.py` for a fresh decision.
+`/` searches the transcripts of the rows the Status view shows.
 Type-to-search is always on, so printable keys feed the filter. The filter has one
 definition: `session_list`'s `query`, matched in the history index before LIMIT.
 Typing re-runs that query after a 150 ms debounce, and the body shows `loading…` until
