@@ -85,9 +85,10 @@ parent, clear its signals, or drive its activity transitions.
 for one active spawn. `SpawnManager._select_drain_plan()` only supplies manager-owned
 capabilities and delegates to it. There are two completion profiles: the shared
 resident/native-task hold and Pi. A native task source or resident backend selects
-the shared hold. It is built by `ResidentDrainCoordinator.build`, reads one
-`HoldEvidence`, and composes `RearmWindow` for signals, absolute deadlines, and
-budgeted rearm. Pi keeps its separate child-wave windows. Claude's connection supplies
+the shared hold. It is built by `ResidentDrainCoordinator.build`; its hold profile
+owns candidate-scoped signal admission, reads one `HoldEvidence`, and composes
+`RearmWindow` for absolute deadlines and budgeted rearm. Pi keeps its separate
+child-wave windows. Claude's connection supplies
 `harness/claude_drain.py`'s
 `ClaudeNativeTaskSource`; it owns snapshot parsing, not policy, and reports only
 blockers and a generation. `HoldEvidence` merges that source with persisted

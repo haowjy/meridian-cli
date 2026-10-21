@@ -156,7 +156,7 @@ session drains that keep the harness alive across turns.
   immutable categorized snapshots
 - `resident_drain.py` — `HoldEvidence`, shared hold profile, cleanup, and the hold
   coordinator builder/adapter
-- `rearm_window.py` — shared resident/native signal, deadline, and rearm budget
+- `rearm_window.py` — shared resident/native absolute deadline and persisted rearm budget
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — validated Pi-private task/receipt disk
   observation and exact public-message admission fencing; disk evidence feeds the ledger
