@@ -43,7 +43,7 @@ which spawns failed and which are still pending. `cancelled` does not trigger
 fail-fast (cancellation keeps existing aggregate-exit behavior).
 
 Checkpoint polling respects the depth-appropriate yield interval (read from
-`_MERIDIAN_HARNESS` env — the orchestrator's own harness prompt-cache TTL).
+`_MERIDIAN_HARNESS` env — the calling orchestrator's own checkpoint interval).
 No-arg discovery always lets an absent history index finish its separate, sticky
 cold-build budget first. Its deadline then bounds one catch-up attempt; if the index
 is still busy, wait yields an explicit discovery-pending checkpoint instead of

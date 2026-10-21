@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -544,6 +545,7 @@ class SpawnApplicationService:
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
             resident_deadline_seconds=resolve_resident_deadline_seconds(
                 config_snapshot=launch_config_snapshot,
+                harness_id=os.getenv("_MERIDIAN_HARNESS") or harness_id,
             ),
             resident_poll_seconds=resolve_resident_poll_seconds(
                 config_snapshot=launch_config_snapshot,

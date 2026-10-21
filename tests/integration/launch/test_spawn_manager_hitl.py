@@ -119,7 +119,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         def observe_event_semantics(self, semantics: object) -> None:
             _ = semantics
 
-        def completion_evidence(self) -> None:
+        def native_task_source(self) -> None:
             return None
 
         @property
@@ -272,7 +272,7 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         def observe_event_semantics(self, semantics: object) -> None:
             _ = semantics
 
-        def completion_evidence(self) -> None:
+        def native_task_source(self) -> None:
             return None
 
         @property
@@ -434,7 +434,7 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
         def observe_event_semantics(self, semantics: object) -> None:
             _ = semantics
 
-        def completion_evidence(self) -> None:
+        def native_task_source(self) -> None:
             return None
 
         @property

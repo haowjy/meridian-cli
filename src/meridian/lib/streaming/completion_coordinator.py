@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from meridian.lib.harness.semantics import TerminalOutcomeCause
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -95,6 +96,8 @@ class CompletionCoordinator:
         """Keep a closed stream alive while success still needs authorization."""
         close_outcome = self._profile.close_outcome(self.state, False)
         return self._candidate is not None and (
+            self._profile.should_defer_close(self.state)
+            or
             (
                 self._phase in {"stabilizing", "validating"}
                 and close_outcome is not None
@@ -153,7 +156,6 @@ class CompletionCoordinator:
                 self._deadline_at,
                 self._stabilization_at,
                 self._evidence.next_due_at(),
-                self._profile.next_directive_poll_at(),
                 self._profile.next_nudge_at(self.state, assessment),
             )
             if due is not None
@@ -171,7 +173,7 @@ class CompletionCoordinator:
         decision = await self._evidence.observe_event(event, transition)
         if (
             not decision.duplicate_canonical_event
-            and self._profile.allows_evaluation_without_candidate()
+            and self._profile.refresh_deadline_after_event()
         ):
             self._refresh_profile_deadline()
         return None if decision.duplicate_canonical_event else normalized_event
@@ -199,15 +201,33 @@ class CompletionCoordinator:
         if self._terminal_published:
             return DrainTerminalDecision()
         if outcome.status == "succeeded":
-            self._candidate = outcome
+            if self._candidate is None:
+                with self._profile.candidate_transition():
+                    directives = self._profile.consume_directives(
+                        self.state,
+                        "terminal_candidate",
+                    )
+                    self._candidate = outcome
+            else:
+                directives = self._profile.consume_directives(
+                    self.state,
+                    "terminal_candidate",
+                )
             self._success_validation = None
             self._active_turn = False
             if action.terminate:
                 self._phase = "assessing"
             # Refresh even when outstanding work defers termination: profile
             # deadlines must start at this boundary, not a later timeout wake.
-            return await self._evaluate_terminal(outcome, action)
-        return await self._evaluate_terminal(outcome, action, assess=False)
+            return await self._evaluate_terminal(outcome, action, directives=directives)
+        return await self._evaluate_terminal(
+            outcome,
+            action,
+            assess=(
+                self._candidate is not None
+                and outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
+            ),
+        )
 
     async def handle_timeout(self) -> DrainLoopDecision:
         return await self._evaluate_wait("timeout")
@@ -273,9 +293,12 @@ class CompletionCoordinator:
         action: DrainAction,
         *,
         assess: bool = True,
+        directives: CompletionDirectives | None = None,
     ) -> DrainTerminalDecision:
         assessment = await self._fresh_assessment("terminal_candidate") if assess else None
         now = self._clock()
+        if self._is_due(self._deadline_at, now):
+            self._deadline_latched = True
         evidence_activity = self._pending_evidence_activity
         evidence_failure = self._pending_evidence_failure
         decision = self._profile.evaluate(
@@ -284,9 +307,13 @@ class CompletionCoordinator:
                 trigger="terminal_candidate",
                 now=now,
                 directives=(
-                    self._profile.consume_directives(self.state, "terminal_candidate")
-                    if assess
-                    else CompletionDirectives()
+                    directives
+                    if directives is not None
+                    else (
+                        self._profile.consume_directives(self.state, "terminal_candidate")
+                        if assess
+                        else CompletionDirectives()
+                    )
                 ),
                 assessment=assessment or self._assessment or _INITIAL_ASSESSMENT,
                 deadline_expired=self._deadline_latched,
@@ -464,11 +491,15 @@ class CompletionCoordinator:
             self._deadline_at = self._profile.deadline_for(decision, now)
         elif self._deadline_at is None:
             self._deadline_at = self._profile.deadline_for(decision, now)
-        if decision.nudge is not None:
+        if decision.nudge:
             try:
-                await self._profile.send_nudge(decision.nudge)
+                await self._profile.send_nudge()
             except Exception:
                 logger.exception("Completion nudge failed.")
+                # Nudge delivery is completion evidence: profiles that make the
+                # handshake best-effort can now accept a ready candidate, while
+                # profiles that do not care simply return to waiting.
+                return await self._evaluate_wait("event")
         return DrainLoopDecision()
 
     def _latch_cleanup_once(
@@ -504,9 +535,7 @@ class CompletionCoordinator:
         self._deadline_at = None
         self._stabilization_at = None
         self._stabilization_generation = None
-        accepted = getattr(self._profile, "after_terminal_accepted", None)
-        if accepted is not None:
-            accepted(outcome)
+        self._profile.after_terminal_accepted(outcome)
         return DrainLoopDecision(recorded_outcome=outcome)
 
     def _reset_cycle(self) -> None:

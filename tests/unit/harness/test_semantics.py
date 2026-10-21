@@ -40,7 +40,6 @@ def test_connection_closed_outcome_uses_preformatted_message() -> None:
             },
             harness_id="codex",
         ),
-        cause=TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE,
     )
 
     assert outcome.error == (

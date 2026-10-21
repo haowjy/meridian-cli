@@ -18,7 +18,8 @@ DrainPlan
   ├─ policy: DrainPolicy
   ├─ aux_wake / handle_aux_wake
   ├─ finalizer
-  └─ teardown: DrainSessionTeardown
+  ├─ teardown: DrainSessionTeardown
+  └─ accepted_signals: done/rearm kinds the coordinator consumes
 
 SpawnSession
   ├─ connection: HarnessConnection   ← live harness connection
@@ -45,7 +46,7 @@ The implementation is split by responsibility:
 - `drain_teardown.py` — harness-neutral plan-owned async connection-stop contract
 - `pi_drain_teardown.py` — Pi cleanup-phase connection-stop policy
 - `spawn_session.py` — `SpawnSession` and `DrainOutcome` carriers
-- `resident_drain.py` — resident-backend descendant waiting and done-nudge model
+- `resident_drain.py` — `HoldEvidence`, shared candidate confirmation/rearm policy, hold builder
 - `pi_drain.py` — Pi spawned-session quiescence coordinator
 - `pi_lifecycle_tracker.py` — validation for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi quiescence inputs
@@ -82,18 +83,35 @@ parent, clear its signals, or drive its activity transitions.
 
 `drain_plan_factory.build_drain_plan()` returns the whole drain-loop configuration
 for one active spawn. `SpawnManager._select_drain_plan()` only supplies manager-owned
-capabilities and delegates to it. There are three completion profiles: resident,
-native-task hold, and Pi. Native completion evidence selects the native-task profile;
-otherwise resident backend control selects the resident profile. Both use
-`ResidentDrainCoordinator` and compose `RearmWindow` for signals, absolute deadlines,
-and budgeted rearm. Pi keeps its separate child-wave windows. Claude's connection
-supplies `harness/claude_drain.py` evidence; it owns snapshot parsing, not policy.
-Native tasks and the pending follow-up result are diagnostic blockers, not policy
-flags carried through assessments.
+capabilities and delegates to it. There are two completion profiles: the shared
+resident/native-task hold and Pi. A native task source or resident backend selects
+the shared hold. It is built by `ResidentDrainCoordinator.build`; its hold profile
+owns candidate-scoped signal admission, reads one `HoldEvidence`, and composes
+`RearmWindow` for absolute deadlines and budgeted rearm. Pi keeps its separate
+child-wave windows. Claude's connection supplies
+`harness/claude_drain.py`'s
+`ClaudeNativeTaskSource`; it owns snapshot parsing, not policy, and reports only
+blockers and a generation. `HoldEvidence` merges that source with persisted
+descendants for every hold: `unknown` descendants dominate, otherwise either source's
+blockers hold. Native tasks and the pending follow-up result are diagnostic blockers,
+not policy flags carried through assessments.
 Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux wakes. Plain streaming harnesses
 intentionally run with
 `DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence
 of a coordinator is the plain path.
+
+Each plan declares `accepted_signals`: hold plans consume `done` and `rearm`, Pi only
+`done` (it has no rearm window and leaves `rearm.signal` alone), and the plain plan
+neither. Which plan a spawn gets depends on the live connection, so no table keyed on
+the harness id can
+know it. `SpawnManager.start_spawn` therefore writes the set to
+`spawns/<id>/accepted-signals.json` right after selecting the plan, before the drain
+starts, and `meridian spawn done` / `rearm` read it under the published-artifact lock
+before writing. It stays off the spawn row because `SpawnStateFields` forbids unknown
+keys: 0.11.0 and older would quarantine every row carrying a new field, while they
+ignore extra files in the spawn dir. An absent file means the plan isn't chosen yet or
+the runner predates the file; the CLI writes the signal and says delivery is
+unconfirmed.
 
 The factory also owns application-service construction for descendant cancellation
 and injects that capability into both resident and Pi cleanup. Harness-policy modules
@@ -160,11 +178,11 @@ drain classification stands. Publication is idempotent — `terminal_published` 
 `SpawnSession` guards against double publication.
 
 Resident completion also resolves transport death before that publication barrier.
-When a successful turn is being held for persisted descendant work and the backend
-then emits a generic `error/connectionClosed`, the resident profile publishes
-`backend_dead_while_awaiting_done` rather than the transport's incidental close
-message. Harness-specific terminal failures remain authoritative. A success already
-recorded for publication is still protected by the generic success-first barrier.
+A synthetic `error/connectionClosed` makes confirmation unavailable: ready evidence
+accepts the retained candidate, while persisted blockers or temporarily unknown
+evidence remain held. Native-only blockers and non-transport terminal failures keep
+their failure diagnostics. A success already recorded for publication is still
+protected by the generic success-first barrier.
 
 ### Subscriber Queue Backpressure
 

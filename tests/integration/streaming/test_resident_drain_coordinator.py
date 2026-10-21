@@ -44,6 +44,7 @@ async def _execute_latched_cleanup(
     assert request is not None
     await coordinator.execute_post_publication_cleanup(request)
 
+
 @pytest.mark.asyncio
 async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     tmp_path: Path,
@@ -56,18 +57,17 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_connection(
+    coordinator = ResidentDrainCoordinator.build(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
-        receiver=connection,
-        resident_backend=connection.resident_backend,
+        send_nudge=connection.resident_backend.begin_followup_turn,
+        backend=connection.resident_backend,
+        native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
         rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    write_spawn_signal(tmp_path, "p1", "done")
-
     def _raise_evidence_read_failure(*_args: object, **_kwargs: object) -> None:
         raise OSError("descendant evidence unavailable")
 
@@ -88,6 +88,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     assert decision.emit_turn_boundary is True
     assert connection.fake_resident_backend.awaiting_done_values == [True]
 
+    write_spawn_signal(tmp_path, "p1", "done")
     clock.advance(30.0)
     expired = await coordinator.handle_timeout()
 
@@ -95,6 +96,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     assert expired.recorded_outcome.status == "failed"
     assert expired.recorded_outcome.exit_code == 1
     assert expired.recorded_outcome.error == "resident_evidence_unreadable"
+
 
 @pytest.mark.asyncio
 async def test_terminal_done_completes_when_descendant_evidence_recovers(
@@ -108,11 +110,12 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_connection(
+    coordinator = ResidentDrainCoordinator.build(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
-        receiver=connection,
-        resident_backend=connection.resident_backend,
+        send_nudge=connection.resident_backend.begin_followup_turn,
+        backend=connection.resident_backend,
+        native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
         rearm_budget=None,
@@ -133,7 +136,6 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         "descendant_projection",
         _read_descendants,
     )
-    write_spawn_signal(tmp_path, "p1", "done")
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
 
     waiting = await coordinator.handle_terminal_event(
@@ -141,6 +143,7 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         terminal,
         DrainAction(terminate=True, emit_turn_boundary=False),
     )
+    write_spawn_signal(tmp_path, "p1", "done")
     evidence_readable = True
     await coordinator.handle_timeout()
     recovered = await _after_refresh(coordinator)
@@ -161,11 +164,12 @@ async def test_rejected_success_validation_preserves_resident_wait_protection(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_connection(
+    coordinator = ResidentDrainCoordinator.build(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
-        receiver=connection,
-        resident_backend=connection.resident_backend,
+        send_nudge=connection.resident_backend.begin_followup_turn,
+        backend=connection.resident_backend,
+        native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
         rearm_budget=None,
@@ -181,6 +185,15 @@ async def test_rejected_success_validation_preserves_resident_wait_protection(
         )
         assert connection.fake_resident_backend.awaiting_done_values == [True]
 
+        await coordinator.wait_for_aux_wake()
+        await coordinator.handle_aux_wake()
+        coordinator.observe_activity_transition("turn_active")
+        await coordinator.handle_terminal_event(
+            resident_event(HarnessId.CODEX, "turn/completed", {}),
+            terminal,
+            DrainAction(terminate=True, emit_turn_boundary=False),
+        )
+
         spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
         clock.advance(0.01)
         await coordinator.handle_timeout()
@@ -194,9 +207,10 @@ async def test_rejected_success_validation_preserves_resident_wait_protection(
 
         assert rejected.recorded_outcome is None
         assert connection.fake_resident_backend.awaiting_done_values
-        assert all(connection.fake_resident_backend.awaiting_done_values)
+        assert connection.fake_resident_backend.awaiting_done_values[-1] is True
     finally:
         await coordinator.stop()
+
 
 @pytest.mark.asyncio
 async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
@@ -211,11 +225,12 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_connection(
+    coordinator = ResidentDrainCoordinator.build(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
-        receiver=connection,
-        resident_backend=connection.resident_backend,
+        send_nudge=connection.resident_backend.begin_followup_turn,
+        backend=connection.resident_backend,
+        native=None,
         deadline_seconds=3300.0,
         poll_seconds=5.0,
         rearm_budget=None,
@@ -238,8 +253,16 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     assert connection.fake_resident_backend.injected_messages == []
 
     clock.advance(270.0)
-    nudged = await coordinator.handle_timeout()
-    assert nudged.recorded_outcome is None
+    assert (await coordinator.handle_timeout()).recorded_outcome is None
+    assert connection.fake_resident_backend.injected_messages == []
+
+    coordinator.observe_activity_transition("turn_active")
+    next_candidate = await coordinator.handle_terminal_event(
+        resident_event(HarnessId.CODEX, "turn/completed", {}),
+        terminal,
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
+    assert next_candidate.emit_turn_boundary is True
     assert len(connection.fake_resident_backend.injected_messages) == 1
     injected = connection.fake_resident_backend.injected_messages[0]
     assert "meridian spawn done" in injected
@@ -250,10 +273,20 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     await coordinator.handle_aux_wake()
 
     assert coordinator.next_timeout() == pytest.approx(5.0)
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
+    assert connection.fake_resident_backend.awaiting_done_values == [
+        True,
+        False,
+        True,
+        False,
+    ]
 
     write_spawn_signal(tmp_path, "p1", "done")
     requested = await coordinator.handle_timeout()
+    await coordinator.handle_terminal_event(
+        resident_event(HarnessId.CODEX, "turn/completed", {}),
+        terminal,
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
     decision = await _after_refresh(coordinator)
     assert requested.recorded_outcome is None
     assert decision.recorded_outcome == terminal
@@ -263,7 +296,10 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
         False,
         True,
         False,
+        True,
+        False,
     ]
+
 
 @pytest.mark.asyncio
 async def test_active_followup_turn_still_enforces_deadline(
@@ -284,6 +320,7 @@ async def test_active_followup_turn_still_enforces_deadline(
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
     assert decision.recorded_outcome.error == "resident_deadline_expired"
+
 
 @pytest.mark.asyncio
 async def test_deadline_returns_timed_out_when_descendant_reap_fails(
@@ -326,6 +363,7 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     later_decision = await coordinator.handle_timeout()
     assert later_decision.recorded_outcome is None
     assert cleanup_calls == 1
+
 
 @pytest.mark.asyncio
 async def test_deadline_reap_cancels_active_descendant_cli_spawns(
@@ -383,6 +421,7 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     assert already_terminal is not None
     assert already_terminal.status == "succeeded"
 
+
 @pytest.mark.asyncio
 async def test_done_signal_is_honored_with_tracked_child_outstanding(
     tmp_path: Path,
@@ -395,7 +434,11 @@ async def test_done_signal_is_honored_with_tracked_child_outstanding(
     coordinator = await awaiting_done_coordinator(tmp_path, connection)
 
     write_spawn_signal(tmp_path, "p1", "done")
-    requested = await coordinator.handle_timeout()
+    requested = await coordinator.handle_terminal_event(
+        resident_event(HarnessId.OPENCODE, "agent_end", {}),
+        TerminalEventOutcome(status="succeeded", exit_code=0),
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
     decision = await _after_refresh(coordinator)
 
     assert requested.recorded_outcome is None
