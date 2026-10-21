@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-10-21
+
 ### Upgrade notes
 - Session browse's preview pane and cached previews are gone, and `--plain --format json` rows lose `live`, `historical`, `native_status` and `history_id`; update scripts that read them. The history index rebuilds itself on first use; older builds read all new state, so rollback works (one mixed-version background-spawn caveat in the guide). See [session browse redesign](docs/upgrading.md#session-browse-redesign-history-index-schema-12).
 - `session browse --include-archives` warns and does nothing; use `--status archived`. See [upgrade note](docs/upgrading.md#session-browse---include-archives).
