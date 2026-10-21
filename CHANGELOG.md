@@ -17,7 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 - Session browse preview pane and its history-index cache (`previews` table, `session index` preview counts). Index schema bumped; rebuilds from authoritative files.
-- `session browse --plain --format json` rows drop `live`, `historical`, `native_status` and `history_id`. An archived row's `chat_id` is its history id.
+- `session browse --plain --format json` rows drop `live`, `historical`, `native_status` and `history_id`. `reentry.kind` (`resume`, `fork` or `blocked`) says what Enter does, which is what `live` was used for. An archived row's `chat_id` is its history id.
 
 ### Fixed
 - Old-format idle state files no longer print a version warning on every listing. Only a write that would replace one warns.
