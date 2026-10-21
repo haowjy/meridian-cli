@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.7] - 2026-10-21
+
 ### Fixed
 - Codex `approval: confirm` launches again: maps to `on-request` (same as `auto`) instead of `untrusted`, which Codex 0.163 rejects at startup.
 
