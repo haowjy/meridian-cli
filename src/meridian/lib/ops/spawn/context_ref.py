@@ -4,6 +4,7 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -65,6 +66,7 @@ class SpawnContextRef(BaseModel):
     report_text: str | None = None
     harness_session_id: str | None = None
     chat_id: str | None = None
+    history_id: UUID | None = None
     work_id: str | None = None
     task_cwd: str | None = None
 
@@ -77,6 +79,7 @@ class SessionContextRef(BaseModel):
     ref_kind: Literal["session"] = "session"
     chat_id: str
     primary_spawn_id: str | None = None
+    history_id: UUID | None = None
     status: str
     agent: str
     model: str
@@ -193,6 +196,7 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
         report_text=_load_report_text(project_root, row.id),
         harness_session_id=row.harness_session_id,
         chat_id=row.chat_id,
+        history_id=row.history_id,
         work_id=(row.work_id or "").strip() or None,
         task_cwd=(row.task_cwd or "").strip() or None,
     )
@@ -211,6 +215,7 @@ def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> Sessio
     return SessionContextRef(
         chat_id=chat_id,
         primary_spawn_id=primary_row.id,
+        history_id=primary_row.history_id,
         status=primary_row.status,
         agent=primary_row.agent or "",
         model=primary_row.model or "",
@@ -228,6 +233,7 @@ def _session_context_ref_from_record(
 
     return SessionContextRef(
         chat_id=session.chat_id,
+        history_id=session.history_id,
         status="stopped" if session.stopped_at is not None else "running",
         agent=session.agent,
         model=session.model,

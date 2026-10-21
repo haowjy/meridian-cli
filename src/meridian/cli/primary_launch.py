@@ -32,6 +32,7 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.run_boundary import run_boundary_summary
+from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
@@ -340,11 +341,8 @@ def run_primary_launch(
         if requested_work_id is None and resolved_fork.source_work_id is not None:
             requested_work_id = resolved_fork.source_work_id
 
-    context_source = (
-        resolve_session_target(project_root=project_root, continue_ref=raw_from_target)
-        if raw_from_target
-        else None
-    )
+    # Same resolver as the prompt context, so the persisted identity is the one the writer read.
+    context_source = resolve_context_ref(project_root, raw_from_target) if raw_from_target else None
     resolved_goal = normalize_goal(goal)
 
     launch_result = launch_primary(
@@ -385,10 +383,8 @@ def run_primary_launch(
             launch_policy_snapshot=continue_launch_policy_snapshot,
             session=continue_session.model_copy(
                 update={
-                    "context_from_chat_id": context_source.source_chat_id
-                    if context_source
-                    else None,
-                    "context_from_history_id": context_source.source_history_id
+                    "context_from_chat_id": context_source.chat_id if context_source else None,
+                    "context_from_history_id": context_source.history_id
                     if context_source
                     else None,
                     "requested_harness_session_id": continue_harness_session_id,
