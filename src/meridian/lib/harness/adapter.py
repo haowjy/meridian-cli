@@ -200,7 +200,6 @@ class SpawnParams(BaseModel):
     continue_fork: bool = False
     appended_system_prompt: str | None = None
     user_turn_content: str | None = None
-    context_from_payload: tuple[str, ...] = ()
     reference_items: tuple[Any, ...] = ()
     pi_harness_profile: PiHarnessProfileConfig | None = None
     allow_builtin_agents: bool = False

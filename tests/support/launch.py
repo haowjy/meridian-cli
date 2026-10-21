@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.types import HarnessId
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import HarnessRegistry
@@ -103,7 +102,6 @@ def _direct_prepared_surface(
         composition_warnings=warnings,
         content=PreparedLaunchContent(
             final_prompt=request.prompt,
-            resolved_context_from=context_ref_values(request.context_refs),
             loaded_references=loaded_references,
             prompt_payload=prepare_prompt_payload(
                 adhoc_agent_payload=request.prompt_payload.adhoc_agent_payload,

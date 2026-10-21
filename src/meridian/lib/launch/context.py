@@ -31,7 +31,7 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
-from meridian.lib.core.context_ref import ContextRef, context_ref_values, render_context_refs
+from meridian.lib.core.context_ref import ContextRef, render_context_refs
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
@@ -349,7 +349,6 @@ class TaskContextInputs:
 
     reference_items: tuple[ReferenceItem, ...]
     prior_output: str
-    resolved_context_from: tuple[str, ...]
 
 
 def resolve_task_context_inputs(
@@ -372,7 +371,6 @@ def resolve_task_context_inputs(
     return TaskContextInputs(
         reference_items=loaded_references,
         prior_output=sanitize_prior_output(prior_output) if prior_output.strip() else "",
-        resolved_context_from=context_ref_values(context_refs),
     )
 
 
@@ -523,7 +521,6 @@ def materialize_launch_artifacts(
     continue_harness_session_id: str | None = None,
     continue_fork: bool = False,
     model_override_explicit: bool = False,
-    context_from_payload: tuple[str, ...] = (),
     reference_items: tuple[ReferenceItem, ...] = (),
     inject_task_cwd_instruction: bool = False,
     sandbox: str | None = None,
@@ -577,7 +574,6 @@ def materialize_launch_artifacts(
         continue_harness_session_id=continue_harness_session_id,
         continue_fork=continue_fork,
         appended_system_prompt=effective_appended_system or None,
-        context_from_payload=context_from_payload,
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
         pi_harness_profile=pi_harness_profile,
@@ -1091,15 +1087,15 @@ def _build_shared_composition(
     )
 
 
-def _build_spawn_composed_launch_content(
+def _resolve_spawn_prepare_projection(
     *,
     request: SpawnRequest,
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
     launch_mode: LaunchMode | None = None,
-) -> tuple[ComposedLaunchContent, tuple[str, ...]]:
-    """Build semantic spawn composition inputs shared by projection and bind refresh."""
+) -> PreparedLaunchContent:
+    """Compose the spawn's semantic content from the request inputs and project it."""
 
     profile = policy.profile
     harness = policy.adapter
@@ -1152,32 +1148,11 @@ def _build_spawn_composed_launch_content(
         reference_items=task_ctx.reference_items,
         prior_output=task_ctx.prior_output,
     )
-    return composed, task_ctx.resolved_context_from
-
-
-def _resolve_spawn_prepare_projection(
-    *,
-    request: SpawnRequest,
-    project_paths: ProjectConfigPaths,
-    active_work_dir: Path | None,
-    policy: ResolvedLaunchPolicy,
-    launch_mode: LaunchMode | None = None,
-) -> PreparedLaunchContent:
-    harness = policy.adapter
-
-    composed, resolved_context_from = _build_spawn_composed_launch_content(
-        request=request,
-        project_paths=project_paths,
-        active_work_dir=active_work_dir,
-        policy=policy,
-        launch_mode=launch_mode,
-    )
 
     projected = harness.project_content(composed)
 
     return PreparedLaunchContent(
         final_prompt=projected.user_turn_content.strip() or composed.user_task_prompt,
-        resolved_context_from=resolved_context_from,
         loaded_references=composed.reference_items,
         prompt_payload=prepare_prompt_payload(projected_content=projected),
         projected_content=projected,
@@ -1260,7 +1235,6 @@ def _resolve_primary_projection(
     return (
         PreparedLaunchContent(
             final_prompt=projected.user_turn_content.strip() or request.prompt,
-            resolved_context_from=task_ctx.resolved_context_from,
             loaded_references=task_ctx.reference_items,
             prompt_payload=prompt_payload,
             projected_content=projected,
@@ -1370,10 +1344,7 @@ def prepare_launch_surface(
     resolved_skills = policies.resolved_skills
 
     route_warning = None
-    content = PreparedLaunchContent(
-        final_prompt=request.prompt,
-        resolved_context_from=context_ref_values(request.context_refs),
-    )
+    content = PreparedLaunchContent(final_prompt=request.prompt)
     final_passthrough_args = request.extra_args
     continuation = ResolvedContinuation(harness_session_id=None, continue_fork=False)
     seed_harness_session_id: str | None = None
@@ -1463,7 +1434,6 @@ def prepare_launch_surface(
         )
     content = PreparedLaunchContent(
         final_prompt=content.final_prompt,
-        resolved_context_from=content.resolved_context_from,
         loaded_references=content.loaded_references,
         prompt_payload=PreparedPromptPayload(
             adhoc_agent_payload=adhoc_agent_payload,
@@ -1503,7 +1473,6 @@ def prepare_launch_surface(
                     "continue_fork": continuation.continue_fork,
                 }
             ),
-            "context_from": content.resolved_context_from,
             "warning": warning,
             "agent_metadata": agent_metadata,
             "prompt_payload": _request_prompt_payload(content.prompt_payload),
@@ -1862,7 +1831,6 @@ def bind_launch_context(
             if bindings.continue_fork_override is not None
             else resolved_request.session.continue_fork
         ),
-        context_from_payload=context_ref_values(resolved_request.context_refs),
         reference_items=loaded_references,
         sandbox=resolved_request.execution_policy.sandbox,
         tools=resolved_request.tools,
