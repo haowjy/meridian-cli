@@ -77,7 +77,7 @@ from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequir
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.lib.core.logging import warning_cache_scope
-from meridian.lib.launch.cwd import WorkTaskDirMissing
+from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.telemetry import emit_telemetry
 
 if TYPE_CHECKING:

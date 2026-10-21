@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 from meridian.cli.invocation import Emitter, emit
+from meridian.lib.extensions.declaration import OpDeclaration
 from meridian.lib.extensions.types import ExtensionCommandSpec, ExtensionSurface
 
 if TYPE_CHECKING:
@@ -67,11 +68,29 @@ def register_extension_cli_group(
 
     Handler keys are fqids (e.g. "meridian.work.start"), not op names.
     """
+    return register_extension_cli_specs(
+        app,
+        specs=registry.list_for_cli_group(group),
+        handlers=handlers,
+        command_help_epilogues=command_help_epilogues,
+        default_handler=default_handler,
+    )
+
+
+def register_extension_cli_specs(
+    app: App,
+    *,
+    specs: Iterable[ExtensionCommandSpec | OpDeclaration],
+    handlers: dict[str, HandlerFactory] | None = None,
+    command_help_epilogues: dict[str, str] | None = None,
+    default_handler: Callable[..., None] | None = None,
+) -> set[str]:
+    """Register explicit handlers from metadata, resolving schemas only for auto-handlers."""
     registered: set[str] = set()
     resolved_handlers = handlers or {}
     resolved_epilogues = command_help_epilogues or {}
 
-    for spec in registry.list_for_cli_group(group):
+    for spec in specs:
         if ExtensionSurface.CLI not in spec.surfaces:
             continue
         fqid = spec.fqid
@@ -80,7 +99,9 @@ def register_extension_cli_group(
         if handler_factory is not None:
             handler = handler_factory()
         else:
-            auto = _make_auto_handler_from_spec(spec, emit)
+            auto = _make_auto_handler_from_spec(
+                spec.resolve() if isinstance(spec, OpDeclaration) else spec, emit
+            )
             if auto is None:
                 raise ValueError(
                     f"No CLI handler for '{fqid}' and auto-generation failed "

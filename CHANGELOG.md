@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Session commands load operations only in their handlers. Lightweight command declarations avoid importing the entire operation registry; managed work lookup uses the history index.
 - Session browse data: active/archive scope and updated/created sort before limiting, tmux target, last-used model, turn age and cache-stale marker in plain rows. Fork and `--from` ancestry survive continuation; indexed lineage, model refresh and shared transcript windows support the next picker.
 
 ## [0.11.4] - 2026-10-21

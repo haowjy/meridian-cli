@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.state import work_store
 from meridian.lib.state.spawn_scope import read_spawn_scope
@@ -28,10 +29,6 @@ class TaskCwdResolution:
     source: str
     work_item: str | None
     warning: str | None = None
-
-
-class WorkTaskDirMissing(Exception):
-    """No usable fallback exists for a stale work-item task directory."""
 
 
 @dataclass(frozen=True)

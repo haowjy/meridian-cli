@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
-from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir_for_project
 
 if TYPE_CHECKING:
@@ -124,6 +123,8 @@ def launch_primary(
     )
     resolved_project_paths = resolve_project_paths(resolved_project_root)
     project_state_dir = resolved_project_paths.root_dir
+    from meridian.lib.launch.resolution import resolve_launch_inputs
+
     launch_resolution = resolve_launch_inputs(
         authority_root=resolved_project_root,
         project_state_dir=project_state_dir,

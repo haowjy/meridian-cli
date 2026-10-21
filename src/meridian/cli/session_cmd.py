@@ -7,32 +7,20 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from cyclopts import App, Parameter
 
-from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.ext_registration import register_extension_cli_specs
 from meridian.cli.invocation import Emitter, emit
 from meridian.cli.utils import cli_project_root_posix
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.util import FormatContext
-from meridian.lib.extensions.registry import get_first_party_registry
-from meridian.lib.ops.session_archive import (
-    SessionArchiveInput,
-    SessionImportInput,
-    SessionRestoreInput,
-    session_archive_sync,
-    session_import_sync,
-    session_restore_sync,
-)
-from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
-from meridian.lib.ops.session_index import SessionIndexInput, session_index_sync
-from meridian.lib.ops.session_list import SessionListInput, session_list_sync
-from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
-from meridian.lib.ops.session_reentry import Fork, Resume, SessionReentryDecision
-from meridian.lib.ops.session_repair import SessionRepairInput, repair_session_reference_sync
-from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
+from meridian.lib.ops.commands import get_cli_op_declarations
+
+if TYPE_CHECKING:
+    from meridian.lib.ops.session_reentry import SessionReentryDecision
 
 
 def _session_project_root(file_path: str | None) -> str | None:
@@ -91,6 +79,8 @@ def _exec_decision(
     config_file: str | None = None,
     exec_fn: Callable[[str, list[str]], Any] = os.execv,
 ) -> None:
+    from meridian.lib.ops.session_reentry import Fork, Resume
+
     """Replace the picker process with the selected primary-session action."""
 
     if not isinstance(decision, (Resume, Fork)):
@@ -115,6 +105,14 @@ def _session_browse(
         bool,
         Parameter(name="--plain", help="Print a table instead of opening the picker."),
     ] = False,
+    status: Annotated[
+        Literal["active", "archived"],
+        Parameter(name="--status", help="Session scope."),
+    ] = "active",
+    sort: Annotated[
+        Literal["updated", "created"],
+        Parameter(name="--sort", help="Session ordering."),
+    ] = "updated",
     include_archives: Annotated[
         bool,
         Parameter(
@@ -123,6 +121,8 @@ def _session_browse(
         ),
     ] = False,
 ) -> None:
+    from meridian.lib.ops.session_list import SessionListInput, session_list_sync
+
     presentation = resolve_browse_presentation(
         plain=plain,
         stdin_tty=sys.stdin.isatty(),
@@ -135,7 +135,9 @@ def _session_browse(
     if isinstance(presentation, Refused):
         print(f"error: {presentation.reason}", file=sys.stderr)
         raise SystemExit(2)
-    listing = session_list_sync(SessionListInput(project_root=project_root, limit=limit))
+    listing = session_list_sync(
+        SessionListInput(project_root=project_root, limit=limit, status=status, sort=sort)
+    )
     if isinstance(presentation, Plain):
         emit(listing)
         return
@@ -255,6 +257,8 @@ def _session_log(
         ),
     ] = None,
 ) -> None:
+    from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+
     resolved_tail: int | None = None
     if tail is not None:
         if len(tail) > 1:
@@ -306,6 +310,8 @@ def _session_export(
         ),
     ] = False,
 ) -> None:
+    from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
+
     emit(
         session_export_sync(
             SessionExportInput(
@@ -353,6 +359,8 @@ def _session_search(
         Parameter(name="--global", help="Search all local Meridian runtime roots."),
     ] = False,
 ) -> None:
+    from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
+
     emit(
         session_search_sync(
             SessionSearchInput(
@@ -392,6 +400,8 @@ def _session_repair(
         ),
     ] = False,
 ) -> None:
+    from meridian.lib.ops.session_repair import SessionRepairInput, repair_session_reference_sync
+
     emit(
         repair_session_reference_sync(
             SessionRepairInput(
@@ -423,6 +433,8 @@ def _session_archive(
         ),
     ] = False,
 ) -> None:
+    from meridian.lib.ops.session_archive import SessionArchiveInput, session_archive_sync
+
     emit(
         session_archive_sync(
             SessionArchiveInput(
@@ -440,6 +452,8 @@ def _session_archive(
 
 
 def _session_import(emit: Emitter, archive: str) -> None:
+    from meridian.lib.ops.session_archive import SessionImportInput, session_import_sync
+
     emit(
         session_import_sync(
             SessionImportInput(project_root=cli_project_root_posix(), archive=archive)
@@ -452,6 +466,8 @@ def _session_restore(
     refs: Annotated[tuple[str, ...], Parameter(help="History IDs or origin aliases.")],
     archive: Annotated[str, Parameter(name="--archive")],
 ) -> None:
+    from meridian.lib.ops.session_archive import SessionRestoreInput, session_restore_sync
+
     emit(
         session_restore_sync(
             SessionRestoreInput(
@@ -469,6 +485,8 @@ def _session_index(
     reset: Annotated[bool, Parameter(name="--reset")] = False,
     metadata_only: Annotated[bool, Parameter(name="--metadata-only")] = False,
 ) -> None:
+    from meridian.lib.ops.session_index import SessionIndexInput, session_index_sync
+
     emit(
         session_index_sync(
             SessionIndexInput.model_validate(
@@ -497,10 +515,9 @@ def register_session_commands(app: App) -> None:
         "meridian.session.search": lambda: partial(_session_search, emit),
         "meridian.session.repair": lambda: partial(_session_repair, emit),
     }
-    register_extension_cli_group(
+    register_extension_cli_specs(
         app,
-        registry=get_first_party_registry(),
-        group="session",
+        specs=get_cli_op_declarations("session"),
         handlers=handlers,
         command_help_epilogues={
             "meridian.session.log": (

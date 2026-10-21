@@ -16,7 +16,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 import structlog
@@ -24,18 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from meridian.lib.core.native_identity import NativeKeyFields, NativeSessionUnavailable
 from meridian.lib.core.types import ChatId
-from meridian.lib.harness.legacy_native_stores import (
-    SUPPORTED,
-    InvalidNativeSession,
-    LegacyNativeStores,
-    NativeSessionEvidence,
-    parse_instant,
-    pi_recorded_session_dir,
-    pi_session_evidence,
-    pi_sessions_in,
-    pi_shared_session_root,
-    pi_spawn_session_dir,
-)
+
+if TYPE_CHECKING:
+    from meridian.lib.harness.legacy_native_stores import (
+        NativeSessionEvidence,
+    )
 from meridian.lib.launch.constants import PI_RUNTIME_META_FILENAME
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -99,6 +92,8 @@ def report_legacy_native_import(
     records: list[SessionRecord] | None = None,
 ) -> ImportReport:
     """Compute exact bindings without locks, state writes, or native-store writes."""
+    from meridian.lib.harness.legacy_native_stores import SUPPORTED, LegacyNativeStores
+
     report = ImportReport(
         schema_version=1,
         timestamp=utc_now_iso(),
@@ -365,6 +360,8 @@ class RetainedChatFacts:
         self.cwds.update(os.path.normpath(value) for value in values if value)
 
     def add_window(self, start: str | None, stop: str | None) -> None:
+        from meridian.lib.harness.legacy_native_stores import parse_instant
+
         begin = parse_instant(start)
         if begin is not None:
             # An unrecorded stop only admits sessions created near the start.
@@ -382,6 +379,8 @@ class RetainedChatFacts:
             self.prompts.add(normalize_text(prompt))
         if report and report_body(report):
             self.reports.add(normalize_text(report_body(report)))
+        from meridian.lib.harness.legacy_native_stores import pi_recorded_session_dir
+
         session_dir = pi_recorded_session_dir(runtime_meta)
         if session_dir is not None:
             self.session_dirs.add(session_dir)
@@ -521,6 +520,12 @@ class PiRecovery:
 
 def _pi_spawn_candidates(fact: RetainedChatFacts) -> list[NativeSessionEvidence]:
     """Sessions in the chat's own spawn dirs (never the shared root) that fit cwd and time."""
+    from meridian.lib.harness.legacy_native_stores import (
+        pi_sessions_in,
+        pi_shared_session_root,
+        pi_spawn_session_dir,
+    )
+
     shared = pi_shared_session_root()
     directories = {pi_spawn_session_dir(spawn_id) for spawn_id in fact.spawn_ids}
     directories |= fact.session_dirs
@@ -544,6 +549,11 @@ def recover_legacy_pi_sessions(
     retained starting prompt (or, with no prompt retained, the report body).
     Primaries shared one root, so they are never bound here.
     """
+    from meridian.lib.harness.legacy_native_stores import (
+        InvalidNativeSession,
+        pi_session_evidence,
+    )
+
     marker = runtime_root / MARKER
     with lock_file(runtime_root / "locks" / "legacy-native-import.lock"):
         prior = _read_marker(marker)

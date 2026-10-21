@@ -8,7 +8,7 @@ from typing import TypeVar
 import structlog
 
 from meridian.lib.launch.bundle_adapter import MarsSelectionError
-from meridian.lib.launch.cwd import WorkTaskDirMissing
+from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.launch.request import SpawnRequest
 
 from .models import SpawnActionOutput, SpawnCreateInput
