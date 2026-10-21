@@ -102,9 +102,8 @@ class SpawnDrainLoop:
         )
         try:
             while True:
-                should_defer_close = getattr(coordinator, "should_defer_close", None)
                 if drain_waiter.events_closed and not (
-                    should_defer_close is not None and should_defer_close()
+                    coordinator is not None and coordinator.should_defer_close()
                 ):
                     session = self._sessions.get(spawn_id)
                     close_outcome = (
@@ -121,7 +120,7 @@ class SpawnDrainLoop:
                     break
                 wake = await drain_waiter.wait(_next_timeout(coordinator))
                 if isinstance(wake, DrainClosedWake):
-                    if should_defer_close is not None and should_defer_close():
+                    if coordinator is not None and coordinator.should_defer_close():
                         continue
                     session = self._sessions.get(spawn_id)
                     close_outcome = (
@@ -188,7 +187,7 @@ class SpawnDrainLoop:
                     action = policy.classify(event_outcome)
                     had_candidate = bool(
                         coordinator is not None
-                        and getattr(coordinator, "pending_outcome", None) is not None
+                        and coordinator.pending_outcome is not None
                     )
                     captured_candidate = (
                         coordinator is not None
@@ -207,7 +206,7 @@ class SpawnDrainLoop:
                     if (
                         coordinator is not None
                         and terminal_decision.recorded_outcome is None
-                        and getattr(coordinator, "pending_outcome", None) is None
+                        and coordinator.pending_outcome is None
                         and (had_candidate or captured_candidate)
                     ):
                         self._clear_report_candidate(spawn_id)

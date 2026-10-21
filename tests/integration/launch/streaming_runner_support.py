@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -318,6 +319,7 @@ class _CodexTerminalWithScopeConnection(_OpenCodeTerminalWithScopeConnection):
 
 class _ResidentDeadlineConnection:
     starts = 0
+    resident_deadlines: ClassVar[list[float]] = []
 
     def __init__(self) -> None:
         self.state = "created"
@@ -367,6 +369,9 @@ class _ResidentDeadlineConnection:
         if plan is not None and plan.session_id is not None:
             self._session_id = plan.session_id
         type(self).starts += 1
+        _ResidentDeadlineConnection.resident_deadlines.append(
+            config.resident_deadline_seconds
+        )
         self._spawn_id = config.spawn_id
         self.state = "connected"
 
@@ -512,6 +517,7 @@ async def _execute_with_context(
     runtime_root: Path,
     registry: HarnessRegistry,
     execution_cwd: Path | None = None,
+    config_snapshot: dict[str, object] | None = None,
     **kwargs: object,
 ) -> int:
     resolved_execution_cwd = execution_cwd or project_root.resolve()
@@ -520,6 +526,7 @@ async def _execute_with_context(
         request=request,
         runtime=LaunchRuntime(
             argv_intent=LaunchArgvIntent.SPEC_ONLY,
+            config_snapshot=config_snapshot or {},
             runtime_root=runtime_root.as_posix(),
             project_paths_project_root=project_root.as_posix(),
             project_paths_execution_cwd=resolved_execution_cwd.as_posix(),

@@ -11,7 +11,7 @@ candidate/deadline mechanics and the stabilization/validation phases live in
 the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
 `coordinator=None`; Claude/Codex/OpenCode completion shares one hold profile, and Pi
 supplies its own profile. Keep Pi child-wave,
-disk-state, direct-follow-up gating, resident-done nudges, and descendant cleanup policy
+disk-state, direct-follow-up gating, candidate confirmation/rearm, and descendant cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
 `drain_plan_factory.py` is the composition root for plan selection. It owns the
@@ -44,7 +44,8 @@ unbounded-while-descendants-live behavior is by design.
 Native-task activity never renews the deadline. Explicit done authorizes completion
 with leftover native tasks; managed-scope teardown stops them. A successful completion
 candidate gets one best-effort confirmation turn: `done` accepts, `rearm` opens another
-window, and silence accepts only after evidence is ready. The default completion window
+fixed window and waits for a genuinely new successful/idle candidate, and silence
+accepts only after evidence is ready. The default completion window
 is the calling harness's configured wait-yield interval unless
 `timeouts.resident_deadline_seconds` overrides it.
 

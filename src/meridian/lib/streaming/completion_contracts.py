@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -27,7 +28,6 @@ AssessmentTrigger = Literal[
     "aux_wake",
     "evidence_due",
 ]
-NudgeUrgency = Literal["normal", "timeout_soon"]
 ProfileAction = Literal[
     "clear",
     "complete",
@@ -143,7 +143,7 @@ class ProfileDecision:
     outcome: TerminalEventOutcome | None = None
     emit_turn_boundary: bool = False
     cleanup_reason: str | None = None
-    nudge: NudgeUrgency | None = None
+    nudge: bool = False
     reset_deadline: bool = False
     restart_stabilization: bool = False
     candidate: TerminalEventOutcome | None = None
@@ -156,7 +156,7 @@ class ProfileDecision:
             raise ValueError("cleanup decisions require a reason")
         if self.action != "cleanup" and self.cleanup_reason is not None:
             raise ValueError("only cleanup decisions may carry a cleanup reason")
-        if self.nudge is not None and self.action != "wait":
+        if self.nudge and self.action != "wait":
             raise ValueError("only wait decisions may request a nudge")
         if self.restart_stabilization and self.action != "stabilize":
             raise ValueError("only stabilize decisions may restart stabilization")
@@ -242,6 +242,8 @@ class CompletionProfile(Protocol):
 
     def refresh_deadline_after_event(self) -> bool: ...
 
+    def candidate_transition(self) -> AbstractContextManager[None]: ...
+
     def consume_directives(
         self,
         state: CompletionState,
@@ -264,9 +266,9 @@ class CompletionProfile(Protocol):
         self, state: CompletionState, assessment: WorkAssessment
     ) -> float | None: ...
 
-    def next_directive_poll_at(self) -> float | None: ...
+    async def send_nudge(self) -> None: ...
 
-    async def send_nudge(self, urgency: NudgeUrgency) -> None: ...
+    def after_terminal_accepted(self, outcome: TerminalEventOutcome) -> None: ...
 
     def stream_exit_decision(
         self,
@@ -295,7 +297,6 @@ __all__ = [
     "EvidenceEventDecision",
     "EvidenceFailure",
     "NativeTaskSource",
-    "NudgeUrgency",
     "ProfileAction",
     "ProfileDecision",
     "ProfileExitDecision",

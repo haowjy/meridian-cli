@@ -95,13 +95,16 @@ def stringify_terminal_error(error: object) -> str | None:
 
 def connection_closed_outcome(
     event: RawHarnessEvent,
-    *,
-    cause: TerminalOutcomeCause | None = None,
 ) -> TerminalEventOutcome:
     """Build the shared outcome for a Meridian synthetic connection close."""
 
     error = stringify_terminal_error(event.payload.get("message")) or "connection_closed"
-    return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error, cause=cause)
+    return TerminalEventOutcome(
+        status=SpawnStatus.FAILED,
+        exit_code=1,
+        error=error,
+        cause=TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE,
+    )
 
 
 @dataclass(frozen=True)

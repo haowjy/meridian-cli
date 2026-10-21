@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 import pytest
@@ -18,7 +19,6 @@ from meridian.lib.streaming.completion_contracts import (
     EvidenceActivity,
     EvidenceEventDecision,
     EvidenceFailure,
-    NudgeUrgency,
     ProfileDecision,
     ProfileExitDecision,
     WorkAssessment,
@@ -138,6 +138,9 @@ class _Profile:
     def refresh_deadline_after_event(self) -> bool:
         return False
 
+    def candidate_transition(self):  # type: ignore[no-untyped-def]
+        return nullcontext()
+
     def consume_directives(
         self, state: CompletionState, trigger: AssessmentTrigger
     ) -> CompletionDirectives:
@@ -200,17 +203,17 @@ class _Profile:
         del state
         return False
 
-    def next_directive_poll_at(self) -> None:
-        return None
-
     def next_nudge_at(
         self, state: CompletionState, assessment: WorkAssessment
     ) -> float | None:
         del state, assessment
         return None
 
-    async def send_nudge(self, urgency: NudgeUrgency) -> None:
-        del urgency
+    async def send_nudge(self) -> None:
+        return None
+
+    def after_terminal_accepted(self, outcome: TerminalEventOutcome) -> None:
+        del outcome
 
     def stream_exit_decision(
         self,

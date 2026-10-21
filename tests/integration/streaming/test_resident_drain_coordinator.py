@@ -68,8 +68,6 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
         rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    write_spawn_signal(tmp_path, "p1", "done")
-
     def _raise_evidence_read_failure(*_args: object, **_kwargs: object) -> None:
         raise OSError("descendant evidence unavailable")
 
@@ -90,6 +88,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     assert decision.emit_turn_boundary is True
     assert connection.fake_resident_backend.awaiting_done_values == [True]
 
+    write_spawn_signal(tmp_path, "p1", "done")
     clock.advance(30.0)
     expired = await coordinator.handle_timeout()
 
@@ -137,7 +136,6 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         "descendant_projection",
         _read_descendants,
     )
-    write_spawn_signal(tmp_path, "p1", "done")
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
 
     waiting = await coordinator.handle_terminal_event(
@@ -145,6 +143,7 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         terminal,
         DrainAction(terminate=True, emit_turn_boundary=False),
     )
+    write_spawn_signal(tmp_path, "p1", "done")
     evidence_readable = True
     await coordinator.handle_timeout()
     recovered = await _after_refresh(coordinator)

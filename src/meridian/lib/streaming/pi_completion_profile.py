@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -17,14 +18,9 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionEvaluation,
     CompletionState,
     EvidenceActivity,
-    NudgeUrgency,
     ProfileDecision,
     ProfileExitDecision,
     WorkAssessment,
-)
-from meridian.lib.streaming.completion_nudge import (
-    COMPLETION_NUDGE_INTERVAL_SECONDS,
-    PI_COMPLETION_NUDGE_MESSAGE,
 )
 from meridian.lib.streaming.drain_policy import (
     DrainPolicy,
@@ -38,6 +34,8 @@ if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
+COMPLETION_NUDGE_INTERVAL_SECONDS = 270.0
+PI_COMPLETION_NUDGE_MESSAGE = "Are you done? Run `meridian spawn done` to finish."
 PI_EVIDENCE_UNREADABLE_TIMEOUT_SECONDS: float = 300.0
 PI_DONE_NUDGE_IDLE_DELAY_SECONDS: float = 5.0
 
@@ -125,6 +123,9 @@ class PiCompletionProfile:
 
     def refresh_deadline_after_event(self) -> bool:
         return True
+
+    def candidate_transition(self) -> AbstractContextManager[None]:
+        return nullcontext()
 
     def bind_cleanup(self, cleanup: PiCompletionCleanupPort) -> None:
         self._cleanup = cleanup
@@ -256,16 +257,12 @@ class PiCompletionProfile:
         del state
         return False
 
-    def next_directive_poll_at(self) -> None:
-        return None
-
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
         del state, assessment
         self._refresh_done_nudge_state()
         return self.next_done_nudge_monotonic
 
-    async def send_nudge(self, urgency: NudgeUrgency) -> None:
-        del urgency
+    async def send_nudge(self) -> None:
         try:
             if self.send_done_nudge_callback is not None:
                 await self.send_done_nudge_callback(PI_COMPLETION_NUDGE_MESSAGE)
@@ -500,8 +497,11 @@ class PiCompletionProfile:
 
         if context.profile_timer_due and self._done_nudge_due(context.now):
             self.next_done_nudge_monotonic = context.now + self.done_nudge_interval_seconds
-            return ProfileDecision(action="wait", nudge="normal", reset_deadline=True)
+            return ProfileDecision(action="wait", nudge=True, reset_deadline=True)
         return ProfileDecision(action="wait", reset_deadline=True)
+
+    def after_terminal_accepted(self, outcome: TerminalEventOutcome) -> None:
+        del outcome
 
     def _evaluate_done(
         self,

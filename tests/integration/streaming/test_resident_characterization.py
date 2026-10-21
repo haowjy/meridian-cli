@@ -159,13 +159,14 @@ async def test_terminal_rearm_overrides_done_and_rejects_candidate(
     coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     clock.advance(1.0)
+    candidate = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    assert candidate.emit_turn_boundary is True
     write_spawn_signal(tmp_path, "p1", "done")
     write_spawn_signal(tmp_path, "p1", "rearm")
 
-    requested = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    requested = await coordinator.handle_timeout()
 
     assert requested.recorded_outcome is None
-    assert requested.emit_turn_boundary is True
     assert coordinator.pending_outcome is None
     row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
     assert row is not None
@@ -573,6 +574,7 @@ async def test_one_confirmation_injection_per_candidate(
         deadline_seconds=20.0,
     )
     try:
+        write_spawn_signal(tmp_path, SpawnId("p1"), "done")
         first = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
         assert first.emit_turn_boundary
         await coordinator.wait_for_aux_wake()
@@ -581,10 +583,20 @@ async def test_one_confirmation_injection_per_candidate(
 
         write_spawn_signal(tmp_path, SpawnId("p1"), "rearm")
         assert (await coordinator.handle_timeout()).recorded_outcome is None
+        row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+        assert row is not None
+        assert row.resident_rearm_count == 1
         for _ in range(3):
             clock.advance(2.0)
             assert (await coordinator.handle_timeout()).recorded_outcome is None
         assert len(connection.fake_resident_backend.injected_messages) == 1
+
+        write_spawn_signal(tmp_path, SpawnId("p1"), "done")
+        write_spawn_signal(tmp_path, SpawnId("p1"), "rearm")
+        assert (await coordinator.handle_timeout()).recorded_outcome is None
+        row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+        assert row is not None
+        assert row.resident_rearm_count == 1
 
         second = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
         assert second.emit_turn_boundary

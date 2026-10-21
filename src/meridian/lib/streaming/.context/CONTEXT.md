@@ -177,11 +177,11 @@ drain classification stands. Publication is idempotent — `terminal_published` 
 `SpawnSession` guards against double publication.
 
 Resident completion also resolves transport death before that publication barrier.
-When a successful turn is being held for persisted descendant work and the backend
-then emits a generic `error/connectionClosed`, the resident profile publishes
-`backend_dead_while_awaiting_done` rather than the transport's incidental close
-message. Harness-specific terminal failures remain authoritative. A success already
-recorded for publication is still protected by the generic success-first barrier.
+A synthetic `error/connectionClosed` makes confirmation unavailable: ready evidence
+accepts the retained candidate, while persisted blockers or temporarily unknown
+evidence remain held. Native-only blockers and non-transport terminal failures keep
+their failure diagnostics. A success already recorded for publication is still
+protected by the generic success-first barrier.
 
 ### Subscriber Queue Backpressure
 

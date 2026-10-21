@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import AbstractContextManager
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,6 +14,8 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
+from meridian.lib.state.spawn_aggregate import published_artifact_lock
+from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -24,7 +27,6 @@ from meridian.lib.streaming.completion_contracts import (
     EvidenceEventDecision,
     EvidenceFailure,
     NativeTaskSource,
-    NudgeUrgency,
     ProfileDecision,
     ProfileExitDecision,
     WorkAssessment,
@@ -70,7 +72,7 @@ class HoldEvidence:
     def __init__(
         self,
         *,
-        descendants: DescendantRefreshOwner | None,
+        descendants: DescendantRefreshOwner,
         native: NativeTaskSource | None,
     ) -> None:
         self._descendants = descendants
@@ -80,8 +82,7 @@ class HoldEvidence:
         return None
 
     async def stop(self) -> None:
-        if self._descendants is not None:
-            await self._descendants.stop()
+        await self._descendants.stop()
 
     async def observe_event(
         self, event: RawHarnessEvent, transition: str | None
@@ -101,15 +102,12 @@ class HoldEvidence:
         del trigger, state
         native_blockers = () if self._native is None else self._native.blockers
         generation = 0 if self._native is None else self._native.generation
-        if self._descendants is None:
-            descendant_blockers: tuple[DiagnosticBlocker, ...] = ()
-        else:
-            self._descendants.ensure_due()
-            descendants = self._descendants.assessment
-            generation += descendants.generation
-            if descendants.disposition == "unknown":
-                return replace(descendants, generation=generation)
-            descendant_blockers = descendants.blockers
+        self._descendants.ensure_due()
+        descendants = self._descendants.assessment
+        generation += descendants.generation
+        if descendants.disposition == "unknown":
+            return replace(descendants, generation=generation)
+        descendant_blockers = descendants.blockers
         blockers = descendant_blockers + native_blockers
         return WorkAssessment(
             disposition="blocked" if blockers else "ready",
@@ -118,26 +116,23 @@ class HoldEvidence:
         )
 
     def next_due_at(self) -> float | None:
-        return None if self._descendants is None else self._descendants.next_due_at
+        return self._descendants.next_due_at
 
     async def handle_due(self) -> EvidenceEventDecision:
-        if self._descendants is not None:
-            self._descendants.ensure_due()
+        self._descendants.ensure_due()
         return EvidenceEventDecision()
 
     def wants_aux_wake(self) -> bool:
-        return self._descendants is not None and self._descendants.wants_wake
+        return self._descendants.wants_wake
 
     async def wait_for_change(self) -> None:
-        if self._descendants is None:
-            raise RuntimeError("native-only hold evidence has no auxiliary wake source")
         await self._descendants.wait()
 
     def request_validation(self) -> int:
-        return 0 if self._descendants is None else self._descendants.request()
+        return self._descendants.request()
 
     def validation_complete(self, request: int) -> bool:
-        return self._descendants is None or self._descendants.validated(request)
+        return self._descendants.validated(request)
 
 
 class _HoldProfile:
@@ -155,6 +150,8 @@ class _HoldProfile:
         rearm_budget: int | None,
         clock: Callable[[], float],
     ) -> None:
+        self._runtime_root = runtime_root
+        self._spawn_id = spawn_id
         self._window = RearmWindow(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
@@ -169,6 +166,7 @@ class _HoldProfile:
         self._confirmation_requested = False
         self._confirmation_turn_started = False
         self._confirmation_failed = False
+        self._done_requested = False
         self._rearmed = False
         self._confirmation_grace_at: float | None = None
         self._blockers: tuple[DiagnosticBlocker, ...] = ()
@@ -179,13 +177,24 @@ class _HoldProfile:
     def refresh_deadline_after_event(self) -> bool:
         return False
 
+    def candidate_transition(self) -> AbstractContextManager[None]:
+        return published_artifact_lock(self._runtime_root, self._spawn_id)
+
     def consume_directives(
         self,
         state: CompletionState,
         trigger: AssessmentTrigger,
     ) -> CompletionDirectives:
-        del state, trigger
-        return self._window.consume_directives()
+        del trigger
+        signals = consume_resident_signals(self._runtime_root, self._spawn_id)
+        if state.candidate is None:
+            self._done_requested = False
+            return CompletionDirectives()
+        if self._window.grant_rearm(signals.rearm):
+            self._done_requested = False
+            return CompletionDirectives(rearm=True)
+        self._done_requested = self._done_requested or signals.done
+        return CompletionDirectives(done=self._done_requested)
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
         self._blockers = context.assessment.blockers
@@ -247,10 +256,7 @@ class _HoldProfile:
         del state, assessment
         return self._confirmation_grace_at
 
-    def next_directive_poll_at(self) -> None:
-        return None
-
-    async def send_nudge(self, urgency: NudgeUrgency) -> None:
+    async def send_nudge(self) -> None:
         self._confirmation_requested = True
         self._confirmation_failed = False
         self._confirmation_grace_at = self._clock() + self._confirmation_grace_seconds
@@ -258,7 +264,7 @@ class _HoldProfile:
             self._confirmation_failed = True
             raise RuntimeError("completion handshake backend is unavailable")
         try:
-            await self._send_nudge(self._nudge_message(urgency))
+            await self._send_nudge(self._nudge_message())
         except Exception:
             self._confirmation_failed = True
             raise
@@ -281,7 +287,7 @@ class _HoldProfile:
 
     def clear(self) -> None:
         self.set_awaiting_done(False)
-        self._window.clear()
+        self._done_requested = False
         self._confirmation_requested = False
         self._confirmation_turn_started = False
         self._confirmation_failed = False
@@ -310,7 +316,6 @@ class _HoldProfile:
             if (
                 context.candidate is not None
                 and outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
-                and self._resident_health_status() == LivenessDecision.BACKEND_DEAD
             ):
                 if context.deadline_expired:
                     self.clear()
@@ -329,15 +334,6 @@ class _HoldProfile:
                     self._enter_wait()
                     return ProfileDecision(action="wait", emit_turn_boundary=True)
             self.clear()
-            if (
-                context.candidate is not None
-                and outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
-                and self._resident_health_status() == LivenessDecision.BACKEND_DEAD
-            ):
-                return ProfileDecision(
-                    action="fail",
-                    outcome=_BACKEND_DEAD_WHILE_AWAITING_DONE,
-                )
             return ProfileDecision(action="fail", outcome=outcome)
         if context.directives.rearm:
             self._mark_rearmed()
@@ -351,7 +347,7 @@ class _HoldProfile:
             if context.assessment.disposition == "unknown":
                 self._enter_wait()
                 return ProfileDecision(action="wait", emit_turn_boundary=True)
-            return self._propose_success(outcome, context.now)
+            return self._propose_success(context.candidate or outcome, context.now)
         if context.deadline_expired:
             self.clear()
             return self._window.timeout_decision()
@@ -362,14 +358,14 @@ class _HoldProfile:
             return ProfileDecision(action="wait", emit_turn_boundary=True)
         if self._confirmation_requested:
             if context.assessment.disposition == "ready":
-                return self._propose_success(outcome, context.now)
+                return self._propose_success(context.candidate or outcome, context.now)
             self._enter_wait()
             return ProfileDecision(action="wait", emit_turn_boundary=True)
         self._enter_wait()
         return ProfileDecision(
             action="wait",
             emit_turn_boundary=True,
-            nudge="normal",
+            nudge=True,
         )
 
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
@@ -418,7 +414,7 @@ class _HoldProfile:
             return ProfileDecision(action="wait")
         if not self._confirmation_requested and not self._rearmed:
             self._enter_wait()
-            return ProfileDecision(action="wait", nudge="normal")
+            return ProfileDecision(action="wait", nudge=True)
         if context.assessment.disposition == "ready" and (
             self._confirmation_failed or self._confirmation_turn_started
         ):
@@ -439,7 +435,7 @@ class _HoldProfile:
     def _enter_wait(self) -> None:
         self.set_awaiting_done(True)
 
-    def _nudge_message(self, urgency: NudgeUrgency) -> str:
+    def _nudge_message(self) -> str:
         descendants = [
             blocker.identity
             for blocker in self._blockers
@@ -475,8 +471,6 @@ class _HoldProfile:
             "When finished, run `meridian spawn done` and then provide your complete final "
             "report. If more work remains, run `meridian spawn rearm` and continue."
         )
-        if urgency == "timeout_soon":
-            message += " This spawn's completion window expires soon."
         return message
 
     def set_awaiting_done(self, awaiting_done: bool) -> None:
@@ -547,14 +541,13 @@ class ResidentDrainCoordinator:
         send_nudge: Callable[[str], Awaitable[None]],
         backend: ResidentBackendControl | None,
         native: NativeTaskSource | None,
-        deadline_seconds: float | None,
+        deadline_seconds: float,
         poll_seconds: float | None,
         rearm_budget: int | None,
         cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
     ) -> ResidentDrainCoordinator:
-        resolved_deadline = (
-            deadline_seconds if deadline_seconds and deadline_seconds > 0 else 3300.0
-        )
+        if deadline_seconds <= 0:
+            raise ValueError("resident completion deadline must be positive")
         resolved_poll = poll_seconds if poll_seconds and poll_seconds > 0 else 5.0
         clock = time.monotonic
         if native is None and backend is None:
@@ -575,7 +568,7 @@ class ResidentDrainCoordinator:
             spawn_id=spawn_id,
             backend=backend,
             send_nudge=send_nudge,
-            deadline_seconds=resolved_deadline,
+            deadline_seconds=deadline_seconds,
             poll_seconds=resolved_poll,
             rearm_budget=rearm_budget,
             clock=clock,

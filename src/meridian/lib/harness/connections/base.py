@@ -295,7 +295,7 @@ class ConnectionConfig:
     system: str | None = None
     timeout_seconds: float | None = None
     pi_child_wave_timeout_seconds: float | None = None
-    resident_deadline_seconds: float | None = None
+    resident_deadline_seconds: float = 3000.0
     resident_poll_seconds: float | None = None
     resident_rearm_budget: int | None = None
     pi_task_ping_interval_seconds: float | None = None

@@ -158,24 +158,14 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
-    resolved_harnesses: list[HarnessId | str | None] = []
     _ResidentDeadlineConnection.starts = 0
+    _ResidentDeadlineConnection.resident_deadlines = []
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
         lambda _harness_id, _transport_id=TransportId.STREAMING: _ResidentDeadlineConnection,
     )
-    def _resolve_deadline(*, config_snapshot, harness_id):  # type: ignore[no-untyped-def]
-        del config_snapshot
-        resolved_harnesses.append(harness_id)
-        return 0.01
-
     monkeypatch.setenv("_MERIDIAN_HARNESS", HarnessId.CLAUDE.value)
-    monkeypatch.setattr(
-        streaming_runner_module,
-        "resolve_resident_deadline_seconds",
-        _resolve_deadline,
-    )
     monkeypatch.setattr(
         streaming_runner_module,
         "resolve_resident_poll_seconds",
@@ -223,6 +213,13 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
             runtime_root=runtime_root,
             registry=registry,
             clock=fake_clock,
+            config_snapshot={
+                "min_wait_yield_seconds": 0.001,
+                "harness": {
+                    "claude": {"wait_yield_seconds": 0.01},
+                    "codex": {"wait_yield_seconds": 2.0},
+                },
+            },
         ),
         timeout=15.0,
     )
@@ -230,7 +227,7 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
     row = spawn_store.get_spawn(runtime_root, parent_id)
     assert exit_code == 1
     assert _ResidentDeadlineConnection.starts == 1
-    assert resolved_harnesses == [HarnessId.CLAUDE.value]
+    assert _ResidentDeadlineConnection.resident_deadlines == [0.01]
     assert row is not None
     assert row.status == "timed_out"
     assert row.terminal.exit_code == 1

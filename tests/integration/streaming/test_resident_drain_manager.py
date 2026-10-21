@@ -380,18 +380,32 @@ async def test_rearm_at_terminal_event_rejects_done_and_first_candidate(
     spawn_id = SpawnId("p1")
     start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
-    write_spawn_signal(tmp_path, spawn_id, "done")
-    write_spawn_signal(tmp_path, spawn_id, "rearm")
     connection = FakeResidentConnection(HarnessId.OPENCODE)
     manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
+    subscriber = manager.subscribe(spawn_id)
+    assert subscriber is not None
 
     connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
+    await next_turn_boundary(subscriber)
+    write_spawn_signal(tmp_path, spawn_id, "done")
+    write_spawn_signal(tmp_path, spawn_id, "rearm")
     completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
+        await wait_until(
+            lambda: (
+                (row := spawn_store.get_spawn(tmp_path, spawn_id)) is not None
+                and row.resident_rearm_count == 1
+            ),
+            description="candidate-scoped rearm consumption",
+        )
         await assert_still_pending(completion)
         spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
-        await assert_still_pending(completion)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(completion), timeout=0.05)
+        connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
+        await next_turn_boundary(subscriber)
+        write_spawn_signal(tmp_path, spawn_id, "done")
         connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
         outcome = await completion
         assert outcome is not None
