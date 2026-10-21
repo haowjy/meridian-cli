@@ -72,6 +72,33 @@ def resolve_browse_presentation(
     return Interactive()
 
 
+def _exec_argv(
+    decision: SessionReentryDecision, *, project_root: str, config_file: str | None
+) -> list[str]:
+    """The one argv for every browse re-entry: resume, fork or start-from."""
+
+    from meridian.lib.ops.session_reentry import Blocked, StartFrom
+
+    if isinstance(decision, Blocked):
+        raise ValueError("blocked session decisions cannot be executed")
+    argv = [sys.executable, "-m", "meridian", "-C", project_root]
+    if config_file:
+        argv.extend(("--config", config_file))
+    if isinstance(decision, StartFrom):
+        argv.extend(("--from", decision.chat_id))
+        for flag, value in (
+            ("-a", decision.agent),
+            ("-m", decision.model),
+            ("--work", decision.work_id),
+            ("-p", decision.prompt),
+        ):
+            if value:
+                argv.extend((flag, value))
+    else:
+        argv.extend(("--fork" if decision.kind == "fork" else "--continue", decision.chat_id))
+    return argv
+
+
 def _exec_decision(
     decision: SessionReentryDecision,
     *,
@@ -79,17 +106,9 @@ def _exec_decision(
     config_file: str | None = None,
     exec_fn: Callable[[str, list[str]], Any] = os.execv,
 ) -> None:
-    from meridian.lib.ops.session_reentry import Fork, Resume
-
     """Replace the picker process with the selected primary-session action."""
 
-    if not isinstance(decision, (Resume, Fork)):
-        raise ValueError("blocked session decisions cannot be executed")
-    verb = "--fork" if isinstance(decision, Fork) else "--continue"
-    argv = [sys.executable, "-m", "meridian", "-C", project_root]
-    if config_file:
-        argv.extend(("--config", config_file))
-    argv.extend((verb, decision.chat_id))
+    argv = _exec_argv(decision, project_root=project_root, config_file=config_file)
     sys.stdout.flush()
     sys.stderr.flush()
     exec_fn(sys.executable, argv)

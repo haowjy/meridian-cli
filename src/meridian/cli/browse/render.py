@@ -43,6 +43,22 @@ def _enter_hint(row: SessionListRow | None) -> str:
     return f"enter {row.reentry.kind}  "
 
 
+def _start_hint(row: SessionListRow | None, key: str) -> str:
+    """The start-from key, offered only while it can succeed."""
+    if row is None or row.start_from.kind == "blocked":
+        return ""
+    return f"{key} start from  "
+
+
+def start_prompt_footer(chat_id: str, text: str, width: int) -> StyleAndTextTuples:
+    """One-line prompt for a fresh session reading ``chat_id``; the typed tail stays visible."""
+    label = f"start from {chat_id}: "
+    tail = "  enter start  esc cancel"
+    room = max(1, width - len(label) - len(tail) - 1)
+    shown = text[-room:]
+    return [("class:label", label), ("", shown + "█"), ("class:hint", tail)]
+
+
 def _lines(lines: list[StyleAndTextTuples]) -> StyleAndTextTuples:
     out: StyleAndTextTuples = []
     for index, line in enumerate(lines):
@@ -190,7 +206,8 @@ def list_footer(state: ListState, width: int) -> StyleAndTextTuples:
     else:
         lineage = "ctrl-l" if state.filter_text else "l"  # `l` is text once a filter has begun
         enter = _enter_hint(state.highlighted)
-        hint = f"{enter}space view  {lineage} lineage  tab filters  / transcripts  esc quit"
+        start = _start_hint(state.highlighted, "ctrl-n" if state.filter_text else "n")
+        hint = f"{enter}{start}space view  {lineage} lineage  tab filters  / transcripts  esc quit"
     return [("class:hint", clip(hint, width))]
 
 
@@ -257,7 +274,8 @@ def detail_body(state: DetailState, width: int, height: int) -> StyleAndTextTupl
 def detail_footer(state: DetailState, width: int) -> StyleAndTextTuples:
     if state.message:
         return [("class:error", clip(state.message, width))]
-    hint = f"↑/↓ pgup/pgdn home/end scroll  {_enter_hint(state.row)}l lineage  esc back"
+    enter, start = _enter_hint(state.row), _start_hint(state.row, "n")
+    hint = f"↑/↓ pgup/pgdn home/end scroll  {enter}{start}l lineage  esc back"
     return [("class:hint", clip(hint, width))]
 
 

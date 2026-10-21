@@ -26,12 +26,25 @@ class Fork:
 
 
 @dataclass(frozen=True)
+class StartFrom:
+    """Launch a fresh primary session with ``--from chat_id``, inheriting its identity."""
+
+    chat_id: str
+    agent: str = ""
+    model: str = ""
+    work_id: str = ""
+    prompt: str = ""
+    kind: Literal["start-from"] = field(default="start-from", init=False)
+
+
+@dataclass(frozen=True)
 class Blocked:
     reason: str
     kind: Literal["blocked"] = field(default="blocked", init=False)
 
 
-type SessionReentryDecision = Resume | Fork | Blocked
+type SessionReentryDecision = Resume | Fork | StartFrom | Blocked
+type StartFromDecision = StartFrom | Blocked
 
 
 def decide_reentry(
@@ -44,6 +57,16 @@ def decide_reentry(
     if live:
         return Fork(chat_id)
     return Resume(chat_id)
+
+
+def decide_start_from(
+    *, chat_id: str, has_harness_session: bool, agent: str, model: str, work_id: str
+) -> StartFromDecision:
+    """``--from`` reads recorded state only, so running, stopped and restored chats all qualify."""
+
+    if not has_harness_session:
+        return Blocked("no harness session recorded; cannot start from it")
+    return StartFrom(chat_id, agent=agent, model=model, work_id=work_id)
 
 
 def resolve_session_reentry(project_root: str, chat_id: str) -> SessionReentryDecision:
@@ -76,6 +99,9 @@ __all__ = [
     "Fork",
     "Resume",
     "SessionReentryDecision",
+    "StartFrom",
+    "StartFromDecision",
     "decide_reentry",
+    "decide_start_from",
     "resolve_session_reentry",
 ]
