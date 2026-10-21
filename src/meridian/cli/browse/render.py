@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple
 
+from prompt_toolkit.utils import get_cwidth
+
 from meridian.cli.browse.model import (
     SORTS,
     STATUSES,
@@ -54,8 +56,14 @@ def start_prompt_footer(chat_id: str, text: str, width: int) -> StyleAndTextTupl
     """One-line prompt for a fresh session reading ``chat_id``; the typed tail stays visible."""
     label = f"start from {chat_id}: "
     tail = "  enter start  esc cancel"
-    room = max(1, width - len(label) - len(tail) - 1)
-    shown = text[-room:]
+    room = max(1, width - get_cwidth(label) - get_cwidth(tail) - 1)
+    kept: list[str] = []
+    for character in reversed(text):
+        room -= get_cwidth(character)
+        if room < 0:
+            break
+        kept.append(character)
+    shown = "".join(reversed(kept))
     return [("class:label", label), ("", shown + "█"), ("class:hint", tail)]
 
 

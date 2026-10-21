@@ -362,7 +362,9 @@ class _Browser:
         if isinstance(decision, Blocked):
             view.message = f"{chat_id}: {decision.reason}"
             return
-        model = view.model if isinstance(view, DetailState) and view.model else decision.model
+        # The row's model is the one on screen (detail refreshes it); the decision's copy is not.
+        model = view.model if isinstance(view, DetailState) and view.model else ""
+        model = model or (row.model if row is not None else "") or decision.model
         self.start, self.start_text = replace(decision, model=model), ""
 
     def launch_start_from(self) -> None:

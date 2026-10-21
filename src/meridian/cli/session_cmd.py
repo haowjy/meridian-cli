@@ -85,15 +85,16 @@ def _exec_argv(
     if config_file:
         argv.extend(("--config", config_file))
     if isinstance(decision, StartFrom):
-        argv.extend(("--from", decision.chat_id))
+        # `--opt=value` keeps a value such as "-x fix" from parsing as a flag. An empty agent
+        # stays explicit: omitting `--agent` would select the configured default profile.
+        argv.extend(("--from", decision.chat_id, f"--agent={decision.agent}"))
         for flag, value in (
-            ("-a", decision.agent),
-            ("-m", decision.model),
+            ("--model", decision.model),
             ("--work", decision.work_id),
-            ("-p", decision.prompt),
+            ("--prompt", decision.prompt),
         ):
             if value:
-                argv.extend((flag, value))
+                argv.append(f"{flag}={value}")
     else:
         argv.extend(("--fork" if decision.kind == "fork" else "--continue", decision.chat_id))
     return argv
