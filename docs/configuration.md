@@ -516,6 +516,8 @@ Environment variables still override all file values.
 
 Mars owns package materialization, project routing defaults, model aliases, and
 per-agent runtime policy. See [Mars configuration and agent runtime](configuration/mars.md).
+Which of a profile's `tools`, `sandbox`, and `approval` each harness applies is in
+[Permissions by harness](agent-profiles.md#permissions-by-harness).
 
 ## Example
 

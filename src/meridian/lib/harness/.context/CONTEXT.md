@@ -306,8 +306,10 @@ In managed-primary mode, Meridian is the first WebSocket client (turn owner).
 server — the TUI (secondary observer) can only observe notifications.
 `CodexConnection._handle_server_request()` dispatches these through an injected
 request handler:
-- Spawn paths: `AutoAcceptHandler` (auto-approves all)
-- Managed-primary attach: `InteractiveHandler` (surfaces as durable events)
+- Spawn paths: `PermissionBroker` with auto-reject (the request is answered `reject`)
+- Managed-primary attach: `PermissionBroker` without auto-reject (journals and
+  surfaces the request as durable events; no in-tree code replies — the control
+  socket's `permission_reply` message is the only reply path)
 
 ### Codex: Live-Fork Snapshot Contract
 

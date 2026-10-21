@@ -48,25 +48,41 @@ Exit code conventions: non-zero → `GuardrailFailure`; timeout → 124; `OSErro
 
 ## Permission Resolution (`permissions.py`)
 
-`PermissionConfig` holds transport-neutral intent: `sandbox` and `approval` modes.
-The resolver translates intent into harness flags.
+`PermissionConfig` holds transport-neutral intent: `sandbox` and `approval` modes,
+plus `opencode_permission_override`, the OpenCode permission JSON compiled from
+`tools`. The resolver translates intent into harness flags.
 
 **Resolver selection via `build_permission_resolver()`:**
 
 | Condition | Resolver | Emits |
 |---|---|---|
-| Neither list provided | `TieredPermissionResolver` | `()` — harness derives from sandbox/approval |
-| `allowed_tools` only | `ExplicitToolsResolver` | `--allowedTools <csv>` (Claude) |
-| `disallowed_tools` only | `DisallowedToolsResolver` | `--disallowedTools <csv>` (Claude) |
-| Both provided | `CombinedToolsResolver` | Combined; allowlist takes precedence for OpenCode JSON |
+| `tools` is `None` | `TieredPermissionResolver` | `()` — harness derives from sandbox/approval |
+| `tools` is a `ToolsField` | `ToolsPermissionResolver` | Claude `--allowedTools` / `--disallowedTools` from `compile_tools_to_claude_flags`; OpenCode JSON from `opencode_permission_json()` |
 | Explicit unsafe opt-out | `UnsafeNoOpPermissionResolver` | `()` + warning log |
 
-**Tool name normalization:** `_normalize_tool_name` strips Claude-style qualifiers
-(`tool(args)` → `tool`) and lowercases. Applied before all allow/deny operations.
+**`tools` is the abstract `ToolsField`** (`lib/tools.py`): a map from capability
+(or scoped `bash(rg *)` key) to `allow` / `deny` / `ask`, or the `allow` / `deny`
+shorthand. Each harness compiles it differently: Claude flags treat `ask` as
+`allow` (no flag expresses it), OpenCode keeps `ask`, and Codex ignores the map
+except for `infer_codex_sandbox_from_tools`. Profiles reach this type through
+`launch/bundle_adapter.py`, which rebuilds it from Mars's `tools.allowed` /
+`tools.disallowed` lists, so a profile never produces `ask`.
 
 **`resolve_permission_pipeline()` in this module** is a re-export shim that delegates
 to `lib/launch/permissions.py`. The launch layer owns the actual pipeline.
 `PermissionConfig` and the resolver types live here.
+
+**Known gaps.** Mars lowers tool names to the target harness's native names before
+Meridian sees them (Codex `exec_command` / `apply_patch`, Claude `Bash` / `Edit`),
+and two compilers here assume capability names:
+
+- `infer_codex_sandbox_from_tools` looks for `bash` and `edit`, so on Codex it never
+  matches and returns `read-only` whenever `tools` is set and `sandbox` is not.
+- `compile_tools_to_claude_flags` lowercases each key and re-capitalizes only its
+  first letter, so multi-word Claude tools (`WebSearch`, `WebFetch`,
+  `AskUserQuestion`) become `Websearch` etc., which Claude ignores.
+
+User-facing behavior is in `docs/agent-profiles.md#permissions-by-harness`.
 
 ## Circular Import Constraints
 

@@ -174,7 +174,7 @@ unsupported and fail with migration guidance.
 
 ### Supported fields
 
-Scalar fields: `model`, `harness`, `effort`, `approval`, `sandbox`, `autocompact`, `autocompact_pct`.
+Scalar fields: `model`, `harness`, `effort`, `approval` (`default`, `confirm`, `auto`, `never`), `sandbox` (`default`, `read-only`, `workspace-write`, `danger-full-access`), `autocompact`, `autocompact_pct`.
 
 **`timeout` is not supported in agent overlays.** Timeout continues to resolve
 through CLI/env/profile/Meridian-config paths.
@@ -187,7 +187,11 @@ Overlay rules are prepended before profile rules to form one effective
 ordered `model-policies` list. Matching uses first-match-wins by list order.
 Duplicate matches are valid; the earlier rule in the combined list wins.
 
-List/tool override keys (`skills`, `tools`, `disallowed-tools`, `mcp-tools`) are rejected with a warning in agent overlays.
+`approval` and `sandbox` overlays take effect, with the per-harness limits in
+[Permissions by harness](../agent-profiles.md#permissions-by-harness). Tool policy
+comes from the profile only: a `[agents.<name>.tools]` table in an overlay does not
+change what Meridian launches with, and a list-valued `tools` key under
+`[agents.<name>]` is a parse error.
 
 ### Three-state model-policy semantics
 

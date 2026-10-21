@@ -65,7 +65,9 @@ authoritative spawn state.
 | `--task-dir PATH` | Override source-edit directory for this spawn/fork (must exist) |
 | `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
-| `--approval MODE` | `default` \| `confirm` \| `auto` \| `yolo` |
+| `--approval MODE` | `default` \| `confirm` \| `auto` \| `never`. Overrides the profile; each harness applies only some modes: [Permissions by harness](agent-profiles.md#permissions-by-harness) |
+| `--sandbox MODE` | `default` \| `read-only` \| `workspace-write` \| `danger-full-access`. Overrides the profile; only Codex and Cursor apply it |
+| `--yolo` | Shorthand for `--approval never`. Rejected together with `--approval` |
 | `--metadata` | Show detailed inline accounting (model, cost, tokens, duration, report path). Still includes report body and transcript command. |
 | `--no-full` | Suppress report body from output (default is now to show it) |
 | `--verbose` | Debug/runtime verbosity |

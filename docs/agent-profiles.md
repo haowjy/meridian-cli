@@ -50,16 +50,15 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `name` | str | filename stem | Profile identifier used with `-a NAME` |
 | `description` | str | `""` | One-line description shown in `mars list` |
 | `model` | str | — | Default model alias or ID (e.g. `claude-sonnet`, `gpt-5.3-codex`) |
-| `harness` | str | — | Force a specific harness (`claude`, `codex`, `opencode`) |
+| `harness` | str | — | Force a specific harness: `claude`, `codex`, `opencode`, `cursor`, or `pi` |
 | `mode` | str | `subagent` | `primary` or `subagent` — controls listing grouping |
 | `model-invocable` | bool | `true` | `false` hides agent from model-facing inventory prompt; explicit `-a NAME` invocation still works. Skills have their own `model-invocable`; see [Skills](#skills-and-skill-variants) |
 | `skills` | list[str] or `{load, available}` | `[]` | Skills the agent loads into its system prompt; the mapping form also lists skills it may load itself. See [Skills](#skills-and-skill-variants) |
-| `tools` | list[str] | `[]` | Tool names to allow |
-| `disallowed-tools` | list[str] | `[]` | Tool names to block |
-| `mcp-tools` | list[str] | `[]` | MCP tool names to enable |
-| `sandbox` | str | — | Sandbox level override |
+| `tools` | map or list[str] | — | Per-tool rules: `bash: allow`, `edit: deny`. A list allows each name. A scoped key such as `bash(rg *)` limits a rule to matching calls. `allow` and `deny` are the only values; `ask` is rejected. MCP grants are `mcp(server)` entries. What each harness does with the rules: [Permissions by harness](#permissions-by-harness) |
+| `disallowed-tools` | list[str] | `[]` | Tools to deny, with the same names and scoped keys as `tools`. Equivalent to `deny` entries in the `tools` map |
+| `sandbox` | str | — | `default`, `read-only`, `workspace-write`, or `danger-full-access`. Applied by Codex and Cursor only: [Permissions by harness](#permissions-by-harness) |
 | `effort` | str | — | Effort level (`low`, `medium`, `high`) |
-| `approval` | str | — | Approval mode (`default`, `confirm`, `auto`, `yolo`) |
+| `approval` | str | — | When the harness stops to ask: `default`, `confirm`, `auto`, or `never`. `yolo` is a deprecated spelling of `never`. See [Permissions by harness](#permissions-by-harness) |
 | `autocompact` | int | — | Compaction percentage threshold |
 | `timeout` | int | — | Spawn timeout in seconds |
 | `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited |
@@ -104,7 +103,7 @@ model-policies:
   - match:
       model-glob: "openai/*"
     override:
-      sandbox: strict
+      sandbox: read-only
 ```
 
 ### Match selectors
@@ -282,6 +281,54 @@ model-policies:
 ```
 
 ...works on a machine with only Codex installed — it silently routes to `gpt5` rather than erroring.
+
+## Permissions by harness
+
+A profile has three permission fields: `tools` (which tools the agent may call), `sandbox` (what the harness may touch on disk), and `approval` (when the harness stops to ask).
+
+```yaml
+tools:
+  'bash(rg *)': allow     # scoped key: only matching shell commands
+  edit: deny
+sandbox: read-only
+approval: never
+```
+
+A *spawn* is an agent Meridian launches with `meridian spawn`; a *primary* is the interactive session you start with `meridian` and work in yourself. Each harness applies only some of these fields. Meridian drops the rest without an error or a warning, so a profile that is read-only on one harness can be unrestricted on another. Read the row for the harness the profile runs on before relying on a field.
+
+| Harness | `tools` | `sandbox` | `approval` |
+|---|---|---|---|
+| **Claude**, spawn and primary | `deny` removes the tool. `allow` only skips the prompt for it; tools you don't list stay available | No effect | `confirm` asks (permission mode `default`). `auto` approves file edits and asks for other tools. `never` skips every permission check. `default` leaves Claude's own default |
+| **Codex**, spawn and primary | No effect, except `web: allow`, which turns on Codex web search | Applied. With `tools` set and `sandbox` unset, Codex launches `read-only` | `auto` lets Codex decide when to ask (`on-request`). `never` stops Codex asking; the sandbox still applies. `confirm` fails to launch (see below) |
+| **OpenCode**, spawn | Applied. Denied tools are removed from the model's tool list | No effect | No effect |
+| **OpenCode**, primary | No effect: the TUI uses OpenCode's own permissions | No effect | No effect |
+| **Pi**, spawn and primary | No effect | No effect | No effect |
+| **Cursor**, spawn only | No effect | `read-only` turns Cursor's sandbox on. `workspace-write` and `danger-full-access` turn it off; Cursor's sandbox has no middle setting | `never` passes `--yolo`, `auto` passes `--force`. `default` and `confirm` pass nothing |
+
+The same limits apply when `approval` or `sandbox` comes from `--approval`, `--sandbox`, `--yolo`, a [Mars agent overlay](configuration/mars.md#agent-runtime-overlays), or `[primary]` in [Meridian config](configuration.md) instead of the profile. `tools` comes only from the profile.
+
+Things the table implies:
+
+- **Denying `edit` does not make an agent read-only.** It removes the edit tools, and a shell command can still write a file. A sandbox stops that: `sandbox: read-only` on Codex and Cursor. Claude and OpenCode have no sandbox here, so deny `bash` too. Nothing restricts writes on Pi.
+- **On Claude, only some `tools` names reach Claude intact.** One-word tools (`bash`, `read`, `edit`, `write`, `glob`, `grep`, `agent`) work. Tools that are two words in Claude (`web`, `web_fetch`, `ask_user`) reach it with the wrong capitalization: `web: deny` becomes `Websearch`, which is not Claude's `WebSearch`, so Claude prints `Permission deny rule "Websearch" matches no known tool` and the tool stays available. Meridian also denies Claude's own sub-agent tools (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) on every launch, and the `agent` and `task` tools in spawns unless the profile allows them, so delegation goes through `meridian spawn`.
+- **On Codex, `confirm` fails.** Meridian passes `approval_policy="untrusted"`, and Codex 0.163.0 exits at startup with `approval_policy = "untrusted" is no longer supported`. Use `auto` or `never` on Codex.
+- **On Codex, set `sandbox` whenever `tools` is set.** The inferred sandbox is `read-only` whatever `tools` allows, so a profile that allows `bash` and `edit` still cannot write.
+- **OpenCode primaries ignore `tools`.** The same profile restricts an OpenCode spawn and not an OpenCode primary session.
+
+`meridian spawn -a NAME --dry-run` prints the command line Meridian builds, including the permission flags for Claude, Codex, Cursor, and Pi. OpenCode receives its rules in its environment instead: `OPENCODE_PERMISSION` on OpenCode 1.x, `OPENCODE_CONFIG_CONTENT` on OpenCode 2.x. `--dry-run` does not show them.
+
+### Who answers an approval request
+
+A request arises when a tool call needs approval under the harness's approval mode. A profile cannot set a tool to `ask`; requests come from `approval` and the harness's own defaults.
+
+| Where | What happens |
+|---|---|
+| Codex or OpenCode spawn | Meridian rejects the request and records it in the spawn's `permission_requests.jsonl`. The agent's tool call fails |
+| Claude spawn | Claude blocks the call and returns an approval-required error to the agent. This applies to the agent's Meridian commands too: under `approval: confirm` a spawn can be refused its own `meridian spawn done` |
+| Pi spawn | Pi has no approval prompts |
+| Claude or OpenCode primary | The harness asks the user in its own TUI |
+| Codex primary | Codex sends approval requests to Meridian instead of showing them in its TUI. Meridian records them and nothing answers, so the tool call does not run. Avoid profiles that need approvals on a Codex primary |
+| Cursor | Unknown: not observed. Don't rely on approval prompts in Cursor spawns |
 
 ## Example Profiles
 
