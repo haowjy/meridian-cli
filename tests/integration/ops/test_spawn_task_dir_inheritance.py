@@ -71,7 +71,6 @@ def test_execute_contract_does_not_shadow_ambient_work_item_task_dir(
     contract = _resolve_execution_contract(
         request=SpawnRequest(
             prompt="task",
-            prompt_is_composed=True,
             model="gpt-5.4",
             harness=HarnessId.CODEX.value,
             authority_root=project_root.as_posix(),

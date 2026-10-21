@@ -94,8 +94,10 @@ class SpawnRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     # Prompt / agent / skills
+    # The caller's task prompt. Never the composed launch text: every prepare
+    # renders ``context_refs`` and ``reference_files`` around it, so feeding the
+    # composed text back in would render them twice.
     prompt: str
-    prompt_is_composed: bool = True
     primary_prompt_is_synthetic: bool = False
     model: str | None = None
     harness: str | None = None

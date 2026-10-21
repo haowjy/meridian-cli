@@ -72,7 +72,6 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         spawn_id="dry-run-opencode-spawn-prepare",
         request=SpawnRequest(
             prompt="task prompt",
-            prompt_is_composed=False,
             model="google/gemini-2.5-pro",
             harness="opencode",
             agent="dev-orchestrator",
@@ -111,9 +110,9 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         "user_task_prompt": "user-turn",
         "task_context": "user-turn",
     }
-    assert f"# Reference: {file_ref.as_posix()}" in preview.resolved_request.prompt
-    assert f"# Reference: {dir_ref.as_posix()}/" in preview.resolved_request.prompt
-    assert "# Meridian Agents" not in preview.resolved_request.prompt
+    assert f"# Reference: {file_ref.as_posix()}" in preview.binding.run_params.prompt
+    assert f"# Reference: {dir_ref.as_posix()}/" in preview.binding.run_params.prompt
+    assert "# Meridian Agents" not in preview.binding.run_params.prompt
     assert "# Meridian Agents" in preview.projected_content.system_prompt
 
 
@@ -139,7 +138,6 @@ def test_spawn_prepare_profile_resolved_claude_approval_auto_projects_accept_edi
         spawn_id="dry-run-claude-spawn-prepare-approval-auto",
         request=SpawnRequest(
             prompt="task prompt",
-            prompt_is_composed=False,
             agent="coder",
         ),
         runtime=LaunchRuntime(
@@ -190,7 +188,6 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
         spawn_id=f"dry-run-{harness}-spawn-prepare-no-inventory",
         request=SpawnRequest(
             prompt="task prompt",
-            prompt_is_composed=False,
             model=model,
             harness=harness,
             agent="dev-orchestrator",
@@ -213,7 +210,7 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
     assert "`meridian spawn -a dev-orchestrator`" in inventory_channel
     assert "`meridian spawn -a reviewer`" in inventory_channel
     assert "# Meridian Agents" not in preview.projected_content.user_turn_content
-    assert "# Meridian Agents" not in preview.resolved_request.prompt
+    assert "# Meridian Agents" not in preview.binding.run_params.prompt
 
 
 def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
@@ -253,7 +250,6 @@ def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
         spawn_id="dry-run-codex-spawn-prepare-spawn-disabled",
         request=SpawnRequest(
             prompt="task prompt",
-            prompt_is_composed=False,
             model="gpt-5.4",
             harness="codex",
             agent="dev-orchestrator",
@@ -307,7 +303,6 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
         spawn_id="dry-run-claude-spawn-prepare",
         request=SpawnRequest(
             prompt="complete the task",
-            prompt_is_composed=False,
             model="claude-sonnet-4-5",
             harness="claude",
             agent="dev-orchestrator",
@@ -391,7 +386,6 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
         spawn_id="dry-run-claude-spawn-prepare-continue",
         request=SpawnRequest(
             prompt="continue the task",
-            prompt_is_composed=False,
             model="claude-sonnet-4-5",
             harness="claude",
             agent="dev-orchestrator",
@@ -448,7 +442,6 @@ def test_spawn_prepare_claude_projects_profile_auto_approval_without_cli_overrid
         spawn_id="dry-run-claude-spawn-prepare-approval-auto",
         request=SpawnRequest(
             prompt="task",
-            prompt_is_composed=False,
             model="claude-sonnet-4-5",
             harness="claude",
         ),
@@ -490,7 +483,6 @@ def test_spawn_prepare_headless_deny_error_names_denied_harness(
             spawn_id="dry-run-codex-spawn-denied",
             request=SpawnRequest(
                 prompt="task",
-                prompt_is_composed=False,
                 model="gpt-5.4",
                 harness="codex",
             ),
@@ -535,7 +527,6 @@ def test_spawn_prepare_headless_deny_same_harness_suggests_native_agent(
             spawn_id="dry-run-claude-spawn-denied",
             request=SpawnRequest(
                 prompt="task",
-                prompt_is_composed=False,
                 model="claude-opus-4-6",
                 harness="claude",
             ),

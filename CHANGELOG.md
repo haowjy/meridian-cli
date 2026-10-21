@@ -23,6 +23,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Old-format idle state files no longer print a version warning on every listing. Only a write that would replace one warns.
 - Format-v1 idle state files are read (last turn and TTL kept) instead of ignored.
 - Session listing no longer reads a work item per row; the work label is the work id.
+- A background spawn (`spawn --bg`) no longer puts its `--from` context and `-f` references in its prompt twice. The worker composed the prompt again around the already-composed text.
 
 ## [0.11.4] - 2026-10-21
 

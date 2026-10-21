@@ -86,7 +86,6 @@ def build_primary_spawn_request(
 
     return SpawnRequest(
         prompt=base_prompt,
-        prompt_is_composed=False,
         primary_prompt_is_synthetic=primary_prompt_is_synthetic,
         model=(request.model or "").strip() or None,
         harness=(request.harness or "").strip() or None,

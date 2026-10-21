@@ -752,7 +752,6 @@ def test_opencode_named_primary_continue_preserves_explicit_model(
         spawn_id="dry-run-opencode-named-continue",
         request=SpawnRequest(
             prompt="continue prompt",
-            prompt_is_composed=False,
             model="openai/gpt-5.5",
             harness=HarnessId.OPENCODE.value,
             session=SessionRequest(

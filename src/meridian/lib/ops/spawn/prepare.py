@@ -171,7 +171,6 @@ def build_create_payload(
 
         raw_request = SpawnRequest(
             prompt=payload.prompt,
-            prompt_is_composed=False,
             model=payload.model or None,
             harness=payload.harness,
             agent=payload.agent,

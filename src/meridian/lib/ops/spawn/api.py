@@ -455,7 +455,7 @@ def spawn_create_sync(
             reference_files=prepared_request.reference_files,
             template_vars=prepared_request.template_vars,
             context_from_resolved=context_ref_values(prepared_request.context_refs),
-            composed_prompt=prepared_request.prompt,
+            composed_prompt=prepared_surface.content.final_prompt,
             goal=prepared_goal,
             model_selection_requested_token=prepared_request.model_selection_requested_token,
             model_selection_canonical_id=prepared_request.model_selection_canonical_id,

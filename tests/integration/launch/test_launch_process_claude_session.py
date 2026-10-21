@@ -76,7 +76,6 @@ def _build_primary_launch_context(
         spawn_id=f"dry-run-primary-{harness_id.value}",
         request=SpawnRequest(
             prompt=prompt,
-            prompt_is_composed=False,
             model=model,
             harness=harness_id.value,
             extra_args=extra_args,

@@ -1280,37 +1280,13 @@ def _prepare_spawn_surface(
     policy: ResolvedLaunchPolicy,
     launch_mode: LaunchMode | None = None,
 ) -> tuple[PreparedLaunchContent, ResolvedContinuation]:
-    content = PreparedLaunchContent(
-        final_prompt=request.prompt,
-        resolved_context_from=context_ref_values(request.context_refs),
+    content = _resolve_spawn_prepare_projection(
+        request=request,
+        project_paths=project_paths,
+        active_work_dir=active_work_dir,
+        policy=policy,
+        launch_mode=launch_mode,
     )
-
-    if not request.prompt_is_composed:
-        content = _resolve_spawn_prepare_projection(
-            request=request,
-            project_paths=project_paths,
-            active_work_dir=active_work_dir,
-            policy=policy,
-            launch_mode=launch_mode,
-        )
-    else:
-        composed, resolved_context_from = _build_spawn_composed_launch_content(
-            request=request,
-            project_paths=project_paths,
-            active_work_dir=active_work_dir,
-            policy=policy,
-            launch_mode=launch_mode,
-        )
-        stored_composed = composed_content_for_bind_refresh(composed)
-        if stored_composed is not None:
-            content = PreparedLaunchContent(
-                final_prompt=content.final_prompt,
-                resolved_context_from=resolved_context_from or content.resolved_context_from,
-                loaded_references=composed.reference_items,
-                prompt_payload=content.prompt_payload,
-                projected_content=content.projected_content,
-                composed_content=stored_composed,
-            )
 
     return (
         content,
@@ -1503,8 +1479,6 @@ def prepare_launch_surface(
 
     resolved_request = request.model_copy(
         update={
-            "prompt": content.final_prompt,
-            "prompt_is_composed": True,
             "model": policies.model,
             "harness": str(policies.harness),
             "agent": resolved_agent_name,

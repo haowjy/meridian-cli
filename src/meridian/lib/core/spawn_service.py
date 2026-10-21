@@ -536,7 +536,7 @@ class SpawnApplicationService:
         connection_config = ConnectionConfig(
             spawn_id=final_spawn_id,
             harness_id=harness_id,
-            prompt=launch_ctx.resolved_request.prompt,
+            prompt=launch_ctx.binding.run_params.prompt,
             control_root=launch_ctx.control_root,
             child_env=child_env,
             runtime_root=launch_ctx.runtime_root,
