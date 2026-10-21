@@ -20,6 +20,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Format-v1 idle state files are read (last turn and TTL kept) instead of ignored.
 - `--from` records the chat and history of the context it actually used, not the continuation target.
 - A primary session records its last executed model when it stops (after scope cleanup, best effort: never waits on a lock, reads only the history tail), so browse shows the last-used model for sessions never continued or opened.
+- `session browse` type-to-search queries the index before LIMIT (chat id, tmux, work, agent, model, cwd), so a chat outside the first page is found; `N of M` counts the match. Status/Sort reloads show "loading…" instead of the previous scope's rows, and cancel any transcript search.
+- `session browse` detail opens for a lineage node with no list row, and transcript entries scroll in full instead of clipping at 60 lines.
+- Primary `--from` resolves the context ref once and passes it through launch composition.
 
 ## [0.11.4] - 2026-10-21
 

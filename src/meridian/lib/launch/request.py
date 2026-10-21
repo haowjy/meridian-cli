@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.core.context_ref import ContextRef
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
@@ -118,6 +119,9 @@ class SpawnRequest(BaseModel):
 
     # Context plumbing
     context_from: tuple[str, ...] = ()
+    # Refs a caller already resolved (primary launch); composition resolves ``context_from``
+    # itself only when this is empty.
+    context_refs: tuple[ContextRef, ...] = ()
     reference_files: tuple[str, ...] = ()
     template_vars: dict[str, str] = Field(default_factory=_empty_template_vars)
 

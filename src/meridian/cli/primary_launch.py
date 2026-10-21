@@ -342,7 +342,11 @@ def run_primary_launch(
             requested_work_id = resolved_fork.source_work_id
 
     # Same resolver as the prompt context, so the persisted identity is the one the writer read.
-    context_source = resolve_context_ref(project_root, raw_from_target) if raw_from_target else None
+    # (the bare-`--from` sentinel is already resolved to a spawn id in ``resolved_context_from``)
+    context_sources = tuple(
+        resolve_context_ref(project_root, ref) for ref in fork_resolution.resolved_context_from
+    )
+    context_source = context_sources[0] if context_sources else None
     resolved_goal = normalize_goal(goal)
 
     launch_result = launch_primary(
@@ -367,6 +371,7 @@ def run_primary_launch(
             supplemental_prompt_documents=supplemental_prompt_documents,
             include_bootstrap_documents=include_bootstrap_documents,
             context_from=fork_resolution.resolved_context_from,
+            context_refs=context_sources,
             reference_files=reference_files,
             prompt=prompt,
             skills=requested_skills,

@@ -97,6 +97,7 @@ def build_primary_spawn_request(
         ignore_direnv=request.ignore_direnv,
         supplemental_prompt_documents=request.supplemental_prompt_documents,
         context_from=request.context_from,
+        context_refs=request.context_refs,
         reference_files=request.reference_files,
         execution_policy=request.execution_policy,
         session=normalized_session,

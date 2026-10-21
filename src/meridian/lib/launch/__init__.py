@@ -129,6 +129,7 @@ def launch_primary(
         authority_root=resolved_project_root,
         project_state_dir=project_state_dir,
         context_from=request.context_from,
+        context_refs=request.context_refs,
         reference_files=request.reference_files,
         explicit_task_dir=request.task_dir,
         explicit_work_id=explicit_work_id,

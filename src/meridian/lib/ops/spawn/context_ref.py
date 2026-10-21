@@ -3,11 +3,8 @@
 import re
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
-from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
-
+from meridian.lib.core.context_ref import ContextRef, SessionContextRef, SpawnContextRef
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -49,47 +46,6 @@ def _reject_filesystem_path_context_ref(value: str) -> None:
         "Use a spawn id (p123), chat id (c123), or harness session id. "
         "To include file contents in the prompt, use --file/-f instead."
     )
-
-
-class SpawnContextRef(BaseModel):
-    """Resolved context payload sourced from one prior spawn."""
-
-    model_config = ConfigDict(frozen=True)
-
-    ref_kind: Literal["spawn"] = "spawn"
-    spawn_id: str
-    status: str
-    agent: str
-    desc: str
-    model: str
-    harness: str
-    report_text: str | None = None
-    harness_session_id: str | None = None
-    chat_id: str | None = None
-    history_id: UUID | None = None
-    work_id: str | None = None
-    task_cwd: str | None = None
-
-
-class SessionContextRef(BaseModel):
-    """Resolved context payload sourced from one prior chat/session."""
-
-    model_config = ConfigDict(frozen=True)
-
-    ref_kind: Literal["session"] = "session"
-    chat_id: str
-    primary_spawn_id: str | None = None
-    history_id: UUID | None = None
-    status: str
-    agent: str
-    model: str
-    harness: str
-    harness_session_id: str | None = None
-    work_id: str | None = None
-    task_cwd: str | None = None
-
-
-type ContextRef = SpawnContextRef | SessionContextRef
 
 
 def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> SpawnRecord | None:

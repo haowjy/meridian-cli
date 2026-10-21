@@ -31,6 +31,7 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
+from meridian.lib.core.context_ref import ContextRef
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
@@ -354,6 +355,7 @@ class TaskContextInputs:
 def resolve_task_context_inputs(
     *,
     context_from: tuple[str, ...],
+    context_refs: tuple[ContextRef, ...] = (),
     reference_files: tuple[str, ...],
     authority_root: Path,
     reference_anchor: Path,
@@ -376,7 +378,7 @@ def resolve_task_context_inputs(
             resolved_context_ref_value,
         )
 
-        resolved_context_refs = tuple(
+        resolved_context_refs = context_refs or tuple(
             resolve_context_ref(resolved_authority_root, ref) for ref in context_from
         )
         resolved_context_from = tuple(
@@ -1122,6 +1124,7 @@ def _build_spawn_composed_launch_content(
 
     task_ctx = resolve_task_context_inputs(
         context_from=request.context_from,
+        context_refs=request.context_refs,
         reference_files=request.reference_files,
         authority_root=project_paths.project_root,
         reference_anchor=project_paths.execution_cwd,
@@ -1247,6 +1250,7 @@ def _resolve_primary_projection(
 
     task_ctx = resolve_task_context_inputs(
         context_from=request.context_from,
+        context_refs=request.context_refs,
         reference_files=request.reference_files,
         authority_root=project_paths.project_root,
         reference_anchor=project_paths.execution_cwd,
