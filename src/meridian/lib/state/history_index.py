@@ -12,7 +12,7 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -92,14 +92,6 @@ META = Table(
     Column("version", Integer, nullable=False),
     Column("generation", Text, nullable=False),
     Column("build", Text, nullable=False),
-)
-PREVIEWS = Table(
-    "previews",
-    INDEX_SCHEMA,
-    Column("key", Text, primary_key=True),
-    Column("history_id", Text),
-    Column("archive_digest", Text),
-    Column("value", Text, nullable=False),
 )
 RECORDS = Table(
     "records",
@@ -1270,122 +1262,6 @@ class HistoryIndex:
                 db = stack.enter_context(_connect(self.path, timeout=_remaining(deadline)))
             yield db
 
-    def preview_references(self) -> tuple[tuple[str, str | None, str], ...]:
-        recent, _ = self.recent_sessions(limit=2**31 - 1, live_chat_ids=set())
-        references: list[tuple[str, str | None, str]] = []
-        seen: set[str] = set()
-        for row in recent:
-            history_id = str(row.history_id) if row.history_id else None
-            if isinstance(row, SpawnRecord):
-                ref, generation = str(row.history_id), row.session_instance_id or ""
-            else:
-                ref = row.chat_id
-                generation = row.session_instance_id or row.harness_session_id or row.started_at
-            references.append((ref, history_id, generation))
-            if history_id:
-                seen.add(history_id)
-        with self.query() as db:
-            # Warming includes selected archived children, not only loose spawns
-            # and the primary-session browser's rows.
-            for history_id, generation in db.execute(
-                select(
-                    RECORDS.c.history_id,
-                    func.json_extract(RECORDS.c.record_json, "$.session_instance_id"),
-                )
-            ):
-                if history_id not in seen:
-                    references.append((history_id, history_id, generation or ""))
-        return tuple(references)
-
-    def preview_count(self, *, preview_version: int, deadline: float | None = None) -> int:
-        """Read cached counts without initializing or catching up metadata."""
-        deadline = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
-        with lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)):
-            if not self.path.exists():
-                return 0
-            with _connect(self.path, timeout=_remaining(deadline), readonly=True) as db:
-                meta = db.execute(select(META.c.version)).first()
-                if meta is None or meta[0] != SCHEMA_VERSION:
-                    return 0
-                preview_rows = select(
-                    PREVIEWS.c.key, PREVIEWS.c.history_id, PREVIEWS.c.archive_digest
-                ).where(
-                    func.json_valid(PREVIEWS.c.value) == 1,
-                    func.json_extract(PREVIEWS.c.value, "$.preview.version") == preview_version,
-                    func.json_extract(PREVIEWS.c.value, "$.preview.rendering_reason").is_(None),
-                    func.json_extract(PREVIEWS.c.value, "$.complete") == 1,
-                )
-                return sum(
-                    self._preview_generation_matches(db, row[0])
-                    and self._preview_binding_matches(db, row[1], row[2])
-                    for row in db.execute(preview_rows)
-                )
-
-    def preview_cache(self, key: str) -> tuple[str, str | None] | None:
-        """Bounded cache-only lookup: never catch up metadata or open source content."""
-        if not self.path.exists():
-            return None
-        with (
-            lock_file(self.database_lock, mode="shared", timeout=0.005),
-            _connect(self.path, timeout=0.005, readonly=True) as db,
-        ):
-            meta = db.execute(select(META.c.version, META.c.build)).first()
-            if meta is None or meta[0] != SCHEMA_VERSION:
-                return None
-            row = db.execute(
-                select(PREVIEWS.c.history_id, PREVIEWS.c.archive_digest, PREVIEWS.c.value).where(
-                    PREVIEWS.c.key == key
-                )
-            ).first()
-            if (
-                row is not None
-                and self._preview_generation_matches(db, key)
-                and self._preview_binding_matches(db, row[0], row[1])
-            ):
-                return meta[1], row[2]
-            return meta[1], None
-
-    @staticmethod
-    def _preview_generation_matches(db: Connection, key: str) -> bool:
-        history_id, generation, ref = json.loads(key)
-        if history_id is not None:
-            return True  # The portable UUID, not a reusable alias, resolves this source.
-        if not generation:
-            return False
-        row = db.execute(
-            select(SESSIONS.c.record_json)
-            .where(SESSIONS.c.chat == ref)
-            .order_by(SESSIONS.c.ordinal.desc())
-            .limit(1)
-        ).first()
-        if row is None:
-            return False
-        session = SessionRecord.model_validate_json(row[0])
-        return generation == (
-            session.session_instance_id or session.harness_session_id or session.started_at
-        )
-
-    @staticmethod
-    def _preview_binding_matches(
-        db: Connection, history_id: str | None, archive_digest: str | None
-    ) -> bool:
-        if history_id is None:
-            return archive_digest is None
-        row = db.execute(
-            select(RECORDS.c.archive_id, ARCHIVE_HEADS.c.portable_digest)
-            .select_from(
-                RECORDS.outerjoin(ARCHIVE_HEADS, ARCHIVE_HEADS.c.history_id == RECORDS.c.history_id)
-            )
-            .where(RECORDS.c.history_id == history_id)
-        ).first()
-        if row is None:
-            return False
-        return (
-            row[0] is None
-            if archive_digest is None
-            else row[0] is not None and row[1] == archive_digest
-        )
-
     def selected_archive_digest(self, history_id: str) -> str | None:
         with self.query() as db:
             row = db.execute(
@@ -1394,67 +1270,6 @@ class HistoryIndex:
                 )
             ).first()
             return row[0] if row else None
-
-    def store_preview(
-        self,
-        key: str,
-        *,
-        build: str,
-        previous: str | None,
-        history_id: str | None,
-        archive_digest: str | None,
-        source: HistorySource,
-        prepare_value: Callable[[], str | None],
-    ) -> bool:
-        """Publish bounded derived content only into the generation that requested it."""
-        with (
-            lock_file(HistoryChanges(self.root).mutation_lock, mode="shared", timeout=0.1),
-            lock_file(self.database_lock, mode="shared", timeout=0.1),
-            lock_file(source.lock_path(self.root), timeout=0.1),
-            _connect(self.path, timeout=0.1, autocommit=True) as db,
-        ):
-            db.exec_driver_sql("BEGIN IMMEDIATE")
-            try:
-                meta = db.execute(select(META.c.build)).first()
-                if (
-                    meta is None
-                    or meta[0] != build
-                    or not self._preview_generation_matches(db, key)
-                    or not self._preview_binding_matches(db, history_id, archive_digest)
-                ):
-                    db.rollback()
-                    return False
-                old = db.execute(
-                    select(
-                        PREVIEWS.c.history_id, PREVIEWS.c.archive_digest, PREVIEWS.c.value
-                    ).where(PREVIEWS.c.key == key)
-                ).first()
-                if (old[2] if old else None) != previous and (
-                    old is None or self._preview_binding_matches(db, old[0], old[1])
-                ):
-                    db.rollback()
-                    return False
-                value = prepare_value()
-                if value is None:
-                    db.rollback()
-                    return False
-                if len(value.encode("utf-8")) > 64 * 1024:
-                    raise ValueError("Preview exceeds the bounded cache contract")
-                db.execute(
-                    insert(PREVIEWS)
-                    .prefix_with("OR REPLACE")
-                    .values(
-                        key=key,
-                        history_id=history_id,
-                        archive_digest=archive_digest,
-                        value=value,
-                    )
-                )
-                db.commit()
-                return True
-            except BaseException:
-                db.rollback()
-                raise
 
     def snapshots(self, *, destination: Path | None = None) -> tuple[HistorySnapshot, ...]:
         from meridian.lib.state.retention_archive import ArchiveReceipt, archive_display_path

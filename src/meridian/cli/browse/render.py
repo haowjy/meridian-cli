@@ -1,176 +1,325 @@
-"""Pure prompt_toolkit formatted-text rendering for session browse."""
+"""Width-aware prompt_toolkit formatted text for each browse view (pure functions)."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
+
+from meridian.cli.browse.model import (
+    SORTS,
+    STATUSES,
+    DetailState,
+    LineageNode,
+    LineageState,
+    ListState,
+)
+from meridian.cli.browse.text import cell, clip
+from meridian.lib.core.formatting import relative_time
+from meridian.lib.ops.session_list import SessionListRow
 
 if TYPE_CHECKING:
     from prompt_toolkit.formatted_text import StyleAndTextTuples
 
-from prompt_toolkit.utils import get_cwidth
-
-from meridian.cli.browse.model import BrowseModel
-from meridian.lib.core.formatting import relative_time
-from meridian.lib.ops.session_reentry import Blocked, Fork, SessionReentryDecision
-
-_WIDE_LIST_WIDTH = 60
-_CHAT_ID_WIDTH = 7
 _AGE_WIDTH = 4
-_AGENT_WIDTH = 12
-_MODEL_WIDTH = 16
+_GAP = "  "
+LIST_HEADER_HEIGHT = 3
+DETAIL_HEADER_HEIGHT = 5
 
 
-def _clip(value: str, width: int) -> str:
-    if width <= 0:
-        return ""
-    if get_cwidth(value) <= width:
-        return value
-    if width == 1:
-        return "…"
-    target_width = width - get_cwidth("…")
-    clipped: list[str] = []
-    used_width = 0
-    for character in value:
-        character_width = get_cwidth(character)
-        if used_width + character_width > target_width:
-            break
-        clipped.append(character)
-        used_width += character_width
-    return "".join(clipped).rstrip() + "…"
+def _age(row: SessionListRow) -> str:
+    return relative_time(row.last_turn_at or row.activity_at).removesuffix(" ago")
 
 
-def _cell(value: str, width: int) -> str:
-    clipped = _clip(value, width)
-    return clipped + " " * max(0, width - get_cwidth(clipped))
+def _status_glyph(row: SessionListRow) -> tuple[str, str]:
+    if row.live:
+        return "●", "class:live"
+    if row.stale:
+        return "⚠", "class:stale"
+    return " ", ""
 
 
-def render_status(model: BrowseModel, width: int) -> StyleAndTextTuples:
-    if model.mode in {"search-input", "searching", "search-results"}:
-        scope = "+archived" if model.include_archives else "loose"
-        label = f"search ({scope}): {model.search_query}"
-        if model.mode == "searching":
-            progress = f"scanned {model.search_scanned}/{model.search_total}"
-            label = f"{label}  {progress}"
-        elif model.mode == "search-results":
-            progress = f"{len(model.search_matches)} of {model.search_total} match"
-            if model.search_unavailable:
-                progress += f" · {model.search_unavailable} unavailable"
-            label = f"{label}  {progress}"
-    else:
-        label = f"filter: {model.filter_text}"
-    return [("class:status", _clip(label, width))]
+def _lines(lines: list[StyleAndTextTuples]) -> StyleAndTextTuples:
+    out: StyleAndTextTuples = []
+    for index, line in enumerate(lines):
+        if index:
+            out.append(("", "\n"))
+        out.extend(line)
+    return out
 
 
-def render_list_header(model: BrowseModel, width: int) -> StyleAndTextTuples:
-    if not model.visible_rows:
-        return []
-    if width < _WIDE_LIST_WIDTH:
-        line = f"    {_cell('C-ID', _CHAT_ID_WIDTH)} {_cell('AGE', _AGE_WIDTH)} WORK"
-    else:
-        line = (
-            f"    {_cell('C-ID', _CHAT_ID_WIDTH)} {_cell('AGE', _AGE_WIDTH)} "
-            f"{_cell('AGENT', _AGENT_WIDTH)} {_cell('MODEL', _MODEL_WIDTH)} WORK"
-        )
-    return [("class:list-header", _clip(line, width))]
+def _title(value: str) -> str:
+    return value.capitalize()
 
 
-def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
-    rows = model.visible_rows
-    if not rows:
-        return [("class:empty", "no primary sessions")]
+def _choice(options: tuple[str, ...], current: str, focused: bool) -> StyleAndTextTuples:
+    out: StyleAndTextTuples = []
+    for option in options:
+        selected = option == current
+        style = "class:choice-focus" if selected and focused else "bold" if selected else ""
+        out += [(style, f"[{_title(option)}]" if selected else _title(option)), ("", " ")]
+    return out
 
-    fragments: StyleAndTextTuples = []
-    for index, row in enumerate(rows):
-        selected = index == model.highlight
-        if selected:
-            fragments.append(("[SetCursorPosition]", ""))
-        marker = "▸" if selected else " "
-        live = "●" if row.live else " "
-        age = relative_time(row.activity_at).removesuffix(" ago")
-        prefix = f"{marker} {live} "
-        if width < _WIDE_LIST_WIDTH:
-            line = (
-                f"{prefix}{_cell(row.chat_id, _CHAT_ID_WIDTH)} "
-                f"{_cell(age, _AGE_WIDTH)} {row.work_label or '—'}"
-            )
+
+# --- list ---------------------------------------------------------------------------------
+
+
+def _list_columns(rows: tuple[SessionListRow, ...], width: int) -> list[tuple[str, int]]:
+    """Choose TMUX/WORK/AGENT/MODEL widths; narrow terminals drop MODEL, then AGENT."""
+
+    def natural(header: str, values: list[str], low: int, high: int) -> int:
+        return max(low, min(high, max([len(header), *map(len, values)])))
+
+    cols = [
+        ("TMUX", natural("TMUX", [r.tmux_target or "" for r in rows], 4, 20)),
+        ("WORK", natural("WORK", [r.work_label for r in rows], 4, 30)),
+        ("AGENT", natural("AGENT", [r.agent for r in rows], 5, 14)),
+        ("MODEL", natural("MODEL", [r.model for r in rows], 5, 26)),
+    ]
+    fixed = 4 + _AGE_WIDTH  # gutter + status cell, then age
+
+    def total() -> int:
+        return fixed + sum(w + len(_GAP) for _, w in cols)
+
+    for droppable in ("MODEL", "AGENT"):
+        if total() > width:
+            cols = [c for c in cols if c[0] != droppable]
+    for name, floor in (("WORK", 6), ("TMUX", 4)):
+        if total() > width:
+            overflow = total() - width
+            cols = [(n, max(floor, w - overflow) if n == name else w) for n, w in cols]
+    return cols
+
+
+def _column_value(row: SessionListRow, name: str) -> str:
+    return {
+        "TMUX": row.tmux_target or "",
+        "WORK": row.work_label,
+        "AGENT": row.agent,
+        "MODEL": row.model,
+    }[name]
+
+
+def list_header(state: ListState, width: int) -> StyleAndTextTuples:
+    count = f"{len(state.visible_rows)} of {state.listing.total_count}"
+    narrow = width < 56  # drop padding so both controls still fit at 50 columns
+    left: StyleAndTextTuples = [("", "Status: " if narrow else " Status: ")]
+    left += _choice(STATUSES, state.status, state.focus == "status")
+    left += [("", "Sort: " if narrow else " Sort: ")]
+    left += _choice(SORTS, state.sort, state.focus == "sort")
+    used = sum(len(fragment[1]) for fragment in left)
+    status_line: StyleAndTextTuples = list(left)
+    if width - used >= len(count) + 2:
+        status_line.append(("", " " * (width - used - len(count) - 1)))
+        status_line.append(("class:hint", count))
+
+    if state.search_mode == "off":
+        if state.filter_text:
+            search: StyleAndTextTuples = [("bold", f"> {clip(state.filter_text, width - 2)}")]
         else:
-            line = (
-                f"{prefix}{_cell(row.chat_id, _CHAT_ID_WIDTH)} {_cell(age, _AGE_WIDTH)} "
-                f"{_cell(row.agent or '—', _AGENT_WIDTH)} "
-                f"{_cell(row.model or '—', _MODEL_WIDTH)} {row.work_label or '—'}"
+            search = [("class:hint", "> type to search")]
+    else:
+        label = f"/ {state.search_query}"
+        if state.search_mode == "running":
+            label += f"   scanned {state.search_scanned}/{state.search_total}"
+        elif state.search_mode == "results":
+            label += f"   {len(state.search_matches)} of {state.search_total} match"
+            if state.search_unavailable:
+                label += f", {state.search_unavailable} unavailable"
+        search = [("bold", clip(label, width))]
+
+    column_line = "    " + _GAP.join(
+        cell(name, w) for name, w in _list_columns(state.visible_rows, width)
+    )
+    column_line += _GAP + cell("AGE", _AGE_WIDTH, right=True)
+    return _lines([status_line, search, [("class:columns", clip(column_line, width))]])
+
+
+def list_body(state: ListState, width: int) -> StyleAndTextTuples:
+    rows = state.visible_rows
+    if not rows:
+        filtered = state.filter_text or state.search_mode == "results"
+        empty = "no archived sessions" if state.status == "archived" else "no primary sessions"
+        return [("class:hint", "  no matches" if filtered else f"  {empty}")]
+    cols = _list_columns(rows, width)
+    out: StyleAndTextTuples = []
+    for index, row in enumerate(rows):
+        selected = index == state.highlight
+        base = "class:selected" if selected else ""
+        if selected:
+            out.append(("[SetCursorPosition]", ""))
+        glyph, glyph_style = _status_glyph(row)
+        text = _GAP.join(cell(_column_value(row, name), w) for name, w in cols)
+        text += _GAP + cell(_age(row), _AGE_WIDTH, right=True)
+        out.append((base, "▸ " if selected else "  "))
+        out.append((f"{base} {glyph_style}".strip(), glyph))
+        out.append((base, f" {text}".ljust(max(0, width - 3))))
+        if index < len(rows) - 1:
+            out.append(("", "\n"))
+    return out
+
+
+def list_footer(state: ListState, width: int) -> StyleAndTextTuples:
+    if state.message:
+        return [("class:error", clip(state.message, width))]
+    if state.search_mode == "input":
+        hint = "enter search transcripts  esc cancel"
+    elif state.search_mode != "off":
+        hint = "enter resume  space view  esc back"
+    elif state.focus is not None:
+        hint = "←/→ change  tab next  esc done"
+    else:
+        lineage = "ctrl-l" if state.filter_text else "l"  # `l` is text once a filter has begun
+        hint = f"enter resume  space view  {lineage} lineage  tab filters  / transcripts  esc quit"
+    return [("class:hint", clip(hint, width))]
+
+
+# --- detail -------------------------------------------------------------------------------
+
+
+def _stamp(iso: str) -> str:
+    try:
+        local = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return iso or "-"
+    return f"{local:%Y-%m-%d %H:%M} ({relative_time(iso)})"
+
+
+def detail_header(state: DetailState, width: int) -> StyleAndTextTuples:
+    row = state.row
+    live = " ● live" if row is not None and row.live else ""
+    harness = row.harness if row is not None else ""
+    tmux = (row.tmux_target if row else None) or "-"
+    work = (row.work_label if row else "") or "-"
+    agent = (row.agent if row else "") or "-"
+    model = state.model or (row.model if row else "") or "-"
+    created = _stamp(row.created_at) if row is not None and row.created_at else "-"
+    last = relative_time(row.last_turn_at or row.activity_at) if row is not None else "-"
+    window = state.window
+    shown = (
+        f" entries {window.lo + 1}-{window.hi} of {window.total}"
+        if window is not None and window.entries
+        else ""
+    )
+
+    def pair(*items: tuple[str, str]) -> StyleAndTextTuples:
+        out: StyleAndTextTuples = []
+        for label, value in items:
+            out += [("class:label", f" {label} "), ("", value + " ")]
+        return out
+
+    lines: list[StyleAndTextTuples] = [
+        [("bold", f" {state.chat_id}"), ("", f"  {harness}"), ("class:live", live)],
+        pair(("tmux", tmux), ("work", work)),
+        pair(("agent", agent), ("model", model)),
+        pair(("created", created), ("last turn", last)),
+        [("class:hint", clip(f"──{shown} ".ljust(width, "─"), width))],
+    ]
+    return _lines(lines)
+
+
+def detail_body(state: DetailState, width: int, height: int) -> StyleAndTextTuples:
+    if state.error:
+        return [("class:error", f" {clip(state.error, width - 2)}")]
+    if state.window is None:
+        return [("class:hint", " loading transcript…")]
+    lines = state.lines(width)
+    if not lines:
+        return [("class:hint", " no transcript entries")]
+    first = state.first_line(width, height)
+    visible = lines[first : first + height]
+    blank: StyleAndTextTuples = [("", "")]
+    padded: list[StyleAndTextTuples] = [blank] * (height - len(visible))
+    for style, text in visible:
+        padded.append([(style, text)])
+    return _lines(padded)
+
+
+def detail_footer(state: DetailState, width: int) -> StyleAndTextTuples:
+    if state.message:
+        return [("class:error", clip(state.message, width))]
+    hint = "↑/↓ pgup/pgdn home/end scroll  enter resume  l lineage  esc back"
+    return [("class:hint", clip(hint, width))]
+
+
+# --- lineage ------------------------------------------------------------------------------
+
+
+_EDGE_WIDTH = 4
+
+
+def _lineage_layout(nodes: tuple[LineageNode, ...], width: int) -> tuple[int, int, int, int]:
+    """Widths of the tree, TMUX, WORK and AGENT cells; WORK yields first on narrow terminals."""
+    rows = [n.row for n in nodes if n.row is not None]
+    tree = max([len("CHAT"), *(len(n.prefix) + len(n.chat_id) for n in nodes)])
+    tmux = min(18, max([4, *(len(r.tmux_target or "") for r in rows)]))
+    work = min(26, max([4, *(len(r.work_label) for r in rows)]))
+    agent = min(12, max([5, *(len(r.agent) for r in rows)]))
+    fixed = 4 + _EDGE_WIDTH + len(_GAP) * 5 + _AGE_WIDTH
+    while fixed + tree + tmux + work + agent > width and work > 6:
+        work -= 1
+    return tree, tmux, work, agent
+
+
+def lineage_header(state: LineageState, width: int) -> StyleAndTextTuples:
+    columns: StyleAndTextTuples = []
+    if state.nodes:
+        tree, tmux, work, agent = _lineage_layout(state.nodes, width)
+        text = _GAP.join(
+            [
+                "    " + cell("CHAT", tree),
+                cell("EDGE", _EDGE_WIDTH),
+                cell("TMUX", tmux),
+                cell("WORK", work),
+                cell("AGENT", agent),
+                cell("AGE", _AGE_WIDTH, right=True),
+            ]
+        )
+        columns = [("class:columns", clip(text, width))]
+    return _lines(
+        [
+            [("bold", clip(f" Lineage of {state.origin}", width))],
+            [("class:hint", clip(" forks and --from sources, ancestors first", width))],
+            columns,
+        ]
+    )
+
+
+def lineage_body(state: LineageState, width: int) -> StyleAndTextTuples:
+    if state.error:
+        return [("class:error", f" {clip(state.error, width - 2)}")]
+    if state.nodes is None:
+        return [("class:hint", " loading lineage…")]
+    tree, tmux, work, agent = _lineage_layout(state.nodes, width)
+    out: StyleAndTextTuples = []
+    for index, node in enumerate(state.nodes):
+        selected = index == state.cursor
+        base = "class:selected" if selected else ""
+        if selected:
+            out.append(("[SetCursorPosition]", ""))
+        row = node.row
+        glyph, glyph_style = _status_glyph(row) if row is not None else (" ", "")
+        label = cell(node.prefix + node.chat_id, tree)
+        edge = cell(node.kind, _EDGE_WIDTH)
+        if row is None:
+            rest = "(not in this project's index)"
+        else:
+            rest = _GAP.join(
+                [
+                    cell(row.tmux_target or "", tmux),
+                    cell(row.work_label, work),
+                    cell(row.agent, agent),
+                    cell(_age(row), _AGE_WIDTH, right=True),
+                ]
             )
-        if row.native_status:
-            line += f" [{row.native_status}]"
-        style = "class:selected" if selected else "class:row"
-        clipped_line = _clip(line, width)
-        fragments.append((style, clipped_line[:2]))
-        live_style = f"{style} class:live" if row.live else style
-        fragments.append((live_style, clipped_line[2:3]))
-        fragments.append((style, clipped_line[3:]))
-        fragments.append(("", "\n"))
-    if model.older_count:
-        shown = len(model.rows)
-        hint = f"({shown} of {shown + model.older_count} shown — use --limit to see more)"
-        fragments.append(("class:hint", _clip(hint, width)))
-    return fragments
+        weight = "bold" if node.chat_id == state.origin else ""
+        out.append((base, "▸ " if selected else "  "))
+        out.append((f"{base} {glyph_style}".strip(), glyph))
+        text = f" {label}{_GAP}{edge}{_GAP}{rest}"
+        out.append((f"{base} {weight}".strip(), clip(text, width - 3).ljust(width - 3)))
+        if index < len(state.nodes) - 1:
+            out.append(("", "\n"))
+    return out
 
 
-def render_preview(model: BrowseModel, width: int, height: int) -> StyleAndTextTuples:
-    row = model.highlighted_row
-    if row is None:
-        return [("class:empty", "")]
-    if model.preview_loading or model.preview_chat_id != row.chat_id:
-        lines = ("loading preview…",)
-    else:
-        lines = model.preview_lines or ("preview temporarily unavailable",)
-    detail = model.preview_detail
-    visible = lines[-max(1, height - (2 if detail else 1)) :]
-    header = f"{row.chat_id} · current segment"
-    if model.preview_status:
-        header = f"{model.preview_status} · {header}"
-    fragments: StyleAndTextTuples = [("class:preview-title", _clip(header, width)), ("", "\n")]
-    if detail:
-        fragments.extend((("class:hint", _clip(detail, width)), ("", "\n")))
-    for line in visible:
-        fragments.extend((("class:preview", _clip(line, width)), ("", "\n")))
-    return fragments
-
-
-def _action_hint(decision: SessionReentryDecision) -> str:
-    if isinstance(decision, Fork):
-        return "[enter] fork → new session (live)"
-    if isinstance(decision, Blocked):
-        return decision.reason
-    return "[enter] resume"
-
-
-def render_footer(model: BrowseModel, width: int) -> StyleAndTextTuples:
-    if model.inline_message:
-        escape_action = "quit" if model.mode == "list" else "back"
-        text = f"{model.inline_message} · [esc] {escape_action}"
-        return [("class:error", _clip(text, width))]
-    row = model.highlighted_row
-    action = _action_hint(row.reentry) if row is not None else ""
-    if model.mode == "search-input":
-        text = "type query · [enter] search · [esc] back"
-    elif model.mode == "searching":
-        parts = ("searching transcripts", action, "[esc] cancel")
-        text = " · ".join(part for part in parts if part)
-    elif model.mode == "search-results":
-        text = " · ".join(part for part in ("search results", action, "[esc] back") if part)
-    elif row is None:
-        text = "[q]/[esc] quit"
-    elif isinstance(row.reentry, Blocked):
-        text = f"{action} · [esc] quit"
-    else:
-        text = f"type to filter · / search · {action} · [esc] quit"
-    return [("class:footer", _clip(text, width))]
-
-
-__all__ = [
-    "render_footer",
-    "render_list",
-    "render_list_header",
-    "render_preview",
-    "render_status",
-]
+def lineage_footer(state: LineageState, width: int) -> StyleAndTextTuples:
+    return [("class:hint", clip("↑/↓ move  enter open detail  esc back", width))]

@@ -149,6 +149,9 @@ def _session_browse(
         listing,
         project_root,
         partial(resolve_session_reentry, project_root),
+        limit=limit,
+        status=status,
+        sort=sort,
         include_archives=include_archives,
     )
     if decision is not None:

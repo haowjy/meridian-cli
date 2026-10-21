@@ -28,7 +28,7 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.session_fold import SUPPORTED_SESSION_EVENT_VERSIONS
 
 # Project conversation lineage and native model observations.
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 def versioned(stem: str) -> str:

@@ -10,7 +10,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.loader import load_config
-from meridian.lib.harness.transcript_preview import TRANSCRIPT_PREVIEW_VERSION
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_search_index import SearchProjection, SearchStatus
 from meridian.lib.state.history_changes import HistoryChanges
@@ -32,8 +31,6 @@ class SessionIndexOutput(BaseModel):
     coverage: dict[str, object] | None = None
     reason: str | None = None
     pending_sources: int = 0
-    preview_cached: int = 0
-    preview_unavailable: int | None = None
     search_fresh: int | None = None
     search_stale: int = 0
     search_unindexed: int = 0
@@ -41,12 +38,7 @@ class SessionIndexOutput(BaseModel):
     search_unavailable: int = 0
 
     def format_text(self, ctx: object = None) -> str:
-        text = (
-            f"History index: {self.baseline}; pending sources: {self.pending_sources}; "
-            f"cached previews: {self.preview_cached}"
-        )
-        if self.preview_unavailable is not None:
-            text += f"; unavailable in warm pass: {self.preview_unavailable}"
+        text = f"History index: {self.baseline}; pending sources: {self.pending_sources}"
         if self.search_fresh is not None:
             text += (
                 f"\nNative search: {self.search_fresh} fresh, {self.search_stale} stale, "
@@ -78,11 +70,6 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
             schema_version=status.schema,
             reason=status.reason,
             pending_sources=len(pending),
-            preview_cached=(
-                index.preview_count(preview_version=TRANSCRIPT_PREVIEW_VERSION, deadline=deadline)
-                if status.baseline == "current"
-                else 0
-            ),
         )
     if payload.action == "rebuild":
         from meridian.lib.state.retention_archive import import_archive
@@ -103,7 +90,6 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
         baseline="complete" if coverage.complete else "incomplete",
         coverage=asdict(coverage),
         pending_sources=len(pending),
-        preview_cached=index.preview_count(preview_version=TRANSCRIPT_PREVIEW_VERSION),
         **search,
     )
 
