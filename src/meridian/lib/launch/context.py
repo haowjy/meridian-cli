@@ -1921,6 +1921,15 @@ def bind_launch_context(
         permission_config=permission_config,
         runtime_env_overrides=bind_env_overrides,
     )
+    # system-prompt.md is written before launch whenever the appended prompt is non-empty.
+    harness_launch_env = harness.project_launch_env(
+        spec=spec,
+        agent=resolved_agent,
+        system_prompt_path=system_prompt_path,
+        env=env,
+    )
+    env.update(harness_launch_env)
+    bind_env_overrides.update(harness_launch_env)
     intent = harness.plan_native_identity(
         run_params, preforked_session_id=bindings.forked_harness_session_id)
     if intent is not None:

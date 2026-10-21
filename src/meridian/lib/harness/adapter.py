@@ -378,6 +378,15 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         self, config: PermissionConfig, *, run: SpawnParams, env: Mapping[str, str]
     ) -> dict[str, str]: ...
 
+    def project_launch_env(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        agent: str | None,
+        system_prompt_path: Path,
+        env: Mapping[str, str],
+    ) -> dict[str, str]: ...
+
     def blocked_child_env_vars(self) -> frozenset[str]: ...
 
     def prepare_prelaunch(
@@ -692,6 +701,22 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     ) -> dict[str, str]:
         """Optional process defaults; explicit inherited or launch values win."""
         _ = config, run, env
+        return {}
+
+    def project_launch_env(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        agent: str | None,
+        system_prompt_path: Path,
+        env: Mapping[str, str],
+    ) -> dict[str, str]:
+        """Env overrides that deliver the bound prompt and model through harness config.
+
+        ``system_prompt_path`` holds the appended prompt whenever
+        ``spec.appended_system_prompt`` is non-empty; ``env`` is the child env as bound.
+        """
+        _ = spec, agent, system_prompt_path, env
         return {}
 
     def prepare_prelaunch(

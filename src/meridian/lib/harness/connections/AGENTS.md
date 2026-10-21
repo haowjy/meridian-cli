@@ -28,7 +28,11 @@ Transports differ at the wire level:
   `[harness.opencode] version` at launch bind) or probes `opencode --version`, then
   delegates. Both transports manage `opencode serve` and share process lifecycle,
   liveness, and SSE framing; V2 overrides the `/api` session surface, basic auth,
-  event envelopes, and model switch. 1.x is legacy/frozen. V1 creation uses
+  event envelopes, and model switch. 1.x is legacy/frozen. Connections consume the
+  bound `OPENCODE_CONFIG_CONTENT` as given: the prompt (default config agent) and a
+  fresh session's `model` are projected at launch bind, so `ConnectionConfig` carries
+  no system prompt and neither transport sends a message-level `system`; the V2
+  transport only folds in V2 permissions. V1 creation uses
   `{providerID, id}`; a fresh session's initial prompt carries `{providerID, modelID}`.
   On V1 resume the native committed model is retained and an explicit model is
   rejected with `HarnessCapabilityMismatch` (V2 applies it via `POST /api/session/{id}/model`).

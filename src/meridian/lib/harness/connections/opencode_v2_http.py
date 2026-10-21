@@ -45,14 +45,12 @@ from meridian.lib.harness.connections.opencode_http import (
     SessionNotReadyError,
     find_free_port,
     map_approval_decision,
-    materialize_system_prompt,
     permission_liveness_key,
     summarize_body,
 )
 from meridian.lib.harness.projections.project_opencode_streaming import (
     merge_opencode_v2_permission_config,
     project_opencode_model,
-    project_opencode_model_config,
     project_opencode_spec_to_session_payload,
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
@@ -185,10 +183,6 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             port=port,
         )
         env = dict(config.child_env)
-        if spec.model and not spec.continue_session_id:
-            env[OPENCODE_CONFIG_CONTENT_ENV] = project_opencode_model_config(
-                env.get(OPENCODE_CONFIG_CONTENT_ENV), spec.model, self._model_agent_override
-            )
         # V2 reads permissions from config content, not the V1 OPENCODE_PERMISSION
         # env. Interactive primaries defer to the native TUI, matching V1, which
         # drops its permission override for the primary launch.
@@ -205,7 +199,6 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         spawn_dir = resolve_spawn_log_dir(
             config.control_root, config.spawn_id, runtime_root=runtime_root
         )
-        self._instruction_path = materialize_system_prompt(config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
@@ -271,13 +264,10 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         )
         return self._client
 
-    async def _inspect_selected_model(
-        self, model: str, *, expected_agent: str | None = None
-    ) -> str | None:
+    async def _validate_selected_model(self, model: str) -> None:
         # V2 resolves the model from the session (set at create or via /model);
-        # the 1.x native-agent config override does not apply here.
-        _ = model, expected_agent
-        return None
+        # there is no V1-style provider/config inspection to run.
+        _ = model
 
     async def _create_session(self, spec: ResolvedLaunchSpec) -> str:
         self._emit_startup_phase(StartupPhase.INITIALIZING_SESSION)
@@ -355,11 +345,10 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         self,
         text: str,
         *,
-        system: str | None = None,
         fresh: bool = False,
         model: str | None = None,
     ) -> None:
-        _ = system, fresh, model
+        _ = fresh, model
         if self._initial_prompt_posted_at is None:
             self._initial_prompt_posted_at = time.time()
         await self._post_session_action(
@@ -587,7 +576,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
 
         return await self._reconcile_initial_terminal()
 
-    async def _cleanup_runtime(self, *, replacement_deadline: float | None = None) -> None:
+    async def _cleanup_runtime(self) -> None:
         task = self._stdout_drain_task
         self._stdout_drain_task = None
         if task is not None and not task.done():
@@ -595,7 +584,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._server_password = None
-        await super()._cleanup_runtime(replacement_deadline=replacement_deadline)
+        await super()._cleanup_runtime()
 
 
 __all__ = ["OpenCodeV2Connection", "v2_session_idle_marker"]

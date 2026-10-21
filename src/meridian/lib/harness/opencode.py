@@ -63,6 +63,10 @@ from meridian.lib.harness.passthrough.opencode import (
     build_opencode_server_attach_command,
 )
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.projections.project_opencode_config import (
+    meridian_agent_id,
+    project_opencode_launch_config,
+)
 from meridian.lib.harness.projections.project_opencode_streaming import (
     opencode_model_parts,
     project_opencode_spec_to_serve_command,
@@ -93,6 +97,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
@@ -150,8 +155,13 @@ def project_opencode_spec_to_session_payload_for_project(
 def resolve_opencode_subprocess_spec(
     spec: ResolvedLaunchSpec, env: Mapping[str, str]
 ) -> ResolvedLaunchSpec:
-    """Resolve the resume guard using the launch environment; projection stays pure."""
-    if spec.interactive or not spec.continue_session_id or spec.model is None:
+    """Resolve version-dependent argv using the launch environment; projection stays pure.
+
+    Two projections need a positively identified version: the resume-with-model guard
+    and the bare TUI's ``--standalone`` (V2 only).
+    """
+    resumes_with_model = bool(spec.continue_session_id) and spec.model is not None
+    if not spec.interactive and not resumes_with_model:
         return spec
     preference = normalize_version_preference(spec.opencode_version)
     if preference in ("v1", "v2"):
@@ -175,10 +185,7 @@ def project_opencode_primary_preview(
     backend[backend.index("--port") + 1] = "<port>"
     continuing = bool(spec.continue_session_id)
     if version == "v2":
-        probe_step = (
-            "GET /api/config, /api/provider and /api/agent; "
-            "apply the requested model via POST /api/session/{id}/model.",
-        )
+        probe_step = ("Create the session with the requested model.",)
         attach_command = build_opencode_server_attach_command(
             spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
         )
@@ -187,10 +194,8 @@ def project_opencode_primary_preview(
         )
     else:
         probe_step = (
-            "GET /config/providers, /config and /agent; "
-            "validate availability and effective defaults.",
-            "If its model conflicts, stop the owned backend and restart once "
-            "with a launch-local agent override, then repeat all three inspections.",
+            "GET /config/providers and /config; "
+            "validate availability and the effective model.",
         )
         attach_command = build_opencode_attach_command(
             spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
@@ -213,10 +218,11 @@ def project_opencode_primary_preview(
         attach_command=attach_command,
         steps=(
             *steps,
-            "Preserve inherited configuration; add private system instructions when supplied.",
-            "Launch, inspections, replacement and bootstrap share one startup deadline.",
+            "Preserve inherited configuration; the bound config selects Meridian's "
+            "default agent when a system prompt is supplied.",
+            "Launch, inspections and bootstrap share one startup deadline.",
             "Native configuration and actual message model are unavailable in dry-run.",
-            "Fail on rejected configuration or uncertain cleanup; no black-box fallback.",
+            "Fail on rejected configuration; no black-box fallback.",
         ),
         model=spec.model if not continuing else None,
     )
@@ -463,6 +469,26 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if config.opencode_permission_override:
             overrides["OPENCODE_PERMISSION"] = config.opencode_permission_override
         return overrides
+
+    def project_launch_env(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        agent: str | None,
+        system_prompt_path: Path,
+        env: Mapping[str, str],
+    ) -> dict[str, str]:
+        # The prompt file exists exactly when the appended prompt is non-empty
+        # (``write_projection_artifacts``); a missing ``{file:}`` fails OpenCode's
+        # whole config. A continued session keeps its committed model.
+        has_prompt = bool((spec.appended_system_prompt or "").strip())
+        config = project_opencode_launch_config(
+            env.get(OPENCODE_CONFIG_CONTENT_ENV),
+            agent_id=meridian_agent_id(agent),
+            prompt_file=system_prompt_path if has_prompt else None,
+            model=None if spec.continue_session_id else spec.model,
+        )
+        return {} if config is None else {OPENCODE_CONFIG_CONTENT_ENV: config}
 
     def seed_session(
         self,

@@ -89,7 +89,6 @@ class OpenCodePassthrough:
             control_root=control_root,
             child_env=dict(env),
             task_cwd=task_cwd,
-            system=spec.appended_system_prompt or None,
         )
 
     def build_tui_command(

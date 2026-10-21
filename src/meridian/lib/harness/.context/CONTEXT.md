@@ -348,6 +348,41 @@ native TUI, matching V1's dropped override. The projection functions live in
 `projections/project_opencode_streaming.py`; the server's own V1→V2 translation
 does not handle flat scoped keys correctly, which is why Meridian compiles them.
 
+### OpenCode: Prompt and Model Delivery
+
+Bind projects the composed prompt and the model into `OPENCODE_CONFIG_CONTENT`;
+no launch path or connection shapes either. `project_opencode_config.py` builds
+the JSON, `OpenCodeAdapter.project_launch_env()` is the seam (the base adapter's
+default is a no-op), and every other key in the inherited config survives.
+
+- **Agent.** `agent.meridian-<profile>` (`meridian` alone without a profile) with
+  `mode: primary` and `prompt: {file:<spawn-log-dir>/system-prompt.md}`, chosen by
+  `default_agent`. The id is readable in the TUI and prefixed so it never merges
+  into a user's agent and inherits their model. The agent carries no `model`: V2
+  ignores it.
+- **One shape for both versions.** V1 reads `agent.<id>.prompt`; V2's config
+  normalization maps it to `agents.<id>.system`. Replacing the base prompt keeps
+  AGENTS.md, OpenCode's skill listing and the environment block (probed on both
+  versions).
+- **Model.** Top-level config `model`, set only for a fresh session (a continued
+  session keeps its committed model). It is the only model channel the V2 bare TUI
+  has (`--model` is rejected), so the subprocess projector drops `--model` for a
+  V2 TUI and keeps it elsewhere (`opencode run`, V1's TUI). Effort has no working
+  V2 channel.
+- **Condition.** The `{file:}` reference is emitted only when the appended prompt
+  is non-empty, the same condition under which `write_projection_artifacts()`
+  writes the file. Substitution is single-pass: literal `{file:..}` / `{env:..}`
+  text inside the prompt arrives untouched.
+- **Bare TUI needs `--standalone` on V2.** Without it the TUI is a client of the
+  shared `opencode serve --service` process, which was configured by whoever
+  started it: the launch env (config content, `OPENCODE_DB`) never applies.
+  `resolve_opencode_subprocess_spec` resolves the version for interactive launches
+  so the projector can add the flag for a positively identified V2 only (V1 rejects
+  unknown flags).
+- **Rejected:** a plugin `context` hook (V2-only, ships code that must load),
+  session instruction entries (experimental, no black-box coverage), and repairing
+  `instructions` (the V2 loader ignores it upstream).
+
 ### OpenCode: Version Dispatcher, V2 Transport, Storage
 
 `opencode_backend.py` owns version resolution. `[harness.opencode] version`
@@ -364,7 +399,8 @@ subprocess projector rejects resume-with-model only for a known V1, keeps
 All version probes require an explicit environment, including executable `PATH`
 lookup. The bundle's optional `resolve_subprocess_spec` port runs adapter-owned
 environment-dependent resolution before the pure argv projector; OpenCode uses it
-to probe the resume guard with the bound environment. Primary previews and the
+to probe the resume guard and the bare-TUI `--standalone` flag with the bound
+environment. Primary previews and the
 connection dispatcher pass the same bound environment to version detection.
 
 `connections/opencode_connection.py` is the single registered OpenCode transport.

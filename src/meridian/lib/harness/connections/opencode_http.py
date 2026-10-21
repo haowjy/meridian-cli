@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import socket
-import tempfile
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
@@ -61,10 +60,7 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
-from meridian.lib.harness.projections.project_opencode_streaming import (
-    opencode_model_parts,
-    project_opencode_model_config,
-)
+from meridian.lib.harness.projections.project_opencode_streaming import opencode_model_parts
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
@@ -74,7 +70,6 @@ from meridian.lib.harness.semantics import (
     PrimaryEventScope,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
     trace_state_change,
@@ -84,7 +79,6 @@ from meridian.lib.observability.trace_helpers import (
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
-    is_pgid_reachable,
 )
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
@@ -215,8 +209,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._stderr_log_path: Path | None = None
         self._stderr_read_offset = 0
         self._base_url: str | None = None
-        self._model_agent_override: str | None = None
-        self._instruction_path: Path | None = None
         self._session_id: str | None = None
         self._event_path: str | None = None
         self._last_health_ok = False
@@ -562,11 +554,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._stop_lock.release()
 
     async def _start_unlocked(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        if (
-            self._process is not None
-            or self._scope_handle is not None
-            or self._instruction_path is not None
-        ):
+        if self._process is not None or self._scope_handle is not None:
             # A failed cleanup must not lose its remaining ownership on retry.
             await self._cleanup_runtime()
         validate_prompt_size(config)
@@ -590,7 +578,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         readiness_timeout, session_timeout = self._startup_timeout_budgets(config.timeout_seconds)
 
-        self._model_agent_override = None
         deadline = asyncio.get_running_loop().time() + readiness_timeout + session_timeout
         async with asyncio.timeout_at(deadline):
             self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
@@ -598,16 +585,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             await self._wait_for_ready(timeout_seconds=readiness_timeout)
             if spec.model and not spec.continue_session_id:
-                conflict = await self._inspect_selected_model(spec.model)
-                if conflict is not None:
-                    await self._cleanup_runtime(replacement_deadline=deadline)
-                    self._model_agent_override = conflict
-                    await self._launch_process(config, spec)
-                    await self._wait_for_ready(timeout_seconds=readiness_timeout)
-                    if await self._inspect_selected_model(spec.model, expected_agent=conflict):
-                        raise HarnessCapabilityMismatch(
-                            "OpenCode native agent still overrides the selected model"
-                        )
+                await self._validate_selected_model(spec.model)
             self._session_id = await self._create_session_with_retry(
                 spec,
                 timeout_seconds=min(
@@ -628,7 +606,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             if not attach_owns_prompt:
                 await self._post_session_message(
                     config.prompt,
-                    system=config.system,
                     fresh=not bool(spec.continue_session_id),
                     model=spec.model,
                 )
@@ -987,17 +964,12 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             port=port,
         )
         env = dict(config.child_env)
-        if spec.model and not spec.continue_session_id:
-            env[OPENCODE_CONFIG_CONTENT_ENV] = project_opencode_model_config(
-                env.get(OPENCODE_CONFIG_CONTENT_ENV), spec.model, self._model_agent_override
-            )
         runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
             config.control_root
         )
         spawn_dir = resolve_spawn_log_dir(
             config.control_root, config.spawn_id, runtime_root=runtime_root
         )
-        self._instruction_path = materialize_system_prompt(config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
@@ -1212,9 +1184,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             raise HarnessCapabilityMismatch(f"OpenCode cannot inspect {path}: status={status}")
         return body
 
-    async def _inspect_selected_model(
-        self, model: str, *, expected_agent: str | None = None
-    ) -> str | None:
+    async def _validate_selected_model(self, model: str) -> None:
+        """Fail early when the bound config's model is unavailable or overridden."""
         provider, model_id = opencode_model_parts(model)
         providers = await self._native_json("/config/providers")
         available = (
@@ -1234,55 +1205,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         ):
             raise HarnessCapabilityMismatch(f"OpenCode selected model is unavailable: {model}")
         config = await self._native_json("/config")
-        if not isinstance(config, dict):
-            raise HarnessCapabilityMismatch("OpenCode returned invalid configuration")
-        config = cast("dict[str, object]", config)
-        if config.get("model") != model:
+        if not isinstance(config, dict) or cast("dict[str, object]", config).get("model") != model:
             raise HarnessCapabilityMismatch(
                 "OpenCode effective configuration overrides the selected model"
             )
-        agents = await self._native_json("/agent")
-        if not isinstance(agents, list):
-            raise HarnessCapabilityMismatch("OpenCode returned invalid primary agents")
-        agent = next(
-            (
-                row
-                for row in (
-                    cast("dict[str, object]", item)
-                    for item in cast("list[object]", agents)
-                    if isinstance(item, dict)
-                )
-                if row.get("mode") != "subagent" and not row.get("hidden")
-            ),
-            None,
-        )
-        if agent is None or not isinstance(agent.get("name"), str):
-            raise HarnessCapabilityMismatch("OpenCode has no visible native primary agent")
-        name = cast("str", agent["name"])
-        if expected_agent is not None and name != expected_agent:
-            raise HarnessCapabilityMismatch(
-                "OpenCode native primary agent changed during configuration"
-            )
-        configured = config.get("default_agent")
-        if configured is not None and configured != name:
-            raise HarnessCapabilityMismatch(
-                "OpenCode default agent does not match its visible primary"
-            )
-        native_model = agent.get("model")
-        if native_model is None:
-            return None
-        if not isinstance(native_model, dict):
-            raise HarnessCapabilityMismatch("OpenCode native agent has invalid model configuration")
-        native_model = cast("dict[str, object]", native_model)
-        return (
-            None
-            if native_model.get("providerID") == provider
-            and native_model.get("modelID") == model_id
-            else name
-        )
 
     async def _post_session_message(
-        self, text: str, *, system: str | None = None, fresh: bool = False, model: str | None = None
+        self, text: str, *, fresh: bool = False, model: str | None = None
     ) -> None:
         payload: dict[str, object] = {"parts": [{"type": "text", "text": text}]}
         if fresh:
@@ -1336,8 +1265,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             variant = choice.get("variant")
             if isinstance(variant, str):
                 payload["variant"] = variant
-        if system and system.strip():
-            payload["system"] = system
         await self._post_session_action(
             path_templates=self._MESSAGE_PATH_TEMPLATES,
             payload_variants=(payload,),
@@ -1579,7 +1506,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._client = aiohttp.ClientSession(timeout=timeout)
         return self._client
 
-    async def _cleanup_runtime(self, *, replacement_deadline: float | None = None) -> None:
+    async def _cleanup_runtime(self) -> None:
         self._liveness.reset()
         client = self._client
         self._client = None
@@ -1591,35 +1518,11 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         scope_handle = self._scope_handle
         process = self._process
-        grace = self._STOP_GRACE_SECONDS
-        if replacement_deadline is not None:
-            if scope_handle is None or process is None:
-                raise RuntimeError("OpenCode replacement requires an owned process scope")
-            # POSIX scope termination can synchronously spend one extra second
-            # awaiting SIGKILL. Reserve that within the shared startup budget.
-            remaining = replacement_deadline - asyncio.get_running_loop().time()
-            if remaining <= 1:
-                raise TimeoutError("OpenCode startup budget exhausted before replacement")
-            grace = min(grace, remaining - 1)
         if scope_handle is not None and process is not None:
-            result = await scope_handle.terminate(
-                grace_seconds=grace,
+            await scope_handle.terminate(
+                grace_seconds=self._STOP_GRACE_SECONDS,
                 reason="stop_called",
             )
-            if replacement_deadline is not None:
-                remaining = replacement_deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    raise TimeoutError("OpenCode startup budget exhausted during replacement")
-                await asyncio.wait_for(process.wait(), timeout=remaining)
-                snapshot = scope_handle.snapshot
-                if (
-                    result.skip_reason
-                    or result.degraded_fallback
-                    or (snapshot.pgid is not None and is_pgid_reachable(snapshot.pgid))
-                ):
-                    raise RuntimeError(
-                        "OpenCode backend cleanup is uncertain; refusing replacement"
-                    )
         elif process is not None and process.returncode is None:
             process.terminate()
             try:
@@ -1643,9 +1546,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             logger.warning("OpenCode pending permission cleanup failed", exc_info=True)
         self._liveness.signal_request_resolved("cancel")
         self._close_log_handles()
-        if self._instruction_path is not None:
-            self._instruction_path.unlink(missing_ok=True)
-            self._instruction_path = None
 
     def _url(self, path: str) -> str:
         if self._base_url is None:
@@ -1962,34 +1862,6 @@ def summarize_body(body: object | None) -> str:
 
 def _is_retryable_transport_error(exc: Exception) -> bool:
     return isinstance(exc, OSError | TimeoutError | aiohttp.ClientError)
-
-
-def materialize_system_prompt(system: str | None, env: dict[str, str]) -> Path | None:
-    """Create one owned, private instruction file for this backend attempt."""
-    raw = env.get(OPENCODE_CONFIG_CONTENT_ENV, "").strip()
-    parsed: object = json.loads(raw) if raw else {}
-    if not isinstance(parsed, dict):
-        raise HarnessCapabilityMismatch("OpenCode config content must be a JSON object")
-    config = cast("dict[str, object]", parsed)
-    text = (system or "").strip()
-    if not text:
-        return None
-    previous = config.get("instructions", [])
-    if not isinstance(previous, list) or not all(
-        isinstance(item, str) for item in cast("list[object]", previous)
-    ):
-        raise HarnessCapabilityMismatch("OpenCode instructions must be a list of paths")
-    fd, name = tempfile.mkstemp(prefix="meridian-sysprompt-", suffix=".md")
-    path = Path(name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        config["instructions"] = [*cast("list[str]", previous), str(path)]
-        env[OPENCODE_CONFIG_CONTENT_ENV] = json.dumps(config, separators=(",", ":"))
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
-    return path
 
 
 def _looks_like_address_in_use(stderr_text: str) -> bool:

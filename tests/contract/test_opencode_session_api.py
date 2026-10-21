@@ -177,24 +177,6 @@ async def test_create_session_forwards_mcp_tools_in_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_post_session_message_includes_system_field_when_present() -> None:
-    connection = _TestableOpenCodeConnection(responses=[(204, None, "")])
-    connection._session_id = "sess-system"
-
-    await connection._post_session_message("user turn", system="system prompt", fresh=True)
-
-    assert connection.requests == [
-        (
-            "/session/sess-system/prompt_async",
-            {
-                "parts": [{"type": "text", "text": "user turn"}],
-                "system": "system prompt",
-            },
-        )
-    ]
-
-
-@pytest.mark.asyncio
 async def test_session_creation_does_not_replay_when_projected_payload_hangs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -367,52 +349,39 @@ async def test_followup_preserves_committed_native_model_agent_and_variant(varia
     }
 
 
-@pytest.mark.asyncio
-async def test_selected_model_inspection_identifies_native_agent_conflict() -> None:
-    connection = _TestableOpenCodeConnection(
-        responses=[],
-        get_responses=[
-            (200, {"providers": [{"id": "openai", "models": {"selected": {}}}]}, ""),
-            (200, {"model": "openai/selected", "default_agent": "build"}, ""),
-            (
-                200,
-                [
-                    {
-                        "name": "build",
-                        "mode": "primary",
-                        "model": {"providerID": "other", "modelID": "conflicting"},
-                    }
-                ],
-                "",
-            ),
-        ],
-    )
-    assert await connection._inspect_selected_model("openai/selected") == "build"
-
-
-def test_model_config_override_preserves_unrelated_native_configuration() -> None:
+def test_launch_config_preserves_unrelated_native_configuration() -> None:
     import json
+    from pathlib import Path
 
-    from meridian.lib.harness.projections.project_opencode_streaming import (
-        project_opencode_model_config,
+    from meridian.lib.harness.projections.project_opencode_config import (
+        project_opencode_launch_config,
     )
 
     config = {
         "theme": "native",
-        "agent": {
-            "build": {"model": "old/model", "temperature": 0.2},
-            "plan": {"model": "other/model"},
-        },
+        "agent": {"build": {"model": "old/model", "temperature": 0.2}},
+        "instructions": ["/user/instructions.md"],
     }
     projected = json.loads(
-        project_opencode_model_config(json.dumps(config), "openai/selected", agent="build")
+        project_opencode_launch_config(
+            json.dumps(config),
+            agent_id="meridian-coder",
+            prompt_file=Path("/spawns/p1/system-prompt.md"),
+            model="openai/selected",
+        )
+        or ""
     )
     assert projected == {
         "theme": "native",
         "model": "openai/selected",
+        "default_agent": "meridian-coder",
+        "instructions": ["/user/instructions.md"],
         "agent": {
-            "build": {"model": "openai/selected", "temperature": 0.2},
-            "plan": {"model": "other/model"},
+            "build": {"model": "old/model", "temperature": 0.2},
+            "meridian-coder": {
+                "prompt": "{file:/spawns/p1/system-prompt.md}",
+                "mode": "primary",
+            },
         },
     }
     assert config["agent"]["build"]["model"] == "old/model"
@@ -452,30 +421,6 @@ async def test_followup_recovers_last_committed_user_choice_when_session_has_non
         "model": {"providerID": "native", "modelID": "last-choice"},
         "variant": "high",
     }
-
-
-@pytest.mark.asyncio
-async def test_private_instructions_are_owned_and_removed_on_stop(tmp_path) -> None:
-    import json
-
-    from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
-
-    inherited = tmp_path / "user-instructions.md"
-    inherited.write_text("user-owned")
-    env = {OPENCODE_CONFIG_CONTENT_ENV: json.dumps({"instructions": [str(inherited)]})}
-    connection = OpenCodeConnection()
-    connection._instruction_path = opencode_http.materialize_system_prompt("private", env)
-    owned = connection._instruction_path
-    assert owned is not None and owned.read_text() == "private"
-    assert json.loads(env[OPENCODE_CONFIG_CONTENT_ENV])["instructions"] == [
-        str(inherited),
-        str(owned),
-    ]
-    await connection.stop()
-    assert not owned.exists()
-    assert inherited.read_text() == "user-owned"
-    with pytest.raises(ValueError):
-        opencode_http.materialize_system_prompt(None, {OPENCODE_CONFIG_CONTENT_ENV: "{bad"})
 
 
 @pytest.mark.asyncio

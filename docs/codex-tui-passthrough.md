@@ -138,11 +138,11 @@ the command.
 
 OpenCode uses the `fallback_to_blackbox` policy. On `PrimaryAttachError`, Meridian
 logs a warning, removes managed sidecars, and starts a black-box OpenCode TUI. An
-explicit provider/model selection is applied through launch-local configuration; a
-conflicting native primary-agent model triggers at most one verified backend
-replacement before session creation. Native config files are not edited. Dry-run
-describes serve, inspection, bootstrap and attach stages; it does not claim to know
-native-resolved defaults or an actual message model. Dry-run uses cached model
+explicit provider/model selection is applied through the launch config's top-level
+`model`, and Meridian's prompt rides a default config agent in the same config
+(V2's bare TUI runs `--standalone` so it honors that config). Native config files
+are not edited. Dry-run describes serve, inspection, bootstrap and attach stages; it
+does not claim to know native-resolved defaults or an actual message model. Dry-run uses cached model
 resolution without native availability probes; normal launch still validates
 availability. CLI telemetry/cache setup may write local files. Invalid inherited
 OpenCode JSON is rejected, never silently discarded.

@@ -541,7 +541,6 @@ class SpawnApplicationService:
             child_env=child_env,
             runtime_root=launch_ctx.runtime_root,
             task_cwd=connection_task_cwd,
-            system=launch_ctx.binding.run_params.appended_system_prompt,
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
             resident_deadline_seconds=resolve_resident_deadline_seconds(
                 config_snapshot=launch_config_snapshot,

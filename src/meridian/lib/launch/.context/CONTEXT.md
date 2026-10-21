@@ -233,6 +233,13 @@ is registered child-injectable in `env_registry.py`. Because both dry-run previe
 and real connection read `binding.environment.final_env`, preview and execution
 select the same backend. Capture agrees through schema detection, not the env var.
 
+The same step projects OpenCode's prompt and model: after `build_env_plan()`,
+bind calls `harness.project_launch_env()` with the spec, the profile name, the
+`system-prompt.md` path and the bound env, and merges the returned overrides into
+the final env and `bind_env_overrides`. It runs after workspace projection, so the
+workspace's `external_directory` grants and any inherited config keys are
+preserved. The base adapter returns nothing; only OpenCode uses it.
+
 
 ### Agent Inventory Prompt
 
@@ -351,7 +358,7 @@ documented config-precedence rule that CLI flags always win.
 `OPENCODE_CONFIG_CONTENT_ENV`. Keeping this dependency-light module in `launch/`
 prevents `harness` bootstrap from importing back into a partially initialized
 harness package. It depends only on `core.types`, never on harness internals;
-`harness/connections/opencode_http.py` imports the env constant from here.
+`harness/opencode.py` and `harness/connections/opencode_v2_http.py` import the env constant from here.
 
 Two steps inside `bind_launch_context()`:
 
@@ -517,11 +524,17 @@ reaches the agent only through composition. Claude reads the appended prompt fro
 writes from the full appended prompt, not `projected.system_prompt`: post-projection
 additions such as the source-edit-directory instruction live only there.
 
-Composition is not delivery on every transport. OpenCode v2 streaming hands the
-prompt to `opencode serve` only as an instructions file, which v2 ignores, and
-the `opencode run` projection drops `appended_system_prompt`. Agents on those
-paths get no loaded skills. That is a harness-connection gap, not a reason to
-add a skill channel here.
+Delivery is the harness's job, and OpenCode's happens in bind: it has no
+per-request system field on v2, so `bind_launch_context()` asks the adapter
+(`project_launch_env()`) for child env that carries the appended prompt. OpenCode
+answers with `OPENCODE_CONFIG_CONTENT` holding a default agent whose prompt is
+`{file:<spawn-log-dir>/system-prompt.md}` (see the harness
+[OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-and-model-delivery)).
+Every OpenCode launch inherits it, so loaded skills reach the agent with the rest
+of the prompt. The file is written by `write_projection_artifacts()`, which every
+runner must call between bind and launch — primary, spawn, and
+`meridian streaming serve`. A runner that skipped it would hand OpenCode a missing
+`{file:}` target, which fails the whole config. Don't add a skill channel here.
 
 ## Patterns
 

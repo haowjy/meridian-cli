@@ -37,16 +37,19 @@ _SESSION_PAYLOAD_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-_MESSAGE_FIELDS: frozenset[str] = frozenset({"appended_system_prompt", "model"})
+_MESSAGE_FIELDS: frozenset[str] = frozenset({"model"})
 _REFERENCE_FIELDS: frozenset[str] = frozenset({"reference_items"})
 
 _ACCOUNTED_FIELDS: frozenset[str] = (
     _SERVE_COMMAND_FIELDS | _SESSION_PAYLOAD_FIELDS | _MESSAGE_FIELDS | _REFERENCE_FIELDS
 )
 _PROJECTED_FIELDS: frozenset[str] = _ACCOUNTED_FIELDS
+# ``appended_system_prompt`` is delivered at launch bind as a config agent
+# (``project_opencode_config.py``), not by this projection.
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
+        "appended_system_prompt",
         "agents_payload",
         "claude_native_agents_enabled",
         "claude_runtime",
@@ -68,7 +71,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
 
 def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
     _ = spec.prompt
-    _ = spec.appended_system_prompt
     if spec.reference_items:
         logger.debug(
             "OpenCode streaming ignores native reference_items; "
@@ -137,29 +139,6 @@ def project_opencode_model(
         return None
     provider, model_id = opencode_model_parts(model)
     return {"providerID": provider, id_field: model_id}
-
-
-def project_opencode_model_config(raw: str | None, model: str, agent: str | None = None) -> str:
-    """Launch-local override; preserve native agent fields and reject malformed input."""
-    opencode_model_parts(model)
-    parsed: object = json.loads(raw) if raw and raw.strip() else {}
-    if not isinstance(parsed, dict):
-        raise HarnessCapabilityMismatch("OpenCode config content must be a JSON object")
-    config = dict(cast("dict[str, object]", parsed))
-    config["model"] = model
-    if agent is not None:
-        agents = config.get("agent", {})
-        if not isinstance(agents, dict):
-            raise HarnessCapabilityMismatch("OpenCode agent configuration must be a JSON object")
-        agents = dict(cast("dict[str, object]", agents))
-        selected = agents.get(agent, {})
-        if not isinstance(selected, dict):
-            raise HarnessCapabilityMismatch(
-                "OpenCode selected-agent configuration must be a JSON object"
-            )
-        agents[agent] = {**cast("dict[str, object]", selected), "model": model}
-        config["agent"] = agents
-    return json.dumps(config, separators=(",", ":"))
 
 
 _OPENCODE_V2_ACTION_ALIASES: dict[str, str] = {
