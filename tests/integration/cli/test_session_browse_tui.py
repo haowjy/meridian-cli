@@ -180,10 +180,9 @@ def test_plain_browse_and_bare_continue_are_identical(tmp_path) -> None:
     assert browse.stdout.splitlines()[0].split() == [
         "STALE",
         "TMUX",
-        "WORK",
         "AGENT",
-        "MODEL",
         "AGE",
+        "WORK",
     ]
 
 
@@ -224,5 +223,5 @@ def test_plain_browse_keeps_unbound_chat_visible(tmp_path) -> None:
 
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
-    assert lines[0].split() == ["STALE", "TMUX", "WORK", "AGENT", "MODEL", "AGE"]
+    assert lines[0].split() == ["STALE", "TMUX", "AGENT", "AGE", "WORK"]
     assert len(lines) == 3  # both chats, bound and unbound; ids no longer appear in rows

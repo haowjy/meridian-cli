@@ -59,6 +59,13 @@ class SessionListRow(BaseModel):
     def stale(self) -> bool:
         return self.cache_deadline is not None and time.time() > self.cache_deadline
 
+    def agent_label(self, *, with_model: bool = True) -> str:
+        """``agent (model)``; either alone when the other is unknown."""
+
+        if self.agent and self.model and with_model:
+            return f"{self.agent} ({self.model})"
+        return self.agent or self.model
+
     @property
     def filter_text(self) -> str:
         return " ".join(
@@ -88,15 +95,14 @@ class SessionListOutput(BaseModel):
         if not self.rows:
             return "no primary sessions"
 
-        rows = [["STALE", "TMUX", "WORK", "AGENT", "MODEL", "AGE"]]
+        rows = [["STALE", "TMUX", "AGENT", "AGE", "WORK"]]
         rows.extend(
             [
                 "⚠" if row.stale else "",
                 row.tmux_target or "",
-                row.work_label,
-                row.agent,
-                row.model,
+                row.agent_label(),
                 relative_time(row.last_turn_at or row.activity_at).removesuffix(" ago"),
+                row.work_label,
             ]
             for row in self.rows
         )

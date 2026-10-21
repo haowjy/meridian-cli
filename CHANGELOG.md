@@ -6,7 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - `meridian session browse` rewritten. Header shows Status (Active/Archived) and Sort (Updated/Created); Tab focuses them, left/right change them and re-query. Rows: stale-cache `⚠`, tmux target, work, agent, last-used model, age since last turn. No live marker and no live-first order: Updated orders by last activity, with a running session placed by its last turn. Type to search (substring over tmux, work, agent, model, chat id, cwd); `/` still searches transcripts. Space opens a full-screen transcript view (loaded once, scroll older entries, model refreshed on open, chat id in the header); `l` or Ctrl-L opens the fork/`--from` lineage tree; Enter on a lineage node opens it.
-- `session browse --plain` drops the LIVE and C-ID columns. Columns now STALE, TMUX, WORK, AGENT, MODEL, AGE; `⚠` also marks running sessions past their cache TTL.
+- `session browse --plain` drops the LIVE and C-ID columns. Columns now STALE, TMUX, AGENT (shown as `agent (model)`), AGE, WORK, with WORK last and truncated first on narrow terminals; `⚠` also marks running sessions past their cache TTL.
 - `session index` status and rebuild no longer report cached previews.
 - Session commands load operations only in their handlers. Lightweight command declarations avoid importing the entire operation registry; managed work lookup uses the history index.
 - Session browse data: active/archive scope and updated/created sort before limiting, tmux target, last-used model, turn age and cache-stale marker in plain rows (retained metadata survives archiving). Fork and `--from` ancestry survive continuation; indexed lineage, model refresh and shared transcript windows support the next picker.

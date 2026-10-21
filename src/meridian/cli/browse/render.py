@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from meridian.cli.browse.model import (
     SORTS,
@@ -61,40 +61,57 @@ def _choice(options: tuple[str, ...], current: str, focused: bool) -> StyleAndTe
 # --- list ---------------------------------------------------------------------------------
 
 
-def _list_columns(rows: tuple[SessionListRow, ...], width: int) -> list[tuple[str, int]]:
-    """Choose TMUX/WORK/AGENT/MODEL widths; narrow terminals drop MODEL, then AGENT."""
-
-    def natural(header: str, values: list[str], low: int, high: int) -> int:
-        return max(low, min(high, max([len(header), *map(len, values)])))
-
-    cols = [
-        ("TMUX", natural("TMUX", [r.tmux_target or "" for r in rows], 4, 20)),
-        ("WORK", natural("WORK", [r.work_label for r in rows], 4, 30)),
-        ("AGENT", natural("AGENT", [r.agent for r in rows], 5, 14)),
-        ("MODEL", natural("MODEL", [r.model for r in rows], 5, 26)),
-    ]
-    fixed = 4 + _AGE_WIDTH  # gutter + status cell, then age
-
-    def total() -> int:
-        return fixed + sum(w + len(_GAP) for _, w in cols)
-
-    for droppable in ("MODEL", "AGENT"):
-        if total() > width:
-            cols = [c for c in cols if c[0] != droppable]
-    for name, floor in (("WORK", 6), ("TMUX", 4)):
-        if total() > width:
-            overflow = total() - width
-            cols = [(n, max(floor, w - overflow) if n == name else w) for n, w in cols]
-    return cols
+class _Layout(NamedTuple):
+    tmux: int
+    agent: int  # 0 when the AGENT column is dropped
+    with_model: bool
+    work: int  # WORK is last and takes whatever width remains
 
 
-def _column_value(row: SessionListRow, name: str) -> str:
-    return {
-        "TMUX": row.tmux_target or "",
-        "WORK": row.work_label,
-        "AGENT": row.agent,
-        "MODEL": row.model,
-    }[name]
+_WORK_MIN = 6
+
+
+def _fit(rows: tuple[SessionListRow, ...], budget: int) -> _Layout:
+    """Lay out TMUX, AGENT, AGE and WORK in ``budget`` columns.
+
+    Narrow terminals shrink WORK first, then drop the ``(model)`` part, then AGENT.
+    """
+
+    def natural(values: list[str], low: int, high: int) -> int:
+        return max(low, min(high, max([0, *map(len, values)])))
+
+    tmux = natural([r.tmux_target or "" for r in rows], 4, 20)
+    full = natural([r.agent_label() for r in rows], 5, 34)
+    short = natural([r.agent_label(with_model=False) for r in rows], 5, 20)
+
+    def used(tmux: int, agent: int) -> int:
+        return tmux + len(_GAP) + (agent + len(_GAP) if agent else 0) + _AGE_WIDTH + len(_GAP)
+
+    for agent, with_model in ((full, True), (short, False)):
+        if budget - used(tmux, agent) >= _WORK_MIN:
+            return _Layout(tmux, agent, with_model, budget - used(tmux, agent))
+    tmux = max(4, tmux - max(0, _WORK_MIN - (budget - used(tmux, 0))))
+    return _Layout(tmux, 0, False, max(0, budget - used(tmux, 0)))
+
+
+def _cells(row: SessionListRow, layout: _Layout) -> str:
+    """TMUX, AGENT, AGE and WORK cells of one row."""
+
+    parts = [cell(row.tmux_target or "", layout.tmux)]
+    if layout.agent:
+        parts.append(cell(row.agent_label(with_model=layout.with_model), layout.agent))
+    parts.append(cell(_age(row), _AGE_WIDTH, right=True))
+    parts.append(clip(row.work_label, layout.work))
+    return _GAP.join(parts)
+
+
+def _cell_headers(layout: _Layout) -> str:
+    parts = [cell("TMUX", layout.tmux)]
+    if layout.agent:
+        parts.append(cell("AGENT", layout.agent))
+    parts.append(cell("AGE", _AGE_WIDTH, right=True))
+    parts.append(clip("WORK", layout.work))
+    return _GAP.join(parts)
 
 
 def list_header(state: ListState, width: int) -> StyleAndTextTuples:
@@ -125,10 +142,7 @@ def list_header(state: ListState, width: int) -> StyleAndTextTuples:
                 label += f", {state.search_unavailable} unavailable"
         search = [("bold", clip(label, width))]
 
-    column_line = "    " + _GAP.join(
-        cell(name, w) for name, w in _list_columns(state.visible_rows, width)
-    )
-    column_line += _GAP + cell("AGE", _AGE_WIDTH, right=True)
+    column_line = "    " + _cell_headers(_fit(state.visible_rows, width - 4))
     return _lines([status_line, search, [("class:columns", clip(column_line, width))]])
 
 
@@ -138,7 +152,7 @@ def list_body(state: ListState, width: int) -> StyleAndTextTuples:
         filtered = state.filter_text or state.search_mode == "results"
         empty = "no archived sessions" if state.status == "archived" else "no primary sessions"
         return [("class:hint", "  no matches" if filtered else f"  {empty}")]
-    cols = _list_columns(rows, width)
+    layout = _fit(rows, width - 4)
     out: StyleAndTextTuples = []
     for index, row in enumerate(rows):
         selected = index == state.highlight
@@ -146,8 +160,7 @@ def list_body(state: ListState, width: int) -> StyleAndTextTuples:
         if selected:
             out.append(("[SetCursorPosition]", ""))
         glyph, glyph_style = _status_glyph(row)
-        text = _GAP.join(cell(_column_value(row, name), w) for name, w in cols)
-        text += _GAP + cell(_age(row), _AGE_WIDTH, right=True)
+        text = _cells(row, layout)
         out.append((base, "▸ " if selected else "  "))
         out.append((f"{base} {glyph_style}".strip(), glyph))
         out.append((base, f" {text}".ljust(max(0, width - 3))))
@@ -186,7 +199,7 @@ def detail_header(state: DetailState, width: int) -> StyleAndTextTuples:
     row = state.row
     harness = row.harness if row is not None else ""
     tmux = (row.tmux_target if row else None) or "-"
-    work = (row.work_label if row else "") or "-"
+    work = (row.work_label) or "-"
     agent = (row.agent if row else "") or "-"
     model = state.model or (row.model if row else "") or "-"
     created = _stamp(row.created_at) if row is not None and row.created_at else "-"
@@ -244,32 +257,22 @@ def detail_footer(state: DetailState, width: int) -> StyleAndTextTuples:
 _EDGE_WIDTH = 4
 
 
-def _lineage_layout(nodes: tuple[LineageNode, ...], width: int) -> tuple[int, int, int, int]:
-    """Widths of the tree, TMUX, WORK and AGENT cells; WORK yields first on narrow terminals."""
-    rows = [n.row for n in nodes if n.row is not None]
+def _lineage_layout(nodes: tuple[LineageNode, ...], width: int) -> tuple[int, _Layout]:
+    """Width of the CHAT tree cell and the shared TMUX/AGENT/AGE/WORK layout."""
+
+    rows = tuple(n.row for n in nodes if n.row is not None)
     tree = max([len("CHAT"), *(len(n.prefix) + len(n.chat_id) for n in nodes)])
-    tmux = min(18, max([4, *(len(r.tmux_target or "") for r in rows)]))
-    work = min(26, max([4, *(len(r.work_label) for r in rows)]))
-    agent = min(12, max([5, *(len(r.agent) for r in rows)]))
-    fixed = 4 + _EDGE_WIDTH + len(_GAP) * 5 + _AGE_WIDTH
-    while fixed + tree + tmux + work + agent > width and work > 6:
-        work -= 1
-    return tree, tmux, work, agent
+    # leading column, gutter, then CHAT and EDGE with their gaps
+    prefix = 4 + tree + len(_GAP) + _EDGE_WIDTH + len(_GAP)
+    return tree, _fit(rows, width - prefix)
 
 
 def lineage_header(state: LineageState, width: int) -> StyleAndTextTuples:
     columns: StyleAndTextTuples = []
     if state.nodes:
-        tree, tmux, work, agent = _lineage_layout(state.nodes, width)
+        tree, layout = _lineage_layout(state.nodes, width)
         text = _GAP.join(
-            [
-                "    " + cell("CHAT", tree),
-                cell("EDGE", _EDGE_WIDTH),
-                cell("TMUX", tmux),
-                cell("WORK", work),
-                cell("AGENT", agent),
-                cell("AGE", _AGE_WIDTH, right=True),
-            ]
+            ["    " + cell("CHAT", tree), cell("EDGE", _EDGE_WIDTH), _cell_headers(layout)]
         )
         columns = [("class:columns", clip(text, width))]
     return _lines(
@@ -286,7 +289,7 @@ def lineage_body(state: LineageState, width: int) -> StyleAndTextTuples:
         return [("class:error", f" {clip(state.error, width - 2)}")]
     if state.nodes is None:
         return [("class:hint", " loading lineage…")]
-    tree, tmux, work, agent = _lineage_layout(state.nodes, width)
+    tree, layout = _lineage_layout(state.nodes, width)
     out: StyleAndTextTuples = []
     for index, node in enumerate(state.nodes):
         selected = index == state.cursor
@@ -297,17 +300,7 @@ def lineage_body(state: LineageState, width: int) -> StyleAndTextTuples:
         glyph, glyph_style = _status_glyph(row) if row is not None else (" ", "")
         label = cell(node.prefix + node.chat_id, tree)
         edge = cell(node.kind, _EDGE_WIDTH)
-        if row is None:
-            rest = "(not in this project's index)"
-        else:
-            rest = _GAP.join(
-                [
-                    cell(row.tmux_target or "", tmux),
-                    cell(row.work_label, work),
-                    cell(row.agent, agent),
-                    cell(_age(row), _AGE_WIDTH, right=True),
-                ]
-            )
+        rest = "(not in this project's index)" if row is None else _cells(row, layout)
         weight = "bold" if node.chat_id == state.origin else ""
         out.append((base, "▸ " if selected else "  "))
         out.append((f"{base} {glyph_style}".strip(), glyph))
