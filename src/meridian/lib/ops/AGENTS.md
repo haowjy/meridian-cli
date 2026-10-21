@@ -40,7 +40,8 @@ spawn. The reaper also reads `_MERIDIAN_DEPTH` and skips reaping when nested.
 
 ## Operation Categories
 
-**Session:** `session_list.py`, `session_reentry.py`, `session_transcript.py`,
+**Session:** `session_lineage.py` (indexed fork/from component),
+`session_model.py` (native executed-model refresh), `session_list.py`, `session_reentry.py`, `session_transcript.py`,
 `session_log.py`, `session_log_render.py` (pure rendering — clean/raw modes, tool
 collapsing, content pipeline), `session_render.py`, `session_search.py`,
 `session_search_index.py` (`SearchProjection` — rebuildable search rows refreshed
@@ -50,6 +51,11 @@ from authoritative bindings and exact native sources), `session_preview.py`
 an unbound chat's native session), `session_corpus.py`,
 `session_archive.py`, `runner_history_prune.py` (explicit dry-run-first prune of
 redundant runner history for bound chats), `session_index.py`.
+
+`session_log.select_session_log_window` windows an already-parsed transcript;
+detail consumers retain one `read_session_transcript` snapshot across windows.
+`session_list` scopes status and ordering before limiting. Idle state refines live
+AGE and cache deadlines only; it is GC-able notification state, not turn history.
 
 Discovery composes the shared `state/history_index.py` projection; lifecycle/control
 reads stay authoritative. `session_corpus.py` selects search roots and work scope.

@@ -38,6 +38,7 @@ from sqlalchemy import (
     or_,
     select,
     text,
+    tuple_,
     union_all,
 )
 from sqlalchemy.engine import Connection, Engine  # noqa: TC002
@@ -67,7 +68,9 @@ from meridian.lib.state.session_fold import (
     UnsupportedSessionRecords,
     parse_event,
     project_session_generation,
+    supported_session_event_version,
 )
+from meridian.lib.state.session_store import parse_model_observation
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
     SpawnStateQuarantined,
@@ -180,6 +183,22 @@ SESSION_CHATS = Table(
     Column("latest_blank", Text),
     Column("record_json", Text, nullable=False),
 )
+MODEL_OBSERVATIONS = Table(
+    "model_observations",
+    INDEX_SCHEMA,
+    Column("harness", Text, primary_key=True),
+    Column("session", Text, primary_key=True),
+    Column("model", Text, nullable=False),
+)
+LINEAGE = Table(
+    "session_lineage",
+    INDEX_SCHEMA,
+    Column("child", Text, primary_key=True),
+    Column("kind", Text, primary_key=True),
+    Column("parent", Text, nullable=False),
+    Column("history_id", Text),
+)
+Index("lineage_parent", LINEAGE.c.parent)
 WORK_CHATS = Table(
     "work_chats",
     INDEX_SCHEMA,
@@ -505,6 +524,8 @@ class HistoryIndex:
             db.execute(delete(SESSIONS))
             db.execute(delete(SESSION_CHATS))
             db.execute(delete(WORK_CHATS))
+            db.execute(delete(MODEL_OBSERVATIONS))
+            db.execute(delete(LINEAGE))
             db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
             db.execute(delete(CURSORS).where(CURSORS.c.source == "sessions"))
             return
@@ -513,9 +534,7 @@ class HistoryIndex:
             snapshot_extent = stat.st_size
             inode = f"{stat.st_dev}:{stat.st_ino}"
             cursor = (
-                db.execute(select(CURSORS).where(CURSORS.c.source == "sessions"))
-                .mappings()
-                .first()
+                db.execute(select(CURSORS).where(CURSORS.c.source == "sessions")).mappings().first()
             )
             offset = 0
             unsupported = UnsupportedSessionRecords()
@@ -533,6 +552,8 @@ class HistoryIndex:
                 db.execute(delete(SESSIONS))
                 db.execute(delete(SESSION_CHATS))
                 db.execute(delete(WORK_CHATS))
+                db.execute(delete(MODEL_OBSERVATIONS))
+                db.execute(delete(LINEAGE))
                 db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
             # Load a chat's prior state only when an appended event touches it.
             # Metadata is derived once per changed generation, not mirrored per event.
@@ -546,9 +567,27 @@ class HistoryIndex:
             dirty: set[tuple[str, str]] = set()
             dirty_chats: set[str] = set()
             work_chats: set[tuple[str, str]] = set()
+
+            def parse_index_event(payload: dict[str, object]):
+                if not supported_session_event_version(payload, unsupported):
+                    return None
+                observation = parse_model_observation(payload)
+                if observation is not None:
+                    db.execute(
+                        insert(MODEL_OBSERVATIONS)
+                        .prefix_with("OR REPLACE")
+                        .values(
+                            harness=observation.harness,
+                            session=observation.harness_session_id,
+                            model=observation.observed_model_token,
+                        )
+                    )
+                    return None
+                return parse_event(payload, unsupported)
+
             for parsed_event, end in iter_jsonl_file(
                 handle,
-                lambda payload: parse_event(payload, unsupported),
+                parse_index_event,
                 path=path,
                 offset=offset,
                 extent=snapshot_extent,
@@ -590,9 +629,7 @@ class HistoryIndex:
                         parsed_event,
                         ordinal=offset,
                     )
-                    started = isinstance(
-                        parsed_event, (SessionStartEvent, SessionHistoricalEvent)
-                    )
+                    started = isinstance(parsed_event, (SessionStartEvent, SessionHistoricalEvent))
                     if records.get(chat) is not prior:
                         dirty_chats.add(chat)
                         if started:
@@ -641,6 +678,22 @@ class HistoryIndex:
                     self._aliases(db, source_id, history_id, session=record)
                 else:
                     db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
+            for chat in dirty_chats:
+                record = records[chat]
+                db.execute(delete(LINEAGE).where(LINEAGE.c.child == chat))
+                if record.kind == "primary":
+                    for kind in ("forked", "context"):
+                        parent = getattr(record, f"{kind}_from_chat_id")
+                        history = getattr(record, f"{kind}_from_history_id")
+                        if parent:
+                            db.execute(
+                                insert(LINEAGE).values(
+                                    child=chat,
+                                    kind=kind,
+                                    parent=parent,
+                                    history_id=str(history) if history else None,
+                                )
+                            )
             if dirty_chats:
                 db.exec_driver_sql(
                     "INSERT OR REPLACE INTO session_chats "
@@ -1160,9 +1213,7 @@ class HistoryIndex:
         except FileLockTimeout:
             return ()
         return tuple(
-            _source_label(marker.source)
-            for marker in pending
-            if marker.source.kind != "sessions"
+            _source_label(marker.source) for marker in pending if marker.source.kind != "sessions"
         )
 
     @staticmethod
@@ -1537,7 +1588,12 @@ class HistoryIndex:
             }
 
     def recent_sessions(
-        self, *, limit: int, live_chat_ids: set[str]
+        self,
+        *,
+        limit: int,
+        live_chat_ids: set[str],
+        status: Literal["active", "archived"] | None = None,
+        sort: Literal["updated", "created"] = "updated",
     ) -> tuple[list[SessionRecord | SpawnRecord], int]:
         newer = SESSIONS.alias("newer")
         live_expr = SESSIONS.c.chat.in_(sorted(live_chat_ids)) if live_chat_ids else literal(0)
@@ -1546,6 +1602,10 @@ class HistoryIndex:
                 SESSIONS.c.record_json,
                 literal("session").label("source"),
                 SESSIONS.c.activity,
+                func.coalesce(
+                    func.nullif(func.json_extract(SESSIONS.c.record_json, "$.created_at"), ""),
+                    func.json_extract(SESSIONS.c.record_json, "$.started_at"),
+                ).label("created"),
                 live_expr.label("live"),
                 func.cast(func.substr(SESSIONS.c.chat, 2), Integer).label("tie"),
             ).where(
@@ -1562,15 +1622,28 @@ class HistoryIndex:
                 RECORDS.c.record_json,
                 literal("archive").label("source"),
                 RECORDS.c.activity,
+                func.json_extract(RECORDS.c.record_json, "$.started_at").label("created"),
                 literal(0).label("live"),
                 literal(0).label("tie"),
             ).where(RECORDS.c.archive_id.is_not(None), RECORDS.c.kind == "primary"),
         ).cte("browse")
+        if status is not None:
+            browse = (
+                select(browse)
+                .where(browse.c.source == ("archive" if status == "archived" else "session"))
+                .cte("scoped")
+            )
         with self.query() as db:
             total = db.execute(select(func.count()).select_from(browse)).scalar() or 0
             rows = db.execute(
                 select(browse.c.record_json, browse.c.source)
-                .order_by(browse.c.live.desc(), browse.c.activity.desc(), browse.c.tie.desc())
+                .order_by(
+                    *(
+                        (browse.c.live.desc(), browse.c.activity.desc(), browse.c.tie.desc())
+                        if sort == "updated"
+                        else (browse.c.created.desc(), browse.c.tie.desc())
+                    )
+                )
                 .limit(limit)
             )
             return [
@@ -1579,6 +1652,36 @@ class HistoryIndex:
                 else SpawnRecord.model_validate_json(row[0])
                 for row in rows
             ], total
+
+    def last_executed_models(self, identities: set[tuple[str, str]]) -> dict[tuple[str, str], str]:
+        if not identities:
+            return {}
+        with self.query() as db:
+            return {
+                (row[0], row[1]): row[2]
+                for row in db.execute(
+                    select(MODEL_OBSERVATIONS).where(
+                        tuple_(MODEL_OBSERVATIONS.c.harness, MODEL_OBSERVATIONS.c.session).in_(
+                            sorted(identities)
+                        )
+                    )
+                )
+            }
+
+    def lineage_edges(self, chat_id: str) -> list[tuple[str, str, str, str | None]]:
+        # Traverse both directions in SQLite, including multiple context parents.
+        with self.query() as db:
+            return [
+                tuple(row)
+                for row in db.exec_driver_sql(
+                    "WITH RECURSIVE tree(chat) AS (SELECT ? UNION "
+                    "SELECT parent FROM session_lineage JOIN tree ON child = chat UNION "
+                    "SELECT child FROM session_lineage JOIN tree ON parent = chat) "
+                    "SELECT child, kind, parent, history_id FROM session_lineage "
+                    "WHERE child IN tree ORDER BY child, kind",
+                    (chat_id,),
+                )
+            ]
 
     def sessions(
         self, *, limit: int | None = None, chat_ids: set[str] | None = None

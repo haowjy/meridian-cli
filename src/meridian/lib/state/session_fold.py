@@ -121,10 +121,14 @@ class SessionRecord(SessionSettings):
     harness_session_id: OptionalPersistedHarnessSessionId
     native_store: str | None = None
     started_at: str
+    created_at: str = ""
     stopped_at: str | None
     session_instance_id: str = ""
     forked_from_chat_id: OptionalPersistedChatId = None
     forked_from_history_id: uuid.UUID | None = None
+    context_from_chat_id: OptionalPersistedChatId = None
+    context_from_history_id: uuid.UUID | None = None
+    tmux_target: str | None = None
     spawn_id: str | None = None
 
     def key_fields(self) -> NativeKeyFields:
@@ -154,6 +158,9 @@ class SessionStartEvent(SessionSettings):
     started_at: str
     forked_from_chat_id: OptionalPersistedChatId = None
     forked_from_history_id: uuid.UUID | None = None
+    context_from_chat_id: OptionalPersistedChatId = None
+    context_from_history_id: uuid.UUID | None = None
+    tmux_target: str | None = None
     spawn_id: str | None = None
     model_selection_protocol: Literal[1] | None = None
 
@@ -355,10 +362,14 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
         native_store=event.native_store,
         **event.model_dump(include=set(SessionSettings.model_fields)),
         started_at=event.started_at,
+        created_at=event.started_at,
         stopped_at=None,
         session_instance_id=event.session_instance_id,
         forked_from_chat_id=event.forked_from_chat_id,
         forked_from_history_id=event.forked_from_history_id,
+        context_from_chat_id=event.context_from_chat_id,
+        context_from_history_id=event.context_from_history_id,
+        tmux_target=event.tmux_target,
         spawn_id=event.spawn_id,
     )
 
@@ -391,7 +402,20 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
             outcome = bind(existing.key_fields(), event.key_fields())
             if isinstance(outcome, Conflict):
                 return False
-            record = with_key(record, outcome.key)
+            record = record.model_copy(
+                update={"created_at": existing.created_at or existing.started_at}
+            )
+            record = with_key(record, outcome.key).model_copy(
+                update={
+                    field: getattr(existing, field) or getattr(record, field)
+                    for field in (
+                        "forked_from_chat_id",
+                        "forked_from_history_id",
+                        "context_from_chat_id",
+                        "context_from_history_id",
+                    )
+                }
+            )
         records[record.chat_id] = record
         return True
     existing = records.get(event.chat_id)
@@ -541,7 +565,17 @@ def project_session_generation(
     if isinstance(event, SessionStartEvent):
         if not applied:
             return ()
-        event = with_key(event, records[chat_id].key_fields())
+        event = with_key(event, records[chat_id].key_fields()).model_copy(
+            update={
+                field: getattr(records[chat_id], field)
+                for field in (
+                    "forked_from_chat_id",
+                    "forked_from_history_id",
+                    "context_from_chat_id",
+                    "context_from_history_id",
+                )
+            }
+        )
     elif isinstance(event, SessionUpdateEvent) and not applied:
         existing = records.get(chat_id)
         if existing is not None and isinstance(
@@ -569,6 +603,8 @@ def project_session_generation(
         )
     rows = generations.setdefault((chat_id, generation), {})
     if project_session_event(rows, event):
+        if isinstance(event, SessionStartEvent):
+            rows[chat_id] = records[chat_id]
         changed.append((chat_id, generation))
         current = rows[chat_id]
         if current.record_mode == "live" and current.stopped_at is None:

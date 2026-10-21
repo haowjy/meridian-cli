@@ -235,13 +235,16 @@ def run_primary_launch(
         if passthrough:
             raise ValueError("Cannot combine --continue with passthrough args (--).")
         resolved_continue = resolve_session_target(
-            project_root=project_root, continue_ref=resume_target, harness_hint=harness,
+            project_root=project_root,
+            continue_ref=resume_target,
+            harness_hint=harness,
         )
         if resolved_continue.missing_harness_session_id:
             raise NativeSessionUnavailable(resume_target, "unbound")
         if resolved_continue.source_spawn_id is not None:
             sweep_before_continue(
-                resolve_project_runtime_root(project_root), resolved_continue.source_spawn_id,
+                resolve_project_runtime_root(project_root),
+                resolved_continue.source_spawn_id,
                 chat_id=resolved_continue.source_chat_id,
                 dry_run=dry_run,
             )
@@ -337,6 +340,11 @@ def run_primary_launch(
         if requested_work_id is None and resolved_fork.source_work_id is not None:
             requested_work_id = resolved_fork.source_work_id
 
+    context_source = (
+        resolve_session_target(project_root=project_root, continue_ref=raw_from_target)
+        if raw_from_target
+        else None
+    )
     resolved_goal = normalize_goal(goal)
 
     launch_result = launch_primary(
@@ -375,19 +383,27 @@ def run_primary_launch(
                 autocompact_pct=autocompact_pct,
             ),
             launch_policy_snapshot=continue_launch_policy_snapshot,
-            session=continue_session.model_copy(update={
-                "requested_harness_session_id": continue_harness_session_id,
-                "continue_harness": continue_harness,
-                "continue_chat_id": continue_chat_id,
-                "continue_fork": continue_fork,
-                "forked_from_chat_id": forked_from_chat_id,
-                "forked_from_history_id": forked_from_history_id,
-                "source_control_root": source_control_root,
-                "source_execution_cwd": source_execution_cwd,
-                "source_native_store": source_native_store,
-                "continue_source_tracked": continue_source_tracked,
-                "continue_source_ref": continue_source_ref,
-            }),
+            session=continue_session.model_copy(
+                update={
+                    "context_from_chat_id": context_source.source_chat_id
+                    if context_source
+                    else None,
+                    "context_from_history_id": context_source.source_history_id
+                    if context_source
+                    else None,
+                    "requested_harness_session_id": continue_harness_session_id,
+                    "continue_harness": continue_harness,
+                    "continue_chat_id": continue_chat_id,
+                    "continue_fork": continue_fork,
+                    "forked_from_chat_id": forked_from_chat_id,
+                    "forked_from_history_id": forked_from_history_id,
+                    "source_control_root": source_control_root,
+                    "source_execution_cwd": source_execution_cwd,
+                    "source_native_store": source_native_store,
+                    "continue_source_tracked": continue_source_tracked,
+                    "continue_source_ref": continue_source_ref,
+                }
+            ),
         ),
         harness_registry=harness_registry,
     )
@@ -408,8 +424,11 @@ def run_primary_launch(
         except ImportError as exc:
             history_warning = f"Session close maintenance failed: {exc}"
     return PrimaryLaunchOutput(
-        boundary_summary=(run_boundary_summary(row, include_unverified=False)
-                          if not dry_run and launch_result.primary_spawn_id and row else None),
+        boundary_summary=(
+            run_boundary_summary(row, include_unverified=False)
+            if not dry_run and launch_result.primary_spawn_id and row
+            else None
+        ),
         message=_result_message(exit_code=launch_result.exit_code),
         exit_code=launch_result.exit_code,
         command=launch_result.command if dry_run else (),

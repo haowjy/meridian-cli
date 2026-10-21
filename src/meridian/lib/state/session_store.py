@@ -255,7 +255,7 @@ def native_observations(
             return None
         if native_id not in native_ids(row):
             return None
-        return _parse_model_observation(row)
+        return parse_model_observation(row)
 
     observations = read_events(
         path,
@@ -378,7 +378,7 @@ class StaleSessionCleanup(NamedTuple):
     materialized_scopes: tuple[MaterializedCleanupScope, ...]
 
 
-def _parse_model_observation(payload: Mapping[str, object]) -> SessionModelObservationEvent | None:
+def parse_model_observation(payload: Mapping[str, object]) -> SessionModelObservationEvent | None:
     if payload.get("event") != "model_observation":
         return None
     try:
@@ -555,6 +555,9 @@ def start_session(
     skill_paths: tuple[str, ...] = (),
     forked_from_chat_id: str | None = None,
     forked_from_history_id: uuid.UUID | None = None,
+    context_from_chat_id: str | None = None,
+    context_from_history_id: uuid.UUID | None = None,
+    tmux_target: str | None = None,
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
@@ -600,6 +603,9 @@ def start_session(
             ),
             spawn_id=spawn_id,
             forked_from_history_id=forked_from_history_id,
+            context_from_chat_id=ChatId(context_from_chat_id) if context_from_chat_id else None,
+            context_from_history_id=context_from_history_id,
+            tmux_target=tmux_target,
             model_selection_protocol=model_selection_protocol,
         )
         with (
@@ -1192,9 +1198,7 @@ def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
     """Return the active work item ID for a session, or None."""
 
     record = chat_record(runtime_root, chat_id)
-    if record is None:
-        return None
-    return record.active_work_id
+    return record.active_work_id if record else None
 
 
 def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:

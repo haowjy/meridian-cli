@@ -23,6 +23,7 @@ from meridian.lib.ops.session_render import (
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     AbsoluteTranscriptMessage,
+    ParsedSessionTranscript,
     SessionLogRoute,
     build_session_log_command,
     read_session_transcript,
@@ -261,11 +262,7 @@ def _segment_boundary_commands(
     return (previous_segment_command, next_segment_command)
 
 
-def session_log_sync(
-    payload: SessionLogInput,
-    ctx: RuntimeContext | None = None,
-) -> SessionLogOutput:
-    _ = ctx
+def _validate_window(payload: SessionLogInput) -> bool:
     if payload.tail is not None and payload.tail < 0:
         raise ValueError("--tail must be >= 0.")
 
@@ -303,11 +300,14 @@ def session_log_sync(
     if payload.around_ordinal is not None and payload.context is None:
         raise ValueError("--around requires --context.")
 
-    parsed = read_session_transcript(
-        ref=payload.ref,
-        file_path=payload.file_path,
-        project_root=payload.project_root,
-    )
+    return uses_window_selectors
+
+
+def select_session_log_window(
+    parsed: ParsedSessionTranscript,
+    payload: SessionLogInput,
+) -> SessionLogOutput:
+    uses_window_selectors = _validate_window(payload)
 
     address_space: _NavigationAddressSpace
 
@@ -464,6 +464,21 @@ def session_log_sync(
     )
 
 
+def session_log_sync(
+    payload: SessionLogInput,
+    ctx: RuntimeContext | None = None,
+) -> SessionLogOutput:
+    _ = ctx
+    _validate_window(payload)
+    parsed = read_session_transcript(
+        ref=payload.ref,
+        file_path=payload.file_path,
+        project_root=payload.project_root,
+    )
+
+    return select_session_log_window(parsed, payload)
+
+
 session_log = async_from_sync(session_log_sync)
 
 
@@ -472,6 +487,7 @@ __all__ = [
     "SessionLogEntryMessage",
     "SessionLogInput",
     "SessionLogOutput",
+    "select_session_log_window",
     "session_log",
     "session_log_sync",
 ]

@@ -51,6 +51,8 @@ class SessionRequest(BaseModel):
     source_native_store: str | None = None
     forked_from_chat_id: str | None = None
     forked_from_history_id: UUID | None = None
+    context_from_chat_id: str | None = None
+    context_from_history_id: UUID | None = None
     continue_harness: str | None = None
     continue_source_tracked: bool = False
     continue_source_ref: str | None = None

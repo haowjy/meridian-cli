@@ -3,27 +3,13 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from meridian.lib.notify.notice import SessionLabel
+from meridian.lib.platform.tmux import resolve_tmux_session
 
 TmuxSessionResolver = Callable[[str], str | None]
-
-
-def _tmux_session(pane: str) -> str | None:
-    try:
-        result = subprocess.run(
-            ["tmux", "display-message", "-p", "-t", pane, "#S"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return result.stdout.strip() or None
 
 
 def _clean(value: str | None) -> str | None:
@@ -37,7 +23,7 @@ def build_session_label(
     *,
     environ: Mapping[str, str] | None = None,
     cwd: Path | None = None,
-    resolve_tmux_session: TmuxSessionResolver = _tmux_session,
+    resolve_tmux_session: TmuxSessionResolver = resolve_tmux_session,
 ) -> SessionLabel:
     """Resolve the optional actor, work, project, and tmux label parts."""
     env = os.environ if environ is None else environ

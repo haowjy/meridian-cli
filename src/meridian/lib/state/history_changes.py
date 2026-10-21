@@ -27,8 +27,8 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.session_fold import SUPPORTED_SESSION_EVENT_VERSIONS
 
-# A later chat start now projects every earlier unstopped generation as inactive.
-SCHEMA_VERSION = 10
+# Project conversation lineage and native model observations.
+SCHEMA_VERSION = 11
 
 
 def versioned(stem: str) -> str:

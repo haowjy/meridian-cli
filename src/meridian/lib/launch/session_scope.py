@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import pkgutil
 import threading
 from collections.abc import Callable, Generator
@@ -17,6 +18,7 @@ from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_c
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.platform.tmux import resolve_tmux_target
 from meridian.lib.state import spawn_store
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.native_binding import BindOutcome, Conflict
@@ -197,6 +199,11 @@ def session_scope(
         skill_paths=metadata.skill_paths,
         forked_from_chat_id=request.forked_from_chat_id,
         forked_from_history_id=request.forked_from_history_id,
+        context_from_chat_id=request.context_from_chat_id,
+        context_from_history_id=request.context_from_history_id,
+        tmux_target=resolve_tmux_target(os.environ.get("TMUX_PANE", ""))
+        if kind == "primary"
+        else None,
         control_root=control_root,
         task_cwd=task_cwd,
         execution_cwd=execution_cwd,
