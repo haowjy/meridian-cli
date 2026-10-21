@@ -1,0 +1,5 @@
+{
+  "name": "meridian-spawn-watch",
+  "version": "0.1.0",
+  "description": "Delivers finished background Meridian spawns to the lead as a new turn when its Claude Code session goes idle, through `meridian spawn collect`."
+}
