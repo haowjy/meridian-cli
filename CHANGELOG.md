@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-10-21
+
 ### Upgrade notes
 - `meridian spawn done` / `rearm` can now exit 1 where they used to succeed; scripts that ignored a signal nothing reads will see the failure. No steps before or after upgrading; older builds ignore the new `accepted-signals.json`, so rollback works. See [completion signal reporting](docs/upgrading.md#completion-signal-reporting).
 
