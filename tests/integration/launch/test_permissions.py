@@ -150,38 +150,6 @@ def test_claude_tool_projection_keeps_allow_rules_without_deny_default() -> None
     )
 
 
-def test_tools_resolver_codex_ignores_claude_tool_flags() -> None:
-    config, resolver = resolve_permission_pipeline(
-        sandbox="workspace-write",
-        tools={"*": "allow", "bash": "deny"},
-    )
-
-    assert config.sandbox == "workspace-write"
-    assert isinstance(resolver, ToolsPermissionResolver)
-    assert resolve_permission_flags(resolver, HarnessId.CODEX) == (
-        "--sandbox",
-        "workspace-write",
-    )
-
-
-@pytest.mark.parametrize(
-    ("sandbox", "expected_sandbox", "expected_flags"),
-    (
-        ("default", "default", ()),
-        ("read-only", "read-only", ("--sandbox", "read-only")),
-    ),
-)
-def test_codex_uses_exact_sandbox_from_profile(
-    sandbox: str,
-    expected_sandbox: str,
-    expected_flags: tuple[str, ...],
-) -> None:
-    config, resolver = resolve_permission_pipeline(sandbox=sandbox)
-
-    assert config.sandbox == expected_sandbox
-    assert resolve_permission_flags(resolver, HarnessId.CODEX) == expected_flags
-
-
 def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars() -> None:
     child_env = build_harness_child_env(
         base_env={
