@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -28,7 +29,6 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionState,
     EvidenceActivity,
     EvidenceEventDecision,
-    NudgeUrgency,
     ProfileDecision,
     ProfileExitDecision,
     WorkAssessment,
@@ -179,6 +179,13 @@ class _Coordinator:
     async def stop(self) -> None:
         return None
 
+    @property
+    def pending_outcome(self) -> None:
+        return None
+
+    def should_defer_close(self) -> bool:
+        return False
+
     def next_timeout(self) -> None:
         return None
 
@@ -290,6 +297,12 @@ class _StabilizingProfile:
     def allows_evaluation_without_candidate(self) -> bool:
         return False
 
+    def refresh_deadline_after_event(self) -> bool:
+        return False
+
+    def candidate_transition(self):  # type: ignore[no-untyped-def]
+        return nullcontext()
+
     def consume_directives(
         self,
         state: CompletionState,
@@ -326,8 +339,9 @@ class _StabilizingProfile:
         del state, intentional_stop
         return None
 
-    def next_directive_poll_at(self) -> None:
-        return None
+    def should_defer_close(self, state: CompletionState) -> bool:
+        del state
+        return False
 
     def next_nudge_at(
         self,
@@ -337,8 +351,11 @@ class _StabilizingProfile:
         del state, assessment
         return None
 
-    async def send_nudge(self, urgency: NudgeUrgency) -> None:
-        del urgency
+    async def send_nudge(self) -> None:
+        return None
+
+    def after_terminal_accepted(self, outcome: Any) -> None:
+        del outcome
 
     def stream_exit_decision(
         self,

@@ -7,6 +7,21 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Claude TUI primaries show the derived-active Meridian spawns running under their session in a bounded status line, refreshed on spawn-changing events and every 60 seconds only while spawns remain active.
 
+## [0.11.3] - 2026-10-21
+
+### Upgrade notes
+- `meridian spawn done` / `rearm` can now exit 1 where they used to succeed; scripts that ignored a signal nothing reads will see the failure. No steps before or after upgrading; older builds ignore the new `accepted-signals.json`, so rollback works. See [completion signal reporting](docs/upgrading.md#completion-signal-reporting).
+
+### Changed
+- `meridian spawn done` / `rearm` refuse, exit 1, instead of reporting "signal written" when nothing will read the signal: a primary session, a spawn that is no longer running, a spawn with no completion hold (Cursor and other plain plans), `rearm` on Pi, and `rearm` once the rearm budget is spent. A spawn whose runner hasn't reported yet still gets the signal, with a note that delivery is unconfirmed.
+- Pi child spawns read only `done.signal`; a stray `rearm.signal` is no longer deleted and ignored.
+- Claude, Codex, and OpenCode resident children now share one completion hold: they wait for Meridian descendants as well as harness-native background work, then get one best-effort `done` / `rearm` confirmation turn. A silent or unavailable confirmation accepts only when no work remains. The default completion window now matches the calling harness's configured `wait_yield_seconds` (50 minutes for Claude and Codex) unless `timeouts.resident_deadline_seconds` overrides it.
+
+## [0.11.2] - 2026-10-20
+
+### Fixed
+- `meridian --continue <chat>` works after history archiving reclaims the chat's last spawn directory. Continue dry-runs now also refuse a live source or successor instead of promising a launch the real continue rejects. (#676)
+
 ## [0.11.1] - 2026-10-19
 
 ### Changed

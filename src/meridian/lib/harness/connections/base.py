@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from meridian.lib.harness.semantics import EventSemantics, PrimaryEventScope
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
-    from meridian.lib.streaming.completion_contracts import CompletionEvidence
+    from meridian.lib.streaming.completion_contracts import NativeTaskSource
 
 # Uniform transport message cap across harness adapters.
 MAX_HARNESS_MESSAGE_BYTES: Final[int] = 10 * 1024 * 1024
@@ -295,7 +295,7 @@ class ConnectionConfig:
     system: str | None = None
     timeout_seconds: float | None = None
     pi_child_wave_timeout_seconds: float | None = None
-    resident_deadline_seconds: float | None = None
+    resident_deadline_seconds: float = 3000.0
     resident_poll_seconds: float | None = None
     resident_rearm_budget: int | None = None
     pi_task_ping_interval_seconds: float | None = None
@@ -361,8 +361,8 @@ class HarnessConnection(Generic[SpecT], ABC):
         """Resident backend control seam, when this transport supports resident turns."""
         return None
 
-    def completion_evidence(self) -> CompletionEvidence | None:
-        """Native completion evidence, independent of resident backend control."""
+    def native_task_source(self) -> NativeTaskSource | None:
+        """Harness-native background tasks, independent of resident backend control."""
         return None
 
     @property

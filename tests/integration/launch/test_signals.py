@@ -102,7 +102,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         def observe_event_semantics(self, semantics: object) -> None:
             _ = semantics
 
-        def completion_evidence(self) -> None:
+        def native_task_source(self) -> None:
             return None
 
         @property

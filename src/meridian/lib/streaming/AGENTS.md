@@ -9,9 +9,9 @@ Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
 candidate/deadline mechanics and the stabilization/validation phases live in
 `CompletionCoordinator`, behind
 the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
-`coordinator=None`; native-task holds, Codex/OpenCode resident completion, and Pi
-each supply their own profile. Keep Pi child-wave,
-disk-state, direct-follow-up gating, resident-done nudges, and descendant cleanup policy
+`coordinator=None`; Claude/Codex/OpenCode completion shares one hold profile, and Pi
+supplies its own profile. Keep Pi child-wave,
+disk-state, direct-follow-up gating, candidate confirmation/rearm, and descendant cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
 `drain_plan_factory.py` is the composition root for plan selection. It owns the
@@ -19,16 +19,17 @@ plain/resident/Pi choice and injects manager capabilities for event emission,
 serialized injection, and application-service descendant cleanup into both Pi and
 resident policy. Drain collaborators must not construct application services.
 
-**Do not key resident behavior off harness ids.** The connection supplies completion
-evidence independently of backend control. Resident backend control selects
-Codex/OpenCode descendant evidence. Claude instead
-supplies native-task evidence and serialized stdin injection without backend liveness
-capabilities. Select the profile once from these capabilities; evidence reports facts,
-while profiles own hold, done/rearm, deadline and nudge policy.
+**Do not key resident behavior off harness ids.** A connection exposes a native task
+source (`native_task_source()`) independently of resident backend control. Both feed
+one `HoldEvidence(descendants, native)` built by `ResidentDrainCoordinator.build`:
+resident backend control nudges through `begin_followup_turn`; Claude supplies its
+native task source and is nudged through serialized inject. Every hold also reads
+persisted descendants. Select the profile once from these capabilities; evidence
+reports facts, while profiles own hold, done/rearm, deadline and nudge policy.
 
 ## Completion and Absolute Timeout Models
 
-Resident completion uses an absolute deadline per arm. Only an explicit
+Hold completion uses an absolute deadline per arm. Only an explicit
 `rearm.signal` can grant a new window; ordinary harness or descendant activity cannot.
 Rearm grants are unlimited by default. `--resident-rearm-budget`,
 `MERIDIAN_RESIDENT_REARM_BUDGET`, profile `resident-rearm-budget`, or
@@ -41,10 +42,14 @@ activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
 Native-task activity never renews the deadline. Explicit done authorizes completion
-with leftover native tasks; managed-scope teardown stops them. Keep native result-wait
-and nudge behavior in the native profile, not the shared coordinator or evidence adapter.
+with leftover native tasks; managed-scope teardown stops them. A successful completion
+candidate gets one best-effort confirmation turn: `done` accepts, `rearm` opens another
+fixed window and waits for a genuinely new successful/idle candidate, and silence
+accepts only after evidence is ready. The default completion window
+is the calling harness's configured wait-yield interval unless
+`timeouts.resident_deadline_seconds` overrides it.
 
-For all three profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
+For both profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
 ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
 defaults to `None`; resident rearms and Pi waves cannot reset it.
 
@@ -114,6 +119,11 @@ needed to guarantee it gets through — without it, the subscriber hangs forever
 
 `DrainPlan` carries the selected coordinator, policy, aux wake, finalizer, and async
 session teardown for one active spawn. Its `coordinator=None` value is the plain path.
+`accepted_signals` names the `spawn done`/`rearm` signals the coordinator consumes:
+hold plans `{done, rearm}`, Pi `{done}`, plain none. `build_drain_plan` is the only
+place that sets it; `SpawnManager.start_spawn` writes it once to
+`spawns/<id>/accepted-signals.json` before the drain starts, and the CLI refuses a
+signal the file doesn't list. Don't move it onto the spawn row (see `.context/CONTEXT.md`).
 `DrainPolicy` governs terminal event behavior:
 
 | Policy | On terminal event | Action |
@@ -144,9 +154,9 @@ session drains that keep the harness alive across turns.
 - `pi_drain.py` — Pi evidence/cleanup collaborators and drain-protocol adapter
 - `pi_work_ledger.py` — sole mutable owner of Pi-private disk blockers; exposes
   immutable categorized snapshots
-- `resident_drain.py` — resident evidence/profile/cleanup and drain-protocol adapter
-- `native_hold_profile.py` — native-task hold and closing-result policy
-- `rearm_window.py` — shared resident/native signal, deadline, and rearm budget
+- `resident_drain.py` — `HoldEvidence`, shared hold profile, cleanup, and the hold
+  coordinator builder/adapter
+- `rearm_window.py` — shared resident/native absolute deadline and persisted rearm budget
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — validated Pi-private task/receipt disk
   observation and exact public-message admission fencing; disk evidence feeds the ledger

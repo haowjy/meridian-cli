@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
@@ -15,6 +15,7 @@ from meridian.lib.streaming.drain_teardown import (
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.harness.semantics import NormalizedHarnessEvent, TerminalEventOutcome
+    from meridian.lib.state.spawn_signals import SpawnSignalKind
     from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
@@ -74,21 +75,15 @@ class DrainPlan:
     handle_aux_wake: Callable[[], Awaitable[DrainLoopDecision]] | None = None
     finalizer: DrainFinalizer | None = None
     teardown: DrainSessionTeardown = DEFAULT_DRAIN_SESSION_TEARDOWN
+    #: `meridian spawn done`/`rearm` signals the coordinator consumes. SpawnManager
+    #: persists it in the spawn dir so the CLI can refuse a signal nothing will read.
+    accepted_signals: frozenset[SpawnSignalKind] = frozenset()
 
     def selected_policy(self) -> DrainPolicy:
         return self.policy or SingleTurnDrainPolicy()
 
     def with_policy(self, policy: DrainPolicy) -> DrainPlan:
-        return DrainPlan(
-            coordinator=self.coordinator,
-            policy=policy,
-            raw_terminal_frames_authoritative=self.raw_terminal_frames_authoritative,
-            on_policy_selected=self.on_policy_selected,
-            aux_wake=self.aux_wake,
-            handle_aux_wake=self.handle_aux_wake,
-            finalizer=self.finalizer,
-            teardown=self.teardown,
-        )
+        return replace(self, policy=policy)
 
 
 class DrainCoordinator(Protocol):
@@ -102,6 +97,11 @@ class DrainCoordinator(Protocol):
     async def start(self) -> None: ...
 
     async def stop(self) -> None: ...
+
+    @property
+    def pending_outcome(self) -> TerminalEventOutcome | None: ...
+
+    def should_defer_close(self) -> bool: ...
 
     def next_timeout(self) -> float | None: ...
 

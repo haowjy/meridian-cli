@@ -85,12 +85,18 @@ def main() -> None:
 
         original = api.sweep_before_continue
 
-        def scheduled_sweep(runtime_root: Path, spawn_id: str, *, dry_run: bool = False) -> None:
+        def scheduled_sweep(
+            runtime_root: Path,
+            spawn_id: str,
+            *,
+            chat_id: str | None,
+            dry_run: bool = False,
+        ) -> None:
             root = Path(os.environ["FAKE_ROOT"])
             if race == "second":
                 while not (root / "first-swept").exists():
                     time.sleep(0.01)
-            original(runtime_root, spawn_id, dry_run=dry_run)
+            original(runtime_root, spawn_id, chat_id=chat_id, dry_run=dry_run)
             (root / f"{race}-swept").touch()
             while not (root / "second-swept").exists():
                 time.sleep(0.01)

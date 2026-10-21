@@ -365,8 +365,9 @@ def resolve_pi_child_wave_timeout_seconds(
 def resolve_resident_deadline_seconds(
     *,
     config_snapshot: dict[str, object] | None,
+    harness_id: HarnessId | str | None = None,
 ) -> float:
-    """Resolve the resident hard-cap deadline in seconds."""
+    """Resolve the completion window from the calling harness wait interval."""
 
     if config_snapshot:
         timeout_from_config = _resolve_timeout_field_from_config_snapshot(
@@ -375,7 +376,13 @@ def resolve_resident_deadline_seconds(
         )
         if timeout_from_config is not None:
             return timeout_from_config
-    return 1800.0
+    try:
+        config = MeridianConfig.model_validate(config_snapshot or {})
+    except Exception:
+        config = MeridianConfig()
+    return config.wait_yield_seconds_for_harness(
+        harness_id.value if isinstance(harness_id, HarnessId) else harness_id
+    )
 
 
 def resolve_resident_poll_seconds(

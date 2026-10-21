@@ -133,7 +133,7 @@ def enrich_finalize(
     report_path = _persist_report(
         log_dir=log_dir,
         extracted=report,
-        text_capped=facts.text_capped,
+        text_capped=facts.report_text_capped,
     )
 
     return FinalizeExtraction(

@@ -7,12 +7,16 @@ For 0.7 upgrade and unbound-chat repair steps, see
 
 If long-running spawns feel expensive or slow to resume, the harness prompt cache may be going cold while Meridian waits.
 
-**Root cause:** Meridian's default `spawn wait` yield interval is 50 minutes. If the harness's prompt-cache TTL is shorter than that, the next turn reprocesses the full context from scratch.
+**Root cause:** Meridian's default `spawn wait` yield interval is 50 minutes. If
+the calling harness's prompt-cache TTL is shorter than that, its next turn may
+reprocess the full context. The wait checkpoint and a child's completion deadline
+are operational bounds, not promises about provider cache retention.
 
 | Harness   | Cache TTL | Fix |
 |-----------|-----------|-----|
 | Claude Code | 5 minutes (default) or 1 hour (subscription / `ENABLE_PROMPT_CACHING_1H=1`) | Extend to 1 hour via `~/.claude/settings.json` (see [Getting Started](getting-started.md)) |
-| Codex CLI | 5–10 minutes typical, up to 1 hour extended | Usually automatic on current models |
+| Codex CLI, signed in | Retained across old-conversation resumes without a cache penalty | No cache-specific wait-yield change needed |
+| Codex/API-key usage | Depends on the API model and request | Use the API's prompt-cache settings; Meridian does not select them |
 | OpenCode | Harness-dependent | Check OpenCode docs for cache behavior |
 
 **Quick workarounds:**

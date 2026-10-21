@@ -1188,7 +1188,12 @@ def _spawn_done(
     emit: Emitter,
     spawn_id: Annotated[
         str | None,
-        Parameter(help="Spawn ID to finish (defaults to MERIDIAN_SPAWN_ID)."),
+        Parameter(
+            help=(
+                "Spawn whose current completion candidate to accept "
+                "(defaults to MERIDIAN_SPAWN_ID)."
+            )
+        ),
     ] = None,
 ) -> None:
     result = spawn_done_sync(
@@ -1207,7 +1212,12 @@ def _spawn_rearm(
     emit: Emitter,
     spawn_id: Annotated[
         str | None,
-        Parameter(help="Spawn ID to keep resident (defaults to MERIDIAN_SPAWN_ID)."),
+        Parameter(
+            help=(
+                "Spawn whose current candidate to reject and rearm "
+                "(defaults to MERIDIAN_SPAWN_ID)."
+            )
+        ),
     ] = None,
 ) -> None:
     result = spawn_rearm_sync(
@@ -1313,13 +1323,13 @@ def register_spawn_commands(app: App) -> None:
     app.command(
         partial(_spawn_done, emit),
         name="done",
-        help="Signal a resident spawn to finish successfully.",
+        help="Accept a resident spawn's current completion candidate.",
     )
     registered.add("spawn.done")
     app.command(
         partial(_spawn_rearm, emit),
         name="rearm",
-        help="Signal a resident spawn to keep running.",
+        help="Reject the current candidate and open another completion window.",
     )
     registered.add("spawn.rearm")
     app.command(

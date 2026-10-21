@@ -10,6 +10,7 @@ from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
+from meridian.lib.launch.report import extract_or_fallback_report
 from meridian.lib.ops.spawn.models import SpawnSignalInput
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming.drain_policy import (
@@ -81,7 +82,7 @@ async def test_codex_failed_turn_completed_preserves_terminal_error(
 
 
 @pytest.mark.asyncio
-async def test_codex_backend_death_with_pending_success_preserves_resident_reason(
+async def test_codex_backend_death_with_pending_success_waits_for_child(
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p1")
@@ -95,18 +96,20 @@ async def test_codex_backend_death_with_pending_success_preserves_resident_reaso
     connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
     await next_turn_boundary(subscriber)
     connection.fail_backend("no close frame received or sent")
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        outcome = await manager.wait_for_completion(spawn_id)
+        await assert_still_pending(completion)
+        spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+        outcome = await completion
         assert outcome is not None
-        assert outcome.status == "failed"
-        assert outcome.error == "backend_dead_while_awaiting_done"
+        assert outcome.status == "succeeded", outcome
     finally:
         await manager.stop_spawn(spawn_id)
 
 
 @pytest.mark.asyncio
-async def test_opencode_process_death_with_pending_success_preserves_exit_diagnostics(
+async def test_opencode_process_death_with_pending_success_waits_for_child(
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p1")
@@ -125,13 +128,14 @@ async def test_opencode_process_death_with_pending_success_preserves_exit_diagno
         "fatal backend detail"
     )
     connection.fail_backend(diagnostic)
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        outcome = await manager.wait_for_completion(spawn_id)
+        await assert_still_pending(completion)
+        spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+        outcome = await completion
         assert outcome is not None
-        assert outcome.status == "failed"
-        assert outcome.error == diagnostic
-        assert outcome.error != "backend_dead_while_awaiting_done"
+        assert outcome.status == "succeeded"
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -368,7 +372,7 @@ async def test_resident_still_waits_on_genuinely_active_finalizing_child(
 
 
 @pytest.mark.asyncio
-async def test_done_signal_at_terminalresident_event_wins_over_outstanding_child(
+async def test_rearm_at_terminal_event_rejects_done_and_first_candidate(
     tmp_path: Path,
 ) -> None:
     from meridian.lib.state.spawn_signals import write_spawn_signal
@@ -376,17 +380,39 @@ async def test_done_signal_at_terminalresident_event_wins_over_outstanding_child
     spawn_id = SpawnId("p1")
     start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
-    write_spawn_signal(tmp_path, spawn_id, "done")
-    write_spawn_signal(tmp_path, spawn_id, "rearm")
     connection = FakeResidentConnection(HarnessId.OPENCODE)
     manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
+    subscriber = manager.subscribe(spawn_id)
+    assert subscriber is not None
 
     connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
+    await next_turn_boundary(subscriber)
+    write_spawn_signal(tmp_path, spawn_id, "done")
+    write_spawn_signal(tmp_path, spawn_id, "rearm")
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        outcome = await manager.wait_for_completion(spawn_id)
+        await wait_until(
+            lambda: (
+                (row := spawn_store.get_spawn(tmp_path, spawn_id)) is not None
+                and row.resident_rearm_count == 1
+            ),
+            description="candidate-scoped rearm consumption",
+        )
+        await assert_still_pending(completion)
+        spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(completion), timeout=0.05)
+        connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
+        await next_turn_boundary(subscriber)
+        write_spawn_signal(tmp_path, spawn_id, "done")
+        connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
+        outcome = await completion
         assert outcome is not None
         assert outcome.status == "succeeded"
+        row = spawn_store.get_spawn(tmp_path, spawn_id)
+        assert row is not None
+        assert row.resident_rearm_count == 1
         assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
@@ -576,7 +602,7 @@ async def test_child_written_before_terminalresident_event_is_processed_prevents
 
 
 @pytest.mark.asyncio
-async def test_resident_stream_close_with_dead_backend_fails_while_child_running(
+async def test_resident_stream_close_with_dead_backend_waits_for_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -602,16 +628,17 @@ async def test_resident_stream_close_with_dead_backend_fails_while_child_running
         connection.mark_failed()
         connection.close_stream()
 
+        await assert_still_pending(completion)
+        spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
         outcome = await completion
         assert outcome is not None
-        assert outcome.status == "failed"
-        assert outcome.error == "backend_dead_while_awaiting_done"
+        assert outcome.status == "succeeded"
     finally:
         await manager.stop_spawn(spawn_id)
 
 
 @pytest.mark.asyncio
-async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
+async def test_resident_stream_close_with_stalled_backend_waits_for_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -637,10 +664,11 @@ async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
         connection.mark_stalled()
         connection.close_stream()
 
+        await assert_still_pending(completion)
+        spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
         outcome = await completion
         assert outcome is not None
-        assert outcome.status == "failed"
-        assert outcome.error == "stream_closed_while_awaiting_done"
+        assert outcome.status == "succeeded"
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -725,7 +753,8 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
     start_row(tmp_path, str(child_id), HarnessId.OPENCODE, str(spawn_id))
     connection = FakeResidentConnection(HarnessId.CODEX)
     manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
-
+    fold = CODEX_EXTRACTOR.create_fold()
+    manager.register_event_hook(spawn_id, fold)
     subscriber = manager.subscribe(spawn_id)
     assert subscriber is not None
 
@@ -744,6 +773,16 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
                 asyncio.shield(manager.wait_for_completion(spawn_id)),
                 timeout=0.05,
             )
+        await next_turn_boundary(subscriber)
+        connection.emit(
+            resident_event(
+                HarnessId.CODEX,
+                "item/completed",
+                {"item": {"type": "agentMessage", "text": "Done."}},
+            )
+        )
+        connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
+        await next_turn_boundary(subscriber)
         spawn_store.finalize_spawn(
             tmp_path,
             child_id,
@@ -754,12 +793,11 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
         outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        fold = CODEX_EXTRACTOR.create_fold()
         facts = fold.facts
-        while not subscriber.empty():
-            event = subscriber.get_nowait()
-            if event is not None:
-                fold(event.raw)
-        assert facts.final_text == "Resident report."
+        assert facts.final_text == "Done."
+        assert facts.completion_text == "Resident report."
+        report = extract_or_fallback_report(tmp_path / "spawns" / str(spawn_id), facts=facts)
+        assert report.content == "Resident report."
+        assert report.source == "assistant_message"
     finally:
         await manager.stop_spawn(spawn_id)

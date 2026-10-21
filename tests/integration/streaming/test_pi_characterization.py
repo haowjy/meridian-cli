@@ -18,9 +18,9 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming import pi_completion_profile as pi_completion_profile_module
-from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoopDecision
 from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
+from meridian.lib.streaming.pi_completion_profile import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from tests.support.pi import PiDrainScenario, pi_event, start_row, write_json, write_pi_bash_record
 

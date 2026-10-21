@@ -1,5 +1,22 @@
 # Upgrade notes
 
+## Completion signal reporting
+
+`meridian spawn done` and `meridian spawn rearm` now refuse, with exit code 1,
+when nothing will read the signal: a primary session, a spawn that is no longer
+running, a spawn with no completion hold (Cursor and other plain
+plans), `rearm` on Pi, and `rearm` after the rearm budget is spent. Scripts that
+relied on these commands always succeeding will now see the failure.
+
+The runner now records the signals its spawn reads in
+`spawns/<id>/accepted-signals.json` once it has chosen how to wait for
+completion. A spawn started by an older runner has no such file; the commands
+still write the signal and say that delivery is unconfirmed.
+
+Nothing needs doing before or after upgrading. Spawn rows are unchanged and
+older builds ignore the new file, so rolling back works; an older CLI's
+`spawn done` / `rearm` write the signal without checking, as before.
+
 ## Hook event names
 
 Hook event names now identify the persisted moment when they fire. This release

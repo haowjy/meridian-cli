@@ -22,8 +22,8 @@ from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import pi_drain as pi_drain_module
-from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_policy import DrainAction
+from meridian.lib.streaming.pi_completion_profile import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager

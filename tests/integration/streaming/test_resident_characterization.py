@@ -49,11 +49,12 @@ def _coordinator(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = ResidentDrainCoordinator.for_connection(
+    coordinator = ResidentDrainCoordinator.build(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
-        receiver=connection,
-        resident_backend=connection.resident_backend,
+        send_nudge=connection.resident_backend.begin_followup_turn,
+        backend=connection.resident_backend,
+        native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,
         rearm_budget=rearm_budget,
@@ -150,24 +151,27 @@ async def test_terminal_cancel_wins_over_done_and_outstanding_descendant(
 
 
 @pytest.mark.asyncio
-async def test_terminal_done_overrides_rearm_and_persisted_descendant(
+async def test_terminal_rearm_overrides_done_and_rejects_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Current done override accepts success despite an active persisted child."""
+    """Rearm wins a coincident done and abandons the current candidate."""
     coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     clock.advance(1.0)
+    candidate = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    assert candidate.emit_turn_boundary is True
     write_spawn_signal(tmp_path, "p1", "done")
     write_spawn_signal(tmp_path, "p1", "rearm")
 
-    requested = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    decision = await _after_refresh(coordinator)
+    requested = await coordinator.handle_timeout()
 
     assert requested.recorded_outcome is None
-    assert decision.recorded_outcome == _SUCCESS
-    assert requested.emit_turn_boundary is True
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
+    assert coordinator.pending_outcome is None
+    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+    assert row is not None
+    assert row.resident_rearm_count == 1
+    assert connection.fake_resident_backend.awaiting_done_values == [True]
     assert connection.fake_resident_backend.injected_messages == []
 
 
@@ -309,13 +313,19 @@ async def test_terminal_wait_and_poll_see_late_grandchild_through_terminal_paren
     )
     clock.advance(1.0)
     await coordinator.handle_timeout()
+    await coordinator.wait_for_aux_wake()
+    handshake = await coordinator.handle_aux_wake()
+    assert handshake.recorded_outcome is None
+    assert "meridian spawn done" in connection.fake_resident_backend.injected_messages[-1]
+    coordinator.observe_activity_transition("turn_active")
+    await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     ready = await _after_refresh(coordinator)
     assert ready.recorded_outcome == _SUCCESS
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
+    assert connection.fake_resident_backend.awaiting_done_values[-1] is False
 
 
 @pytest.mark.asyncio
-async def test_terminal_ready_tree_finalizes_immediately(
+async def test_terminal_ready_tree_finalizes_after_confirmation_turn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -323,12 +333,18 @@ async def test_terminal_ready_tree_finalizes_immediately(
     clock.advance(1.0)
 
     requested = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    await coordinator.wait_for_aux_wake()
+    handshake = await coordinator.handle_aux_wake()
+    assert handshake.recorded_outcome is None
+    assert "meridian spawn done" in connection.fake_resident_backend.injected_messages[-1]
+    coordinator.observe_activity_transition("turn_active")
+    await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     decision = await _after_refresh(coordinator)
 
     assert requested.recorded_outcome is None
     assert decision.recorded_outcome == _SUCCESS
     assert requested.emit_turn_boundary is True
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
+    assert connection.fake_resident_backend.awaiting_done_values[-1] is False
 
 
 @pytest.mark.asyncio
@@ -351,13 +367,18 @@ async def test_expired_deadline_beats_freshly_ready_tree(
     cleanup_calls: list[SpawnId] = []
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
-    decision = await coordinator.handle_timeout()
-    assert decision.recorded_outcome is not None
-    assert decision.recorded_outcome.status == "timed_out"
-    assert decision.recorded_outcome.exit_code == 1
-    assert decision.recorded_outcome.error == "resident_deadline_expired"
+    terminal_at_deadline = await coordinator.handle_terminal_event(
+        _EVENT,
+        _SUCCESS,
+        _TERMINATE,
+    )
+    outcome = terminal_at_deadline.recorded_outcome
+    assert outcome is not None
+    assert outcome.status == "timed_out"
+    assert outcome.exit_code == 1
+    assert outcome.error == "resident_deadline_expired"
     assert cleanup_calls == []
-    await _execute_latched_cleanup(coordinator, decision.recorded_outcome)
+    await _execute_latched_cleanup(coordinator, outcome)
     assert cleanup_calls == [SpawnId("p1")]
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
@@ -508,9 +529,7 @@ async def test_deadline_outcome_wins_when_explicit_descendant_cancel_races(
     exit_decision = await coordinator.handle_stream_exit(decision.recorded_outcome)
     request = exit_decision.post_publication_cleanup
     assert request is not None
-    cleanup_task = asyncio.create_task(
-        coordinator.execute_post_publication_cleanup(request)
-    )
+    cleanup_task = asyncio.create_task(coordinator.execute_post_publication_cleanup(request))
     explicitly_cancelled, _ = await asyncio.gather(explicit_cancel_task, cleanup_task)
 
     assert explicitly_cancelled in ({"p2"}, set())
@@ -526,7 +545,7 @@ async def test_deadline_outcome_wins_when_explicit_descendant_cancel_races(
 
 
 @pytest.mark.asyncio
-async def test_intentional_stream_close_returns_pending_resident_outcome(
+async def test_intentional_stream_close_refuses_blocked_resident_outcome(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -538,37 +557,54 @@ async def test_intentional_stream_close_returns_pending_resident_outcome(
     clock.advance(1.0)
     close_outcome = coordinator.handle_close(intentional_stop=True)
 
-    assert close_outcome == _SUCCESS
+    assert close_outcome is not None
+    assert close_outcome.status == "failed"
+    assert close_outcome.error == "stream_closed_while_awaiting_done"
     assert connection.fake_resident_backend.awaiting_done_values == [True]
 
 
 @pytest.mark.asyncio
-async def test_short_deadline_nudge_cadence_and_urgency(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+async def test_one_confirmation_injection_per_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A due nudge is ordinary at half-window, urgent if delivery is delayed."""
-    from meridian.lib.streaming.completion_nudge import (
-        COMPLETION_NUDGE_MESSAGE,
-        TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE,
+    coordinator, connection, clock = _coordinator(
+        tmp_path,
+        monkeypatch,
+        deadline_seconds=20.0,
     )
+    try:
+        write_spawn_signal(tmp_path, SpawnId("p1"), "done")
+        first = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+        assert first.emit_turn_boundary
+        await coordinator.wait_for_aux_wake()
+        assert (await coordinator.handle_aux_wake()).recorded_outcome is None
+        assert len(connection.fake_resident_backend.injected_messages) == 1
 
-    for delay, message in (
-        (10.0, COMPLETION_NUDGE_MESSAGE),
-        (19.0, TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE),
-    ):
-        root = tmp_path / str(delay)
-        coordinator, connection, clock = _coordinator(root, monkeypatch, deadline_seconds=20.0)
-        try:
-            write_spawn_signal(root, SpawnId("p1"), "rearm")
-            terminal = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-            assert terminal.emit_turn_boundary
-            await coordinator.wait_for_aux_wake()
-            await coordinator.handle_aux_wake()
-            clock.advance(9.0)
-            await coordinator.handle_timeout()
-            assert not connection.fake_resident_backend.injected_messages
-            clock.advance(delay - 9.0)
-            await coordinator.handle_timeout()
-            assert connection.fake_resident_backend.injected_messages == [message]
-        finally:
-            await coordinator.stop()
+        write_spawn_signal(tmp_path, SpawnId("p1"), "rearm")
+        assert (await coordinator.handle_timeout()).recorded_outcome is None
+        row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+        assert row is not None
+        assert row.resident_rearm_count == 1
+        for _ in range(3):
+            clock.advance(2.0)
+            assert (await coordinator.handle_timeout()).recorded_outcome is None
+        assert len(connection.fake_resident_backend.injected_messages) == 1
+
+        write_spawn_signal(tmp_path, SpawnId("p1"), "done")
+        write_spawn_signal(tmp_path, SpawnId("p1"), "rearm")
+        assert (await coordinator.handle_timeout()).recorded_outcome is None
+        row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+        assert row is not None
+        assert row.resident_rearm_count == 1
+
+        second = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+        assert second.emit_turn_boundary
+        await coordinator.wait_for_aux_wake()
+        assert (await coordinator.handle_aux_wake()).recorded_outcome is None
+        assert len(connection.fake_resident_backend.injected_messages) == 2
+        for _ in range(3):
+            assert (await coordinator.after_event()).recorded_outcome is None
+        assert len(connection.fake_resident_backend.injected_messages) == 2
+    finally:
+        await coordinator.stop()

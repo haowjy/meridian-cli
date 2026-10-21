@@ -41,7 +41,7 @@ def extract_or_fallback_report(
     if facts.failure is not None:
         return ExtractedReport(content=facts.failure.message, source="pi_failure")
     native_text = load_native_text() if load_native_text is not None else None
-    text = (native_text or facts.final_text or "").strip()
+    text = (facts.completion_text or native_text or facts.final_text or "").strip()
     if text and not _is_terminal_control_frame(text):
         return ExtractedReport(content=text, source="assistant_message")
     if failure_reason and failure_reason.strip():

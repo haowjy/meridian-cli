@@ -63,7 +63,6 @@ from meridian.lib.harness.semantics import (
     EventSemantics,
     HarnessSemantics,
     TerminalEventOutcome,
-    TerminalOutcomeCause,
     connection_closed_outcome,
     stringify_terminal_error,
 )
@@ -555,10 +554,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
 def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
-        return connection_closed_outcome(
-            event,
-            cause=TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE,
-        )
+        return connection_closed_outcome(event)
     if event.event_type != "turn/completed":
         return None
 
