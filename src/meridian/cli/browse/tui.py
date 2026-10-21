@@ -87,7 +87,6 @@ class _Browser:
         limit: int,
         status: Status,
         sort: Sort,
-        include_archives: bool,
         resolve_reentry: Callable[[str], SessionReentryDecision],
     ) -> None:
         self.list = ListState(listing, status, sort)
@@ -99,7 +98,6 @@ class _Browser:
         threading.Thread(target=_preload, args=(ready,), daemon=True).start()
         self._project_root = project_root
         self._limit = limit
-        self._include_archives = include_archives
         self._resolve_reentry = resolve_reentry
         # One parsed snapshot survives Esc and re-open; a new generation reloads it.
         self._snapshot: tuple[str, str, TranscriptWindow] | None = None
@@ -178,9 +176,7 @@ class _Browser:
         query = state.search_query.strip()
         if not query:
             return
-        chat_ids = tuple(
-            row.chat_id for row in state.visible_rows if self._include_archives or not row.archived
-        )
+        chat_ids = tuple(row.chat_id for row in state.visible_rows)  # what the Status view shows
         state.search_mode = "running"
         state.search_scanned, state.search_total, state.search_unavailable = 0, len(chat_ids), 0
         state.search_matches = frozenset()
@@ -509,7 +505,6 @@ def run_browse_picker(
     limit: int = 50,
     status: Status = "active",
     sort: Sort = "updated",
-    include_archives: bool = False,
     input: Input | None = None,
     output: Output | None = None,
 ) -> Resume | Fork | None:
@@ -521,7 +516,6 @@ def run_browse_picker(
         limit=limit,
         status=status,
         sort=sort,
-        include_archives=include_archives,
         resolve_reentry=resolve_reentry,
     )
 

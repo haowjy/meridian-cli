@@ -117,11 +117,19 @@ def _session_browse(
         bool,
         Parameter(
             name="--include-archives",
-            help="Include archived chats' native transcripts in the picker's / search.",
+            help="Deprecated, no effect: / searches the chats the Status view shows.",
         ),
     ] = False,
 ) -> None:
     from meridian.lib.ops.session_list import SessionListInput, session_list_sync
+
+    if include_archives:
+        print(
+            "warning: --include-archives is deprecated and has no effect; `/` searches the "
+            "chats the Status view shows (use Status: Archived or --status archived). "
+            "It will be removed in the next minor release.",
+            file=sys.stderr,
+        )
 
     presentation = resolve_browse_presentation(
         plain=plain,
@@ -152,7 +160,6 @@ def _session_browse(
         limit=limit,
         status=status,
         sort=sort,
-        include_archives=include_archives,
     )
     if decision is not None:
         _exec_decision(

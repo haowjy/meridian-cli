@@ -158,7 +158,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | ------- | ----------- |
 | `meridian spawn report show ID` | Show one spawn's report |
 | `meridian spawn report search "query"` | Search across all spawn reports |
-| `meridian session browse [--include-archives]` | Browse sessions (Space opens a transcript, `l` the fork/`--from` lineage, Tab the Status and Sort filters); `/` searches bound native transcripts, excluding archived rows unless requested (the flag does not search ZIP contents) |
+| `meridian session browse [--status active\|archived] [--sort updated\|created]` | Browse sessions (Space opens a transcript, `l` the fork/`--from` lineage, Tab the Status and Sort filters); `/` searches the bound native transcripts of the rows the Status view shows, never ZIP contents |
 | `meridian session log REF` | Read a chat, spawn, harness session, or ZIP-backed history UUID |
 | `meridian session search "query" [REF]` | Search one session or a scoped corpus (`--workspace`, `--global`, `--work`); includes bound archived chats by default, never runner history |
 | `meridian session index status` | Inspect metadata and native-search coverage without rebuilding |

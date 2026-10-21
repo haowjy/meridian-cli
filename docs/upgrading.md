@@ -17,6 +17,16 @@ Nothing needs doing before or after upgrading. Spawn rows are unchanged and
 older builds ignore the new file, so rolling back works; an older CLI's
 `spawn done` / `rearm` write the signal without checking, as before.
 
+## Session browse `--include-archives`
+
+`meridian session browse --include-archives` is deprecated and has no effect. It
+duplicated Status: Archived: the picker's `/` transcript search now covers the
+rows the Status view shows, so switch Status to Archived (Tab, then left/right) or
+start with `--status archived` to search archived chats. It never searched ZIP
+contents and still does not. The flag is still accepted and prints a warning on
+stderr; it becomes an error in the next minor release. Nothing needs doing before
+or after upgrading.
+
 ## Hook event names
 
 Hook event names now identify the persisted moment when they fire. This release

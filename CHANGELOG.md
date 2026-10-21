@@ -11,6 +11,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Session commands load operations only in their handlers. Lightweight command declarations avoid importing the entire operation registry; managed work lookup uses the history index.
 - Session browse data: active/archive scope and updated/created sort before limiting, tmux target, last-used model, turn age and cache-stale marker in plain rows (retained metadata survives archiving). Fork and `--from` ancestry survive continuation; indexed lineage, model refresh and shared transcript windows support the next picker.
 
+### Deprecated
+- `session browse --include-archives`: no effect, warns on stderr. `/` searches the rows the Status view shows; use Status: Archived (`--status archived`) for archived chats. Removed next minor. See [upgrade note](docs/upgrading.md#session-browse---include-archives).
+
 ### Removed
 - Session browse preview pane and its history-index cache (`previews` table, `session index` preview counts). Index schema bumped; rebuilds from authoritative files.
 

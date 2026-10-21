@@ -132,13 +132,13 @@ archives and do not justify deleting source history.
 meridian session import /mnt/history/meridian/meridian-history-UUID.zip
 meridian session log HISTORY_UUID
 meridian session search "phrase"
-meridian session browse --include-archives
+meridian session browse --status archived
 meridian session restore HISTORY_UUID --archive /mnt/history/meridian/meridian-history-UUID.zip
 ```
 
 The browser lists archived metadata under Status: Archived; ZIP rows are read-only.
-Its `/` content search excludes archived rows unless started with
-`--include-archives`; the flag includes archived rows, not ZIP content.
+Its `/` content search covers the rows the Status view shows, so under Archived it
+searches archived chats' bound native transcripts, never ZIP content.
 
 Import explicitly selects a verified ZIP snapshot for direct reads without extracting it.
 Rebuild and automatic recovery discover orphan ZIPs as snapshot-only metadata;

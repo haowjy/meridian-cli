@@ -8,3 +8,5 @@
   lookup remove the original eager operation registry/journal-fold costs, but
   universal CLI imports and SQLAlchemy-backed index loading still dominate.
   Keep one command registration/read path; do not add a parallel fast CLI loader.
+- Remove `session browse --include-archives` (deprecated, no effect: `/` searches what
+  the Status view shows) in the minor release after the one that deprecated it.
