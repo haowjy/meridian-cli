@@ -115,7 +115,7 @@ def _cell_headers(layout: _Layout) -> str:
 
 
 def list_header(state: ListState, width: int) -> StyleAndTextTuples:
-    count = f"{len(state.visible_rows)} of {state.listing.total_count}"
+    count = "" if state.pending else f"{len(state.visible_rows)} of {state.listing.total_count}"
     narrow = width < 56  # drop padding so both controls still fit at 50 columns
     left: StyleAndTextTuples = [("", "Status: " if narrow else " Status: ")]
     left += _choice(STATUSES, state.status, state.focus == "status")
@@ -123,7 +123,7 @@ def list_header(state: ListState, width: int) -> StyleAndTextTuples:
     left += _choice(SORTS, state.sort, state.focus == "sort")
     used = sum(len(fragment[1]) for fragment in left)
     status_line: StyleAndTextTuples = list(left)
-    if width - used >= len(count) + 2:
+    if count and width - used >= len(count) + 2:
         status_line.append(("", " " * (width - used - len(count) - 1)))
         status_line.append(("class:hint", count))
 
@@ -148,6 +148,8 @@ def list_header(state: ListState, width: int) -> StyleAndTextTuples:
 
 def list_body(state: ListState, width: int) -> StyleAndTextTuples:
     rows = state.visible_rows
+    if state.loading:
+        return [("class:hint", "  loading…")]
     if not rows:
         filtered = state.filter_text or state.search_mode == "results"
         empty = "no archived sessions" if state.status == "archived" else "no primary sessions"

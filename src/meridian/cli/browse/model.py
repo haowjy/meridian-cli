@@ -33,6 +33,17 @@ class ListState:
     search_unavailable: int = 0
     search_matches: frozenset[str] = frozenset()
     message: str | None = None
+    # A reload is in flight; ``loaded`` is the (status, sort) the current listing answers.
+    pending: bool = False
+    loaded: tuple[Status, Sort] | None = None
+
+    def __post_init__(self) -> None:
+        self.loaded = (self.status, self.sort)
+
+    @property
+    def loading(self) -> bool:
+        """The body would show another scope's rows (or none yet) until the reload lands."""
+        return self.pending and (self.loaded != (self.status, self.sort) or not self.visible_rows)
 
     @property
     def visible_rows(self) -> tuple[SessionListRow, ...]:
@@ -47,7 +58,9 @@ class ListState:
     @property
     def highlighted(self) -> SessionListRow | None:
         rows = self.visible_rows
-        return rows[min(self.highlight, len(rows) - 1)] if rows else None
+        if self.loading or not rows:
+            return None
+        return rows[min(self.highlight, len(rows) - 1)]
 
     def clamp(self) -> None:
         self.highlight = max(0, min(self.highlight, len(self.visible_rows) - 1))
@@ -80,8 +93,13 @@ class ListState:
             return False
         return moved
 
+    def begin_reload(self) -> None:
+        self.pending = True
+
     def replace_listing(self, listing: SessionListOutput) -> None:
         self.listing = listing
+        self.loaded = (self.status, self.sort)
+        self.pending = False
         self.highlight = 0
         self.message = None
         self.leave_search()

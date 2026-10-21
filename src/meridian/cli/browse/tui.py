@@ -148,6 +148,7 @@ class _Browser:
         supersedes the sleeping one.
         """
         state = self.list
+        state.begin_reload()
         payload = SessionListInput(
             project_root=self._project_root,
             limit=self._limit,
@@ -166,6 +167,7 @@ class _Browser:
             return session_list_sync(payload)
 
         def fail(reason: str) -> None:
+            state.pending = False
             state.message = f"could not load sessions: {reason}"
 
         self.lanes.run("list", work, state.replace_listing, fail)
