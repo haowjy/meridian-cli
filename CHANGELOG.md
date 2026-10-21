@@ -5,27 +5,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- `meridian session browse` rewritten. Header shows Status (Active/Archived) and Sort (Updated/Created); Tab focuses them, left/right change them and re-query. Rows: stale-cache `⚠` (unknown, so absent, for a running session with no idle record), tmux target, `agent (model)` with the last-used model, age since last turn, work (last, takes the remaining width). No live marker and no live-first order: Updated orders by last activity, with a running session placed by its last turn. Type to search (substring over tmux, work, agent, model, chat id, cwd); `/` still searches transcripts. Space opens a full-screen transcript view (loaded once, scroll older entries, model refreshed on open, chat id in the header); `l` or Ctrl-L opens the fork/`--from` lineage tree; Enter on a lineage node opens it.
+- `meridian session browse` rewritten. Header shows Status (Active/Archived) and Sort (Updated/Created); Tab focuses them, left/right change them and re-query. Rows: stale-cache `⚠` (unknown, so absent, for a running session with no idle record), tmux target, `agent (model)` with the last-used model, age since last turn, work (last, takes the remaining width). No live marker and no live-first order: Updated orders by last activity, with a running session placed by its last turn. Type to search: the index query matches chat id (history id for archived rows), tmux, work, agent, model (recorded or last used) and cwd before LIMIT, so `N of M` counts the match and a chat outside the first page is found; the body shows "loading…" until the answer for the current Status, Sort and text lands. `/` searches the transcripts of the rows the Status view shows; a Status or Sort change cancels it. Space opens a full-screen transcript view (loaded once, scroll older entries, model refreshed on open, chat id in the header); `l` or Ctrl-L opens the fork/`--from` lineage tree; Enter on a lineage node opens it. The footer says what Enter does to the highlighted row: `enter fork` for a running session, `enter resume`, or nothing when blocked.
 - `session browse --plain` drops the LIVE and C-ID columns. Columns now STALE, TMUX, AGENT (shown as `agent (model)`), AGE, WORK, with WORK last and truncated first on narrow terminals; `⚠` also marks running sessions past their cache TTL.
 - `session index` status and rebuild no longer report cached previews.
-- Session commands load operations only in their handlers. Lightweight command declarations avoid importing the entire operation registry; managed work lookup uses the history index.
-- Session browse data: active/archive scope and updated/created sort before limiting, tmux target, last-used model, turn age and cache-stale marker in plain rows (retained metadata survives archiving). Fork and `--from` ancestry survive continuation; indexed lineage, model refresh and shared transcript windows support the next picker.
+- CLI command groups register from lightweight declarations and import an operation only in its handler.
+- Session browse data: active/archive scope and updated/created sort before limiting, tmux target, last-used model, turn age and cache-stale marker in plain rows (retained metadata survives archiving). Fork and `--from` ancestry is recorded on the chat (the context `--from` actually used, not the continuation target) and survives continuation; indexed lineage, model refresh and shared transcript windows support the picker.
+- A primary session records its last executed model when it stops (after scope cleanup, best effort: never waits on a lock, reads only the history tail), so browse shows the last-used model for sessions never continued or opened. Continue reads the same observation; only the raw native model id is stored.
 
 ### Deprecated
 - `session browse --include-archives`: no effect, warns on stderr. `/` searches the rows the Status view shows; use Status: Archived (`--status archived`) for archived chats. Removed next minor. See [upgrade note](docs/upgrading.md#session-browse---include-archives).
 
 ### Removed
 - Session browse preview pane and its history-index cache (`previews` table, `session index` preview counts). Index schema bumped; rebuilds from authoritative files.
+- `session browse --plain --format json` rows drop `live`, `historical`, `native_status` and `history_id`. An archived row's `chat_id` is its history id.
 
 ### Fixed
 - Old-format idle state files no longer print a version warning on every listing. Only a write that would replace one warns.
-- Session listing resolves project paths once, not once per work item.
 - Format-v1 idle state files are read (last turn and TTL kept) instead of ignored.
-- `--from` records the chat and history of the context it actually used, not the continuation target.
-- A primary session records its last executed model when it stops (after scope cleanup, best effort: never waits on a lock, reads only the history tail), so browse shows the last-used model for sessions never continued or opened.
-- `session browse` type-to-search queries the index before LIMIT (chat id, tmux, work, agent, model, cwd), so a chat outside the first page is found; `N of M` counts the match. Status/Sort reloads show "loading…" instead of the previous scope's rows, and cancel any transcript search.
-- `session browse` detail opens for a lineage node with no list row, and transcript entries scroll in full instead of clipping at 60 lines.
-- Primary `--from` resolves the context ref once and passes it through launch composition.
+- Session listing no longer reads a work item per row; the work label is the work id.
 
 ## [0.11.4] - 2026-10-21
 
