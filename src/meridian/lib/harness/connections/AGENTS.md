@@ -15,8 +15,10 @@ carries the raw event plus its semantics to subscribers.
 Transports differ at the wire level:
 - **Claude** (`claude_ws.py`): stdin/stdout NDJSON. No WebSocket despite the filename.
 - **Codex** (`codex_ws.py`): real WebSocket to a managed `codex app-server`, JSON-RPC 2.0.
-  Codex's `requestApproval` and `requestUserInput` messages are dispatched to
-  either `AutoAcceptHandler` (spawn paths) or `InteractiveHandler` (managed-primary attach).
+  Codex's `requestApproval` and `requestUserInput` messages are dispatched to the
+  injected request handler: a `PermissionBroker` that auto-rejects on spawn paths
+  (`streaming/spawn_dispatch.py`), a non-rejecting one on managed-primary attach.
+  `AutoAcceptHandler` is only the fallback when no handler is injected.
   Handler capabilities are declared on the `ServerRequestHandler` protocol
   (`no_runtime_hitl`) and read directly; never probe them with `getattr` defaults —
   two sites with different defaults once reported contradictory HITL support.

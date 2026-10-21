@@ -42,9 +42,13 @@ meridian spawn --harness cursor -m claude-opus-4-7 --effort high
 
 | Meridian approval mode | Cursor flag |
 |---|---|
-| `yolo` | `--yolo` |
+| `never` (also spelled `yolo`) | `--yolo` |
 | `auto` | `--force` |
 | `default` / `confirm` | *(no flag)* |
+
+Cursor ignores a profile's `tools`. `sandbox: read-only` turns Cursor's sandbox
+on; `workspace-write` and `danger-full-access` turn it off. See
+[Permissions by harness](../agent-profiles.md#permissions-by-harness).
 
 ## Limitations
 

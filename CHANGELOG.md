@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Docs: new "Permissions by harness" section in `docs/agent-profiles.md` says which of a profile's `tools`, `sandbox`, `approval` each harness applies and who answers approval prompts. Profile field rows corrected (`tools` is a map, `approval: never`, all five harnesses).
+
 ## [0.11.4] - 2026-10-21
 
 ### Removed

@@ -141,11 +141,18 @@ The streaming layer records cleanup phases (`cleanup_running`, `cleanup_complete
 Inbound harness requests (tool approvals, user-input prompts) are dispatched through an
 injected `ServerRequestHandler`:
 
+- `PermissionBroker` (`harness/permission_broker.py`) — journals each request to the
+  spawn's `permission_requests.jsonl` and emits `request/opened`. Spawn dispatch
+  (`streaming/spawn_dispatch.py`) builds it for Codex and OpenCode with
+  `auto_reject_runtime_requests=True`, so a spawn's approval request is answered
+  `reject`; managed-primary attach builds it with `False`, so it only records and
+  surfaces the request. `no_runtime_hitl = False`.
 - `AutoAcceptHandler` — auto-approves all approvals, sends empty dict for user-input.
-  Used on non-interactive spawn paths. `no_runtime_hitl = True`.
+  The connection default when no handler is injected, and the handler for the
+  `NONE` / `AUTO_ACCEPT` primary runtime-request policies. `no_runtime_hitl = True`.
 - `InteractiveHandler` — converts requests to `request/opened` events on the event stream,
   expecting external code to call `respond_request()` / `respond_user_input()` later.
-  Used on managed-primary attach paths. `no_runtime_hitl = False`.
+  Fallback for managed-primary attach when no broker is built. `no_runtime_hitl = False`.
 
 The handler is injected; `HarnessConnection` implementations must not embed policy.
 
