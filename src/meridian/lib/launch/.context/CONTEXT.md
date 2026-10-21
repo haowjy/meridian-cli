@@ -392,6 +392,9 @@ finally:
 ```
 
 The inner try/finally ensures scope reclamation runs even if `stop_session` raises.
+After reclamation, a primary session makes one best-effort model observation
+(`observe_session_model(..., best_effort=True)`): try-locks only, history tail only, exceptions
+suppressed. It never delays reclamation, and a contended lock just skips the observation.
 `reclaim_session_owned_scopes_for_chat` terminates any process scopes the session owns
 (e.g., managed primary backends) that were not released during normal teardown.
 
