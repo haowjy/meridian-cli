@@ -20,7 +20,7 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
 
 if TYPE_CHECKING:
-    from meridian.lib.ops.session_reentry import SessionReentryDecision
+    from meridian.lib.ops.session_reentry import Launch
 
 
 def _session_project_root(file_path: str | None) -> str | None:
@@ -72,19 +72,21 @@ def resolve_browse_presentation(
     return Interactive()
 
 
-def _exec_argv(
-    decision: SessionReentryDecision, *, project_root: str, config_file: str | None
-) -> list[str]:
-    """The one argv for every browse re-entry: resume, fork or start-from."""
+def _exec_decision(
+    decision: Launch,
+    *,
+    project_root: str,
+    config_file: str | None = None,
+    exec_fn: Callable[[str, list[str]], Any] = os.execv,
+) -> None:
+    """Replace the picker process with the selected primary-session action."""
 
-    from meridian.lib.ops.session_reentry import Blocked, StartFrom
+    from meridian.lib.ops.session_reentry import StartFromLaunch
 
-    if isinstance(decision, Blocked):
-        raise ValueError("blocked session decisions cannot be executed")
     argv = [sys.executable, "-m", "meridian", "-C", project_root]
     if config_file:
         argv.extend(("--config", config_file))
-    if isinstance(decision, StartFrom):
+    if isinstance(decision, StartFromLaunch):
         # `--opt=value` keeps a value such as "-x fix" from parsing as a flag. An empty agent
         # stays explicit: omitting `--agent` would select the configured default profile.
         argv.extend(("--from", decision.chat_id, f"--agent={decision.agent}"))
@@ -97,19 +99,6 @@ def _exec_argv(
                 argv.append(f"{flag}={value}")
     else:
         argv.extend(("--fork" if decision.kind == "fork" else "--continue", decision.chat_id))
-    return argv
-
-
-def _exec_decision(
-    decision: SessionReentryDecision,
-    *,
-    project_root: str,
-    config_file: str | None = None,
-    exec_fn: Callable[[str, list[str]], Any] = os.execv,
-) -> None:
-    """Replace the picker process with the selected primary-session action."""
-
-    argv = _exec_argv(decision, project_root=project_root, config_file=config_file)
     sys.stdout.flush()
     sys.stderr.flush()
     exec_fn(sys.executable, argv)

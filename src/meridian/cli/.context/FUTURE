@@ -9,3 +9,6 @@
   dedicated command prefix or a modal filter would remove the special case.
 - Session browse: start-from (`n`) always inherits the source's agent, last-used model and work
   item. An agent/model selector on the prompt line is a maybe-later idea; not built.
+- Session browse: `DetailState` holds a row snapshot plus `model`; looking the row up in `browser.list`
+  by chat_id would delete `DetailState.model` (not done: detail can open from lineage for a chat
+  outside the listing).

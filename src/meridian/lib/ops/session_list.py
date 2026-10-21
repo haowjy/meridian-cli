@@ -325,9 +325,6 @@ def session_list_sync(
                     # Not ``recorded_harness_sessions``: that excludes historical records,
                     # which `--from` still reads.
                     has_harness_session=bool((record.harness_session_id or "").strip()),
-                    agent=record.agent,
-                    model=row_model,
-                    work_id=record.active_work_id or "",
                 ),
                 agent=record.agent,
                 model=row_model,
