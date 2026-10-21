@@ -234,7 +234,9 @@ all qualify; only a row with no recorded harness session (and archived-history r
 `n` (Ctrl-N once a filter exists, same rule as `l`) in the list or detail view opens a one-line
 prompt in the footer; Enter returns `StartFrom` carrying the row's agent, last-used model, work
 item and the typed text, Esc cancels. `session_cmd._exec_argv` is the single argv builder for all
-three actions and renders it as `--from <chat> -a -m --work [-p text]`, omitting empty parts.
+three actions and renders it as `--from <chat> --agent=<a> [--model=] [--work=] [--prompt=]`.
+`--opt=value` keeps a prompt such as `-x fix` from parsing as a flag; `--agent` is always
+present because omitting it would select the configured default profile for an agentless source.
 The row's values are used as shown (no re-read at Enter): the launch's own `--from` resolver
 is the validity check.
 `/` searches the transcripts of the rows the Status view shows.
