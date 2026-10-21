@@ -16,7 +16,6 @@ from meridian.cli.browse.model import (
 from meridian.cli.browse.text import cell, clip
 from meridian.lib.core.formatting import relative_time
 from meridian.lib.ops.session_list import SessionListRow
-from meridian.lib.ops.session_reentry import Fork, Resume
 
 if TYPE_CHECKING:
     from prompt_toolkit.formatted_text import StyleAndTextTuples
@@ -39,13 +38,9 @@ def _status_glyph(row: SessionListRow) -> tuple[str, str]:
 
 def _enter_hint(row: SessionListRow | None) -> str:
     """What Enter does to ``row``: a running session forks, a blocked one offers nothing."""
-    if row is None:
+    if row is None or row.reentry.kind == "blocked":
         return ""
-    if isinstance(row.reentry, Fork):
-        return "enter fork  "
-    if isinstance(row.reentry, Resume):
-        return "enter resume  "
-    return ""
+    return f"enter {row.reentry.kind}  "
 
 
 def _lines(lines: list[StyleAndTextTuples]) -> StyleAndTextTuples:
