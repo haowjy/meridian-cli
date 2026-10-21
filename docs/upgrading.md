@@ -1,5 +1,70 @@
 # Upgrade notes
 
+## Session browse redesign (history index schema 12)
+
+`meridian session browse` was rewritten (see the changelog). The on-disk changes
+behind it are additive or rebuildable; nothing you wrote by hand is migrated.
+
+**What changed, and why**
+
+- Session start records gain defaulted fields: `tmux_target`, `context_from_chat_id`
+  and `context_from_history_id`. A fork or `--from` chat now records the context it
+  actually used, and that lineage carries across continuation, so the picker can
+  draw the lineage tree.
+- `model_observation` rows now hold the raw native model token, and a primary
+  session also writes one when it stops, so browse can show the last-used model
+  for chats never continued. Continue maps the raw token to a routable model when
+  it launches.
+- The history index moves from schema 10 to 12 (`history-v12-sessions-v1.sqlite3`):
+  lineage edges and model observations are indexed, and the `previews` table is gone.
+- Idle state files in format v1 are read as v2 (last turn and TTL kept) and
+  rewritten as v2 on the next write.
+- A `spawn --bg` request (`bg-worker-request.json`) keeps the raw prompt and no
+  longer carries `prompt_is_composed` or `context_from`; the worker composes the
+  prompt once.
+
+**Before installing**
+
+Nothing is required. Running `--bg` spawns can finish on the old worker.
+
+**After installing**
+
+Nothing is required. The first indexed read (any `session browse`, `session log`
+or `session index` command) rebuilds the v12 index from the authoritative files and
+may take a little longer on a large project. The old `history-v10-sessions-v1.sqlite3`
+stays on disk unused; delete it once you no longer need to roll back.
+
+**Data no longer kept**
+
+The preview pane and its cache (the index `previews` table, and the preview counts
+in `session index status` and rebuild) are removed. Previews were derived from the
+transcripts, so nothing is lost; `Space` opens the full transcript.
+
+**Scripts**
+
+`session browse --plain --format json` rows drop `live`, `historical`,
+`native_status` and `history_id`. `reentry.kind` (`resume`, `fork` or `blocked`)
+replaces `live` as what Enter does; an archived row's `chat_id` is its history id.
+The plain table columns are now STALE, TMUX, AGENT, AGE, WORK. For
+`--include-archives` see [below](#session-browse---include-archives).
+
+**Rolling back**
+
+Rolling back to 0.11.4 works. Probed on a copy of a real project runtime (9 chats)
+written by this build, then read by 0.11.4:
+
+- Older builds ignore the new start-event fields; a chat with `tmux_target` and
+  `context_from_*` listed and logged normally.
+- A raw-token `model_observation` row was ignored by the old `session browse`.
+- 0.11.4 builds its own `history-v10-sessions-v1.sqlite3` next to the v12 file
+  (`session index status` reports it current) and lists every chat. The picker
+  loses the new columns, the model and the lineage tree.
+- Idle files rewritten as v2 are the format 0.11.4 writes.
+- A `--bg` request written by this build and picked up by a 0.11.4 worker defaults
+  to a composed prompt and composes it once from the raw text, as before the fix. I
+  did not run a live `--from` spawn through that mixed case, so a `--from` context may be missing on
+  a spawn queued before the rollback.
+
 ## Completion signal reporting
 
 `meridian spawn done` and `meridian spawn rearm` now refuse, with exit code 1,
