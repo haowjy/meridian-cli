@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from meridian.lib.state.paths import ProjectPaths
 from meridian.lib.state.work_state import (
     UnsupportedWorkStateVersion,
     WorkItem,
@@ -64,10 +65,15 @@ def work_item_needs_repair(runtime_root: Path, work_id: str) -> bool:
         return True
 
 
-def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
-    """Load one work item from active or archived directories."""
+def get_work_item(
+    runtime_root: Path, work_id: str, *, paths: ProjectPaths | None = None
+) -> WorkItem | None:
+    """Load one work item from active or archived directories.
 
-    paths = project_paths_for_work_store(runtime_root)
+    Batch callers resolve ``paths`` once; resolving per item re-reads project identity.
+    """
+
+    paths = paths or project_paths_for_work_store(runtime_root)
     if paths.work_dir is None or paths.work_archive_dir is None:
         return None
     active_dir, archived_dir = locate_work_dirs(paths, work_id)

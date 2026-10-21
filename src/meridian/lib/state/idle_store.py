@@ -133,10 +133,12 @@ class IdleStore:
         return self.root / ".gc"
 
     def read(self, harness: str, session: str) -> IdleState | None:
-        return self._read_path(self.path_for(harness, session))
+        return self._read_path(self.path_for(harness, session), warn=False)
 
     @staticmethod
-    def _read_path(path: Path) -> IdleState | None:
+    def _read_path(path: Path, *, warn: bool = True) -> IdleState | None:
+        """Read one file; skewed files are warned about only where a write would replace them."""
+
         state = read_model(path, IdleState)
         if state is not None:
             return state
@@ -145,7 +147,7 @@ class IdleStore:
         except OSError:
             return None
         version = payload.get("v", 2) if payload is not None else 2
-        if type(version) is not int or version != 2:
+        if warn and (type(version) is not int or version != 2):
             _warn_idle_version_skew(path, repr(version))
         return None
 
@@ -189,7 +191,7 @@ class IdleStore:
     def list_states(self) -> tuple[IdleState, ...]:
         if not self.root.is_dir():
             return ()
-        states = [self._read_path(path) for path in self.root.glob("*.json")]
+        states = [self._read_path(path, warn=False) for path in self.root.glob("*.json")]
         return tuple(state for state in states if state is not None)
 
     def gc(self) -> None:

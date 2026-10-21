@@ -18,7 +18,7 @@ from meridian.lib.ops.session_reentry import Blocked, SessionReentryDecision, de
 from meridian.lib.state import session_store, work_store
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.idle_store import IdleState, IdleStore
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.paths import ProjectPaths, RuntimePaths, resolve_project_paths
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -128,10 +128,8 @@ def _turn_metadata(
     return last_turn, anchor + ttl
 
 
-def _work_label(runtime_root: Path, work_id: str | None) -> str:
-    if not work_id:
-        return ""
-    item = work_store.get_work_item(runtime_root, work_id)
+def _work_label(runtime_root: Path, paths: ProjectPaths, work_id: str) -> str:
+    item = work_store.get_work_item(runtime_root, work_id, paths=paths)
     return item.name if item is not None else work_id
 
 
@@ -186,8 +184,11 @@ def session_list_sync(
         record.work_id if isinstance(record, SpawnRecord) else record.active_work_id
         for record in visible_records
     }
+    project_paths = resolve_project_paths(roots.project_root)
     work_labels = {
-        work_id: _work_label(roots.project_state_dir, work_id) for work_id in work_ids if work_id
+        work_id: _work_label(roots.project_state_dir, project_paths, work_id)
+        for work_id in work_ids
+        if work_id
     }
 
     rows: list[SessionListRow] = []
