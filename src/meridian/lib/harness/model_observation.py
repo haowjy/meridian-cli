@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import HarnessSessionId
 from meridian.lib.harness import opencode_transcript
 from meridian.lib.state.event_store import utc_now_iso
-from meridian.lib.state.session_fold import SessionRecord
 from meridian.lib.state.session_store import SessionModelObservationEvent, record_model_observation
 
 _BEST_EFFORT_TAIL_BYTES = 1 << 20
@@ -128,23 +128,26 @@ def read_last_executed_model(
 
 
 def observe_session_model(
-    runtime_root: Path, record: SessionRecord, *, best_effort: bool = False
+    runtime_root: Path,
+    key: NativeKey,
+    *,
+    project_root: str | None,
+    best_effort: bool = False,
 ) -> str | None:
     """Record the native session's last executed model; return it, or ``None`` if unreadable.
 
-    ``best_effort`` never waits: it reads only the history tail and skips the write
-    (raising ``FileLockTimeout``) when an authority lock is contended.
+    The only writer of model observations. It stores the raw native token; callers that
+    launch with it map it to a routable model themselves. ``best_effort`` never waits: it
+    reads only the history tail and skips the write (raising ``FileLockTimeout``) when an
+    authority lock is contended.
     """
 
-    key = record.native_key()
-    if key is None or record.record_mode == "historical":
-        return None
     token = read_last_executed_model(
-        record.harness,
+        key.harness,
         key.session_id,
         context=NativeModelReadContext(
-            native_store=record.native_store,
-            project_root=record.control_root,
+            native_store=key.native_store,
+            project_root=project_root,
             tail_bytes=_BEST_EFFORT_TAIL_BYTES if best_effort else None,
         ),
     )
@@ -152,7 +155,7 @@ def observe_session_model(
         record_model_observation(
             runtime_root,
             SessionModelObservationEvent(
-                harness=record.harness,
+                harness=key.harness,
                 harness_session_id=HarnessSessionId(key.session_id),
                 observed_model_token=token,
                 recorded_at=utc_now_iso(),

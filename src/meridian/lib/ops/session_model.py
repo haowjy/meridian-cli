@@ -16,7 +16,6 @@ class SessionModelRefreshInput(BaseModel):
 class SessionModelRefreshOutput(BaseModel):
     chat_id: str
     model: str | None = None
-    refreshed: bool = False
 
 
 def session_model_refresh_sync(payload: SessionModelRefreshInput) -> SessionModelRefreshOutput:
@@ -31,14 +30,12 @@ def session_model_refresh_sync(payload: SessionModelRefreshInput) -> SessionMode
     key = record.native_key()
     if key is None or record.record_mode == "historical":
         return SessionModelRefreshOutput(chat_id=payload.chat_id, model=record.model)
-    token = observe_session_model(roots.runtime_root, record)
+    token = observe_session_model(roots.runtime_root, key, project_root=record.control_root)
     model = token or index.last_executed_models({(record.harness, key.session_id)}).get(
         (record.harness, key.session_id),
         record.model,
     )
-    return SessionModelRefreshOutput(
-        chat_id=payload.chat_id, model=model, refreshed=token is not None
-    )
+    return SessionModelRefreshOutput(chat_id=payload.chat_id, model=model)
 
 
 session_model_refresh = async_from_sync(session_model_refresh_sync)

@@ -235,8 +235,11 @@ def session_scope(
             # observation is fine, delayed shutdown is not.
             with suppress(Exception):
                 record = chat_record(runtime_root, resolved_chat_id)
-                if record is not None:
-                    observe_session_model(runtime_root, record, best_effort=True)
+                key = record.native_key() if record is not None else None
+                if record is not None and key is not None:
+                    observe_session_model(
+                        runtime_root, key, project_root=record.control_root, best_effort=True
+                    )
 
 
 __all__ = ["SessionAttempt", "session_scope"]

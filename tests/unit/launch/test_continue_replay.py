@@ -214,13 +214,10 @@ def _patch_intent_seams(
         continue_replay_module, "get_initial_model_selection", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        continue_replay_module, "read_last_executed_model", lambda *a, **k: live
+        continue_replay_module, "observe_session_model", lambda *a, **k: live
     )
     monkeypatch.setattr(
         continue_replay_module, "get_last_executed_model", lambda *a, **k: stored
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "record_model_observation", lambda *a, **k: True
     )
     tokens = [token for token in (live, stored) if token]
     monkeypatch.setattr(
@@ -244,7 +241,7 @@ def test_explicit_override_beats_observed(monkeypatch: pytest.MonkeyPatch) -> No
     live_calls: list[str] = []
     monkeypatch.setattr(
         continue_replay_module,
-        "read_last_executed_model",
+        "observe_session_model",
         lambda *a, **k: live_calls.append("live") or "observed-token",
     )
 
@@ -358,7 +355,7 @@ def test_fork_ignores_observed(monkeypatch: pytest.MonkeyPatch) -> None:
     live_calls: list[str] = []
     monkeypatch.setattr(
         continue_replay_module,
-        "read_last_executed_model",
+        "observe_session_model",
         lambda *a, **k: live_calls.append("live") or "observed-token",
     )
     monkeypatch.setattr(
