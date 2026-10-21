@@ -13,17 +13,10 @@ import pytest
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-from meridian.cli.browse import tui as browse_tui
-from meridian.cli.browse.tui import (
-    Lane,
-    LaneFailure,
-    SearchProgress,
-    SearchRequest,
-    run_browse_picker,
-)
+from meridian.cli.browse.lanes import Lanes
+from meridian.cli.browse.tui import run_browse_picker
 from meridian.lib.ops.session_list import SessionListOutput, SessionListRow
 from meridian.lib.ops.session_reentry import Blocked, Resume
-from meridian.lib.ops.session_search import SubsetSearchStep
 from meridian.lib.state import session_store
 
 
@@ -68,7 +61,7 @@ def test_headless_picker_filters_then_activates_visible_row(tmp_path) -> None:
 
 def test_headless_picker_blocked_enter_stays_open_until_quit(tmp_path) -> None:
     with create_pipe_input() as pipe:
-        pipe.send_text("\rq")
+        pipe.send_text("\r\x1b")
         decision = run_browse_picker(
             _listing(),
             tmp_path.as_posix(),
@@ -94,86 +87,41 @@ def test_headless_picker_ctrl_c_exits_130(tmp_path) -> None:
     assert exc_info.value.code == 130
 
 
-def test_lane_discards_completion_from_replaced_request() -> None:
-    started = threading.Event()
-    release = threading.Event()
-    invalidated = threading.Event()
+def test_superseded_lane_request_never_applies() -> None:
+    first_started = threading.Event()
+    release_first = threading.Event()
+    applied: list[str] = []
+    done = threading.Event()
 
-    def worker(request, _current, post) -> None:
-        started.set()
-        assert release.wait(timeout=1)
-        post(request)
+    def apply(value: str) -> None:
+        applied.append(value)
+        if value == "second":
+            done.set()
 
-    first = object()
-    second = object()
-    lane: Lane[object, object] = Lane(worker, invalidated.set)
-    try:
-        lane.submit(first)
-        assert started.wait(timeout=1)
-        lane.submit(second)
-        release.set()
-        deadline = time.monotonic() + 1
-        results: list[object] = []
-        while time.monotonic() < deadline and second not in results:
-            invalidated.wait(timeout=0.05)
-            invalidated.clear()
-            results.extend(lane.drain())
-    finally:
-        lane.close()
+    lanes = Lanes(lambda callback: callback(), _ready())
 
-    assert results == [second]
+    def slow(_current, _post) -> str:
+        first_started.set()
+        assert release_first.wait(timeout=2)
+        return "first"
 
-
-def test_lane_reports_failure_and_serves_the_next_request() -> None:
-    invalidated = threading.Event()
-
-    def worker(request: str, _current, post) -> None:
-        if request == "bad":
-            raise RuntimeError("preview exploded")
-        post(request)
-
-    lane: Lane[str, str] = Lane(worker, invalidated.set)
-    try:
-        lane.submit("bad")
-        assert invalidated.wait(timeout=1)
-        invalidated.clear()
-        assert list(lane.drain()) == [LaneFailure("preview exploded")]
-
-        lane.submit("good")
-        assert invalidated.wait(timeout=1)
-        assert list(lane.drain()) == ["good"]
-    finally:
-        lane.close()
-
-
-def test_search_worker_does_not_open_next_transcript_after_cancellation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    opened: list[str] = []
-
-    def iter_steps(*, project_root: str, chat_ids: tuple[str, ...], query: str):
-        _ = project_root, query
-        for chat_id in chat_ids:
-            opened.append(chat_id)
-            yield SubsetSearchStep(chat_id, matched=False)
-
-    monkeypatch.setattr("meridian.lib.ops.session_search.iter_session_subset_search", iter_steps)
-    active = True
-    posted: list[object] = []
-
-    def post(result: object) -> None:
-        nonlocal active
-        posted.append(result)
-        active = False
-
-    browse_tui._search_worker("/tmp/project")(
-        SearchRequest("needle", ("c1", "c2")),
-        lambda: active,
-        post,
+    lanes.run("detail", slow, apply, lambda reason: applied.append(reason))
+    assert first_started.wait(timeout=2)
+    lanes.run(
+        "detail", lambda _current, _post: "second", apply, lambda reason: applied.append(reason)
     )
+    assert done.wait(timeout=2)
+    release_first.set()
+    time.sleep(0.1)
+    lanes.close()
 
-    assert opened == ["c1"]
-    assert posted == [SearchProgress(1, 2)]
+    assert applied == ["second"]
+
+
+def _ready() -> threading.Event:
+    event = threading.Event()
+    event.set()
+    return event
 
 
 def _run_meridian(args: list[str], *, cwd: Path, meridian_home: Path):

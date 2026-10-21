@@ -5,8 +5,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- `meridian session browse` rewritten. Header shows Status (Active/Archived) and Sort (Updated/Created); Tab focuses them, left/right change them and re-query. Rows: live `●` or stale-cache `⚠`, tmux target, work, agent, last-used model, age since last turn. Type to search (substring over tmux, work, agent, model, chat id, cwd); `/` still searches transcripts. Space opens a full-screen transcript view (loaded once, scroll older entries, model refreshed on open); `l` or Ctrl-L opens the fork/`--from` lineage tree; Enter on a lineage node opens it.
+- `session index` status and rebuild no longer report cached previews.
 - Session commands load operations only in their handlers. Lightweight command declarations avoid importing the entire operation registry; managed work lookup uses the history index.
 - Session browse data: active/archive scope and updated/created sort before limiting, tmux target, last-used model, turn age and cache-stale marker in plain rows (retained metadata survives archiving). Fork and `--from` ancestry survive continuation; indexed lineage, model refresh and shared transcript windows support the next picker.
+
+### Removed
+- Session browse preview pane and its history-index cache (`previews` table, `session index` preview counts). Index schema bumped; rebuilds from authoritative files.
+
+### Fixed
+- Old-format idle state files no longer print a version warning on every listing. Only a write that would replace one warns.
+- Session listing resolves project paths once, not once per work item.
 
 ## [0.11.4] - 2026-10-21
 

@@ -19,7 +19,7 @@ no progress bar. It never upgrades or removes another format's file, so an older
 background process that survives the reinstall can keep using its index.
 Workspace/global search shares one initialization budget across its roots. These
 cooperative deadlines cannot interrupt a blocked filesystem call. Automatic
-initialization does not warm previews or move history into SQLite.
+initialization does not move history into SQLite.
 
 A genuine initialization failure is recorded outside the replaceable index directory.
 Later automatic requests report the failure instead of repeatedly starting over.
@@ -36,7 +36,7 @@ explicit rebuild; it is never silently queried.
 
 ```sh
 meridian session index status
-meridian session index rebuild  # rebuild metadata and native search; previews refresh lazily
+meridian session index rebuild  # rebuild metadata and native search
 meridian session index rebuild --metadata-only  # discovery metadata only
 meridian session index rebuild --reset  # damaged dirty-source coordination
 ```
@@ -136,7 +136,7 @@ meridian session browse --include-archives
 meridian session restore HISTORY_UUID --archive /mnt/history/meridian/meridian-history-UUID.zip
 ```
 
-The browser always lists archived metadata and can preview a selected ZIP row.
+The browser lists archived metadata under Status: Archived; ZIP rows are read-only.
 Its `/` content search excludes archived rows unless started with
 `--include-archives`; the flag includes archived rows, not ZIP content.
 
@@ -162,18 +162,13 @@ warning; search one by reference (`meridian session search "phrase" HISTORY_UUID
 Coverage warnings and unavailable sources are reported alongside results; they
 never turn confirmed matches into false negatives.
 
-## Browser previews
+## Browser transcript view
 
-Selection shows a cached snippet immediately when available, labeled updating
-until freshness is checked. Previews retain at most the latest ten normalized
-messages in the current segment (16 KiB message text, 2 KiB setup); clipping is
-labeled. Active selected sessions refresh every two seconds. This is not a full
-conversation index; full logs and content search still read authoritative content.
-
-A previously verified snippet can remain visible as `cached · archive offline`
-when its selected ZIP is unavailable. Corrupt/unreadable content is labeled
-unavailable, not current. Selecting a row or reading a ZIP never restores it.
-Restore remains an explicit action.
+`meridian session browse` reads no transcript while you move through the list. Space
+opens a detail view that reads and parses the selected chat's transcript once, off the
+UI thread, then scrolls older entries from that parsed snapshot. It reloads only when the
+chat's session generation changes. A ZIP-only transcript is read from the archive;
+reading never restores it. Restore remains an explicit action.
 
 ## Pi journal views
 

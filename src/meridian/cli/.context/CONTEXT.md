@@ -202,13 +202,27 @@ the plain table; interactive use inside a managed Meridian session is refused.
 This keeps supervisor ownership explicit rather than presenting a picker that
 cannot safely transfer the process.
 
-The full-screen application lives in `browse/`: `model.py` owns pure state
-transitions, `render.py` produces width-aware formatted text, and `tui.py` binds
-keys and latest-only preview/search lanes. Lane workers publish results through
-`Application.invalidate()` and never mutate rendered state directly. Enter asks
+The full-screen application lives in `browse/`: `model.py` owns pure state for
+the list, detail and lineage views (a view stack; the list keeps its highlight
+and filter while deeper views are open), `render.py` produces width-aware
+formatted text, `transcript.py` holds one parsed snapshot per detail view and
+pages it with `select_session_log_window`, `lanes.py` runs blocking ops on daemon
+threads (latest request per lane wins, stale results are dropped), and `tui.py`
+binds keys and owns navigation. No view loads anything on highlight: Space reads the
+transcript once (reload only when the session generation changes) and refreshes the
+shown model through `session_model_refresh_sync`; `l` loads lineage plus the
+nodes' rows through `session_list_sync(chat_ids=...)`.
+
+Type-to-search is always on, so printable keys feed the filter. Space always opens
+the detail view and never filters. `l` opens lineage only while the filter is
+empty (it is text afterwards); Ctrl-L always does. A worker preload thread imports
+the cyclic transcript/search/lineage ops once before any lane runs: concurrent
+first imports from worker threads saw half-initialized packages. Enter asks
 `session_reentry.py` for a fresh authoritative decision, then returns that typed
 decision from `Application.run()`. The command handler performs `os.execv()` only
-after the application and its worker lanes have closed.
+after the application and its lanes have closed. Nothing may write to stderr
+while the application runs; read paths keep skew warnings out of the listing
+(`IdleStore.read` is quiet).
 
 ## Related KB
 

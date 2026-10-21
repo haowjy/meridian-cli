@@ -45,9 +45,7 @@ spawn. The reaper also reads `_MERIDIAN_DEPTH` and skips reaping when nested.
 `session_log.py`, `session_log_render.py` (pure rendering — clean/raw modes, tool
 collapsing, content pipeline), `session_render.py`, `session_search.py`,
 `session_search_index.py` (`SearchProjection` — rebuildable search rows refreshed
-from authoritative bindings and exact native sources), `session_preview.py`
-(cache-first bounded session previews, canonical reads outside index locks),
-`session_target.py`, `session_export.py`, `session_repair.py` (inspect or bind
+from authoritative bindings and exact native sources), `session_target.py`, `session_export.py`, `session_repair.py` (inspect or bind
 an unbound chat's native session), `session_corpus.py`,
 `session_archive.py`, `runner_history_prune.py` (explicit dry-run-first prune of
 redundant runner history for bound chats), `session_index.py`.
