@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Interactive Claude primaries can receive completed background Meridian spawn
+  results while idle; `harness.claude.spawn_watch.enabled` controls the watcher
+  and defaults to enabled.
+
 ## [0.11.8] - 2026-10-21
 
 ### Added

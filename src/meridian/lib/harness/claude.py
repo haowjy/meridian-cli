@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import ClassVar
 from uuid import uuid4
 
+from meridian.lib.config.loader import load_config
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
@@ -95,6 +97,8 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
+_IDLE_PLUGIN = "meridian-idle"
+_SPAWN_WATCH_PLUGIN = "meridian-spawn-watch"
 
 
 def build_claude_adhoc_agent_json(
@@ -265,9 +269,18 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             disallowed_tools = (
                 "Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)",
             )
-        plugin_names = (
-            (_BOUNDARY_PLUGIN, "meridian-idle") if run.interactive else (_BOUNDARY_PLUGIN,)
-        )
+        plugin_names = (_BOUNDARY_PLUGIN,)
+        if run.interactive:
+            control_root = (run.control_root or "").strip()
+            project_root = (
+                Path(control_root).expanduser().resolve()
+                if control_root
+                else resolve_project_root_resolution().project_root
+            )
+            claude_profile = load_config(project_root).harness.claude
+            plugin_names += (_IDLE_PLUGIN,)
+            if claude_profile.spawn_watch.enabled:
+                plugin_names += (_SPAWN_WATCH_PLUGIN,)
         return ResolvedLaunchSpec(
             harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,

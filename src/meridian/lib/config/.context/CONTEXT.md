@@ -113,6 +113,11 @@ time. These follow the same pattern: ambient config snapshot → launch-time env
 Called from `bind_launch_context()` in `lib/launch/context.py` and threaded
 into the harness adapter's `resolve_launch_spec()`.
 
+Claude's adapter resolves `[harness.claude].spawn_watch` directly from
+`SpawnParams.control_root` when it selects interactive-primary runtime plugins.
+This keeps a Claude-only bundle toggle out of the shared `SpawnParams` surface;
+an absent control root falls back to ambient project-root resolution.
+
 Claude native Agent routing does not use a `meridian.toml` harness option.
 Built-in Claude agents stay denied unconditionally; generic `Agent` permission
 follows Mars `[settings.meridian.agent_copy]` via `project_has_claude_agent_copy()` in
