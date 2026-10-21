@@ -16,7 +16,9 @@ def resolve_tmux_target(pane: str) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return result.stdout.strip() or None
+    target = result.stdout.strip()
+    # tmux succeeds for a vanished pane but expands its session/window as ":".
+    return target if target.partition(":")[0] else None
 
 
 def resolve_tmux_session(pane: str) -> str | None:

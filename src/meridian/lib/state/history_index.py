@@ -1597,6 +1597,28 @@ class HistoryIndex:
     ) -> tuple[list[SessionRecord | SpawnRecord], int]:
         newer = SESSIONS.alias("newer")
         live_expr = SESSIONS.c.chat.in_(sorted(live_chat_ids)) if live_chat_ids else literal(0)
+        archive_created = (
+            select(
+                func.coalesce(
+                    func.nullif(
+                        func.json_extract(
+                            LOCATIONS.c.receipt_json, "$.records[0].session.created_at"
+                        ),
+                        "",
+                    ),
+                    func.json_extract(LOCATIONS.c.receipt_json, "$.records[0].session.started_at"),
+                )
+            )
+            .join(ARCHIVE_HEADS, ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id)
+            .where(
+                LOCATIONS.c.history_id == RECORDS.c.history_id,
+                LOCATIONS.c.kind == "archive",
+                LOCATIONS.c.portable_digest == ARCHIVE_HEADS.c.portable_digest,
+            )
+            .order_by(LOCATIONS.c.ordinal.desc(), LOCATIONS.c.source_id)
+            .limit(1)
+            .scalar_subquery()
+        )
         browse = union_all(
             select(
                 SESSIONS.c.record_json,
@@ -1622,7 +1644,7 @@ class HistoryIndex:
                 RECORDS.c.record_json,
                 literal("archive").label("source"),
                 RECORDS.c.activity,
-                func.json_extract(RECORDS.c.record_json, "$.started_at").label("created"),
+                func.coalesce(archive_created, RECORDS.c.started).label("created"),
                 literal(0).label("live"),
                 literal(0).label("tie"),
             ).where(RECORDS.c.archive_id.is_not(None), RECORDS.c.kind == "primary"),
@@ -1652,6 +1674,30 @@ class HistoryIndex:
                 else SpawnRecord.model_validate_json(row[0])
                 for row in rows
             ], total
+
+    def archived_session_metadata(self, history_ids: set[str]) -> dict[str, SessionRecord]:
+        """Read retained session metadata from selected archive receipts in one query."""
+        if not history_ids:
+            return {}
+        result: dict[str, SessionRecord] = {}
+        with self.query() as db:
+            rows = db.execute(
+                select(
+                    LOCATIONS.c.history_id,
+                    func.json_extract(LOCATIONS.c.receipt_json, "$.records[0].session"),
+                )
+                .join(ARCHIVE_HEADS, ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id)
+                .where(
+                    LOCATIONS.c.kind == "archive",
+                    LOCATIONS.c.history_id.in_(sorted(history_ids)),
+                    LOCATIONS.c.portable_digest == ARCHIVE_HEADS.c.portable_digest,
+                )
+                .order_by(LOCATIONS.c.ordinal.desc(), LOCATIONS.c.source_id)
+            )
+            for history_id, raw in rows:
+                if raw is not None and history_id not in result:
+                    result[history_id] = SessionRecord.model_validate_json(raw)
+        return result
 
     def last_executed_models(self, identities: set[tuple[str, str]]) -> dict[tuple[str, str], str]:
         if not identities:

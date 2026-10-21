@@ -161,11 +161,19 @@ def session_list_sync(
         status=payload.status,
         sort=payload.sort,
     )
+    archived_metadata = index.archived_session_metadata(
+        {str(record.history_id) for record in visible_records if isinstance(record, SpawnRecord)}
+    )
     identities: set[tuple[str, str]] = {
         (record.harness, record.harness_session_id)
         for record in visible_records
         if record.harness and record.harness_session_id
     }
+    identities.update(
+        (record.harness, record.harness_session_id)
+        for record in archived_metadata.values()
+        if record.harness_session_id
+    )
     models = index.last_executed_models(identities)
     idle_store = IdleStore()
     idle_states = {key: idle_store.read(*key) for key in identities}
@@ -186,12 +194,21 @@ def session_list_sync(
     for record in visible_records:
         if isinstance(record, SpawnRecord):
             ref = str(record.history_id)
-            fallback = record.terminal.finished_at if record.terminal else record.started_at or ""
+            metadata = archived_metadata.get(ref)
+            harness = metadata.harness if metadata else record.harness or ""
+            native_id = metadata.harness_session_id if metadata else record.harness_session_id
+            fallback = (
+                (metadata.stopped_at or metadata.started_at)
+                if metadata
+                else record.terminal.finished_at
+                if record.terminal
+                else record.started_at or ""
+            )
             last_turn, cache_deadline = _turn_metadata(
-                record.harness or "",
+                harness,
                 fallback,
                 False,
-                idle_states.get((record.harness or "", record.harness_session_id or "")),
+                idle_states.get((harness, native_id or "")),
             )
             rows.append(
                 SessionListRow(
@@ -201,17 +218,18 @@ def session_list_sync(
                     archived=True,
                     last_turn_at=last_turn,
                     cache_deadline=cache_deadline,
-                    created_at=record.started_at or "",
-                    harness=record.harness or "",
+                    created_at=(metadata.created_at or metadata.started_at)
+                    if metadata
+                    else record.started_at or "",
+                    tmux_target=metadata.tmux_target if metadata else None,
+                    harness=harness,
                     activity_at=record.terminal.finished_at
                     if record.terminal
                     else record.started_at or "",
                     live=False,
                     reentry=Blocked(f"archived history; read with meridian session log {ref}"),
                     agent=record.agent or "",
-                    model=models.get(
-                        (record.harness or "", record.harness_session_id or ""), record.model or ""
-                    ),
+                    model=models.get((harness, native_id or ""), record.model or ""),
                     work_label=work_labels.get(record.work_id or "", ""),
                     task_cwd=record.task_cwd or record.execution_cwd or "",
                 )
