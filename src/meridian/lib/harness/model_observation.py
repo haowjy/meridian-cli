@@ -15,7 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.core.native_identity import NativeKey
+from meridian.lib.core.types import HarnessSessionId
 from meridian.lib.harness import opencode_transcript
+from meridian.lib.state.event_store import utc_now_iso
+from meridian.lib.state.session_store import SessionModelObservationEvent, record_model_observation
+
+_BEST_EFFORT_TAIL_BYTES = 1 << 20
 
 
 @dataclass(frozen=True)
@@ -24,6 +30,8 @@ class NativeModelReadContext:
 
     native_store: str | None = None
     project_root: str | None = None
+    # Scan only the last N bytes of a JSONL history; a model set earlier is missed.
+    tail_bytes: int | None = None
 
 
 def _nested_str(payload: object, *keys: str) -> str | None:
@@ -39,10 +47,18 @@ def _nested_str(payload: object, *keys: str) -> str | None:
     return None
 
 
-def _iter_json_objects(path: Path) -> Iterator[dict[str, object]]:
+def _iter_json_objects(path: Path, tail_bytes: int | None) -> Iterator[dict[str, object]]:
     try:
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
+        with path.open("rb") as handle:
+            if tail_bytes is not None:
+                size = handle.seek(0, 2)
+                if size > tail_bytes:
+                    handle.seek(size - tail_bytes)
+                    handle.readline()  # drop the partial line the seek landed in
+                else:
+                    handle.seek(0)
+            for raw in handle:
+                line = raw.decode("utf-8", errors="ignore")
                 stripped = line.strip()
                 if not stripped:
                     continue
@@ -89,7 +105,7 @@ def read_last_executed_model(
                 )
             last: str | None = None
             fallback: str | None = None
-            for payload in _iter_json_objects(native):
+            for payload in _iter_json_objects(native, context.tail_bytes):
                 event_type = payload.get("type")
                 if harness == "claude" and event_type == "assistant":
                     last = _nested_str(payload, "message", "model") or last
@@ -111,7 +127,46 @@ def read_last_executed_model(
     return None
 
 
+def observe_session_model(
+    runtime_root: Path,
+    key: NativeKey,
+    *,
+    project_root: str | None,
+    best_effort: bool = False,
+) -> str | None:
+    """Record the native session's last executed model; return it, or ``None`` if unreadable.
+
+    The only writer of model observations. It stores the raw native token; callers that
+    launch with it map it to a routable model themselves. ``best_effort`` never waits: it
+    reads only the history tail and skips the write (raising ``FileLockTimeout``) when an
+    authority lock is contended.
+    """
+
+    token = read_last_executed_model(
+        key.harness,
+        key.session_id,
+        context=NativeModelReadContext(
+            native_store=key.native_store,
+            project_root=project_root,
+            tail_bytes=_BEST_EFFORT_TAIL_BYTES if best_effort else None,
+        ),
+    )
+    if token is not None:
+        record_model_observation(
+            runtime_root,
+            SessionModelObservationEvent(
+                harness=key.harness,
+                harness_session_id=HarnessSessionId(key.session_id),
+                observed_model_token=token,
+                recorded_at=utc_now_iso(),
+            ),
+            lock_timeout=0 if best_effort else None,
+        )
+    return token
+
+
 __all__ = [
     "NativeModelReadContext",
+    "observe_session_model",
     "read_last_executed_model",
 ]

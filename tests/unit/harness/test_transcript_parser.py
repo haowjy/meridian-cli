@@ -211,9 +211,7 @@ def test_parser_extracts_codex_messages_tool_calls_and_results() -> None:
     assert messages[2].is_tool_result is True
 
 
-def test_pi_journal_compaction_and_branch_annotations_survive_checkpoint() -> None:
-    from meridian.lib.harness.transcript_preview import PreviewAccumulator
-
+def test_pi_journal_compaction_and_branch_annotations() -> None:
     events = [
         {"type": "session", "id": "session", "version": 3, "cwd": "/repo"},
         {
@@ -268,30 +266,15 @@ def test_pi_journal_compaction_and_branch_annotations_survive_checkpoint() -> No
     assert all(m.role == "annotation" for m in annotations)
     assert any(m.content == "extension notice" for m in parsed.segments[1])
     assert parsed.rendering_reason is None
-    accumulator = PreviewAccumulator()
-    for event in events:
-        accumulator = PreviewAccumulator(accumulator.preview.model_copy())
-        accumulator.feed(event)
-    assert accumulator.preview.setup == "recorded handoff"
-    assert accumulator.preview.pi_previous_entry_id == "f"
-    assert any("parent" in line.lower() for line in accumulator.preview.lines())
-    assert accumulator.preview.rendering_reason is None
 
 
 def test_pi_unknown_material_is_not_certified_empty() -> None:
-    from meridian.lib.harness.transcript_preview import PreviewAccumulator
-
     events = [
         {"type": "session", "id": "s", "version": 3, "cwd": "/repo"},
         {"type": "future_message", "id": "a", "parentId": None, "content": "not understood"},
     ]
     parsed = parse_transcript_events_with_prologues(events)
     assert parsed.rendering_reason
-    accumulator = PreviewAccumulator()
-    for event in events:
-        accumulator.feed(event)
-    assert accumulator.preview.rendering_reason
-    assert "No messages" not in "\n".join(accumulator.preview.lines())
 
 
 def test_pi_bash_execution_and_metadata_journal() -> None:
@@ -345,23 +328,6 @@ def test_non_pi_message_shape_does_not_start_pi_journal_tracking() -> None:
     assert parsed.rendering_reason is None
 
 
-def test_pi_preview_does_not_persist_unbounded_entry_identity() -> None:
-    from meridian.lib.harness.transcript_preview import PreviewAccumulator
-
-    accumulator = PreviewAccumulator()
-    accumulator.feed(
-        {
-            "type": "message",
-            "id": "x" * 100_000,
-            "parentId": None,
-            "message": {"role": "assistant", "content": "answer"},
-        }
-    )
-    assert accumulator.preview.rendering_reason
-    assert accumulator.preview.pi_previous_entry_id is None
-    assert len(accumulator.preview.model_dump_json()) < 1000
-
-
 @pytest.mark.parametrize("event_type", [[], {}])
 def test_pi_unhashable_type_is_incomplete_not_a_parser_crash(event_type: object) -> None:
     generic = parse_transcript_events_with_prologues(
@@ -383,8 +349,6 @@ def test_pi_unhashable_type_is_incomplete_not_a_parser_crash(event_type: object)
 def test_pi_malformed_type_without_entry_identity_is_incomplete(
     event_type: object, missing_fields: tuple[str, ...]
 ) -> None:
-    from meridian.lib.harness.transcript_preview import PreviewAccumulator
-
     malformed = {"type": event_type, "id": "entry", "parentId": None}
     for field in missing_fields:
         malformed.pop(field)
@@ -393,12 +357,6 @@ def test_pi_malformed_type_without_entry_identity_is_incomplete(
     events = [{"type": "session", "id": "session", "version": 3, "cwd": "/repo"}, malformed]
     parsed = parse_transcript_events_with_prologues(events)
     assert parsed.rendering_reason == "Unsupported Pi journal entry; rendering is incomplete."
-
-    accumulator = PreviewAccumulator()
-    for event in events:
-        accumulator.feed(event)
-    assert accumulator.preview.rendering_reason == parsed.rendering_reason
-    assert "No messages" not in "\n".join(accumulator.preview.lines())
 
 
 @pytest.mark.parametrize(
@@ -412,12 +370,6 @@ def test_pi_malformed_type_without_entry_identity_is_incomplete(
     ],
 )
 def test_malformed_pi_material_is_not_certified_empty(message: dict[str, object]) -> None:
-    from meridian.lib.harness.transcript_preview import PreviewAccumulator
-
     event = {"type": "message", "message": message}
     parsed = parse_transcript_events_with_prologues([event])
     assert parsed.rendering_reason
-    accumulator = PreviewAccumulator()
-    accumulator.feed(event)
-    assert accumulator.preview.rendering_reason
-    assert "No messages" not in "\n".join(accumulator.preview.lines())

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import pkgutil
 import threading
 from collections.abc import Callable, Generator
@@ -15,8 +16,10 @@ from typing import TYPE_CHECKING, Literal
 from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
+from meridian.lib.harness.model_observation import observe_session_model
 from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.platform.tmux import resolve_tmux_target
 from meridian.lib.state import spawn_store
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.native_binding import BindOutcome, Conflict
@@ -25,6 +28,7 @@ from meridian.lib.state.session_store import (
     SessionModelSelectionEvent,
     SessionRecord,
     StartedSession,
+    chat_record,
     record_model_selection,
     start_session,
     stop_session,
@@ -197,6 +201,11 @@ def session_scope(
         skill_paths=metadata.skill_paths,
         forked_from_chat_id=request.forked_from_chat_id,
         forked_from_history_id=request.forked_from_history_id,
+        context_from_chat_id=request.context_from_chat_id,
+        context_from_history_id=request.context_from_history_id,
+        tmux_target=resolve_tmux_target(os.environ.get("TMUX_PANE", ""))
+        if kind == "primary"
+        else None,
         control_root=control_root,
         task_cwd=task_cwd,
         execution_cwd=execution_cwd,
@@ -220,6 +229,17 @@ def session_scope(
             _stop_session(runtime_root, resolved_chat_id)
         finally:
             _reclaim_session_scopes(runtime_root, resolved_chat_id)
+        if kind == "primary":
+            # Browse shows the last-used model; a mid-session switch is only visible in the
+            # native history. Runs after reclamation and never waits on a lock: a missed
+            # observation is fine, delayed shutdown is not.
+            with suppress(Exception):
+                record = chat_record(runtime_root, resolved_chat_id)
+                key = record.native_key() if record is not None else None
+                if record is not None and key is not None:
+                    observe_session_model(
+                        runtime_root, key, project_root=record.control_root, best_effort=True
+                    )
 
 
 __all__ = ["SessionAttempt", "session_scope"]

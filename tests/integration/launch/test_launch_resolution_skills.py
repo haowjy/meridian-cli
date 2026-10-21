@@ -151,7 +151,6 @@ def test_bundle_skill_content_renders_in_system_prompt_for_claude(
         spawn_id="dry-run-claude-skill-spawn",
         request=SpawnRequest(
             prompt="do the task",
-            prompt_is_composed=False,
             model="sonnet",
             harness="claude",
             agent="dev-orchestrator",

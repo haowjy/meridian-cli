@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
@@ -13,17 +14,10 @@ import pytest
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-from meridian.cli.browse import tui as browse_tui
-from meridian.cli.browse.tui import (
-    Lane,
-    LaneFailure,
-    SearchProgress,
-    SearchRequest,
-    run_browse_picker,
-)
+from meridian.cli.browse.lanes import Lanes
+from meridian.cli.browse.tui import run_browse_picker
 from meridian.lib.ops.session_list import SessionListOutput, SessionListRow
 from meridian.lib.ops.session_reentry import Blocked, Resume
-from meridian.lib.ops.session_search import SubsetSearchStep
 from meridian.lib.state import session_store
 
 
@@ -33,7 +27,6 @@ def _listing() -> SessionListOutput:
         SessionListRow(
             chat_id=chat_id,
             activity_at=now,
-            live=False,
             reentry=Resume(chat_id),
             agent="coder",
             model="gpt",
@@ -45,7 +38,31 @@ def _listing() -> SessionListOutput:
     return SessionListOutput(rows=rows, total_count=2)
 
 
-def test_headless_picker_filters_then_activates_visible_row(tmp_path) -> None:
+def test_headless_picker_filters_then_activates_visible_row(tmp_path, monkeypatch) -> None:
+    """Typing re-runs the session_list query; Enter acts on the row that query returned."""
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    project_id = "session-browse-query"
+    (project_root / "meridian.toml").write_text(
+        f'[project]\nid = "{project_id}"\n', encoding="utf-8"
+    )
+    meridian_home = tmp_path / "meridian-home"
+    runtime_root = meridian_home / "projects" / project_id
+    runtime_root.mkdir(parents=True)
+    monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
+    for work, session_id in (
+        ("alpha", "11111111-1111-4111-8111-111111111111"),
+        ("beta", "22222222-2222-4222-8222-222222222222"),
+    ):
+        chat_id = session_store.start_session(
+            runtime_root,
+            harness="codex",
+            harness_session_id=session_id,
+            model="gpt-5.4",
+            kind="primary",
+        ).chat_id
+        session_store.update_session_work_id(runtime_root, chat_id, work)
+        session_store.stop_session(runtime_root, chat_id)
     selected: list[str] = []
 
     def resolve(chat_id: str):
@@ -53,10 +70,19 @@ def test_headless_picker_filters_then_activates_visible_row(tmp_path) -> None:
         return Resume(chat_id)
 
     with create_pipe_input() as pipe:
-        pipe.send_text("beta\r")
+
+        def keys() -> None:
+            pipe.send_text("beta")
+            time.sleep(1.5)  # past the typing debounce and the query
+            pipe.send_text("\r")
+            time.sleep(5)
+            with contextlib.suppress(Exception):
+                pipe.send_text("\x03")  # fail instead of hanging if Enter found no row
+
+        threading.Thread(target=keys, daemon=True).start()
         decision = run_browse_picker(
             _listing(),
-            tmp_path.as_posix(),
+            project_root.as_posix(),
             resolve,
             input=pipe,
             output=DummyOutput(),
@@ -68,7 +94,7 @@ def test_headless_picker_filters_then_activates_visible_row(tmp_path) -> None:
 
 def test_headless_picker_blocked_enter_stays_open_until_quit(tmp_path) -> None:
     with create_pipe_input() as pipe:
-        pipe.send_text("\rq")
+        pipe.send_text("\r\x1b")
         decision = run_browse_picker(
             _listing(),
             tmp_path.as_posix(),
@@ -94,88 +120,41 @@ def test_headless_picker_ctrl_c_exits_130(tmp_path) -> None:
     assert exc_info.value.code == 130
 
 
-def test_lane_discards_completion_from_replaced_request() -> None:
-    started = threading.Event()
-    release = threading.Event()
-    invalidated = threading.Event()
+def test_superseded_lane_request_never_applies() -> None:
+    first_started = threading.Event()
+    release_first = threading.Event()
+    applied: list[str] = []
+    done = threading.Event()
 
-    def worker(request, _current, post) -> None:
-        started.set()
-        assert release.wait(timeout=1)
-        post(request)
+    def apply(value: str) -> None:
+        applied.append(value)
+        if value == "second":
+            done.set()
 
-    first = object()
-    second = object()
-    lane: Lane[object, object] = Lane(worker, invalidated.set)
-    try:
-        lane.submit(first)
-        assert started.wait(timeout=1)
-        lane.submit(second)
-        release.set()
-        deadline = time.monotonic() + 1
-        results: list[object] = []
-        while time.monotonic() < deadline and second not in results:
-            invalidated.wait(timeout=0.05)
-            invalidated.clear()
-            results.extend(lane.drain())
-    finally:
-        lane.close()
+    lanes = Lanes(lambda callback: callback(), _ready())
 
-    assert results == [second]
+    def slow(_current, _post) -> str:
+        first_started.set()
+        assert release_first.wait(timeout=2)
+        return "first"
 
-
-def test_lane_reports_failure_and_serves_the_next_request() -> None:
-    invalidated = threading.Event()
-
-    def worker(request: str, _current, post) -> None:
-        if request == "bad":
-            raise RuntimeError("preview exploded")
-        post(request)
-
-    lane: Lane[str, str] = Lane(worker, invalidated.set)
-    try:
-        lane.submit("bad")
-        assert invalidated.wait(timeout=1)
-        invalidated.clear()
-        assert list(lane.drain()) == [LaneFailure("preview exploded")]
-
-        lane.submit("good")
-        assert invalidated.wait(timeout=1)
-        assert list(lane.drain()) == ["good"]
-    finally:
-        lane.close()
-
-
-def test_search_worker_does_not_open_next_transcript_after_cancellation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    opened: list[str] = []
-
-    def iter_steps(*, project_root: str, chat_ids: tuple[str, ...], query: str):
-        _ = project_root, query
-        for chat_id in chat_ids:
-            opened.append(chat_id)
-            yield SubsetSearchStep(chat_id, matched=False)
-
-    monkeypatch.setattr(
-        "meridian.lib.ops.session_search.iter_session_subset_search", iter_steps
+    lanes.run("detail", slow, apply, lambda reason: applied.append(reason))
+    assert first_started.wait(timeout=2)
+    lanes.run(
+        "detail", lambda _current, _post: "second", apply, lambda reason: applied.append(reason)
     )
-    active = True
-    posted: list[object] = []
+    assert done.wait(timeout=2)
+    release_first.set()
+    time.sleep(0.1)
+    lanes.close()
 
-    def post(result: object) -> None:
-        nonlocal active
-        posted.append(result)
-        active = False
+    assert applied == ["second"]
 
-    browse_tui._search_worker("/tmp/project")(
-        SearchRequest("needle", ("c1", "c2")),
-        lambda: active,
-        post,
-    )
 
-    assert opened == ["c1"]
-    assert posted == [SearchProgress(1, 2)]
+def _ready() -> threading.Event:
+    event = threading.Event()
+    event.set()
+    return event
 
 
 def _run_meridian(args: list[str], *, cwd: Path, meridian_home: Path):
@@ -228,11 +207,16 @@ def test_plain_browse_and_bare_continue_are_identical(tmp_path) -> None:
     assert browse.returncode == bare.returncode == 0
     assert "Imported native sessions for 0 of 1 existing chats" in browse.stderr
     assert bare.stderr == ""
-    assert re.sub(r"\b\d+[smhd]\b", "AGE", browse.stdout) == re.sub(
-        r"\b\d+[smhd]\b", "AGE", bare.stdout
+    assert re.sub(r"\b\d+[smhd]\b", "IDLE", browse.stdout) == re.sub(
+        r"\b\d+[smhd]\b", "IDLE", bare.stdout
     )
-    assert "C-ID" in browse.stdout
-    assert chat_id in browse.stdout
+    assert browse.stdout.splitlines()[0].split() == [
+        "STALE",
+        "TMUX",
+        "AGENT",
+        "IDLE",
+        "WORK",
+    ]
 
 
 def test_plain_browse_keeps_unbound_chat_visible(tmp_path) -> None:
@@ -271,6 +255,6 @@ def test_plain_browse_keeps_unbound_chat_visible(tmp_path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert bound in result.stdout
-    assert unbound in result.stdout
-    assert "unbound" in result.stdout
+    lines = result.stdout.splitlines()
+    assert lines[0].split() == ["STALE", "TMUX", "AGENT", "IDLE", "WORK"]
+    assert len(lines) == 3  # both chats, bound and unbound; ids no longer appear in rows

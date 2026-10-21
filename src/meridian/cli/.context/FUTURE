@@ -3,3 +3,7 @@
   startup catalog already marks every idle command `default_output_mode="json"`;
   or add an `error_envelope="json"` flag) so the next adapter-facing group gets
   the envelope without touching the dispatcher (thermo F7).
+- Session browse: a cross-project "All" scope. The session list reads one project's runtime root, so
+  the Status/Sort header has no project control yet.
+- Session browse: `l` is also a filter character, so lineage needs Ctrl-L once a filter exists. A
+  dedicated command prefix or a modal filter would remove the special case.

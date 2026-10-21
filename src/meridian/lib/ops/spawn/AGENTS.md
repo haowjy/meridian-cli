@@ -102,7 +102,12 @@ replay the model turn.
   Import from `execute.py` only — do not import `execute_*` modules from outside `ops/spawn/`.
 - `prepare.py` — `build_create_payload()` → `SpawnCreateArtifacts` (compose once; dry-run bind for `cli_command`).
 - `query.py` — `resolve_spawn_reference()` and spawn-record reads.
-- `context_ref.py` — `resolve_context_ref()` for `-f` references.
+- `context_ref.py` — `resolve_context_ref()` turns a `--from` ref (spawn or chat) into a
+  `ContextRef`. `prepare.py` calls it once per spawn; launch only renders the result.
+  A spawn's `--from` stays in `context_refs` and is not copied onto
+  `SessionRequest.context_from_*`: lineage covers primary sessions only, so no edge
+  is persisted for a spawn and its prior context reaches the child only as rendered
+  context blocks (see `cli/.context/CONTEXT.md`, session browse).
 - `failure_policy.py` — depth guard, depth limit helpers.
 
 ## Anti-Patterns

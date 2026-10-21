@@ -62,7 +62,6 @@ def test_unsupported_fork_is_rejected_instead_of_reusing_native_session():
     })()
     request = SpawnRequest(
         prompt="fork me",
-        prompt_is_composed=False,
         session=SessionRequest(
             requested_harness_session_id="ses_source",
             continue_fork=True,

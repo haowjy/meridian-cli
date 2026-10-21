@@ -54,8 +54,7 @@ the reserved `native-transcript.jsonl` name. State's snapshot codec unwraps and
 validates it; native dictionaries still use the existing normalizer. Storage
 headers/seals never become conversational events. A shared `TranscriptValidation`
 stays partial until verified EOF, separately from `rendering_reason`; search
-withholds unverified matches and preview refresh does not cache partial reads as
-current. Capture qualification: `transcript_capture.py` streams, hashes, and records
+withholds unverified matches. Capture qualification: `transcript_capture.py` streams, hashes, and records
 status (complete, known-incomplete, unavailable, or unsupported);
 `capture_qualify.py` observers own dialect tails. Only complete observations are sealed into
 `native-transcript.jsonl`. JSONL capture keeps raw lines; OpenCode keeps versioned
@@ -78,7 +77,6 @@ segments use it to avoid double-counting those events in the message stream.
 Pi native `message` and RPC `message_end` share message extraction. Native
 compactions create segments with recorded summaries; branch summaries and parent
 changes are typed annotations in append order, not reconstructed active context.
-The normalizer carries preceding-entry identity across preview checkpoints.
 Unknown material records/content set `rendering_reason`; consumers must not call
 that a complete empty rendering. Raw storage remains unchanged.
 
@@ -92,7 +90,7 @@ Missing sources and DB errors must not become empty iteration. A present DB sess
 wins over legacy JSON even when empty.
 
 Only the shared normalizer translates these records. It preserves initial-user
-setup and summary compactions across preview checkpoints; unsupported roles,
+setup and summary compactions; unsupported roles,
 parts and malformed material retain an explicit rendering reason. Rendering
 support is not native capture qualification: a consistent DB transaction can
 still contain unfinished work. Do not use normalized display events as capture

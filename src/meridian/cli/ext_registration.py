@@ -65,7 +65,8 @@ def register_extension_cli_group(
 ) -> set[str]:
     """Register CLI commands for one extension group.
 
-    Handler keys are fqids (e.g. "meridian.work.start"), not op names.
+    Handler keys are fqids (e.g. "meridian.work.start"), not op names. Explicit handlers
+    register from metadata; only an auto-handler resolves the operation's schema.
     """
     registered: set[str] = set()
     resolved_handlers = handlers or {}
@@ -80,7 +81,8 @@ def register_extension_cli_group(
         if handler_factory is not None:
             handler = handler_factory()
         else:
-            auto = _make_auto_handler_from_spec(spec, emit)
+            resolved = registry.get(fqid)
+            auto = _make_auto_handler_from_spec(resolved, emit) if resolved else None
             if auto is None:
                 raise ValueError(
                     f"No CLI handler for '{fqid}' and auto-generation failed "

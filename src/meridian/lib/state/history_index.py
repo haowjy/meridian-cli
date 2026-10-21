@@ -12,12 +12,12 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO, Literal, NoReturn
+from typing import BinaryIO, Literal, NamedTuple, NoReturn
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,6 +38,7 @@ from sqlalchemy import (
     or_,
     select,
     text,
+    tuple_,
     union_all,
 )
 from sqlalchemy.engine import Connection, Engine  # noqa: TC002
@@ -67,7 +68,9 @@ from meridian.lib.state.session_fold import (
     UnsupportedSessionRecords,
     parse_event,
     project_session_generation,
+    supported_session_event_version,
 )
+from meridian.lib.state.session_store import parse_model_observation
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
     SpawnStateQuarantined,
@@ -89,14 +92,6 @@ META = Table(
     Column("version", Integer, nullable=False),
     Column("generation", Text, nullable=False),
     Column("build", Text, nullable=False),
-)
-PREVIEWS = Table(
-    "previews",
-    INDEX_SCHEMA,
-    Column("key", Text, primary_key=True),
-    Column("history_id", Text),
-    Column("archive_digest", Text),
-    Column("value", Text, nullable=False),
 )
 RECORDS = Table(
     "records",
@@ -180,6 +175,22 @@ SESSION_CHATS = Table(
     Column("latest_blank", Text),
     Column("record_json", Text, nullable=False),
 )
+MODEL_OBSERVATIONS = Table(
+    "model_observations",
+    INDEX_SCHEMA,
+    Column("harness", Text, primary_key=True),
+    Column("session", Text, primary_key=True),
+    Column("model", Text, nullable=False),
+)
+LINEAGE = Table(
+    "session_lineage",
+    INDEX_SCHEMA,
+    Column("child", Text, primary_key=True),
+    Column("kind", Text, primary_key=True),
+    Column("parent", Text, nullable=False),
+    Column("history_id", Text),
+)
+Index("lineage_parent", LINEAGE.c.parent)
 WORK_CHATS = Table(
     "work_chats",
     INDEX_SCHEMA,
@@ -196,6 +207,56 @@ CURSORS = Table(
     # Sorted JSON list of unsupported session versions already passed by the cursor.
     Column("unsupported", Text),
 )
+
+
+def _metadata_match(
+    chat: ColumnElement[str],
+    record_json: ColumnElement[str],
+    session_json: ColumnElement[str],
+    needle: str,
+) -> ColumnElement[bool]:
+    """A browse row's displayed metadata contains ``needle`` (lowercase).
+
+    ``session_json`` is the session record that owns the tmux target and native identity:
+    the record itself for a session, the archive receipt's session for an archive (NULL
+    when the archive has no receipt).
+    """
+
+    def field(json: ColumnElement[str], *paths: str) -> ColumnElement[str]:
+        return func.coalesce(*(func.json_extract(json, path) for path in paths), "")
+
+    haystack = func.lower(
+        func.coalesce(chat, "")
+        .concat(" ")
+        .concat(field(session_json, "$.tmux_target"))
+        .concat(" ")
+        .concat(field(record_json, "$.active_work_id", "$.work_id"))
+        .concat(" ")
+        .concat(field(record_json, "$.agent"))
+        .concat(" ")
+        .concat(field(record_json, "$.model"))
+        .concat(" ")
+        .concat(field(record_json, "$.task_cwd", "$.execution_cwd"))
+    )
+    # An archive without a receipt shows the model observed for its own record's identity.
+    identity = func.coalesce(session_json, record_json)
+    observed = exists().where(
+        MODEL_OBSERVATIONS.c.harness == field(identity, "$.harness"),
+        MODEL_OBSERVATIONS.c.session == field(identity, "$.harness_session_id"),
+        func.instr(func.lower(MODEL_OBSERVATIONS.c.model), needle) > 0,
+    )
+    return or_(func.instr(haystack, needle) > 0, observed)
+
+
+class BrowsePage(NamedTuple):
+    """One browse query: records in order, the matching total, and archive sessions.
+
+    ``archived`` maps an archive record's history id to the session its receipt retained.
+    """
+
+    records: list[SessionRecord | SpawnRecord]
+    total: int
+    archived: dict[str, SessionRecord]
 
 
 class HistoryIndexIncomplete(RuntimeError):
@@ -505,6 +566,8 @@ class HistoryIndex:
             db.execute(delete(SESSIONS))
             db.execute(delete(SESSION_CHATS))
             db.execute(delete(WORK_CHATS))
+            db.execute(delete(MODEL_OBSERVATIONS))
+            db.execute(delete(LINEAGE))
             db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
             db.execute(delete(CURSORS).where(CURSORS.c.source == "sessions"))
             return
@@ -513,9 +576,7 @@ class HistoryIndex:
             snapshot_extent = stat.st_size
             inode = f"{stat.st_dev}:{stat.st_ino}"
             cursor = (
-                db.execute(select(CURSORS).where(CURSORS.c.source == "sessions"))
-                .mappings()
-                .first()
+                db.execute(select(CURSORS).where(CURSORS.c.source == "sessions")).mappings().first()
             )
             offset = 0
             unsupported = UnsupportedSessionRecords()
@@ -533,6 +594,8 @@ class HistoryIndex:
                 db.execute(delete(SESSIONS))
                 db.execute(delete(SESSION_CHATS))
                 db.execute(delete(WORK_CHATS))
+                db.execute(delete(MODEL_OBSERVATIONS))
+                db.execute(delete(LINEAGE))
                 db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
             # Load a chat's prior state only when an appended event touches it.
             # Metadata is derived once per changed generation, not mirrored per event.
@@ -546,9 +609,27 @@ class HistoryIndex:
             dirty: set[tuple[str, str]] = set()
             dirty_chats: set[str] = set()
             work_chats: set[tuple[str, str]] = set()
+
+            def parse_index_event(payload: dict[str, object]):
+                if not supported_session_event_version(payload, unsupported):
+                    return None
+                observation = parse_model_observation(payload)
+                if observation is not None:
+                    db.execute(
+                        insert(MODEL_OBSERVATIONS)
+                        .prefix_with("OR REPLACE")
+                        .values(
+                            harness=observation.harness,
+                            session=observation.harness_session_id,
+                            model=observation.observed_model_token,
+                        )
+                    )
+                    return None
+                return parse_event(payload, unsupported)
+
             for parsed_event, end in iter_jsonl_file(
                 handle,
-                lambda payload: parse_event(payload, unsupported),
+                parse_index_event,
                 path=path,
                 offset=offset,
                 extent=snapshot_extent,
@@ -590,9 +671,7 @@ class HistoryIndex:
                         parsed_event,
                         ordinal=offset,
                     )
-                    started = isinstance(
-                        parsed_event, (SessionStartEvent, SessionHistoricalEvent)
-                    )
+                    started = isinstance(parsed_event, (SessionStartEvent, SessionHistoricalEvent))
                     if records.get(chat) is not prior:
                         dirty_chats.add(chat)
                         if started:
@@ -641,6 +720,22 @@ class HistoryIndex:
                     self._aliases(db, source_id, history_id, session=record)
                 else:
                     db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
+            for chat in dirty_chats:
+                record = records[chat]
+                db.execute(delete(LINEAGE).where(LINEAGE.c.child == chat))
+                if record.kind == "primary":
+                    for kind in ("forked", "context"):
+                        parent = getattr(record, f"{kind}_from_chat_id")
+                        history = getattr(record, f"{kind}_from_history_id")
+                        if parent:
+                            db.execute(
+                                insert(LINEAGE).values(
+                                    child=chat,
+                                    kind=kind,
+                                    parent=parent,
+                                    history_id=str(history) if history else None,
+                                )
+                            )
             if dirty_chats:
                 db.exec_driver_sql(
                     "INSERT OR REPLACE INTO session_chats "
@@ -1160,9 +1255,7 @@ class HistoryIndex:
         except FileLockTimeout:
             return ()
         return tuple(
-            _source_label(marker.source)
-            for marker in pending
-            if marker.source.kind != "sessions"
+            _source_label(marker.source) for marker in pending if marker.source.kind != "sessions"
         )
 
     @staticmethod
@@ -1219,122 +1312,6 @@ class HistoryIndex:
                 db = stack.enter_context(_connect(self.path, timeout=_remaining(deadline)))
             yield db
 
-    def preview_references(self) -> tuple[tuple[str, str | None, str], ...]:
-        recent, _ = self.recent_sessions(limit=2**31 - 1, live_chat_ids=set())
-        references: list[tuple[str, str | None, str]] = []
-        seen: set[str] = set()
-        for row in recent:
-            history_id = str(row.history_id) if row.history_id else None
-            if isinstance(row, SpawnRecord):
-                ref, generation = str(row.history_id), row.session_instance_id or ""
-            else:
-                ref = row.chat_id
-                generation = row.session_instance_id or row.harness_session_id or row.started_at
-            references.append((ref, history_id, generation))
-            if history_id:
-                seen.add(history_id)
-        with self.query() as db:
-            # Warming includes selected archived children, not only loose spawns
-            # and the primary-session browser's rows.
-            for history_id, generation in db.execute(
-                select(
-                    RECORDS.c.history_id,
-                    func.json_extract(RECORDS.c.record_json, "$.session_instance_id"),
-                )
-            ):
-                if history_id not in seen:
-                    references.append((history_id, history_id, generation or ""))
-        return tuple(references)
-
-    def preview_count(self, *, preview_version: int, deadline: float | None = None) -> int:
-        """Read cached counts without initializing or catching up metadata."""
-        deadline = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
-        with lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)):
-            if not self.path.exists():
-                return 0
-            with _connect(self.path, timeout=_remaining(deadline), readonly=True) as db:
-                meta = db.execute(select(META.c.version)).first()
-                if meta is None or meta[0] != SCHEMA_VERSION:
-                    return 0
-                preview_rows = select(
-                    PREVIEWS.c.key, PREVIEWS.c.history_id, PREVIEWS.c.archive_digest
-                ).where(
-                    func.json_valid(PREVIEWS.c.value) == 1,
-                    func.json_extract(PREVIEWS.c.value, "$.preview.version") == preview_version,
-                    func.json_extract(PREVIEWS.c.value, "$.preview.rendering_reason").is_(None),
-                    func.json_extract(PREVIEWS.c.value, "$.complete") == 1,
-                )
-                return sum(
-                    self._preview_generation_matches(db, row[0])
-                    and self._preview_binding_matches(db, row[1], row[2])
-                    for row in db.execute(preview_rows)
-                )
-
-    def preview_cache(self, key: str) -> tuple[str, str | None] | None:
-        """Bounded cache-only lookup: never catch up metadata or open source content."""
-        if not self.path.exists():
-            return None
-        with (
-            lock_file(self.database_lock, mode="shared", timeout=0.005),
-            _connect(self.path, timeout=0.005, readonly=True) as db,
-        ):
-            meta = db.execute(select(META.c.version, META.c.build)).first()
-            if meta is None or meta[0] != SCHEMA_VERSION:
-                return None
-            row = db.execute(
-                select(PREVIEWS.c.history_id, PREVIEWS.c.archive_digest, PREVIEWS.c.value).where(
-                    PREVIEWS.c.key == key
-                )
-            ).first()
-            if (
-                row is not None
-                and self._preview_generation_matches(db, key)
-                and self._preview_binding_matches(db, row[0], row[1])
-            ):
-                return meta[1], row[2]
-            return meta[1], None
-
-    @staticmethod
-    def _preview_generation_matches(db: Connection, key: str) -> bool:
-        history_id, generation, ref = json.loads(key)
-        if history_id is not None:
-            return True  # The portable UUID, not a reusable alias, resolves this source.
-        if not generation:
-            return False
-        row = db.execute(
-            select(SESSIONS.c.record_json)
-            .where(SESSIONS.c.chat == ref)
-            .order_by(SESSIONS.c.ordinal.desc())
-            .limit(1)
-        ).first()
-        if row is None:
-            return False
-        session = SessionRecord.model_validate_json(row[0])
-        return generation == (
-            session.session_instance_id or session.harness_session_id or session.started_at
-        )
-
-    @staticmethod
-    def _preview_binding_matches(
-        db: Connection, history_id: str | None, archive_digest: str | None
-    ) -> bool:
-        if history_id is None:
-            return archive_digest is None
-        row = db.execute(
-            select(RECORDS.c.archive_id, ARCHIVE_HEADS.c.portable_digest)
-            .select_from(
-                RECORDS.outerjoin(ARCHIVE_HEADS, ARCHIVE_HEADS.c.history_id == RECORDS.c.history_id)
-            )
-            .where(RECORDS.c.history_id == history_id)
-        ).first()
-        if row is None:
-            return False
-        return (
-            row[0] is None
-            if archive_digest is None
-            else row[0] is not None and row[1] == archive_digest
-        )
-
     def selected_archive_digest(self, history_id: str) -> str | None:
         with self.query() as db:
             row = db.execute(
@@ -1343,67 +1320,6 @@ class HistoryIndex:
                 )
             ).first()
             return row[0] if row else None
-
-    def store_preview(
-        self,
-        key: str,
-        *,
-        build: str,
-        previous: str | None,
-        history_id: str | None,
-        archive_digest: str | None,
-        source: HistorySource,
-        prepare_value: Callable[[], str | None],
-    ) -> bool:
-        """Publish bounded derived content only into the generation that requested it."""
-        with (
-            lock_file(HistoryChanges(self.root).mutation_lock, mode="shared", timeout=0.1),
-            lock_file(self.database_lock, mode="shared", timeout=0.1),
-            lock_file(source.lock_path(self.root), timeout=0.1),
-            _connect(self.path, timeout=0.1, autocommit=True) as db,
-        ):
-            db.exec_driver_sql("BEGIN IMMEDIATE")
-            try:
-                meta = db.execute(select(META.c.build)).first()
-                if (
-                    meta is None
-                    or meta[0] != build
-                    or not self._preview_generation_matches(db, key)
-                    or not self._preview_binding_matches(db, history_id, archive_digest)
-                ):
-                    db.rollback()
-                    return False
-                old = db.execute(
-                    select(
-                        PREVIEWS.c.history_id, PREVIEWS.c.archive_digest, PREVIEWS.c.value
-                    ).where(PREVIEWS.c.key == key)
-                ).first()
-                if (old[2] if old else None) != previous and (
-                    old is None or self._preview_binding_matches(db, old[0], old[1])
-                ):
-                    db.rollback()
-                    return False
-                value = prepare_value()
-                if value is None:
-                    db.rollback()
-                    return False
-                if len(value.encode("utf-8")) > 64 * 1024:
-                    raise ValueError("Preview exceeds the bounded cache contract")
-                db.execute(
-                    insert(PREVIEWS)
-                    .prefix_with("OR REPLACE")
-                    .values(
-                        key=key,
-                        history_id=history_id,
-                        archive_digest=archive_digest,
-                        value=value,
-                    )
-                )
-                db.commit()
-                return True
-            except BaseException:
-                db.rollback()
-                raise
 
     def snapshots(self, *, destination: Path | None = None) -> tuple[HistorySnapshot, ...]:
         from meridian.lib.state.retention_archive import ArchiveReceipt, archive_display_path
@@ -1537,48 +1453,166 @@ class HistoryIndex:
             }
 
     def recent_sessions(
-        self, *, limit: int, live_chat_ids: set[str]
-    ) -> tuple[list[SessionRecord | SpawnRecord], int]:
+        self,
+        *,
+        limit: int,
+        status: Literal["active", "archived"] | None = None,
+        sort: Literal["updated", "created"] = "updated",
+        chat_ids: set[str] | None = None,
+        exclude_chat_ids: set[str] | None = None,
+        query: str = "",
+    ) -> BrowsePage:
+        """Select picker records ordered by indexed activity or creation.
+
+        ``chat_ids`` addresses specific chats and overrides ``status``;
+        ``exclude_chat_ids`` drops chats the caller orders itself (running sessions, whose
+        indexed activity is their start time). ``query`` keeps rows whose displayed chat,
+        tmux target, agent, model (recorded or last executed), cwd or work (its name is its
+        id) contains it, case-insensitively; it applies before LIMIT and to the total.
+        """
         newer = SESSIONS.alias("newer")
-        live_expr = SESSIONS.c.chat.in_(sorted(live_chat_ids)) if live_chat_ids else literal(0)
-        browse = union_all(
-            select(
-                SESSIONS.c.record_json,
-                literal("session").label("source"),
-                SESSIONS.c.activity,
-                live_expr.label("live"),
-                func.cast(func.substr(SESSIONS.c.chat, 2), Integer).label("tie"),
-            ).where(
-                SESSIONS.c.kind == "primary",
-                ~exists().where(
-                    newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal
-                ),
-                ~exists().where(
-                    RECORDS.c.archive_id.is_not(None),
-                    RECORDS.c.history_id == SESSIONS.c.history_id,
-                ),
+        # The archive receipt's retained session, read once for ordering, matching and rows.
+        archive_session = (
+            select(func.json_extract(LOCATIONS.c.receipt_json, "$.records[0].session"))
+            .join(ARCHIVE_HEADS, ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id)
+            .where(
+                LOCATIONS.c.history_id == RECORDS.c.history_id,
+                LOCATIONS.c.kind == "archive",
+                LOCATIONS.c.portable_digest == ARCHIVE_HEADS.c.portable_digest,
+            )
+            .order_by(LOCATIONS.c.ordinal.desc(), LOCATIONS.c.source_id)
+            .limit(1)
+            .scalar_subquery()
+        )
+
+        def created(json: ColumnElement[str]) -> ColumnElement[str]:
+            return func.coalesce(
+                func.nullif(func.json_extract(json, "$.created_at"), ""),
+                func.json_extract(json, "$.started_at"),
+            )
+
+        sessions = select(
+            SESSIONS.c.record_json,
+            SESSIONS.c.record_json.label("session_json"),
+            literal("session").label("source"),
+            func.json_extract(SESSIONS.c.record_json, "$.chat_id").label("chat"),
+            SESSIONS.c.activity,
+            created(SESSIONS.c.record_json).label("created"),
+            func.cast(func.substr(SESSIONS.c.chat, 2), Integer).label("tie"),
+        ).where(
+            SESSIONS.c.kind == "primary",
+            ~exists().where(newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal),
+            ~exists().where(
+                RECORDS.c.archive_id.is_not(None),
+                RECORDS.c.history_id == SESSIONS.c.history_id,
             ),
+        )
+        archives = select(
+            RECORDS.c.record_json,
+            archive_session.label("session_json"),
+            literal("archive").label("source"),
+            RECORDS.c.history_id.label("chat"),
+            RECORDS.c.activity,
+            RECORDS.c.started,
+            literal(0).label("tie"),
+        ).where(RECORDS.c.archive_id.is_not(None), RECORDS.c.kind == "primary")
+        archived = archives.subquery("archived_raw")
+        browse = union_all(
+            sessions,
             select(
-                RECORDS.c.record_json,
-                literal("archive").label("source"),
-                RECORDS.c.activity,
-                literal(0).label("live"),
-                literal(0).label("tie"),
-            ).where(RECORDS.c.archive_id.is_not(None), RECORDS.c.kind == "primary"),
+                archived.c.record_json,
+                archived.c.session_json,
+                archived.c.source,
+                archived.c.chat,
+                archived.c.activity,
+                func.coalesce(created(archived.c.session_json), archived.c.started).label(
+                    "created"
+                ),
+                archived.c.tie,
+            ),
         ).cte("browse")
+        if chat_ids is not None:
+            browse = (
+                select(browse)
+                .where(browse.c.source == "session", browse.c.chat.in_(sorted(chat_ids)))
+                .cte("addressed")
+            )
+        else:
+            conditions: list[ColumnElement[bool]] = []
+            if status is not None:
+                conditions.append(
+                    browse.c.source == ("archive" if status == "archived" else "session")
+                )
+            if exclude_chat_ids:
+                conditions.append(
+                    or_(
+                        browse.c.source != "session", browse.c.chat.not_in(sorted(exclude_chat_ids))
+                    )
+                )
+            if conditions:
+                browse = select(browse).where(*conditions).cte("scoped")
+        needle = query.strip().lower()
+        if needle:
+            match = _metadata_match(
+                browse.c.chat, browse.c.record_json, browse.c.session_json, needle
+            )
+            browse = select(browse).where(match).cte("matched")
         with self.query() as db:
             total = db.execute(select(func.count()).select_from(browse)).scalar() or 0
             rows = db.execute(
-                select(browse.c.record_json, browse.c.source)
-                .order_by(browse.c.live.desc(), browse.c.activity.desc(), browse.c.tie.desc())
+                select(browse.c.record_json, browse.c.source, browse.c.chat, browse.c.session_json)
+                .order_by(
+                    *(
+                        (browse.c.activity.desc(), browse.c.tie.desc())
+                        if sort == "updated"
+                        else (func.julianday(browse.c.created).desc(), browse.c.tie.desc())
+                    )
+                )
                 .limit(limit)
             )
+            records: list[SessionRecord | SpawnRecord] = []
+            archived_sessions: dict[str, SessionRecord] = {}
+            for record_json, source, chat, session_json in rows:
+                if source == "session":
+                    records.append(SessionRecord.model_validate_json(record_json))
+                    continue
+                records.append(SpawnRecord.model_validate_json(record_json))
+                if session_json is not None:
+                    archived_sessions[chat] = SessionRecord.model_validate_json(session_json)
+            return BrowsePage(records, total, archived_sessions)
+
+    def last_executed_models(self, identities: set[tuple[str, str]]) -> dict[tuple[str, str], str]:
+        if not identities:
+            return {}
+        with self.query() as db:
+            return {
+                (row[0], row[1]): row[2]
+                for row in db.execute(
+                    select(MODEL_OBSERVATIONS).where(
+                        tuple_(MODEL_OBSERVATIONS.c.harness, MODEL_OBSERVATIONS.c.session).in_(
+                            sorted(identities)
+                        )
+                    )
+                )
+            }
+
+    def lineage_edges(self, chat_id: str) -> list[tuple[str, str, str]]:
+        # Traverse both directions in SQLite, including multiple context parents.
+        with self.query() as db:
             return [
-                SessionRecord.model_validate_json(row[0])
-                if row[1] == "session"
-                else SpawnRecord.model_validate_json(row[0])
-                for row in rows
-            ], total
+                tuple(row)
+                for row in db.exec_driver_sql(
+                    "WITH RECURSIVE edges AS (SELECT * FROM session_lineage AS edge "
+                    "WHERE NOT EXISTS (SELECT 1 FROM session_chats "
+                    "WHERE chat = edge.parent AND json_extract(record_json, '$.kind') = 'spawn')), "
+                    "tree(chat) AS (SELECT ? UNION "
+                    "SELECT parent FROM edges JOIN tree ON child = chat UNION "
+                    "SELECT child FROM edges JOIN tree ON parent = chat) "
+                    "SELECT child, kind, parent FROM edges "
+                    "WHERE child IN tree ORDER BY child, kind",
+                    (chat_id,),
+                )
+            ]
 
     def sessions(
         self, *, limit: int | None = None, chat_ids: set[str] | None = None

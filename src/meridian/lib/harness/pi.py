@@ -175,7 +175,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "skills",
             "agent",
             "adhoc_agent_payload",
-            "context_from_payload",
             "model_override_explicit",
             "reference_items",
             "task_cwd",

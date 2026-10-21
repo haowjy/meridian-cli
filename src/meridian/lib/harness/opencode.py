@@ -302,7 +302,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
-            "context_from_payload",
             "reference_items",
             "task_cwd",
             "pi_harness_profile",

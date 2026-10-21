@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_id
 from meridian.lib.ops.runtime import resolve_roots_for_read
@@ -15,16 +16,19 @@ from meridian.lib.state.session_store import (
 @dataclass(frozen=True)
 class Resume:
     chat_id: str
+    kind: Literal["resume"] = field(default="resume", init=False)
 
 
 @dataclass(frozen=True)
 class Fork:
     chat_id: str
+    kind: Literal["fork"] = field(default="fork", init=False)
 
 
 @dataclass(frozen=True)
 class Blocked:
     reason: str
+    kind: Literal["blocked"] = field(default="blocked", init=False)
 
 
 type SessionReentryDecision = Resume | Fork | Blocked

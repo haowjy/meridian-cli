@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
-
-import pytest
 
 import meridian.lib.ops.session_list as session_list_module
 from meridian.lib.ops.session_list import SessionListInput, session_list_sync
-from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
 from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, resolve_session_reentry
 from meridian.lib.ops.session_search import iter_session_subset_search
 from meridian.lib.state import primary_meta, session_store, spawn_store, work_repository
+from meridian.lib.state.idle_store import IdleState
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
 
 
@@ -56,7 +55,7 @@ def _write_codex_rollout(*, home: Path, project_root: Path, session_id: str, tex
     )
 
 
-def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> None:
+def test_session_list_is_primary_only_ordered_by_activity_and_capped(tmp_path: Path) -> None:
     project_root, runtime_root = _project_roots(tmp_path)
     project_state_dir = resolve_project_paths(project_root).root_dir
     work_repository.create_work_item(project_state_dir, "browse-feature")
@@ -99,10 +98,58 @@ def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> N
     assert len(output.rows) == 1
     row = output.rows[0]
     assert row.chat_id == live_chat
-    assert row.live is True
     assert row.reentry == Fork(live_chat)
     assert row.work_label == "browse-feature"
     assert "(1 of 2 shown — use --limit to see more)" in output.format_text()
+
+
+def test_running_session_is_ordered_by_last_turn_not_start(tmp_path: Path, monkeypatch) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    now = ["2026-09-01T00:00:00Z"]
+    monkeypatch.setattr(session_store, "utc_now_iso", lambda: now[0])
+    running = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="44444444-4444-4444-8444-444444444444",
+        model="gpt",
+        kind="primary",
+    ).chat_id  # started 00:00, still running
+    now[0] = "2026-09-01T01:00:00Z"
+    stopped = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="55555555-5555-4555-8555-555555555555",
+        model="gpt",
+        kind="primary",
+    ).chat_id  # started 01:00
+    now[0] = "2026-09-01T02:00:00Z"
+    session_store.stop_session(runtime_root, stopped)
+
+    class _Idle:
+        turn_ms = 0
+
+        def read(self, harness: str, session: str):
+            if not session.startswith("4"):
+                return None
+            return IdleState.model_construct(
+                idle_since_ms=self.turn_ms, ttl_seconds=None, harness=harness, session=session
+            )
+
+    idle = _Idle()
+    monkeypatch.setattr(session_list_module, "IdleStore", lambda: idle)
+    try:
+        # Last turn 03:00 beats the stopped session's 02:00 although the start was 00:00.
+        idle.turn_ms = 3 * 3_600_000 + int(datetime(2026, 9, 1, tzinfo=UTC).timestamp() * 1000)
+        recent = session_list_sync(SessionListInput(project_root=project_root.as_posix(), limit=1))
+        assert [row.chat_id for row in recent.rows] == [running]
+        assert recent.total_count == 2
+
+        # Last turn 01:30 sorts below the stopped session; the cap still counts both.
+        idle.turn_ms = 90 * 60_000 + int(datetime(2026, 9, 1, tzinfo=UTC).timestamp() * 1000)
+        older = session_list_sync(SessionListInput(project_root=project_root.as_posix(), limit=2))
+        assert [row.chat_id for row in older.rows] == [stopped, running]
+    finally:
+        session_store.stop_session(runtime_root, running)
 
 
 def test_session_list_breaks_equal_timestamp_ties_by_chat_id(tmp_path: Path, monkeypatch) -> None:
@@ -279,35 +326,9 @@ def test_list_and_reentry_block_when_native_key_is_incomplete(tmp_path: Path) ->
         listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))
         row = next(row for row in listing.rows if row.chat_id == chat_id)
         assert isinstance(row.reentry, Blocked)
-        assert row.native_status == "unbound"
         assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
     finally:
         session_store.stop_session(runtime_root, chat_id)
-
-
-def test_preview_resolution_failure_is_row_local_and_has_no_transcript_text(
-    tmp_path: Path,
-) -> None:
-    project_root, runtime_root = _project_roots(tmp_path)
-    (runtime_root / "legacy-native-import-v1.json").write_text("{}\n", encoding="utf-8")
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="pi",
-        harness_session_id="pi-missing-native-file",
-        model="pi",
-        kind="primary",
-    ).chat_id
-    record = session_store.chat_record(runtime_root, chat_id)
-    assert record is not None
-
-    preview = SessionPreview(project_root.as_posix()).refresh(
-        PreviewIdentity(chat_id, generation=record.session_instance_id), lambda: True
-    )
-
-    assert preview is not None
-    assert preview.lines == ()
-    assert preview.status == "unavailable"
-    assert preview.source == "unbound"
 
 
 def test_session_list_uses_index_for_missing_ids(
@@ -570,200 +591,3 @@ def test_subset_search_does_not_borrow_sibling_history_when_primary_spawn_is_mis
 
     assert len(steps) == 1
     assert steps[0].matched is False
-
-
-def _bind_preview_native(root, key, events):
-    store = root.parent / "native"
-    store.mkdir(exist_ok=True)
-    sid = "11111111-1111-4111-8111-111111111111"
-    path = store / f"{sid}.jsonl"
-    path.write_text(
-        json.dumps({"sessionId": sid})
-        + "\n"
-        + "".join(json.dumps(event) + "\n" for event in events)
-    )
-    session_store.start_session(
-        root,
-        harness="claude",
-        harness_session_id=sid,
-        native_store=str(store),
-        chat_id="c1",
-        model="test",
-        kind="primary",
-        spawn_id=key,
-    )
-    session_store.stop_session(root, "c1")
-    return path
-
-
-def test_native_preview_stays_bounded_and_cached_after_reclaim(tmp_path, monkeypatch) -> None:
-    from meridian.lib.ops import session_preview
-    from meridian.lib.ops.session_archive import archive_history
-    from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
-    from meridian.lib.state.history_index import HistoryIndex
-
-    project, root = _project_roots(tmp_path)
-    key = str(
-        spawn_store.start_spawn(
-            root, chat_id="c1", model="test", agent="coder", harness="claude", prompt="hello"
-        )
-    )
-    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    _bind_preview_native(
-        root, key, ({"role": "assistant", "content": f"message {i}"} for i in range(100))
-    )
-    state = spawn_store.get_spawn(root, key)
-    assert state is not None
-    identity = PreviewIdentity(key, str(state.history_id))
-    reader = SessionPreview(str(project))
-    view = reader.refresh(identity, lambda: True)
-    assert view is not None and view.status == "current · clipped"
-    assert "message 99" in view.lines and "message 89" not in view.lines
-
-    def forbid_body(*args, **kwargs):
-        raise AssertionError("warm previews must not replay transcript bodies")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(session_preview, "read_native_source", forbid_body)
-        assert reader.peek(identity) is not None
-        assert reader.refresh(identity, lambda: True) == view
-    from meridian.lib.ops.session_archive import materialize_native_history
-
-    materialize_native_history(project, root, key)
-    result = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
-    assert result.reclaimed
-    archived = reader.refresh(identity, lambda: True)
-    assert archived is not None and "message 99" in archived.lines
-    Path(result.archives[0]).rename(tmp_path / "offline.zip")
-    offline = reader.refresh(identity, lambda: True)
-    assert offline is not None and offline.state == "current"
-    assert "message 99" in offline.lines
-    HistoryIndex(root).rebuild()
-    assert reader.peek(identity) is None
-
-
-@pytest.mark.parametrize("unfinished", [False, True])
-def test_preview_reparses_same_inode_rewrite_and_metadata_accepts_large_event(
-    tmp_path, unfinished
-) -> None:
-    from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
-    from meridian.lib.state.history_index import HistoryIndex
-
-    project, root = _project_roots(tmp_path)
-    key = str(
-        spawn_store.start_spawn(
-            root, chat_id="c1", model="test", agent="coder", harness="codex", prompt="hello"
-        )
-    )
-    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    path = _bind_preview_native(
-        root,
-        key,
-        iter(
-            (
-                {"role": "assistant", "content": "PREFIX_A"},
-                {"role": "assistant", "content": "x" * (2 * 1024 * 1024)},
-            )
-        ),
-    )
-    state = spawn_store.get_spawn(root, key)
-    assert state is not None
-    identity = PreviewIdentity(key, str(state.history_id))
-    if unfinished:
-        with path.open("ab") as handle:
-            handle.write(b'{"unfinished":')
-    reader = SessionPreview(str(project))
-    before = reader.refresh(identity, lambda: True)
-    assert before is not None and "PREFIX_A" in before.lines
-    original = path.read_bytes()
-    with path.open("r+b") as handle:
-        handle.write(original.replace(b"PREFIX_A", b"PREFIX_B"))
-    after = reader.refresh(identity, lambda: True)
-    assert after is not None and "PREFIX_B" in after.lines and "PREFIX_A" not in after.lines
-    # Rebuild reads metadata's last event, not every event or the preview body.
-    HistoryIndex(root).rebuild()
-    assert reader.peek(identity) is None
-    rebuilt = reader.refresh(identity, lambda: True)
-    assert rebuilt is not None and "PREFIX_B" in rebuilt.lines
-
-
-@pytest.mark.parametrize("change", ["rebuild", "replace", "rewrite"])
-def test_preview_rejects_changed_snapshot_at_publication(tmp_path, monkeypatch, change) -> None:
-    from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
-    from meridian.lib.state.history_index import HistoryIndex
-
-    project, root = _project_roots(tmp_path)
-    key = str(
-        spawn_store.start_spawn(
-            root, chat_id="c1", model="test", agent="coder", harness="codex", prompt="hello"
-        )
-    )
-    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    path = _bind_preview_native(
-        root,
-        key,
-        iter(
-            (
-                {"role": "assistant", "content": "snapshot A"},
-                {"role": "assistant", "content": "z" * 500},
-            )
-        ),
-    )
-    state = spawn_store.get_spawn(root, key)
-    assert state is not None
-    identity = PreviewIdentity(key, str(state.history_id))
-    reader = SessionPreview(str(project))
-    original = HistoryIndex.store_preview
-
-    def change_before_publication(index, *args, **kwargs):
-        if change == "rebuild":
-            index.rebuild()
-        else:
-            replacement = path.with_suffix(".replacement")
-            replacement.write_bytes(path.read_bytes().replace(b"snapshot A", b"snapshot B"))
-            if change == "rewrite":
-                with path.open("r+b") as handle:
-                    handle.write(replacement.read_bytes())
-            else:
-                replacement.replace(path)
-        return original(index, *args, **kwargs)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(HistoryIndex, "store_preview", change_before_publication)
-        stale = reader.refresh(identity, lambda: True)
-    assert stale is not None and stale.state == "updating"
-    assert "snapshot A" not in stale.lines
-    assert reader.peek(identity) is None
-    fresh = reader.refresh(identity, lambda: True)
-    assert fresh is not None and fresh.state == "current"
-    assert ("snapshot B" if change != "rebuild" else "snapshot A") in fresh.lines
-
-
-def test_native_preview_does_not_follow_reused_chat_generation(tmp_path, monkeypatch) -> None:
-    from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
-
-    project, root = _project_roots(tmp_path)
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    for number in (1, 2):
-        native = "00000001-1111-4111-8111-111111111111"
-        _write_codex_rollout(
-            home=home, project_root=project, session_id=native, text=f"generation {number}"
-        )
-        session_store.start_session(
-            root,
-            harness="codex",
-            harness_session_id=native,
-            model="test",
-            chat_id="c1",
-            kind="primary",
-        )
-        session_store.stop_session(root, "c1")
-        if number == 1:
-            row = session_list_sync(SessionListInput(project_root=str(project))).rows[0]
-            old = PreviewIdentity(row.chat_id, row.history_id, row.session_generation)
-    reader = SessionPreview(str(project))
-    view = reader.refresh(old, lambda: True)
-    assert view is not None and view.state == "unavailable"
-    assert "generation 2" not in view.lines
-    assert reader.peek(old) is None

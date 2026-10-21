@@ -4,13 +4,14 @@ import pytest
 
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.context_ref import ContextRef, SpawnContextRef
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
-from meridian.lib.ops.spawn import context_ref
+from meridian.lib.ops.spawn import prepare
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import SpawnCreateArtifacts, build_create_payload
 from meridian.lib.state import work_repository
@@ -52,9 +53,9 @@ def _stub_context_from_work(
     *,
     spawn_id: str = "p123",
 ) -> None:
-    def fake_resolve_context_ref(project_root: Path, ref: str) -> context_ref.ContextRef:
+    def fake_resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         _ = (project_root, ref)
-        return context_ref.SpawnContextRef(
+        return SpawnContextRef(
             spawn_id=spawn_id,
             status="succeeded",
             agent="coder",
@@ -64,7 +65,7 @@ def _stub_context_from_work(
             work_id=work_id,
         )
 
-    monkeypatch.setattr(context_ref, "resolve_context_ref", fake_resolve_context_ref)
+    monkeypatch.setattr(prepare, "resolve_context_ref", fake_resolve_context_ref)
 
 
 def _prompt_surface_text(artifacts: SpawnCreateArtifacts) -> str:

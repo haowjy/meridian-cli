@@ -215,7 +215,7 @@ def write_projection_artifacts(
         starting_prompt = projected.user_turn_content.strip()
     else:
         user_turn = (run_params.user_turn_content or "").strip()
-        starting_prompt = user_turn or launch_context.request.prompt.strip()
+        starting_prompt = user_turn or run_params.prompt.strip()
 
     if system_prompt:
         atomic_write_text(log_dir / "system-prompt.md", system_prompt)

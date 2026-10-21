@@ -44,7 +44,6 @@ def test_spawn_create_background_handoff_preserves_external_task_cwd(
 
     prepared_request = SpawnRequest(
         prompt="reply with OK",
-        prompt_is_composed=True,
         model="gpt-5.3-codex",
         harness=HarnessId.CODEX.value,
         authority_root=project_root.as_posix(),
@@ -123,7 +122,6 @@ def test_spawn_create_persists_and_executes_prepared_task_cwd_contract(
 
     prepared_request = SpawnRequest(
         prompt="reply with OK",
-        prompt_is_composed=True,
         model="gpt-5.3-codex",
         harness=HarnessId.CODEX.value,
         authority_root=project_root.as_posix(),

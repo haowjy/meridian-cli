@@ -25,6 +25,13 @@ from meridian.lib.state.native_binding import Conflict, bind
 
 HISTORICAL_GENERATION_PREFIX = "historical-"
 SUPPORTED_SESSION_EVENT_VERSIONS = frozenset({1})
+# Lineage belongs to the chat, not a generation: the first start event that sets a pair
+# keeps it across continuations. Each pair moves together.
+_CHAT_LINEAGE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("forked_from_chat_id", "forked_from_history_id"),
+    ("context_from_chat_id", "context_from_history_id"),
+)
+_CHAT_OWNED_FIELDS = ("created_at", *(field for pair in _CHAT_LINEAGE_FIELDS for field in pair))
 logger = logging.getLogger(__name__)
 
 
@@ -121,10 +128,14 @@ class SessionRecord(SessionSettings):
     harness_session_id: OptionalPersistedHarnessSessionId
     native_store: str | None = None
     started_at: str
+    created_at: str = ""
     stopped_at: str | None
     session_instance_id: str = ""
     forked_from_chat_id: OptionalPersistedChatId = None
     forked_from_history_id: uuid.UUID | None = None
+    context_from_chat_id: OptionalPersistedChatId = None
+    context_from_history_id: uuid.UUID | None = None
+    tmux_target: str | None = None
     spawn_id: str | None = None
 
     def key_fields(self) -> NativeKeyFields:
@@ -154,6 +165,9 @@ class SessionStartEvent(SessionSettings):
     started_at: str
     forked_from_chat_id: OptionalPersistedChatId = None
     forked_from_history_id: uuid.UUID | None = None
+    context_from_chat_id: OptionalPersistedChatId = None
+    context_from_history_id: uuid.UUID | None = None
+    tmux_target: str | None = None
     spawn_id: str | None = None
     model_selection_protocol: Literal[1] | None = None
 
@@ -355,10 +369,14 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
         native_store=event.native_store,
         **event.model_dump(include=set(SessionSettings.model_fields)),
         started_at=event.started_at,
+        created_at=event.started_at,
         stopped_at=None,
         session_instance_id=event.session_instance_id,
         forked_from_chat_id=event.forked_from_chat_id,
         forked_from_history_id=event.forked_from_history_id,
+        context_from_chat_id=event.context_from_chat_id,
+        context_from_history_id=event.context_from_history_id,
+        tmux_target=event.tmux_target,
         spawn_id=event.spawn_id,
     )
 
@@ -391,7 +409,15 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
             outcome = bind(existing.key_fields(), event.key_fields())
             if isinstance(outcome, Conflict):
                 return False
+            record = record.model_copy(
+                update={"created_at": existing.created_at or existing.started_at}
+            )
             record = with_key(record, outcome.key)
+            for parent_fields in _CHAT_LINEAGE_FIELDS:
+                if any(getattr(existing, field) is not None for field in parent_fields):
+                    record = record.model_copy(
+                        update={field: getattr(existing, field) for field in parent_fields}
+                    )
         records[record.chat_id] = record
         return True
     existing = records.get(event.chat_id)
@@ -569,6 +595,12 @@ def project_session_generation(
         )
     rows = generations.setdefault((chat_id, generation), {})
     if project_session_event(rows, event):
+        if isinstance(event, SessionStartEvent):
+            rows[chat_id] = rows[chat_id].model_copy(
+                update={
+                    field: getattr(records[chat_id], field) for field in _CHAT_OWNED_FIELDS
+                }
+            )
         changed.append((chat_id, generation))
         current = rows[chat_id]
         if current.record_mode == "live" and current.stopped_at is None:

@@ -393,5 +393,5 @@ def test_recent_sessions_reused_generation_seed_42(tmp_path: Path) -> None:
     # Main selects the highest-ordinal bucket, not the accepted generation.
     # Frozen fold order and main's seed-42 browse order pin complete payloads.
     expected = {record.chat_id: record for record in old.list_session_generations(tmp_path)}
-    actual = HistoryIndex(tmp_path).recent_sessions(limit=100, live_chat_ids=set())
-    assert actual == ([expected["c1"], expected["c2"]], 2)
+    actual = HistoryIndex(tmp_path).recent_sessions(limit=100)
+    assert actual[:2] == ([expected["c1"], expected["c2"]], 2)

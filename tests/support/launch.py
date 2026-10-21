@@ -102,7 +102,6 @@ def _direct_prepared_surface(
         composition_warnings=warnings,
         content=PreparedLaunchContent(
             final_prompt=request.prompt,
-            resolved_context_from=request.context_from,
             loaded_references=loaded_references,
             prompt_payload=prepare_prompt_payload(
                 adhoc_agent_payload=request.prompt_payload.adhoc_agent_payload,

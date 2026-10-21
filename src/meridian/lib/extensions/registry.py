@@ -6,18 +6,31 @@ import hashlib
 import json
 from collections.abc import Iterable
 
+from meridian.lib.extensions.declaration import OpDeclaration
 from meridian.lib.extensions.types import ExtensionCommandSpec, ExtensionSurface
+
+# Both expose the registration metadata (fqid, summary, cli_group, cli_name, surfaces,
+# first_party); only a resolved spec carries handlers and schemas.
+type CommandEntry = ExtensionCommandSpec | OpDeclaration
+
+
+def _resolved(entry: CommandEntry) -> ExtensionCommandSpec:
+    return entry.resolved if isinstance(entry, OpDeclaration) else entry
 
 
 class ExtensionCommandRegistry:
-    """Registry of extension commands with validation."""
+    """Registry of extension commands with validation.
+
+    Declarations are validated from metadata and import their implementation only when a
+    caller needs the full spec (``get``, ``list_all``, ``list_for_surface``).
+    """
 
     def __init__(self) -> None:
-        self._commands: dict[str, ExtensionCommandSpec] = {}
+        self._commands: dict[str, CommandEntry] = {}
         self._cli_commands: dict[tuple[str, str], str] = {}  # (group, name) -> fqid
 
-    def register(self, spec: ExtensionCommandSpec) -> None:
-        """Register a command spec. Raises ValueError on validation failure."""
+    def register(self, spec: CommandEntry) -> None:
+        """Register a command spec or declaration. Raises ValueError on validation failure."""
 
         fqid = spec.fqid
         if fqid in self._commands:
@@ -44,35 +57,36 @@ class ExtensionCommandRegistry:
             self._cli_commands[cli_key] = fqid
 
     def get(self, fqid: str) -> ExtensionCommandSpec | None:
-        return self._commands.get(fqid)
+        entry = self._commands.get(fqid)
+        return _resolved(entry) if entry is not None else None
 
     def get_by_cli(self, group: str, name: str) -> ExtensionCommandSpec | None:
         """Look up a command by CLI group and subcommand name."""
         fqid = self._cli_commands.get((group, name))
         if fqid is None:
             return None
-        return self._commands.get(fqid)
+        return self.get(fqid)
 
-    def list_for_cli_group(self, group: str) -> list[ExtensionCommandSpec]:
-        """Return all commands in a CLI group, sorted by cli_name."""
+    def list_for_cli_group(self, group: str) -> list[CommandEntry]:
+        """Return a CLI group's entries, sorted by cli_name, without resolving them."""
         return sorted(
             (s for s in self._commands.values() if s.cli_group == group),
             key=lambda s: s.cli_name or "",
         )
 
     def list_all(self) -> list[ExtensionCommandSpec]:
-        return list(self._commands.values())
+        return [_resolved(entry) for entry in self._commands.values()]
 
     def list_for_surface(self, surface: ExtensionSurface) -> list[ExtensionCommandSpec]:
         """Return commands available on a specific surface."""
 
-        return [spec for spec in self._commands.values() if surface in spec.surfaces]
+        return [_resolved(e) for e in self._commands.values() if surface in e.surfaces]
 
     def __len__(self) -> int:
         return len(self._commands)
 
     def __iter__(self) -> Iterable[ExtensionCommandSpec]:
-        return iter(self._commands.values())
+        return iter(self.list_all())
 
 
 _first_party_registry: ExtensionCommandRegistry | None = None
@@ -122,6 +136,7 @@ def compute_manifest_hash(registry: ExtensionCommandRegistry) -> str:
 
 
 __all__ = [
+    "CommandEntry",
     "ExtensionCommandRegistry",
     "build_first_party_registry",
     "compute_manifest_hash",

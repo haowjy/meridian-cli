@@ -1,12 +1,14 @@
 """Resolve and render prior context references for spawn prompts."""
 
 import re
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
-
+from meridian.lib.core.context_ref import (
+    CHAT_REF_RE,
+    ContextRef,
+    SessionContextRef,
+    SpawnContextRef,
+)
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -18,7 +20,6 @@ from .query import (
     resolve_spawn_reference,
 )
 
-_SESSION_REF_RE = re.compile(r"^c\d+$")
 _SPAWN_REF_RE = re.compile(r"^p\d+$")
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -29,7 +30,7 @@ def _is_filesystem_path_ref(value: str) -> bool:
     normalized = value.strip()
     if not normalized or normalized.startswith("@"):
         return False
-    if _SPAWN_REF_RE.fullmatch(normalized) or _SESSION_REF_RE.fullmatch(normalized):
+    if _SPAWN_REF_RE.fullmatch(normalized) or CHAT_REF_RE.fullmatch(normalized):
         return False
     if normalized.startswith(("./", "../", "/", "~")):
         return True
@@ -48,45 +49,6 @@ def _reject_filesystem_path_context_ref(value: str) -> None:
         "Use a spawn id (p123), chat id (c123), or harness session id. "
         "To include file contents in the prompt, use --file/-f instead."
     )
-
-
-class SpawnContextRef(BaseModel):
-    """Resolved context payload sourced from one prior spawn."""
-
-    model_config = ConfigDict(frozen=True)
-
-    ref_kind: Literal["spawn"] = "spawn"
-    spawn_id: str
-    status: str
-    agent: str
-    desc: str
-    model: str
-    harness: str
-    report_text: str | None = None
-    harness_session_id: str | None = None
-    chat_id: str | None = None
-    work_id: str | None = None
-    task_cwd: str | None = None
-
-
-class SessionContextRef(BaseModel):
-    """Resolved context payload sourced from one prior chat/session."""
-
-    model_config = ConfigDict(frozen=True)
-
-    ref_kind: Literal["session"] = "session"
-    chat_id: str
-    primary_spawn_id: str | None = None
-    status: str
-    agent: str
-    model: str
-    harness: str
-    harness_session_id: str | None = None
-    work_id: str | None = None
-    task_cwd: str | None = None
-
-
-type ContextRef = SpawnContextRef | SessionContextRef
 
 
 def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> SpawnRecord | None:
@@ -145,7 +107,7 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         if spawn_row is None:
             raise ValueError(f"Spawn '{spawn_id}' not found")
         return _spawn_context_ref(spawn_row, project_root)
-    if _SESSION_REF_RE.fullmatch(normalized) or _is_tracked_session(project_root, normalized):
+    if CHAT_REF_RE.fullmatch(normalized) or _is_tracked_session(project_root, normalized):
         runtime_root = resolve_runtime_root_for_read(project_root)
         session = (
             session_store.chat_record(runtime_root, normalized)
@@ -193,6 +155,7 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
         report_text=_load_report_text(project_root, row.id),
         harness_session_id=row.harness_session_id,
         chat_id=row.chat_id,
+        history_id=row.history_id,
         work_id=(row.work_id or "").strip() or None,
         task_cwd=(row.task_cwd or "").strip() or None,
     )
@@ -211,6 +174,7 @@ def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> Sessio
     return SessionContextRef(
         chat_id=chat_id,
         primary_spawn_id=primary_row.id,
+        history_id=primary_row.history_id,
         status=primary_row.status,
         agent=primary_row.agent or "",
         model=primary_row.model or "",
@@ -228,6 +192,7 @@ def _session_context_ref_from_record(
 
     return SessionContextRef(
         chat_id=session.chat_id,
+        history_id=session.history_id,
         status="stopped" if session.stopped_at is not None else "running",
         agent=session.agent,
         model=session.model,
@@ -238,102 +203,4 @@ def _session_context_ref_from_record(
     )
 
 
-def resolved_context_ref_value(ref: ContextRef) -> str:
-    """Return the external resolved reference value for operation output."""
-
-    if ref.ref_kind == "session":
-        return ref.chat_id
-    return ref.spawn_id
-
-
-def first_context_ref_work_id(project_root: Path, refs: tuple[str, ...]) -> str | None:
-    """Return the first work item attached to resolved ``--from`` context refs."""
-
-    for ref in refs:
-        work_id = (resolve_context_ref(project_root, ref).work_id or "").strip()
-        if work_id:
-            return work_id
-    return None
-
-
-def _render_context_ref(ref: ContextRef) -> str:
-    status = ref.status or "unknown"
-    agent = ref.agent or "n/a"
-
-    if ref.ref_kind == "session":
-        tag_attrs = f'chat="{ref.chat_id}"'
-        if ref.primary_spawn_id:
-            tag_attrs += f' primary_spawn="{ref.primary_spawn_id}"'
-        transcript_ref = (
-            ref.chat_id
-            if _SESSION_REF_RE.fullmatch(ref.chat_id) or ref.primary_spawn_id is None
-            else ref.primary_spawn_id
-        )
-        lines = [
-            f"<prior-session-context {tag_attrs}>",
-            f"# Prior session: {ref.chat_id}",
-            f"**Status:** {status} | **Agent:** {agent}",
-        ]
-        if ref.primary_spawn_id:
-            lines[2] = f"**Primary spawn:** {ref.primary_spawn_id} | {lines[2]}"
-        if ref.task_cwd:
-            lines.append(f"**Task directory:** `{ref.task_cwd}`")
-        lines.extend([
-            "",
-            "## Explore Further",
-            f"- Session transcript: `meridian session log {transcript_ref}`",
-        ])
-        if ref.primary_spawn_id:
-            lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
-        if ref.harness_session_id and ref.harness_session_id.strip():
-            lines.insert(
-                3,
-                f"**Harness:** {ref.harness or 'n/a'} | "
-                f"**Harness session:** {ref.harness_session_id}",
-            )
-        lines.append("</prior-session-context>")
-        return "\n".join(lines)
-
-    desc = ref.desc or "n/a"
-    lines = [
-        f'<prior-spawn-context spawn="{ref.spawn_id}">',
-        f"# Prior spawn: {ref.spawn_id}",
-        f"**Status:** {status} | **Agent:** {agent} | **Desc:** {desc}",
-    ]
-    if ref.task_cwd:
-        lines.append(f"**Task directory:** `{ref.task_cwd}`")
-    lines.extend([
-        "",
-        "## Report",
-    ])
-    if ref.report_text and ref.report_text.strip():
-        lines.append(ref.report_text.strip())
-    else:
-        lines.append("No report available.")
-
-    lines.append("")
-    lines.append("## Explore Further")
-    lines.append(f"- Full details: `meridian spawn show {ref.spawn_id}`")
-    if ref.chat_id and ref.chat_id.strip():
-        lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
-    lines.append("</prior-spawn-context>")
-    return "\n".join(lines)
-
-
-def render_context_refs(refs: Sequence[ContextRef]) -> str:
-    """Render resolved --from references as prior-context prompt blocks."""
-
-    if not refs:
-        return ""
-    return "\n\n".join(_render_context_ref(ref) for ref in refs)
-
-
-__all__ = [
-    "ContextRef",
-    "SessionContextRef",
-    "SpawnContextRef",
-    "first_context_ref_work_id",
-    "render_context_refs",
-    "resolve_context_ref",
-    "resolved_context_ref_value",
-]
+__all__ = ["resolve_context_ref"]

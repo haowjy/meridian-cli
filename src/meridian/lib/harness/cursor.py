@@ -67,7 +67,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "control_root",
             "appended_system_prompt",
             "user_turn_content",
-            "context_from_payload",
             "reference_items",
             "continue_harness_session_id",
             "continue_fork",

@@ -1,6 +1,10 @@
 # lib/extensions — Unified Command System
 
-CLI and MCP read from one registry. Surfaces are access policies on one
+Operation metadata has one owner: lightweight `ops/commands.py` declarations
+(`OP_DECLARATIONS`). The registry holds them unresolved and imports an
+operation only when a caller needs its full spec (`get`, `list_all`,
+`list_for_surface`); CLI registration reads metadata alone. CLI and MCP share
+those specs. Surfaces are access policies on one
 `ExtensionCommandSpec`, not separate implementations.
 
 ## Mental Model

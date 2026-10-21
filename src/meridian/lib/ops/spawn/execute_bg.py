@@ -135,15 +135,6 @@ async def _execute_existing_spawn(
     runtime_request = launch_request.runtime
     resolved_model = (request.model or "").strip()
     resolved_harness_id = (request.harness or "").strip()
-    resolved_prompt = (request.prompt or "").strip()
-    if not resolved_prompt:
-        await finalize_launch_failure(
-            runtime_root,
-            project_paths.project_root,
-            spawn_id,
-            "Missing prompt",
-        )
-        return 1
     if not resolved_harness_id:
         await finalize_launch_failure(
             runtime_root,
@@ -158,7 +149,7 @@ async def _execute_existing_spawn(
     )
     spawn = Spawn(
         spawn_id=SpawnId(spawn_record.id),
-        prompt=resolved_prompt,
+        prompt=request.prompt,
         model=ModelId(resolved_model),
         status=spawn_status,
     )
@@ -175,7 +166,6 @@ async def _execute_existing_spawn(
             update={
                 "model": resolved_model,
                 "harness": resolved_harness_id,
-                "prompt": resolved_prompt,
                 "agent": request.agent if request.agent is not None else spawn_record.agent,
                 "skill_paths": spawn_record.skill_paths,
             }

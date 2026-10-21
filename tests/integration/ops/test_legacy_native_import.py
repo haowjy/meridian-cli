@@ -574,14 +574,16 @@ def test_deferred_import_backs_off_then_retries_and_clears_note(
     _claude(home, root, "native-id")
     now = [1_000.0]
     monkeypatch.setattr(legacy.time, "time", lambda: now[0])
-    original = legacy.LegacyNativeStores.matching_stores
+    from meridian.lib.harness.legacy_native_stores import LegacyNativeStores
+
+    original = LegacyNativeStores.matching_stores
     calls = [0]
 
     def fail_once(self, *args: object, **kwargs: object) -> tuple[set[Path], bool]:
         calls[0] += 1
         raise OSError("native source unavailable")
 
-    monkeypatch.setattr(legacy.LegacyNativeStores, "matching_stores", fail_once)
+    monkeypatch.setattr(LegacyNativeStores, "matching_stores", fail_once)
     legacy.maybe_import_legacy_native_sessions(root)
     note_path = root / legacy.DEFERRAL_NOTE
     note = json.loads(note_path.read_text())
@@ -595,7 +597,7 @@ def test_deferred_import_backs_off_then_retries_and_clears_note(
     assert capsys.readouterr().err == ""
 
     now[0] += legacy.RETRY_DELAY_SECONDS + 1
-    monkeypatch.setattr(legacy.LegacyNativeStores, "matching_stores", original)
+    monkeypatch.setattr(LegacyNativeStores, "matching_stores", original)
     legacy.maybe_import_legacy_native_sessions(root)
     assert calls == [1]
     assert (root / legacy.MARKER).exists()

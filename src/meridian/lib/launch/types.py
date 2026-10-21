@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.core.context_ref import ContextRef
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
@@ -57,7 +58,7 @@ class LaunchRequest(BaseModel):
     passthrough_args: tuple[str, ...] = ()
     pinned_context: str = ""
     supplemental_prompt_documents: tuple[PromptDocument, ...] = ()
-    context_from: tuple[str, ...] = ()
+    context_refs: tuple[ContextRef, ...] = ()  # resolved once by the caller; see SpawnRequest
     reference_files: tuple[str, ...] = ()
     prompt: str | None = None
     skills: tuple[str, ...] = ()

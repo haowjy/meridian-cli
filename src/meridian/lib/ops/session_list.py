@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import time
+from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,8 +14,9 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_ids
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_reentry import Blocked, SessionReentryDecision, decide_reentry
-from meridian.lib.state import session_store, work_store
-from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state import session_store
+from meridian.lib.state.history_index import BrowsePage, HistoryIndex
+from meridian.lib.state.idle_store import IdleState, IdleStore
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -23,30 +26,43 @@ class SessionListInput(BaseModel):
 
     project_root: str | None = None
     limit: int = Field(default=50, gt=0)
+    status: Literal["active", "archived"] = "active"
+    sort: Literal["updated", "created"] = "updated"
+    # Address specific chats (lineage nodes); overrides ``status``.
+    chat_ids: tuple[str, ...] | None = None
+    # Case-insensitive substring over chat id, tmux, work, agent, model and cwd; applied
+    # before ``limit`` so ``total_count`` is the matching scope.
+    query: str = ""
 
 
 class SessionListRow(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     chat_id: str
-    history_id: str | None = None
     session_generation: str = ""
     archived: bool = False
-    historical: bool = False
+    created_at: str = ""
+    harness: str = ""
+    tmux_target: str | None = None
+    last_turn_at: str = ""
+    cache_deadline: float | None = None
     activity_at: str
-    live: bool
     reentry: SessionReentryDecision
     agent: str
     model: str
     work_label: str
     task_cwd: str
-    native_status: str = ""
 
     @property
-    def filter_text(self) -> str:
-        return " ".join(
-            (self.chat_id, self.work_label, self.agent, self.model, self.task_cwd)
-        ).lower()
+    def stale(self) -> bool:
+        return self.cache_deadline is not None and time.time() > self.cache_deadline
+
+    def agent_label(self, *, with_model: bool = True) -> str:
+        """``agent (model)``; either alone when the other is unknown."""
+
+        if self.agent and self.model and with_model:
+            return f"{self.agent} ({self.model})"
+        return self.agent or self.model
 
 
 class SessionListOutput(BaseModel):
@@ -64,17 +80,14 @@ class SessionListOutput(BaseModel):
         if not self.rows:
             return "no primary sessions"
 
-        rows = [["C-ID", "AGE", "LIVE", "AGENT", "MODEL", "WORK", "NATIVE"]]
+        rows = [["STALE", "TMUX", "AGENT", "IDLE", "WORK"]]
         rows.extend(
             [
-                row.chat_id
-                + (" [ZIP]" if row.archived else " [historical]" if row.historical else ""),
-                relative_time(row.activity_at).removesuffix(" ago"),
-                "●" if row.live else "",
-                row.agent or "—",
-                row.model or "—",
-                row.work_label or "—",
-                row.native_status or "—",
+                "⚠" if row.stale else "",
+                row.tmux_target or "",
+                row.agent_label(),
+                relative_time(row.last_turn_at or row.activity_at).removesuffix(" ago"),
+                row.work_label,
             ]
             for row in self.rows
         )
@@ -84,11 +97,93 @@ class SessionListOutput(BaseModel):
         return output
 
 
-def _work_label(runtime_root: Path, work_id: str | None) -> str:
-    if not work_id:
-        return ""
-    item = work_store.get_work_item(runtime_root, work_id)
-    return item.name if item is not None else work_id
+# Estimated fallbacks when notification state is absent or has been garbage-collected.
+_DEFAULT_CACHE_TTL_SECONDS = {"claude": 300, "codex": 1800, "opencode": 300, "pi": 300}
+
+
+def _turn_metadata(
+    harness: str,
+    fallback: str,
+    live: bool,
+    idle: IdleState | None,
+) -> tuple[str, float | None]:
+    idle_at = idle.idle_since_ms / 1000 if idle and idle.idle_since_ms else None
+    last_turn = datetime.fromtimestamp(idle_at, UTC).isoformat() if live and idle_at else fallback
+    ttl = idle.ttl_seconds if idle and idle.ttl_seconds else _DEFAULT_CACHE_TTL_SECONDS.get(harness)
+    if not fallback or ttl is None:
+        return last_turn, None
+    if idle_at is None and live:
+        # No sensor data for a running session: staleness is unknown, not "since it started".
+        return last_turn, None
+    anchor = idle_at if idle_at is not None else datetime.fromisoformat(fallback).timestamp()
+    return last_turn, anchor + ttl
+
+
+def _epoch(iso: str) -> float:
+    try:
+        parsed = datetime.fromisoformat(iso.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).timestamp()
+
+
+def _chat_number(chat_id: str) -> int:
+    digits = chat_id.removeprefix("c")
+    return int(digits) if digits.isdigit() else 0
+
+
+def _recent_by_last_turn(
+    index: HistoryIndex,
+    limit: int,
+    live_chat_ids: set[str],
+    idle_store: IdleStore,
+    idle_states: dict[tuple[str, str], IdleState | None],
+    query: str,
+) -> BrowsePage:
+    """Active sessions by last activity before LIMIT.
+
+    The index orders stopped sessions by stop time. A running session's indexed activity is
+    its start, which would sink it below recently stopped ones, so the (few) running
+    sessions are fetched whole, placed by their last turn from the idle file, and merged.
+    """
+
+    stopped = index.recent_sessions(
+        limit=limit, status="active", exclude_chat_ids=live_chat_ids, query=query
+    )
+    running = (
+        index.recent_sessions(limit=len(live_chat_ids), chat_ids=live_chat_ids, query=query).records
+        if live_chat_ids
+        else []
+    )
+    keyed: list[tuple[float, int, session_store.SessionRecord | SpawnRecord]] = []
+    for record in running:
+        if isinstance(record, SpawnRecord):
+            continue
+        key = (record.harness, record.harness_session_id or "")
+        if record.harness and record.harness_session_id and key not in idle_states:
+            idle_states[key] = idle_store.read(*key)
+        last_turn, _ = _turn_metadata(
+            record.harness, record.stopped_at or record.started_at, True, idle_states.get(key)
+        )
+        keyed.append((_epoch(last_turn), _chat_number(record.chat_id), record))
+    for record in stopped.records:
+        if isinstance(record, SpawnRecord):
+            activity = record.terminal.finished_at if record.terminal else record.started_at
+            keyed.append((_epoch(activity or ""), 0, record))
+        else:
+            keyed.append(
+                (
+                    _epoch(record.stopped_at or record.started_at),
+                    _chat_number(record.chat_id),
+                    record,
+                )
+            )
+    keyed.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return BrowsePage(
+        [record for _, _, record in keyed[:limit]],
+        stopped.total + len(running),
+        stopped.archived,
+    )
 
 
 def session_list_sync(
@@ -110,54 +205,101 @@ def session_list_sync(
             roots.runtime_root, path.name.removesuffix(".lease.json")
         )
     }
-    visible_records, total_count = HistoryIndex(roots.runtime_root).recent_sessions(
-        limit=payload.limit, live_chat_ids=live_chat_ids
+    index = HistoryIndex(roots.runtime_root)
+    idle_store = IdleStore()
+    idle_states: dict[tuple[str, str], IdleState | None] = {}
+    if payload.chat_ids is None and payload.status == "active" and payload.sort == "updated":
+        page = _recent_by_last_turn(
+            index, payload.limit, live_chat_ids, idle_store, idle_states, payload.query
+        )
+    else:
+        page = index.recent_sessions(
+            limit=payload.limit,
+            status=payload.status,
+            sort=payload.sort,
+            chat_ids=set(payload.chat_ids) if payload.chat_ids is not None else None,
+            query=payload.query,
+        )
+    visible_records, archived_metadata = page.records, page.archived
+    identities: set[tuple[str, str]] = {
+        (record.harness, record.harness_session_id)
+        for record in visible_records
+        if record.harness and record.harness_session_id
+    }
+    identities.update(
+        (record.harness, record.harness_session_id)
+        for record in archived_metadata.values()
+        if record.harness_session_id
     )
+    models = index.last_executed_models(identities)
+    for key in identities - idle_states.keys():
+        idle_states[key] = idle_store.read(*key)
+
     recorded_harness_sessions = recover_recorded_chat_harness_session_ids(
         roots.runtime_root,
         [record for record in visible_records if isinstance(record, session_store.SessionRecord)],
     )
-    work_ids = {
-        record.work_id if isinstance(record, SpawnRecord) else record.active_work_id
-        for record in visible_records
-    }
-    work_labels = {
-        work_id: _work_label(roots.project_state_dir, work_id) for work_id in work_ids if work_id
-    }
 
     rows: list[SessionListRow] = []
     for record in visible_records:
         if isinstance(record, SpawnRecord):
             ref = str(record.history_id)
+            metadata = archived_metadata.get(ref)
+            harness = metadata.harness if metadata else record.harness or ""
+            native_id = metadata.harness_session_id if metadata else record.harness_session_id
+            fallback = (
+                (metadata.stopped_at or metadata.started_at)
+                if metadata
+                else record.terminal.finished_at
+                if record.terminal
+                else record.started_at or ""
+            )
+            last_turn, cache_deadline = _turn_metadata(
+                harness,
+                fallback,
+                False,
+                idle_states.get((harness, native_id or "")),
+            )
             rows.append(
                 SessionListRow(
                     chat_id=ref,
-                    history_id=ref,
                     session_generation=record.session_instance_id or "",
                     archived=True,
+                    last_turn_at=last_turn,
+                    cache_deadline=cache_deadline,
+                    created_at=(metadata.created_at or metadata.started_at)
+                    if metadata
+                    else record.started_at or "",
+                    tmux_target=metadata.tmux_target if metadata else None,
+                    harness=harness,
                     activity_at=record.terminal.finished_at
                     if record.terminal
                     else record.started_at or "",
-                    live=False,
                     reentry=Blocked(f"archived history; read with meridian session log {ref}"),
                     agent=record.agent or "",
-                    model=record.model or "",
-                    work_label=work_labels.get(record.work_id or "", ""),
+                    model=models.get((harness, native_id or ""), record.model or ""),
+                    work_label=record.work_id or "",
                     task_cwd=record.task_cwd or record.execution_cwd or "",
                 )
             )
             continue
         live = record.chat_id in live_chat_ids
+        idle = idle_states.get((record.harness, record.harness_session_id or ""))
+        fallback = record.stopped_at or record.started_at
+        last_turn, cache_deadline = _turn_metadata(record.harness, fallback, live, idle)
+
         rows.append(
             SessionListRow(
                 chat_id=record.chat_id,
-                history_id=str(record.history_id) if record.history_id else None,
                 session_generation=record.session_instance_id
                 or record.harness_session_id
                 or record.started_at,
-                historical=record.record_mode == "historical",
+                created_at=record.created_at or record.started_at,
+                harness=record.harness or "",
+                tmux_target=record.tmux_target,
+                last_turn_at=last_turn,
+                cache_deadline=cache_deadline,
                 activity_at=record.stopped_at or record.started_at,
-                live=live,
                 reentry=Blocked("historical record; read-only, cannot resume or fork")
                 if record.record_mode == "historical"
                 else decide_reentry(
@@ -169,14 +311,13 @@ def session_list_sync(
                     ),
                 ),
                 agent=record.agent,
-                model=record.model,
-                work_label=work_labels.get(record.active_work_id or "", ""),
+                model=models.get((record.harness, record.harness_session_id or ""), record.model),
+                work_label=record.active_work_id or "",
                 task_cwd=record.task_cwd or record.execution_cwd or "",
-                native_status="" if record.native_key() is not None else "unbound",
             )
         )
 
-    return SessionListOutput(rows=tuple(rows), total_count=total_count)
+    return SessionListOutput(rows=tuple(rows), total_count=page.total)
 
 
 session_list = async_from_sync(session_list_sync)

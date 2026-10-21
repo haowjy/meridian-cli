@@ -243,10 +243,10 @@ def test_spawn_without_chat_is_unbound(tmp_path):
     assert exc.value.reason == "unbound"
 
 
-def test_opencode_preview_refreshes_recorded_database_wal(tmp_path):
+def test_opencode_log_reads_recorded_database_wal_updates(tmp_path):
     import sqlite3
 
-    from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
+    from meridian.lib.ops.session_transcript import read_session_transcript
     from meridian.lib.state.paths import resolve_project_runtime_root_for_write
     from tests.support.opencode_db import write_opencode_db_session_with_parts
 
@@ -270,22 +270,22 @@ def test_opencode_preview_refreshes_recorded_database_wal(tmp_path):
     )
     record = session_store.chat_record(root, "c1")
     assert record is not None
-    identity = PreviewIdentity("c1", generation=record.session_instance_id or sid)
     from meridian.lib.state.history_index import HistoryIndex
 
     HistoryIndex(root).rebuild()
-    reader = SessionPreview(str(project))
+
+    def text() -> str:
+        parsed = read_session_transcript(ref="c1", file_path=None, project_root=str(project))
+        return "\n".join(entry.content for entry in parsed.all_entries)
+
     with sqlite3.connect(database) as db:
         db.execute("PRAGMA journal_mode=WAL")
-        before = reader.refresh(identity, lambda: True)
-        assert before is not None and "before WAL update" in before.lines
-        assert reader.peek(identity) is not None
+        assert "before WAL update" in text()
         stamp = database.stat().st_mtime_ns
         db.execute("UPDATE part SET data = replace(data, 'before WAL update', 'after WAL update')")
         db.commit()
         assert database.stat().st_mtime_ns == stamp
-        after = reader.refresh(identity, lambda: True)
-        assert after is not None and "after WAL update" in after.lines
+        assert "after WAL update" in text()
 
 
 def test_reclaimed_spawn_resolves_by_local_alias(tmp_path):

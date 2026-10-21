@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from meridian.lib.core.context_ref import ContextRef
 from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
 from meridian.lib.launch.reference import validate_reference_paths
 from meridian.lib.state.paths import resolve_kb_dir
@@ -41,19 +42,11 @@ class LaunchInputResolution:
         }
 
 
-def _first_context_work_id(project_root: Path, refs: tuple[str, ...]) -> str | None:
-    if not refs:
-        return None
-    from meridian.lib.ops.spawn.context_ref import first_context_ref_work_id
-
-    return first_context_ref_work_id(project_root, refs)
-
-
 def resolve_launch_inputs(
     *,
     authority_root: Path,
     project_state_dir: Path,
-    context_from: tuple[str, ...],
+    context_refs: tuple[ContextRef, ...],
     reference_files: tuple[str, ...],
     explicit_task_dir: str | Path | None = None,
     explicit_work_id: str | None = None,
@@ -79,7 +72,9 @@ def resolve_launch_inputs(
         and normalized_explicit_work_id is None
         and normalized_ambient_work_id is None
     ):
-        context_work_id = _first_context_work_id(resolved_authority_root, context_from)
+        context_work_id = next(
+            (work for ref in context_refs if (work := (ref.work_id or "").strip())), None
+        )
 
     effective_work_id = (
         normalized_explicit_work_id or normalized_ambient_work_id or context_work_id

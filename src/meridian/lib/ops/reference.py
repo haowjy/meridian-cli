@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import UUID
 
+from meridian.lib.core.context_ref import CHAT_REF_RE
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import SpawnId
@@ -22,7 +23,6 @@ from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 _SPAWN_REF_RE = re.compile(r"^p\d+$")
-_CHAT_REF_RE = re.compile(r"^c\d+$")
 
 
 @dataclass(frozen=True)
@@ -316,7 +316,7 @@ def resolve_session_reference(
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
-        if not _SPAWN_REF_RE.fullmatch(normalized) and not _CHAT_REF_RE.fullmatch(normalized):
+        if not _SPAWN_REF_RE.fullmatch(normalized) and not CHAT_REF_RE.fullmatch(normalized):
             return _resolve_untracked_reference(project_root, normalized, harness_hint)
         raise ValueError(f"Session reference '{normalized}' not found")
     if _SPAWN_REF_RE.fullmatch(normalized):
@@ -332,7 +332,7 @@ def resolve_session_reference(
             if recovery is not None:
                 return replace(result, recovery=recovery)
         return result
-    if _CHAT_REF_RE.fullmatch(normalized) or session_identity.is_tracked_chat_ref(
+    if CHAT_REF_RE.fullmatch(normalized) or session_identity.is_tracked_chat_ref(
         resolved_runtime_root, normalized
     ):
         result = _resolve_chat_reference(resolved_runtime_root, normalized, project_root)

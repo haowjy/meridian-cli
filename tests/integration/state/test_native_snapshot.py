@@ -399,37 +399,6 @@ def test_wire_header_requires_explicit_exact_discriminator(tmp_path: Path, chang
         list(iter_transcript_events(path))
 
 
-def test_snapshot_preview_bypasses_stream_append_checkpoint(tmp_path: Path, monkeypatch) -> None:
-    from meridian.lib.ops import session_preview
-    from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
-
-    path = tmp_path / "history.jsonl"  # Renamed storage still must not become an append stream.
-    _snapshot(
-        path,
-        (
-            json.dumps({"type": "session", "id": "native-1", "version": 3, "cwd": str(tmp_path)}),
-            json.dumps(
-                {
-                    "type": "message",
-                    "id": "a",
-                    "parentId": None,
-                    "message": {"role": "user", "content": "retained needle"},
-                }
-            ),
-        ),
-    )
-    source = TranscriptSource("native_file", "native-1", "pi", "snapshot", path)
-    target = SessionLogTarget(source)
-    monkeypatch.setattr(session_preview, "resolve_roots_for_read", lambda _: None)
-    monkeypatch.setattr(session_preview, "resolve_transcript_source", lambda **_: target)
-    view = session_preview.SessionPreview(str(tmp_path)).refresh(
-        session_preview.PreviewIdentity("p1", history_id="fixture"), lambda: True
-    )
-    assert view is not None
-    assert "retained needle" in "\n".join(view.lines)
-    assert view.state == "current"
-
-
 def test_resolved_native_source_checks_snapshot_binding(tmp_path: Path) -> None:
     from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
     from meridian.lib.ops.session_transcript import SessionLogRoute, parse_session_target
@@ -476,41 +445,6 @@ def test_later_reserved_marker_never_becomes_complete_transcript(
         list(iter_transcript_events(path, validation=validation))
     assert validation.state == "corrupt"
     assert validation.descriptor is None
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        b'\n{"record":"meridian.native.snapshot","record":"ordinary"}\n',
-        b'\n{"record":"meridian.native.snapshot",\n',
-        b'\n{"recor\\u0064":"meridian.native.seal","record":"ordinary"}\n',
-        b'{"record":"meridian.transcript"}\n'
-        b'{"record":"meridian.native.seal","record":"meridian.transcript"}\n',
-    ],
-    ids=[
-        "later-duplicate",
-        "later-torn",
-        "later-escaped-duplicate",
-        "managed-header-then-seal",
-    ],
-)
-def test_managed_preview_rejects_later_reserved_markers(
-    tmp_path: Path, payload: bytes, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from meridian.lib.ops import session_preview
-    from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
-
-    path = tmp_path / "history.jsonl"
-    path.write_bytes(payload)
-    source = TranscriptSource("native_file", "p1", "pi", "owned", path)
-    target = SessionLogTarget(source)
-    monkeypatch.setattr(session_preview, "resolve_roots_for_read", lambda _: None)
-    monkeypatch.setattr(session_preview, "resolve_transcript_source", lambda **_: target)
-    view = session_preview.SessionPreview(str(tmp_path)).refresh(
-        session_preview.PreviewIdentity("p1", history_id="fixture"), lambda: True
-    )
-    assert view is not None
-    assert view.state == "unavailable"
 
 
 def test_ordinary_unmarked_malformed_lines_stay_tolerant(tmp_path: Path) -> None:

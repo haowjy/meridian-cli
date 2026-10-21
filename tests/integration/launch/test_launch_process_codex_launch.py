@@ -85,7 +85,6 @@ def _build_primary_launch_context(
         spawn_id=f"dry-run-primary-{harness_id.value}",
         request=SpawnRequest(
             prompt=prompt,
-            prompt_is_composed=False,
             model=model,
             harness=harness_id.value,
             extra_args=extra_args,
@@ -189,7 +188,6 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
         spawn_id=f"dry-run-primary-{harness_id.value}",
         request=SpawnRequest(
             prompt=f"{harness_id.value} primary prompt",
-            prompt_is_composed=False,
             model="gpt-5.4",
             harness=harness_id.value,
             launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.4", harness=harness_id.value),

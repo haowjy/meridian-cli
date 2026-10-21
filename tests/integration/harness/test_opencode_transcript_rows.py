@@ -10,7 +10,6 @@ import pytest
 
 from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
 from meridian.lib.harness.transcript import parse_transcript_events_with_prologues
-from meridian.lib.harness.transcript_preview import PreviewAccumulator
 from tests.support.opencode_db import write_opencode_db_session_with_parts
 
 
@@ -122,12 +121,6 @@ def test_raw_projection_keeps_compaction_and_checkpoint_setup(
     parsed = parse_transcript_events_with_prologues(events)
     assert parsed.total_compactions == 1
     assert parsed.segment_setups == ("initial setup", "handoff")
-    accumulator = PreviewAccumulator()
-    for event in events:
-        accumulator = PreviewAccumulator(accumulator.preview)
-        accumulator.feed(event)
-    assert accumulator.preview.setup == "handoff"
-    assert [message.content for message in accumulator.preview.messages] == ["second answer"]
 
 
 @pytest.mark.parametrize(
@@ -159,21 +152,3 @@ def test_raw_projection_preserves_supported_content_beside_diagnostic(
     assert json.loads(events[1]["parts"][1]["data"]) == bad_part
     parsed = parse_transcript_events_with_prologues(events)
     assert parsed.rendering_reason and parsed.segments[0][0].content == "kept"
-
-
-def test_checkpoint_does_not_borrow_later_user_system_setup(tmp_path: Path) -> None:
-    path = tmp_path / "opencode.db"
-    write_opencode_db_session_with_parts(
-        db_path=path,
-        session_id="s",
-        messages=[
-            ("user", {}, [{"type": "text", "text": "first"}]),
-            ("user", {"system": "later setup"}, [{"type": "text", "text": "second"}]),
-        ],
-    )
-    accumulator = PreviewAccumulator()
-    for event in iter_opencode_db_events(session_id="s", db_path=path):
-        accumulator = PreviewAccumulator(accumulator.preview)
-        accumulator.feed(event)
-    assert accumulator.preview.setup is None
-    assert [message.content for message in accumulator.preview.messages] == ["first", "second"]

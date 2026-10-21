@@ -23,7 +23,7 @@ pending; active stream appends may coalesce them. Terminal writes and late event
 replace the token. Active activity is explicitly provisional.
 
 Incremental session projection loads only the accepted-chat row and generation
-rows for each chat touched after the cursor. Recency and preview freshness use
+rows for each chat touched after the cursor. Recency uses
 the highest-ordinal generation bucket, which can differ from the accepted
 generation when a key is reused. A cursor reset still clears the
 session projection and replays the full committed log. One read may observe only
@@ -255,7 +255,7 @@ merge, and consolidate lock epochs.
 Bulk reads still outside the seam: `list_all_session_records`,
 `list_session_generations`, and `legacy_native_import.py`'s raw reads.
 
-## Search and previews
+## Search
 
 `native-search-v1.sqlite3` is a separate disposable projection. It stores native
 keys, locators, freshness witnesses and normalized display entries, never chat
@@ -267,8 +267,5 @@ no index may select a chat's native source. Rebuild refreshes search unless
 `--metadata-only`; status reports fresh/stale/unindexed counts and bytes.
 
 Metadata activity uses spawn/session facts and sealed snapshot observations, not
-runner-stream tails. `ops/session_preview.py` lazily refreshes bounded native
-previews with the shared normalizer. Source signatures invalidate stale content;
-there is no runner-stream cursor. Cache publication checks generation and the
-selected source/digest under the existing locks. Incomplete or rendering-partial
-snapshots do not count as compatible cached previews.
+runner-stream tails. The index holds no transcript content: `session browse` reads
+a transcript through `session_transcript.py` once per detail view.

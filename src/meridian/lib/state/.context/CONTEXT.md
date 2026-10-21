@@ -58,7 +58,7 @@ the v2 migration; published rows now use schema v3.
 Sessions remain event-sourced JSONL (`sessions.jsonl`). Lifecycle and control
 reads use the keyed seam in `session_store.py`; multi-chat callers select all
 needed chats in one pass and project the accepted binding and generation.
-Discovery uses the disposable history index; its recency and preview reads
+Discovery uses the disposable history index; its recency reads
 select the highest-ordinal generation from the same authority.
 An absent event `v` is legacy v1. Events with an unsupported version are
 skipped with a warning rather than being folded as if their shape were current.

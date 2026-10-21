@@ -9,12 +9,12 @@ from collections.abc import Callable
 from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Protocol, TypeVar
+from typing import Literal, Protocol, TypeVar, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.json_doc import mutate_model, read_model
+from meridian.lib.state.json_doc import mutate_model
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.utils.json_shapes import loads_json_object
 
@@ -108,6 +108,42 @@ def _validate_component(value: str, *, label: str) -> str:
     return normalized
 
 
+def _upgrade_v1(payload: dict[str, object]) -> dict[str, object]:
+    """Read a v1 document as v2: keep the turn clock and TTL, drop compaction machinery."""
+
+    schedule = (
+        cast("dict[str, object]", payload["schedule"])
+        if isinstance(payload.get("schedule"), dict)
+        else None
+    )
+    done = (
+        cast("dict[str, object]", payload["done"])
+        if isinstance(payload.get("done"), dict)
+        else None
+    )
+    upgraded = {
+        key: value
+        for key, value in payload.items()
+        if key in IdleState.model_fields and key not in {"schedule", "done"}
+    }
+    upgraded["v"] = 2
+    upgraded["schedule"] = (
+        {stage: schedule.get(stage) for stage in ("push_at", "warn_at")}
+        if schedule is not None
+        else {}
+    )
+    upgraded["done"] = (
+        {
+            stage: outcome
+            for stage, outcome in done.items()
+            if stage in ("push", "warn") and outcome != "ok"
+        }
+        if done is not None
+        else {}
+    )
+    return upgraded
+
+
 class IdleStore:
     """One atomically replaced JSON file per harness-native session."""
 
@@ -133,21 +169,29 @@ class IdleStore:
         return self.root / ".gc"
 
     def read(self, harness: str, session: str) -> IdleState | None:
-        return self._read_path(self.path_for(harness, session))
+        return self._read_path(self.path_for(harness, session), warn=False)
 
     @staticmethod
-    def _read_path(path: Path) -> IdleState | None:
-        state = read_model(path, IdleState)
-        if state is not None:
-            return state
+    def _read_path(path: Path, *, warn: bool = True) -> IdleState | None:
+        """Read one file; skewed files are warned about only where a write would replace them."""
+
         try:
             payload = loads_json_object(path.read_text(encoding="utf-8"))
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return None
-        version = payload.get("v", 2) if payload is not None else 2
-        if type(version) is not int or version != 2:
-            _warn_idle_version_skew(path, repr(version))
-        return None
+        if payload is None:
+            return None
+        version = payload.get("v", 2)
+        if type(version) is int and version == 1:
+            payload = _upgrade_v1(payload)
+        elif type(version) is not int or version != 2:
+            if warn:
+                _warn_idle_version_skew(path, repr(version))
+            return None
+        try:
+            return IdleState.model_validate(payload)
+        except ValidationError:
+            return None
 
     def mutate(
         self,
@@ -156,6 +200,7 @@ class IdleStore:
         mutation: Callable[[IdleState | None], tuple[IdleState | None, T]],
     ) -> T:
         path = self.path_for(harness, session)
+
         def stamp(current: IdleState | None) -> tuple[IdleState | None, T]:
             next_state, result = mutation(current)
             if next_state is not None:
@@ -189,7 +234,7 @@ class IdleStore:
     def list_states(self) -> tuple[IdleState, ...]:
         if not self.root.is_dir():
             return ()
-        states = [self._read_path(path) for path in self.root.glob("*.json")]
+        states = [self._read_path(path, warn=False) for path in self.root.glob("*.json")]
         return tuple(state for state in states if state is not None)
 
     def gc(self) -> None:

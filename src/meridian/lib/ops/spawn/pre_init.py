@@ -7,8 +7,9 @@ from typing import TypeVar
 
 import structlog
 
+from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.launch.bundle_adapter import MarsSelectionError
-from meridian.lib.launch.cwd import WorkTaskDirMissing
+from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.launch.request import SpawnRequest
 
 from .models import SpawnActionOutput, SpawnCreateInput
@@ -57,7 +58,11 @@ def _pre_init_output(
         skills=() if request is not None else payload.skills,
         reference_files=request.reference_files if request is not None else payload.files,
         template_vars=request.template_vars if request is not None else {},
-        context_from_resolved=request.context_from if request is not None else payload.context_from,
+        context_from_resolved=(
+            context_ref_values(request.context_refs)
+            if request is not None
+            else payload.context_from
+        ),
         exit_code=1,
         authority_root=(
             (request.authority_root or None) if request is not None else payload.project_root

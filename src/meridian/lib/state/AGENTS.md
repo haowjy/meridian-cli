@@ -247,6 +247,12 @@ stopped at the new start time: ordinary starts hold the chat's exclusive lifetim
 lock, while observed-chat starts mint a new chat and immediately stop it.
 Historical multi-ID arrays are ignored on read.
 
+Fork and context-source ancestry belong to the chat, not its latest generation:
+accepted starts carry both parent identities and original creation time forward.
+Tmux targets belong to the generation and may be absent. HistoryIndex projects
+parent edges and native model observations from the journal; list consumers batch
+model lookups rather than scanning observations once per row.
+
 ## Entry Points
 
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.

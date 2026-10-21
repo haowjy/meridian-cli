@@ -176,7 +176,6 @@ class PreparedLaunchContent:
     """Typed content-composition output consumed by later launch binding."""
 
     final_prompt: str = ""
-    resolved_context_from: tuple[str, ...] = ()
     loaded_references: tuple[ReferenceItem, ...] = ()
     prompt_payload: PreparedPromptPayload = field(default_factory=PreparedPromptPayload)
     projected_content: ProjectedContent | None = None

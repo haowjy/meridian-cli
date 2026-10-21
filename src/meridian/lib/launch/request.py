@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.core.context_ref import ContextRef
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
@@ -51,6 +52,8 @@ class SessionRequest(BaseModel):
     source_native_store: str | None = None
     forked_from_chat_id: str | None = None
     forked_from_history_id: UUID | None = None
+    context_from_chat_id: str | None = None
+    context_from_history_id: UUID | None = None
     continue_harness: str | None = None
     continue_source_tracked: bool = False
     continue_source_ref: str | None = None
@@ -91,8 +94,10 @@ class SpawnRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     # Prompt / agent / skills
+    # The caller's task prompt. Never the composed launch text: every prepare
+    # renders ``context_refs`` and ``reference_files`` around it, so feeding the
+    # composed text back in would render them twice.
     prompt: str
-    prompt_is_composed: bool = True
     primary_prompt_is_synthetic: bool = False
     model: str | None = None
     harness: str | None = None
@@ -115,7 +120,8 @@ class SpawnRequest(BaseModel):
     session: SessionRequest = Field(default_factory=SessionRequest)
 
     # Context plumbing
-    context_from: tuple[str, ...] = ()
+    # ``--from`` refs, resolved once at the request boundary (cli or spawn prepare).
+    context_refs: tuple[ContextRef, ...] = ()
     reference_files: tuple[str, ...] = ()
     template_vars: dict[str, str] = Field(default_factory=_empty_template_vars)
 

@@ -2,3 +2,11 @@
   `spawn.py`) in the minor release after the one that deprecated it. It never
   listed files; it stays one minor so scripts piping it to `xargs git add` keep
   working while they're updated.
+- Meet session browse's <200 ms warm-start target. Phase A's seven-run medians
+  are 500 ms / ~81 MB for both fresh and managed environments (50 stable rows;
+  749 and 309 scoped records respectively). Handler imports and indexed work
+  lookup remove the original eager operation registry/journal-fold costs, but
+  universal CLI imports and SQLAlchemy-backed index loading still dominate.
+  Keep one command registration/read path; do not add a parallel fast CLI loader.
+- Remove `session browse --include-archives` (deprecated, no effect: `/` searches what
+  the Status view shows) in the minor release after the one that deprecated it.

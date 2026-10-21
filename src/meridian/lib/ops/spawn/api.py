@@ -20,6 +20,7 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import NativeSessionUnavailable
@@ -453,8 +454,8 @@ def spawn_create_sync(
             skill_paths=prepared_request.skill_paths,
             reference_files=prepared_request.reference_files,
             template_vars=prepared_request.template_vars,
-            context_from_resolved=tuple(prepared_request.context_from or ()),
-            composed_prompt=prepared_request.prompt,
+            context_from_resolved=context_ref_values(prepared_request.context_refs),
+            composed_prompt=prepared_surface.content.final_prompt,
             goal=prepared_goal,
             model_selection_requested_token=prepared_request.model_selection_requested_token,
             model_selection_canonical_id=prepared_request.model_selection_canonical_id,

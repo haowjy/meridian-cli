@@ -17,7 +17,7 @@ from meridian.lib.core.depth import (
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state import spawn_store
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
 
 
@@ -37,7 +37,10 @@ class LocalFilesystemBackend:
     """Default context backend backed by local state modules."""
 
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
-        return session_store.get_session_active_work_id(runtime_root, chat_id)
+        from meridian.lib.state.history_index import HistoryIndex
+
+        records = HistoryIndex(runtime_root).sessions(chat_ids={chat_id})
+        return records[0].active_work_id if records else None
 
     def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
         row = spawn_store.get_spawn(runtime_root, spawn_id)

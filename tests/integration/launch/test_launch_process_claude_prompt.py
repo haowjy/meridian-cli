@@ -78,7 +78,6 @@ def _build_primary_launch_context(
         spawn_id=f"dry-run-primary-{harness_id.value}",
         request=SpawnRequest(
             prompt=prompt,
-            prompt_is_composed=False,
             model=model,
             harness=harness_id.value,
             extra_args=extra_args,
@@ -113,7 +112,6 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         spawn_id="dry-run-primary",
         request=SpawnRequest(
             prompt="primary prompt",
-            prompt_is_composed=False,
             model="claude-sonnet-4-5",
             harness=HarnessId.CLAUDE.value,
             extra_args=("--append-system-prompt=passthrough system prompt",),
@@ -225,7 +223,6 @@ def test_claude_primary_prompt_file_holds_each_loaded_skill_once(
         spawn_id="dry-run-primary-skills",
         request=SpawnRequest(
             prompt="primary prompt",
-            prompt_is_composed=False,
             model="claude-sonnet-4-5",
             harness=HarnessId.CLAUDE.value,
             agent="solo-dev",

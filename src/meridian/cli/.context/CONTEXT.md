@@ -180,7 +180,8 @@ ForkModeResolution
   fork_fresh_ref: str | None    — resolved --fork-fresh ref
   is_fork: bool                 — True if either fork flag present
   is_fresh: bool                — True if --fork-fresh was used
-  resolved_context_from: tuple[str, ...]  — resolved --from refs
+  resolved_context_from: tuple[str, ...]  — --from refs, bare sentinel expanded
+                                           (primary_launch resolves them to ContextRefs)
 ```
 
 ### Pipeline Position
@@ -202,13 +203,45 @@ the plain table; interactive use inside a managed Meridian session is refused.
 This keeps supervisor ownership explicit rather than presenting a picker that
 cannot safely transfer the process.
 
-The full-screen application lives in `browse/`: `model.py` owns pure state
-transitions, `render.py` produces width-aware formatted text, and `tui.py` binds
-keys and latest-only preview/search lanes. Lane workers publish results through
-`Application.invalidate()` and never mutate rendered state directly. Enter asks
+The full-screen application lives in `browse/`: `model.py` owns pure state for
+the list, detail and lineage views (a view stack; the list keeps its highlight
+and filter while deeper views are open), `render.py` produces width-aware
+formatted text, `transcript.py` holds one parsed snapshot per detail view and
+pages it with `select_session_log_window`, `lanes.py` runs blocking ops on daemon
+threads (latest request per lane wins, stale results are dropped), and `tui.py`
+binds keys and owns navigation. No view loads anything on highlight: Space reads the
+transcript once (reload only when the session generation changes) and refreshes the
+shown model through `session_model_refresh_sync`; `l` loads lineage plus the
+nodes' rows through `session_list_sync(chat_ids=...)`.
+
+Lineage is a tree of primary sessions only. Browse lists `kind == "primary"`
+sessions, the history index writes `session_lineage` edges only for primary chats,
+and the edge query drops edges whose parent is a spawn chat. So a spawn's `--from`
+is not recorded on its session start event: nothing could read it there. A spawn's
+`--from` shows in its create output (`context_from_resolved`) and its
+`starting-prompt.md`. Recording it would only pay off with spawn rows in browse,
+which is a product change.
+
+Rows carry no live marker or live-first order; each row's `reentry` (decided in
+`session_list_sync`) is what makes a running session fork rather than resume, and
+the footer's Enter hint reads it (`enter fork`, `enter resume`, or nothing when
+blocked). Enter itself still asks `session_reentry.py` for a fresh decision.
+`/` searches the transcripts of the rows the Status view shows.
+Type-to-search is always on, so printable keys feed the filter. The filter has one
+definition: `session_list`'s `query`, matched in the history index before LIMIT.
+Typing re-runs that query after a 150 ms debounce, and the body shows `loading…` until
+the answer for the current status, sort and text lands; the TUI never matches filter
+text against rows itself. (`/` results are different: they narrow the loaded rows to
+the chats the transcript search matched.) Space always opens
+the detail view and never filters. `l` opens lineage only while the filter is
+empty (it is text afterwards); Ctrl-L always does. A worker preload thread imports
+the cyclic transcript/search/lineage ops once before any lane runs: concurrent
+first imports from worker threads saw half-initialized packages. Enter asks
 `session_reentry.py` for a fresh authoritative decision, then returns that typed
 decision from `Application.run()`. The command handler performs `os.execv()` only
-after the application and its worker lanes have closed.
+after the application and its lanes have closed. Nothing may write to stderr
+while the application runs; read paths keep skew warnings out of the listing
+(`IdleStore.read` is quiet).
 
 ## Related KB
 

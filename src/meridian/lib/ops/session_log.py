@@ -23,6 +23,7 @@ from meridian.lib.ops.session_render import (
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     AbsoluteTranscriptMessage,
+    ParsedSessionTranscript,
     SessionLogRoute,
     build_session_log_command,
     read_session_transcript,
@@ -45,6 +46,14 @@ class SessionLogInput(BaseModel):
     context: int | None = None
     file_path: str | None = None
     project_root: str | None = None
+
+    @property
+    def uses_window_selectors(self) -> bool:
+        """An absolute window (``--from``/``--before``/``--around``) rather than a segment."""
+        return any(
+            ordinal is not None
+            for ordinal in (self.from_ordinal, self.before_ordinal, self.around_ordinal)
+        )
 
 
 class SessionLogEntryMessage(BaseModel):
@@ -261,11 +270,7 @@ def _segment_boundary_commands(
     return (previous_segment_command, next_segment_command)
 
 
-def session_log_sync(
-    payload: SessionLogInput,
-    ctx: RuntimeContext | None = None,
-) -> SessionLogOutput:
-    _ = ctx
+def _validate_window(payload: SessionLogInput) -> None:
     if payload.tail is not None and payload.tail < 0:
         raise ValueError("--tail must be >= 0.")
 
@@ -277,7 +282,7 @@ def session_log_sync(
     if sum(absolute_selectors) > 1:
         raise ValueError("Use only one of --from, --before, or --around.")
 
-    uses_window_selectors = any(absolute_selectors)
+    uses_window_selectors = payload.uses_window_selectors
     if payload.global_scope and payload.segment is not None:
         raise ValueError("--global cannot be combined with --segment.")
     if payload.global_scope and not uses_window_selectors:
@@ -303,11 +308,13 @@ def session_log_sync(
     if payload.around_ordinal is not None and payload.context is None:
         raise ValueError("--around requires --context.")
 
-    parsed = read_session_transcript(
-        ref=payload.ref,
-        file_path=payload.file_path,
-        project_root=payload.project_root,
-    )
+
+def select_session_log_window(
+    parsed: ParsedSessionTranscript,
+    payload: SessionLogInput,
+) -> SessionLogOutput:
+    """Window an already-parsed transcript; ``session_log_sync`` validates ``payload`` first."""
+    uses_window_selectors = payload.uses_window_selectors
 
     address_space: _NavigationAddressSpace
 
@@ -464,6 +471,21 @@ def session_log_sync(
     )
 
 
+def session_log_sync(
+    payload: SessionLogInput,
+    ctx: RuntimeContext | None = None,
+) -> SessionLogOutput:
+    _ = ctx
+    _validate_window(payload)  # before the read: bad flags never cost a transcript parse
+    parsed = read_session_transcript(
+        ref=payload.ref,
+        file_path=payload.file_path,
+        project_root=payload.project_root,
+    )
+
+    return select_session_log_window(parsed, payload)
+
+
 session_log = async_from_sync(session_log_sync)
 
 
@@ -472,6 +494,7 @@ __all__ = [
     "SessionLogEntryMessage",
     "SessionLogInput",
     "SessionLogOutput",
+    "select_session_log_window",
     "session_log",
     "session_log_sync",
 ]

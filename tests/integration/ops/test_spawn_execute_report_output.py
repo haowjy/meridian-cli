@@ -569,7 +569,6 @@ def test_reserve_then_prepare_materializes_context_from_work(
             model="gpt-5.4",
             harness="codex",
             agent="coder",
-            context_from=("p123",),
             work_id_hint="source-work",
             task_cwd_work_item="source-work",
             inherited_context_work_id="source-work",

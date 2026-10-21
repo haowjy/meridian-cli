@@ -255,7 +255,7 @@ def native_observations(
             return None
         if native_id not in native_ids(row):
             return None
-        return _parse_model_observation(row)
+        return parse_model_observation(row)
 
     observations = read_events(
         path,
@@ -293,11 +293,13 @@ def append_native_rows(
     root: Path,
     native_id: str,
     rows: Iterable[SessionModelObservationEvent],
+    *,
+    lock_timeout: float | None = None,
 ) -> None:
     paths = RuntimePaths.from_root_dir(root)
     with (
-        lock_file(HistoryChanges(root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
+        lock_file(HistoryChanges(root).mutation_lock, mode="shared", timeout=lock_timeout),
+        lock_file(paths.sessions_flock, timeout=lock_timeout),
     ):
         batch = list(rows)
         if any(row.harness_session_id != native_id for row in batch):
@@ -378,7 +380,7 @@ class StaleSessionCleanup(NamedTuple):
     materialized_scopes: tuple[MaterializedCleanupScope, ...]
 
 
-def _parse_model_observation(payload: Mapping[str, object]) -> SessionModelObservationEvent | None:
+def parse_model_observation(payload: Mapping[str, object]) -> SessionModelObservationEvent | None:
     if payload.get("event") != "model_observation":
         return None
     try:
@@ -555,6 +557,9 @@ def start_session(
     skill_paths: tuple[str, ...] = (),
     forked_from_chat_id: str | None = None,
     forked_from_history_id: uuid.UUID | None = None,
+    context_from_chat_id: str | None = None,
+    context_from_history_id: uuid.UUID | None = None,
+    tmux_target: str | None = None,
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
@@ -600,6 +605,9 @@ def start_session(
             ),
             spawn_id=spawn_id,
             forked_from_history_id=forked_from_history_id,
+            context_from_chat_id=ChatId(context_from_chat_id) if context_from_chat_id else None,
+            context_from_history_id=context_from_history_id,
+            tmux_target=tmux_target,
             model_selection_protocol=model_selection_protocol,
         )
         with (
@@ -1066,13 +1074,20 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
     return recorded
 
 
-def record_model_observation(runtime_root: Path, event: SessionModelObservationEvent) -> bool:
+def record_model_observation(
+    runtime_root: Path,
+    event: SessionModelObservationEvent,
+    *,
+    lock_timeout: float | None = None,
+) -> bool:
     """Durably append an executed-model observation; false means already recorded.
 
     Independent of intent: this fact keys on ``(harness, harness_session_id)`` and
     may exist for native sessions Meridian did not start, so no matching
     ``SessionStartEvent`` generation is required. Dedupes against the latest
-    observation for the identity to keep the JSONL bounded.
+    observation for the identity to keep the JSONL bounded. ``lock_timeout=0`` makes
+    every lock acquisition one non-blocking attempt and raises ``FileLockTimeout`` on
+    contention.
     """
 
     recorded = False
@@ -1092,10 +1107,12 @@ def record_model_observation(runtime_root: Path, event: SessionModelObservationE
             recorded = True
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared"):
+    with lock_file(paths.project_lifetime_flock, mode="shared", timeout=lock_timeout):
         if not runtime_root.is_dir():
             raise FileNotFoundError(runtime_root)
-        append_native_rows(runtime_root, event.harness_session_id, rows())
+        append_native_rows(
+            runtime_root, event.harness_session_id, rows(), lock_timeout=lock_timeout
+        )
     return recorded
 
 
@@ -1192,9 +1209,7 @@ def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
     """Return the active work item ID for a session, or None."""
 
     record = chat_record(runtime_root, chat_id)
-    if record is None:
-        return None
-    return record.active_work_id
+    return record.active_work_id if record else None
 
 
 def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:

@@ -153,7 +153,13 @@ store derives from the final child environment without a Meridian
 seeds `<store>/<id>.jsonl` from `<source_native_store>/<id>.jsonl`: atomic symlink
 replacement within the same config root, otherwise atomic copy. Missing sources refuse
 before exec, including when an ambient same-ID file exists. Model reads use the
-same exact adapter resolver, with no ambient-store fallback. OpenCode's
+same exact adapter resolver, with no ambient-store fallback.
+`model_observation.observe_session_model` is the only writer of model observations
+(primary stop, continue, and the browse detail view all call it). It stores the raw
+native model token; a caller that launches with it maps it to a routable model
+itself. Do not call `session_store.record_model_observation` from anywhere else: readers
+need one token format, and continue used to store a launch-mapped id that a raw-id
+writer beside it would have mixed in indistinguishably. OpenCode's
 newly recorded store is its resolved database path, including `OPENCODE_DB`.
 Claude trampoline successors travel in `PostExit` and persist in `run_boundary`,
 never through the entry-ID return, chat binding, or exit

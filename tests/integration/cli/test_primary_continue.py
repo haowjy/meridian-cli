@@ -275,7 +275,6 @@ def test_continue_to_different_harness_fails_without_changing_source_chat(
 
     request = launch_context.SpawnRequest(
         prompt="continue prompt",
-        prompt_is_composed=False,
         session=SessionRequest(
             requested_harness_session_id=session_id,
             continue_harness="pi",
@@ -298,7 +297,6 @@ def test_continue_to_different_harness_fails_without_changing_source_chat(
 def test_continue_fails_when_adapter_cannot_resume() -> None:
     request = launch_context.SpawnRequest(
         prompt="continue prompt",
-        prompt_is_composed=False,
         session=SessionRequest(requested_harness_session_id="native-session"),
     )
     harness = type(
