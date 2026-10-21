@@ -28,8 +28,11 @@ Transports differ at the wire level:
   `[harness.opencode] version` at launch bind) or probes `opencode --version`, then
   delegates. Both transports manage `opencode serve` and share process lifecycle,
   liveness, and SSE framing; V2 overrides the `/api` session surface, basic auth,
-  event envelopes, and model switch. 1.x is legacy/frozen. V1 creation uses
-  `{providerID, id}`; a fresh session's initial prompt carries `{providerID, modelID}`.
+  event envelopes, and model switch. 1.x is legacy/frozen. Connections consume the
+  bound `OPENCODE_CONFIG_CONTENT` as given and select `spec.agent_name` wherever they
+  create or resume a session; see
+  [OpenCode prompt, agent and model delivery](../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
+  V1 creation uses `{providerID, id}`; a fresh session's initial prompt carries `{providerID, modelID}`.
   On V1 resume the native committed model is retained and an explicit model is
   rejected with `HarnessCapabilityMismatch` (V2 applies it via `POST /api/session/{id}/model`).
   Follow-up messages omit the model to retain native state. Rejected/timed-out

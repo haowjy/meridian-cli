@@ -50,7 +50,7 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         get_responses: list[tuple[int, object | None, str] | Exception] | None = None,
     ) -> None:
         super().__init__()
-        self.initial_messages: list[tuple[str, str | None]] = []
+        self.initial_messages: list[str] = []
         self.startup_events: list[str] = []
         self._get_responses = iter(get_responses) if get_responses is not None else None
 
@@ -96,11 +96,10 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         self,
         text: str,
         *,
-        system: str | None = None,
         fresh: bool = False,
         model: str | None = None,
     ) -> None:
-        self.initial_messages.append((text, system))
+        self.initial_messages.append(text)
 
 
 class _SseContent:
@@ -238,7 +237,6 @@ def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
         prompt="hello from test",
         control_root=tmp_path,
         child_env={"MERIDIAN_TEST_ENV": "1"},
-        system="system from test",
     )
 
 
@@ -426,14 +424,14 @@ async def test_opencode_start_resets_expired_liveness(
 @pytest.mark.parametrize(
     ("use_start_observer", "expected_initial_messages"),
     (
-        (False, [("hello from test", "system from test")]),
-        (True, [("hello from test", "system from test")]),
+        (False, ["hello from test"]),
+        (True, ["hello from test"]),
     ),
 )
 async def test_opencode_start_primary_observer_mode_controls_initial_prompt_post(
     tmp_path: Path,
     use_start_observer: bool,
-    expected_initial_messages: list[tuple[str, str | None]],
+    expected_initial_messages: list[str],
 ) -> None:
     connection = _StartProbeOpenCodeConnection()
     config = _build_connection_config(tmp_path)
@@ -696,46 +694,6 @@ async def test_stop_waits_for_inflight_backend_publication(tmp_path, monkeypatch
         if process.returncode is None:
             process.kill()
             await process.wait()
-
-
-@pytest.mark.asyncio
-async def test_start_retries_residual_private_instruction_cleanup(tmp_path, monkeypatch) -> None:
-    connection = _StartProbeOpenCodeConnection()
-    created: list[Path] = []
-    failed_unlink = False
-    original_unlink = Path.unlink
-
-    def unlink(path, *args, **kwargs):
-        nonlocal failed_unlink
-        if created and path == created[0] and not failed_unlink:
-            failed_unlink = True
-            raise PermissionError("one-shot unlink failure")
-        return original_unlink(path, *args, **kwargs)
-
-    async def launch(config, spec):
-        path = opencode_http.materialize_system_prompt(config.system, {})
-        assert path is not None
-        connection._instruction_path = path
-        created.append(path)
-        if len(created) == 1:
-            raise RuntimeError("first launch failed")
-        connection._process = FakeOpenCodeProcess()
-
-    monkeypatch.setattr(Path, "unlink", unlink)
-    monkeypatch.setattr(connection, "_launch_process", launch)
-    spec = ResolvedLaunchSpec(
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-    try:
-        with pytest.raises(RuntimeError, match="first launch failed"):
-            await connection.start(_build_connection_config(tmp_path), spec)
-        assert created[0].exists()
-        await connection.start(_build_connection_config(tmp_path), spec)
-        await connection.stop()
-        assert all(not path.exists() for path in created)
-    finally:
-        for path in created:
-            original_unlink(path, missing_ok=True)
 
 
 class _ScriptedSseContent:

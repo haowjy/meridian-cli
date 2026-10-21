@@ -18,3 +18,26 @@
   lifetimes; the current shared loop intentionally keeps the review fold bounded.
 - `claude_inbox.py`: posting to Claude's inbox is fire-and-forget, because the socket replies with nothing. Claude can send a `peer_message_status` receipt (delivered/held/refused) to a sender's `uds:` reply address, but the format was found only in the bundle and isn't documented. If it becomes documented, bind a temporary reply socket so `spawn inject` can report "held for approval" or "refused" instead of just "posted" (`work:claude-mod-inject` D7).
 - `../claude_runtime/meridian-idle/`: a TUI primary could also show child-spawn status through `$.ui.status`, and get native `done`/`rearm` tools via `$.tool.register`. Both were proven in probe p8415. They're left out because `spawn done`/`rearm` act only on resident spawns, and a user ends a TUI primary. Add them to the existing idle mod if primaries gain a resident/completion contract (`work:claude-mod-inject` D7).
+- `projections/project_opencode_subprocess.py`: an OpenCode 2 black-box fallback that
+  resumes a session committed to another agent gets no Meridian prompt, because the v2
+  bare TUI rejects `--agent`. Fresh fallback sessions take `default_agent`. To close it,
+  run a private `opencode serve`, call `POST /api/session/{id}/agent`, then attach the
+  TUI with `--server`; or use a `--agent` flag if a later v2 adds one.
+- `opencode.py`: profile tool/permission policy is not applied to OpenCode interactive
+  primaries (they defer to the native TUI on both versions). Meridian's config agent
+  could carry the profile's `permission` rules so primaries follow the profile too.
+  Needs an owner decision: it changes what a user can do in their own TUI.
+- OpenCode 2 has no effort channel that reaches the request: config parses
+  `provider/model#variant` and agent `model.variant`, but probes saw no reasoning field
+  in provider requests. Revisit when upstream wires variants through.
+- `opencode.py` / `connections/opencode_v2_http.py`: the V2 permission merge still
+  rewrites `OPENCODE_CONFIG_CONTENT` at connection launch, so the config has two
+  writers (bind's hook, then the connection) and the OpenCode version is resolved in
+  four places (primary preview, subprocess spec, idle sensor, connection dispatcher).
+  Resolve the concrete version once at bind (carry `v1`/`v2` on
+  `spec.opencode_version`; keep the preference only for dry-run, which must stay
+  probe-free), fold the permission merge into `project_launch_env()`, and drop the
+  duplicate probes and the connection-time config write. While there, check whether V2
+  `opencode run` receives tool permissions at all: `env.py` gives it only
+  `OPENCODE_PERMISSION`, which V2 ignores, so a non-interactive V2 spawn may run
+  without the profile's tool policy. Unprobed.

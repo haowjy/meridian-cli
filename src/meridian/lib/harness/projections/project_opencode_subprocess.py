@@ -30,15 +30,17 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "mcp_tools",
         "projected_roots",
         "agent_name",
-        "appended_system_prompt",
         "skills",
         "opencode_version",
     }
 )
 
+# ``appended_system_prompt`` is delivered at launch bind as a config agent
+# (``project_opencode_config.py``), not by this projection.
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
+        "appended_system_prompt",
         "agents_payload",
         "claude_native_agents_enabled",
         "claude_runtime",
@@ -135,11 +137,6 @@ def project_opencode_spec_to_cli_args(
             "OpenCode subprocess received spec.skills but has no native skills flag; "
             "skills must be delivered by prompt injection or streaming payload"
         )
-    if spec.appended_system_prompt:
-        logger.debug(
-            "OpenCode subprocess cannot project appended_system_prompt separately; "
-            "streaming transport sends it via the message system field"
-        )
     if spec.projected_roots:
         logger.debug(
             "OpenCode subprocess workspace roots are projected via %s env.",
@@ -148,8 +145,17 @@ def project_opencode_spec_to_cli_args(
 
     command: list[str] = list(base_command)
 
-    if spec.model is not None:
-        command.extend(("--model", spec.model))
+    # V2's bare TUI rejects ``--model`` and ``--agent`` (a fresh session's model and
+    # default agent ride the bound config) and otherwise attaches to the shared
+    # background service, which never sees this launch's env (config content,
+    # OPENCODE_DB). A resumed V2 session therefore keeps its stored agent here.
+    v2_tui = spec.interactive and spec.opencode_version == "v2"
+    if v2_tui:
+        command.append("--standalone")
+
+    model_arg = None if v2_tui else spec.model
+    if model_arg is not None:
+        command.extend(("--model", model_arg))
 
     normalized_effort = (spec.effort or "").strip()
     if normalized_effort:
@@ -163,8 +169,9 @@ def project_opencode_spec_to_cli_args(
         else:
             command.extend(("--variant", normalized_effort))
 
-    if spec.agent_name:
-        command.extend(("--agent", spec.agent_name))
+    agent_arg = None if v2_tui else spec.agent_name
+    if agent_arg is not None:
+        command.extend(("--agent", agent_arg))
 
     has_continue_session = bool(harness_session_id)
     has_continue_fork = has_continue_session and spec.continue_fork
@@ -172,7 +179,7 @@ def project_opencode_spec_to_cli_args(
 
     _log_collision_if_needed(
         managed_flag="--model",
-        has_managed_value=spec.model is not None,
+        has_managed_value=model_arg is not None,
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(
@@ -182,7 +189,7 @@ def project_opencode_spec_to_cli_args(
     )
     _log_collision_if_needed(
         managed_flag="--agent",
-        has_managed_value=bool(spec.agent_name),
+        has_managed_value=agent_arg is not None,
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(

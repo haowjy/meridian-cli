@@ -9,6 +9,10 @@ from typing import Literal, cast
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections.project_opencode_config import (
+    dump_opencode_config_content,
+    opencode_model_parts,
+)
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.constants import BASE_COMMAND_OPENCODE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -37,16 +41,18 @@ _SESSION_PAYLOAD_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-_MESSAGE_FIELDS: frozenset[str] = frozenset({"appended_system_prompt", "model"})
 _REFERENCE_FIELDS: frozenset[str] = frozenset({"reference_items"})
 
 _ACCOUNTED_FIELDS: frozenset[str] = (
-    _SERVE_COMMAND_FIELDS | _SESSION_PAYLOAD_FIELDS | _MESSAGE_FIELDS | _REFERENCE_FIELDS
+    _SERVE_COMMAND_FIELDS | _SESSION_PAYLOAD_FIELDS | _REFERENCE_FIELDS
 )
 _PROJECTED_FIELDS: frozenset[str] = _ACCOUNTED_FIELDS
+# ``appended_system_prompt`` is delivered at launch bind as a config agent
+# (``project_opencode_config.py``), not by this projection.
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
+        "appended_system_prompt",
         "agents_payload",
         "claude_native_agents_enabled",
         "claude_runtime",
@@ -68,7 +74,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
 
 def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
     _ = spec.prompt
-    _ = spec.appended_system_prompt
     if spec.reference_items:
         logger.debug(
             "OpenCode streaming ignores native reference_items; "
@@ -120,15 +125,6 @@ def project_opencode_spec_to_serve_command(
     return command
 
 
-def opencode_model_parts(model: str) -> tuple[str, str]:
-    provider, separator, model_id = model.partition("/")
-    if not separator or not provider.strip() or not model_id.strip():
-        raise HarnessCapabilityMismatch(
-            "OpenCode requires a provider-qualified model: provider/model"
-        )
-    return provider, model_id
-
-
 def project_opencode_model(
     model: str | None, *, id_field: Literal["id", "modelID"],
 ) -> dict[str, str] | None:
@@ -137,29 +133,6 @@ def project_opencode_model(
         return None
     provider, model_id = opencode_model_parts(model)
     return {"providerID": provider, id_field: model_id}
-
-
-def project_opencode_model_config(raw: str | None, model: str, agent: str | None = None) -> str:
-    """Launch-local override; preserve native agent fields and reject malformed input."""
-    opencode_model_parts(model)
-    parsed: object = json.loads(raw) if raw and raw.strip() else {}
-    if not isinstance(parsed, dict):
-        raise HarnessCapabilityMismatch("OpenCode config content must be a JSON object")
-    config = dict(cast("dict[str, object]", parsed))
-    config["model"] = model
-    if agent is not None:
-        agents = config.get("agent", {})
-        if not isinstance(agents, dict):
-            raise HarnessCapabilityMismatch("OpenCode agent configuration must be a JSON object")
-        agents = dict(cast("dict[str, object]", agents))
-        selected = agents.get(agent, {})
-        if not isinstance(selected, dict):
-            raise HarnessCapabilityMismatch(
-                "OpenCode selected-agent configuration must be a JSON object"
-            )
-        agents[agent] = {**cast("dict[str, object]", selected), "model": model}
-        config["agent"] = agents
-    return json.dumps(config, separators=(",", ":"))
 
 
 _OPENCODE_V2_ACTION_ALIASES: dict[str, str] = {
@@ -350,7 +323,7 @@ def merge_opencode_v2_permission_config(
         *_order_opencode_v2_rules_broad_first(_resolve_opencode_v2_rule_collisions(rules)),
         *inherited_external_directory,
     ]
-    return json.dumps(config, separators=(",", ":"))
+    return dump_opencode_config_content(config)
 
 
 def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[str, object]:
@@ -405,7 +378,6 @@ _check_projection_drift(
 __all__ = [
     "_ACCOUNTED_FIELDS",
     "_DELEGATED_FIELDS",
-    "_MESSAGE_FIELDS",
     "_PROJECTED_FIELDS",
     "_REFERENCE_FIELDS",
     "_SERVE_COMMAND_FIELDS",

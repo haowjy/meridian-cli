@@ -45,19 +45,17 @@ from meridian.lib.harness.connections.opencode_http import (
     SessionNotReadyError,
     find_free_port,
     map_approval_decision,
-    materialize_system_prompt,
     permission_liveness_key,
     summarize_body,
 )
+from meridian.lib.harness.projections.project_opencode_config import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.harness.projections.project_opencode_streaming import (
     merge_opencode_v2_permission_config,
     project_opencode_model,
-    project_opencode_model_config,
     project_opencode_spec_to_session_payload,
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
     resolve_spawn_log_dir,
@@ -185,10 +183,6 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             port=port,
         )
         env = dict(config.child_env)
-        if spec.model and not spec.continue_session_id:
-            env[OPENCODE_CONFIG_CONTENT_ENV] = project_opencode_model_config(
-                env.get(OPENCODE_CONFIG_CONTENT_ENV), spec.model, self._model_agent_override
-            )
         # V2 reads permissions from config content, not the V1 OPENCODE_PERMISSION
         # env. Interactive primaries defer to the native TUI, matching V1, which
         # drops its permission override for the primary launch.
@@ -205,7 +199,6 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         spawn_dir = resolve_spawn_log_dir(
             config.control_root, config.spawn_id, runtime_root=runtime_root
         )
-        self._instruction_path = materialize_system_prompt(config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
@@ -271,13 +264,10 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         )
         return self._client
 
-    async def _inspect_selected_model(
-        self, model: str, *, expected_agent: str | None = None
-    ) -> str | None:
+    async def _validate_selected_model(self, model: str) -> None:
         # V2 resolves the model from the session (set at create or via /model);
-        # the 1.x native-agent config override does not apply here.
-        _ = model, expected_agent
-        return None
+        # there is no V1-style provider/config inspection to run.
+        _ = model
 
     async def _create_session(self, spec: ResolvedLaunchSpec) -> str:
         self._emit_startup_phase(StartupPhase.INITIALIZING_SESSION)
@@ -293,6 +283,10 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             if status in self._SUCCESS_STATUSES:
                 session_id = _v2_session_id(body)
                 if session_id and session_id.strip() == continue_session_id:
+                    # A resumed session keeps its stored agent and model; ``default_agent``
+                    # only covers sessions with none, so select Meridian's agent here.
+                    if spec.agent_name:
+                        await self._switch_session_agent(continue_session_id, spec.agent_name)
                     if spec.model:
                         await self._switch_session_model(continue_session_id, spec.model)
                     return continue_session_id
@@ -329,37 +323,46 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             f"body={summarize_body(body)}"
         )
 
+    async def _switch_session_agent(self, session_id: str, agent: str) -> None:
+        """Select ``agent`` for a resumed session's subsequent turns."""
+
+        await self._post_session_switch(session_id, "agent", {"agent": agent})
+
     async def _switch_session_model(self, session_id: str, model: str) -> None:
         """Apply the resolved model to a resumed session.
 
-        The server resets the variant to default when omitted, and unknown routes
-        fall through to an SPA ``200 text/html`` response, so success requires a
-        non-HTML content type.
+        The server resets the variant to default when omitted.
         """
 
         projected = project_opencode_model(model, id_field="id")
-        if projected is None:
-            return
+        if projected is not None:
+            await self._post_session_switch(session_id, "model", {"model": projected})
+
+    async def _post_session_switch(
+        self, session_id: str, route: str, payload: dict[str, object]
+    ) -> None:
+        # Unknown routes fall through to an SPA ``200 text/html`` response, so success
+        # requires a non-HTML content type.
         status, body, content_type = await self._post_json(
-            f"/api/session/{session_id}/model",
-            {"model": projected},
+            f"/api/session/{session_id}/{route}",
+            payload,
             skip_body_on_statuses=self._SUCCESS_STATUSES,
         )
         if status in self._SUCCESS_STATUSES and "text/html" not in content_type:
             return
         raise HarnessCapabilityMismatch(
-            f"OpenCode V2 session model switch failed: status={status} body={summarize_body(body)}"
+            f"OpenCode V2 session {route} switch failed: "
+            f"status={status} body={summarize_body(body)}"
         )
 
     async def _post_session_message(
         self,
         text: str,
         *,
-        system: str | None = None,
         fresh: bool = False,
         model: str | None = None,
     ) -> None:
-        _ = system, fresh, model
+        _ = fresh, model
         if self._initial_prompt_posted_at is None:
             self._initial_prompt_posted_at = time.time()
         await self._post_session_action(
@@ -587,7 +590,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
 
         return await self._reconcile_initial_terminal()
 
-    async def _cleanup_runtime(self, *, replacement_deadline: float | None = None) -> None:
+    async def _cleanup_runtime(self) -> None:
         task = self._stdout_drain_task
         self._stdout_drain_task = None
         if task is not None and not task.done():
@@ -595,7 +598,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._server_password = None
-        await super()._cleanup_runtime(replacement_deadline=replacement_deadline)
+        await super()._cleanup_runtime()
 
 
 __all__ = ["OpenCodeV2Connection", "v2_session_idle_marker"]

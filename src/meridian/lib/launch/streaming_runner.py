@@ -995,7 +995,6 @@ async def execute_with_streaming(
             child_env=child_env,
             runtime_root=runtime_root,
             task_cwd=child_cwd if child_cwd.resolve() != control_root.resolve() else None,
-            system=getattr(spec, "appended_system_prompt", None),
             timeout_seconds=timeout_seconds,
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
             resident_deadline_seconds=resident_deadline_seconds,

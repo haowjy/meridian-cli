@@ -50,7 +50,6 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.workspace_projection import (
-    OPENCODE_CONFIG_CONTENT_ENV,
     project_workspace_roots,
 )
 from meridian.lib.safety.permissions import PermissionConfig
@@ -1666,7 +1665,6 @@ def bind_launch_context(
     workspace_projection = project_workspace_roots(
         harness_id=harness.id,
         roots=projected_roots,
-        parent_opencode_config_content=base_env.get(OPENCODE_CONFIG_CONTENT_ENV),
     )
     projected_extra_args = preflight.expanded_passthrough_args
     if workspace_projection.diagnostics:
@@ -1913,13 +1911,19 @@ def bind_launch_context(
         runtime_overrides={**runtime_override_env, **child_context_env},
         preflight_overrides=preflight.extra_env,
     )
-    bind_env_overrides.update(workspace_projection.env_overrides)
     env = build_env_plan(
         base_env=base_env,
         adapter=harness,
         run_inputs=run_params,
         permission_config=permission_config,
         runtime_env_overrides=bind_env_overrides,
+    )
+    env.update(
+        harness.project_launch_env(
+            spec=spec,
+            system_prompt_path=system_prompt_path,
+            env=env,
+        )
     )
     intent = harness.plan_native_identity(
         run_params, preforked_session_id=bindings.forked_harness_session_id)
@@ -1933,7 +1937,6 @@ def bind_launch_context(
         child_context_env=child_context_env,
         plan_env=dict(bindings.plan_overrides),
         preflight_env=dict(preflight.extra_env),
-        workspace_env=dict(workspace_projection.env_overrides),
         runtime_override_env=runtime_override_env,
         bind_env_overrides=bind_env_overrides,
         runner_overlay_env={},

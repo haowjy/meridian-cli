@@ -292,7 +292,6 @@ class ConnectionConfig:
     child_env: dict[str, str]
     runtime_root: Path | None = None
     task_cwd: Path | None = None
-    system: str | None = None
     timeout_seconds: float | None = None
     pi_child_wave_timeout_seconds: float | None = None
     resident_deadline_seconds: float = 3000.0

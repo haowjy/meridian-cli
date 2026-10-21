@@ -120,7 +120,9 @@ class InlineFileReferenceContribution:
 class ProjectionChannels:
     """Adapter-resolved channel decisions for semantic content categories."""
 
-    system_instruction: Literal["append-system-prompt", "system-field", "inline", "none"]
+    system_instruction: Literal[
+        "append-system-prompt", "system-field", "config-agent", "inline", "none"
+    ]
     user_task_prompt: Literal["user-turn", "inline"]
     task_context: Literal["user-turn", "inline", "native-injection"]
 
