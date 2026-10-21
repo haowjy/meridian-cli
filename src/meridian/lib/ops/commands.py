@@ -1,9 +1,10 @@
 """Explicit operation manifest shared by CLI and MCP surfaces."""
 
 from meridian.lib.extensions.declaration import OpDeclaration
-from meridian.lib.extensions.types import ExtensionCommandSpec, ExtensionSurface
+from meridian.lib.extensions.types import ExtensionSurface
 
-_OP_SPECS: tuple[OpDeclaration, ...] = (
+# Metadata only: implementations import when the registry resolves a declaration.
+OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
         extension_id="meridian.config",
         command_id="get",
@@ -655,17 +656,4 @@ _OP_SPECS: tuple[OpDeclaration, ...] = (
 )
 
 
-def get_all_op_specs() -> list[ExtensionCommandSpec]:
-    """Return all op-style specs for registration."""
-
-    return [spec.resolve() for spec in _OP_SPECS]
-
-
-__all__ = [
-    "get_all_op_specs",
-]
-
-
-def get_cli_op_declarations(group: str) -> list[OpDeclaration]:
-    """Read registration metadata without importing operation implementations."""
-    return [spec for spec in _OP_SPECS if spec.cli_group == group]
+__all__ = ["OP_DECLARATIONS"]

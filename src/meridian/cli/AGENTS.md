@@ -19,9 +19,10 @@ argv
 
 ## Key Rules
 
-- **Session handler imports stay local.** Registration consumes lightweight op
-  declarations, not the fully resolved first-party registry. Loading that registry
-  defeats handler-local imports by importing unrelated operations.
+- **Handler imports stay local.** Every group registers through
+  `register_extension_cli_group`, which reads the first-party registry's unresolved
+  declarations; only an auto-generated handler resolves its operation. Resolving
+  the whole registry (`list_all`, `list_for_surface`) imports every operation.
 - **Selective command imports.** `_register_commands_for_invocation()` imports and explicitly registers only the module group matching the first positional token. Full registration fires only for `--help`.
 - **`app_tree.py` breaks the circular import.** It defines top-level Cyclopts app objects (`spawn_app`, `session_app`, etc.) without importing any command implementations. If you import command implementations from `app_tree.py`, selective registration collapses into importing everything.
 - **`invocation.py` owns invocation state.** Command modules import `emit`, `get_global_options()`, and `current_output_sink()` from there. They never import `main.py` or receive those values through registration callbacks.

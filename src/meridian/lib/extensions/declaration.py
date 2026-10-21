@@ -24,6 +24,7 @@ class OpDeclaration:
     cli_group: str | None = None
     cli_name: str | None = None
     surfaces: frozenset[ExtensionSurface] = frozenset({ExtensionSurface.CLI, ExtensionSurface.MCP})
+    first_party: bool = True
 
     @property
     def fqid(self) -> str:
@@ -31,6 +32,7 @@ class OpDeclaration:
 
     @cached_property
     def resolved(self) -> ExtensionCommandSpec:
+        """Import the implementation and build the full spec (once)."""
         return ExtensionCommandSpec.from_op(
             extension_id=self.extension_id,
             command_id=self.command_id,
@@ -42,7 +44,5 @@ class OpDeclaration:
             cli_group=self.cli_group,
             cli_name=self.cli_name,
             surfaces=self.surfaces,
+            first_party=self.first_party,
         )
-
-    def resolve(self) -> ExtensionCommandSpec:
-        return self.resolved

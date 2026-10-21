@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from cyclopts import App, Parameter
 
-from meridian.cli.ext_registration import register_extension_cli_specs
+from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, emit
 from meridian.cli.utils import cli_project_root_posix
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.commands import get_cli_op_declarations
+from meridian.lib.extensions.registry import get_first_party_registry
 
 if TYPE_CHECKING:
     from meridian.lib.ops.session_reentry import SessionReentryDecision
@@ -518,9 +518,10 @@ def register_session_commands(app: App) -> None:
         "meridian.session.search": lambda: partial(_session_search, emit),
         "meridian.session.repair": lambda: partial(_session_repair, emit),
     }
-    register_extension_cli_specs(
+    register_extension_cli_group(
         app,
-        specs=get_cli_op_declarations("session"),
+        registry=get_first_party_registry(),
+        group="session",
         handlers=handlers,
         command_help_epilogues={
             "meridian.session.log": (
