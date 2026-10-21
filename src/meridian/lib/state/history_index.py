@@ -1594,7 +1594,9 @@ class HistoryIndex:
         live_chat_ids: set[str],
         status: Literal["active", "archived"] | None = None,
         sort: Literal["updated", "created"] = "updated",
+        chat_ids: set[str] | None = None,
     ) -> tuple[list[SessionRecord | SpawnRecord], int]:
+        """Select picker records; ``chat_ids`` addresses live chats and overrides ``status``."""
         newer = SESSIONS.alias("newer")
         live_expr = SESSIONS.c.chat.in_(sorted(live_chat_ids)) if live_chat_ids else literal(0)
         archive_created = (
@@ -1649,7 +1651,16 @@ class HistoryIndex:
                 literal(0).label("tie"),
             ).where(RECORDS.c.archive_id.is_not(None), RECORDS.c.kind == "primary"),
         ).cte("browse")
-        if status is not None:
+        if chat_ids is not None:
+            browse = (
+                select(browse)
+                .where(
+                    browse.c.source == "session",
+                    func.json_extract(browse.c.record_json, "$.chat_id").in_(sorted(chat_ids)),
+                )
+                .cte("addressed")
+            )
+        elif status is not None:
             browse = (
                 select(browse)
                 .where(browse.c.source == ("archive" if status == "archived" else "session"))

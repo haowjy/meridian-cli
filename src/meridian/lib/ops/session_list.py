@@ -29,6 +29,8 @@ class SessionListInput(BaseModel):
     limit: int = Field(default=50, gt=0)
     status: Literal["active", "archived"] = "active"
     sort: Literal["updated", "created"] = "updated"
+    # Address specific chats (lineage nodes); overrides ``status``.
+    chat_ids: tuple[str, ...] | None = None
 
 
 class SessionListRow(BaseModel):
@@ -158,6 +160,7 @@ def session_list_sync(
         live_chat_ids=live_chat_ids,
         status=payload.status,
         sort=payload.sort,
+        chat_ids=set(payload.chat_ids) if payload.chat_ids is not None else None,
     )
     archived_metadata = index.archived_session_metadata(
         {str(record.history_id) for record in visible_records if isinstance(record, SpawnRecord)}
