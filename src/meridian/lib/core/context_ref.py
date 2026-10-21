@@ -52,7 +52,8 @@ class SessionContextRef(BaseModel):
 
 type ContextRef = SpawnContextRef | SessionContextRef
 
-_SESSION_REF_RE = re.compile(r"^c\d+$")
+# A chat handle (``c12``), as opposed to a spawn id or a native session id.
+CHAT_REF_RE = re.compile(r"^c\d+$")
 
 
 def resolved_context_ref_value(ref: ContextRef) -> str:
@@ -73,7 +74,7 @@ def _render_context_ref(ref: ContextRef) -> str:
             tag_attrs += f' primary_spawn="{ref.primary_spawn_id}"'
         transcript_ref = (
             ref.chat_id
-            if _SESSION_REF_RE.fullmatch(ref.chat_id) or ref.primary_spawn_id is None
+            if CHAT_REF_RE.fullmatch(ref.chat_id) or ref.primary_spawn_id is None
             else ref.primary_spawn_id
         )
         lines = [
@@ -146,6 +147,7 @@ def context_ref_values(refs: Sequence[ContextRef]) -> tuple[str, ...]:
 
 
 __all__ = [
+    "CHAT_REF_RE",
     "ContextRef",
     "SessionContextRef",
     "SpawnContextRef",
