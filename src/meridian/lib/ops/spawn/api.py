@@ -2,14 +2,11 @@
 
 import asyncio
 import os
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-import psutil
 
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -37,7 +34,6 @@ from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.pi_private_state import SpawnObservations, WaitReservation
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
@@ -58,15 +54,14 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
-from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_observations import record as record_spawn_observation
 from meridian.lib.state.spawn_signals import (
     SpawnSignalKind,
     read_accepted_signals,
@@ -1666,73 +1661,6 @@ def _resolve_wait_checkpoint_seconds(
     return float(config.wait_yield_seconds_for_harness(parent_harness))
 
 
-def _update_pi_wait_observation(
-    *,
-    runtime_root: Path,
-    parent_spawn_id: str | None,
-    waiting_add: tuple[str, ...] = (),
-    waiting_remove: tuple[str, ...] = (),
-    observed_add: tuple[str, ...] = (),
-    lease_seconds: float = 30.0,
-) -> None:
-    """Record spawn IDs the parent session is explicitly waiting for or saw.
-
-    The Pi spawn watcher uses this as a suppression marker for implicit
-    completion notifications. ``state.json`` remains authority for spawn state;
-    this file is UI policy state under the parent Pi session's coordination dir.
-    """
-
-    if not parent_spawn_id or not (waiting_add or waiting_remove or observed_add):
-        return
-
-    observed_path = runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.json"
-    lock_path = runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.lock"
-    with lock_file(lock_path):
-        try:
-            existing = SpawnObservations.model_validate_json(
-                observed_path.read_text(encoding="utf-8")
-            )
-        except FileNotFoundError:
-            existing = SpawnObservations(v=1, spawn_id=parent_spawn_id, observed_spawn_ids=[])
-        if existing.spawn_id != parent_spawn_id:
-            raise ValueError("Pi spawn observation parent mismatch")
-        observed_ids = set(existing.observed_spawn_ids)
-        now = time.time()
-        reservations = {
-            token: lease
-            for token, lease in existing.wait_reservations.items()
-            if lease.expires_at_epoch > now
-        }
-        token = f"{os.getpid()}:{threading.get_ident()}"
-        own_lease = reservations.get(token)
-        own_ids = set(own_lease.spawn_ids if own_lease else ())
-        own_ids.update(waiting_add)
-        own_ids.difference_update(waiting_remove)
-        if own_ids:
-            reservations[token] = WaitReservation(
-                owner_pid=os.getpid(),
-                owner_birth_epoch=psutil.Process().create_time(),
-                expires_at_epoch=now + lease_seconds,
-                spawn_ids=sorted(own_ids),
-            )
-        else:
-            reservations.pop(token, None)
-        waiting_ids = {item for lease in reservations.values() for item in lease.spawn_ids}
-        observed_ids.update(observed_add)
-        atomic_write_text(
-            observed_path,
-            SpawnObservations(
-                v=1,
-                spawn_id=parent_spawn_id,
-                updated_at_ms=time.time() * 1000,
-                observed_spawn_ids=sorted(observed_ids),
-                waiting_spawn_ids=sorted(waiting_ids),
-                wait_reservations=reservations,
-            ).model_dump_json(indent=2)
-            + "\n",
-        )
-
-
 def spawn_wait_sync(
     payload: SpawnWaitInput,
     ctx: RuntimeContext | None = None,
@@ -1844,7 +1772,7 @@ def spawn_wait_sync(
     parent_wait_observer_id = (
         str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
     )
-    _update_pi_wait_observation(
+    record_spawn_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_wait_observer_id,
         waiting_add=spawn_ids,
@@ -1852,7 +1780,7 @@ def spawn_wait_sync(
     )
     try:
         while True:
-            _update_pi_wait_observation(
+            record_spawn_observation(
                 runtime_root=runtime_root,
                 parent_spawn_id=parent_wait_observer_id,
                 waiting_add=tuple(pending),
@@ -1901,7 +1829,7 @@ def spawn_wait_sync(
                         if not _spawn_is_terminal(detail.status)
                     )
                 )
-                _update_pi_wait_observation(
+                record_spawn_observation(
                     runtime_root=runtime_root,
                     parent_spawn_id=parent_wait_observer_id,
                     waiting_remove=spawn_ids,
@@ -1928,7 +1856,7 @@ def spawn_wait_sync(
                     for spawn_id in spawn_ids
                     if spawn_id in completed_rows
                 )
-                _update_pi_wait_observation(
+                record_spawn_observation(
                     runtime_root=runtime_root,
                     parent_spawn_id=parent_wait_observer_id,
                     waiting_remove=spawn_ids,
@@ -1962,7 +1890,7 @@ def spawn_wait_sync(
                         if not _spawn_is_terminal(detail.status)
                     )
                 )
-                _update_pi_wait_observation(
+                record_spawn_observation(
                     runtime_root=runtime_root,
                     parent_spawn_id=parent_wait_observer_id,
                     waiting_remove=spawn_ids,
@@ -2031,7 +1959,7 @@ def spawn_wait_sync(
                 next_progress = now + progress_interval
             time.sleep(min(poll, max(0.0, wait_deadline - time.monotonic())))
     finally:
-        _update_pi_wait_observation(
+        record_spawn_observation(
             runtime_root=runtime_root,
             parent_spawn_id=parent_wait_observer_id,
             waiting_remove=spawn_ids,

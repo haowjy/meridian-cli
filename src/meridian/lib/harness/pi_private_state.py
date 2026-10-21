@@ -72,19 +72,3 @@ class ClearedSpawns(PrivateModel):
     spawn_id: str
     updated_at_ms: float
     cleared_spawn_ids: list[str]
-
-
-class WaitReservation(PrivateModel):
-    owner_pid: StrictInt = Field(gt=0)
-    owner_birth_epoch: float = Field(gt=0)
-    expires_at_epoch: float
-    spawn_ids: list[str]
-
-
-class SpawnObservations(PrivateModel):
-    v: Literal[1]
-    spawn_id: str
-    updated_at_ms: float = 0.0
-    observed_spawn_ids: list[str]
-    waiting_spawn_ids: list[str] = Field(default_factory=list)
-    wait_reservations: dict[str, WaitReservation] = Field(default_factory=dict)
