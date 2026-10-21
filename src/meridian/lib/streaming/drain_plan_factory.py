@@ -83,7 +83,9 @@ def build_drain_plan(
         await inject(spawn_id, message, source="pi_done_nudge")
 
     async def _send_completion_nudge(message: str) -> None:
-        await inject(spawn_id, message, source="completion_nudge")
+        result = await inject(spawn_id, message, source="completion_nudge")
+        if not result.success:
+            raise RuntimeError(result.error or "completion handshake injection failed")
 
     async def _cancel_descendants(root_id: SpawnId) -> set[str]:
         service = build_spawn_application_service(project_root, runtime_root)

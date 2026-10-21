@@ -95,6 +95,8 @@ class CompletionCoordinator:
         """Keep a closed stream alive while success still needs authorization."""
         close_outcome = self._profile.close_outcome(self.state, False)
         return self._candidate is not None and (
+            self._profile.should_defer_close(self.state)
+            or
             (
                 self._phase in {"stabilizing", "validating"}
                 and close_outcome is not None
@@ -469,6 +471,10 @@ class CompletionCoordinator:
                 await self._profile.send_nudge(decision.nudge)
             except Exception:
                 logger.exception("Completion nudge failed.")
+                # Nudge delivery is completion evidence: profiles that make the
+                # handshake best-effort can now accept a ready candidate, while
+                # profiles that do not care simply return to waiting.
+                return await self._evaluate_wait("event")
         return DrainLoopDecision()
 
     def _latch_cleanup_once(

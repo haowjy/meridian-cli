@@ -193,6 +193,10 @@ class _Profile:
     ) -> TerminalEventOutcome | None:
         return state.candidate if intentional_stop else None
 
+    def should_defer_close(self, state: CompletionState) -> bool:
+        del state
+        return False
+
     def next_directive_poll_at(self) -> None:
         return None
 

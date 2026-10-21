@@ -1260,6 +1260,7 @@ class SpawnWaitMultiOutput(BaseModel):
     checkpoint: bool = False
     checkpoint_discovery_pending: bool = False
     checkpoint_pending_ids: tuple[str, ...] = ()
+    checkpoint_descendants: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     checkpoint_chat_id: str | None = None
     checkpoint_elapsed_secs: float | None = None
     # Compatibility fields for single-run callers.
@@ -1333,6 +1334,9 @@ class SpawnWaitMultiOutput(BaseModel):
             if desc:
                 line += f"  {desc}"
             lines.append(line)
+            descendants = self.checkpoint_descendants.get(sid, ())
+            if descendants:
+                lines.append(f"    waiting for descendants: {', '.join(descendants)}")
         lines.append("")
         if self.checkpoint_chat_id:
             lines.append("Run `meridian spawn wait` again to continue.")
@@ -1361,6 +1365,11 @@ class SpawnWaitMultiOutput(BaseModel):
             if self.checkpoint_discovery_pending:
                 wire["checkpoint_discovery_pending"] = True
             wire["checkpoint_pending_ids"] = list(self.checkpoint_pending_ids)
+            if self.checkpoint_descendants:
+                wire["checkpoint_descendants"] = {
+                    spawn_id: list(descendants)
+                    for spawn_id, descendants in self.checkpoint_descendants.items()
+                }
             if self.checkpoint_elapsed_secs is not None:
                 wire["checkpoint_elapsed_secs"] = round(self.checkpoint_elapsed_secs, 2)
             if self.checkpoint_chat_id:

@@ -1955,6 +1955,23 @@ def spawn_wait_sync(
                     )
                     for row in checkpoint_rows
                 )
+                tree_rows = overlay_derived(
+                    runtime_root,
+                    spawn_store.list_spawns(runtime_root).records,
+                )
+                checkpoint_descendants = {
+                    spawn_id: tuple(
+                        row.id
+                        for row in collect_descendants(spawn_id, tree_rows)
+                        if row.id != spawn_id and is_active_spawn_status(row.status)
+                    )
+                    for spawn_id in pending_ids
+                }
+                checkpoint_descendants = {
+                    spawn_id: descendants
+                    for spawn_id, descendants in checkpoint_descendants.items()
+                    if descendants
+                }
                 _update_pi_wait_observation(
                     runtime_root=runtime_root,
                     parent_spawn_id=parent_wait_observer_id,
@@ -1986,6 +2003,7 @@ def spawn_wait_sync(
                     ),
                     checkpoint=True,
                     checkpoint_pending_ids=pending_ids,
+                    checkpoint_descendants=checkpoint_descendants,
                     checkpoint_chat_id=wait_chat_id,
                     checkpoint_elapsed_secs=now - started,
                 )

@@ -310,13 +310,19 @@ async def test_terminal_wait_and_poll_see_late_grandchild_through_terminal_paren
     )
     clock.advance(1.0)
     await coordinator.handle_timeout()
+    await coordinator.wait_for_aux_wake()
+    handshake = await coordinator.handle_aux_wake()
+    assert handshake.recorded_outcome is None
+    assert "meridian spawn done" in connection.fake_resident_backend.injected_messages[-1]
+    coordinator.observe_activity_transition("turn_active")
+    await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     ready = await _after_refresh(coordinator)
     assert ready.recorded_outcome == _SUCCESS
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
+    assert connection.fake_resident_backend.awaiting_done_values[-1] is False
 
 
 @pytest.mark.asyncio
-async def test_terminal_ready_tree_finalizes_immediately(
+async def test_terminal_ready_tree_finalizes_after_confirmation_turn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -324,12 +330,18 @@ async def test_terminal_ready_tree_finalizes_immediately(
     clock.advance(1.0)
 
     requested = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    await coordinator.wait_for_aux_wake()
+    handshake = await coordinator.handle_aux_wake()
+    assert handshake.recorded_outcome is None
+    assert "meridian spawn done" in connection.fake_resident_backend.injected_messages[-1]
+    coordinator.observe_activity_transition("turn_active")
+    await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     decision = await _after_refresh(coordinator)
 
     assert requested.recorded_outcome is None
     assert decision.recorded_outcome == _SUCCESS
     assert requested.emit_turn_boundary is True
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
+    assert connection.fake_resident_backend.awaiting_done_values[-1] is False
 
 
 @pytest.mark.asyncio
@@ -509,9 +521,7 @@ async def test_deadline_outcome_wins_when_explicit_descendant_cancel_races(
     exit_decision = await coordinator.handle_stream_exit(decision.recorded_outcome)
     request = exit_decision.post_publication_cleanup
     assert request is not None
-    cleanup_task = asyncio.create_task(
-        coordinator.execute_post_publication_cleanup(request)
-    )
+    cleanup_task = asyncio.create_task(coordinator.execute_post_publication_cleanup(request))
     explicitly_cancelled, _ = await asyncio.gather(explicit_cancel_task, cleanup_task)
 
     assert explicitly_cancelled in ({"p2"}, set())
@@ -527,7 +537,7 @@ async def test_deadline_outcome_wins_when_explicit_descendant_cancel_races(
 
 
 @pytest.mark.asyncio
-async def test_intentional_stream_close_returns_pending_resident_outcome(
+async def test_intentional_stream_close_refuses_blocked_resident_outcome(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -539,23 +549,21 @@ async def test_intentional_stream_close_returns_pending_resident_outcome(
     clock.advance(1.0)
     close_outcome = coordinator.handle_close(intentional_stop=True)
 
-    assert close_outcome == _SUCCESS
+    assert close_outcome is not None
+    assert close_outcome.status == "failed"
+    assert close_outcome.error == "stream_closed_while_awaiting_done"
     assert connection.fake_resident_backend.awaiting_done_values == [True]
 
 
 @pytest.mark.asyncio
 async def test_short_deadline_nudge_cadence_and_urgency(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A due nudge is ordinary at half-window, urgent if delivery is delayed."""
-    from meridian.lib.streaming.completion_nudge import (
-        COMPLETION_NUDGE_MESSAGE,
-        TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE,
-    )
-
-    for delay, message in (
-        (10.0, COMPLETION_NUDGE_MESSAGE),
-        (19.0, TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE),
+    for delay, urgent in (
+        (10.0, False),
+        (19.0, True),
     ):
         root = tmp_path / str(delay)
         coordinator, connection, clock = _coordinator(root, monkeypatch, deadline_seconds=20.0)
@@ -570,6 +578,9 @@ async def test_short_deadline_nudge_cadence_and_urgency(
             assert not connection.fake_resident_backend.injected_messages
             clock.advance(delay - 9.0)
             await coordinator.handle_timeout()
-            assert connection.fake_resident_backend.injected_messages == [message]
+            assert len(connection.fake_resident_backend.injected_messages) == 1
+            message = connection.fake_resident_backend.injected_messages[0]
+            assert "meridian spawn done" in message
+            assert ("expires soon" in message) is urgent
         finally:
             await coordinator.stop()

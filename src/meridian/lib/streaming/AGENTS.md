@@ -9,8 +9,8 @@ Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
 candidate/deadline mechanics and the stabilization/validation phases live in
 `CompletionCoordinator`, behind
 the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
-`coordinator=None`; native-task holds, Codex/OpenCode resident completion, and Pi
-each supply their own profile. Keep Pi child-wave,
+`coordinator=None`; Claude/Codex/OpenCode completion shares one hold profile, and Pi
+supplies its own profile. Keep Pi child-wave,
 disk-state, direct-follow-up gating, resident-done nudges, and descendant cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
@@ -22,15 +22,14 @@ resident policy. Drain collaborators must not construct application services.
 **Do not key resident behavior off harness ids.** A connection exposes a native task
 source (`native_task_source()`) independently of resident backend control. Both feed
 one `HoldEvidence(descendants, native)` built by `ResidentDrainCoordinator.build`:
-resident backend control selects persisted-descendant evidence and nudges through
-`begin_followup_turn`; Claude supplies its native task source, nudged through
-serialized inject, and does not yet wait on descendants. Select the profile once from
-these capabilities; evidence reports facts, while profiles own hold, done/rearm,
-deadline and nudge policy.
+resident backend control nudges through `begin_followup_turn`; Claude supplies its
+native task source and is nudged through serialized inject. Every hold also reads
+persisted descendants. Select the profile once from these capabilities; evidence
+reports facts, while profiles own hold, done/rearm, deadline and nudge policy.
 
 ## Completion and Absolute Timeout Models
 
-Resident completion uses an absolute deadline per arm. Only an explicit
+Hold completion uses an absolute deadline per arm. Only an explicit
 `rearm.signal` can grant a new window; ordinary harness or descendant activity cannot.
 Rearm grants are unlimited by default. `--resident-rearm-budget`,
 `MERIDIAN_RESIDENT_REARM_BUDGET`, profile `resident-rearm-budget`, or
@@ -43,8 +42,11 @@ activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
 Native-task activity never renews the deadline. Explicit done authorizes completion
-with leftover native tasks; managed-scope teardown stops them. Keep native result-wait
-and nudge behavior in the native profile, not the shared coordinator or evidence adapter.
+with leftover native tasks; managed-scope teardown stops them. A successful completion
+candidate gets one best-effort confirmation turn: `done` accepts, `rearm` opens another
+window, and silence accepts only after evidence is ready. The default completion window
+is the spawning harness's configured wait-yield interval unless
+`timeouts.resident_deadline_seconds` overrides it.
 
 For all three profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
 ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
@@ -151,9 +153,8 @@ session drains that keep the harness alive across turns.
 - `pi_drain.py` — Pi evidence/cleanup collaborators and drain-protocol adapter
 - `pi_work_ledger.py` — sole mutable owner of Pi-private disk blockers; exposes
   immutable categorized snapshots
-- `resident_drain.py` — `HoldEvidence`, resident profile, cleanup, and the hold
+- `resident_drain.py` — `HoldEvidence`, shared hold profile, cleanup, and the hold
   coordinator builder/adapter
-- `native_hold_profile.py` — native-task hold and closing-result policy
 - `rearm_window.py` — shared resident/native signal, deadline, and rearm budget
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — validated Pi-private task/receipt disk

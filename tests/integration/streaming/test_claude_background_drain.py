@@ -24,19 +24,23 @@ from meridian.lib.streaming.drain_plan_factory import build_drain_plan
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from meridian.lib.streaming.types import InjectResult
+from tests.support.pi import start_row
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "scenario", ["natural", "done_midturn", "done_poll", "done_no_result", "no_result", "stop"],
+    "scenario",
+    ["natural", "done_midturn", "done_poll", "done_no_result", "no_result", "stop"],
 )
 async def test_claude_waits_for_background_snapshot_and_followup_result(
-    tmp_path: Path, scenario: str,
+    tmp_path: Path,
+    scenario: str,
 ) -> None:
     delivered: list[NormalizedHarnessEvent] = []
     outcomes: list[DrainOutcome] = []
     spawn_id = SpawnId("p-claude-bg")
     messages: list[str] = []
+    start_row(tmp_path, str(spawn_id), HarnessId.CLAUDE, None)
 
     async def inject(
         _id: SpawnId, message: str, source: str = "control_socket", **_: object
@@ -112,7 +116,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
             control_root=tmp_path,
             child_env={},
             resident_poll_seconds=0.01,
-            resident_deadline_seconds=0.2,
+            resident_deadline_seconds=2.0,
         ),
     )
     session = cast("SpawnSession", SimpleNamespace(cancel_sent=False, started_monotonic=0.0))
@@ -136,7 +140,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
     try:
         await asyncio.wait_for(
             loop.run(spawn_id=spawn_id, receiver=receiver, drain_plan=plan, tracer=None),
-            timeout=1.0,
+            timeout=3.0,
         )
     except TimeoutError:
         pytest.fail("drain hung past the resident deadline")
@@ -155,7 +159,12 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
     assert delivered[-1].raw.payload["result"] == (
         "Final done report" if scenario.startswith("done") else "Marker read: done"
     )
-    assert not messages
+    if scenario == "natural":
+        assert len(messages) == 1
+        assert "meridian spawn done" in messages[0]
+        assert "meridian spawn rearm" in messages[0]
+    else:
+        assert not messages
     assert len(outcomes) == 1
     assert outcomes[0].status == "succeeded"
     assert outcomes[0].authoritative

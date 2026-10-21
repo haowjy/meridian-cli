@@ -544,6 +544,7 @@ class SpawnApplicationService:
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
             resident_deadline_seconds=resolve_resident_deadline_seconds(
                 config_snapshot=launch_config_snapshot,
+                harness_id=harness_id,
             ),
             resident_poll_seconds=resolve_resident_poll_seconds(
                 config_snapshot=launch_config_snapshot,

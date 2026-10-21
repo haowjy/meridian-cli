@@ -249,6 +249,10 @@ class PiCompletionProfile:
         del intentional_stop
         return state.candidate if state.phase in {"stabilizing", "validating"} else None
 
+    def should_defer_close(self, state: CompletionState) -> bool:
+        del state
+        return False
+
     def next_directive_poll_at(self) -> None:
         return None
 

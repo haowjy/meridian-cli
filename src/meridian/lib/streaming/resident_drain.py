@@ -30,10 +30,6 @@ from meridian.lib.streaming.completion_contracts import (
     WorkAssessment,
 )
 from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
-from meridian.lib.streaming.completion_nudge import (
-    COMPLETION_NUDGE_MESSAGE,
-    TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE,
-)
 from meridian.lib.streaming.descendant_evidence import (
     DescendantRefreshOwner,
     ReconciledDescendantEvidence,
@@ -43,7 +39,6 @@ from meridian.lib.streaming.drain_coordinator import (
     DrainLoopDecision,
     DrainTerminalDecision,
 )
-from meridian.lib.streaming.native_hold_profile import NativeTaskHoldProfile
 from meridian.lib.streaming.rearm_window import RearmWindow
 
 if TYPE_CHECKING:
@@ -69,7 +64,7 @@ class HoldEvidence:
     Unreadable descendants dominate and carry their failure; otherwise the hold
     is blocked while either source has blockers. Native facts update with the
     stream, so success validation waits only on a fresh descendant read.
-    Descendants are absent only for Claude, which does not yet wait on them.
+    Descendant refresh starts only after the first completion candidate.
     """
 
     def __init__(
@@ -82,8 +77,7 @@ class HoldEvidence:
         self._native = native
 
     async def start(self) -> None:
-        if self._descendants is not None:
-            self._descendants.start()
+        return None
 
     async def stop(self) -> None:
         if self._descendants is not None:
@@ -146,17 +140,18 @@ class HoldEvidence:
         return self._descendants is None or self._descendants.validated(request)
 
 
-class _ResidentCompletionProfile:
-    """Own resident precedence, signals, backend state, deadline, and nudges."""
+class _HoldProfile:
+    """Own the shared descendant/native completion handshake and deadline."""
 
     def __init__(
         self,
         *,
         runtime_root: Path,
         spawn_id: SpawnId,
-        backend: ResidentBackendControl,
+        backend: ResidentBackendControl | None,
         send_nudge: Callable[[str], Awaitable[None]],
         deadline_seconds: float,
+        poll_seconds: float,
         rearm_budget: int | None,
         clock: Callable[[], float],
     ) -> None:
@@ -169,9 +164,17 @@ class _ResidentCompletionProfile:
         self._backend = backend
         self._send_nudge = send_nudge
         self._clock = clock
-        self._explicit_hold = False
+        self._confirmation_grace_seconds = poll_seconds
         self._awaiting_done = False
+        self._confirmation_requested = False
+        self._confirmation_turn_started = False
+        self._confirmation_failed = False
+        self._rearmed = False
+        self._normal_nudge_sent = False
+        self._timeout_nudge_sent = False
         self._next_nudge_at: float | None = None
+        self._confirmation_grace_at: float | None = None
+        self._blockers: tuple[DiagnosticBlocker, ...] = ()
 
     def allows_evaluation_without_candidate(self) -> bool:
         return False
@@ -185,12 +188,13 @@ class _ResidentCompletionProfile:
         return self._window.consume_directives()
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
+        self._blockers = context.assessment.blockers
         if context.terminal_action is not None:
             return self._evaluate_terminal(context)
         return self._evaluate_wait(context)
 
     def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
-        if decision.action not in {"wait", "stabilize"}:
+        if decision.action not in {"wait", "stabilize", "complete"}:
             return None
         return self._window.deadline_for(now)
 
@@ -202,8 +206,14 @@ class _ResidentCompletionProfile:
     ) -> TerminalEventOutcome | None:
         if state.candidate is None:
             return None
-        if intentional_stop:
+        if state.assessment is not None and state.assessment.disposition == "ready":
             return state.candidate
+        if intentional_stop:
+            return TerminalEventOutcome(
+                status=SpawnStatus.FAILED,
+                exit_code=1,
+                error="stream_closed_while_awaiting_done",
+            )
         if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
             return _BACKEND_DEAD_WHILE_AWAITING_DONE
         return TerminalEventOutcome(
@@ -212,25 +222,50 @@ class _ResidentCompletionProfile:
             error="stream_closed_while_awaiting_done",
         )
 
-    def next_nudge_at(
-        self, state: CompletionState, assessment: WorkAssessment
-    ) -> float | None:
-        del state, assessment
-        return self._next_nudge_at if self._explicit_hold else None
+    def should_defer_close(self, state: CompletionState) -> bool:
+        return (
+            state.candidate is not None
+            and state.assessment is not None
+            and state.assessment.disposition == "blocked"
+            and all(
+                blocker.source == "persisted_descendant"
+                for blocker in state.assessment.blockers
+            )
+            and self._resident_health_status() == LivenessDecision.CONTINUE
+        )
+
+    def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
+        del assessment
+        if self._timeout_nudge_sent or state.deadline_at is None:
+            reminder_at = None
+        elif self._normal_nudge_sent:
+            reminder_at = state.deadline_at - self._window.nudge_interval
+        else:
+            reminder_at = self._next_nudge_at
+        due = [value for value in (self._confirmation_grace_at, reminder_at) if value is not None]
+        return min(due) if due else None
 
     def next_directive_poll_at(self) -> None:
         return None
 
     async def send_nudge(self, urgency: NudgeUrgency) -> None:
-        self._next_nudge_at = self._clock() + self._window.nudge_interval
+        self._confirmation_requested = True
+        self._confirmation_failed = False
+        self._rearmed = False
+        if urgency == "timeout_soon":
+            self._timeout_nudge_sent = True
+        else:
+            self._normal_nudge_sent = True
+        self._next_nudge_at = None
+        self._confirmation_grace_at = self._clock() + self._confirmation_grace_seconds
         if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
-            return
-        message = (
-            TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE
-            if urgency == "timeout_soon"
-            else COMPLETION_NUDGE_MESSAGE
-        )
-        await self._send_nudge(message)
+            self._confirmation_failed = True
+            raise RuntimeError("completion handshake backend is unavailable")
+        try:
+            await self._send_nudge(self._nudge_message(urgency))
+        except Exception:
+            self._confirmation_failed = True
+            raise
 
     def stream_exit_decision(
         self,
@@ -244,20 +279,31 @@ class _ResidentCompletionProfile:
         if transition != "turn_active":
             return
         self.set_awaiting_done(False)
-        self._next_nudge_at = self._clock() + self._window.nudge_interval
+        if self._confirmation_requested:
+            self._confirmation_turn_started = True
+            self._confirmation_grace_at = None
+        self._rearmed = False
 
     def clear(self) -> None:
         self.set_awaiting_done(False)
-        self._explicit_hold = False
         self._window.clear()
+        self._confirmation_requested = False
+        self._confirmation_turn_started = False
+        self._confirmation_failed = False
+        self._rearmed = False
+        self._normal_nudge_sent = False
+        self._timeout_nudge_sent = False
         self._next_nudge_at = None
+        self._confirmation_grace_at = None
+        self._blockers = ()
 
     def after_terminal_accepted(self, outcome: TerminalEventOutcome) -> None:
         del outcome
         self.clear()
 
     def _propose_success(self, outcome: TerminalEventOutcome, now: float) -> ProfileDecision:
-        self._enter_wait(now)
+        del now
+        self._enter_wait()
         return ProfileDecision(action="complete", outcome=outcome)
 
     def _evaluate_terminal(self, context: CompletionEvaluation) -> ProfileDecision:
@@ -282,19 +328,32 @@ class _ResidentCompletionProfile:
             return ProfileDecision(action="fail", outcome=outcome)
         if context.directives.rearm:
             self._mark_rearmed(context.now)
+            if not context.directives.done:
+                self._enter_wait()
+                return ProfileDecision(
+                    action="wait",
+                    emit_turn_boundary=True,
+                    reset_deadline=True,
+                )
         if context.directives.done:
             if context.assessment.disposition == "unknown":
-                self._enter_wait(context.now)
+                self._enter_wait()
                 return ProfileDecision(action="wait", emit_turn_boundary=True)
             return self._propose_success(outcome, context.now)
-        if context.assessment.disposition != "ready" or self._explicit_hold:
-            self._enter_wait(context.now)
-            return ProfileDecision(
-                action="wait",
-                emit_turn_boundary=True,
-                reset_deadline=context.directives.rearm,
-            )
-        return self._propose_success(outcome, context.now)
+        if context.assessment.disposition == "unknown":
+            self._enter_wait()
+            return ProfileDecision(action="wait", emit_turn_boundary=True)
+        if self._confirmation_requested:
+            if context.assessment.disposition == "ready":
+                return self._propose_success(outcome, context.now)
+            self._enter_wait()
+            return ProfileDecision(action="wait", emit_turn_boundary=True)
+        self._enter_wait()
+        return ProfileDecision(
+            action="wait",
+            emit_turn_boundary=True,
+            nudge="normal",
+        )
 
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
         candidate = context.candidate
@@ -314,44 +373,117 @@ class _ResidentCompletionProfile:
                             error="resident_evidence_unreadable",
                         ),
                     )
-                return ProfileDecision(action="wait")
+                return ProfileDecision(action="wait", reset_deadline=rearmed)
+            if context.active_turn and (not context.deadline_expired or rearmed):
+                return ProfileDecision(action="wait", reset_deadline=rearmed)
             return self._propose_success(candidate, context.now)
         if context.deadline_expired and not rearmed:
+            if (
+                context.assessment.disposition == "ready"
+                and self._confirmation_requested
+                and not context.active_turn
+            ):
+                return self._propose_success(candidate, context.now)
             self.clear()
             return self._window.timeout_decision()
+        if rearmed:
+            return ProfileDecision(action="wait", reset_deadline=True)
         if context.active_turn:
-            return ProfileDecision(action="wait", reset_deadline=rearmed)
-        if context.assessment.disposition != "ready":
-            return ProfileDecision(action="wait", reset_deadline=rearmed)
-        if self._explicit_hold:
-            nudge = (
-                self._window.nudge_urgency(context)
-                if context.profile_timer_due and not rearmed
-                else None
-            )
-            return ProfileDecision(action="wait", nudge=nudge, reset_deadline=rearmed)
-        return self._propose_success(candidate, context.now)
+            return ProfileDecision(action="wait")
+        if context.assessment.disposition == "unknown":
+            return ProfileDecision(action="wait")
+        confirmation_grace_expired = (
+            self._confirmation_grace_at is not None
+            and context.now >= self._confirmation_grace_at
+            and not self._confirmation_turn_started
+        )
+        if confirmation_grace_expired:
+            self._confirmation_grace_at = None
+            self._confirmation_failed = True
+        if not self._confirmation_requested and not self._rearmed:
+            self._enter_wait()
+            return ProfileDecision(action="wait", nudge="normal")
+        if context.assessment.disposition == "ready" and (
+            self._confirmation_failed or self._confirmation_turn_started
+        ):
+            return self._propose_success(candidate, context.now)
+        if confirmation_grace_expired:
+            self._enter_wait()
+            return ProfileDecision(action="wait")
+        nudge = self._window.nudge_urgency(context) if context.profile_timer_due else None
+        if nudge is not None and self._normal_nudge_sent:
+            nudge = "timeout_soon"
+        self._enter_wait()
+        return ProfileDecision(action="wait", nudge=nudge)
 
     def _mark_rearmed(self, now: float) -> None:
-        self._explicit_hold = True
+        self._confirmation_requested = False
+        self._confirmation_turn_started = False
+        self._confirmation_failed = False
+        self._rearmed = True
+        self._normal_nudge_sent = False
+        self._timeout_nudge_sent = False
         self._next_nudge_at = now + self._window.nudge_interval
+        self._confirmation_grace_at = None
 
-    def _enter_wait(self, now: float) -> None:
-        if self._explicit_hold:
-            self._next_nudge_at = now + self._window.nudge_interval
+    def _enter_wait(self) -> None:
         self.set_awaiting_done(True)
+
+    def _nudge_message(self, urgency: NudgeUrgency) -> str:
+        descendants = [
+            blocker.identity
+            for blocker in self._blockers
+            if blocker.source == "persisted_descendant" and blocker.identity is not None
+        ]
+        tasks = [
+            blocker.identity
+            for blocker in self._blockers
+            if blocker.source == "native_task"
+            and blocker.code == "running"
+            and blocker.identity is not None
+        ]
+        awaiting_result = any(
+            blocker.source == "native_task" and blocker.code == "awaiting_followup_result"
+            for blocker in self._blockers
+        )
+        details: list[str] = []
+        if descendants:
+            ids = " ".join(descendants)
+            details.append(
+                f"Descendant spawns are still running: {', '.join(descendants)}. "
+                f"Run `meridian spawn wait {ids}` before finishing."
+            )
+        if tasks:
+            details.append(f"Background tasks are still running: {'; '.join(tasks)}.")
+        if awaiting_result:
+            details.append("Background tasks finished, but their follow-up result is pending.")
+        if details:
+            message = " ".join(details) + " "
+        else:
+            message = "Before this spawn closes, confirm whether you are actually finished. "
+        message += (
+            "When finished, run `meridian spawn done` and then provide your complete final "
+            "report. If more work remains, run `meridian spawn rearm` and continue."
+        )
+        if urgency == "timeout_soon":
+            message += " This spawn's completion window expires soon."
+        return message
 
     def set_awaiting_done(self, awaiting_done: bool) -> None:
         if awaiting_done == self._awaiting_done:
             return
-        self._backend.set_awaiting_done(awaiting_done)
+        if self._backend is not None:
+            self._backend.set_awaiting_done(awaiting_done)
         self._awaiting_done = awaiting_done
 
     def _resident_health_status(self) -> LivenessDecision:
+        if self._backend is None:
+            return LivenessDecision.CONTINUE
         try:
             return self._backend.health_status()
         except Exception:
             return LivenessDecision.BACKEND_DEAD
+
 
 class _ResidentCompletionCleanup:
     """Cancel resident descendants through the canonical application service."""
@@ -391,7 +523,7 @@ class ResidentDrainCoordinator:
         self,
         *,
         coordinator: CompletionCoordinator,
-        profile: _ResidentCompletionProfile | NativeTaskHoldProfile,
+        profile: _HoldProfile,
     ) -> None:
         self._coordinator = coordinator
         self._profile = profile
@@ -415,43 +547,29 @@ class ResidentDrainCoordinator:
         )
         resolved_poll = poll_seconds if poll_seconds and poll_seconds > 0 else 5.0
         clock = time.monotonic
-        profile: _ResidentCompletionProfile | NativeTaskHoldProfile
-        if native is not None:
-            # Claude keeps its native-task profile, without descendants, until
-            # the two hold profiles merge.
-            evidence = HoldEvidence(descendants=None, native=native)
-            profile = NativeTaskHoldProfile(
-                runtime_root=runtime_root,
-                spawn_id=spawn_id,
-                send_nudge=send_nudge,
-                poll_seconds=resolved_poll,
-                deadline_seconds=resolved_deadline,
-                rearm_budget=rearm_budget,
-                clock=clock,
-            )
-        elif backend is not None:
-            evidence = HoldEvidence(
-                descendants=DescendantRefreshOwner(
-                    ReconciledDescendantEvidence(
-                        runtime_root=runtime_root,
-                        root_spawn_id=spawn_id,
-                    ),
-                    poll_seconds=resolved_poll,
-                    clock=clock,
-                ),
-                native=None,
-            )
-            profile = _ResidentCompletionProfile(
-                runtime_root=runtime_root,
-                spawn_id=spawn_id,
-                backend=backend,
-                send_nudge=send_nudge,
-                deadline_seconds=resolved_deadline,
-                rearm_budget=rearm_budget,
-                clock=clock,
-            )
-        else:
+        if native is None and backend is None:
             raise ValueError("a hold needs a native task source or resident backend control")
+        evidence = HoldEvidence(
+            descendants=DescendantRefreshOwner(
+                ReconciledDescendantEvidence(
+                    runtime_root=runtime_root,
+                    root_spawn_id=spawn_id,
+                ),
+                poll_seconds=resolved_poll,
+                clock=clock,
+            ),
+            native=native,
+        )
+        profile = _HoldProfile(
+            runtime_root=runtime_root,
+            spawn_id=spawn_id,
+            backend=backend,
+            send_nudge=send_nudge,
+            deadline_seconds=resolved_deadline,
+            poll_seconds=resolved_poll,
+            rearm_budget=rearm_budget,
+            clock=clock,
+        )
         coordinator = CompletionCoordinator(
             evidence=evidence,
             profile=profile,
@@ -474,9 +592,7 @@ class ResidentDrainCoordinator:
         self._profile.observe_activity_transition(transition)
         self._coordinator.note_activity_transition(transition)
 
-    async def observe_event(
-        self, event: NormalizedHarnessEvent
-    ) -> NormalizedHarnessEvent | None:
+    async def observe_event(self, event: NormalizedHarnessEvent) -> NormalizedHarnessEvent | None:
         self._profile.observe_activity_transition(event.semantics.activity)
         return await self._coordinator.observe_event(event)
 

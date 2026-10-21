@@ -167,7 +167,7 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
     monkeypatch.setattr(
         streaming_runner_module,
         "resolve_resident_deadline_seconds",
-        lambda *, config_snapshot: 0.01,
+        lambda *, config_snapshot, harness_id: 0.01,
     )
     monkeypatch.setattr(
         streaming_runner_module,
