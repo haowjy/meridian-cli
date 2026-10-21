@@ -33,24 +33,26 @@ class ListState:
     search_unavailable: int = 0
     search_matches: frozenset[str] = frozenset()
     message: str | None = None
-    # A reload is in flight; ``loaded`` is the (status, sort) the current listing answers.
+    # A reload is in flight; ``loaded`` is the scope the current listing answers.
     pending: bool = False
-    loaded: tuple[Status, Sort] | None = None
+    loaded: tuple[Status, Sort, str] | None = None
 
     def __post_init__(self) -> None:
-        self.loaded = (self.status, self.sort)
+        self.loaded = self.scope
+
+    @property
+    def scope(self) -> tuple[Status, Sort, str]:
+        """The query inputs: the session_list query is the only definition of a match."""
+        return self.status, self.sort, self.filter_text.strip()
 
     @property
     def loading(self) -> bool:
         """The body would show another scope's rows (or none yet) until the reload lands."""
-        return self.pending and (self.loaded != (self.status, self.sort) or not self.visible_rows)
+        return self.pending and (self.loaded != self.scope or not self.visible_rows)
 
     @property
     def visible_rows(self) -> tuple[SessionListRow, ...]:
-        needle = self.filter_text.strip().lower()
         rows = self.listing.rows
-        if needle:
-            rows = tuple(row for row in rows if needle in row.filter_text)
         if self.search_mode == "results":
             rows = tuple(row for row in rows if row.chat_id in self.search_matches)
         return rows
@@ -100,7 +102,7 @@ class ListState:
 
     def replace_listing(self, listing: SessionListOutput) -> None:
         self.listing = listing
-        self.loaded = (self.status, self.sort)
+        self.loaded = self.scope
         self.pending = False
         self.highlight = 0
         self.message = None

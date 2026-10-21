@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,10 +14,10 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_ids
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_reentry import Blocked, SessionReentryDecision, decide_reentry
-from meridian.lib.state import session_store, work_store
-from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state import session_store
+from meridian.lib.state.history_index import BrowsePage, HistoryIndex
 from meridian.lib.state.idle_store import IdleState, IdleStore
-from meridian.lib.state.paths import ProjectPaths, RuntimePaths, resolve_project_paths
+from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -40,23 +39,19 @@ class SessionListRow(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     chat_id: str
-    history_id: str | None = None
     session_generation: str = ""
     archived: bool = False
-    historical: bool = False
     created_at: str = ""
     harness: str = ""
     tmux_target: str | None = None
     last_turn_at: str = ""
     cache_deadline: float | None = None
     activity_at: str
-    live: bool
     reentry: SessionReentryDecision
     agent: str
     model: str
     work_label: str
     task_cwd: str
-    native_status: str = ""
 
     @property
     def stale(self) -> bool:
@@ -68,19 +63,6 @@ class SessionListRow(BaseModel):
         if self.agent and self.model and with_model:
             return f"{self.agent} ({self.model})"
         return self.agent or self.model
-
-    @property
-    def filter_text(self) -> str:
-        return " ".join(
-            (
-                self.chat_id,
-                self.tmux_target or "",
-                self.work_label,
-                self.agent,
-                self.model,
-                self.task_cwd,
-            )
-        ).lower()
 
 
 class SessionListOutput(BaseModel):
@@ -157,7 +139,7 @@ def _recent_by_last_turn(
     idle_store: IdleStore,
     idle_states: dict[tuple[str, str], IdleState | None],
     query: str,
-) -> tuple[list[session_store.SessionRecord | SpawnRecord], int]:
+) -> BrowsePage:
     """Active sessions by last activity before LIMIT.
 
     The index orders stopped sessions by stop time. A running session's indexed activity is
@@ -165,11 +147,11 @@ def _recent_by_last_turn(
     sessions are fetched whole, placed by their last turn from the idle file, and merged.
     """
 
-    stopped, stopped_total = index.recent_sessions(
+    stopped = index.recent_sessions(
         limit=limit, status="active", exclude_chat_ids=live_chat_ids, query=query
     )
     running = (
-        index.recent_sessions(limit=len(live_chat_ids), chat_ids=live_chat_ids, query=query)[0]
+        index.recent_sessions(limit=len(live_chat_ids), chat_ids=live_chat_ids, query=query).records
         if live_chat_ids
         else []
     )
@@ -184,7 +166,7 @@ def _recent_by_last_turn(
             record.harness, record.stopped_at or record.started_at, True, idle_states.get(key)
         )
         keyed.append((_epoch(last_turn), _chat_number(record.chat_id), record))
-    for record in stopped:
+    for record in stopped.records:
         if isinstance(record, SpawnRecord):
             activity = record.terminal.finished_at if record.terminal else record.started_at
             keyed.append((_epoch(activity or ""), 0, record))
@@ -197,12 +179,11 @@ def _recent_by_last_turn(
                 )
             )
     keyed.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    return [record for _, _, record in keyed[:limit]], stopped_total + len(running)
-
-
-def _work_label(runtime_root: Path, paths: ProjectPaths, work_id: str) -> str:
-    item = work_store.get_work_item(runtime_root, work_id, paths=paths)
-    return item.name if item is not None else work_id
+    return BrowsePage(
+        [record for _, _, record in keyed[:limit]],
+        stopped.total + len(running),
+        stopped.archived,
+    )
 
 
 def session_list_sync(
@@ -228,20 +209,18 @@ def session_list_sync(
     idle_store = IdleStore()
     idle_states: dict[tuple[str, str], IdleState | None] = {}
     if payload.chat_ids is None and payload.status == "active" and payload.sort == "updated":
-        visible_records, total_count = _recent_by_last_turn(
+        page = _recent_by_last_turn(
             index, payload.limit, live_chat_ids, idle_store, idle_states, payload.query
         )
     else:
-        visible_records, total_count = index.recent_sessions(
+        page = index.recent_sessions(
             limit=payload.limit,
             status=payload.status,
             sort=payload.sort,
             chat_ids=set(payload.chat_ids) if payload.chat_ids is not None else None,
             query=payload.query,
         )
-    archived_metadata = index.archived_session_metadata(
-        {str(record.history_id) for record in visible_records if isinstance(record, SpawnRecord)}
-    )
+    visible_records, archived_metadata = page.records, page.archived
     identities: set[tuple[str, str]] = {
         (record.harness, record.harness_session_id)
         for record in visible_records
@@ -260,16 +239,6 @@ def session_list_sync(
         roots.runtime_root,
         [record for record in visible_records if isinstance(record, session_store.SessionRecord)],
     )
-    work_ids = {
-        record.work_id if isinstance(record, SpawnRecord) else record.active_work_id
-        for record in visible_records
-    }
-    project_paths = resolve_project_paths(roots.project_root)
-    work_labels = {
-        work_id: _work_label(roots.project_state_dir, project_paths, work_id)
-        for work_id in work_ids
-        if work_id
-    }
 
     rows: list[SessionListRow] = []
     for record in visible_records:
@@ -294,7 +263,6 @@ def session_list_sync(
             rows.append(
                 SessionListRow(
                     chat_id=ref,
-                    history_id=ref,
                     session_generation=record.session_instance_id or "",
                     archived=True,
                     last_turn_at=last_turn,
@@ -307,11 +275,10 @@ def session_list_sync(
                     activity_at=record.terminal.finished_at
                     if record.terminal
                     else record.started_at or "",
-                    live=False,
                     reentry=Blocked(f"archived history; read with meridian session log {ref}"),
                     agent=record.agent or "",
                     model=models.get((harness, native_id or ""), record.model or ""),
-                    work_label=work_labels.get(record.work_id or "", ""),
+                    work_label=record.work_id or "",
                     task_cwd=record.task_cwd or record.execution_cwd or "",
                 )
             )
@@ -324,7 +291,6 @@ def session_list_sync(
         rows.append(
             SessionListRow(
                 chat_id=record.chat_id,
-                history_id=str(record.history_id) if record.history_id else None,
                 session_generation=record.session_instance_id
                 or record.harness_session_id
                 or record.started_at,
@@ -333,9 +299,7 @@ def session_list_sync(
                 tmux_target=record.tmux_target,
                 last_turn_at=last_turn,
                 cache_deadline=cache_deadline,
-                historical=record.record_mode == "historical",
                 activity_at=record.stopped_at or record.started_at,
-                live=live,
                 reentry=Blocked("historical record; read-only, cannot resume or fork")
                 if record.record_mode == "historical"
                 else decide_reentry(
@@ -348,13 +312,12 @@ def session_list_sync(
                 ),
                 agent=record.agent,
                 model=models.get((record.harness, record.harness_session_id or ""), record.model),
-                work_label=work_labels.get(record.active_work_id or "", ""),
+                work_label=record.active_work_id or "",
                 task_cwd=record.task_cwd or record.execution_cwd or "",
-                native_status="" if record.native_key() is not None else "unbound",
             )
         )
 
-    return SessionListOutput(rows=tuple(rows), total_count=total_count)
+    return SessionListOutput(rows=tuple(rows), total_count=page.total)
 
 
 session_list = async_from_sync(session_list_sync)

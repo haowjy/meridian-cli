@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
 
 import pytest
 
-from meridian.cli.browse.model import ListState, build_lineage_nodes
+from meridian.cli.browse.model import build_lineage_nodes
 from meridian.cli.session_cmd import (
     Interactive,
     Plain,
@@ -14,28 +13,7 @@ from meridian.cli.session_cmd import (
     resolve_browse_presentation,
 )
 from meridian.lib.ops.session_lineage import SessionLineageEdge
-from meridian.lib.ops.session_list import SessionListOutput, SessionListRow
 from meridian.lib.ops.session_reentry import Fork, Resume
-
-
-def _row(chat_id: str) -> SessionListRow:
-    return SessionListRow(
-        chat_id=chat_id,
-        activity_at=datetime.now(UTC).isoformat(),
-        live=False,
-        reentry=Resume(chat_id),
-        agent="coder",
-        model="gpt",
-        work_label="",
-        task_cwd=f"/tmp/{chat_id}",
-    )
-
-
-def test_filter_is_substring_only() -> None:
-    rows = tuple(_row(chat_id) for chat_id in ("c13711", "c11", "c9"))
-    state = ListState(SessionListOutput(rows=rows, total_count=3), "active", "updated")
-    state.edit_filter("c11")
-    assert [row.chat_id for row in state.visible_rows] == ["c11"]  # not c13711 by subsequence
 
 
 def test_lineage_tree_draws_multi_parent_node_under_each_parent_and_survives_cycles() -> None:

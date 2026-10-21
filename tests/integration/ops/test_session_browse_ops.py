@@ -98,7 +98,6 @@ def test_session_list_is_primary_only_ordered_by_activity_and_capped(tmp_path: P
     assert len(output.rows) == 1
     row = output.rows[0]
     assert row.chat_id == live_chat
-    assert row.live is True
     assert row.reentry == Fork(live_chat)
     assert row.work_label == "browse-feature"
     assert "(1 of 2 shown — use --limit to see more)" in output.format_text()
@@ -327,7 +326,6 @@ def test_list_and_reentry_block_when_native_key_is_incomplete(tmp_path: Path) ->
         listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))
         row = next(row for row in listing.rows if row.chat_id == chat_id)
         assert isinstance(row.reentry, Blocked)
-        assert row.native_status == "unbound"
         assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
     finally:
         session_store.stop_session(runtime_root, chat_id)

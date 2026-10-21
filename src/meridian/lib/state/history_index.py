@@ -17,7 +17,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO, Literal, NoReturn
+from typing import BinaryIO, Literal, NamedTuple, NoReturn
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -209,31 +209,51 @@ CURSORS = Table(
 )
 
 
-def _metadata_match(record_json: ColumnElement[str], needle: str) -> ColumnElement[bool]:
-    """Browse metadata contains ``needle`` (lowercase)."""
+def _metadata_match(
+    chat: ColumnElement[str],
+    record_json: ColumnElement[str],
+    session_json: ColumnElement[str],
+    needle: str,
+) -> ColumnElement[bool]:
+    """A browse row's displayed metadata contains ``needle`` (lowercase).
 
-    def field(*paths: str) -> ColumnElement[str]:
-        return func.coalesce(*(func.json_extract(record_json, path) for path in paths), "")
+    ``session_json`` is the session record that owns the tmux target and native identity:
+    the record itself for a session, the archive receipt's session for an archive.
+    """
+
+    def field(json: ColumnElement[str], *paths: str) -> ColumnElement[str]:
+        return func.coalesce(*(func.json_extract(json, path) for path in paths), "")
 
     haystack = func.lower(
-        field("$.chat_id", "$.history_id")
+        func.coalesce(chat, "")
         .concat(" ")
-        .concat(field("$.tmux_target"))
+        .concat(field(session_json, "$.tmux_target"))
         .concat(" ")
-        .concat(field("$.active_work_id", "$.work_id"))
+        .concat(field(record_json, "$.active_work_id", "$.work_id"))
         .concat(" ")
-        .concat(field("$.agent"))
+        .concat(field(record_json, "$.agent"))
         .concat(" ")
-        .concat(field("$.model"))
+        .concat(field(record_json, "$.model"))
         .concat(" ")
-        .concat(field("$.task_cwd"))
+        .concat(field(record_json, "$.task_cwd", "$.execution_cwd"))
     )
     observed = exists().where(
-        MODEL_OBSERVATIONS.c.harness == field("$.harness"),
-        MODEL_OBSERVATIONS.c.session == field("$.harness_session_id"),
+        MODEL_OBSERVATIONS.c.harness == field(session_json, "$.harness"),
+        MODEL_OBSERVATIONS.c.session == field(session_json, "$.harness_session_id"),
         func.instr(func.lower(MODEL_OBSERVATIONS.c.model), needle) > 0,
     )
     return or_(func.instr(haystack, needle) > 0, observed)
+
+
+class BrowsePage(NamedTuple):
+    """One browse query: records in order, the matching total, and archive sessions.
+
+    ``archived`` maps an archive record's history id to the session its receipt retained.
+    """
+
+    records: list[SessionRecord | SpawnRecord]
+    total: int
+    archived: dict[str, SessionRecord]
 
 
 class HistoryIndexIncomplete(RuntimeError):
@@ -1438,28 +1458,19 @@ class HistoryIndex:
         chat_ids: set[str] | None = None,
         exclude_chat_ids: set[str] | None = None,
         query: str = "",
-    ) -> tuple[list[SessionRecord | SpawnRecord], int]:
+    ) -> BrowsePage:
         """Select picker records ordered by indexed activity or creation.
 
         ``chat_ids`` addresses specific chats and overrides ``status``;
         ``exclude_chat_ids`` drops chats the caller orders itself (running sessions, whose
-        indexed activity is their start time). ``query`` keeps records whose chat id, tmux
-        target, agent, model (recorded or last executed), cwd or work (its name is its id)
-        contains it, case-insensitively; it applies before LIMIT and to the total.
+        indexed activity is their start time). ``query`` keeps rows whose displayed chat,
+        tmux target, agent, model (recorded or last executed), cwd or work (its name is its
+        id) contains it, case-insensitively; it applies before LIMIT and to the total.
         """
         newer = SESSIONS.alias("newer")
-        archive_created = (
-            select(
-                func.coalesce(
-                    func.nullif(
-                        func.json_extract(
-                            LOCATIONS.c.receipt_json, "$.records[0].session.created_at"
-                        ),
-                        "",
-                    ),
-                    func.json_extract(LOCATIONS.c.receipt_json, "$.records[0].session.started_at"),
-                )
-            )
+        # The archive receipt's retained session, read once for ordering, matching and rows.
+        archive_session = (
+            select(func.json_extract(LOCATIONS.c.receipt_json, "$.records[0].session"))
             .join(ARCHIVE_HEADS, ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id)
             .where(
                 LOCATIONS.c.history_id == RECORDS.c.history_id,
@@ -1470,41 +1481,57 @@ class HistoryIndex:
             .limit(1)
             .scalar_subquery()
         )
-        browse = union_all(
-            select(
-                SESSIONS.c.record_json,
-                literal("session").label("source"),
-                SESSIONS.c.activity,
-                func.coalesce(
-                    func.nullif(func.json_extract(SESSIONS.c.record_json, "$.created_at"), ""),
-                    func.json_extract(SESSIONS.c.record_json, "$.started_at"),
-                ).label("created"),
-                func.cast(func.substr(SESSIONS.c.chat, 2), Integer).label("tie"),
-            ).where(
-                SESSIONS.c.kind == "primary",
-                ~exists().where(
-                    newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal
-                ),
-                ~exists().where(
-                    RECORDS.c.archive_id.is_not(None),
-                    RECORDS.c.history_id == SESSIONS.c.history_id,
-                ),
+
+        def created(json: ColumnElement[str]) -> ColumnElement[str]:
+            return func.coalesce(
+                func.nullif(func.json_extract(json, "$.created_at"), ""),
+                func.json_extract(json, "$.started_at"),
+            )
+
+        sessions = select(
+            SESSIONS.c.record_json,
+            SESSIONS.c.record_json.label("session_json"),
+            literal("session").label("source"),
+            func.json_extract(SESSIONS.c.record_json, "$.chat_id").label("chat"),
+            SESSIONS.c.activity,
+            created(SESSIONS.c.record_json).label("created"),
+            func.cast(func.substr(SESSIONS.c.chat, 2), Integer).label("tie"),
+        ).where(
+            SESSIONS.c.kind == "primary",
+            ~exists().where(newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal),
+            ~exists().where(
+                RECORDS.c.archive_id.is_not(None),
+                RECORDS.c.history_id == SESSIONS.c.history_id,
             ),
+        )
+        archives = select(
+            RECORDS.c.record_json,
+            archive_session.label("session_json"),
+            literal("archive").label("source"),
+            RECORDS.c.history_id.label("chat"),
+            RECORDS.c.activity,
+            RECORDS.c.started,
+            literal(0).label("tie"),
+        ).where(RECORDS.c.archive_id.is_not(None), RECORDS.c.kind == "primary")
+        archived = archives.subquery("archived_raw")
+        browse = union_all(
+            sessions,
             select(
-                RECORDS.c.record_json,
-                literal("archive").label("source"),
-                RECORDS.c.activity,
-                func.coalesce(archive_created, RECORDS.c.started).label("created"),
-                literal(0).label("tie"),
-            ).where(RECORDS.c.archive_id.is_not(None), RECORDS.c.kind == "primary"),
+                archived.c.record_json,
+                archived.c.session_json,
+                archived.c.source,
+                archived.c.chat,
+                archived.c.activity,
+                func.coalesce(created(archived.c.session_json), archived.c.started).label(
+                    "created"
+                ),
+                archived.c.tie,
+            ),
         ).cte("browse")
         if chat_ids is not None:
             browse = (
                 select(browse)
-                .where(
-                    browse.c.source == "session",
-                    func.json_extract(browse.c.record_json, "$.chat_id").in_(sorted(chat_ids)),
-                )
+                .where(browse.c.source == "session", browse.c.chat.in_(sorted(chat_ids)))
                 .cte("addressed")
             )
         else:
@@ -1514,21 +1541,23 @@ class HistoryIndex:
                     browse.c.source == ("archive" if status == "archived" else "session")
                 )
             if exclude_chat_ids:
-                chat = func.json_extract(browse.c.record_json, "$.chat_id")
                 conditions.append(
-                    or_(browse.c.source != "session", chat.not_in(sorted(exclude_chat_ids)))
+                    or_(
+                        browse.c.source != "session", browse.c.chat.not_in(sorted(exclude_chat_ids))
+                    )
                 )
             if conditions:
                 browse = select(browse).where(*conditions).cte("scoped")
         needle = query.strip().lower()
         if needle:
-            browse = (
-                select(browse).where(_metadata_match(browse.c.record_json, needle)).cte("matched")
+            match = _metadata_match(
+                browse.c.chat, browse.c.record_json, browse.c.session_json, needle
             )
+            browse = select(browse).where(match).cte("matched")
         with self.query() as db:
             total = db.execute(select(func.count()).select_from(browse)).scalar() or 0
             rows = db.execute(
-                select(browse.c.record_json, browse.c.source)
+                select(browse.c.record_json, browse.c.source, browse.c.chat, browse.c.session_json)
                 .order_by(
                     *(
                         (browse.c.activity.desc(), browse.c.tie.desc())
@@ -1538,36 +1567,16 @@ class HistoryIndex:
                 )
                 .limit(limit)
             )
-            return [
-                SessionRecord.model_validate_json(row[0])
-                if row[1] == "session"
-                else SpawnRecord.model_validate_json(row[0])
-                for row in rows
-            ], total
-
-    def archived_session_metadata(self, history_ids: set[str]) -> dict[str, SessionRecord]:
-        """Read retained session metadata from selected archive receipts in one query."""
-        if not history_ids:
-            return {}
-        result: dict[str, SessionRecord] = {}
-        with self.query() as db:
-            rows = db.execute(
-                select(
-                    LOCATIONS.c.history_id,
-                    func.json_extract(LOCATIONS.c.receipt_json, "$.records[0].session"),
-                )
-                .join(ARCHIVE_HEADS, ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id)
-                .where(
-                    LOCATIONS.c.kind == "archive",
-                    LOCATIONS.c.history_id.in_(sorted(history_ids)),
-                    LOCATIONS.c.portable_digest == ARCHIVE_HEADS.c.portable_digest,
-                )
-                .order_by(LOCATIONS.c.ordinal.desc(), LOCATIONS.c.source_id)
-            )
-            for history_id, raw in rows:
-                if raw is not None and history_id not in result:
-                    result[history_id] = SessionRecord.model_validate_json(raw)
-        return result
+            records: list[SessionRecord | SpawnRecord] = []
+            archived_sessions: dict[str, SessionRecord] = {}
+            for record_json, source, chat, session_json in rows:
+                if source == "session":
+                    records.append(SessionRecord.model_validate_json(record_json))
+                    continue
+                records.append(SpawnRecord.model_validate_json(record_json))
+                if session_json is not None:
+                    archived_sessions[chat] = SessionRecord.model_validate_json(session_json)
+            return BrowsePage(records, total, archived_sessions)
 
     def last_executed_models(self, identities: set[tuple[str, str]]) -> dict[tuple[str, str], str]:
         if not identities:

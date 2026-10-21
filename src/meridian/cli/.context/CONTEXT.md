@@ -213,8 +213,13 @@ transcript once (reload only when the session generation changes) and refreshes 
 shown model through `session_model_refresh_sync`; `l` loads lineage plus the
 nodes' rows through `session_list_sync(chat_ids=...)`.
 
-Rows carry no live marker or live-first order; `row.live` exists only so re-entry forks a running session.
-Type-to-search is always on, so printable keys feed the filter. Space always opens
+Rows carry no live marker or live-first order; each row's `reentry` (decided in
+`session_list_sync`) is what makes a running session fork rather than resume.
+Type-to-search is always on, so printable keys feed the filter. The filter has one
+definition: `session_list`'s `query`, matched in the history index before LIMIT.
+Typing re-runs that query after a 150 ms debounce, and the body shows `loading…` until
+the answer for the current status, sort and text lands; the TUI never re-filters rows
+itself. Space always opens
 the detail view and never filters. `l` opens lineage only while the filter is
 empty (it is text afterwards); Ctrl-L always does. A worker preload thread imports
 the cyclic transcript/search/lineage ops once before any lane runs: concurrent
