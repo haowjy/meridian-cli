@@ -3,7 +3,7 @@
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.harness.model_observation import observe_session_model
-from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
+from meridian.lib.ops.runtime import resolve_roots_for_read
 from meridian.lib.state.history_index import HistoryIndex
 
 
@@ -37,5 +37,3 @@ def session_model_refresh_sync(payload: SessionModelRefreshInput) -> SessionMode
     )
     return SessionModelRefreshOutput(chat_id=payload.chat_id, model=model)
 
-
-session_model_refresh = async_from_sync(session_model_refresh_sync)

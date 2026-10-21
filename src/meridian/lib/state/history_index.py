@@ -1593,7 +1593,7 @@ class HistoryIndex:
                 )
             }
 
-    def lineage_edges(self, chat_id: str) -> list[tuple[str, str, str, str | None]]:
+    def lineage_edges(self, chat_id: str) -> list[tuple[str, str, str]]:
         # Traverse both directions in SQLite, including multiple context parents.
         with self.query() as db:
             return [
@@ -1605,7 +1605,7 @@ class HistoryIndex:
                     "tree(chat) AS (SELECT ? UNION "
                     "SELECT parent FROM edges JOIN tree ON child = chat UNION "
                     "SELECT child FROM edges JOIN tree ON parent = chat) "
-                    "SELECT child, kind, parent, history_id FROM edges "
+                    "SELECT child, kind, parent FROM edges "
                     "WHERE child IN tree ORDER BY child, kind",
                     (chat_id,),
                 )

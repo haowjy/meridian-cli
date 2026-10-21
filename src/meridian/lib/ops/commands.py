@@ -5,26 +5,6 @@ from meridian.lib.extensions.types import ExtensionCommandSpec, ExtensionSurface
 
 _OP_SPECS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
-        extension_id="meridian.session",
-        command_id="lineage",
-        summary="Read top-level fork and context lineage for a chat.",
-        handler="meridian.lib.ops.session_lineage:session_lineage",
-        sync_handler="meridian.lib.ops.session_lineage:session_lineage_sync",
-        input_type="meridian.lib.ops.session_lineage:SessionLineageInput",
-        output_type="meridian.lib.ops.session_lineage:SessionLineageOutput",
-        surfaces=frozenset(),
-    ),
-    OpDeclaration(
-        extension_id="meridian.session",
-        command_id="model-refresh",
-        summary="Refresh a chat's last executed native model.",
-        handler="meridian.lib.ops.session_model:session_model_refresh",
-        sync_handler="meridian.lib.ops.session_model:session_model_refresh_sync",
-        input_type="meridian.lib.ops.session_model:SessionModelRefreshInput",
-        output_type="meridian.lib.ops.session_model:SessionModelRefreshOutput",
-        surfaces=frozenset(),
-    ),
-    OpDeclaration(
         extension_id="meridian.config",
         command_id="get",
         summary="Get one resolved config key with source annotation.",
