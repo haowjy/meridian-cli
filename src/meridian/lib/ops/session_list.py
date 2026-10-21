@@ -31,6 +31,9 @@ class SessionListInput(BaseModel):
     sort: Literal["updated", "created"] = "updated"
     # Address specific chats (lineage nodes); overrides ``status``.
     chat_ids: tuple[str, ...] | None = None
+    # Case-insensitive substring over chat id, tmux, work, agent, model and cwd; applied
+    # before ``limit`` so ``total_count`` is the matching scope.
+    query: str = ""
 
 
 class SessionListRow(BaseModel):
@@ -153,6 +156,7 @@ def _recent_by_last_turn(
     live_chat_ids: set[str],
     idle_store: IdleStore,
     idle_states: dict[tuple[str, str], IdleState | None],
+    query: str,
 ) -> tuple[list[session_store.SessionRecord | SpawnRecord], int]:
     """Active sessions by last activity before LIMIT.
 
@@ -162,10 +166,10 @@ def _recent_by_last_turn(
     """
 
     stopped, stopped_total = index.recent_sessions(
-        limit=limit, status="active", exclude_chat_ids=live_chat_ids
+        limit=limit, status="active", exclude_chat_ids=live_chat_ids, query=query
     )
     running = (
-        index.recent_sessions(limit=len(live_chat_ids), chat_ids=live_chat_ids)[0]
+        index.recent_sessions(limit=len(live_chat_ids), chat_ids=live_chat_ids, query=query)[0]
         if live_chat_ids
         else []
     )
@@ -225,7 +229,7 @@ def session_list_sync(
     idle_states: dict[tuple[str, str], IdleState | None] = {}
     if payload.chat_ids is None and payload.status == "active" and payload.sort == "updated":
         visible_records, total_count = _recent_by_last_turn(
-            index, payload.limit, live_chat_ids, idle_store, idle_states
+            index, payload.limit, live_chat_ids, idle_store, idle_states, payload.query
         )
     else:
         visible_records, total_count = index.recent_sessions(
@@ -233,6 +237,7 @@ def session_list_sync(
             status=payload.status,
             sort=payload.sort,
             chat_ids=set(payload.chat_ids) if payload.chat_ids is not None else None,
+            query=payload.query,
         )
     archived_metadata = index.archived_session_metadata(
         {str(record.history_id) for record in visible_records if isinstance(record, SpawnRecord)}

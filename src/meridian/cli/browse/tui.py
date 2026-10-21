@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import threading
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,8 @@ from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, SessionReent
 if TYPE_CHECKING:
     from prompt_toolkit.input import Input
     from prompt_toolkit.output import Output
+
+_TYPING_DEBOUNCE = 0.15
 
 type View = ListState | DetailState | LineageState
 
@@ -138,18 +141,28 @@ class _Browser:
 
     # --- list -------------------------------------------------------------------------
 
-    def requery(self) -> None:
+    def requery(self, *, debounce: float = 0.0) -> None:
+        """Reload the listing for the current status, sort and typed filter.
+
+        Typing passes ``debounce`` so a burst of keystrokes costs one query; a newer request
+        supersedes the sleeping one.
+        """
         state = self.list
         payload = SessionListInput(
             project_root=self._project_root,
             limit=self._limit,
             status=state.status,
             sort=state.sort,
+            query=state.filter_text.strip(),
         )
 
-        def work(_current: Callable[[], bool], _post: Post) -> SessionListOutput:
+        def work(current: Callable[[], bool], _post: Post) -> SessionListOutput:
             from meridian.lib.ops.session_list import session_list_sync
 
+            if debounce:
+                time.sleep(debounce)
+                if not current():
+                    return state.listing  # superseded; the lane drops this result
             return session_list_sync(payload)
 
         def fail(reason: str) -> None:
@@ -382,6 +395,7 @@ def _bindings(browser: _Browser) -> KeyBindings:
             view.focus = None
         elif view.filter_text:
             view.edit_filter("")
+            browser.requery()
         else:
             browser.exit(None)
 
@@ -422,6 +436,7 @@ def _bindings(browser: _Browser) -> KeyBindings:
             state.search_query = state.search_query[:-1]
         elif state.search_mode == "off":
             state.edit_filter(state.filter_text[:-1])
+            browser.requery(debounce=_TYPING_DEBOUNCE)
 
     @bindings.add(Keys.Any, filter=in_list)
     def _(event: KeyPressEvent) -> None:
@@ -443,6 +458,7 @@ def _bindings(browser: _Browser) -> KeyBindings:
         elif state.search_mode == "off":
             state.focus = None
             state.edit_filter(state.filter_text + value)
+            browser.requery(debounce=_TYPING_DEBOUNCE)
 
     # detail
     for key, sign in (("up", -1), ("down", 1)):

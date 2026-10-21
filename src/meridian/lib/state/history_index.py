@@ -209,6 +209,33 @@ CURSORS = Table(
 )
 
 
+def _metadata_match(record_json: ColumnElement[str], needle: str) -> ColumnElement[bool]:
+    """Browse metadata contains ``needle`` (lowercase)."""
+
+    def field(*paths: str) -> ColumnElement[str]:
+        return func.coalesce(*(func.json_extract(record_json, path) for path in paths), "")
+
+    haystack = func.lower(
+        field("$.chat_id", "$.history_id")
+        .concat(" ")
+        .concat(field("$.tmux_target"))
+        .concat(" ")
+        .concat(field("$.active_work_id", "$.work_id"))
+        .concat(" ")
+        .concat(field("$.agent"))
+        .concat(" ")
+        .concat(field("$.model"))
+        .concat(" ")
+        .concat(field("$.task_cwd"))
+    )
+    observed = exists().where(
+        MODEL_OBSERVATIONS.c.harness == field("$.harness"),
+        MODEL_OBSERVATIONS.c.session == field("$.harness_session_id"),
+        func.instr(func.lower(MODEL_OBSERVATIONS.c.model), needle) > 0,
+    )
+    return or_(func.instr(haystack, needle) > 0, observed)
+
+
 class HistoryIndexIncomplete(RuntimeError):
     """Discovery cannot safely promise complete candidate membership."""
 
@@ -1410,12 +1437,15 @@ class HistoryIndex:
         sort: Literal["updated", "created"] = "updated",
         chat_ids: set[str] | None = None,
         exclude_chat_ids: set[str] | None = None,
+        query: str = "",
     ) -> tuple[list[SessionRecord | SpawnRecord], int]:
         """Select picker records ordered by indexed activity or creation.
 
         ``chat_ids`` addresses specific chats and overrides ``status``;
         ``exclude_chat_ids`` drops chats the caller orders itself (running sessions, whose
-        indexed activity is their start time).
+        indexed activity is their start time). ``query`` keeps records whose chat id, tmux
+        target, agent, model (recorded or last executed), cwd or work (its name is its id)
+        contains it, case-insensitively; it applies before LIMIT and to the total.
         """
         newer = SESSIONS.alias("newer")
         archive_created = (
@@ -1490,6 +1520,11 @@ class HistoryIndex:
                 )
             if conditions:
                 browse = select(browse).where(*conditions).cte("scoped")
+        needle = query.strip().lower()
+        if needle:
+            browse = (
+                select(browse).where(_metadata_match(browse.c.record_json, needle)).cte("matched")
+            )
         with self.query() as db:
             total = db.execute(select(func.count()).select_from(browse)).scalar() or 0
             rows = db.execute(
