@@ -45,3 +45,9 @@
   streaming tests). To make it structural, have bind return the launch files and let
   `start_spawn` write them into the staged dir before publishing, or start the spawn
   before bind and roll the row back on composition failure.
+- `workspace_projection.py`: after OpenCode roots moved into the harness hook, the
+  module only reports applicability. `ProjectionResult.args`,
+  `_project_claude_workspace_args`, `ProjectionResult.diagnostics`,
+  `WorkspaceProjectionDiagnostic` and the diagnostics branch in `context.py`
+  (`bind_launch_context`) have no producer or consumer. Collapse to
+  `workspace_applicability(harness_id, roots)` and delete the rest (thermo p8773 L6).

@@ -398,7 +398,9 @@ class SpawnApplicationService:
         SEAM-3: ConnectionConfig is projected from LaunchContext.
         SEAM-ID.1: ID allocation happens atomically with row creation.
 
-        Raises on resolution failure. No spawn row exists on failure.
+        Raises on resolution failure, with no spawn row. If writing the launch files
+        (``system-prompt.md``) fails after the row is persisted, the row stays
+        ``running`` until the reaper finalizes it.
         On success, row exists with resolved metadata.
         """
         mars_cache = MarsResultCache()

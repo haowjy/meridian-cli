@@ -486,8 +486,9 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         env: Mapping[str, str],
     ) -> dict[str, str]:
         # ``spec.agent_name`` is set exactly when the appended prompt is non-empty, which
-        # is when the runner writes ``system-prompt.md`` after bind (a missing ``{file:}``
-        # target fails OpenCode's whole config). A continued session keeps its model.
+        # is when ``system-prompt.md`` is written after the spawn is persisted and before
+        # launch (a missing ``{file:}`` target fails OpenCode's whole config). A continued
+        # session keeps its model.
         config = project_opencode_launch_config(
             env.get(OPENCODE_CONFIG_CONTENT_ENV),
             roots=spec.projected_roots,
