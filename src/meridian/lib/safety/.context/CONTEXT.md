@@ -59,15 +59,15 @@ and returns `(native value, EnforcementReport)`; User-facing behavior is in
 `capability` + `pattern` carry meaning, `native` carries emission, and neither is derived
 from the other. `native_status` is `known`, `absent` (the harness has no such tool) or
 `unknown` (Mars has no name: a gap). A compile emits `native` as given and reads
-`capability` only for mechanism it owns: Codex's switches, the platform-rule overrides,
-the sandbox inference. Meridian keeps no tool-name table. A bundle without `tools.rules`
+`capability` only for mechanism it owns, such as Codex's switches and platform-rule
+overrides. Meridian keeps no tool-name table. A bundle without `tools.rules`
 fails with "install Mars >= 0.17.0"; the flat `allowed`/`disallowed` lists are not read.
 
 **Legacy snapshots.** A launch snapshot an older build wrote holds `tools` (native key ->
 action). `legacy_tool_rules` reads it as native-only rules (`capability=None`, origin
-`legacy-snapshot`; the `*` key stays the `*` rule). A harness that can emit natives (Claude, OpenCode) does; Codex
-honors a legacy `web_search` and infers no more than `read-only`. Report lines for these
-rules carry `[legacy snapshot]`.
+`legacy-snapshot`; the `*` key stays the `*` rule). A harness that can emit natives
+(Claude, OpenCode) does; Codex's capability-keyed switches cannot interpret them. Report
+lines for these rules carry `[legacy snapshot]`.
 
 **Allowlists.** Two kinds, and `PermissionPolicy` answers for both so a compile asks and
 does not re-derive: `is_allowlist` (a `*: deny` rule, which Mars adds for list-form
@@ -96,9 +96,10 @@ A compile reports what it enforces or has something specific to say about; the r
 ("Mars has no <Harness> name"), and a deny of a tool the harness lacks (`absent`) is
 satisfied.
 
-**Sandbox inference** (Codex only, `permissions_codex.py`): with `sandbox: default` the
-Codex compile infers one from the `bash`, `edit`, `external_directory` and `*` capabilities.
-No other harness infers a sandbox. It is deleted with the Codex commit.
+**Codex switches.** Exact, unscoped `allow`/`deny` rules for `bash`, `web`, and `image`
+become process-level shell, web-search, and image-viewing switches. The web-search grant
+also accepts the exact `web_search` capability. Scoped rules and `ask` have no switch and
+are reported unsupported. An unset sandbox is left unset, so Codex chooses its default.
 
 ## Circular Import Constraints
 

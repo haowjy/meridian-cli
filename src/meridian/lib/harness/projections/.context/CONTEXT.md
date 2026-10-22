@@ -85,13 +85,15 @@ its projectors spell that value:
 | Harness | Compile result | Spelled by |
 |---|---|---|
 | Claude | permission mode, `--allowedTools` / `--disallowedTools` lists | `project_claude.py` (argv) |
-| Codex | sandbox mode, approval policy | `project_codex_subprocess.py` (`--sandbox`, `-c approval_policy`), `project_codex_streaming.py` (`-c` flags and the thread payload) |
+| Codex | sandbox mode, approval policy, shell/web/image switches | `project_codex_subprocess.py` (`--sandbox`, `-c`/feature flags), `project_codex_streaming.py` (process flags and the thread payload) |
 | OpenCode | V1 permission map; `None` for primaries | `OpenCodeAdapter.project_launch_env()` (`OPENCODE_PERMISSION` JSON); the V2 connection (V2 rules merged into config content) |
 | Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
 | Pi | none: permissions are mediated through extension UI hooks | |
 
-Claude's compile treats `ask` as `allow` (no flag expresses it) and Codex has no carrier
-for tool rules, so only its two modes compile.
+Codex compiles exact unscoped `bash`, `web`, and `image` allow/deny rules to process-level
+switches. Its scoped rules, `ask`, and allowlists have no native carrier and remain
+unsupported. `project_codex_tool_switch_flags` is the one spelling shared by `codex exec`
+and `codex app-server`; the thread payload continues to carry sandbox and approval only.
 
 A compile that restricts the shell must name the `completion-commands` platform rule's
 `commands` (`meridian spawn done` / `rearm`) in its own scope syntax, where a broad `bash` or
