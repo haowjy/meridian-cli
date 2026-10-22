@@ -1,10 +1,10 @@
 """Compile Meridian's permission policy to Claude's native launch controls.
 
 Claude checks deny rules, then ask rules, then allow rules, whatever their specificity, so a
-broad deny or ask shadows every narrower allow. A capability whose unmatched calls must not
-run freely (an allowlist, or a plain deny or ask beside scoped allows) is therefore gated by
-the permission mode instead of a broad rule: a mode in which unmatched calls need approval,
-which a headless spawn cannot give. Every report line is read back from the emitted
+broad deny or ask shadows every narrower allow. A plain deny or ask beside scoped allows of
+the same tool (a per-capability allowlist is one: the policy writes its deny) is therefore
+gated by the permission mode instead of emitted: a mode in which unmatched calls need
+approval, which a headless spawn cannot give. Every report line is read back from the emitted
 channels, so a rule that order shadows, or that the compile left out, says so.
 """
 
@@ -25,7 +25,6 @@ from meridian.lib.safety.policy import (
     PlatformRuleKind,
     ReportLine,
     ReportStatus,
-    allowlist_element,
     complete_report,
     platform_element,
     rule_element,
@@ -138,7 +137,7 @@ class _Gate:
 
     capability: str | None
     base: str
-    action: ToolAction | None  # the plain rule the mode stands in for; None for an allowlist
+    action: ToolAction  # the plain rule the mode stands in for
 
 
 @dataclass(frozen=True)
@@ -352,13 +351,6 @@ def _compile_channels(
         for entry, native in plain
         if native in profile_scoped_bases
     }
-    for capability in policy.allowlisted_capabilities:
-        for entry in effective:
-            if entry.rule.capability != capability or entry.action != "allow":
-                continue
-            for base, scope in map(split_native, entry.rule.native):
-                if scope is not None:
-                    gates.setdefault((capability, base), _Gate(capability, base, None))
     # The completion allows alone never change the profile's mode: they gate a plain rule
     # only where the mode already makes unmatched calls ask. Elsewhere the plain rule
     # stays and shadows them, and the completion line says so.
@@ -551,7 +543,7 @@ def _gate_is_exact(gate: _Gate, permissions: ClaudePermissions, *, interactive: 
         return False
     if gate.capability is None or gate.capability in _READ_ONLY_CLASS_CAPABILITIES:
         return False
-    # A primary's human answers the prompt: right for ask, a widening for deny or allowlist.
+    # A primary's human answers the prompt: right for ask, a widening for deny.
     return not interactive or gate.action == "ask"
 
 
@@ -581,7 +573,7 @@ def _tool_rule_line(
 
     placed: list[tuple[str, str]] = []
     notes: list[str] = []
-    gates = {gate.base: gate for gate in channels.gates if gate.action is not None}
+    gates = {gate.base: gate for gate in channels.gates}
     gated = [native for native in rule.native if entry.action != "allow" and native in gates]
     partial = not all(
         _gate_is_exact(gates[native], permissions, interactive=interactive) for native in gated
@@ -626,46 +618,6 @@ def _tool_rule_line(
         partial = True
     note = "; ".join(part for part in (_render_placed(placed), *notes) if part)
     return ReportLine(element, "partial" if partial else "native", note)
-
-
-def _allowlist_lines(
-    policy: PermissionPolicy,
-    permissions: ClaudePermissions,
-    channels: _Channels,
-    *,
-    interactive: bool,
-) -> list[ReportLine]:
-    lines: list[ReportLine] = []
-    for capability in policy.allowlisted_capabilities:
-        gates = [
-            gate
-            for gate in channels.gates
-            if gate.capability == capability and gate.action is None
-        ]
-        if not gates:
-            lines.append(
-                ReportLine(
-                    allowlist_element(capability),
-                    "platform",
-                    "platform rules deny every scoped allow",
-                )
-            )
-            continue
-        note = _gate_note(
-            permissions,
-            capability=capability,
-            bases=[gate.base for gate in gates],
-            interactive=interactive,
-        )
-        exact = all(_gate_is_exact(gate, permissions, interactive=interactive) for gate in gates)
-        lines.append(
-            ReportLine(
-                allowlist_element(capability),
-                "native" if exact else "partial",
-                f"scoped allows in --settings permissions.allow; {note}",
-            )
-        )
-    return lines
 
 
 def _completion_line(
@@ -908,7 +860,6 @@ def compile_claude_permissions(
         )
         is not None
     ]
-    lines.extend(_allowlist_lines(policy, permissions, channels, interactive=interactive))
     lines.extend(_platform_lines(policy, permissions))
     if policy.sandbox != "default":
         lines.append(_sandbox_line(policy, permissions))

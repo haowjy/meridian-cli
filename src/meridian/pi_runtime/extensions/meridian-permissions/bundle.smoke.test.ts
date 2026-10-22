@@ -18,7 +18,6 @@ describe.skipIf(!existsSync(bundlePath))("meridian-permissions bundle smoke", ()
     process.env._MERIDIAN_PI_PERMISSION_POLICY = JSON.stringify({
       version: 1,
       rules: [],
-      allowlist_tools: [],
       completion_commands: [],
       headless_reject_reason: "headless",
     });

@@ -49,7 +49,6 @@ export type PermissionRule = {
 export type PermissionPolicy = {
   version: 1;
   rules: PermissionRule[];
-  allowlist_tools: string[];
   completion_commands: string[];
   headless_reject_reason: string;
 };
@@ -80,11 +79,9 @@ function parsePolicy(raw: string | undefined): PermissionPolicy | undefined {
   if (
     policy.version !== 1
     || !Array.isArray(policy.rules)
-    || !isStringArray(policy.allowlist_tools)
     || !isStringArray(policy.completion_commands)
     || typeof policy.headless_reject_reason !== "string"
     || !policy.headless_reject_reason.trim()
-    || policy.allowlist_tools.some((tool) => !tool.trim())
     || policy.completion_commands.some((command) => !COMPLETION_COMMANDS.has(command))
   ) {
     throw new Error("Pi permission policy has an unsupported shape");
@@ -175,15 +172,7 @@ function policyDecision(
     };
     if (winner === undefined || isHigherRank(decision, winner)) winner = decision;
   }
-  if (winner !== undefined) return winner;
-  if (policy.allowlist_tools.includes(tool)) {
-    return {
-      action: "deny",
-      detail,
-      reason: `${DENIAL_PREFIX}${tool} allows only its scoped rules.`,
-    };
-  }
-  return undefined;
+  return winner;
 }
 
 function isAssignment(word: ShellWord): boolean {
@@ -367,11 +356,10 @@ function isCompletionCommand(policy: PermissionPolicy, command: string): boolean
 }
 
 function bashIsRestricted(policy: PermissionPolicy): boolean {
-  return policy.allowlist_tools.length > 0
-    || policy.rules.some((rule) => (
-      (rule.tool === "bash" || rule.tool === "*")
-      && (rule.pattern != null || rule.action !== "allow")
-    ));
+  return policy.rules.some((rule) => (
+    (rule.tool === "bash" || rule.tool === "*")
+    && (rule.pattern != null || rule.action !== "allow")
+  ));
 }
 
 export function decideToolCall(

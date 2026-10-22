@@ -93,8 +93,9 @@ its projectors spell that value:
 Claude emits `ask` only as `settings.permissions.ask`; it never contributes to an allow
 channel. Claude checks deny, then ask, then allow, so a plain deny or ask beside scoped
 allows of the same tool would shadow them. The compile therefore emits no such plain rule
-and gates the capability through the permission mode instead, like a per-capability
-allowlist: a mode in which unmatched calls need approval, which a headless spawn refuses.
+(a per-capability allowlist arrives as one, written by the policy) and gates the capability
+through the permission mode instead: a mode in which unmatched calls need approval, which a
+headless spawn refuses.
 `approval: auto|never|yolo` gates with `acceptEdits` (edits keep running; it also runs file
 commands such as `touch`, `rm` and redirects inside the working directories), unless an
 edit capability is gated, which needs `manual`; `default` and `confirm` gate with `manual`.
@@ -117,7 +118,8 @@ unmatched Bash calls before the mode can refuse them, which defeats the allowlis
 
 Codex compiles exact unscoped `bash`, `web`/`web_search` (the narrower wins), and `image` allow/deny rules to process-level
 switches. Its scoped rules, `ask`, and allowlists have no native carrier and remain
-unsupported. `project_codex_tool_switch_flags` is the one spelling shared by `codex exec`
+unsupported; a per-capability allowlist's deny (origin `allowlist`) sets no switch, so the
+shell stays on for Codex to read files with. `project_codex_tool_switch_flags` is the one spelling shared by `codex exec`
 and `codex app-server`; the thread payload continues to carry sandbox and approval only.
 
 A compile that restricts the shell must name the `completion-commands` platform rule's

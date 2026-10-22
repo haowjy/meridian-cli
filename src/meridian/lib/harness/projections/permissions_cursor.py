@@ -15,7 +15,6 @@ from meridian.lib.safety.policy import (
     EnforcementReport,
     PermissionPolicy,
     ReportLine,
-    allowlist_element,
     complete_report,
     rule_element,
 )
@@ -34,10 +33,6 @@ def _cursor_report(policy: PermissionPolicy, permissions: CursorPermissions) -> 
     lines = [
         ReportLine(rule_element(rule), "unsupported", unsupported_note) for rule in policy.rules
     ]
-    lines.extend(
-        ReportLine(allowlist_element(capability), "unsupported", unsupported_note)
-        for capability in policy.allowlisted_capabilities
-    )
     if permissions.sandbox is not None:
         note = f"--sandbox {permissions.sandbox}"
         if policy.sandbox == "workspace-write":

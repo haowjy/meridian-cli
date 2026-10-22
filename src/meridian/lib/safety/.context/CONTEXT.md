@@ -74,16 +74,21 @@ action). `legacy_tool_rules` reads it as native-only rules (`capability=None`, o
 (Claude, OpenCode) does; Codex's capability-keyed switches cannot interpret them. Report
 lines for these rules carry `[legacy snapshot]`.
 
-**Allowlists.** Two kinds, and `PermissionPolicy` answers for both so a compile asks and
-does not re-derive: `is_allowlist` (a `*: deny` rule, which Mars adds for list-form
-`tools: [a, b]` and a map may write), `allowlisted_capabilities` (capabilities whose only
-rules are scoped allows: only those scopes may run, whatever `approval` says) and
-`allowed_natives` (the harness names of every rule that leaves a tool callable).
-A `*` rule decides every unmatched call itself, so it ends the per-capability kind; an
-unscoped rule for the capability does the same. Platform rules do not depend on the allowlist:
-`launch_platform_rules` skips a platform deny only for an explicit deny of that capability
-(`unscoped_action`), never for `*: deny`. Each allowlisted capability is a report element
-(`allowlist_element`), so a harness that does not enforce it says `unsupported` by default.
+**Allowlists.** Two kinds. `is_allowlist` is the whole-policy kind: a `*: deny` rule, which
+Mars adds for list-form `tools: [a, b]` and a map may write; `allowed_natives` names every
+tool a rule leaves callable. The per-capability kind is a capability whose rules are scoped
+allows and nothing unscoped: only those scopes may run, whatever `approval` says. A `*` rule
+decides every unmatched call itself, so it ends that kind, as an unscoped rule for the
+capability does. `build_permission_policy` writes each such allowlist into `rules` as the
+unscoped deny it means (origin `allowlist`, natives the bases of the capability's scoped
+natives, report element `tools: <capability> allowlist ...`), placed before Mars's rules.
+So no compile has an allowlist path: each emits that deny as it emits a profile's plain deny
+beside scoped allows. The one exception is Codex, whose shell switch would also refuse the
+scoped allows and leave nothing to read files with, so its switches skip the origin. The
+deny exists only on the bound policy; launch snapshots keep Mars's rules and the policy is
+rebuilt at bind. Platform rules do not depend on the allowlist: `launch_platform_rules`
+reads Mars's rules, and skips a platform deny only for an explicit deny of that capability
+(`unscoped_action`), never for `*: deny`.
 
 **Completion commands.** `launch_platform_rules` gives every spawn a `completion-commands`
 platform rule: an allow, not a deny, for the shell commands a child runs to answer

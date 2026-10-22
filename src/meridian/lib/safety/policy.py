@@ -14,7 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.tools import LEGACY_SNAPSHOT_ORIGIN, ToolRule, unscoped_action
+from meridian.lib.tools import LEGACY_SNAPSHOT_ORIGIN, ToolRule, split_native, unscoped_action
 
 type SandboxMode = Literal[
     "default",
@@ -37,6 +37,11 @@ _SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
 _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
     {"default", "auto", "never", "yolo", "confirm"}
 )
+
+
+# The origin of the unscoped deny ``build_permission_policy`` writes for a per-capability
+# allowlist; Mars never writes it.
+ALLOWLIST_ORIGIN = "allowlist"
 
 
 type PlatformRuleKind = Literal["native-subagents", "builtin-agents", "completion-commands"]
@@ -65,13 +70,14 @@ class PlatformRule(BaseModel):
 class PermissionPolicy(BaseModel):
     """Everything permission-shaped for one launch, before any harness reads it.
 
-    Two kinds of allowlist, and the queries below are how a compile asks about them:
+    Two kinds of allowlist:
 
     - ``*: deny`` (the list form of ``tools`` writes one; a map may too): the policy is an
-      allowlist, and only the tools it allows exist.
+      allowlist, and only the tools it allows exist. ``is_allowlist`` asks about it.
     - A capability whose rules are scoped allows and nothing unscoped (``bash(rg *): allow``
-      and no ``bash`` rule): only those scopes may run, whatever ``approval`` says. A ``*``
-      rule decides every unmatched call itself, so it ends the second kind.
+      and no ``bash`` rule): only those scopes may run, whatever ``approval`` says. The
+      builder writes it into ``rules`` as the unscoped deny it means (origin
+      ``ALLOWLIST_ORIGIN``), so a compile handles it as any plain deny beside scoped allows.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -89,23 +95,6 @@ class PermissionPolicy(BaseModel):
         """Whether a ``*: deny`` rule makes every tool the rules do not allow unavailable."""
 
         return unscoped_action(self.rules, "*") == "deny"
-
-    @property
-    def allowlisted_capabilities(self) -> tuple[str, ...]:
-        """Capabilities where only the scoped allows may run, in policy order."""
-
-        if unscoped_action(self.rules, "*") is not None:
-            return ()
-        scoped_allows = dict.fromkeys(
-            rule.capability
-            for rule in self.rules
-            if rule.capability is not None and rule.pattern is not None and rule.action == "allow"
-        )
-        return tuple(
-            capability
-            for capability in scoped_allows
-            if unscoped_action(self.rules, capability) is None
-        )
 
     @property
     def allowed_natives(self) -> tuple[str, ...]:
@@ -146,17 +135,13 @@ type EnforcementReport = tuple[ReportLine, ...]
 def rule_element(rule: ToolRule) -> str:
     """Name a rule the way the profile wrote it; a legacy snapshot rule has only its native key."""
 
+    if rule.origin == ALLOWLIST_ORIGIN:
+        return f"tools: {rule.capability} allowlist (only the scoped allows may run)"
     name = rule.capability if rule.capability is not None else ", ".join(rule.native)
     if rule.pattern is not None:
         name = f"{name}({rule.pattern})"
     legacy = " [legacy snapshot]" if rule.origin == LEGACY_SNAPSHOT_ORIGIN else ""
     return f"tools: {name} = {rule.action}{legacy}"
-
-
-def allowlist_element(capability: str) -> str:
-    """The report element for a capability whose scoped allows are its only permitted calls."""
-
-    return f"tools: {capability} allowlist (only the scoped allows may run)"
 
 
 def platform_element(rule: PlatformRule) -> str:
@@ -189,8 +174,7 @@ def complete_report(
 ) -> EnforcementReport:
     """Give every policy element exactly one line, in policy order.
 
-    Elements are the rules, the allowlisted capabilities, the platform rules, the sandbox and
-    the approval mode.
+    Elements are the rules, the platform rules, the sandbox and the approval mode.
 
     A compile reports only what it enforces or has something specific to say about; any
     element it left out gets the default line: a rule Mars could not name for ``harness`` is
@@ -200,10 +184,6 @@ def complete_report(
     """
 
     defaults = [_rule_default_line(rule, harness) for rule in policy.rules]
-    defaults.extend(
-        ReportLine(allowlist_element(capability), "unsupported", f"not projected for {harness}")
-        for capability in policy.allowlisted_capabilities
-    )
     defaults.extend(
         ReportLine(platform_element(rule), "unsupported", f"not projected for {harness}")
         for rule in policy.platform_rules
@@ -247,6 +227,46 @@ def _parse_sandbox_value(raw: str | None) -> SandboxMode:
     raise ValueError(f"Unsupported sandbox mode '{raw}'. Expected: {allowed}.")
 
 
+def _allowlist_denies(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
+    """The unscoped deny each per-capability allowlist means, in policy order.
+
+    A capability with scoped allows and no unscoped rule refuses every call they don't
+    match. A ``*`` rule decides those calls itself, so it ends every such allowlist. The
+    deny names the tools the scoped rules name, unscoped; a capability Mars could not name
+    keeps its rules' status, so the report states the same gap.
+    """
+
+    if unscoped_action(rules, "*") is not None:
+        return ()
+    first_allow: dict[str, ToolRule] = {}
+    for rule in rules:
+        if rule.capability is not None and rule.pattern is not None and rule.action == "allow":
+            first_allow.setdefault(rule.capability, rule)
+    denies: list[ToolRule] = []
+    for capability, allow in first_allow.items():
+        if unscoped_action(rules, capability) is not None:
+            continue
+        natives = tuple(
+            dict.fromkeys(
+                tool
+                for rule in rules
+                if rule.capability == capability
+                for tool, scope in map(split_native, rule.native)
+                if scope is not None
+            )
+        )
+        denies.append(
+            ToolRule(
+                capability=capability,
+                action="deny",
+                native=natives,
+                native_status="known" if natives else allow.native_status,
+                origin=ALLOWLIST_ORIGIN,
+            )
+        )
+    return tuple(denies)
+
+
 def build_permission_policy(
     *,
     rules: tuple[ToolRule, ...] = (),
@@ -258,11 +278,15 @@ def build_permission_policy(
     """Build the policy from Mars's resolved tool rules and the execution policy.
 
     ``sandbox`` and ``approval`` are the already-resolved execution policy values; this
-    validates them and never re-resolves precedence.
+    validates them and never re-resolves precedence. Each per-capability allowlist gains
+    the unscoped deny it means (see ``PermissionPolicy``).
     """
 
     return PermissionPolicy(
-        rules=rules,
+        # First, as the broad rule its scoped allows are exceptions to: OpenCode orders equally
+        # specific rules by policy order, and this keeps its config what it was before the
+        # allowlist became a rule.
+        rules=(*_allowlist_denies(rules), *rules),
         platform_rules=platform_rules,
         sandbox=_parse_sandbox_value(sandbox),
         sandbox_write_roots=tuple(dict.fromkeys(root for root in sandbox_write_roots if root)),
@@ -271,6 +295,7 @@ def build_permission_policy(
 
 
 __all__ = [
+    "ALLOWLIST_ORIGIN",
     "ApprovalMode",
     "EnforcementReport",
     "PermissionPolicy",
@@ -278,7 +303,6 @@ __all__ = [
     "ReportLine",
     "ReportStatus",
     "SandboxMode",
-    "allowlist_element",
     "build_permission_policy",
     "complete_report",
     "format_report_lines",

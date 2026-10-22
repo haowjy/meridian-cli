@@ -66,8 +66,9 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
 child-spawn observation and notification behavior belong in spawn-watch.
 
-The permissions extension never tries to understand arbitrary shell. Whenever Bash has
-a scoped rule, a tool allowlist, `ask`, or `deny`, it accepts only simple words,
+The permissions extension never tries to understand arbitrary shell. Whenever a `bash` or
+`*` rule is scoped or not `allow` (a per-capability allowlist arrives as an unscoped deny
+beside its scoped allows), it accepts only simple words,
 single quotes, double quotes without expansion/escaping, and the separators `&&`, `||`,
 `;`, `|`, and newline. It refuses all other syntax before rule matching. A completion
 backstop applies only when the entire input is one `meridian spawn done` or `meridian

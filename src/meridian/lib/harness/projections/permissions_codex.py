@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
+    ALLOWLIST_ORIGIN,
     EnforcementReport,
     PermissionPolicy,
     ReportLine,
@@ -83,9 +84,13 @@ def map_codex_sandbox_mode(sandbox_mode: str) -> str | None:
 
 
 def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
-    """Return the Codex switch an exact, unscoped tool rule controls."""
+    """Return the Codex switch an exact, unscoped tool rule controls.
 
-    if rule.pattern is not None or rule.action == "ask":
+    An allowlist's deny has none: the switch would refuse the scoped allows too, and a shell
+    allowlist would leave Codex nothing to read files with.
+    """
+
+    if rule.pattern is not None or rule.action == "ask" or rule.origin == ALLOWLIST_ORIGIN:
         return None
     enabled = rule.action == "allow"
     if rule.capability == "bash":

@@ -21,9 +21,7 @@ from meridian.lib.harness.opencode_backend import OpenCodeVersion
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     EnforcementReport,
-    PermissionPolicy,
     ReportLine,
-    allowlist_element,
     complete_report,
     platform_element,
     rule_element,
@@ -111,70 +109,7 @@ def _collapse_exact_rules(
     return tuple(sorted(strongest.values(), key=_specificity))
 
 
-def _allowlist_entries(
-    policy: PermissionPolicy,
-    *,
-    version: OpenCodeVersion,
-    edit_conflict: ToolAction | None,
-) -> tuple[dict[str, tuple[OpenCodePermissionRule, ...]], list[ReportLine]]:
-    """Compile each scoped-only capability to a broad deny before its allows."""
-
-    by_capability: dict[str, tuple[OpenCodePermissionRule, ...]] = {}
-    lines: list[ReportLine] = []
-    for capability in policy.allowlisted_capabilities:
-        actions = tuple(
-            dict.fromkeys(
-                _native_action(split_native(native)[0], version=version)
-                for rule in policy.rules
-                if rule.capability == capability and rule.native_status == "known"
-                for native in rule.native
-            )
-        )
-        entries = tuple(
-            OpenCodePermissionRule(action=action, resource="*", effect="deny")
-            for action in actions
-        )
-        by_capability[capability] = entries
-        if entries:
-            conflated = version == "v2" and any(entry.action == "edit" for entry in entries)
-            if edit_conflict is not None and conflated:
-                status = "partial"
-                note = (
-                    f"V2 conflates write/patch as edit; conflicting semantics "
-                    f"conservatively use permission edit(*): {edit_conflict}"
-                )
-            elif conflated and (
-                capability in {"write", "patch"}
-                or any(
-                    rule.capability == capability and _uses_v2_write_patch_alias(rule)
-                    for rule in policy.rules
-                )
-            ):
-                status = "partial"
-                note = (
-                    "V2 conflates write/patch as edit; permission "
-                    + ", ".join(f"{entry.action}(*)" for entry in entries)
-                    + ": deny"
-                )
-            else:
-                status = "native"
-                note = (
-                    "permission "
-                    + ", ".join(f"{entry.action}(*)" for entry in entries)
-                    + ": deny"
-                )
-            lines.append(
-                ReportLine(
-                    allowlist_element(capability),
-                    status,
-                    note,
-                )
-            )
-    return by_capability, lines
-
-
 def _v2_edit_conflict(
-    policy: PermissionPolicy,
     entries_by_rule: list[tuple[ToolRule, tuple[OpenCodePermissionRule, ...]]],
     *,
     interactive: bool,
@@ -197,9 +132,6 @@ def _v2_edit_conflict(
             else next(iter(native_sources), "edit")
         )
         effects_by_source.setdefault(source, set()).add(effect)
-
-        if rule.capability in policy.allowlisted_capabilities:
-            effects_by_source[source].add("deny")
 
     effects: set[ToolAction] = set()
     for source_effects in effects_by_source.values():
@@ -337,21 +269,15 @@ def compile_opencode_permissions(
     ]
     has_profile_native = any(entries for _, entries in entries_by_rule)
     edit_conflict = (
-        _v2_edit_conflict(policy, entries_by_rule, interactive=spec.interactive)
+        _v2_edit_conflict(entries_by_rule, interactive=spec.interactive)
         if resolved_version == "v2"
         else None
     )
-    allowlists, lines = _allowlist_entries(
-        policy,
-        version=resolved_version,
-        edit_conflict=edit_conflict,
-    )
-
+    lines: list[ReportLine] = []
     profile_entries: list[OpenCodePermissionRule] = []
     default = _default_entry(spec, has_profile_native=has_profile_native)
     if default is not None:
         profile_entries.append(default)
-    profile_entries.extend(entry for entries in allowlists.values() for entry in entries)
     profile_entries.extend(entry for _, entries in entries_by_rule for entry in entries)
     if edit_conflict is not None:
         profile_entries = [entry for entry in profile_entries if entry.action != "edit"]

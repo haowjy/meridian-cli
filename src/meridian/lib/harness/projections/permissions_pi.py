@@ -10,10 +10,10 @@ from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.safety.policy import (
+    ALLOWLIST_ORIGIN,
     EnforcementReport,
     PermissionPolicy,
     ReportLine,
-    allowlist_element,
     complete_report,
     platform_element,
     rule_element,
@@ -42,7 +42,6 @@ class PiExtensionPolicy(BaseModel):
 
     version: int = 1
     rules: tuple[PiExtensionRule, ...]
-    allowlist_tools: tuple[str, ...] = ()
     completion_commands: tuple[str, ...] = ()
     headless_reject_reason: str = HEADLESS_REJECT_REASON
 
@@ -84,7 +83,12 @@ def _extension_rules(rules: tuple[ToolRule, ...]) -> tuple[PiExtensionRule, ...]
                     tool=tool,
                     pattern=pattern,
                     action=rule.action,
-                    label=native,
+                    # The model reads the label in the refusal; an allowlist's deny says why.
+                    label=(
+                        f"{tool} outside its scoped allows"
+                        if rule.origin == ALLOWLIST_ORIGIN
+                        else native
+                    ),
                 )
             )
     return tuple(projected)
@@ -99,13 +103,6 @@ def _completion_commands(policy: PermissionPolicy, *, interactive: bool) -> tupl
         if platform.kind == "completion-commands"
         for command in platform.commands
     )
-
-
-def _allowlist_tools(
-    policy: PermissionPolicy, rules: tuple[PiExtensionRule, ...]
-) -> tuple[str, ...]:
-    capabilities = frozenset(policy.allowlisted_capabilities)
-    return tuple(dedupe_nonempty(rule.tool for rule in rules if rule.capability in capabilities))
 
 
 def _compile_flags(
@@ -144,16 +141,12 @@ def _compile_flags(
 
 
 def _needs_extension(
-    rules: tuple[PiExtensionRule, ...],
-    *,
-    allowlist_tools: tuple[str, ...],
-    completion_commands: tuple[str, ...],
+    rules: tuple[PiExtensionRule, ...], *, completion_commands: tuple[str, ...]
 ) -> bool:
     # Every spawn carries the completion commands; they need the extension only when a
     # rule could otherwise restrict the shell.
     return bool(
-        allowlist_tools
-        or (completion_commands and rules)
+        (completion_commands and rules)
         or any(
             rule.pattern is not None
             or rule.action == "ask"
@@ -204,6 +197,10 @@ def _rule_report_line(
         return ReportLine(rule_element(rule), "native", "--exclude-tools " + ",".join(names))
     if rule.action == "allow" and permissions.tools is not None:
         return ReportLine(rule_element(rule), "native", "--tools " + ",".join(permissions.tools))
+    if rule.action == "deny":
+        return ReportLine(
+            rule_element(rule), "native", "tool_call handler refuses calls no scoped rule allows"
+        )
     return ReportLine(rule_element(rule), "native", "tool_call handler preserves scoped precedence")
 
 
@@ -226,15 +223,6 @@ def _report(
         )
         is not None
     ]
-    if permissions.extension_policy is not None:
-        lines.extend(
-            ReportLine(
-                allowlist_element(capability),
-                "native",
-                "tool_call handler blocks unmatched calls",
-            )
-            for capability in policy.allowlisted_capabilities
-        )
     for platform in policy.platform_rules:
         if platform.kind == "completion-commands" and not spec.interactive:
             lines.append(
@@ -273,19 +261,10 @@ def compile_pi_permissions(
     policy = spec.permission_policy
     rules = _extension_rules(policy.rules)
     completion_commands = _completion_commands(policy, interactive=spec.interactive)
-    allowlist_tools = _allowlist_tools(policy, rules)
     tools, exclude_tools = _compile_flags(policy, rules, completion_commands)
     extension_policy = (
-        PiExtensionPolicy(
-            rules=rules,
-            allowlist_tools=allowlist_tools,
-            completion_commands=completion_commands,
-        )
-        if _needs_extension(
-            rules,
-            allowlist_tools=allowlist_tools,
-            completion_commands=completion_commands,
-        )
+        PiExtensionPolicy(rules=rules, completion_commands=completion_commands)
+        if _needs_extension(rules, completion_commands=completion_commands)
         else None
     )
     permissions = PiPermissions(

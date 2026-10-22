@@ -20,7 +20,6 @@ function policy(
   return {
     version: 1,
     rules,
-    allowlist_tools: [],
     completion_commands: [],
     headless_reject_reason: HEADLESS_REASON,
     ...overrides,
@@ -83,10 +82,10 @@ describe("permission precedence", () => {
 
   it("blocks unmatched calls in a scoped-only allowlist", () => {
     const decision = decideToolCall(
-      policy(
-        [rule({ pattern: "rg *", action: "allow" })],
-        { allowlist_tools: ["bash"] },
-      ),
+      policy([
+        rule({ pattern: "rg *", action: "allow" }),
+        rule({ action: "deny", label: "bash outside its scoped allows" }),
+      ]),
       "bash",
       { command: "touch forbidden" },
     );
@@ -194,10 +193,10 @@ describe("path scope evaluation", () => {
     mkdirSync(join(project, "src", "nested"), { recursive: true });
     mkdirSync(outside);
     try {
-      const scoped = policy(
-        [rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" })],
-        { allowlist_tools: ["read"] },
-      );
+      const scoped = policy([
+        rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" }),
+        rule({ capability: "read", tool: "read", action: "deny" }),
+      ]);
 
       expect(
         decideToolCall(scoped, "read", { path: "src/nested/file.ts" }, project)?.action,
@@ -222,14 +221,14 @@ describe("path scope evaluation", () => {
     symlinkSync(outside, join(project, "src", "link"));
     symlinkSync(join(outside, "new-file"), join(project, "src", "link-file"));
     try {
-      const scoped = policy(
-        [rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" })],
-        { allowlist_tools: ["read"] },
-      );
-      const writeScoped = policy(
-        [rule({ capability: "write", tool: "write", pattern: "src/*", action: "allow" })],
-        { allowlist_tools: ["write"] },
-      );
+      const scoped = policy([
+        rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" }),
+        rule({ capability: "read", tool: "read", action: "deny" }),
+      ]);
+      const writeScoped = policy([
+        rule({ capability: "write", tool: "write", pattern: "src/*", action: "allow" }),
+        rule({ capability: "write", tool: "write", action: "deny" }),
+      ]);
 
       expect(
         decideToolCall(scoped, "read", { path: "src/link/secret" }, project)?.action,
