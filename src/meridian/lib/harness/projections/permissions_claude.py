@@ -130,14 +130,10 @@ def _compile_tool_rules(
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return ``(allowed, disallowed)``; ``ask`` counts as ``allow`` (no flag expresses it).
 
-    Under a ``*: deny`` default, denies are not emitted (the default stands in for them),
-    platform denies included.
+    Every deny is emitted, under ``*: deny`` too: Claude has no flag for "everything else",
+    so the default cannot stand in for a deny of a named tool, and the platform's denies
+    (sub-agents) must hold whatever the profile allows.
     """
-
-    default_action: ToolAction | None = None
-    for entry in effective:
-        if entry.rule.is_wildcard:
-            default_action = entry.action
 
     entries: list[tuple[tuple[str, ...], ToolAction]] = [
         (entry.rule.native, entry.action)
@@ -152,21 +148,16 @@ def _compile_tool_rules(
     allowed: list[str] = []
     disallowed: list[str] = []
     for names, action in entries:
-        if action in {"allow", "ask"}:
-            allowed.extend(names)
-        elif default_action != "deny":
-            disallowed.extend(names)
+        (disallowed if action == "deny" else allowed).extend(names)
 
-    if default_action == "deny" and not allowed:
+    if policy.is_allowlist and not allowed:
         # Best-effort representation for "deny everything".
         disallowed.extend(_WILDCARD_DENY_TOOLS)
 
     return tuple(dedupe_nonempty(allowed)), tuple(dedupe_nonempty(disallowed))
 
 
-def _tool_rule_line(
-    entry: _Effective, allowed: frozenset[str], disallowed: frozenset[str]
-) -> ReportLine:
+def _tool_rule_line(entry: _Effective, allowed: frozenset[str]) -> ReportLine:
     rule = entry.rule
     element = rule_element(rule)
     if entry.overridden:
@@ -187,9 +178,6 @@ def _tool_rule_line(
         )
     if not rule.native:
         return ReportLine(element, "unsupported", "no Claude tool name for this rule")
-    emitted = disallowed if entry.action == "deny" else allowed
-    if not all(name in emitted for name in rule.native):
-        return ReportLine(element, "unsupported", "not emitted: `*: deny` stands in for it")
     flag = "--disallowedTools" if entry.action == "deny" else "--allowedTools"
     note = f"{flag} {','.join(rule.native)}"
     if entry.action == "ask":
@@ -201,7 +189,7 @@ def _tool_rule_line(
     return ReportLine(element, "native", note)
 
 
-def _platform_lines(policy: PermissionPolicy, disallowed: frozenset[str]) -> list[ReportLine]:
+def _platform_lines(policy: PermissionPolicy) -> list[ReportLine]:
     lines: list[ReportLine] = []
     for platform in policy.platform_rules:
         if platform.kind != "native-subagents":
@@ -211,20 +199,11 @@ def _platform_lines(policy: PermissionPolicy, disallowed: frozenset[str]) -> lis
             for capability in platform.capabilities
             for name in _PLATFORM_DENY_TOOLS[capability]
         )
-        if all(name in disallowed for name in names):
-            lines.append(
-                ReportLine(
-                    platform_element(platform), "platform", "--disallowedTools " + ",".join(names)
-                )
+        lines.append(
+            ReportLine(
+                platform_element(platform), "platform", "--disallowedTools " + ",".join(names)
             )
-        else:
-            lines.append(
-                ReportLine(
-                    platform_element(platform),
-                    "unsupported",
-                    "not emitted: `*: deny` stands in for it",
-                )
-            )
+        )
     # ``allow_builtin_agents`` does not reach Claude: the denies apply even without the rule.
     lines.append(
         ReportLine(
@@ -244,13 +223,12 @@ def _claude_report(
     effective: tuple[_Effective, ...],
 ) -> EnforcementReport:
     allowed = frozenset(permissions.allowed_tools)
-    disallowed = frozenset(permissions.disallowed_tools)
     lines = [
-        _tool_rule_line(entry, allowed, disallowed)
+        _tool_rule_line(entry, allowed)
         for entry in effective
         if entry.rule.native_status == "known"
     ]
-    lines.extend(_platform_lines(policy, disallowed))
+    lines.extend(_platform_lines(policy))
     if permissions.skip_permission_prompts:
         approval_note = "--dangerously-skip-permissions"
     elif permissions.permission_mode is not None:

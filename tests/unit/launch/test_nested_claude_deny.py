@@ -95,11 +95,25 @@ def _tool_flag_entries(argv: tuple[str, ...], flag: str) -> tuple[str, ...]:
     return tuple(filter(None, entries))
 
 
+@pytest.mark.parametrize(
+    "tool_rules",
+    [
+        (),
+        # An allowlist (`*: deny`, as the list form of `tools` writes) keeps the platform denies.
+        (tool_rule("*", "deny"), tool_rule("read", "allow", "Read")),
+    ],
+)
 def test_spawn_prepare_denies_native_delegation_and_builtin_agents(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
+    tool_rules: tuple[ToolRule, ...],
 ) -> None:
-    argv = _launch_argv(tmp_path, monkeypatch, surface=LaunchCompositionSurface.SPAWN_PREPARE)
+    argv = _launch_argv(
+        tmp_path,
+        monkeypatch,
+        surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        tool_rules=tool_rules,
+    )
 
     assert {"Agent", *_TASK_DENIES, *_BUILTIN_AGENT_DENIES}.issubset(
         _tool_flag_entries(argv, "--disallowedTools")

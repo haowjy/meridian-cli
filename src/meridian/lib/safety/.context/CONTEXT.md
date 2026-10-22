@@ -69,9 +69,16 @@ action). `legacy_tool_rules` reads it as native-only rules (`capability=None`, o
 honors a legacy `web_search` and infers no more than `read-only`. Report lines for these
 rules carry `[legacy snapshot]`.
 
-**List-form `*` is not projected yet.** The bundle parser drops the `*: deny` Mars adds for
-list-form `tools: [a, b]` (origin `list-form`): no harness enforces "unlisted tools are denied"
-and launches never saw it before typed rules. The allowlist semantics replace this drop.
+**Allowlists.** Two kinds, and `PermissionPolicy` answers for both so a compile asks and
+does not re-derive: `is_allowlist` (a `*: deny` rule, which Mars adds for list-form
+`tools: [a, b]` and a map may write), `allowlisted_capabilities` (capabilities whose only
+rules are scoped allows: only those scopes may run, whatever `approval` says) and
+`allowed_natives` (the harness names of every rule that leaves a tool callable).
+A `*` rule decides every unmatched call itself, so it ends the per-capability kind; an
+unscoped rule for the capability does the same. Platform rules do not depend on the allowlist:
+`launch_platform_rules` skips a platform deny only for an explicit deny of that capability
+(`unscoped_action`), never for `*: deny`. Each allowlisted capability is a report element
+(`allowlist_element`), so a harness that does not enforce it says `unsupported` by default.
 
 **Reports.** `complete_report` gives every policy element exactly one line, in policy order.
 A compile reports what it enforces or has something specific to say about; the rest is

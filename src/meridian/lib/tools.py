@@ -65,14 +65,19 @@ def legacy_tool_rules(tools: ToolsField | None) -> tuple[ToolRule, ...]:
     )
 
 
+def unscoped_action(rules: Iterable[ToolRule], capability: str) -> ToolAction | None:
+    """The action of the unscoped rule naming exactly ``capability``; the last one wins."""
+
+    action: ToolAction | None = None
+    for rule in rules:
+        if rule.capability == capability and rule.pattern is None:
+            action = rule.action
+    return action
+
+
 def capability_action(rules: Iterable[ToolRule], capability: str) -> ToolAction | None:
     """The action for ``capability``: its unscoped rule, else the ``*`` rule's, else ``None``."""
 
-    exact: ToolAction | None = None
-    default: ToolAction | None = None
-    for rule in rules:
-        if rule.capability == capability and rule.pattern is None:
-            exact = rule.action
-        elif rule.is_wildcard:
-            default = rule.action
-    return exact if exact is not None else default
+    rules = tuple(rules)
+    exact = unscoped_action(rules, capability)
+    return exact if exact is not None else unscoped_action(rules, "*")

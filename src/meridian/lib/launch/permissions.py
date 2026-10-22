@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from meridian.lib.safety.policy import PlatformRule
-from meridian.lib.tools import ToolRule, capability_action
+from meridian.lib.tools import ToolRule, capability_action, unscoped_action
 
 # Capabilities whose native tools let an agent delegate outside Meridian's tracking.
 # Sorted: the order is the order a harness's compile emits them in.
@@ -21,9 +21,10 @@ def _native_subagent_capabilities(
 
     ``agent`` is denied everywhere unless native agent copies are the project's delegation
     mechanism. Spawns also deny ``task``, and ``agent`` when copies are off, unless the
-    profile's own rules allow or ask for it, or the rules already deny it.
-    ``profile_tool_rules`` are the profile-declared rules: only a profile can opt out, never
-    a request-level rule.
+    profile's own rules allow or ask for it, or a rule naming the capability already denies
+    it. A ``*: deny`` does not stand in for that rule: a platform deny is a rule of its own,
+    so it holds under an allowlist too. ``profile_tool_rules`` are the profile-declared
+    rules: only a profile can opt out, never a request-level rule.
     """
 
     capabilities: list[str] = []
@@ -33,7 +34,7 @@ def _native_subagent_capabilities(
                 continue
             if capability_action(profile_tool_rules, capability) in {"allow", "ask"}:
                 continue
-            if capability_action(tool_rules, capability) == "deny":
+            if unscoped_action(tool_rules, capability) == "deny":
                 continue
             capabilities.append(capability)
     if not native_agent_copy and "agent" not in capabilities:

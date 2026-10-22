@@ -49,7 +49,6 @@ _MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
-_LIST_FORM_ORIGIN = "list-form"
 
 
 @dataclass(frozen=True)
@@ -225,11 +224,6 @@ def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
             rule = ToolRule.model_validate(entry)
         except ValidationError as exc:
             raise _bundle_schema_error(f"invalid 'tools.rules' entry: {exc}") from exc
-        if rule.is_wildcard and rule.origin == _LIST_FORM_ORIGIN:
-            # List form's own `*: deny` means "unlisted tools are denied". No harness
-            # enforces that yet and launches never saw it before typed rules, so it is
-            # not projected until the allowlist semantics land.
-            continue
         rules.append(rule)
     return tuple(rules)
 

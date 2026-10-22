@@ -14,7 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.tools import LEGACY_SNAPSHOT_ORIGIN, ToolRule
+from meridian.lib.tools import LEGACY_SNAPSHOT_ORIGIN, ToolRule, unscoped_action
 
 type SandboxMode = Literal[
     "default",
@@ -58,7 +58,16 @@ class PlatformRule(BaseModel):
 
 
 class PermissionPolicy(BaseModel):
-    """Everything permission-shaped for one launch, before any harness reads it."""
+    """Everything permission-shaped for one launch, before any harness reads it.
+
+    Two kinds of allowlist, and the queries below are how a compile asks about them:
+
+    - ``*: deny`` (the list form of ``tools`` writes one; a map may too): the policy is an
+      allowlist, and only the tools it allows exist.
+    - A capability whose rules are scoped allows and nothing unscoped (``bash(rg *): allow``
+      and no ``bash`` rule): only those scopes may run, whatever ``approval`` says. A ``*``
+      rule decides every unmatched call itself, so it ends the second kind.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -66,6 +75,44 @@ class PermissionPolicy(BaseModel):
     platform_rules: tuple[PlatformRule, ...] = ()
     sandbox: SandboxMode = "default"
     approval: ApprovalMode = "default"
+
+    @property
+    def is_allowlist(self) -> bool:
+        """Whether a ``*: deny`` rule makes every tool the rules do not allow unavailable."""
+
+        return unscoped_action(self.rules, "*") == "deny"
+
+    @property
+    def allowlisted_capabilities(self) -> tuple[str, ...]:
+        """Capabilities where only the scoped allows may run, in policy order."""
+
+        if unscoped_action(self.rules, "*") is not None:
+            return ()
+        scoped_allows = dict.fromkeys(
+            rule.capability
+            for rule in self.rules
+            if rule.capability is not None and rule.pattern is not None and rule.action == "allow"
+        )
+        return tuple(
+            capability
+            for capability in scoped_allows
+            if unscoped_action(self.rules, capability) is None
+        )
+
+    @property
+    def allowed_natives(self) -> tuple[str, ...]:
+        """The harness's names for every rule that leaves a tool callable (``allow``, ``ask``).
+
+        Policy order, deduplicated, exactly as Mars named them (scoped rules arrive scoped).
+        Under ``is_allowlist`` these are the tools that remain; ``ask`` stays on the list
+        because the harness, not the rule, decides that call.
+        """
+
+        return tuple(
+            dict.fromkeys(
+                name for rule in self.rules if rule.action != "deny" for name in rule.native
+            )
+        )
 
 
 type ReportStatus = Literal["native", "partial", "unsupported", "platform"]
@@ -98,6 +145,12 @@ def rule_element(rule: ToolRule) -> str:
     return f"tools: {name} = {rule.action}{legacy}"
 
 
+def allowlist_element(capability: str) -> str:
+    """The report element for a capability whose scoped allows are its only permitted calls."""
+
+    return f"tools: {capability} allowlist (only the scoped allows may run)"
+
+
 def platform_element(rule: PlatformRule) -> str:
     if rule.kind == "native-subagents":
         return f"platform: deny native sub-agents ({', '.join(sorted(rule.capabilities))})"
@@ -126,6 +179,9 @@ def complete_report(
 ) -> EnforcementReport:
     """Give every policy element exactly one line, in policy order.
 
+    Elements are the rules, the allowlisted capabilities, the platform rules, the sandbox and
+    the approval mode.
+
     A compile reports only what it enforces or has something specific to say about; any
     element it left out gets the default line: a rule Mars could not name for ``harness`` is
     a gap, a deny of a tool ``harness`` lacks is satisfied, and anything else is
@@ -134,6 +190,10 @@ def complete_report(
     """
 
     defaults = [_rule_default_line(rule, harness) for rule in policy.rules]
+    defaults.extend(
+        ReportLine(allowlist_element(capability), "unsupported", f"not projected for {harness}")
+        for capability in policy.allowlisted_capabilities
+    )
     defaults.extend(
         ReportLine(platform_element(rule), "unsupported", f"not projected for {harness}")
         for rule in policy.platform_rules
@@ -206,6 +266,7 @@ __all__ = [
     "ReportLine",
     "ReportStatus",
     "SandboxMode",
+    "allowlist_element",
     "build_permission_policy",
     "complete_report",
     "format_report_lines",

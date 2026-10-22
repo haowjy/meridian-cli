@@ -5,17 +5,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Upgrade notes
+- `tools: [a, b]` and a capability with only scoped allows are allowlists: unlisted tools (or unmatched commands) are denied, whatever `approval` says. OpenCode spawns enforce `*: deny` now; the other harnesses report it `unsupported` until their lanes land. See [upgrade note](docs/upgrading.md#allowlists-in-tools).
 - Needs Mars >= 0.17.0: the launch bundle's `tools.rules` replace the flat `allowed`/`disallowed` lists, which Meridian no longer reads. With an older Mars every launch stops with `Install mars >= 0.17.0`. Cursor loses its inferred `--sandbox enabled` for a profile that sets `tools` and no `sandbox`; Codex's inferred sandbox now follows `bash`/`edit`. See [upgrade note](docs/upgrading.md#typed-tool-rules-mars-017).
 
 ### Added
 - `--dry-run` (spawn and primary) prints a `Permissions:` section: per profile rule, platform rule, sandbox and approval value, what the harness does with it (`native`, `partial`, `unsupported`, `platform`) and the flag it became. `--json` gains `permission_report`; `projection-manifest.json` gains `permission_report`. Report states today's projection, gaps included, e.g. OpenCode primaries get no profile rules, Pi gets none, Codex gets no tool rules.
 
 ### Changed
+- `tools` allowlists: the list form (`tools: [read, grep]`) is `*: deny` plus the allows, and a capability with only scoped allows (`bash(rg *)` and no `bash` rule) permits only those scopes, whatever `approval` says. `PermissionPolicy` answers `is_allowlist`, `allowlisted_capabilities` and `allowed_natives` for the compiles. OpenCode spawns enforce `*: deny`; the other harnesses report it `unsupported`. See [upgrade note](docs/upgrading.md#allowlists-in-tools).
 - Tool rules are Mars's typed rules (`capability`, `pattern`, `action`, `native`, `native_status`): Meridian reads meaning from `capability` and emits `native` as given. Its tool-name table, the Claude re-capitalizing, the OpenCode `web` expansion and the four tool-key parsers are gone. Launch snapshots store the rules in `tool_rules`; an older snapshot's `tools` map is read as native-only rules (`[legacy snapshot]` in `--dry-run`).
 - `--dry-run` reports a rule Mars cannot name for the harness (`native_status: unknown`) as `unsupported`, a deny of a tool the harness lacks (`absent`) as satisfied, and an allow of one as `unsupported`. Unsupported notes read `not projected for <Harness>`.
 - The sandbox inference moved into the Codex compile and reads capabilities; other harnesses no longer infer one. Agent-copy detection is `agent_copy_enabled(project_root, harness_id)` in the catalog layer for every harness; the adapter hook is gone.
 
 ### Fixed
+- Native sub-agent denies (`Agent`, `Task*`) hold under `'*': deny`: they were left out of Claude's argv for such a profile, and the platform rule was not built for `task`.
 - Tools reach the harness under their real names. Claude: `web` denies `WebSearch`/`WebFetch` (was `Websearch`), `ask_user` denies `AskUserQuestion` (was `Askuser`), `edit` covers `Edit`/`Write`/`NotebookEdit`, scoped bash denies are `Bash(git push *)` (was `Bash(git push:*)`), `agent` includes `SendMessage`/`ListAgents`. OpenCode: `read`, `question`, `task`, `websearch`, `webfetch` (were `view`, `askuser`, `agent`, `browser`). Codex: `edit` and `bash` now steer its inferred sandbox.
 
 ## [0.11.8] - 2026-10-21

@@ -1,5 +1,33 @@
 # Upgrade notes
 
+## Allowlists in `tools`
+
+A profile's `tools` now restricts the agent to what it lists, not just what it denies. Two
+forms are allowlists:
+
+- **The list form.** `tools: [read, grep]` means exactly `read` and `grep`, the same as
+  `'*': deny` with those two allowed. Before, Meridian dropped the implied `*: deny`, so the
+  harness's own defaults decided every unlisted tool.
+- **A capability with only scoped allows.** With `'bash(rg *)': allow` and no `bash` rule,
+  `rg` is the only command that may run, whatever `approval` says. `approval: never` means
+  "don't prompt", not "allow anything". Add `bash: allow` to a profile that
+  wants the rest back; a `*` rule also decides every unmatched call.
+
+**What changes now**
+
+- OpenCode spawns enforce `*: deny` (and so the list form). Claude, Codex and Pi do not yet;
+  `--dry-run` shows `tools: * = deny` and `tools: <capability> allowlist` as `unsupported`
+  there, and the [permissions table](agent-profiles.md#permissions-by-harness) says which
+  harness applies which.
+- Spawns still deny native sub-agent tools under `'*': deny` or a list. On Claude this was
+  skipped for a profile that wrote `'*': deny`.
+
+**Before installing**
+
+Check profiles that write `tools` as a list, or only scoped allows: a spawn that cannot run
+`meridian spawn done` cannot finish cleanly, so list `bash(meridian spawn *)` if the agent
+needs it.
+
 ## Typed tool rules (Mars 0.17)
 
 Meridian reads the launch bundle's `tools.rules` instead of the flat `allowed` and
