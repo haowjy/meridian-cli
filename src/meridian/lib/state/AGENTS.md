@@ -44,7 +44,8 @@ bare path
                                       leases; shared by Pi and Claude delivery; goes with
                                       the spawn, so pruning one forgets its consumption
   pi-bash/<spawn_id>/observed-spawns.json
-                                    — legacy home of that file: read, never written
+                                    — legacy-observed-spawns (#719): read, never deleted,
+                                      and mirrored by record() when this Pi dir exists
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
   __status.json                     — mutable per-work-item metadata; readers accept
                                       absent v as v1, writers do not emit v yet

@@ -24,12 +24,7 @@
   project_identity module and leave ops with only active-spawn policy + CLI
   rendering. (B3)
 - Legacy `observed-spawns.json` under `pi-bash/<parent>/`: one minor release after
-  the move ships, delete `spawn_observations.read_legacy()`, its use in
-  `_documents()` and the legacy mirror write at the end of `record()`; the legacy read in `streaming/disk_watcher.py`
-  (`_refresh_cached_state`) and its `pi-bash` watch entry (`_watch_state_dirs`);
-  `readLegacyObservations()` / `resolveLegacyObservedSpawnsPath()` in
-  `pi_runtime/extensions/shared/` (`delivery_receipts.ts`, `pi_state_paths.ts`) and the
-  `bashDir` watch comment in `meridian-spawn-watch/src/index.ts`. Then drop the legacy
-  notes in `delivery-contract.md`, this directory's `AGENTS.md` layout and the
+  the move ships, delete everything tagged `legacy-observed-spawns (#719)`, keep the
+  `pi-bash` watch (it serves the other Pi coordination files), then remove the
   `docs/upgrading.md` topic. Until then, never delete the legacy file: an older
   `spawn wait` may still be writing it.

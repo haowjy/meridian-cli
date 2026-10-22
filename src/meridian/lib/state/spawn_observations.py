@@ -47,12 +47,13 @@ def _read(path: Path, parent_spawn_id: str) -> SpawnObservations | None:
     return observations
 
 
+# legacy-observed-spawns (#719): remove this helper with the compatibility reader.
 def _legacy_dir(runtime_root: Path, parent_spawn_id: str) -> Path:
     return runtime_root / "pi-bash" / parent_spawn_id
 
 
 def read_legacy(runtime_root: Path, parent_spawn_id: str) -> SpawnObservations | None:
-    """Read the pre-``spawns/<parent>/`` file; a damaged copy counts as absent.
+    """legacy-observed-spawns (#719): Read the old file; damage counts as absent.
 
     Builds from before the move wrote ``pi-bash/<parent>/observed-spawns.json``, and
     a ``spawn wait`` started by one may still be writing it. Nothing here deletes it.
@@ -65,7 +66,7 @@ def read_legacy(runtime_root: Path, parent_spawn_id: str) -> SpawnObservations |
 def _documents(runtime_root: Path, parent_spawn_id: str) -> tuple[SpawnObservations, ...]:
     found = (
         _read(observed_spawns_path(runtime_root, parent_spawn_id), parent_spawn_id),
-        read_legacy(runtime_root, parent_spawn_id),
+        read_legacy(runtime_root, parent_spawn_id),  # legacy-observed-spawns (#719)
     )
     return tuple(document for document in found if document is not None)
 
@@ -82,7 +83,8 @@ def record(
     """Record results consumed by a parent or leased by its explicit wait.
 
     Returns ``False`` when the parent's published row is gone or unreadable, so
-    nothing was written; no reader selects that parent's children.
+    nothing was written. ``spawn ack`` treats that as an error; ``spawn wait``
+    proceeds without a record because no reader selects that parent's children.
     """
 
     waiting_add_ids = tuple(waiting_add)
@@ -149,8 +151,8 @@ def record(
         )
     except (PublishedArtifactUnavailable, SpawnStateQuarantined):
         return False
-    # A Pi session started by an older build reads only the legacy file and outlives
-    # the upgrade, so mirror the update there wherever Pi already keeps that directory.
+    # legacy-observed-spawns (#719): A Pi session started by an older build reads only
+    # this file, so mirror updates wherever Pi already keeps the legacy directory.
     legacy_dir = _legacy_dir(runtime_root, parent_spawn_id)
     if legacy_dir.is_dir():
         legacy_path = legacy_dir / "observed-spawns.json"
@@ -198,6 +200,6 @@ __all__ = [
     "SpawnObservations",
     "consumed_ids",
     "leased_ids",
-    "read_legacy",
+    "read_legacy",  # legacy-observed-spawns (#719)
     "record",
 ]

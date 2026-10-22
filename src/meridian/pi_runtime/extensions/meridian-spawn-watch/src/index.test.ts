@@ -429,6 +429,7 @@ describe('durable result delivery', () => {
   it('observes idle before the final snapshot when consumption finishes with the tool', async () => {
     const root = await setup();
     await child(root, 'p1');
+    await mkdir(path.join(root, 'spawns', 'p-parent'), { recursive: true });
     const h = host(false);
     let idleChecks = 0;
     const runtime = new SpawnWatchRuntime(h.pi, () => {
@@ -436,7 +437,7 @@ describe('durable result delivery', () => {
       if (idleChecks === 1) {
         // Model a consuming tool persisting its marker immediately before the
         // host reports idle. The final snapshot must happen after this effect.
-        writeFileSync(path.join(root, 'pi-bash', 'p-parent', 'observed-spawns.json'), JSON.stringify({
+        writeFileSync(path.join(root, 'spawns', 'p-parent', 'observed-spawns.json'), JSON.stringify({
           v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(),
           observed_spawn_ids: ['p1'], waiting_spawn_ids: [], wait_reservations: {},
         }));
@@ -667,7 +668,7 @@ describe('durable result delivery', () => {
     const root = await setup();
     await child(root, 'p1');
     await child(root, 'p2');
-    await file(root, 'observed-spawns.json', {
+    await observations(root, {
       v: 1, spawn_id: 'p-parent', observed_spawn_ids: [], waiting_spawn_ids: ['p1', 'p2'],
       wait_reservations: {
         dead: {owner_pid: 2147483647, owner_birth_epoch: 1, expires_at_epoch: Date.now()/1000+30, spawn_ids: ['p1']},

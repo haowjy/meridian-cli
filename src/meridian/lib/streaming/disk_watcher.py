@@ -23,7 +23,10 @@ from meridian.lib.harness.pi_private_state import (
     DeliveryReceipts,
 )
 from meridian.lib.state.paths import observed_spawns_path
-from meridian.lib.state.spawn_observations import SpawnObservations, read_legacy
+from meridian.lib.state.spawn_observations import (
+    SpawnObservations,
+    read_legacy,  # legacy-observed-spawns (#719)
+)
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 
@@ -103,6 +106,7 @@ class PiDiskWatcher:
         receipts = self._read(self._bash_dir / "delivery-receipts.json", DeliveryReceipts)
         observed = self._read(self._bash_dir / "delivery-observations.json", DeliveryObservations)
         explicit = self._read(self._observations_path, SpawnObservations)
+        # legacy-observed-spawns (#719): merge the old file leniently during transition.
         legacy_explicit = read_legacy(self._runtime_root, self._spawn_id)
         cleared = self._read(self._bash_dir / "cleared-spawns.json", ClearedSpawns)
         fault = self._read(self._bash_dir / "delivery-fault.json", DeliveryFault)
@@ -146,8 +150,9 @@ class PiDiskWatcher:
         return self._ledger.evidence_failure()
 
     async def _watch_state_dirs(self) -> None:
-        # The spawn directory holds the current observed-spawns.json; the bash
-        # directory still holds the legacy copy a pre-move `spawn wait` may write.
+        # Pi coordination files keep the bash-directory watch. The spawn-directory
+        # watch adds the current observed-spawns.json without waking on unrelated files.
+        # legacy-observed-spawns (#719): old observation writes also wake the bash watch.
         watched = [self._bash_dir]
         if self._observations_path.parent.is_dir():
             watched.append(self._observations_path.parent)

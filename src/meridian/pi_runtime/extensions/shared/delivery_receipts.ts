@@ -6,7 +6,7 @@ import { readPrivateJson, writeJsonAtomic } from "./json_file";
 import {
   currentSpawnIdFromEnv,
   resolveDeliveryReceiptsPath,
-  resolveLegacyObservedSpawnsPath,
+  resolveLegacyObservedSpawnsPath, // legacy-observed-spawns (#719)
   resolveObservedSpawnsPath,
 } from "./pi_state_paths";
 import type { DeliveryReceiptsFile, ObservedSpawnsFile } from "./schemas";
@@ -60,9 +60,11 @@ async function readObservationsFile(file: string, spawnId: string): Promise<Obse
 }
 
 /**
- * A `spawn wait` from a build before the move may still write the old file. This
- * build never repairs it, so damaged content counts as absent; an I/O failure
- * (which carries an errno code) is still unknown.
+ * legacy-observed-spawns (#719)
+ * A `spawn wait` from a build before the move may still write the old file.
+ * Compatibility reads do not repair it, so damaged content counts as absent;
+ * an I/O failure (which carries an errno code) is still unknown. A later mirrored
+ * record may replace the damaged copy.
  */
 async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFile> {
   try { return await readObservationsFile(resolveLegacyObservedSpawnsPath(spawnId), spawnId); }
@@ -72,7 +74,7 @@ async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFi
   }
 }
 
-/** Consumed ids and wait leases from the current file and the legacy one. */
+/** legacy-observed-spawns (#719): Merge consumed ids and leases from both files. */
 export async function readSpawnObservations(spawnId = currentSpawnIdFromEnv()): Promise<ObservedSpawnsFile> {
   const current = await readObservationsFile(resolveObservedSpawnsPath(spawnId), spawnId);
   const legacy = await readLegacyObservations(spawnId);

@@ -98,7 +98,7 @@ export class SpawnWatchRuntime {
     mkdirSync(this.bashDir, { recursive: true });
     const watched: Array<[string, (filename: string | null) => void]> = [
       [this.spawnsDir, () => { this.discoveryRevision++; this.requestIdleDelivery(); }],
-      // Legacy home of observed-spawns.json, still written by pre-move `spawn wait`.
+      // legacy-observed-spawns (#719): old writes wake the Pi coordination watch.
       [this.bashDir, () => this.requestIdleDelivery()],
       // Current home. The directory also holds frequently rewritten spawn files
       // (state, logs); only the observations file is read here.

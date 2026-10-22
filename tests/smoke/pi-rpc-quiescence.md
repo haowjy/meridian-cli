@@ -48,7 +48,7 @@ Authoritative/private files under the project runtime:
 | `pi-bash/<p-id>/bash-records.json` | Shell ownership/tracking, terminal and consumption state |
 | `pi-bash/<p-id>/delivery-receipts.json` | Exact native custom-message admission membership |
 | `pi-bash/<p-id>/delivery-observations.json` | Python's observation of the matching public event |
-| `spawns/<p-id>/observed-spawns.json` | Explicit child consumption and live wait leases (older builds wrote `pi-bash/<p-id>/`, still read) |
+| `spawns/<p-id>/observed-spawns.json` | Explicit child consumption and live wait leases (`legacy-observed-spawns (#719)`: the old `pi-bash/<p-id>/` copy is still read and mirrored for Pi parents) |
 | `pi-bash/<p-id>/delivery-fault.json` | Supervised delivery errors |
 
 Native `session log` supplies conversation evidence. Meridian does not write a

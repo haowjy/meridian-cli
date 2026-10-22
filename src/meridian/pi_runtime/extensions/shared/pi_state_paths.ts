@@ -35,7 +35,7 @@ export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): st
   return path.join(resolveSpawnsDir(), spawnId, "observed-spawns.json");
 }
 
-/** Where builds before the move wrote it; read-only here, never created or repaired. */
+/** legacy-observed-spawns (#719): Old location, read-only in the Pi extension. */
 export function resolveLegacyObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "observed-spawns.json");
 }
