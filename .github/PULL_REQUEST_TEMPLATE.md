@@ -148,11 +148,13 @@
 
 ## Release Label Guide
 
-Set one `release:*` label on this PR:
+Set one `release:*` label on this PR. The bump tracks breakage, not size: a
+change that breaks no existing behaviour, config, or on-disk state is a patch,
+however much it adds (`docs/releasing.md`).
 
 - `release:patch` / `release:stable` — next stable **patch** release after merge
-- `release:minor` — next stable **minor** release after merge
-- `release:major` — next stable **major** release after merge
+- `release:minor` — next stable **minor** release after merge; breaks existing behaviour, config, or state
+- `release:major` — next stable **major** release after merge; breaks existing behaviour, config, or state
 - `release:rc` — next **prerelease (RC)** after merge
 - `release:skip` — no release for this merge
 
@@ -166,8 +168,8 @@ After merge to `main`, CI (`.github/workflows/release-on-merge.yml`) will:
 2. Skip only when `release:skip` is present (no label defaults to RC)
 3. Compute the next stable or RC version from existing `v*` tags
 4. Update `src/meridian/__init__.py` + promote `CHANGELOG.md` `[Unreleased]`
-5. Commit `Release X.Y.Z`, create/push `vX.Y.Z`
-6. Run `.github/workflows/publish-pypi.yml`
+5. Commit `release: vX.Y.Z` (or `release: vX.Y.Z-rc.N`), create/push the matching tag
+6. Let the tag push run `.github/workflows/release.yml`, which publishes to PyPI
 
 ## Cleanup
 
