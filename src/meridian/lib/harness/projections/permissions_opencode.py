@@ -26,16 +26,15 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import ToolAction, ToolRule, split_native, unscoped_action
+from meridian.lib.tools import (
+    PLATFORM_ORIGIN,
+    ToolAction,
+    ToolRule,
+    split_native,
+    unscoped_action,
+)
 
 _STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
-
-# Platform-rule capabilities are semantic; these are the OpenCode V1 actions that
-# implement them. The compile aliases them when producing V2 rules.
-_PLATFORM_DENY_ACTIONS: dict[str, tuple[str, ...]] = {
-    "agent": ("task",),
-    "task": ("todowrite",),
-}
 
 _V2_ACTION_ALIASES: dict[str, str] = {
     "bash": "shell",
@@ -207,7 +206,9 @@ def _tool_rule_lines(
             continue
         rendered = ", ".join(f"{entry.action}({entry.resource})" for entry in entries)
         effective = _effective_action(rule.action, interactive=spec.interactive)
-        if any(entry.action in platform_denied_actions for entry in entries):
+        if rule.origin != PLATFORM_ORIGIN and any(
+            entry.action in platform_denied_actions for entry in entries
+        ):
             lines.append(
                 ReportLine(rule_element(rule), "platform", "overridden to deny by a platform rule")
             )
@@ -289,7 +290,9 @@ def compile_opencode_permissions(
         )
         for rule in policy.rules
     ]
-    has_profile_native = any(entries for _, entries in entries_by_rule)
+    has_profile_native = any(
+        entries for rule, entries in entries_by_rule if rule.origin != PLATFORM_ORIGIN
+    )
     edit_conflict = (
         _v2_edit_conflict(entries_by_rule, interactive=spec.interactive)
         if resolved_version == "v2"
@@ -308,30 +311,13 @@ def compile_opencode_permissions(
         )
     ordered = list(_collapse_exact_rules(profile_entries))
 
-    platform_denied_actions: set[str] = set()
-    for platform in policy.platform_rules:
-        if platform.kind != "native-subagents":
-            continue
-        actions = tuple(
-            _native_action(action, version=resolved_version)
-            for capability in platform.capabilities
-            for action in _PLATFORM_DENY_ACTIONS.get(capability, ())
-        )
-        platform_denied_actions.update(actions)
-        if actions:
-            denied = frozenset(actions)
-            ordered = [entry for entry in ordered if entry.action not in denied]
-            ordered.extend(
-                OpenCodePermissionRule(action=action, resource="*", effect="deny")
-                for action in actions
-            )
-            lines.append(
-                ReportLine(
-                    platform_element(platform),
-                    "platform",
-                    "permission " + ", ".join(actions) + ": deny",
-                )
-            )
+    platform_denied_actions = {
+        entry.action
+        for rule, entries in entries_by_rule
+        if rule.origin == PLATFORM_ORIGIN
+        for entry in entries
+        if entry.effect == "deny" and entry.resource == "*"
+    }
 
     final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
 

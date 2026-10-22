@@ -87,7 +87,7 @@ from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILEN
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan, undo_direnv
 from .env import merge_env_overrides as _merge_env_overrides
-from .permissions import launch_platform_rules
+from .permissions import launch_permission_rules
 from .policies import (
     ModelSelectionContext,
     ResolvedLaunchPolicy,
@@ -1434,6 +1434,7 @@ def prepare_launch_surface(
             # resolved rules — e.g. a Codex web grant — must still propagate). Falls back
             # to request.tool_rules only when no rules were resolved.
             "tool_rules": policies.resolved_tool_rules or request.tool_rules,
+            "platform_tool_rules": policies.platform_tool_rules,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,
@@ -1694,8 +1695,16 @@ def bind_launch_context(
         project_root=project_paths.project_root,
     )
     native_agent_copy = agent_copy_enabled(project_paths.project_root, harness.id)
+    platform_tool_rules, platform_rules = launch_permission_rules(
+        tool_rules=resolved_request.tool_rules,
+        profile_tool_rules=profile_tool_rules,
+        platform_tool_rules=resolved_request.platform_tool_rules,
+        spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
+        native_agent_copy=native_agent_copy,
+        allow_builtin_agents=allow_builtin_agents,
+    )
     permission_policy = build_permission_policy(
-        rules=resolved_request.tool_rules,
+        rules=(*resolved_request.tool_rules, *platform_tool_rules),
         sandbox=resolved_request.execution_policy.sandbox,
         sandbox_write_roots=tuple(
             root.as_posix()
@@ -1704,13 +1713,7 @@ def bind_launch_context(
             )
         ),
         approval=resolved_request.execution_policy.approval or "default",
-        platform_rules=launch_platform_rules(
-            tool_rules=resolved_request.tool_rules,
-            profile_tool_rules=profile_tool_rules,
-            spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
-            native_agent_copy=native_agent_copy,
-            allow_builtin_agents=allow_builtin_agents,
-        ),
+        platform_rules=platform_rules,
     )
 
     # Defense in depth for persisted worker requests that bypassed preparation.

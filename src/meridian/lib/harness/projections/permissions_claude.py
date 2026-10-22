@@ -29,14 +29,10 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import ToolAction, ToolRule, split_native
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolAction, ToolRule, split_native
 
 type PermissionMode = Literal["acceptEdits", "manual", "dontAsk"]
 
-_PLATFORM_DENY_TOOLS: dict[str, tuple[str, ...]] = {
-    "agent": ("Agent", "SendMessage", "ListAgents"),
-    "task": ("TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate"),
-}
 _BUILTIN_AGENT_PATTERNS: tuple[str, ...] = (
     "Explore",
     "Plan",
@@ -165,41 +161,35 @@ def _platform_rule(policy: PermissionPolicy, kind: PlatformRuleKind) -> Platform
     return next((rule for rule in policy.platform_rules if rule.kind == kind), None)
 
 
-def _platform_denied_capabilities(policy: PermissionPolicy) -> tuple[str, ...]:
-    rule = _platform_rule(policy, "native-subagents")
-    return () if rule is None else rule.capabilities
-
-
-def _broad_agent_deny_is_native(policy: PermissionPolicy) -> bool:
-    """A broad Agent deny would also disable built-ins the user explicitly enabled."""
-
-    return "agent" in _platform_denied_capabilities(policy) and (
-        _platform_rule(policy, "builtin-agents") is not None
+def _has_platform_agent_deny(policy: PermissionPolicy) -> bool:
+    return any(
+        rule.origin == PLATFORM_ORIGIN and rule.capability == "agent" for rule in policy.rules
     )
 
 
-def _platform_deny_tools(policy: PermissionPolicy, capability: str) -> tuple[str, ...]:
-    names = _PLATFORM_DENY_TOOLS[capability]
-    if capability == "agent" and not _broad_agent_deny_is_native(policy):
-        return tuple(name for name in names if name != "Agent")
-    return names
+def _projected_natives(policy: PermissionPolicy, rule: ToolRule) -> tuple[str, ...]:
+    """Keep Claude's one platform-rule quirk local to its native projection."""
+
+    if (
+        rule.origin == PLATFORM_ORIGIN
+        and rule.capability == "agent"
+        and _platform_rule(policy, "builtin-agents") is None
+    ):
+        # Claude's generic Agent permission covers its built-in agents too. Keep those usable
+        # when explicitly enabled while still denying Mars's separate messaging/listing tools.
+        return tuple(native for native in rule.native if split_native(native)[0] != "Agent")
+    return rule.native
 
 
 def _effective_rules(policy: PermissionPolicy) -> tuple[_Effective, ...]:
-    denied = _platform_denied_capabilities(policy)
     deny_builtins = _platform_rule(policy, "builtin-agents") is not None
-    broad_agent_deny = _broad_agent_deny_is_native(policy)
     effective: list[_Effective] = []
     for rule in policy.rules:
         action = rule.action
         if (
-            (rule.capability == "agent" and broad_agent_deny)
-            or (rule.capability == "task" and "task" in denied)
-            or (
-                rule.capability == "agent"
-                and rule.pattern in _BUILTIN_AGENT_PATTERNS
-                and deny_builtins
-            )
+            rule.capability == "agent"
+            and rule.pattern in _BUILTIN_AGENT_PATTERNS
+            and deny_builtins
         ):
             action = "deny"
         effective.append(_Effective(rule, action))
@@ -303,7 +293,7 @@ def _filter_passthrough_allows(
     if policy.is_allowlist:
         return (), allowed
 
-    generic_agent_denied = "agent" in _platform_denied_capabilities(policy)
+    generic_agent_denied = _has_platform_agent_deny(policy)
     builtins_denied = _platform_rule(policy, "builtin-agents") is not None
     kept: list[str] = []
     dropped: list[str] = []
@@ -337,7 +327,7 @@ def _compile_channels(
         rule = entry.rule
         if rule.is_wildcard or rule.native_status != "known":
             continue
-        for native in rule.native:
+        for native in _projected_natives(policy, rule):
             if entry.action == "allow":
                 allow.append(native)
             elif split_native(native)[1] is not None:
@@ -374,8 +364,6 @@ def _compile_channels(
         else:
             ask.append(native)
 
-    for capability in _platform_denied_capabilities(policy):
-        disallowed.extend(_platform_deny_tools(policy, capability))
     if _platform_rule(policy, "builtin-agents") is not None:
         disallowed.extend(f"Agent({pattern})" for pattern in _BUILTIN_AGENT_PATTERNS)
 
@@ -592,11 +580,21 @@ def _tool_rule_line(
         channel = _channel_of(native, permissions)
         blocker = _shadow(native, permissions) if entry.action == "allow" else None
         if channel is None:
-            notes.append(
-                f"{native} omitted: Claude checks {blocker} first"
-                if blocker is not None
-                else f"{native} omitted"
-            )
+            if (
+                rule.origin == PLATFORM_ORIGIN
+                and rule.capability == "agent"
+                and split_native(native)[0] == "Agent"
+            ):
+                notes.append(
+                    f"{native} omitted: generic Agent cannot be denied without also disabling "
+                    "allowed built-in agents"
+                )
+            else:
+                notes.append(
+                    f"{native} omitted: Claude checks {blocker} first"
+                    if blocker is not None
+                    else f"{native} omitted"
+                )
             partial = True
             continue
         placed.append((channel, native))
@@ -654,26 +652,7 @@ def _platform_lines(
 ) -> list[ReportLine]:
     lines: list[ReportLine] = []
     for platform in policy.platform_rules:
-        if platform.kind == "native-subagents":
-            names = [
-                name
-                for capability in platform.capabilities
-                for name in _platform_deny_tools(policy, capability)
-                if name in permissions.disallowed_tools
-            ]
-            note = "--disallowedTools " + ",".join(names)
-            if "agent" in platform.capabilities and not _broad_agent_deny_is_native(policy):
-                lines.append(
-                    ReportLine(
-                        platform_element(platform),
-                        "partial",
-                        f"{note}; generic Agent cannot be denied without also disabling "
-                        "allowed built-in agents",
-                    )
-                )
-            else:
-                lines.append(ReportLine(platform_element(platform), "platform", note))
-        elif platform.kind == "builtin-agents":
+        if platform.kind == "builtin-agents":
             names = ",".join(f"Agent({pattern})" for pattern in _BUILTIN_AGENT_PATTERNS)
             lines.append(
                 ReportLine(

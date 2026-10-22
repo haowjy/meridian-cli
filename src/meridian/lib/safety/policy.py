@@ -14,7 +14,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.tools import LEGACY_SNAPSHOT_ORIGIN, ToolRule, split_native, unscoped_action
+from meridian.lib.tools import (
+    LEGACY_SNAPSHOT_ORIGIN,
+    PLATFORM_ORIGIN,
+    ToolRule,
+    split_native,
+    unscoped_action,
+)
 
 type SandboxMode = Literal[
     "default",
@@ -44,26 +50,23 @@ _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
 ALLOWLIST_ORIGIN = "allowlist"
 
 
-type PlatformRuleKind = Literal["native-subagents", "builtin-agents", "completion-commands"]
+type PlatformRuleKind = Literal["builtin-agents", "completion-commands"]
 
 
 class PlatformRule(BaseModel):
     """A rule Meridian puts on a launch whatever the profile says.
 
-    ``native-subagents`` denies the harness's own sub-agent tools so delegation goes
-    through Meridian; ``capabilities`` lists the ones to deny (``agent``, ``task``), already
-    net of profile opt-outs. ``builtin-agents`` denies the harness's built-in agents.
-    ``completion-commands`` is the one allow: ``commands`` are the shell commands a child
-    runs to confirm or reject its own completion (``meridian spawn done`` / ``rearm``), which
-    must stay runnable under any allowlist or deny of the shell. A harness spells each command
-    and its argument form in its own scope syntax.
-    A harness that has no native name for a rule leaves it out of its projection.
+    Ordinary agent/task denies are ``ToolRule`` values named by Mars. ``builtin-agents``
+    controls harness mechanisms that cannot be expressed as such a rule. The
+    ``completion-commands`` allow carries the shell commands a child runs to confirm or
+    reject its own completion (``meridian spawn done`` / ``rearm``), which must stay runnable
+    under any allowlist or deny of the shell. A harness spells each command and its argument
+    form in its own scope syntax.
     """
 
     model_config = ConfigDict(frozen=True)
 
     kind: PlatformRuleKind
-    capabilities: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
 
 
@@ -135,6 +138,8 @@ type EnforcementReport = tuple[ReportLine, ...]
 def rule_element(rule: ToolRule) -> str:
     """Name a rule the way the profile wrote it; a legacy snapshot rule has only its native key."""
 
+    if rule.origin == PLATFORM_ORIGIN:
+        return f"platform: tools {rule.capability} = {rule.action}"
     if rule.origin == ALLOWLIST_ORIGIN:
         return f"tools: {rule.capability} allowlist (only the scoped allows may run)"
     name = rule.capability if rule.capability is not None else ", ".join(rule.native)
@@ -145,8 +150,6 @@ def rule_element(rule: ToolRule) -> str:
 
 
 def platform_element(rule: PlatformRule) -> str:
-    if rule.kind == "native-subagents":
-        return f"platform: deny native sub-agents ({', '.join(sorted(rule.capabilities))})"
     if rule.kind == "completion-commands":
         return f"platform: allow completion commands ({', '.join(rule.commands)})"
     return "platform: deny built-in agents"
@@ -156,15 +159,24 @@ def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
     """What the report says about a rule the compile left unreported."""
 
     element = rule_element(rule)
+    satisfied_status: ReportStatus = (
+        "platform" if rule.origin == PLATFORM_ORIGIN else "native"
+    )
     if rule.native_status == "unknown":
         return ReportLine(
             element,
             "unsupported",
-            f"Mars has no {harness} name for this tool, so it is not enforced",
+            (
+                rule.note
+                if rule.origin == PLATFORM_ORIGIN and rule.note
+                else f"Mars has no {harness} name for this tool, so it is not enforced"
+            ),
         )
     if rule.native_status == "absent":
         if rule.action == "deny":
-            return ReportLine(element, "native", f"{harness} has no such tool, so nothing to deny")
+            return ReportLine(
+                element, satisfied_status, f"{harness} has no such tool, so nothing to deny"
+            )
         return ReportLine(element, "unsupported", f"{harness} lacks this tool")
     return ReportLine(element, "unsupported", f"not projected for {harness}")
 
@@ -199,7 +211,14 @@ def complete_report(
             )
         )
     by_element = {line.element: line for line in reported}
-    lines = [by_element.get(default.element, default) for default in defaults]
+    rules_by_element = {rule_element(rule): rule for rule in policy.rules}
+    lines: list[ReportLine] = []
+    for default in defaults:
+        line = by_element.get(default.element, default)
+        rule = rules_by_element.get(default.element)
+        if rule is not None and rule.origin == PLATFORM_ORIGIN and line.status == "native":
+            line = ReportLine(line.element, "platform", line.note)
+        lines.append(line)
     known = {default.element for default in defaults}
     lines.extend(line for line in by_element.values() if line.element not in known)
     return tuple(lines)

@@ -58,7 +58,13 @@ def bundle() -> dict[str, object]:
             "route_trace": report(),
         },
         "execution_policy": {},
-        "tools": {"rules": []},
+        "tools": {
+            "rules": [],
+            "capability_natives": {
+                "agent": {"native": ["spawn_agent"], "native_status": "known"},
+                "task": {"native": ["update_plan"], "native_status": "known"},
+            },
+        },
     }
 
 

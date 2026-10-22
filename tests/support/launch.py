@@ -68,6 +68,7 @@ class FakeBundleResult:
     warnings: tuple[str, ...] = ()
     prompt_surface_inventory_prompt: str = ""
     tool_rules: tuple[ToolRule, ...] = ()
+    platform_tool_rules: tuple[ToolRule, ...] = ()
     tools_mcp: tuple[str, ...] = ()
     skills_loaded: tuple[LoadedSkillEntry, ...] = ()
     skills_available: tuple[AvailableSkillEntry, ...] = ()
@@ -225,6 +226,7 @@ def stub_bundle_request_and_resolve(
     warnings: tuple[str, ...] = (),
     prompt_surface_inventory_prompt: str = "",
     tool_rules: tuple[ToolRule, ...] = (),
+    platform_tool_rules: tuple[ToolRule, ...] = (),
     tools_mcp: tuple[str, ...] = (),
     skills_loaded: tuple[LoadedSkillEntry, ...] = (),
 ) -> list[bundle_adapter.BundleRequest]:
@@ -253,6 +255,7 @@ def stub_bundle_request_and_resolve(
             warnings=warnings,
             prompt_surface_inventory_prompt=prompt_surface_inventory_prompt,
             tool_rules=tool_rules,
+            platform_tool_rules=platform_tool_rules,
             tools_mcp=tools_mcp,
             skills_loaded=skills_loaded,
         )

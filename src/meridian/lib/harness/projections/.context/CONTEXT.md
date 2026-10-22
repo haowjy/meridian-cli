@@ -82,6 +82,12 @@ is non-empty, the projector logs a debug warning and continues — not an error,
 resolved sandbox and approval modes. Each harness module compiles it to a typed value and
 its projectors spell that value:
 
+Mars names the candidate `agent` and `task` platform denies in
+`tools.capability_natives`. Bind selects them after profile opt-outs and adds them to the
+ordinary rule sequence with `origin="platform"`; compiles must not keep a second native-name
+table. `builtin-agents` and `completion-commands` remain separate platform mechanisms because
+they are not ordinary tool denies.
+
 | Harness | Compile result | Spelled by |
 |---|---|---|
 | Claude | tool availability, plain denies, scoped permissions, sandbox and prompt mode | `project_claude.py` (`--tools`, `--disallowedTools`, one `--settings`, permission flags) |
@@ -117,9 +123,12 @@ allowlists, gates and `ask`. Omitting false lets Claude's sandbox auto-approval 
 unmatched Bash calls before the mode can refuse them, which defeats the allowlist.
 
 Codex compiles exact unscoped `bash`, `web`/`web_search` (the narrower wins), and `image` allow/deny rules to process-level
-switches. Its scoped rules, `ask`, and allowlists have no native carrier and remain
-unsupported; a per-capability allowlist's deny (origin `allowlist`) sets no switch, so the
-shell stays on for Codex to read files with. `project_codex_tool_switch_flags` is the one spelling shared by `codex exec`
+switches. Its scoped rules, `ask`, and per-capability allowlists have no native carrier and
+remain unsupported; a per-capability allowlist's deny (origin `allowlist`) sets no switch,
+so the shell stays on for Codex to read files with. A whole-policy allowlist disables web
+search and image viewing but deliberately leaves that shell on. Platform-origin rules never
+drive these tool switches; the built-in-agent mechanism still drives Codex's multi-agent
+feature switch. `project_codex_tool_switch_flags` is the one spelling shared by `codex exec`
 and `codex app-server`; the thread payload continues to carry sandbox and approval only.
 
 OpenCode decides a headless `approval: default` spawn's unmatched calls by a toggle carried

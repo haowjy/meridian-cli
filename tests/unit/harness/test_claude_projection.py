@@ -9,6 +9,7 @@ from meridian.lib.harness.projections.permissions_claude import compile_claude_p
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.safety.policy import PermissionPolicy, PlatformRule, build_permission_policy
+from meridian.lib.tools import PLATFORM_ORIGIN
 from tests.support.launch import tool_rule
 
 
@@ -39,7 +40,11 @@ def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled()
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
-            platform_rules=(PlatformRule(kind="native-subagents", capabilities=("agent",)),)
+            rules=(
+                tool_rule("agent", "deny", "Agent").model_copy(
+                    update={"origin": PLATFORM_ORIGIN}
+                ),
+            )
         ),
         extra_args=("--allowedTools", "Agent,Agent(custom),Bash(meridian spawn *)"),
     )

@@ -111,6 +111,8 @@ class SpawnRequest(BaseModel):
     extra_args: tuple[str, ...] = ()
     mcp_tools: tuple[str, ...] = ()
     tool_rules: tuple[ToolRule, ...] = ()
+    # Mars-named agent/task deny candidates; bind selects them after profile opt-outs.
+    platform_tool_rules: tuple[ToolRule, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)
     ignore_direnv: bool | None = None
 

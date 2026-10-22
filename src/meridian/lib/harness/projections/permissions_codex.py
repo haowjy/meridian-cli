@@ -23,7 +23,7 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 
 _APPROVAL_POLICY_BY_MODE: dict[ApprovalMode, str | None] = {
     "default": None,
@@ -67,7 +67,11 @@ def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
     allowlist would leave Codex nothing to read files with.
     """
 
-    if rule.pattern is not None or rule.action == "ask" or rule.origin == ALLOWLIST_ORIGIN:
+    if (
+        rule.pattern is not None
+        or rule.action == "ask"
+        or rule.origin in {ALLOWLIST_ORIGIN, PLATFORM_ORIGIN}
+    ):
         return None
     enabled = rule.action == "allow"
     if rule.capability == "bash":
@@ -86,7 +90,19 @@ def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> En
     lines: list[ReportLine] = []
     for rule in policy.rules:
         switch = _tool_switch(rule)
-        if switch is not None and getattr(permissions, switch[0]) != switch[1]:
+        if (
+            rule.origin == PLATFORM_ORIGIN
+            and rule.capability == "agent"
+            and permissions.builtin_agents_disabled
+        ):
+            lines.append(
+                ReportLine(
+                    rule_element(rule),
+                    "platform",
+                    "-c features.multi_agent_v2=false -c agents.max_depth=0",
+                )
+            )
+        elif switch is not None and getattr(permissions, switch[0]) != switch[1]:
             lines.append(
                 ReportLine(rule_element(rule), "partial", "overridden by a narrower rule")
             )

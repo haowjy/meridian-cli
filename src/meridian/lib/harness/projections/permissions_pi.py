@@ -241,14 +241,6 @@ def _report(
                     else "no rule restricts bash, so they run",
                 )
             )
-        elif platform.kind == "native-subagents":
-            lines.append(
-                ReportLine(
-                    platform_element(platform),
-                    "platform",
-                    "Pi has no native sub-agent tools",
-                )
-            )
         elif platform.kind == "builtin-agents":
             lines.append(
                 ReportLine(

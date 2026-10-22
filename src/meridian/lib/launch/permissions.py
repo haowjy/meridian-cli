@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from meridian.lib.safety.policy import PlatformRule
-from meridian.lib.tools import ToolRule, capability_action, unscoped_action
+from meridian.lib.tools import (
+    PLATFORM_ORIGIN,
+    ToolRule,
+    capability_action,
+    legacy_platform_tool_rules,
+    unscoped_action,
+)
 
 # Capabilities whose native tools let an agent delegate outside Meridian's tracking.
 # Sorted: the order is the order a harness's compile emits them in.
@@ -24,38 +30,38 @@ def _native_subagent_capabilities(
 ) -> tuple[str, ...]:
     """Return the delegation capabilities the platform denies for this launch.
 
-    ``agent`` is denied everywhere unless native agent copies are the project's delegation
-    mechanism. Spawns also deny ``task``, and ``agent`` when copies are off, unless the
-    profile's own rules allow or ask for it, or a rule naming the capability already denies
-    it. A ``*: deny`` does not stand in for that rule: a platform deny is a rule of its own,
-    so it holds under an allowlist too. ``profile_tool_rules`` are the profile-declared
-    rules: only a profile can opt out, never a request-level rule.
+    ``agent`` is denied everywhere and spawns also deny ``task``, unless native agent copies
+    are the project's delegation mechanism, the profile's own rules allow or ask for the
+    capability, or a rule naming it already denies it. A ``*: deny`` does not stand in for
+    that rule: a platform deny is a rule of its own, so it holds under an allowlist too.
+    ``profile_tool_rules`` are the profile-declared rules: only a profile can opt out, never
+    a request-level rule.
     """
 
     capabilities: list[str] = []
-    if spawn:
-        for capability in _NATIVE_SUBAGENT_CAPABILITIES:
-            if capability == "agent" and native_agent_copy:
-                continue
-            if capability_action(profile_tool_rules, capability) in {"allow", "ask"}:
-                continue
-            if unscoped_action(tool_rules, capability) == "deny":
-                continue
-            capabilities.append(capability)
-    if not native_agent_copy and "agent" not in capabilities:
-        capabilities.append("agent")
+    for capability in _NATIVE_SUBAGENT_CAPABILITIES:
+        if capability == "task" and not spawn:
+            continue
+        if capability == "agent" and native_agent_copy:
+            continue
+        if capability_action(profile_tool_rules, capability) in {"allow", "ask"}:
+            continue
+        if unscoped_action(tool_rules, capability) == "deny":
+            continue
+        capabilities.append(capability)
     return tuple(capabilities)
 
 
-def launch_platform_rules(
+def launch_permission_rules(
     *,
     tool_rules: tuple[ToolRule, ...],
     profile_tool_rules: tuple[ToolRule, ...],
+    platform_tool_rules: tuple[ToolRule, ...],
     spawn: bool,
     native_agent_copy: bool,
     allow_builtin_agents: bool,
-) -> tuple[PlatformRule, ...]:
-    """Return the platform rules for one launch; each harness names them natively.
+) -> tuple[tuple[ToolRule, ...], tuple[PlatformRule, ...]]:
+    """Select ordinary platform denies and the remaining mechanism rules for a launch.
 
     Every spawn gets the completion-command allow. A harness's own defaults can close the
     shell to a headless child even without tool rules (Claude asks before any command that
@@ -63,20 +69,25 @@ def launch_platform_rules(
     profile. A compile whose shell is already open has nothing to add for it.
     """
 
-    rules: list[PlatformRule] = []
     capabilities = _native_subagent_capabilities(
         tool_rules=tool_rules,
         profile_tool_rules=profile_tool_rules,
         spawn=spawn,
         native_agent_copy=native_agent_copy,
     )
-    if capabilities:
-        rules.append(PlatformRule(kind="native-subagents", capabilities=capabilities))
+    candidates = platform_tool_rules or legacy_platform_tool_rules()
+    denies = tuple(
+        rule.model_copy(update={"action": "deny", "origin": PLATFORM_ORIGIN})
+        for rule in candidates
+        if rule.capability in capabilities
+    )
+
+    rules: list[PlatformRule] = []
     if not allow_builtin_agents:
         rules.append(PlatformRule(kind="builtin-agents"))
     if spawn:
         rules.append(PlatformRule(kind="completion-commands", commands=_COMPLETION_COMMANDS))
-    return tuple(rules)
+    return denies, tuple(rules)
 
 
-__all__ = ["launch_platform_rules"]
+__all__ = ["launch_permission_rules"]

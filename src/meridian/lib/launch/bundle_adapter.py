@@ -27,7 +27,7 @@ from meridian.lib.launch.launch_types import (
     ResolvedExecutionPolicy,
     TerminalSurfaceMode,
 )
-from meridian.lib.tools import ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from meridian.lib.utils.json_shapes import json_object
 
 if TYPE_CHECKING:
@@ -93,6 +93,7 @@ class _BundleResult:
     warnings: tuple[str, ...]
     prompt_surface_inventory_prompt: str
     tool_rules: tuple[ToolRule, ...]
+    platform_tool_rules: tuple[ToolRule, ...]
     tools_mcp: tuple[str, ...]
     skills_loaded: tuple[LoadedSkillEntry, ...]
     skills_available: tuple[AvailableSkillEntry, ...]
@@ -224,6 +225,45 @@ def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
             rule = ToolRule.model_validate(entry)
         except ValidationError as exc:
             raise _bundle_schema_error(f"invalid 'tools.rules' entry: {exc}") from exc
+        rules.append(rule)
+    return tuple(rules)
+
+
+def _parse_platform_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
+    """Read native names for Meridian's semantic agent/task platform denies."""
+
+    raw_capabilities = tools.get("capability_natives")
+    if raw_capabilities is None:
+        raise RuntimeError(
+            "Mars launch-bundle has no tools.capability_natives, so this Mars predates "
+            "platform tool metadata. "
+            f"Install mars >= {_MARS_RULES_MIN_VERSION}."
+        )
+    capabilities = json_object(raw_capabilities)
+    if capabilities is None:
+        raise _bundle_schema_error("'tools.capability_natives' must be an object")
+
+    rules: list[ToolRule] = []
+    for capability in ("agent", "task"):
+        entry = json_object(capabilities.get(capability))
+        if entry is None:
+            raise _bundle_schema_error(
+                f"'tools.capability_natives.{capability}' must be an object"
+            )
+        try:
+            rule = ToolRule.model_validate(
+                {
+                    **entry,
+                    "capability": capability,
+                    "pattern": None,
+                    "action": "deny",
+                    "origin": PLATFORM_ORIGIN,
+                }
+            )
+        except ValidationError as exc:
+            raise _bundle_schema_error(
+                f"invalid 'tools.capability_natives.{capability}' entry: {exc}"
+            ) from exc
         rules.append(rule)
     return tuple(rules)
 
@@ -500,6 +540,7 @@ def _parse_bundle_payload(
         warnings=_as_str_tuple(payload.get("warnings")),
         prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
         tool_rules=_parse_tool_rules(tools),
+        platform_tool_rules=_parse_platform_tool_rules(tools),
         tools_mcp=_as_str_tuple(tools.get("mcp")),
         skills_loaded=skills_loaded,
         skills_available=skills_available,
@@ -634,6 +675,7 @@ def bundle_to_resolved_policy(
         ),
         execution_policy=execution_policy,
         resolved_tool_rules=bundle.tool_rules,
+        platform_tool_rules=bundle.platform_tool_rules,
         resolved_mcp_tools=bundle.tools_mcp,
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(

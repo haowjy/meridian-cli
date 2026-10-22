@@ -10,7 +10,7 @@ from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
-from meridian.lib.tools import ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from tests.support.fixtures import allow_headless_claude, write_agent
 from tests.support.launch import (
     build_launch_context,
@@ -34,7 +34,22 @@ _TASK_DENIES = {
     "TaskOutput",
     "TaskStop",
     "TaskUpdate",
+    "TodoWrite",
 }
+_CLAUDE_PLATFORM_RULES = (
+    ToolRule(
+        capability="agent",
+        action="deny",
+        native=("Agent", "SendMessage", "ListAgents"),
+        origin=PLATFORM_ORIGIN,
+    ),
+    ToolRule(
+        capability="task",
+        action="deny",
+        native=tuple(sorted(_TASK_DENIES)),
+        origin=PLATFORM_ORIGIN,
+    ),
+)
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +77,7 @@ def _launch_argv(
         monkeypatch,
         model="haiku",
         harness=HarnessId.CLAUDE,
+        platform_tool_rules=_CLAUDE_PLATFORM_RULES,
     )
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude"]\n',
@@ -134,6 +150,7 @@ def test_profile_opt_out_keeps_task_off_the_platform_deny_list(
         model="haiku",
         harness=HarnessId.CLAUDE,
         tool_rules=(tool_rule("task", "allow", "TaskCreate", "TaskGet"),),
+        platform_tool_rules=_CLAUDE_PLATFORM_RULES,
     )
     (tmp_path / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
     context = build_launch_context(
@@ -180,6 +197,7 @@ def test_agent_copy_exception_keeps_generic_agent_only(
             tool_rule("bash", "allow", "Bash"),
             tool_rule("agent", "allow", "Agent"),
         ),
+        platform_tool_rules=_CLAUDE_PLATFORM_RULES,
     )
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude"]\n\n'
@@ -214,6 +232,7 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         "TaskOutput",
         "TaskStop",
         "TaskUpdate",
+        "TodoWrite",
     }.issubset(disallowed)
 
 

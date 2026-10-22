@@ -14,6 +14,7 @@ type ToolsField = dict[str, ToolAction]
 type NativeStatus = Literal["known", "absent", "unknown"]
 
 LEGACY_SNAPSHOT_ORIGIN = "legacy-snapshot"
+PLATFORM_ORIGIN = "platform"
 
 
 class ToolRule(BaseModel):
@@ -23,7 +24,8 @@ class ToolRule(BaseModel):
     emission (the harness's names for it, already scoped by ``pattern``). Neither is ever
     derived from the other. ``native_status``: ``known`` means ``native`` names the rule;
     ``absent`` means the harness has no such tool; ``unknown`` means Mars has no name for it
-    (a gap to report). The ``*`` rule names no tool: capability ``*`` and no ``native``.
+    (a gap to report); ``note`` can explain that gap. The ``*`` rule names no tool:
+    capability ``*`` and no ``native``.
 
     ``capability`` is ``None`` only for rules read from a launch snapshot an older build
     wrote: those carry native keys alone, so a harness can emit them but not interpret them.
@@ -37,6 +39,7 @@ class ToolRule(BaseModel):
     native: tuple[str, ...] = ()
     native_status: NativeStatus = "known"
     origin: str | None = None
+    note: str | None = None
 
     @property
     def is_wildcard(self) -> bool:
@@ -71,6 +74,25 @@ def legacy_tool_rules(tools: ToolsField | None) -> tuple[ToolRule, ...]:
             origin=LEGACY_SNAPSHOT_ORIGIN,
         )
         for key, action in (tools or {}).items()
+    )
+
+
+def legacy_platform_tool_rules() -> tuple[ToolRule, ...]:
+    """Report platform denies whose native names an older snapshot did not persist."""
+
+    note = (
+        "persisted launch snapshot predates tools.capability_natives; "
+        "no native names are available"
+    )
+    return tuple(
+        ToolRule(
+            capability=capability,
+            action="deny",
+            native_status="unknown",
+            origin=PLATFORM_ORIGIN,
+            note=note,
+        )
+        for capability in ("agent", "task")
     )
 
 
