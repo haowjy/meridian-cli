@@ -69,9 +69,10 @@ class HarnessProjectionPorts(Generic[SpecT]):
     """Projection helpers registered for one harness bundle."""
 
     subprocess_cli_args: SubprocessProjector[SpecT]
-    # The harness's one permission compile: (native projection, report of what it enforces).
-    # Live projectors, ``--dry-run`` and the projection manifest all go through it.
-    permissions: Callable[[SpecT], tuple[object, EnforcementReport]]
+    # What the harness enforces from the spec's permission policy: its compile's report.
+    # ``--dry-run`` and the projection manifest read it; the live projectors call the typed
+    # compile (``permissions_<harness>.py``) directly for its native projection.
+    permission_report: Callable[[SpecT], EnforcementReport]
     # Resolves the spec's facts that depend on the launch environment, once, at bind (the
     # OpenCode backend version), so every projection and the connection read one value.
     bind_spec: Callable[[SpecT, Mapping[str, str]], SpecT] | None = None

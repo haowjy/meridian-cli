@@ -21,6 +21,13 @@ from meridian.lib.safety.policy import (
 from meridian.lib.tools import ToolAction, ToolRule, split_native
 
 PI_PERMISSION_POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY"
+# Pi's tool-selection flags and their short forms; under a bound policy the compile owns them.
+_TOOL_SELECTION_FLAGS: tuple[tuple[str, ...], ...] = (
+    ("--tools", "-t"),
+    ("--exclude-tools", "-xt"),
+    ("--no-tools", "-nt"),
+    ("--no-builtin-tools", "-nbt"),
+)
 
 
 class PiExtensionRule(BaseModel):
@@ -275,6 +282,27 @@ def compile_pi_permissions(
     return permissions, _report(spec, permissions, rules)
 
 
+def reject_passthrough_tool_flags(passthrough: tuple[str, ...], policy: PermissionPolicy) -> None:
+    """Refuse passthrough tool selection on a launch whose profile has tool rules.
+
+    The compile owns Pi's tool flags there; a second selection from passthrough could
+    widen what the profile allows.
+    """
+
+    if not policy.rules:
+        return
+    for flag, *aliases in _TOOL_SELECTION_FLAGS:
+        if any(
+            token == alias or token.startswith(f"{alias}=")
+            for alias in (flag, *aliases)
+            for token in passthrough
+        ):
+            raise ValueError(
+                "Pi launches with a profile cannot accept tool-selection flags from "
+                f"passthrough extra_args; remove {flag} so the profile remains binding"
+            )
+
+
 def project_pi_permission_args(permissions: PiPermissions) -> tuple[str, ...]:
     """Render the compiled Pi permission flags for either launch surface."""
 
@@ -295,4 +323,5 @@ __all__ = [
     "PiPermissions",
     "compile_pi_permissions",
     "project_pi_permission_args",
+    "reject_passthrough_tool_flags",
 ]

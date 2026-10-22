@@ -659,7 +659,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: OpenCodeConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_opencode_spec_to_cli_args,
-            permissions=compile_opencode_permissions,
+            permission_report=lambda spec: compile_opencode_permissions(spec)[1],
             bind_spec=bind_opencode_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_opencode_spec_to_serve_command,

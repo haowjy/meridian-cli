@@ -12,6 +12,7 @@ from meridian.lib.harness.projections._guards import (
 from meridian.lib.harness.projections.permissions_pi import (
     compile_pi_permissions,
     project_pi_permission_args,
+    reject_passthrough_tool_flags,
 )
 from meridian.lib.harness.projections.pi_extension_projection import (
     resolve_pi_permissions_entrypoint,
@@ -64,10 +65,6 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--no-extensions": ("--no-extensions",),
     "--mode": ("--mode",),
     "-e": ("-e", "--extension"),
-    "--tools": ("--tools", "-t"),
-    "--exclude-tools": ("--exclude-tools", "-xt"),
-    "--no-tools": ("--no-tools", "-nt"),
-    "--no-builtin-tools": ("--no-builtin-tools", "-nbt"),
 }
 
 _EFFORT_TO_THINKING: dict[str, str] = {
@@ -132,22 +129,6 @@ def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
         )
 
 
-def _reject_permission_collisions(passthrough_tail: tuple[str, ...], *, policy_bound: bool) -> None:
-    if not policy_bound:
-        return
-    for managed_flag in (
-        "--tools",
-        "--exclude-tools",
-        "--no-tools",
-        "--no-builtin-tools",
-    ):
-        if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES[managed_flag]):
-            raise ValueError(
-                "Pi launches with a profile cannot accept tool-selection flags from "
-                f"passthrough extra_args; remove {managed_flag} so the profile remains binding"
-            )
-
-
 def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     model = (spec.model or "").strip()
     if not model:
@@ -187,7 +168,7 @@ def project_pi_spec_to_cli_args(
 
     _reject_mode_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
-    _reject_permission_collisions(passthrough_tail, policy_bound=bool(spec.permission_policy.rules))
+    reject_passthrough_tool_flags(passthrough_tail, spec.permission_policy)
 
     _log_collision_if_needed(
         managed_flag="--model",

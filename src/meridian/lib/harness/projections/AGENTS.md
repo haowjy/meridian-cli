@@ -31,10 +31,10 @@ without updating the corresponding projector → startup failure.
   `spec.permission_policy` into a typed native value (sandbox/approval modes, tool
   allow/deny lists, OpenCode's version-canonical ordered agent rules). The harness's projectors call it and
   spell the result as argv, env or payload; nothing outside the harness module reads the
-  policy's rules. The compile returns `(native value, EnforcementReport)` and is registered
-  as `HarnessProjectionPorts.permissions`: the projectors, `--dry-run` and
-  `projection-manifest.json` all call that one function, so the report cannot drift from
-  what launched.
+  policy's rules. The compile returns `(native value, EnforcementReport)`; its report is
+  registered as `HarnessProjectionPorts.permission_report`. The projectors, `--dry-run` and
+  `projection-manifest.json` all go through that one function, so the report cannot drift
+  from what launched.
 
 ## Key Rules
 

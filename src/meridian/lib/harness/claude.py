@@ -543,7 +543,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: ClaudeConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_claude_spec_to_cli_args,
-            permissions=compile_claude_permissions,
+            permission_report=lambda spec: compile_claude_permissions(spec)[1],
         ),
         semantics=CLAUDE_SEMANTICS,
         primary_inbox=post_primary_message,

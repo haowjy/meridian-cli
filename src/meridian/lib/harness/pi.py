@@ -621,7 +621,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: PiRpcConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=_project_pi_subprocess_cli_args,
-            permissions=compile_pi_permissions,
+            permission_report=lambda spec: compile_pi_permissions(spec)[1],
         ),
         semantics=PI_SEMANTICS,
         event_sinks=_event_sinks,

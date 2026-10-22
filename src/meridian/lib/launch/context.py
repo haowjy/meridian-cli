@@ -253,7 +253,9 @@ class LaunchContext:
     def enforcement_report(self) -> EnforcementReport:
         """What this launch's harness enforces from the permission policy."""
 
-        return get_harness_bundle(self.harness.id).projections.permissions(self.binding.spec)[1]
+        return get_harness_bundle(self.harness.id).projections.permission_report(
+            self.binding.spec
+        )
 
 
 @dataclass(frozen=True)

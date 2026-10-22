@@ -185,7 +185,7 @@ register_harness_bundle(
         connections={TransportId.SUBPROCESS: CursorSubprocessConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_cursor_spec_to_cli_args,
-            permissions=compile_cursor_permissions,
+            permission_report=lambda spec: compile_cursor_permissions(spec)[1],
         ),
         semantics=CURSOR_SEMANTICS,
     )

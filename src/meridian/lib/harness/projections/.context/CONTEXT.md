@@ -18,8 +18,8 @@ project_pi_native_tui.py   → ResolvedLaunchSpec → args + env (pi native TUI,
 pi_extension_projection.py → (built extension artifacts → stable -e paths, no spec dependency)
 ```
 
-`project_codex_common.py` is not a projector — it provides `map_codex_approval_policy`
-and `map_codex_sandbox_mode` utilities shared by both Codex projectors.
+`project_codex_common.py` is not a projector — it holds the Codex spellings both Codex
+projectors share (tool-switch, MCP and built-in-agent flags).
 
 `pi_extension_projection.py` is not a spec projector — it resolves stable
 Meridian-owned Pi extension entrypoints without copying or materializing them.
@@ -140,10 +140,11 @@ Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `
 what that harness did with it. Status `native` means enforced as stated, `partial` means part
 of the meaning reaches the harness (the note says which), `unsupported` means nothing does,
 `platform` means a Meridian platform rule decided it. The report states today's
-projection, not the intended one: write the note from what the compile emitted. The compile
-is registered on `HarnessProjectionPorts.permissions`; `LaunchContext.enforcement_report()`
-calls it for the `--dry-run` "Permissions:" section (and `permission_report` in `--json`)
-and for `permission_report` in `projection-manifest.json`.
+projection, not the intended one: write the note from what the compile emitted. The
+compile's report is registered as `HarnessProjectionPorts.permission_report` (the projectors
+call the typed compile directly for its native value; nothing generic reads that value);
+`LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
+`permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
 
 ### Adding a New Harness
 

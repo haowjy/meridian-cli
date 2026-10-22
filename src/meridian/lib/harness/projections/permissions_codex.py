@@ -11,20 +11,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
+    ApprovalMode,
     EnforcementReport,
     PermissionPolicy,
     ReportLine,
+    SandboxMode,
     complete_report,
     platform_element,
     rule_element,
 )
 from meridian.lib.tools import ToolRule
 
-_APPROVAL_POLICY_BY_MODE: dict[str, str | None] = {
+_APPROVAL_POLICY_BY_MODE: dict[ApprovalMode, str | None] = {
     "default": None,
     "auto": "on-request",
     # Codex 0.163 accepts only ``on-request`` and ``never``; ``untrusted`` is rejected
@@ -34,7 +35,7 @@ _APPROVAL_POLICY_BY_MODE: dict[str, str | None] = {
     "yolo": "never",
 }
 
-_SANDBOX_MODE_BY_MODE: dict[str, str | None] = {
+_SANDBOX_MODE_BY_MODE: dict[SandboxMode, str | None] = {
     "default": None,
     "read-only": "read-only",
     "workspace-write": "workspace-write",
@@ -57,30 +58,6 @@ class CodexPermissions:
     web_search: bool | None
     view_image: bool | None
     builtin_agents_disabled: bool
-
-
-def map_codex_approval_policy(approval_mode: str) -> str | None:
-    """Map Meridian approval mode to Codex approval policy."""
-
-    if approval_mode not in _APPROVAL_POLICY_BY_MODE:
-        raise HarnessCapabilityMismatch(
-            "Codex cannot express requested approval mode "
-            f"'{approval_mode}' on this CLI/protocol version"
-        )
-    mapped = _APPROVAL_POLICY_BY_MODE[approval_mode]
-    return mapped
-
-
-def map_codex_sandbox_mode(sandbox_mode: str) -> str | None:
-    """Map Meridian sandbox mode to Codex sandbox mode."""
-
-    if sandbox_mode not in _SANDBOX_MODE_BY_MODE:
-        raise HarnessCapabilityMismatch(
-            "Codex cannot express requested sandbox mode "
-            f"'{sandbox_mode}' on this CLI/protocol version"
-        )
-    mapped = _SANDBOX_MODE_BY_MODE[sandbox_mode]
-    return mapped
 
 
 def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
@@ -203,8 +180,8 @@ def compile_codex_permissions(
         if switch is not None:
             switches[switch[0]] = switch[1]
     permissions = CodexPermissions(
-        sandbox_mode=map_codex_sandbox_mode(policy.sandbox),
-        approval_policy=map_codex_approval_policy(policy.approval),
+        sandbox_mode=_SANDBOX_MODE_BY_MODE[policy.sandbox],
+        approval_policy=_APPROVAL_POLICY_BY_MODE[policy.approval],
         shell_tool=switches["shell_tool"],
         web_search=switches["web_search"],
         view_image=switches["view_image"],
@@ -215,9 +192,4 @@ def compile_codex_permissions(
     return permissions, _codex_report(policy, permissions)
 
 
-__all__ = [
-    "CodexPermissions",
-    "compile_codex_permissions",
-    "map_codex_approval_policy",
-    "map_codex_sandbox_mode",
-]
+__all__ = ["CodexPermissions", "compile_codex_permissions"]

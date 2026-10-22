@@ -9,23 +9,44 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
+    ApprovalMode,
     EnforcementReport,
     PermissionPolicy,
     ReportLine,
+    SandboxMode,
     complete_report,
     rule_element,
 )
+
+type CursorApproval = Literal["yolo", "force"]
+type CursorSandbox = Literal["enabled", "disabled"]
+
+_APPROVAL_FLAG: dict[ApprovalMode, CursorApproval | None] = {
+    "default": None,
+    "confirm": None,
+    "auto": "force",
+    "never": "yolo",
+    "yolo": "yolo",
+}
+# Cursor's sandbox is binary: ``enabled`` restricts file access to the workspace,
+# ``disabled`` removes restrictions. ``workspace-write`` overshoots to ``disabled``; Cursor
+# has no finer mode.
+_SANDBOX_VALUE: dict[SandboxMode, CursorSandbox | None] = {
+    "default": None,
+    "read-only": "enabled",
+    "workspace-write": "disabled",
+    "danger-full-access": "disabled",
+}
 
 
 @dataclass(frozen=True)
 class CursorPermissions:
     """Cursor's approval flag and ``--sandbox`` value; ``None`` omits the flag."""
 
-    approval: Literal["yolo", "force"] | None
-    sandbox: Literal["enabled", "disabled"] | None
+    approval: CursorApproval | None
+    sandbox: CursorSandbox | None
 
 
 def _cursor_report(policy: PermissionPolicy, permissions: CursorPermissions) -> EnforcementReport:
@@ -64,38 +85,12 @@ def _cursor_report(policy: PermissionPolicy, permissions: CursorPermissions) -> 
 def compile_cursor_permissions(
     spec: ResolvedLaunchSpec,
 ) -> tuple[CursorPermissions, EnforcementReport]:
-    """Compile ``spec.permission_policy`` for Cursor, with the report of what it did.
-
-    Cursor's sandbox is binary: ``enabled`` restricts file access to the workspace,
-    ``disabled`` removes restrictions. ``workspace-write`` and ``danger-full-access`` both
-    map to ``disabled`` (an overshoot for ``workspace-write``; Cursor has no finer mode).
-    """
+    """Compile ``spec.permission_policy`` for Cursor, with the report of what it did."""
 
     policy = spec.permission_policy
-    approval: Literal["yolo", "force"] | None
-    if policy.approval in ("yolo", "never"):
-        approval = "yolo"
-    elif policy.approval == "auto":
-        approval = "force"
-    elif policy.approval in ("default", "confirm"):
-        approval = None
-    else:
-        raise HarnessCapabilityMismatch(
-            f"Cursor projection does not support approval mode '{policy.approval}'."
-        )
-
-    sandbox: Literal["enabled", "disabled"] | None
-    if policy.sandbox == "default":
-        sandbox = None
-    elif policy.sandbox == "read-only":
-        sandbox = "enabled"
-    elif policy.sandbox in ("workspace-write", "danger-full-access"):
-        sandbox = "disabled"
-    else:
-        raise HarnessCapabilityMismatch(
-            f"Cursor projection does not support sandbox mode '{policy.sandbox}'."
-        )
-    permissions = CursorPermissions(approval=approval, sandbox=sandbox)
+    permissions = CursorPermissions(
+        approval=_APPROVAL_FLAG[policy.approval], sandbox=_SANDBOX_VALUE[policy.sandbox]
+    )
     return permissions, _cursor_report(policy, permissions)
 
 

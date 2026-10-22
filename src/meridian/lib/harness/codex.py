@@ -586,7 +586,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: CodexConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
-            permissions=compile_codex_permissions,
+            permission_report=lambda spec: compile_codex_permissions(spec)[1],
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,
                 bootstrap_payload=project_codex_spec_to_thread_request_for_project,
