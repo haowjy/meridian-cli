@@ -78,11 +78,15 @@ def legacy_tool_rules(tools: ToolsField | None) -> tuple[ToolRule, ...]:
 
 
 def legacy_platform_tool_rules() -> tuple[ToolRule, ...]:
-    """Report platform denies whose native names an older snapshot did not persist."""
+    """Platform denies no source could name, so the report can say they are not enforced.
+
+    Only a replayed launch snapshot an older build wrote lacks the names, and only when Mars
+    could not build a bundle to supply them.
+    """
 
     note = (
-        "persisted launch snapshot predates tools.capability_natives; "
-        "no native names are available"
+        "persisted launch snapshot predates tools.capability_natives and Mars gave no "
+        "bundle to name them, so it is not enforced"
     )
     return tuple(
         ToolRule(

@@ -80,7 +80,7 @@ class LoadedSkillEntry:
 
 
 @dataclass(frozen=True)
-class _BundleResult:
+class BundleResult:
     agent_source_path: str | None
     selection_report: dict[str, object]
     model: str
@@ -477,7 +477,7 @@ def _parse_bundle_payload(
     payload: dict[str, object],
     *,
     harness_registry: HarnessRegistry,
-) -> _BundleResult:
+) -> BundleResult:
     version = payload.get("version")
     if isinstance(version, bool) or not isinstance(version, int):
         raise _bundle_schema_error("missing numeric 'version'")
@@ -527,7 +527,7 @@ def _parse_bundle_payload(
     skills_loaded = _parse_skills_loaded(skills_obj.get("loaded"))
     skills_available = _parse_skills_available(skills_obj.get("available"))
 
-    return _BundleResult(
+    return BundleResult(
         agent_source_path=_normalize_str(payload.get("agent_source_path")) or None,
         selection_report=report.model_dump(mode="json"),
         model=model,
@@ -552,7 +552,7 @@ def request_and_resolve(
     request: BundleRequest,
     *,
     harness_registry: HarnessRegistry,
-) -> _BundleResult:
+) -> BundleResult:
     """Resolve launch routing and execution policy through Mars launch-bundle."""
 
     roots = resolve_mars_roots(request.project_root)
@@ -626,7 +626,7 @@ def _provenance_value(provenance: dict[str, str], field_name: str) -> str | None
 
 def bundle_to_resolved_policy(
     *,
-    bundle: _BundleResult,
+    bundle: BundleResult,
     profile: AgentProfile | None,
     resolved_skills: ResolvedSkills,
     model_selection: ModelSelectionContext | None,
@@ -712,6 +712,7 @@ def bundle_to_resolved_policy(
 
 __all__ = [
     "BundleRequest",
+    "BundleResult",
     "LoadedSkillEntry",
     "bundle_to_resolved_policy",
     "request_and_resolve",

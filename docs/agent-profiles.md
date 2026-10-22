@@ -376,8 +376,8 @@ grants for `meridian spawn done` and
 the rest of the shell. The dry-run report marks platform decisions as `platform` and calls
 out partial or missing projections. Mars supplies each harness's native agent/task names in
 the launch bundle; Meridian does not keep a second name table. A launch snapshot written
-before that metadata existed still replays, but reports those platform denies as unsupported
-because their native names were not persisted.
+before that metadata existed takes the names from a fresh bundle for the same harness when it
+replays; only if Mars cannot build one are those platform denies reported as unsupported.
 
 OpenCode receives all Meridian-owned launch settings in `OPENCODE_CONFIG_CONTENT`, including
 the reserved config agent. Meridian no longer sets `OPENCODE_PERMISSION`.

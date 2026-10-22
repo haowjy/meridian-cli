@@ -610,6 +610,39 @@ def _resolve_policy_from_snapshot(
     )
 
 
+def _with_platform_natives(
+    policy: ResolvedLaunchPolicy,
+    surface: SurfacePolicyInput,
+    bundle: bundle_adapter.BundleResult | None = None,
+) -> ResolvedLaunchPolicy:
+    """Name a replayed snapshot's platform denies when an older build did not persist them.
+
+    Mars names them per harness, whatever the profile, so any bundle for the snapshot's
+    harness carries them: the continue path's own bundle, else one requested here. If Mars
+    cannot build one, they stay unnamed and the launch reports them unenforced
+    (``launch_permission_rules``) rather than failing a launch the snapshot can still run.
+    """
+
+    if policy.platform_tool_rules:
+        return policy
+    if bundle is None:
+        try:
+            bundle = bundle_adapter.request_and_resolve(
+                bundle_adapter.BundleRequest(
+                    agent=None,
+                    project_root=surface.catalog.project_root,
+                    harness_override=str(policy.harness),
+                    no_refresh_models=True,
+                ),
+                harness_registry=surface.harness_registry,
+            )
+        except RuntimeError:
+            return policy
+    if bundle.harness != policy.harness:
+        return policy
+    return replace(policy, platform_tool_rules=bundle.platform_tool_rules)
+
+
 def _model_selection_from_replayed_snapshot(
     replayed: ReplayedModelSelection | None,
 ) -> ModelSelectionContext | None:
@@ -671,7 +704,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         ):
             selected_token = intent.selected_token
         return replace(
-            replayed,
+            _with_platform_natives(replayed, surface, bundle),
             model=bundle.model or None,
             routing=replace(replayed.routing, model=bundle.model or None),
             model_selection=ModelSelectionContext(
@@ -691,7 +724,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         )
 
     if surface.policy_snapshot is not None:
-        return _resolve_policy_from_snapshot(surface=surface, snapshot=surface.policy_snapshot)
+        return _with_platform_natives(
+            _resolve_policy_from_snapshot(surface=surface, snapshot=surface.policy_snapshot),
+            surface,
+        )
 
     if surface.surface in {
         LaunchCompositionSurface.PRIMARY,

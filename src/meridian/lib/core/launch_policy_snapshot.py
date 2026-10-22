@@ -25,8 +25,8 @@ class LaunchPolicySnapshot(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
     tool_rules: tuple[ToolRule, ...] = ()
-    # Candidate platform denies named by Mars for this harness. Snapshots written before
-    # this field replay with explicit unknown-name rules; see ``legacy_platform_tool_rules``.
+    # Candidate platform denies named by Mars for this harness. A snapshot written before
+    # this field replays with the names a fresh Mars bundle gives for the same harness.
     platform_tool_rules: tuple[ToolRule, ...] = ()
     # Pre-rules shape; only snapshots an older build wrote still carry it. Never written.
     tools: ToolsField | None = None

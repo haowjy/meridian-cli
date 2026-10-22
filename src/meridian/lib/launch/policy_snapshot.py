@@ -16,7 +16,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.launch_types import ResolvedLaunchRouting, TerminalSurfaceMode
-from meridian.lib.tools import ToolRule, legacy_platform_tool_rules, legacy_tool_rules
+from meridian.lib.tools import ToolRule, legacy_tool_rules
 
 from .request import SpawnRequest
 from .resolve import ResolvedSkills
@@ -78,7 +78,8 @@ class ReplayedLaunchPolicySnapshot:
     routing: ResolvedLaunchRouting
     execution_policy: ResolvedExecutionPolicy
     resolved_tool_rules: tuple[ToolRule, ...] = ()
-    # Candidate platform denies named for the snapshotted harness.
+    # Candidate platform denies named for the snapshotted harness; empty when an older build
+    # wrote the snapshot (the policy layer then asks Mars for them).
     platform_tool_rules: tuple[ToolRule, ...] = ()
     resolved_mcp_tools: tuple[str, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
@@ -214,7 +215,7 @@ def replay_launch_policy_snapshot(
         ),
         execution_policy=snapshot.execution_policy,
         resolved_tool_rules=snapshot.tool_rules or legacy_tool_rules(snapshot.tools),
-        platform_tool_rules=snapshot.platform_tool_rules or legacy_platform_tool_rules(),
+        platform_tool_rules=snapshot.platform_tool_rules,
         resolved_mcp_tools=snapshot.mcp_tools,
         terminal_surface_mode=terminal_surface_mode,
         matched_policy_rule=snapshot.matched_policy_rule,

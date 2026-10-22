@@ -119,10 +119,18 @@ profile rule can still block a spelling; the dry-run report marks that grant par
 **Launches you continue or fork**
 
 A spawn's launch policy snapshot written by an older build holds the old tools map. This
-build reads it as native-only rules, emits the recorded names as they were, and marks those
-lines `[legacy snapshot]` in `--dry-run`. It cannot interpret them by capability, so Codex
-keeps only the `web_search` switch from them. Probed with a snapshot written by 0.11.8: a
-Claude `--continue` launched with the same argv, and a Codex `--continue` kept web search.
+build reads it as native-only rules, emits the recorded names as they were written through
+this build's channels (a Claude scoped deny now lands in `--settings` rather than
+`--disallowedTools`), and marks those lines `[legacy snapshot]` in `--dry-run`. It cannot
+interpret them by capability, so Codex keeps only the `web_search` switch from them.
+
+Such a snapshot also lacks the native names of the platform sub-agent and task-list denies.
+A replay takes them from a fresh Mars bundle for the same harness, so the denies hold as on
+a new launch; only if Mars cannot build that bundle does the launch run without them, and
+`--dry-run` reports both as `unsupported`. The continued launch writes a new snapshot that
+carries the names. Probed with a snapshot written by 0.11.8: a Claude `--continue` denies
+`Agent`, `SendMessage`, `ListAgents`, and the `Task*`/`TodoWrite` tools, and a Codex
+`--continue` kept web search.
 
 ## Session browse redesign (history index schema 12)
 
