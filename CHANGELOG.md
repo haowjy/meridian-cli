@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Notification titles identify the harness and current session work item; `meridian notify` keeps its message first in the title.
+- Notification titles: `[<reason>] <tmux>: <agent> (<harness>) <title>`. Harness always shown. Work item moved to body's last line, resolved at send time (follows `work switch`). `meridian notify` title: sender, then message.
 
 ## [0.12.0] - 2026-10-22
 

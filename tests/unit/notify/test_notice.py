@@ -13,7 +13,7 @@ def test_manual_notification_puts_the_message_first_and_source_in_the_title() ->
     bare = manual_notification("Done", None, label)
 
     assert (detailed.title, detailed.label) == (
-        'Done — main: codex in project: "meridian-cli"',
+        "main: codex Done",
         label.to_dict(),
     )
     assert detailed.body == 'build passed\nmain: codex in project: "meridian-cli"'

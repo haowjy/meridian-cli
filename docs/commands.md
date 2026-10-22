@@ -300,8 +300,8 @@ through the configured push and email backends unless config routes it
 elsewhere. The title is one line: what the human needs to decide or see. If the
 first argument contains several lines, the first non-empty line becomes the
 message at the start of the title and the remaining lines are prepended to the
-optional body. The shared session headline (tmux session, agent, harness, and
-current work item) follows the message in the title and still ends the body.
+optional body. The title starts with the sender (tmux session, agent and harness),
+followed by the message; the body ends with the sender and its current work item.
 `--no-email` keeps it
 off the email backends (`smtp`, `gmail`), however a route names them.
 

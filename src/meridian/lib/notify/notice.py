@@ -21,19 +21,25 @@ class SessionLabel:
     harness: str | None = None
 
     @property
-    def headline(self) -> str:
-        """Name the terminal, actor, and explicitly labelled work or project."""
+    def sender(self) -> str:
+        """Name the terminal and actor: short enough for a notification title."""
 
-        description = (
+        actor = (
             f"{self.agent} ({self.harness})"
             if self.agent and self.harness
             else self.agent or self.harness or "Meridian"
         )
+        return f"{self.tmux_session}: {actor}" if self.tmux_session else actor
+
+    @property
+    def headline(self) -> str:
+        """The sender plus its work item or project, for the notification body."""
+
         if self.work_id:
-            description += f' on work: "{self.work_id}"'
-        elif self.project:
-            description += f' in project: "{self.project}"'
-        return f"{self.tmux_session}: {description}" if self.tmux_session else description
+            return f'{self.sender} on work: "{self.work_id}"'
+        if self.project:
+            return f'{self.sender} in project: "{self.project}"'
+        return self.sender
 
     def __str__(self) -> str:
         return self.headline
@@ -45,6 +51,7 @@ class SessionLabel:
             "work_id": self.work_id,
             "agent": self.agent,
             "harness": self.harness,
+            "sender": self.sender,
             "headline": self.headline,
         }
 
@@ -84,7 +91,7 @@ def manual_notification(
 
     lines = [title_detail, body.strip() if body else "", label.headline]
     return Notification(
-        title=f"{notification_title} — {label.headline}",
+        title=f"{label.sender} {notification_title}",
         body="\n".join(line for line in lines if line),
         priority=priority,
         email=email,

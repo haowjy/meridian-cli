@@ -248,7 +248,7 @@ def test_arm_opens_reanchors_and_never_reenables_a_done_stage() -> None:
     second = idle.arm(harness="example", session="s1", ttl_seconds=3600)
 
     assert fired.decision == "act"
-    assert sender.notices[0].body == "Your turn"
+    assert sender.notices[0].body.splitlines()[0] == "Your turn"
     assert (second.stretch, second.anchor, second.push_at) == (1, 2, None)
     assert store.read("example", "s1").done == {"push": "sent"}  # type: ignore[union-attr]
 

@@ -110,9 +110,7 @@ def test_notify_splits_a_multiline_title_before_delivery(
 
     assert exc_info.value.code == 0
     delivery = json.loads((tmp_path / "delivered.json").read_text(encoding="utf-8"))
-    assert delivery["notification"]["title"] == (
-        f'Decision needed — Meridian in project: "{tmp_path.name}"'
-    )
+    assert delivery["notification"]["title"] == "Meridian Decision needed"
     assert delivery["notification"]["body"].splitlines()[:2] == [
         "Tradeoffs follow",
         "Explicit body",

@@ -441,6 +441,6 @@ def test_idle_needs_permission_emits_once_without_idle_state(
     assert len(capture.deliveries) == 1
     event, notification = capture.deliveries[0]
     assert event == "notify.needs_permission"
-    assert notification.title == '[permission] claude in project: "checkout"'
+    assert notification.title == "[permission] claude"
     assert "Claude wants to use Bash" in notification.body
     assert not (home / ".meridian" / "idle").exists()
