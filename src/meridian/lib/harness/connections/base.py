@@ -190,6 +190,8 @@ class HarnessRequest:
     request_type: Literal["approval", "user_input"]
     method: str
     payload: dict[str, object]
+    summary: str | None = None
+    """What the model tried, in a line a person can read (the command, the permission)."""
 
 
 class PrimaryRuntimeRequestPolicy(StrEnum):

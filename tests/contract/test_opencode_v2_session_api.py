@@ -128,7 +128,7 @@ async def test_respond_request_v2_posts_reply_to_permission_endpoint() -> None:
         (
             "POST",
             "/api/session/ses_v2/permission/per_1/reply",
-            {"reply": "reject", "message": "not allowed"},
+            {"decision": "reject", "message": "not allowed"},
         ),
     ]
     assert connection._pending_requests == {}

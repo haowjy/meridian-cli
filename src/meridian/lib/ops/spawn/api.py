@@ -114,6 +114,7 @@ from .models import (
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
+    denied_requests,
     detail_from_row,
     read_spawn_row,
     resolve_spawn_reference,
@@ -886,6 +887,7 @@ def spawn_show_sync(
     surfaced_activity = _surface_primary_activity(row.status, activity)
     return detail.model_copy(
         update={
+            "denied_requests": denied_requests(runtime_root, spawn_id),
             "kind": kind,
             "activity": surfaced_activity,
             "managed_backend": managed_backend,

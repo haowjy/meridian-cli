@@ -138,11 +138,16 @@ Inbound harness requests (tool approvals, user-input prompts) are dispatched thr
 injected `ServerRequestHandler`:
 
 - `PermissionBroker` (`harness/permission_broker.py`) — journals each request to the
-  spawn's `permission_requests.jsonl` and emits `request/opened`. Spawn dispatch
-  (`streaming/spawn_dispatch.py`) builds it for Codex and OpenCode with
-  `auto_reject_runtime_requests=True`, so a spawn's approval request is answered
-  `reject`; managed-primary attach builds it with `False`, so it only records and
-  surfaces the request. `no_runtime_hitl = False`.
+  spawn's `permission_requests.jsonl` (format and reader: `state/permission_journal.py`)
+  and emits `request/opened`. Spawn dispatch (`streaming/spawn_dispatch.py`) builds it for
+  Codex and OpenCode with `auto_reject_runtime_requests=True`, so a spawn's approval
+  request is answered `reject` with a reason (`HEADLESS_REJECT_REASON`, journaled as the
+  resolution's `message`); managed-primary attach builds it with `False`, so it only
+  records and surfaces the request. `no_runtime_hitl = False`. Meridian's vocabulary is
+  `accept`/`reject`; a connection translates at the wire. Codex reads `decline` (it cannot
+  read `reject`, and the model sees "approval request failed"), and has no field for a
+  reason; OpenCode V2's reply carries `message`, V1's does not. A connection fills
+  `HarnessRequest.summary` (what the model tried) so `spawn show` needs no harness knowledge.
 - `AutoAcceptHandler` — auto-approves all approvals, sends empty dict for user-input.
   The connection default when no handler is injected, and the handler for the
   `NONE` / `AUTO_ACCEPT` primary runtime-request policies. `no_runtime_hitl = True`.

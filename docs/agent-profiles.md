@@ -322,11 +322,13 @@ Things the table implies:
 
 ### Who answers an approval request
 
-A request arises when a tool call needs approval under the harness's approval mode. A profile cannot set a tool to `ask`; requests come from `approval` and the harness's own defaults.
+A request arises when a tool call needs approval under the harness's approval mode, or, on OpenCode, when a rule says `ask`. Claude sends an `ask` rule as `allow`, and Codex and Pi do not enforce it.
+
+A spawn has nobody to answer, so its requests are refused at once, never held and never passed to the parent agent (a model approving would defeat a rule written for a human). `meridian spawn show` lists the refused requests. Where the spawn's harness reports a request to Meridian, the refusal is recorded in the spawn's `permission_requests.jsonl`.
 
 | Where | What happens |
 |---|---|
-| Codex or OpenCode spawn | Meridian rejects the request and records it in the spawn's `permission_requests.jsonl`. The agent's tool call fails |
+| Codex or OpenCode spawn | Meridian refuses the request and records it in `permission_requests.jsonl`. The agent's tool call fails: OpenCode 2 tells the model why; Codex's protocol has no field for a reason, so the model sees `Rejected("rejected by user")` |
 | Claude spawn | Claude blocks the call and returns an approval-required error to the agent. This applies to the agent's Meridian commands too: under `approval: confirm` a spawn can be refused its own `meridian spawn done` |
 | Pi spawn | Pi has no approval prompts |
 | Claude or OpenCode primary | The harness asks the user in its own TUI |

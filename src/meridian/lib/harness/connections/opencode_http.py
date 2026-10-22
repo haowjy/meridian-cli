@@ -406,6 +406,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 request_type="approval",
                 method=event.event_type,
                 payload=dict(event.payload),
+                summary=_permission_summary(event.payload),
             )
             self._schedule_request_dispatch(harness_request)
             return True
@@ -1728,6 +1729,27 @@ def _permission_payload_sources(
     if isinstance(properties, Mapping):
         sources.append(cast("Mapping[str, object]", properties))
     return sources
+
+
+def _permission_summary(payload: Mapping[str, object]) -> str | None:
+    """What a permission ask covers: the permission and what it names.
+
+    V1 asks carry ``permission`` and ``patterns``; V2 asks carry ``action`` and ``resources``.
+    """
+
+    for source in _permission_payload_sources(payload):
+        for name_key, items_key in (("permission", "patterns"), ("action", "resources")):
+            name = _nonempty_str(source.get(name_key))
+            if name is None:
+                continue
+            items = source.get(items_key)
+            named = (
+                [item for entry in cast("list[object]", items) if (item := _nonempty_str(entry))]
+                if isinstance(items, list)
+                else []
+            )
+            return f"{name}: {', '.join(named)}" if named else name
+    return None
 
 
 def _extract_opencode_permission_context(

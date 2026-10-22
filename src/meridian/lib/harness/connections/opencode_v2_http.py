@@ -449,7 +449,9 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         session_id = self._pending_requests[request_id] or (self._session_id or "")
         if not session_id:
             raise ValueError(f"No pending OpenCode permission request: {request_id}")
-        body: dict[str, object] = {"reply": map_approval_decision(decision, payload)}
+        # OpenCode 2.0.29 reads ``decision`` (once/always/reject); ``reply`` is rejected with
+        # a 400, which left the request pending and the spawn waiting.
+        body: dict[str, object] = {"decision": map_approval_decision(decision, payload)}
         message = payload.get("message") if payload is not None else None
         if isinstance(message, str) and message.strip():
             body["message"] = message

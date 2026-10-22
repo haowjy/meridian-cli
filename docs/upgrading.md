@@ -22,6 +22,14 @@ forms are allowlists:
 - Spawns still deny native sub-agent tools under `'*': deny` or a list. On Claude this was
   skipped for a profile that wrote `'*': deny`.
 
+**Approval requests in spawns**
+
+A request nobody can answer (a Codex or OpenCode spawn that needs approval) is refused at
+once and recorded in the spawn's `permission_requests.jsonl`, now with a one-line `summary`;
+`meridian spawn show` lists the refused requests. Codex used to receive the decision `reject`,
+which it cannot read, so the model saw `Rejected("approval request failed")`; it now receives
+`decline` and sees `Rejected("rejected by user")`.
+
 **Before installing**
 
 Check profiles that write `tools` as a list, or only scoped allows: a spawn that cannot run

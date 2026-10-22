@@ -18,6 +18,7 @@ from meridian.lib.harness.connections.base import (
     HarnessRequest,
     RawHarnessEvent,
 )
+from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.spawn_store import start_spawn
@@ -203,7 +204,9 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         assert connection.capabilities.supports_runtime_hitl is True
 
         # auto_reject_runtime_requests=True causes immediate rejection during start
-        assert connection.respond_calls == [("approval-1", "reject", None)]
+        assert connection.respond_calls == [
+            ("approval-1", "reject", {"message": HEADLESS_REJECT_REASON})
+        ]
         assert _read_permission_statuses(runtime_root, spawn_id) == ["pending", "resolved"]
     finally:
         await manager.stop_spawn(spawn_id)
@@ -519,7 +522,9 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
         assert connection.capabilities.supports_runtime_hitl is True
 
         # auto_reject_runtime_requests=True rejects the OpenCode ask during start.
-        assert connection.respond_calls == [("per_1", "reject", None)]
+        assert connection.respond_calls == [
+            ("per_1", "reject", {"message": HEADLESS_REJECT_REASON})
+        ]
         assert _read_permission_statuses(runtime_root, spawn_id) == ["pending", "resolved"]
     finally:
         await manager.stop_spawn(spawn_id)

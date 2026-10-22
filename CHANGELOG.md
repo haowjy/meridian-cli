@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Needs Mars >= 0.17.0: the launch bundle's `tools.rules` replace the flat `allowed`/`disallowed` lists, which Meridian no longer reads. With an older Mars every launch stops with `Install mars >= 0.17.0`. Cursor loses its inferred `--sandbox enabled` for a profile that sets `tools` and no `sandbox`; Codex's inferred sandbox now follows `bash`/`edit`. See [upgrade note](docs/upgrading.md#typed-tool-rules-mars-017).
 
 ### Added
+- `meridian spawn show` lists the requests a spawn's model made that were refused because nobody could approve them (text and `--json` `denied_requests`). Journal entries gain `summary`. A harness that refuses calls itself hands them to finalization (`AttemptFacts.permission_denials`), which journals them in the same file.
 - `--dry-run` (spawn and primary) prints a `Permissions:` section: per profile rule, platform rule, sandbox and approval value, what the harness does with it (`native`, `partial`, `unsupported`, `platform`) and the flag it became. `--json` gains `permission_report`; `projection-manifest.json` gains `permission_report`. Report states today's projection, gaps included, e.g. OpenCode primaries get no profile rules, Pi gets none, Codex gets no tool rules.
 
 ### Changed
@@ -18,6 +19,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The sandbox inference moved into the Codex compile and reads capabilities; other harnesses no longer infer one. Agent-copy detection is `agent_copy_enabled(project_root, harness_id)` in the catalog layer for every harness; the adapter hook is gone.
 
 ### Fixed
+- Codex spawns refuse an approval request with the decision Codex reads (`decline`); `reject` made Codex answer the model `approval request failed`.
+- OpenCode 2.0.29 spawns can refuse an approval request: the reply body is `decision` (was `reply`; OpenCode answered 400, so the request stayed pending and the spawn waited). The refusal carries a reason the model sees.
 - Native sub-agent denies (`Agent`, `Task*`) hold under `'*': deny`: they were left out of Claude's argv for such a profile, and the platform rule was not built for `task`.
 - Tools reach the harness under their real names. Claude: `web` denies `WebSearch`/`WebFetch` (was `Websearch`), `ask_user` denies `AskUserQuestion` (was `Askuser`), `edit` covers `Edit`/`Write`/`NotebookEdit`, scoped bash denies are `Bash(git push *)` (was `Bash(git push:*)`), `agent` includes `SendMessage`/`ListAgents`. OpenCode: `read`, `question`, `task`, `websearch`, `webfetch` (were `view`, `askuser`, `agent`, `browser`). Codex: `edit` and `bash` now steer its inferred sandbox.
 

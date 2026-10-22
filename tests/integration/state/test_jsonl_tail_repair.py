@@ -48,7 +48,7 @@ def test_permission_journal_repairs_torn_tail_before_append(tmp_path: Path) -> N
     )
 
     broker = PermissionBroker(spawn_dir=spawn_dir)
-    assert broker._next_seq == 1
+    assert [transition.seq for transition in broker.list_transitions()] == [0]
 
     next_row = {
         "seq": 1,
@@ -78,7 +78,7 @@ def test_permission_journal_repairs_torn_tail_before_append(tmp_path: Path) -> N
     assert all(json.loads(line) for line in journal_lines)
 
     reloaded = PermissionBroker(spawn_dir=spawn_dir)
-    assert reloaded._next_seq == 2
+    assert [transition.seq for transition in reloaded.list_transitions()] == [0, 1]
 
 
 @pytest.mark.asyncio

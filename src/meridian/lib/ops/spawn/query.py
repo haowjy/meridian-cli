@@ -11,10 +11,12 @@ from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import pi_lifecycle, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
+from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.permission_journal import PermissionJournal
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived, read_derived
 
-from .models import SpawnDetailOutput
+from .models import DeniedRequestOutput, SpawnDetailOutput
 
 _SPAWN_REFERENCE_STATUS_FILTERS: dict[str, tuple[str, ...] | None] = {
     "@latest": None,
@@ -314,6 +316,21 @@ def _pi_cleanup_telemetry(
     )
 
 
+def denied_requests(runtime_root: Path, spawn_id: str) -> tuple[DeniedRequestOutput, ...]:
+    """The calls the spawn's model made that were refused, from its permission journal."""
+
+    journal = PermissionJournal(runtime_root / spawn_log_subpath(spawn_id))
+    return tuple(
+        DeniedRequestOutput(
+            request_id=record.request_id,
+            method=record.method,
+            summary=record.summary,
+            reason=record.reason,
+        )
+        for record in journal.denied_requests()
+    )
+
+
 def spawn_session_log_available(
     runtime_root: Path,
     spawn_id: str,
@@ -428,6 +445,7 @@ def detail_from_row(
 
 
 __all__ = [
+    "denied_requests",
     "detail_from_row",
     "extract_last_assistant_message",
     "read_report",

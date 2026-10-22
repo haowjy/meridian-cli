@@ -39,6 +39,9 @@ bare path
     runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
     process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
+    permission_requests.jsonl       — requests the model made that nobody could approve
+                                      (`permission_journal.py`: one format for broker and
+                                      finalization writers; `spawn show` reads it)
     report.md · stderr.log · params.json · tokens.json
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
   __status.json                     — mutable per-work-item metadata; readers accept

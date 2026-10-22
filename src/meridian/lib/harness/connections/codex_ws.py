@@ -87,6 +87,10 @@ _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 _STOP_WAIT_TIMEOUT_SECONDS = 5.0
 _PROCESS_EXIT_DIAGNOSTIC_WAIT_SECONDS = 0.1
 _STDERR_EXCERPT_MAX_BYTES = 16 * 1024
+# Meridian's refusal is ``reject``; Codex's is ``decline`` (the turn goes on, the model sees
+# "rejected by user"). Codex cannot read ``reject`` and answers the model "approval request
+# failed". Other decisions are Codex's own and pass through.
+_CODEX_DECISION_BY_MERIDIAN: Final[dict[str, str]] = {"reject": "decline"}
 _ADDRESS_IN_USE_MARKERS: Final[tuple[str, ...]] = (
     "address already in use",
     "address in use",
@@ -598,7 +602,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         jsonrpc_id = self._hitl_requests.get(request_id)
         if jsonrpc_id is None:
             raise ValueError(f"No pending Codex HITL request: {request_id}")
-        result: dict[str, object] = {"decision": decision}
+        result: dict[str, object] = {
+            "decision": _CODEX_DECISION_BY_MERIDIAN.get(decision, decision)
+        }
         if payload:
             result.update(payload)
         try:
@@ -1065,6 +1071,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 request_type="approval",
                 method=method,
                 payload=payload,
+                summary=_approval_summary(payload),
             )
             self._hitl_requests[harness_request.request_id] = request_id
             await self._request_handler.handle_request(self, harness_request)
@@ -1483,6 +1490,16 @@ def _extract_turn_id(payload: dict[str, object]) -> str | None:
     turn_obj = payload.get("turn")
     if isinstance(turn_obj, dict):
         return _extract_str(cast("dict[str, object]", turn_obj), "id")
+    return None
+
+
+def _approval_summary(payload: dict[str, object]) -> str | None:
+    """What an approval request asks to do: the command, else the reason Codex gave."""
+
+    for key in ("command", "reason"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     return None
 
 

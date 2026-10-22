@@ -791,6 +791,28 @@ class SpawnCancelAllOutput(BaseModel):
         return "\n".join(lines)
 
 
+_DENIED_REQUEST_WHAT_LIMIT = 160
+
+
+class DeniedRequestOutput(BaseModel):
+    """A call the model made that was refused because nobody could approve it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    request_id: str
+    method: str
+    summary: str | None = None
+    reason: str | None = None
+
+    def format_line(self) -> str:
+        """One line: what was tried (a multi-line command folded, long ones cut) and why not."""
+
+        what = " ".join((self.summary or self.method).split())
+        if len(what) > _DENIED_REQUEST_WHAT_LIMIT:
+            what = what[: _DENIED_REQUEST_WHAT_LIMIT - 1] + "…"
+        return f"{what} ({self.reason})" if self.reason else what
+
+
 class SpawnDetailOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -841,6 +863,7 @@ class SpawnDetailOutput(BaseModel):
     last_attempt_exit_code: int | None = None
     session_config_dir: str | None = None
     session_log_available: bool = False
+    denied_requests: tuple[DeniedRequestOutput, ...] = ()
 
     def _normalized_report_body(self) -> str | None:
         report_text = (self.report_body or "").strip()
@@ -862,6 +885,14 @@ class SpawnDetailOutput(BaseModel):
             return None
         label = "Warning" if self.status == "succeeded" else "Failure"
         return label, failure_value
+
+    def _denied_requests_lines(self) -> list[str]:
+        if not self.denied_requests:
+            return []
+        return [
+            f"Denied requests ({len(self.denied_requests)}):",
+            *(f"  - {request.format_line()}" for request in self.denied_requests),
+        ]
 
     def _report_suffix(self) -> str:
         report_text = self._normalized_report_body()
@@ -970,6 +1001,11 @@ class SpawnDetailOutput(BaseModel):
             wire["report_body"] = self.report_body
         if self.session_config_dir is not None:
             wire["session_config_dir"] = self.session_config_dir
+        if self.denied_requests:
+            wire["denied_requests"] = [
+                request.model_dump(mode="json", exclude_none=True)
+                for request in self.denied_requests
+            ]
         return wire
 
     def to_cli_output(
@@ -1049,6 +1085,7 @@ class SpawnDetailOutput(BaseModel):
         if failure_line is not None:
             label, value = failure_line
             lines.append(f"{label}: {value}")
+        lines.extend(self._denied_requests_lines())
 
         report_text = self._normalized_report_body()
         if report_text is not None:
@@ -1159,7 +1196,9 @@ class SpawnDetailOutput(BaseModel):
                 else None,
             ),
         ]
-        return kv_block(pairs) + self._report_suffix()
+        denied_lines = self._denied_requests_lines()
+        denied_block = "\n" + "\n".join(denied_lines) if denied_lines else ""
+        return kv_block(pairs) + denied_block + self._report_suffix()
 
 
 class SpawnSubagentsInput(BaseModel):
