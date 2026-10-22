@@ -9,13 +9,27 @@ from pathlib import Path
 from typing import TypeVar
 from uuid import uuid4
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.state.atomic import atomic_write_text
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 ResultT = TypeVar("ResultT")
+
+
+class VersionedPrivateDoc(BaseModel):
+    """Strict base for private coordination files; a ``v`` field must be exactly 1."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore", allow_inf_nan=False, strict=True)
+
+    # Strict ``Literal[1]`` still accepts ``true`` and ``1.0``.
+    @field_validator("v", mode="before", check_fields=False)
+    @classmethod
+    def _exact_version(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("private-file version must be integer 1")
+        return value
 
 
 def read_model(path: Path, model_type: type[ModelT]) -> ModelT | None:
@@ -88,4 +102,10 @@ def mutate_model(
         return updated, result
 
 
-__all__ = ["mutate_model", "read_model", "write_model", "write_model_once"]
+__all__ = [
+    "VersionedPrivateDoc",
+    "mutate_model",
+    "read_model",
+    "write_model",
+    "write_model_once",
+]

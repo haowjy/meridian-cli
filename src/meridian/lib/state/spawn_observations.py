@@ -10,32 +10,21 @@ from pathlib import Path
 from typing import Literal
 
 import psutil
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+from pydantic import Field, StrictInt
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.json_doc import read_model, write_model
+from meridian.lib.state.json_doc import VersionedPrivateDoc, read_model, write_model
 from meridian.lib.state.liveness import is_process_alive_with_birth
 
 
-class _ObservationModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="ignore", allow_inf_nan=False, strict=True)
-
-    @field_validator("v", mode="before", check_fields=False)
-    @classmethod
-    def _exact_version(cls, value: object) -> object:
-        if type(value) is not int or value != 1:
-            raise ValueError("spawn-observation version must be integer 1")
-        return value
-
-
-class WaitReservation(_ObservationModel):
+class WaitReservation(VersionedPrivateDoc):
     owner_pid: StrictInt = Field(gt=0)
     owner_birth_epoch: float = Field(gt=0)
     expires_at_epoch: float
     spawn_ids: list[str]
 
 
-class SpawnObservations(_ObservationModel):
+class SpawnObservations(VersionedPrivateDoc):
     v: Literal[1]
     spawn_id: str
     updated_at_ms: float = 0.0

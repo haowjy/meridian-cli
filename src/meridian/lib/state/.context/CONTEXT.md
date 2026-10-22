@@ -146,6 +146,10 @@ file, so a corrupt sidecar loads as absent and the next write repairs it.
 `mutate_model()` requires the caller's lock and re-reads under it; there is no
 unlocked read-modify-write. A new sidecar adopts this seam rather than hand-rolling
 read, validate, lock and replace.
+Private coordination files (Pi's private state, spawn observations) and their
+nested records subclass `VersionedPrivateDoc`: strict, frozen, extra keys ignored,
+and a `v` field must be the integer 1, because a strict `Literal[1]` alone accepts
+`true` and `1.0`.
 Idle state adds one diagnostic to that generic absent-on-invalid contract: if
 the document's `v` names another format, `idle_store.py` warns with the path and
 that a different Meridian build wrote it.

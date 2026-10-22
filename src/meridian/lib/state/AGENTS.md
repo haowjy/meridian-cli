@@ -266,7 +266,8 @@ model lookups rather than scanning observations once per row.
   codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event I/O, lease ownership, and the canonical
   `session_exists()` predicate (a chat record exists; a harness ID is not required).
-- `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars.
+- `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars,
+  and the `VersionedPrivateDoc` base for private coordination files.
 - `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC;
   a version mismatch remains absent behaviorally but warns that another build wrote the file.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
