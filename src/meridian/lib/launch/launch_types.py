@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -118,11 +118,11 @@ class ResolvedLaunchSpec(BaseModel):
     skills: tuple[str, ...] = ()
     # Using Any for reference_items to avoid circular import with ReferenceItem.
     reference_items: tuple[Any, ...] = ()
-    # Resolved ``[harness.opencode] version`` preference (``auto``/``v1``/``v2``)
-    # carried from launch bind, mirroring the child env the connection reads, so
-    # the subprocess projector applies version-specific guards without resolving
-    # config itself. ``None`` means unresolved; the projector probes.
-    opencode_version: str | None = None
+    # OpenCode's backend version, resolved once at bind from ``[harness.opencode] version``
+    # and the installed binary (the harness's ``bind_spec`` port). The permission compile,
+    # the config projection, argv guards and the connection all read it. ``None`` on a
+    # spec that did not pass through bind.
+    opencode_version: Literal["v1", "v2"] | None = None
 
     task_cwd: str | None = None
 

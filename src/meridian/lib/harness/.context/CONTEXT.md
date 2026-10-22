@@ -406,10 +406,9 @@ each with one owner:
 - **Bare TUI needs `--standalone` on V2.** Without it the TUI is a client of the
   shared `opencode serve --service` process, which was configured by whoever
   started it: the launch env (config content, `OPENCODE_DB`) never applies.
-  `resolve_opencode_subprocess_spec` resolves the version for interactive launches
-  with the managed connection's resolver (including its V2 default when the probe
-  fails), so the fallback never disagrees with the transport it replaces; V1 rejects
-  `--standalone`.
+  The flag reads the version bind resolved, the one the managed connection uses
+  (including its V2 default when the probe fails), so the fallback never disagrees
+  with the transport it replaces; V1 rejects `--standalone`.
 - **Rejected:** a plugin `context` hook (V2-only, ships code that must load),
   session instruction entries (experimental, no black-box coverage), and repairing
   `instructions` (the V2 loader ignores it upstream).
@@ -420,22 +419,22 @@ each with one owner:
 (`auto`/`v1`/`v2`, default `auto`) is a first-class config field; `auto` probes
 `opencode --version` and prefers V2, falling back to `DEFAULT_OPENCODE_VERSION`
 when the binary cannot be probed. `resolve_opencode_version()` never downgrades
-an explicit `v2`. The resolved preference is projected into the OpenCode child
+an explicit `v2`. The config preference is projected into the OpenCode child
 env as `MERIDIAN_HARNESS_OPENCODE_VERSION` at launch bind (see
-[launch context](../../launch/.context/CONTEXT.md)), so TOML config reaches the
-connection and dry-run preview instead of being silently ignored. The same
-preference is carried on `ResolvedLaunchSpec.opencode_version`: the non-interactive
-subprocess projector rejects resume-with-model only for a known V1 and keeps
-`--model` for V2; a failed `auto` probe resolves to V2, as in the connection.
-All version probes require an explicit environment, including executable `PATH`
-lookup. The bundle's optional `resolve_subprocess_spec` port runs adapter-owned
-environment-dependent resolution before the pure argv projector; OpenCode uses it
-to probe the resume guard and the bare-TUI `--standalone` flag with the bound
-environment. Primary previews and the
-connection dispatcher pass the same bound environment to version detection.
+[launch context](../../launch/.context/CONTEXT.md)), and descendants inherit it.
+Bind then resolves the version once, through the bundle's `bind_spec` port
+(`bind_opencode_spec`), against the bound environment (its `PATH` finds the binary to
+probe), and stores `v1`/`v2` on `ResolvedLaunchSpec.opencode_version`. Every reader takes
+that field through `bound_opencode_version()`, which refuses a spec that skipped bind:
+the permission compile and its dry-run report, the config projection, the
+subprocess projector's resume-with-model guard (rejected only for V1) and bare-TUI
+`--standalone`, the managed-primary preview and the connection dispatcher. One
+resolution means the report can never describe a different version than the launch
+emits (a report compiled for V2 while an `auto` launch emitted V1 was the bug this
+replaced).
 
 `connections/opencode_connection.py` is the single registered OpenCode transport.
-At `start()` it resolves the version and delegates to `OpenCodeV2Connection`
+At `start()` it reads the spec's bound version and delegates to `OpenCodeV2Connection`
 (`opencode_v2_http.py`) or the frozen `OpenCodeV1Connection`
 (`opencode_http.py`). The V2 transport subclasses V1 to reuse process lifecycle,
 `BackendLivenessPolicy`, retry classification, and SSE framing, overriding only

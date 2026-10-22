@@ -38,7 +38,11 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
-from meridian.lib.harness.opencode_backend import resolve_opencode_version
+from meridian.lib.harness.opencode_backend import (
+    OPENCODE_VERSION_ENV,
+    bound_opencode_version,
+    resolve_opencode_version,
+)
 from meridian.lib.harness.opencode_idle import (
     detect_ttl,
     primary_idle_sensor,
@@ -147,21 +151,22 @@ def project_opencode_spec_to_session_payload_for_project(
     return project_opencode_spec_to_session_payload(spec)
 
 
-def resolve_opencode_subprocess_spec(
-    spec: ResolvedLaunchSpec, env: Mapping[str, str]
-) -> ResolvedLaunchSpec:
-    """Resolve version-dependent argv using the launch environment; projection stays pure.
+def bind_opencode_spec(spec: ResolvedLaunchSpec, env: Mapping[str, str]) -> ResolvedLaunchSpec:
+    """Resolve the backend version once, at bind, from the launch environment.
 
-    Two projections branch on the version: the resume-with-model guard and the bare
-    TUI's V2-only flags. Both take the managed connection's decision, including its
-    V2 default when the binary cannot be probed, so the fallback never disagrees
-    with the transport it replaces.
+    The preference is the ``[harness.opencode] version`` bind put in the env; ``auto``
+    probes the binary on the env's ``PATH``, and an unprobeable one gets V2. The permission
+    compile and its report, the config projection, the argv guards (resume with a model, the
+    bare TUI's V2 flags), the managed-primary preview and the connection all read the
+    result, so none of them can disagree with another.
     """
-    resumes_with_model = bool(spec.continue_session_id) and spec.model is not None
-    if not spec.interactive and not resumes_with_model:
-        return spec
+
     return spec.model_copy(
-        update={"opencode_version": resolve_opencode_version(spec.opencode_version, env=env)}
+        update={
+            "opencode_version": resolve_opencode_version(
+                env.get(OPENCODE_VERSION_ENV), env=env
+            )
+        }
     )
 
 
@@ -169,13 +174,8 @@ def project_opencode_primary_preview(
     spec: ResolvedLaunchSpec,
     *,
     project_root: Path,
-    env: Mapping[str, str] | None = None,
 ) -> ManagedPrimaryPreview:
-    version = resolve_opencode_version(
-        (env or {}).get("MERIDIAN_HARNESS_OPENCODE_VERSION"),
-        binary="opencode",
-        env=env if env is not None else {},
-    )
+    version = bound_opencode_version(spec.opencode_version)
     backend = project_opencode_spec_to_serve_command(spec, host="127.0.0.1", port=0)
     backend[backend.index("--port") + 1] = "<port>"
     continuing = bool(spec.continue_session_id)
@@ -467,11 +467,10 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        version = resolve_opencode_version(spec.opencode_version, env=env)
-        permissions, _ = compile_opencode_permissions(spec, version=version)
+        permissions, _ = compile_opencode_permissions(spec)
         config = project_opencode_launch_config(
             env.get(OPENCODE_CONFIG_CONTENT_ENV),
-            version=version,
+            version=bound_opencode_version(spec.opencode_version),
             roots=spec.projected_roots,
             agent_id=spec.agent_name or meridian_agent_id(None),
             prompt_file=(
@@ -661,7 +660,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_opencode_spec_to_cli_args,
             permissions=compile_opencode_permissions,
-            resolve_subprocess_spec=resolve_opencode_subprocess_spec,
+            bind_spec=bind_opencode_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_opencode_spec_to_serve_command,
                 bootstrap_payload=project_opencode_spec_to_session_payload_for_project,

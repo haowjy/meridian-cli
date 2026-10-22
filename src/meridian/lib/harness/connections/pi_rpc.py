@@ -494,7 +494,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             self.harness_id,
             spec,
             base_command=BASE_COMMAND_PI_SUBPROCESS,
-            env=config.child_env,
         )
         env = dict(config.child_env)
         launch_role = "spawned"

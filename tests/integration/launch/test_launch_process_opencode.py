@@ -280,7 +280,6 @@ def test_managed_primary_dryrun_has_one_truthful_structured_plan(
 def test_project_config_opencode_version_selects_v2_without_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from meridian.lib.harness.connections.base import ConnectionConfig
     from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
     from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 
@@ -297,14 +296,6 @@ def test_project_config_opencode_version_selects_v2_without_env(
     final_env = launch_context.binding.environment.final_env
     assert final_env["MERIDIAN_HARNESS_OPENCODE_VERSION"] == "v2"
 
-    connection = OpenCodeConnection()
-    selected = connection._select(
-        ConnectionConfig(
-            spawn_id="p-opencode-v2-config",
-            harness_id=HarnessId.OPENCODE,
-            prompt="hello",
-            control_root=tmp_path,
-            child_env=dict(final_env),
-        )
-    )
+    assert launch_context.binding.spec.opencode_version == "v2"
+    selected = OpenCodeConnection()._select(launch_context.binding.spec)
     assert isinstance(selected, OpenCodeV2Connection)

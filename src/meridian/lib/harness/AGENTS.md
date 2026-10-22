@@ -9,12 +9,13 @@ The Meridian OpenCode adapter targets current opencode.ai CLI releases.
 `opencode_backend.py` is the version seam: it resolves V1 vs V2 from
 `[harness.opencode] version` (`auto`/`v1`/`v2`, default `auto`; `auto` probes
 `opencode --version` and prefers V2).
-`connections/opencode_connection.py` is the dispatcher: one registered transport
-resolves the version at `start()` and delegates to the V2 session + `/api/event`
-transport (`opencode_v2_http.py`) or the frozen V1 JSON + SSE transport
-(`opencode_http.py`). The launch bind seam projects the version preference into
-`MERIDIAN_HARNESS_OPENCODE_VERSION`; the dispatcher resolves it once and exposes
-`resolved_version` to consumers such as the idle sensor. Capture and
+Launch bind resolves the version once (`bind_opencode_spec`, the bundle's `bind_spec`
+port) from the preference it projects into `MERIDIAN_HARNESS_OPENCODE_VERSION`, and
+stores it on `ResolvedLaunchSpec.opencode_version`. `connections/opencode_connection.py`
+is the dispatcher: one registered transport reads that version at `start()` and
+delegates to the V2 session + `/api/event` transport (`opencode_v2_http.py`) or the
+frozen V1 JSON + SSE transport (`opencode_http.py`), exposing `resolved_version` to
+consumers such as the idle sensor. Capture and
 storage/transcript reads select their OpenCode dialect by DB schema (`session_v2`
 → V2, `session` → V1) through
 `detect_opencode_db_schema` in `opencode_transcript.py`, never by the installed

@@ -358,6 +358,7 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
     }
     permissions, report = compile_opencode_permissions(
         ResolvedLaunchSpec(
+            opencode_version=cast("OpenCodeVersion", version),
             permission_policy=PermissionPolicy(
                 rules=(
                     ToolRule(capability="*", action="deny"),
@@ -395,7 +396,6 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
                 ),
             )
         ),
-        version=cast("OpenCodeVersion", version),
     )
     projected = json.loads(
         project_opencode_launch_config(

@@ -123,7 +123,6 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
             self.harness_id,
             spec_for_cmd,
             base_command=BASE_COMMAND_CURSOR_SUBPROCESS,
-            env=env,
         )
 
         try:

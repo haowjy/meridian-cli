@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import cast
 
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
@@ -92,7 +91,6 @@ def build_launch_argv(
     *,
     adapter: SubprocessHarness,
     projected_spec: ResolvedLaunchSpec,
-    env: Mapping[str, str],
 ) -> tuple[str, ...]:
     """Stage-owned subprocess argv assembly from one resolved launch spec."""
 
@@ -101,7 +99,6 @@ def build_launch_argv(
             adapter.id,
             projected_spec,
             base_command=_base_command(adapter, interactive=projected_spec.interactive),
-            env=env,
         )
     )
 

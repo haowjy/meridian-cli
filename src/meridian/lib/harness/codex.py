@@ -159,11 +159,9 @@ def project_codex_primary_preview(
     spec: ResolvedLaunchSpec,
     *,
     project_root: Path,
-    env: Mapping[str, str] | None = None,
 ) -> ManagedPrimaryPreview:
     """Describe the managed Codex backend, JSON-RPC bootstrap, and TUI attach."""
 
-    _ = env
     backend = project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=0)
     listen_index = backend.index("--listen") + 1
     backend[listen_index] = "ws://127.0.0.1:<port>"

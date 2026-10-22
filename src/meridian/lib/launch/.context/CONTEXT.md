@@ -229,9 +229,12 @@ ambient environment. For OpenCode, the resolved
 `[harness.opencode].version` preference (from the launch config snapshot, with a
 project-config fallback) is written to `MERIDIAN_HARNESS_OPENCODE_VERSION`.
 `resolve_opencode_version_for_launch()` owns the snapshot/env precedence; the key
-is registered child-injectable in `env_registry.py`. Because both dry-run preview
-and real connection read `binding.environment.final_env`, preview and execution
-select the same backend. Capture agrees through schema detection, not the env var.
+is registered child-injectable in `env_registry.py`. Right after `build_env_plan()`,
+bind calls `bind_launch_spec()` (the harness's `bind_spec` port), which resolves the
+version against that env once and stores it on the spec; the report, the env and argv
+projections, the preview and the connection all read the spec, so preview and
+execution select the same backend. Capture agrees through schema detection, not the
+env var.
 
 The same step lets the harness project config into the child env: after
 `build_env_plan()`, bind calls `harness.project_launch_env()` with the spec, the

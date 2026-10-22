@@ -379,7 +379,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             self.harness_id,
             spec,
             base_command=BASE_COMMAND_CLAUDE_STREAMING,
-            env=config.child_env,
         )
 
     async def _send_user_turn(self, text: str) -> None:

@@ -37,7 +37,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
-from meridian.lib.harness.bundle import get_harness_bundle
+from meridian.lib.harness.bundle import bind_launch_spec, get_harness_bundle
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     PreflightResult,
@@ -1784,17 +1784,14 @@ def bind_launch_context(
     run_params = materialized.run_params
     spec = materialized.spec
     composition_warnings = (*composition_warnings, *materialized.warnings)
-    opencode_version: str | None = None
+    opencode_version_preference: str | None = None
     if harness.id == HarnessId.OPENCODE:
-        # Resolve once and carry the preference on the spec so the dry-run argv
-        # preview applies the same version-specific guard as the connection
-        # instead of probing/config-reading on its own. The same value is
-        # projected into the child env below for the connection and preview.
-        opencode_version = resolve_opencode_version_for_launch(
+        # The config preference reaches the launch env below, where bind resolves it
+        # against the installed binary (``bind_launch_spec``) and descendants inherit it.
+        opencode_version_preference = resolve_opencode_version_for_launch(
             config_snapshot=runtime.config_snapshot,
             project_root=project_paths.project_root,
         )
-        spec = spec.model_copy(update={"opencode_version": opencode_version})
     if harness.id == HarnessId.CODEX and not spec.interactive:
         spec = spec.model_copy(
             update={
@@ -1809,8 +1806,8 @@ def bind_launch_context(
     # Resolve before restoring the environment, then carry the decision to
     # descendants even when direnv originally supplied the setting itself.
     launch_env_overrides["MERIDIAN_IGNORE_DIRENV"] = str(ignore_direnv).lower()
-    if opencode_version is not None:
-        launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version
+    if opencode_version_preference is not None:
+        launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version_preference
     child_context_env = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,
@@ -1856,6 +1853,9 @@ def bind_launch_context(
         run_inputs=run_params,
         runtime_env_overrides=bind_env_overrides,
     )
+    # Facts that depend on the launch environment (OpenCode's backend version) are resolved
+    # once, here; the env projection, the argv, the report and the connection read the spec.
+    spec = bind_launch_spec(harness.id, spec, env=env)
     env.update(
         harness.project_launch_env(
             spec=spec,
@@ -1882,11 +1882,7 @@ def bind_launch_context(
     )
     argv: tuple[str, ...] = ()
     if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
-        argv = build_launch_argv(
-            adapter=harness,
-            projected_spec=spec,
-            env=env,
-        )
+        argv = build_launch_argv(adapter=harness, projected_spec=spec)
 
     binding = ResolvedLaunchBinding(
         work_id=effective_work_id,

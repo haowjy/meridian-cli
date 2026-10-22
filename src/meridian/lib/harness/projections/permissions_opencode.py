@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from meridian.lib.harness.opencode_backend import OpenCodeVersion
+from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     EnforcementReport,
@@ -247,15 +247,15 @@ def _tool_rule_lines(
 
 def compile_opencode_permissions(
     spec: ResolvedLaunchSpec,
-    *,
-    version: OpenCodeVersion | None = None,
 ) -> tuple[OpenCodePermissions, EnforcementReport]:
-    """Compile ``spec.permission_policy`` to ordered config-agent rules and a report."""
+    """Compile ``spec.permission_policy`` to ordered config-agent rules and a report.
+
+    The rules are spelled for ``spec.opencode_version``, the version bind resolved, which the
+    config projection and the connection read too.
+    """
 
     policy = spec.permission_policy
-    resolved_version: OpenCodeVersion = (
-        version if version is not None else "v1" if spec.opencode_version == "v1" else "v2"
-    )
+    resolved_version = bound_opencode_version(spec.opencode_version)
     entries_by_rule = [
         (
             rule,
