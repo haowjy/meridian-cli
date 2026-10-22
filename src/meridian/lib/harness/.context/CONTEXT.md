@@ -277,10 +277,9 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
   native agent surface is Meridian-owned through agent copy). Otherwise, generic
   `Agent` is denied by default and delegation routes through `meridian spawn`.
 
-The detection runs in `bind_launch_context()` through the adapter hook
-`native_agent_copy_enabled()`, which Claude backs with `project_has_claude_agent_copy()` in
-`projections/permissions_claude.py` (reads `mars.toml` and `mars.local.toml`). The result
-decides whether `launch_platform_rules()` puts `agent` in the `native-subagents` rule;
+The detection runs in `bind_launch_context()` through `agent_copy_enabled(project_root,
+harness_id)` in `lib/catalog/agent_copy.py` (reads `mars.toml` and `mars.local.toml`; any
+harness, not only Claude). The result decides whether `launch_platform_rules()` puts `agent` in the `native-subagents` rule;
 `compile_claude_permissions()` reads that rule, turns every profile `agent` rule into a deny
 and, when it is present, strips `Agent` and `Agent(...)` from the parent-inherited and
 passthrough allowed-tool tails.

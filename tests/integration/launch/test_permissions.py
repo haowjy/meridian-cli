@@ -27,7 +27,7 @@ _MERIDIAN_RUNTIME_KEYS = (
 
 def test_invalid_approval_raises() -> None:
     with pytest.raises(ValueError, match="Unsupported approval mode"):
-        build_permission_policy(tools=None, sandbox="danger-full-access", approval="sometimes")
+        build_permission_policy(sandbox="danger-full-access", approval="sometimes")
 
 
 def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars() -> None:

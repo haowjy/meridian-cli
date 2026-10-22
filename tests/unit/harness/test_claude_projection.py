@@ -7,6 +7,7 @@ from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FL
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.safety.policy import PermissionPolicy, PlatformRule, build_permission_policy
+from tests.support.launch import tool_rule
 
 
 def _tool_flag_entries(argv: list[str], flag: str) -> tuple[str, ...]:
@@ -66,7 +67,8 @@ def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent()
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
-            tools={"agent": "deny", "bash": "allow"}, sandbox=None
+            rules=(tool_rule("agent", "deny", "Agent"), tool_rule("bash", "allow", "Bash")),
+            sandbox=None,
         ),
         extra_args=("--allowedTools", "Agent,Bash(meridian spawn *)"),
     )
@@ -85,7 +87,8 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
-            tools={"bash": "allow", "agent": "deny"}, sandbox=None
+            rules=(tool_rule("bash", "allow", "Bash"), tool_rule("agent", "deny", "Agent")),
+            sandbox=None,
         ),
         extra_args=(
             "--allowedTools=Agent,Agent(custom),Bash(meridian spawn *)",
@@ -112,7 +115,8 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
-            tools={"*": "deny", "agent": "allow"}, sandbox=None
+            rules=(tool_rule("*", "deny"), tool_rule("agent", "allow", "Agent")),
+            sandbox=None,
         ),
     )
 

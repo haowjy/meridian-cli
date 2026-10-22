@@ -21,7 +21,6 @@ from meridian.lib.core.overrides import (
     RuntimeOverrides,
     normalize_execution_policy_fields,
 )
-from meridian.lib.tools import ToolsField
 
 
 def _empty_policy_overrides() -> Mapping[str, object]:
@@ -116,7 +115,6 @@ class CompilerResult:
     # Runtime policy
     execution_policy: ResolvedExecutionPolicy
 
-    tools: ToolsField | None = None
     mcp_tools: tuple[str, ...] | None = None
 
     # Selection context

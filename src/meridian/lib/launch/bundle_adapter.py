@@ -9,7 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from meridian.lib.catalog.mars_roots import (
     MarsRoots,
@@ -27,7 +27,7 @@ from meridian.lib.launch.launch_types import (
     ResolvedExecutionPolicy,
     TerminalSurfaceMode,
 )
-from meridian.lib.tools import ToolAction, ToolsField
+from meridian.lib.tools import ToolRule
 from meridian.lib.utils.json_shapes import json_object
 
 if TYPE_CHECKING:
@@ -47,6 +47,9 @@ def _resolve_mars_min_version() -> str:
 
 _MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
+# First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
+_MARS_RULES_MIN_VERSION = "0.17.0"
+_LIST_FORM_ORIGIN = "list-form"
 
 
 @dataclass(frozen=True)
@@ -90,8 +93,7 @@ class _BundleResult:
     provenance: dict[str, str]
     warnings: tuple[str, ...]
     prompt_surface_inventory_prompt: str
-    tools_allowed: tuple[str, ...]
-    tools_disallowed: tuple[str, ...]
+    tool_rules: tuple[ToolRule, ...]
     tools_mcp: tuple[str, ...]
     skills_loaded: tuple[LoadedSkillEntry, ...]
     skills_available: tuple[AvailableSkillEntry, ...]
@@ -197,6 +199,39 @@ def _optional_object_field(payload: dict[str, object], field_name: str) -> dict[
     if not isinstance(raw_value, dict):
         raise _bundle_schema_error(f"'{field_name}' must be an object when present")
     return cast("dict[str, object]", raw_value)
+
+
+def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
+    """Read ``tools.rules``: capability for meaning, native names for emission.
+
+    The flat ``allowed``/``disallowed`` lists Mars still derives from the rules cannot carry
+    ``ask``, ``*`` or the capability behind a name, so nothing here reads them.
+    """
+
+    raw_rules = tools.get("rules")
+    if raw_rules is None:
+        raise RuntimeError(
+            "Mars launch-bundle has no tools.rules, so this Mars predates typed tool rules. "
+            f"Install mars >= {_MARS_RULES_MIN_VERSION}."
+        )
+    if not isinstance(raw_rules, list):
+        raise _bundle_schema_error("'tools.rules' must be a list")
+    rules: list[ToolRule] = []
+    for raw_rule in cast("list[object]", raw_rules):
+        entry = json_object(raw_rule)
+        if entry is None or not isinstance(entry.get("capability"), str):
+            raise _bundle_schema_error("'tools.rules' entries must be objects with a capability")
+        try:
+            rule = ToolRule.model_validate(entry)
+        except ValidationError as exc:
+            raise _bundle_schema_error(f"invalid 'tools.rules' entry: {exc}") from exc
+        if rule.is_wildcard and rule.origin == _LIST_FORM_ORIGIN:
+            # List form's own `*: deny` means "unlisted tools are denied". No harness
+            # enforces that yet and launches never saw it before typed rules, so it is
+            # not projected until the allowlist semantics land.
+            continue
+        rules.append(rule)
+    return tuple(rules)
 
 
 def _parse_harness_id(
@@ -470,8 +505,7 @@ def _parse_bundle_payload(
         provenance=_as_str_dict(payload.get("provenance")),
         warnings=_as_str_tuple(payload.get("warnings")),
         prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
-        tools_allowed=_as_str_tuple(tools.get("allowed")),
-        tools_disallowed=_as_str_tuple(tools.get("disallowed")),
+        tool_rules=_parse_tool_rules(tools),
         tools_mcp=_as_str_tuple(tools.get("mcp")),
         skills_loaded=skills_loaded,
         skills_available=skills_available,
@@ -555,17 +589,6 @@ def _provenance_value(provenance: dict[str, str], field_name: str) -> str | None
     return provenance.get(f"{field_name}_source") or provenance.get(field_name)
 
 
-def _resolved_tools_field(bundle: _BundleResult) -> ToolsField | None:
-    if not bundle.tools_allowed and not bundle.tools_disallowed:
-        return None
-    tools: dict[str, ToolAction] = {}
-    for capability in bundle.tools_allowed:
-        tools[capability] = "allow"
-    for capability in bundle.tools_disallowed:
-        tools[capability] = "deny"
-    return tools
-
-
 def bundle_to_resolved_policy(
     *,
     bundle: _BundleResult,
@@ -616,7 +639,7 @@ def bundle_to_resolved_policy(
             agent=routing_agent,
         ),
         execution_policy=execution_policy,
-        resolved_tools=_resolved_tools_field(bundle),
+        resolved_tool_rules=bundle.tool_rules,
         resolved_mcp_tools=bundle.tools_mcp,
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(

@@ -30,6 +30,7 @@ from meridian.lib.launch.policy_snapshot import build_launch_policy_snapshot
 from meridian.lib.launch.reference import load_reference_items
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.state.paths import resolve_kb_dir
+from meridian.lib.tools import NativeStatus, ToolAction, ToolRule
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -37,6 +38,20 @@ class BuiltLaunchContext(LaunchContext):
     """Launch context plus the prepared surface required by the primary runner."""
 
     prepared: PreparedLaunchSurface
+
+
+def tool_rule(
+    capability: str,
+    action: ToolAction,
+    *native: str,
+    pattern: str | None = None,
+    status: NativeStatus = "known",
+) -> ToolRule:
+    """One Mars-resolved tool rule; ``native`` are the harness's names, already scoped."""
+
+    return ToolRule(
+        capability=capability, pattern=pattern, action=action, native=native, native_status=status
+    )
 
 
 @dataclass(frozen=True)
@@ -52,8 +67,7 @@ class FakeBundleResult:
     selection_report: dict[str, object] | None = None
     warnings: tuple[str, ...] = ()
     prompt_surface_inventory_prompt: str = ""
-    tools_allowed: tuple[str, ...] = ()
-    tools_disallowed: tuple[str, ...] = ()
+    tool_rules: tuple[ToolRule, ...] = ()
     tools_mcp: tuple[str, ...] = ()
     skills_loaded: tuple[LoadedSkillEntry, ...] = ()
     skills_available: tuple[AvailableSkillEntry, ...] = ()
@@ -114,7 +128,7 @@ def _direct_prepared_surface(
                 (request.session.requested_harness_session_id or "").strip() or None
             )
         ),
-        profile_tools=None,
+        profile_tool_rules=(),
         model_selection=None,
         launch_request=resolved_request,
     )
@@ -210,8 +224,7 @@ def stub_bundle_request_and_resolve(
     provenance: dict[str, str] | None = None,
     warnings: tuple[str, ...] = (),
     prompt_surface_inventory_prompt: str = "",
-    tools_allowed: tuple[str, ...] = (),
-    tools_disallowed: tuple[str, ...] = (),
+    tool_rules: tuple[ToolRule, ...] = (),
     tools_mcp: tuple[str, ...] = (),
     skills_loaded: tuple[LoadedSkillEntry, ...] = (),
 ) -> list[bundle_adapter.BundleRequest]:
@@ -239,8 +252,7 @@ def stub_bundle_request_and_resolve(
             provenance=resolved_provenance,
             warnings=warnings,
             prompt_surface_inventory_prompt=prompt_surface_inventory_prompt,
-            tools_allowed=tools_allowed,
-            tools_disallowed=tools_disallowed,
+            tool_rules=tool_rules,
             tools_mcp=tools_mcp,
             skills_loaded=skills_loaded,
         )

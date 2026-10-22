@@ -5,18 +5,21 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
-from meridian.lib.harness.projections.permissions_claude import project_has_claude_agent_copy
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.permissions import native_subagent_capabilities
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.safety.policy import build_permission_policy
-from meridian.lib.tools import ToolsField
-from tests.support.fixtures import allow_headless_claude
-from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
+from meridian.lib.tools import ToolRule
+from tests.support.fixtures import allow_headless_claude, write_agent
+from tests.support.launch import (
+    build_launch_context,
+    stub_bundle_request_and_resolve,
+    tool_rule,
+)
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -56,7 +59,7 @@ def _launch_argv(
     monkeypatch: MonkeyPatch,
     *,
     surface: LaunchCompositionSurface,
-    tools: ToolsField | None = None,
+    tool_rules: tuple[ToolRule, ...] = (),
 ) -> tuple[str, ...]:
     stub_bundle_request_and_resolve(
         monkeypatch,
@@ -73,7 +76,7 @@ def _launch_argv(
             prompt="test",
             model="haiku",
             harness=HarnessId.CLAUDE.value,
-            tools=tools,
+            tool_rules=tool_rules,
         ),
         runtime=_runtime(tmp_path, surface),
         harness_registry=get_default_harness_registry(),
@@ -103,18 +106,42 @@ def test_spawn_prepare_denies_native_delegation_and_builtin_agents(
     )
 
 
-def test_profile_opt_out_keeps_agent_off_the_platform_deny_list() -> None:
-    assert native_subagent_capabilities(
-        tools={"agent": "allow"},
-        profile_tools={"agent": "allow"},
-        spawn=True,
-        native_agent_copy=True,
-    ) == ("task",)
+def test_profile_opt_out_keeps_task_off_the_platform_deny_list(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    write_agent(tmp_path, name="tasker", model="haiku")
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="haiku",
+        harness=HarnessId.CLAUDE,
+        tool_rules=(tool_rule("task", "allow", "TaskCreate", "TaskGet"),),
+    )
+    (tmp_path / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
+    context = build_launch_context(
+        spawn_id="p-task-opt-out",
+        request=SpawnRequest(
+            prompt="test", model="haiku", harness=HarnessId.CLAUDE.value, agent="tasker"
+        ),
+        runtime=_runtime(tmp_path, LaunchCompositionSurface.SPAWN_PREPARE),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    argv = context.binding.argv
+    assert {"TaskCreate", "TaskGet"}.issubset(_tool_flag_entries(argv, "--allowedTools"))
+    assert _TASK_DENIES.isdisjoint(_tool_flag_entries(argv, "--disallowedTools"))
+    assert "Agent" in _tool_flag_entries(argv, "--disallowedTools")
 
 
 def test_parent_allowed_tools_cannot_readd_denied_agent() -> None:
     policy = build_permission_policy(
-        tools={"bash": "allow", "agent": "deny", "agent(Explore)": "deny"}, sandbox=None
+        rules=(
+            tool_rule("bash", "allow", "Bash"),
+            tool_rule("agent", "deny", "Agent"),
+            tool_rule("agent", "deny", "Agent(Explore)", pattern="Explore"),
+        ),
+        sandbox=None,
     )
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
@@ -141,7 +168,7 @@ def test_primary_surface_denies_agent_but_not_task(
         tmp_path,
         monkeypatch,
         surface=LaunchCompositionSurface.PRIMARY,
-        tools={"*": "allow", "bash": "deny"},
+        tool_rules=(tool_rule("*", "allow"), tool_rule("bash", "deny", "Bash")),
     )
 
     disallowed = _tool_flag_entries(argv, "--disallowedTools")
@@ -157,7 +184,10 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         monkeypatch,
         model="claude-sonnet-4-6",
         harness=HarnessId.CLAUDE,
-        tools_allowed=("Bash", "Agent"),
+        tool_rules=(
+            tool_rule("bash", "allow", "Bash"),
+            tool_rule("agent", "allow", "Agent"),
+        ),
     )
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude"]\n\n'
@@ -171,7 +201,6 @@ def test_agent_copy_exception_keeps_generic_agent_only(
             prompt="test",
             model="claude-sonnet-4-6",
             harness=HarnessId.CLAUDE.value,
-            tools={"bash": "allow", "agent": "allow"},
         ),
         runtime=_runtime(tmp_path, LaunchCompositionSurface.SPAWN_PREPARE),
         harness_registry=get_default_harness_registry(),
@@ -206,4 +235,4 @@ def test_agent_copy_setting_comes_from_ancestor_mars_root(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    assert project_has_claude_agent_copy(nested)
+    assert agent_copy_enabled(nested, HarnessId.CLAUDE)

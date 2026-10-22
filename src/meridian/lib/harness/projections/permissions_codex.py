@@ -2,8 +2,9 @@
 
 Codex takes a sandbox mode and an approval policy per launch. Its tool rules have no
 native carrier, so only the two modes compile, plus two switches: the native ``web_search``
-tool and Codex's own multi-agent tools. The projectors (`codex exec` flags,
-`codex app-server` flags, the thread payload) spell the typed result three ways.
+tool and Codex's own multi-agent tools. The switches are keyed on a rule's ``capability``
+(a mechanism map, not a name table). The projectors (`codex exec` flags, `codex app-server`
+flags, the thread payload) spell the typed result three ways.
 """
 
 from __future__ import annotations
@@ -16,11 +17,14 @@ from meridian.lib.safety.policy import (
     EnforcementReport,
     PermissionPolicy,
     ReportLine,
-    ToolRule,
+    SandboxMode,
     complete_report,
     platform_element,
     rule_element,
 )
+from meridian.lib.tools import ToolRule, capability_action
+
+_WEB_SEARCH_CAPABILITIES = frozenset({"web", "web_search"})
 
 _APPROVAL_POLICY_BY_MODE: dict[str, str | None] = {
     "default": None,
@@ -89,7 +93,47 @@ def map_codex_sandbox_mode(sandbox_mode: str) -> str | None:
     return mapped
 
 
-def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> EnforcementReport:
+def _grants_web_search(rule: ToolRule) -> bool:
+    """Codex exposes ``web_search`` only when switched on, so a grant alone is inert.
+
+    A rule from a pre-rules snapshot has no capability, only Codex's own native name.
+    """
+
+    if rule.action == "deny":
+        return False
+    if rule.is_legacy:
+        return rule.native == ("web_search",)
+    return rule.capability in _WEB_SEARCH_CAPABILITIES
+
+
+def _infer_sandbox(rules: tuple[ToolRule, ...]) -> SandboxMode | None:
+    """Infer a sandbox from the tool rules when none was configured.
+
+    Deleted with the Codex commit (an unset sandbox then means Codex's default).
+    """
+
+    if not rules:
+        return None
+
+    def is_allowish(capability: str) -> bool:
+        return capability_action(rules, capability) in {"allow", "ask"}
+
+    if is_allowish("external_directory"):
+        return "danger-full-access"
+    wildcard = capability_action(rules, "*")
+    if wildcard in {"allow", "ask"} and not is_allowish("edit") and not is_allowish("bash"):
+        # Explicitly denying both write-capable tool classes from an allow-all baseline.
+        return "read-only"
+    if wildcard in {"allow", "ask"} and is_allowish("edit") and is_allowish("bash"):
+        return "danger-full-access"
+    if is_allowish("edit") or is_allowish("bash"):
+        return "workspace-write"
+    return "read-only"
+
+
+def _codex_report(
+    policy: PermissionPolicy, permissions: CodexPermissions, inferred_sandbox: SandboxMode | None
+) -> EnforcementReport:
     lines: list[ReportLine] = []
     for rule in policy.rules:
         if _grants_web_search(rule):
@@ -104,11 +148,10 @@ def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> En
                 )
             )
     if permissions.sandbox_mode is not None:
-        lines.append(
-            ReportLine(
-                f"sandbox: {policy.sandbox}", "native", f"sandbox_mode={permissions.sandbox_mode}"
-            )
-        )
+        note = f"sandbox_mode={permissions.sandbox_mode}"
+        if inferred_sandbox is not None:
+            note += "; inferred from the tool rules because no sandbox was configured"
+        lines.append(ReportLine(f"sandbox: {inferred_sandbox or policy.sandbox}", "native", note))
     if permissions.approval_policy is not None:
         note = f"approval_policy={permissions.approval_policy}"
         if policy.approval == "confirm":
@@ -124,27 +167,22 @@ def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> En
     return complete_report(policy, lines, harness="Codex")
 
 
-def _grants_web_search(rule: ToolRule) -> bool:
-    """Codex exposes ``web_search`` only when switched on, so a grant alone is inert."""
-
-    return rule.native == ("web_search",) and rule.action != "deny"
-
-
 def compile_codex_permissions(
     spec: ResolvedLaunchSpec,
 ) -> tuple[CodexPermissions, EnforcementReport]:
     """Compile ``spec.permission_policy`` for Codex, with the report of what it did."""
 
     policy = spec.permission_policy
+    inferred_sandbox = _infer_sandbox(policy.rules) if policy.sandbox == "default" else None
     permissions = CodexPermissions(
-        sandbox_mode=map_codex_sandbox_mode(policy.sandbox),
+        sandbox_mode=map_codex_sandbox_mode(inferred_sandbox or policy.sandbox),
         approval_policy=map_codex_approval_policy(policy.approval),
         web_search=any(_grants_web_search(rule) for rule in policy.rules),
         builtin_agents_disabled=any(
             rule.kind == "builtin-agents" for rule in policy.platform_rules
         ),
     )
-    return permissions, _codex_report(policy, permissions)
+    return permissions, _codex_report(policy, permissions, inferred_sandbox)
 
 
 __all__ = [

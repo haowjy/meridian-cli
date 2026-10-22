@@ -369,8 +369,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None: ...
 
-    def native_agent_copy_enabled(self, project_root: Path) -> bool: ...
-
     def env_defaults(
         self, *, run: SpawnParams, env: Mapping[str, str]
     ) -> dict[str, str]: ...
@@ -691,16 +689,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         return frozenset()
-
-    def native_agent_copy_enabled(self, project_root: Path) -> bool:
-        """Whether Mars installed native agent definitions for this harness in the project.
-
-        When true the harness's own agent tool is the project's delegation mechanism, so the
-        permission policy leaves it usable.
-        """
-
-        _ = project_root
-        return False
 
     def env_defaults(
         self, *, run: SpawnParams, env: Mapping[str, str]

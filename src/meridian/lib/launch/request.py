@@ -13,7 +13,7 @@ from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
 from meridian.lib.safety.policy import EnforcementReport
 from meridian.lib.state.session_store import ConversationModelSelection, SessionModelSelectionEvent
-from meridian.lib.tools import ToolsField
+from meridian.lib.tools import ToolRule
 
 
 def _empty_template_vars() -> dict[str, str]:
@@ -110,7 +110,7 @@ class SpawnRequest(BaseModel):
     # Harness shape
     extra_args: tuple[str, ...] = ()
     mcp_tools: tuple[str, ...] = ()
-    tools: ToolsField | None = None
+    tool_rules: tuple[ToolRule, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)
     ignore_direnv: bool | None = None
 

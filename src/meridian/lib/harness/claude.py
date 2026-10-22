@@ -63,7 +63,6 @@ from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.projections.permissions_claude import (
     compile_claude_permissions,
-    project_has_claude_agent_copy,
 )
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import (
@@ -303,9 +302,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # MCP injection is off by default — agents use the CLI instead.
         # Users who want always-on MCP can configure it in their harness settings.
         return None
-
-    def native_agent_copy_enabled(self, project_root: Path) -> bool:
-        return project_has_claude_agent_copy(project_root)
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         # Meridian manages nesting limits itself; suppress Claude's parent-session

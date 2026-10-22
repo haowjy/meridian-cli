@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 import structlog
 from pydantic import ValidationError
 
+from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.context_config import (
@@ -64,7 +65,7 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.telemetry import emit_telemetry
-from meridian.lib.tools import ToolsField
+from meridian.lib.tools import ToolRule
 from meridian.plugin_api.git import resolve_clone_path
 
 from .command import (
@@ -269,7 +270,7 @@ class PreparedLaunchSurface:
     composition_warnings: tuple[CompositionWarning, ...]
     content: PreparedLaunchContent
     runtime_seeds: PreparedLaunchRuntimeSeeds
-    profile_tools: ToolsField | None
+    profile_tool_rules: tuple[ToolRule, ...]
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
     # Original launch request preserved for LaunchContext.request compatibility.
@@ -1409,8 +1410,8 @@ def prepare_launch_surface(
         projected_content=content.projected_content,
         composed_content=content.composed_content,
     )
-    profile_tools = (
-        policies.resolved_tools if (profile is not None or using_policy_snapshot) else None
+    profile_tool_rules = (
+        policies.resolved_tool_rules if (profile is not None or using_policy_snapshot) else ()
     )
 
     resolved_request = request.model_copy(
@@ -1426,13 +1427,11 @@ def prepare_launch_surface(
                 else request.mcp_tools
             ),
             "execution_policy": execution_policy,
-            # Prefer the bundle's authoritative resolved tool grant whenever it exists
+            # Prefer the bundle's authoritative resolved tool rules whenever they exist
             # (covers spawned subagents, where profile/snapshot aren't set at bind but the
-            # resolved grant — e.g. codex `web_search` — must still propagate). Falls back
-            # to request.tools only when no resolved grant was produced.
-            "tools": (
-                policies.resolved_tools if policies.resolved_tools is not None else request.tools
-            ),
+            # resolved rules — e.g. a Codex web grant — must still propagate). Falls back
+            # to request.tool_rules only when no rules were resolved.
+            "tool_rules": policies.resolved_tool_rules or request.tool_rules,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,
@@ -1512,7 +1511,7 @@ def prepare_launch_surface(
             seed_harness_session_id=seed_harness_session_id,
             seed_session_args=seed_session_args,
         ),
-        profile_tools=profile_tools,
+        profile_tool_rules=profile_tool_rules,
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1567,7 +1566,7 @@ def bind_launch_context(
     composition_warnings = prepared.composition_warnings
     prompt_payload = prepared.prompt_payload
     loaded_references = prepared.loaded_references
-    profile_tools = prepared.profile_tools
+    profile_tool_rules = prepared.profile_tool_rules
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
@@ -1692,14 +1691,14 @@ def bind_launch_context(
         config_snapshot=runtime.config_snapshot,
         project_root=project_paths.project_root,
     )
-    native_agent_copy = harness.native_agent_copy_enabled(project_paths.project_root)
+    native_agent_copy = agent_copy_enabled(project_paths.project_root, harness.id)
     permission_policy = build_permission_policy(
-        tools=resolved_request.tools,
+        rules=resolved_request.tool_rules,
         sandbox=resolved_request.execution_policy.sandbox,
         approval=resolved_request.execution_policy.approval or "default",
         platform_rules=launch_platform_rules(
-            tools=resolved_request.tools,
-            profile_tools=profile_tools,
+            tool_rules=resolved_request.tool_rules,
+            profile_tool_rules=profile_tool_rules,
             spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
             native_agent_copy=native_agent_copy,
             allow_builtin_agents=allow_builtin_agents,

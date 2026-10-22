@@ -1,5 +1,43 @@
 # Upgrade notes
 
+## Typed tool rules (Mars 0.17)
+
+Meridian reads the launch bundle's `tools.rules` instead of the flat `allowed` and
+`disallowed` lists. Each rule carries the capability the profile wrote (`edit`, `web`,
+`bash(git push *)`) and the harness's own names for it, so Meridian no longer guesses native
+names. See the changelog for the tools it now names correctly.
+
+**Before installing**
+
+Install Mars 0.17.0 or later (`meridian mars upgrade`). Meridian needs `tools.rules` in the
+bundle; with an older Mars every launch stops with `Install mars >= 0.17.0`. A
+`mars-agents` package pin below 0.17.0 cannot satisfy it.
+
+**What changes in what a harness receives**
+
+- Names: Claude gets `WebSearch` and `WebFetch` for `web`, `Edit`, `Write` and `NotebookEdit`
+  for `edit`, `AskUserQuestion` for `ask_user`, and `Bash(git push *)` for a scoped `bash` key.
+  OpenCode gets `read`, `question`, `task`, `websearch` and `webfetch`. Before, these reached
+  the harness under names it does not use, so those rules did nothing.
+- A tool Mars has no name for on the harness is not enforced, and `--dry-run` reports it as
+  `unsupported`. A deny of a tool the harness lacks is reported as satisfied.
+- Codex infers a sandbox from the profile's `bash`, `edit` and `*` rules when the profile and
+  the command line set none, as before. It now reads the capability, so a profile that
+  allows `bash` or `edit` gets `workspace-write` where it used to get `read-only`.
+- Cursor no longer gets `--sandbox enabled` for a profile that sets `tools` and no
+  `sandbox`: the inference now runs only for Codex, so Cursor keeps its own default. Set
+  `sandbox: read-only` to keep the restriction.
+- Claude, OpenCode and Pi no longer print a `sandbox: ... unsupported` line for a profile that
+  never set a sandbox.
+
+**Launches you continue or fork**
+
+A spawn's launch policy snapshot written by an older build holds the old tools map. This build
+reads it as native-only rules, emits the recorded names as they were, and marks those lines
+`[legacy snapshot]` in `--dry-run`. It cannot interpret them by capability, so Codex keeps only
+the `web_search` switch from them. Probed with a snapshot written by 0.11.8: a Claude `--continue`
+launched with the same argv, and a Codex `--continue` kept web search.
+
 ## Session browse redesign (history index schema 12)
 
 `meridian session browse` was rewritten (see the changelog). The on-disk changes

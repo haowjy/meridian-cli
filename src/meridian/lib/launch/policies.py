@@ -22,7 +22,7 @@ from meridian.lib.core.overrides import (
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.tools import ToolsField
+from meridian.lib.tools import ToolRule
 
 from . import bundle_adapter
 from .bundle_adapter import LoadedSkillEntry
@@ -162,7 +162,7 @@ class ResolvedLaunchPolicy:
     resolved_skills: ResolvedSkills
     routing: ResolvedLaunchRouting
     execution_policy: ResolvedExecutionPolicy
-    resolved_tools: ToolsField | None = None
+    resolved_tool_rules: tuple[ToolRule, ...] = ()
     resolved_mcp_tools: tuple[str, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
@@ -595,7 +595,7 @@ def _resolve_policy_from_snapshot(
         resolved_skills=replayed.resolved_skills,
         routing=replayed.routing,
         execution_policy=replayed.execution_policy,
-        resolved_tools=replayed.resolved_tools,
+        resolved_tool_rules=replayed.resolved_tool_rules,
         resolved_mcp_tools=replayed.resolved_mcp_tools,
         terminal_surface_mode=replayed.terminal_surface_mode,
         matched_policy_rule=replayed.matched_policy_rule,

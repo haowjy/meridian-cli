@@ -48,32 +48,40 @@ Exit code conventions: non-zero → `GuardrailFailure`; timeout → 124; `OSErro
 
 ## Permission Policy (`policy.py`)
 
-`build_permission_policy(tools, sandbox, approval)` returns the frozen `PermissionPolicy`:
-`rules` (one `ToolRule` per tools-map entry), `sandbox` and `approval`. It validates the
-two modes and never re-resolves precedence; `launch/policies.py` already did. When
-`sandbox` is `default` and `tools` is set, the policy infers a sandbox from the tools map
-(`_infer_sandbox_from_tools`). That inference was written for Codex but applies to every
-harness; it is deleted with the Codex commit.
+`build_permission_policy(rules, sandbox, approval, platform_rules)` returns the frozen
+`PermissionPolicy`: `rules` (Mars's typed tool rules), `platform_rules`, `sandbox` and
+`approval`. It validates the two modes and never re-resolves precedence; `launch/policies.py`
+already did. Each harness compiles the policy in `harness/projections/permissions_<harness>.py`
+and returns `(native value, EnforcementReport)`; User-facing behavior is in
+`docs/agent-profiles.md#permissions-by-harness`.
 
-**`tools` is the abstract `ToolsField`** (`lib/tools.py`): a map from capability (or scoped
-`bash(rg *)` key) to `allow` / `deny` / `ask`. Profiles reach it through
-`launch/bundle_adapter.py`, which rebuilds it from Mars's `tools.allowed` /
-`tools.disallowed` lists, so a profile never produces `ask`.
+**`ToolRule`** (`lib/tools.py`) is Mars's rule from the launch bundle's `tools.rules[]`:
+`capability` + `pattern` carry meaning, `native` carries emission, and neither is derived
+from the other. `native_status` is `known`, `absent` (the harness has no such tool) or
+`unknown` (Mars has no name: a gap). A compile emits `native` as given and reads
+`capability` only for mechanism it owns: Codex's switches, the platform-rule overrides,
+the sandbox inference. Meridian keeps no tool-name table. A bundle without `tools.rules`
+fails with "install Mars >= 0.17.0"; the flat `allowed`/`disallowed` lists are not read.
 
-**`ToolRule` keeps the bundle's native key** in `native` and the lowercased head of that
-key in `capability`, which is Meridian's historical reading of a native name as a
-capability. Known gaps follow from it. Mars lowers tool names to the target harness's
-native names before Meridian sees them (Codex `exec_command` / `apply_patch`, Claude
-`Bash` / `Edit`), and two compiles assume capability names:
+**Legacy snapshots.** A launch snapshot an older build wrote holds `tools` (native key ->
+action). `legacy_tool_rules` reads it as native-only rules (`capability=None`, origin
+`legacy-snapshot`; the `*` key stays the `*` rule). A harness that can emit natives (Claude, OpenCode) does; Codex
+honors a legacy `web_search` and infers no more than `read-only`. Report lines for these
+rules carry `[legacy snapshot]`.
 
-- `_infer_sandbox_from_tools` looks for `bash` and `edit`, so on Codex it never matches and
-  returns `read-only` whenever `tools` is set and `sandbox` is not.
-- Claude's compile lowercases each key and re-capitalizes only its first letter, so
-  multi-word Claude tools (`WebSearch`, `WebFetch`, `AskUserQuestion`) become `Websearch`
-  etc., which Claude ignores.
+**List-form `*` is not projected yet.** The bundle parser drops the `*: deny` Mars adds for
+list-form `tools: [a, b]` (origin `list-form`): no harness enforces "unlisted tools are denied"
+and launches never saw it before typed rules. The allowlist semantics replace this drop.
 
-Each harness's compile lives in `harness/projections/permissions_<harness>.py`. User-facing
-behavior is in `docs/agent-profiles.md#permissions-by-harness`.
+**Reports.** `complete_report` gives every policy element exactly one line, in policy order.
+A compile reports what it enforces or has something specific to say about; the rest is
+`unsupported` ("not projected for <Harness>"), a rule with `native_status: unknown` is a gap
+("Mars has no <Harness> name"), and a deny of a tool the harness lacks (`absent`) is
+satisfied.
+
+**Sandbox inference** (Codex only, `permissions_codex.py`): with `sandbox: default` the
+Codex compile infers one from the `bash`, `edit`, `external_directory` and `*` capabilities.
+No other harness infers a sandbox. It is deleted with the Codex commit.
 
 ## Circular Import Constraints
 

@@ -43,15 +43,14 @@ level creates a circular import at load time.
 `policy.py` builds one `PermissionPolicy` per launch: the tool rules, the sandbox mode and
 the approval mode, already resolved. `ResolvedLaunchSpec.permission_policy` carries it, and
 each harness compiles it in `harness/projections/permissions_<harness>.py`. Nothing in
-`safety/` knows a harness. The rules keep the bundle's native keys until the Mars-typed
-rules replace them. `EnforcementReport` (a tuple of `ReportLine`) is the shape each compile
+`safety/` knows a harness. The tool rules are Mars's typed rules (`lib/tools.py`). `EnforcementReport` (a tuple of `ReportLine`) is the shape each compile
 reports what it enforced in; the formatting helpers for it live here too.
 
 ## Entry Points
 
 - `budget.py` — `LiveBudgetTracker`, `Budget`, `BudgetBreach`
 - `guardrails.py` — `run_guardrails()`
-- `policy.py` — `PermissionPolicy`, `ToolRule`, `build_permission_policy()`
+- `policy.py` — `PermissionPolicy`, `build_permission_policy()`, `complete_report()`
 
 ## Depth
 

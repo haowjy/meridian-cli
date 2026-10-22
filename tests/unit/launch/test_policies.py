@@ -22,6 +22,7 @@ from meridian.lib.launch.policy_snapshot import (
     replay_launch_policy_snapshot,
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, SpawnRequest
+from tests.support.launch import tool_rule
 
 
 def _surface(*layers: RuntimeOverrides) -> SurfacePolicyInput:
@@ -163,7 +164,7 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
         harness="codex",
         agent="coder",
         execution_policy=ResolvedExecutionPolicy(effort="high", approval="auto"),
-        tools={"bash": "allow"},
+        tool_rules=(tool_rule("bash", "allow", "exec_command"),),
         extra_args=("--search",),
         model_selection_requested_token="gpt54",
         model_selection_canonical_id="gpt-5.4",
@@ -183,7 +184,7 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
     assert replayed.routing.model == "gpt54"
     assert replayed.routing.agent == "coder"
     assert replayed.execution_policy == request.execution_policy
-    assert replayed.resolved_tools == {"bash": "allow"}
+    assert replayed.resolved_tool_rules == request.tool_rules
     assert replayed.resolved_skills.loaded_skills == (skill,)
     assert replayed.matched_policy_rule == "settings:2"
     assert replayed.selection_report == {"version": 2, "outcome": "selected"}

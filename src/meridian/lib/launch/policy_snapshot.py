@@ -16,7 +16,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.launch_types import ResolvedLaunchRouting, TerminalSurfaceMode
-from meridian.lib.tools import ToolsField
+from meridian.lib.tools import ToolRule, legacy_tool_rules
 
 from .request import SpawnRequest
 from .resolve import ResolvedSkills
@@ -77,7 +77,7 @@ class ReplayedLaunchPolicySnapshot:
     resolved_skills: ResolvedSkills
     routing: ResolvedLaunchRouting
     execution_policy: ResolvedExecutionPolicy
-    resolved_tools: ToolsField | None = None
+    resolved_tool_rules: tuple[ToolRule, ...] = ()
     resolved_mcp_tools: tuple[str, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     matched_policy_rule: str | None = None
@@ -147,7 +147,7 @@ def build_launch_policy_snapshot(
         skills=request.skills,
         loaded_skills=loaded_skills,
         execution_policy=request.execution_policy,
-        tools=request.tools,
+        tool_rules=request.tool_rules,
         mcp_tools=request.mcp_tools,
         extra_args=request.extra_args,
         env=request.env,
@@ -210,7 +210,7 @@ def replay_launch_policy_snapshot(
             agent=snapshot_agent,
         ),
         execution_policy=snapshot.execution_policy,
-        resolved_tools=snapshot.tools,
+        resolved_tool_rules=snapshot.tool_rules or legacy_tool_rules(snapshot.tools),
         resolved_mcp_tools=snapshot.mcp_tools,
         terminal_surface_mode=terminal_surface_mode,
         matched_policy_rule=snapshot.matched_policy_rule,

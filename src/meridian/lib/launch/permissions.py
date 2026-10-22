@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from meridian.lib.safety.policy import PlatformRule
-from meridian.lib.tools import ToolsField, resolve_tool_action
+from meridian.lib.tools import ToolRule, capability_action
 
 # Capabilities whose native tools let an agent delegate outside Meridian's tracking.
 # Sorted: the order is the order a harness's compile emits them in.
 _NATIVE_SUBAGENT_CAPABILITIES: tuple[str, ...] = ("agent", "task")
 
 
-def native_subagent_capabilities(
+def _native_subagent_capabilities(
     *,
-    tools: ToolsField | None,
-    profile_tools: ToolsField | None,
+    tool_rules: tuple[ToolRule, ...],
+    profile_tool_rules: tuple[ToolRule, ...],
     spawn: bool,
     native_agent_copy: bool,
 ) -> tuple[str, ...]:
@@ -21,9 +21,9 @@ def native_subagent_capabilities(
 
     ``agent`` is denied everywhere unless native agent copies are the project's delegation
     mechanism. Spawns also deny ``task``, and ``agent`` when copies are off, unless the
-    profile's own ``tools`` allows or asks for it, or ``tools`` already denies it.
-    ``profile_tools`` is the profile-declared map: only a profile can opt out, never a
-    request-level ``tools``.
+    profile's own rules allow or ask for it, or the rules already deny it.
+    ``profile_tool_rules`` are the profile-declared rules: only a profile can opt out, never
+    a request-level rule.
     """
 
     capabilities: list[str] = []
@@ -31,9 +31,9 @@ def native_subagent_capabilities(
         for capability in _NATIVE_SUBAGENT_CAPABILITIES:
             if capability == "agent" and native_agent_copy:
                 continue
-            if resolve_tool_action(tools=profile_tools, capability=capability) in {"allow", "ask"}:
+            if capability_action(profile_tool_rules, capability) in {"allow", "ask"}:
                 continue
-            if resolve_tool_action(tools=tools, capability=capability) == "deny":
+            if capability_action(tool_rules, capability) == "deny":
                 continue
             capabilities.append(capability)
     if not native_agent_copy and "agent" not in capabilities:
@@ -43,8 +43,8 @@ def native_subagent_capabilities(
 
 def launch_platform_rules(
     *,
-    tools: ToolsField | None,
-    profile_tools: ToolsField | None,
+    tool_rules: tuple[ToolRule, ...],
+    profile_tool_rules: tuple[ToolRule, ...],
     spawn: bool,
     native_agent_copy: bool,
     allow_builtin_agents: bool,
@@ -52,9 +52,9 @@ def launch_platform_rules(
     """Return the platform rules for one launch; each harness names them natively."""
 
     rules: list[PlatformRule] = []
-    capabilities = native_subagent_capabilities(
-        tools=tools,
-        profile_tools=profile_tools,
+    capabilities = _native_subagent_capabilities(
+        tool_rules=tool_rules,
+        profile_tool_rules=profile_tool_rules,
         spawn=spawn,
         native_agent_copy=native_agent_copy,
     )
@@ -65,7 +65,4 @@ def launch_platform_rules(
     return tuple(rules)
 
 
-__all__ = [
-    "launch_platform_rules",
-    "native_subagent_capabilities",
-]
+__all__ = ["launch_platform_rules"]

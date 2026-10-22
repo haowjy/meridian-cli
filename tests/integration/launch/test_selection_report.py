@@ -58,6 +58,7 @@ def bundle() -> dict[str, object]:
             "route_trace": report(),
         },
         "execution_policy": {},
+        "tools": {"rules": []},
     }
 
 

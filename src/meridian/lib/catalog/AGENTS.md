@@ -67,6 +67,7 @@ environments silently skip auto-resolve aliases.
 
 - `catalog_session.py` — `CatalogSession`: per-operation facade; start here
 - `mars_roots.py` — project/user package-root resolution and user-root initialization
+- `agent_copy.py` — `agent_copy_enabled()`: whether Mars copies native agents into a harness's target
 - `mars_capabilities.py` — cached help-surface probe for optional fallback lookup
 - `model_aliases.py` — `AliasEntry`, `MarsResultCache`, mars subprocess integration
 - `agent.py` — `AgentProfile`, agent frontmatter parsing for `.mars/agents/*.md`

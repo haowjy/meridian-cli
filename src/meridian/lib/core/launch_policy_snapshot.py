@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
-from meridian.lib.tools import ToolsField
+from meridian.lib.tools import ToolRule, ToolsField
 
 
 class LaunchPolicySnapshot(BaseModel):
@@ -24,6 +24,8 @@ class LaunchPolicySnapshot(BaseModel):
     extra_args: tuple[str, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
+    tool_rules: tuple[ToolRule, ...] = ()
+    # Pre-rules shape; only snapshots an older build wrote still carry it. Never written.
     tools: ToolsField | None = None
     mcp_tools: tuple[str, ...] = ()
     matched_policy_rule: str | None = None
