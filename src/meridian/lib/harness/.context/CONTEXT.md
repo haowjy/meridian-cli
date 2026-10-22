@@ -42,8 +42,10 @@ Per-harness mapping:
   allow_builtin_agents = true`, Meridian injects scoped built-in-agent denies through
   `compile_claude_permissions()`. Generic `Agent` is gated by Mars
   `[settings.meridian.agent_copy]`: allowed only when
-  `harnesses = ["claude"]` and `.claude` is a target. Parent/passthrough allowed-tool
-  tails are merged in that compile; profile allowlists and platform denies stay authoritative.
+  `harnesses = ["claude"]` and `.claude` is a target. Passthrough `--allowedTools` is
+  merged in that compile; profile allowlists and platform denies stay authoritative. The
+  `agent` platform deny also names `SendMessage` and `ListAgents`, which reach other agents
+  and local Claude sessions outside Meridian.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
@@ -278,10 +280,11 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
 The detection runs in `bind_launch_context()` through `agent_copy_enabled(project_root,
 harness_id)` in `lib/catalog/agent_copy.py` (reads `mars.toml` and `mars.local.toml`; any
 harness, not only Claude). The result decides whether `launch_platform_rules()` puts `agent` in the `native-subagents` rule;
-`compile_claude_permissions()` reads that rule and removes generic `Agent` grants from the
-parent-inherited and passthrough allowed-tool tails. Claude has no spelling that disables
-generic `Agent` while retaining built-in agents, so with `allow_builtin_agents = true` that
-part of the platform rule is reported partial instead of silently disabling built-ins.
+`compile_claude_permissions()` reads that rule and removes generic `Agent` grants from
+passthrough `--allowedTools`. Claude has no spelling that disables generic `Agent` while
+retaining built-in agents, so with `allow_builtin_agents = true` the compile still denies
+`SendMessage`/`ListAgents` but not `Agent`, and reports that part of the platform rule
+partial instead of silently disabling built-ins.
 
 This is a Meridian platform policy, not a per-agent `tools:` field: bind adds generic
 platform rules (`native-subagents`, `builtin-agents`) to the policy and each harness's

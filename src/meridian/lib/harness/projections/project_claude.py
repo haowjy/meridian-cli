@@ -170,9 +170,12 @@ def project_claude_spec_to_cli_args(
 
     command.extend(passthrough_tail)
 
-    # Permission projection comes after passthrough so a colliding raw Claude flag
-    # cannot silently weaken the profile while the enforcement report claims the
-    # managed value. Tool allow/deny inputs are consumed by the compile above.
+    # Permission projection comes after passthrough. Claude keeps only the last
+    # --settings (and --permission-mode), so the managed settings replace a raw one; the
+    # compile consumed raw tool allow/deny flags and omits its own mode when passthrough
+    # sets one. Passthrough can still widen the profile (--dangerously-skip-permissions,
+    # --permission-mode, --allow-dangerously-skip-permissions): those flags stay, and the
+    # report says so.
     if permissions.skip_permission_prompts:
         command.append("--dangerously-skip-permissions")
     if permissions.permission_mode:
