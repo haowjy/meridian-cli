@@ -6,7 +6,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
-from meridian.lib.safety.policy import build_permission_policy
+from meridian.lib.safety.policy import PermissionPolicy, build_permission_policy
 
 
 def _tool_flag_entries(argv: list[str], flag: str) -> tuple[str, ...]:
@@ -31,7 +31,6 @@ def test_claude_projection_drops_inherited_agent_when_native_agents_disabled() -
             CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
             "Agent,Agent(custom),Bash(meridian spawn *)",
         ),
-        claude_native_agents_enabled=False,
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
@@ -43,11 +42,11 @@ def test_claude_projection_keeps_inherited_agent_when_native_agents_enabled() ->
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
+        permission_policy=PermissionPolicy(native_agent_copy=True),
         extra_args=(
             CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
             "Agent,Agent(custom),Bash(meridian spawn *)",
         ),
-        claude_native_agents_enabled=True,
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
@@ -67,7 +66,6 @@ def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent()
             tools={"agent": "deny", "bash": "allow"}, sandbox=None
         ),
         extra_args=("--allowedTools", "Agent,Bash(meridian spawn *)"),
-        claude_native_agents_enabled=False,
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
@@ -92,7 +90,6 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
             "Write",
             "--verbose",
         ),
-        claude_native_agents_enabled=False,
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
@@ -112,9 +109,8 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
-            tools={"*": "deny", "agent": "allow"}, sandbox=None
+            tools={"*": "deny", "agent": "allow"}, sandbox=None, native_agent_copy=True
         ),
-        claude_native_agents_enabled=True,
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))

@@ -61,6 +61,7 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.projections.permissions_claude import project_has_claude_agent_copy
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
@@ -157,7 +158,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "mcp_tools",
             "projected_roots",
             "user_turn_content",
-            "allow_builtin_agents",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -256,11 +256,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         prompt_file_path: str | None = None
         # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
-        disallowed_tools: tuple[str, ...] = ()
-        if not run.allow_builtin_agents:
-            disallowed_tools = (
-                "Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)",
-            )
         plugin_names = (
             (_BOUNDARY_PLUGIN, "meridian-idle") if run.interactive else (_BOUNDARY_PLUGIN,)
         )
@@ -280,7 +275,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             agent_name=run.agent,
             prompt_file_path=prompt_file_path,
             user_turn_content=user_turn_content,
-            disallowed_tools=disallowed_tools,
             claude_runtime=resolve_claude_runtime(plugin_names=plugin_names),
         )
 
@@ -306,6 +300,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # MCP injection is off by default — agents use the CLI instead.
         # Users who want always-on MCP can configure it in their harness settings.
         return None
+
+    def native_agent_copy_enabled(self, project_root: Path) -> bool:
+        return project_has_claude_agent_copy(project_root)
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         # Meridian manages nesting limits itself; suppress Claude's parent-session

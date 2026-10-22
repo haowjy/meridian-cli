@@ -40,7 +40,8 @@ Per-harness mapping:
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
 - **Claude built-in agent denial**: Meridian injects `--disallowedTools
   Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
-  unconditionally. The denials merge into permission-derived `--disallowedTools` via
+  unconditionally (`compile_claude_permissions()`; Claude does not read
+  `allow_builtin_agents` yet). The denials merge into permission-derived `--disallowedTools` via
   `dedupe_nonempty()`. Generic
   `Agent` is gated by Mars `[settings.meridian.agent_copy]`: allowed only when
   `harnesses = ["claude"]` and `.claude` is a target. Parent/passthrough allowed-tool
@@ -276,15 +277,17 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
   native agent surface is Meridian-owned through agent copy). Otherwise, generic
   `Agent` is denied by default and delegation routes through `meridian spawn`.
 
-The detection runs in `bind_launch_context()` via `project_has_claude_agent_copy()` in
-`permissions.py`, which reads `mars.toml` and `mars.local.toml`. The result flows into
-`ResolvedLaunchSpec.claude_native_agents_enabled` and is projected by
-`project_claude.py`. The projection strips `Agent` and `Agent(...)` from allowed-tools
-when `claude_native_agents_enabled=False`, including parent-inherited allowed-tool tails.
+The detection runs in `bind_launch_context()` through the adapter hook
+`native_agent_copy_enabled()`, which Claude backs with `project_has_claude_agent_copy()` in
+`projections/permissions_claude.py` (reads `mars.toml` and `mars.local.toml`). The result is
+`PermissionPolicy.native_agent_copy`; `compile_claude_permissions()` strips `Agent` and
+`Agent(...)` from allowed-tools when it is false, including parent-inherited allowed-tool
+tails.
 
-This is implemented as a Meridian platform policy (harness adapter injection), not as
-a per-agent `tools:` field. Agent profiles do not need to carry `agent: deny` entries —
-the denial is inherited from the harness adapter when agent copy is absent.
+This is a Meridian platform policy, not a per-agent `tools:` field: bind adds generic
+platform rules (`native-subagents`, `builtin-agents`) to the policy and each harness's
+compile names them natively. Agent profiles do not need to carry `agent: deny` entries —
+the denial is inherited from the platform rule when agent copy is absent.
 
 ### Claude: System-Prompt File Channel
 

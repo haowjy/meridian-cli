@@ -176,7 +176,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "model_override_explicit",
             "reference_items",
             "task_cwd",
-            "allow_builtin_agents",
         }
     )
 

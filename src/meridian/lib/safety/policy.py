@@ -1,9 +1,9 @@
 """Permission policy carried on the resolved launch spec.
 
-One transport-neutral value built at bind: the tool rules, the sandbox mode and
-the approval mode. Each harness compiles it into its own native projection in
-``lib/harness/projections/permissions_<harness>.py``; nothing here knows a
-harness.
+One transport-neutral value built at bind: the tool rules, the platform rules Meridian
+adds, the sandbox mode and the approval mode. Each harness compiles it into its own native
+projection in ``lib/harness/projections/permissions_<harness>.py``, which also names the
+platform rules natively; nothing here knows a harness.
 """
 
 from __future__ import annotations
@@ -57,14 +57,41 @@ class ToolRule(BaseModel):
     origin: str | None = None
 
 
+type PlatformRuleKind = Literal["native-subagents", "builtin-agents"]
+
+
+class PlatformRule(BaseModel):
+    """A restriction Meridian puts on a launch whatever the profile says.
+
+    ``native-subagents`` denies the harness's own sub-agent tools so delegation goes
+    through Meridian; ``capabilities`` lists the ones to deny (``agent``, ``task``), already
+    net of profile opt-outs. ``builtin-agents`` denies the harness's built-in agents.
+    A harness that has no native name for a rule leaves it out of its projection.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: PlatformRuleKind
+    capabilities: tuple[str, ...] = ()
+
+
 class PermissionPolicy(BaseModel):
-    """Tool rules plus the resolved sandbox and approval modes for one launch."""
+    """Everything permission-shaped for one launch, before any harness reads it.
+
+    ``native_agent_copy``: Mars installed native agent definitions for the harness, so
+    its own agent tool is the project's delegation mechanism and stays usable.
+    ``web_search``: the bundle granted the native ``web_search`` tool, which Codex needs
+    switched on explicitly (a native key until the typed rules arrive).
+    """
 
     model_config = ConfigDict(frozen=True)
 
     rules: tuple[ToolRule, ...] = ()
+    platform_rules: tuple[PlatformRule, ...] = ()
     sandbox: SandboxMode = "default"
     approval: ApprovalMode = "default"
+    native_agent_copy: bool = False
+    web_search: bool = False
 
 
 def _split_key(raw_key: str) -> tuple[str, str | None]:
@@ -126,6 +153,9 @@ def build_permission_policy(
     tools: ToolsField | None,
     sandbox: str | None,
     approval: str = "default",
+    platform_rules: tuple[PlatformRule, ...] = (),
+    native_agent_copy: bool = False,
+    web_search: bool = False,
 ) -> PermissionPolicy:
     """Build the policy from the resolved tools map and execution policy.
 
@@ -144,14 +174,18 @@ def build_permission_policy(
         )
     return PermissionPolicy(
         rules=tuple(rules),
+        platform_rules=platform_rules,
         sandbox=resolved_sandbox,
         approval=_parse_approval_value(approval),
+        native_agent_copy=native_agent_copy,
+        web_search=web_search,
     )
 
 
 __all__ = [
     "ApprovalMode",
     "PermissionPolicy",
+    "PlatformRule",
     "SandboxMode",
     "ToolRule",
     "build_permission_policy",

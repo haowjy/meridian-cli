@@ -314,7 +314,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
-            "allow_builtin_agents",
         }
     )
 

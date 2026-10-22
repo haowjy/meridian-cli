@@ -1,180 +1,83 @@
-"""Permission-resolution stage ownership for launch composition."""
+"""Bind-time permission facts: the platform rules and the grants they depend on."""
 
 from __future__ import annotations
 
-import tomllib
-from pathlib import Path
-from typing import cast
+from meridian.lib.safety.policy import PlatformRule
+from meridian.lib.tools import ToolsField, resolve_tool_action
 
-from meridian.lib.catalog.mars_roots import resolve_mars_roots
-from meridian.lib.core.types import normalize_mars_target_name
-from meridian.lib.tools import (
-    ToolAction,
-    ToolsField,
-    normalize_tool_action,
-    normalize_tool_key,
-    resolve_tool_action,
-    tools_field_to_map,
-)
-
-_NESTED_CLAUDE_DELEGATION_CAPABILITIES: frozenset[str] = frozenset({"agent", "task"})
-_CLAUDE_BUILTIN_AGENT_DENY_RULES: tuple[str, ...] = (
-    "agent(Explore)",
-    "agent(Plan)",
-    "agent(General-purpose)",
-    "agent(general-purpose)",
-)
+# Capabilities whose native tools let an agent delegate outside Meridian's tracking.
+# Sorted: the order is the order a harness's compile emits them in.
+_NATIVE_SUBAGENT_CAPABILITIES: tuple[str, ...] = ("agent", "task")
 
 
-def project_has_claude_agent_copy(project_root: Path) -> bool:
-    """Return whether effective Mars config enables Claude native agent copies."""
-
-    mars_root = resolve_mars_roots(project_root).primary
-    targets: tuple[str, ...] = ()
-    agent_copy_harnesses: tuple[str, ...] = ()
-    for config_name in ("mars.toml", "mars.local.toml"):
-        config_path = mars_root / config_name
-        if not config_path.is_file():
-            continue
-        with config_path.open("rb") as handle:
-            payload = tomllib.load(handle)
-        settings = cast("object", payload.get("settings"))
-        if not isinstance(settings, dict):
-            continue
-        typed_settings = cast("dict[str, object]", settings)
-        raw_targets = typed_settings.get("targets")
-        if isinstance(raw_targets, list):
-            targets = tuple(
-                normalize_mars_target_name(str(target))
-                for target in cast("list[object]", raw_targets)
-            )
-        raw_managed_root = typed_settings.get("managed_root")
-        if not targets and isinstance(raw_managed_root, str):
-            normalized_root = normalize_mars_target_name(raw_managed_root)
-            if normalized_root:
-                targets = (normalized_root,)
-        meridian_table = typed_settings.get("meridian")
-        if not isinstance(meridian_table, dict):
-            continue
-        agent_copy = cast("dict[str, object]", meridian_table).get("agent_copy")
-        if not isinstance(agent_copy, dict) or "harnesses" not in agent_copy:
-            continue
-        typed_agent_copy = cast("dict[str, object]", agent_copy)
-        harnesses = typed_agent_copy.get("harnesses")
-        if isinstance(harnesses, list):
-            agent_copy_harnesses = tuple(
-                str(harness).strip().lower()
-                for harness in cast("list[object]", harnesses)
-            )
-    return "claude" in agent_copy_harnesses and "claude" in targets
-
-
-def _normalized_tools_map(tools: ToolsField | None) -> dict[str, ToolAction]:
-    return {
-        normalize_tool_key(key, source="tools"): normalize_tool_action(
-            action,
-            source=f"tools.{key}",
-        )
-        for key, action in tools_field_to_map(tools).items()
-    }
-
-
-def resolve_claude_native_agent_permission_request(
+def native_subagent_capabilities(
     *,
     tools: ToolsField | None,
-    has_claude_agent_copy: bool,
-) -> ToolsField | None:
-    """Apply Claude native Agent defaults from the Mars agent-copy boundary."""
-
-    rules = _normalized_tools_map(tools)
-    if not has_claude_agent_copy:
-        for key in tuple(rules):
-            capability, _separator, _scope = key.partition("(")
-            if capability == "agent":
-                rules[key] = "deny"
-        rules["agent"] = "deny"
-    for key in _CLAUDE_BUILTIN_AGENT_DENY_RULES:
-        rules[key] = "deny"
-    if not rules:
-        return tools
-    return rules
-
-
-def compute_nested_claude_deny_additions(
-    *,
     profile_tools: ToolsField | None,
-    existing_tools: ToolsField | None,
+    spawn: bool,
+    native_agent_copy: bool,
 ) -> tuple[str, ...]:
-    """Return implicit deny entries for nested Claude managed spawns.
+    """Return the delegation capabilities the platform denies for this launch.
 
-    Excludes tools already denied in `existing_tools` and tools explicitly
-    opted out through `profile_tools`.
+    ``agent`` is denied everywhere unless native agent copies are the project's delegation
+    mechanism. Spawns also deny ``task``, and ``agent`` when copies are off, unless the
+    profile's own ``tools`` allows or asks for it, or ``tools`` already denies it.
+    ``profile_tools`` is the profile-declared map: only a profile can opt out, never a
+    request-level ``tools``.
     """
 
-    opted_out: set[str] = set()
-    if profile_tools is not None:
-        profile_rules = tools_field_to_map(profile_tools)
-        for capability in _NESTED_CLAUDE_DELEGATION_CAPABILITIES:
-            action = resolve_tool_action(tools=profile_tools, capability=capability)
-            if action in {"allow", "ask"}:
-                opted_out.add(capability)
-        if "agent" in profile_rules and profile_rules["agent"] == "deny":
-            opted_out.discard("agent")
-        if "task" in profile_rules and profile_rules["task"] == "deny":
-            opted_out.discard("task")
-
-    already_denied = {
-        capability
-        for capability in _NESTED_CLAUDE_DELEGATION_CAPABILITIES
-        if resolve_tool_action(tools=existing_tools, capability=capability) == "deny"
-    }
-    return tuple(
-        capability
-        for capability in sorted(_NESTED_CLAUDE_DELEGATION_CAPABILITIES)
-        if capability not in opted_out and capability not in already_denied
-    )
+    capabilities: list[str] = []
+    if spawn:
+        for capability in _NATIVE_SUBAGENT_CAPABILITIES:
+            if capability == "agent" and native_agent_copy:
+                continue
+            if resolve_tool_action(tools=profile_tools, capability=capability) in {"allow", "ask"}:
+                continue
+            if resolve_tool_action(tools=tools, capability=capability) == "deny":
+                continue
+            capabilities.append(capability)
+    if not native_agent_copy and "agent" not in capabilities:
+        capabilities.append("agent")
+    return tuple(capabilities)
 
 
-def _apply_nested_claude_denies(
-    *,
-    tools: ToolsField | None,
-    denied_capabilities: tuple[str, ...],
-) -> ToolsField:
-    if not denied_capabilities:
-        return tools if tools is not None else {"*": "allow"}
-    rules = tools_field_to_map(tools)
-    if not rules:
-        rules["*"] = "allow"
-    for capability in denied_capabilities:
-        rules[capability] = "deny"
-    return rules
-
-
-def resolve_nested_claude_permission_request(
+def launch_platform_rules(
     *,
     tools: ToolsField | None,
     profile_tools: ToolsField | None,
-    has_profile: bool,
-    allow_native_agent_tool: bool = False,
-) -> ToolsField | None:
-    """Apply Meridian's managed-spawn boundary for nested Claude launches."""
+    spawn: bool,
+    native_agent_copy: bool,
+    allow_builtin_agents: bool,
+) -> tuple[PlatformRule, ...]:
+    """Return the platform rules for one launch; each harness names them natively."""
 
-    _ = has_profile
-    deny_additions = compute_nested_claude_deny_additions(
+    rules: list[PlatformRule] = []
+    capabilities = native_subagent_capabilities(
+        tools=tools,
         profile_tools=profile_tools,
-        existing_tools=tools,
+        spawn=spawn,
+        native_agent_copy=native_agent_copy,
     )
-    if allow_native_agent_tool:
-        deny_additions = tuple(
-            capability for capability in deny_additions if capability != "agent"
-        )
-    resolved_tools = _apply_nested_claude_denies(tools=tools, denied_capabilities=deny_additions)
-    return resolved_tools
+    if capabilities:
+        rules.append(PlatformRule(kind="native-subagents", capabilities=capabilities))
+    if not allow_builtin_agents:
+        rules.append(PlatformRule(kind="builtin-agents"))
+    return tuple(rules)
+
+
+def native_web_search_granted(tools: ToolsField | None) -> bool:
+    """True when the bundle explicitly granted the native ``web_search`` tool (Codex's name).
+
+    Codex exposes it only when switched on, so the grant alone is inert.
+    """
+
+    if tools is None:
+        return False
+    return tools.get("web_search") in {"allow", "ask"}
 
 
 __all__ = [
-    "compute_nested_claude_deny_additions",
-    "project_has_claude_agent_copy",
-    "resolve_claude_native_agent_permission_request",
-    "resolve_nested_claude_permission_request",
+    "launch_platform_rules",
+    "native_subagent_capabilities",
+    "native_web_search_granted",
 ]

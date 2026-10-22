@@ -7,13 +7,11 @@ import pytest
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
+from meridian.lib.harness.projections.permissions_claude import project_has_claude_agent_copy
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.permissions import (
-    compute_nested_claude_deny_additions,
-    project_has_claude_agent_copy,
-)
+from meridian.lib.launch.permissions import native_subagent_capabilities
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.safety.policy import build_permission_policy
 from meridian.lib.tools import ToolsField
@@ -24,10 +22,18 @@ if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
 _BUILTIN_AGENT_DENIES = {
-    "agent(Explore)": "deny",
-    "agent(Plan)": "deny",
-    "agent(General-purpose)": "deny",
-    "agent(general-purpose)": "deny",
+    "Agent(Explore)",
+    "Agent(Plan)",
+    "Agent(General-purpose)",
+    "Agent(general-purpose)",
+}
+_TASK_DENIES = {
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
 }
 
 
@@ -45,13 +51,13 @@ def _runtime(tmp_path: Path, surface: LaunchCompositionSurface) -> LaunchRuntime
     )
 
 
-def _resolved_tools(
+def _launch_argv(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
     *,
     surface: LaunchCompositionSurface,
     tools: ToolsField | None = None,
-) -> ToolsField | None:
+) -> tuple[str, ...]:
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="haiku",
@@ -73,7 +79,7 @@ def _resolved_tools(
         harness_registry=get_default_harness_registry(),
         dry_run=True,
     )
-    return context.resolved_request.tools
+    return context.binding.argv
 
 
 def _tool_flag_entries(argv: tuple[str, ...], flag: str) -> tuple[str, ...]:
@@ -86,29 +92,24 @@ def _tool_flag_entries(argv: tuple[str, ...], flag: str) -> tuple[str, ...]:
     return tuple(filter(None, entries))
 
 
-def test_spawn_prepare_constructs_full_nested_deny_set(
+def test_spawn_prepare_denies_native_delegation_and_builtin_agents(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    assert _resolved_tools(
-        tmp_path,
-        monkeypatch,
-        surface=LaunchCompositionSurface.SPAWN_PREPARE,
-    ) == {
-        "*": "allow",
-        "agent": "deny",
-        "task": "deny",
-        **_BUILTIN_AGENT_DENIES,
-    }
+    argv = _launch_argv(tmp_path, monkeypatch, surface=LaunchCompositionSurface.SPAWN_PREPARE)
+
+    assert {"Agent", *_TASK_DENIES, *_BUILTIN_AGENT_DENIES}.issubset(
+        _tool_flag_entries(argv, "--disallowedTools")
+    )
 
 
-def test_compute_nested_deny_honors_profile_opt_out() -> None:
-    assert set(
-        compute_nested_claude_deny_additions(
-            profile_tools={"agent": "allow"},
-            existing_tools=None,
-        )
-    ) == {"task"}
+def test_profile_opt_out_keeps_agent_off_the_platform_deny_list() -> None:
+    assert native_subagent_capabilities(
+        tools={"agent": "allow"},
+        profile_tools={"agent": "allow"},
+        spawn=True,
+        native_agent_copy=True,
+    ) == ("task",)
 
 
 def test_parent_allowed_tools_cannot_readd_denied_agent() -> None:
@@ -120,7 +121,6 @@ def test_parent_allowed_tools_cannot_readd_denied_agent() -> None:
         model="claude-sonnet-4-6",
         permission_policy=policy,
         extra_args=(CLAUDE_PARENT_ALLOWED_TOOLS_FLAG, "Agent,Agent(Explore),Write"),
-        claude_native_agents_enabled=False,
     )
 
     argv = tuple(project_claude_spec_to_cli_args(spec, base_command=("claude",)))
@@ -137,17 +137,16 @@ def test_primary_surface_denies_agent_but_not_task(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    assert _resolved_tools(
+    argv = _launch_argv(
         tmp_path,
         monkeypatch,
         surface=LaunchCompositionSurface.PRIMARY,
         tools={"*": "allow", "bash": "deny"},
-    ) == {
-        "*": "allow",
-        "bash": "deny",
-        "agent": "deny",
-        **_BUILTIN_AGENT_DENIES,
-    }
+    )
+
+    disallowed = _tool_flag_entries(argv, "--disallowedTools")
+    assert {"Agent", "Bash", *_BUILTIN_AGENT_DENIES}.issubset(disallowed)
+    assert _TASK_DENIES.isdisjoint(disallowed)
 
 
 def test_agent_copy_exception_keeps_generic_agent_only(
@@ -181,8 +180,6 @@ def test_agent_copy_exception_keeps_generic_agent_only(
 
     allowed = _tool_flag_entries(context.binding.argv, "--allowedTools")
     disallowed = _tool_flag_entries(context.binding.argv, "--disallowedTools")
-    assert context.resolved_request.tools is not None
-    assert context.resolved_request.tools["task"] == "deny"
     assert "Agent" in allowed
     assert "Agent" not in disallowed
     assert {

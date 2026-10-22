@@ -114,8 +114,7 @@ def _direct_prepared_surface(
                 (request.session.requested_harness_session_id or "").strip() or None
             )
         ),
-        profile_tools_for_nested_deny=None,
-        has_profile_for_nested_deny=False,
+        profile_tools=None,
         model_selection=None,
         launch_request=resolved_request,
     )

@@ -193,8 +193,9 @@ parent report.
   Source of truth for what every adapter must implement.
 - `registry.py` — `HarnessRegistry`, `with_defaults()`. The global singleton.
 - `claude.py` / `codex.py` / `opencode.py` / `cursor.py` — concrete adapter implementations.
-  Claude adapter threads `ResolvedLaunchSpec.claude_native_agents_enabled` into projection so
-  parent inherited `Agent` grants cannot bypass the Mars `agent_copy` boundary.
+  Claude's compile (`projections/permissions_claude.py`) reads
+  `spec.permission_policy.native_agent_copy` so parent inherited `Agent` grants cannot
+  bypass the Mars `agent_copy` boundary.
 - `__init__.py` — `HARNESS_EXTENSION_TOUCHPOINTS` and `ensure_bootstrap()`.
   Read before adding a harness — lists every file that must be touched.
 - `semantics.py` — `HarnessSemantics` port and typed `EventSemantics` descriptor.

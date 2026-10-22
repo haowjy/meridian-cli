@@ -5,6 +5,17 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 
+# Codex 0.162: disabling v2 falls back to v1, whose tools survive `--disable multi_agent`;
+# only a zero spawn depth removes them. Config overrides, not `--disable`: Codex rejects
+# `--disable` for a feature it does not know (older builds), but ignores an unknown
+# `features.<name>=false`.
+CODEX_DISABLE_BUILTIN_AGENT_FLAGS: tuple[str, ...] = (
+    "-c",
+    "features.multi_agent_v2=false",
+    "-c",
+    "agents.max_depth=0",
+)
+
 
 def project_codex_mcp_config_flags(mcp_tools: Iterable[str]) -> tuple[str, ...]:
     """Project ``mcp_tools`` to Codex ``-c mcp.servers.*.command=...`` flags."""
@@ -28,4 +39,4 @@ def project_codex_mcp_config_flags(mcp_tools: Iterable[str]) -> tuple[str, ...]:
     return tuple(projected)
 
 
-__all__ = ["project_codex_mcp_config_flags"]
+__all__ = ["CODEX_DISABLE_BUILTIN_AGENT_FLAGS", "project_codex_mcp_config_flags"]

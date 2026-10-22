@@ -104,8 +104,6 @@ class ResolvedLaunchSpec(BaseModel):
     # Claude only
     agents_payload: str | None = None
     prompt_file_path: str | None = None
-    claude_native_agents_enabled: bool = False
-    disallowed_tools: tuple[str, ...] = ()
     claude_runtime: ClaudeRuntimeResolution = ClaudeRuntimeResolution()
 
     # Claude + Codex
@@ -115,9 +113,6 @@ class ResolvedLaunchSpec(BaseModel):
     report_output_path: str | None = None
     base_instructions: str | None = None
     developer_instructions: str | None = None
-    # Codex requires `--search` to expose the native Responses `web_search` tool;
-    # Mars `tools.allowed: [web_search]` alone does not enable it.
-    web_search_enabled: bool = False
 
     # OpenCode only
     skills: tuple[str, ...] = ()

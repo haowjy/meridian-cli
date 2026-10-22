@@ -71,7 +71,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "effort",
             "model_override_explicit",
             "pi_harness_profile",
-            "allow_builtin_agents",
         }
     )
 

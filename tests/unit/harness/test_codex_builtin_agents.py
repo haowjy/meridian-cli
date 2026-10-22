@@ -10,12 +10,28 @@ from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
 )
+from meridian.lib.launch.permissions import launch_platform_rules
+from meridian.lib.safety.policy import build_permission_policy
 
 _DISABLED = ["-c", "features.multi_agent_v2=false", "-c", "agents.max_depth=0"]
 
 
-def _appserver_command(params: SpawnParams) -> list[str]:
-    spec = CodexAdapter().resolve_launch_spec(params)
+def _appserver_command(
+    *, allow_builtin_agents: bool = False, extra_args: tuple[str, ...] = ()
+) -> list[str]:
+    spec = CodexAdapter().resolve_launch_spec(SpawnParams(prompt="x", extra_args=extra_args))
+    policy = build_permission_policy(
+        tools=None,
+        sandbox=None,
+        platform_rules=launch_platform_rules(
+            tools=None,
+            profile_tools=None,
+            spawn=False,
+            native_agent_copy=False,
+            allow_builtin_agents=allow_builtin_agents,
+        ),
+    )
+    spec = spec.model_copy(update={"permission_policy": policy})
     return project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=1)
 
 
@@ -47,7 +63,7 @@ def test_codex_builtin_agents_follow_harness_config(
         is False
     )
 
-    command = _appserver_command(SpawnParams(prompt="x", allow_builtin_agents=allowed))
+    command = _appserver_command(allow_builtin_agents=allowed)
     assert _contains(command, _DISABLED) is not expected
 
 
@@ -60,6 +76,6 @@ def test_codex_builtin_agents_follow_harness_config(
 )
 def test_codex_passthrough_override_follows_default_disable(default: str, override: str) -> None:
     # Codex applies `-c` overrides in order, so a later passthrough value wins.
-    command = _appserver_command(SpawnParams(prompt="x", extra_args=("-c", override)))
+    command = _appserver_command(extra_args=("-c", override))
 
     assert command.index(override) > command.index(default)

@@ -10,7 +10,10 @@ from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
-from meridian.lib.harness.projections.project_codex_common import project_codex_mcp_config_flags
+from meridian.lib.harness.projections.project_codex_common import (
+    CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
+    project_codex_mcp_config_flags,
+)
 from meridian.lib.launch.constants import BASE_COMMAND_CODEX_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -23,7 +26,6 @@ _APP_SERVER_ARG_FIELDS: frozenset[str] = frozenset(
         "projected_roots",
         "report_output_path",
         "mcp_tools",
-        "web_search_enabled",
     }
 )
 
@@ -70,13 +72,11 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "native_identity",
         "agent_name",
         "agents_payload",
-        "claude_native_agents_enabled",
         "claude_runtime",
         "appended_system_prompt",
         "harness",
         "pi_extension_entrypoints",
         "load_all_pi_extensions",
-        "disallowed_tools",
         "opencode_version",
         "prompt_file_path",
         "reference_items",
@@ -173,7 +173,7 @@ def project_codex_spec_to_appserver_command(
     # Codex ignores bundle tool grants. Enable the native Responses `web_search` tool via
     # the config knob — the streaming transport runs `codex app-server`, which rejects the
     # `exec`-only `--search` flag but accepts `-c tools.web_search=true`.
-    if spec.web_search_enabled:
+    if permissions.web_search:
         command.extend(("-c", "tools.web_search=true"))
 
     if spec.report_output_path is not None:
@@ -190,6 +190,10 @@ def project_codex_spec_to_appserver_command(
             [root.as_posix() for root in spec.projected_roots],
         )
         command.extend(writable_roots_config)
+
+    # Ahead of passthrough args so a later `-c` override still wins.
+    if permissions.builtin_agents_disabled:
+        command.extend(CODEX_DISABLE_BUILTIN_AGENT_FLAGS)
 
     if spec.extra_args:
         logger.debug(

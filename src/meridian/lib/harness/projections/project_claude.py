@@ -10,18 +10,14 @@ from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
-from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
+from meridian.lib.harness.projections.permissions_claude import (
+    compile_claude_permissions,
+    is_claude_agent_tool,
+)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 
 logger = logging.getLogger(__name__)
-
-_CLAUDE_BUILTIN_AGENT_DENY_TOOLS: tuple[str, ...] = (
-    "Agent(Explore)",
-    "Agent(Plan)",
-    "Agent(General-purpose)",
-    "Agent(general-purpose)",
-)
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
@@ -39,10 +35,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "permission_policy",
         "prompt",
         "prompt_file_path",
-        "claude_native_agents_enabled",
         "claude_runtime",
         "user_turn_content",
-        "disallowed_tools",
     }
 )
 
@@ -57,7 +51,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "opencode_version",
         "reference_items",
         "report_output_path",
-        "web_search_enabled",
         "skills",
         "task_cwd",
     }
@@ -143,12 +136,8 @@ def _has_flag(args: Sequence[str], flag: str) -> bool:
     return any(token == flag or token.startswith(f"{flag}=") for token in args)
 
 
-def _is_claude_agent_tool(tool: str) -> bool:
-    return tool == "Agent" or tool.startswith("Agent(")
-
-
 def _is_denied_tool(tool: str, denied_tools: set[str]) -> bool:
-    return tool in denied_tools or ("Agent" in denied_tools and _is_claude_agent_tool(tool))
+    return tool in denied_tools or ("Agent" in denied_tools and is_claude_agent_tool(tool))
 
 
 def _log_collision_if_needed(
@@ -212,28 +201,18 @@ def project_claude_spec_to_cli_args(
 
     permissions = compile_claude_permissions(spec)
     allowed_tools = list(permissions.allowed_tools)
-    disallowed_tools = list(permissions.disallowed_tools)
-    spec_disallowed: list[str] = []
-    for entry in spec.disallowed_tools:
-        spec_disallowed.extend(split_csv_entries(entry))
-    if not spec.claude_native_agents_enabled:
-        allowed_tools = [tool for tool in allowed_tools if not _is_claude_agent_tool(tool)]
+    if not permissions.native_agents_enabled:
         parent_allowed_tools = [
-            tool for tool in parent_allowed_tools if not _is_claude_agent_tool(tool)
+            tool for tool in parent_allowed_tools if not is_claude_agent_tool(tool)
         ]
         passthrough_allowed_tools = [
-            tool for tool in passthrough_allowed_tools if not _is_claude_agent_tool(tool)
+            tool for tool in passthrough_allowed_tools if not is_claude_agent_tool(tool)
         ]
     allowed_tools = dedupe_nonempty(
         (*allowed_tools, *parent_allowed_tools, *passthrough_allowed_tools)
     )
     disallowed_tools = dedupe_nonempty(
-        (
-            *disallowed_tools,
-            *spec_disallowed,
-            *passthrough_disallowed_tools,
-            *_CLAUDE_BUILTIN_AGENT_DENY_TOOLS,
-        )
+        (*permissions.disallowed_tools, *passthrough_disallowed_tools)
     )
     if disallowed_tools:
         denied_tools = set(disallowed_tools)

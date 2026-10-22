@@ -51,7 +51,7 @@ from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
-from meridian.lib.safety.policy import build_permission_policy
+from meridian.lib.safety.policy import PermissionPolicy, build_permission_policy
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
@@ -63,7 +63,7 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.telemetry import emit_telemetry
-from meridian.lib.tools import ToolsField, tools_field_to_map
+from meridian.lib.tools import ToolsField
 from meridian.plugin_api.git import resolve_clone_path
 
 from .command import (
@@ -85,11 +85,7 @@ from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILEN
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan, undo_direnv
 from .env import merge_env_overrides as _merge_env_overrides
-from .permissions import (
-    project_has_claude_agent_copy,
-    resolve_claude_native_agent_permission_request,
-    resolve_nested_claude_permission_request,
-)
+from .permissions import launch_platform_rules, native_web_search_granted
 from .policies import (
     ModelSelectionContext,
     ResolvedLaunchPolicy,
@@ -267,8 +263,7 @@ class PreparedLaunchSurface:
     composition_warnings: tuple[CompositionWarning, ...]
     content: PreparedLaunchContent
     runtime_seeds: PreparedLaunchRuntimeSeeds
-    profile_tools_for_nested_deny: ToolsField | None
-    has_profile_for_nested_deny: bool
+    profile_tools: ToolsField | None
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
     # Original launch request preserved for LaunchContext.request compatibility.
@@ -488,15 +483,6 @@ def _request_prompt_payload(prompt_payload: PreparedPromptPayload) -> RequestPro
     )
 
 
-def _codex_web_search_enabled(tools: ToolsField | None) -> bool:
-    """True when Mars launch-bundle explicitly granted codex ``web_search``."""
-
-    if tools is None:
-        return False
-    action = tools_field_to_map(tools).get("web_search")
-    return action in ("allow", "ask")
-
-
 def materialize_launch_artifacts(
     *,
     harness: SubprocessHarness,
@@ -517,13 +503,8 @@ def materialize_launch_artifacts(
     model_override_explicit: bool = False,
     reference_items: tuple[ReferenceItem, ...] = (),
     inject_task_cwd_instruction: bool = False,
-    sandbox: str | None = None,
-    tools: ToolsField | None = None,
-    approval: str | None = None,
+    permission_policy: PermissionPolicy,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
-    claude_native_agents_enabled: bool = False,
-    allow_builtin_agents: bool = False,
-    web_search_enabled: bool = False,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
@@ -570,22 +551,10 @@ def materialize_launch_artifacts(
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
         pi_harness_profile=pi_harness_profile,
-        allow_builtin_agents=allow_builtin_agents,
-    )
-    policy = build_permission_policy(
-        tools=tools,
-        sandbox=sandbox,
-        approval=approval or "default",
     )
     spec = resolve_launch_spec_stage(
-        adapter=harness, run_inputs=run_params, permission_policy=policy
+        adapter=harness, run_inputs=run_params, permission_policy=permission_policy
     )
-    if harness.id == HarnessId.CLAUDE:
-        spec = spec.model_copy(
-            update={"claude_native_agents_enabled": claude_native_agents_enabled}
-        )
-    elif harness.id == HarnessId.CODEX and web_search_enabled:
-        spec = spec.model_copy(update={"web_search_enabled": True})
     return MaterializedLaunchArtifacts(
         run_params=run_params,
         spec=spec,
@@ -1329,7 +1298,6 @@ def prepare_launch_surface(
         )
     profile = policies.profile
     using_policy_snapshot = request.launch_policy_snapshot is not None
-    has_profile = profile is not None
     execution_policy = policies.execution_policy
     model_selection = policies.model_selection
     harness = policies.adapter
@@ -1435,7 +1403,7 @@ def prepare_launch_surface(
         projected_content=content.projected_content,
         composed_content=content.composed_content,
     )
-    profile_tools_for_nested_deny = (
+    profile_tools = (
         policies.resolved_tools if (profile is not None or using_policy_snapshot) else None
     )
 
@@ -1538,8 +1506,7 @@ def prepare_launch_surface(
             seed_harness_session_id=seed_harness_session_id,
             seed_session_args=seed_session_args,
         ),
-        profile_tools_for_nested_deny=profile_tools_for_nested_deny,
-        has_profile_for_nested_deny=has_profile or using_policy_snapshot,
+        profile_tools=profile_tools,
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1594,8 +1561,7 @@ def bind_launch_context(
     composition_warnings = prepared.composition_warnings
     prompt_payload = prepared.prompt_payload
     loaded_references = prepared.loaded_references
-    profile_tools_for_nested_deny = prepared.profile_tools_for_nested_deny
-    has_profile_for_nested_deny = prepared.has_profile_for_nested_deny
+    profile_tools = prepared.profile_tools
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
@@ -1715,45 +1681,28 @@ def bind_launch_context(
     if model_selection is not None and model_selection.harness_model_id is not None:
         effective_model = model_selection.harness_model_id
 
-    claude_native_agents_enabled = harness.id == HarnessId.CLAUDE and project_has_claude_agent_copy(
-        project_paths.project_root
-    )
     allow_builtin_agents = resolve_allow_builtin_agents_for_launch(
         harness_id=harness.id.value,
         config_snapshot=runtime.config_snapshot,
         project_root=project_paths.project_root,
     )
-    # resolved_request.tools carries the bundle's authoritative resolved grant, which
-    # includes the codex `web_search` token when the agent grants `web`. Codex needs
-    # `--search` to actually expose the native tool; the grant alone is inert.
-    codex_web_search_enabled = harness.id == HarnessId.CODEX and _codex_web_search_enabled(
-        resolved_request.tools
+    native_agent_copy = harness.native_agent_copy_enabled(project_paths.project_root)
+    permission_policy = build_permission_policy(
+        tools=resolved_request.tools,
+        sandbox=resolved_request.execution_policy.sandbox,
+        approval=resolved_request.execution_policy.approval or "default",
+        platform_rules=launch_platform_rules(
+            tools=resolved_request.tools,
+            profile_tools=profile_tools,
+            spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
+            native_agent_copy=native_agent_copy,
+            allow_builtin_agents=allow_builtin_agents,
+        ),
+        native_agent_copy=native_agent_copy,
+        # The bundle's authoritative resolved grant carries the native `web_search` token
+        # when the agent grants `web`; Codex needs it switched on to expose the tool.
+        web_search=native_web_search_granted(resolved_request.tools),
     )
-
-    if (
-        runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
-        and harness.id == HarnessId.CLAUDE
-    ):
-        tools = resolve_nested_claude_permission_request(
-            tools=resolved_request.tools,
-            profile_tools=profile_tools_for_nested_deny,
-            has_profile=has_profile_for_nested_deny,
-            allow_native_agent_tool=claude_native_agents_enabled,
-        )
-        if tools != resolved_request.tools:
-            resolved_request = resolved_request.model_copy(
-                update={
-                    "tools": tools,
-                }
-            )
-
-    if harness.id == HarnessId.CLAUDE:
-        tools = resolve_claude_native_agent_permission_request(
-            tools=resolved_request.tools,
-            has_claude_agent_copy=claude_native_agents_enabled,
-        )
-        if tools != resolved_request.tools:
-            resolved_request = resolved_request.model_copy(update={"tools": tools})
 
     # Defense in depth for persisted worker requests that bypassed preparation.
     _enforce_headless_harness_policy(
@@ -1822,13 +1771,8 @@ def bind_launch_context(
             else resolved_request.session.continue_fork
         ),
         reference_items=loaded_references,
-        sandbox=resolved_request.execution_policy.sandbox,
-        tools=resolved_request.tools,
-        approval=resolved_request.execution_policy.approval,
+        permission_policy=permission_policy,
         pi_harness_profile=pi_harness_profile,
-        claude_native_agents_enabled=claude_native_agents_enabled,
-        allow_builtin_agents=allow_builtin_agents,
-        web_search_enabled=codex_web_search_enabled,
     )
     run_params = materialized.run_params
     spec = materialized.spec
