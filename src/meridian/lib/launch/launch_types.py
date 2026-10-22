@@ -12,17 +12,11 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    JsonValue,
-    field_serializer,
-    field_validator,
     model_validator,
 )
 
 from meridian.lib.core.execution_policy import (
-    NativeConfig,
-    freeze_native_config,
-    native_config_to_json,
-    validate_native_config,
+    NativeConfigValue,
 )
 from meridian.lib.core.execution_policy import (
     ResolvedExecutionPolicy as ResolvedExecutionPolicy,
@@ -100,32 +94,15 @@ class ResolvedLaunchSpec(BaseModel):
     # Permissions: defaults to no tool rules and default sandbox/approval.
     permission_policy: PermissionPolicy = PermissionPolicy()
     # Harness-native execution settings preserved from the selected Mars profile.
-    native_config: NativeConfig = Field(
+    native_config: NativeConfigValue = Field(
         default_factory=lambda: ResolvedExecutionPolicy().native_config
     )
-
-    @field_validator("native_config", mode="before")
-    @classmethod
-    def _validate_native_config(cls, value: object) -> object:
-        return validate_native_config(value)
-
-    @field_validator("native_config")
-    @classmethod
-    def _freeze_native_config(cls, value: NativeConfig) -> NativeConfig:
-        return freeze_native_config(value)
-
-    @field_serializer("native_config")
-    def _serialize_native_config(self, value: NativeConfig) -> dict[str, JsonValue]:
-        return native_config_to_json(value)
 
     # Passthrough args forwarded verbatim to the harness process.
     extra_args: tuple[str, ...] = ()
 
     # Interactive mode
     interactive: bool = False
-
-    # Harness-agnostic MCP tool configuration.
-    mcp_tools: tuple[str, ...] = ()
 
     # First-class workspace root projection — harness-agnostic, deduplicated.
     projected_roots: tuple[Path, ...] = ()

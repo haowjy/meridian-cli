@@ -109,7 +109,6 @@ class SpawnRequest(BaseModel):
 
     # Harness shape
     extra_args: tuple[str, ...] = ()
-    mcp_tools: tuple[str, ...] = ()
     tool_rules: tuple[ToolRule, ...] = ()
     # Mars-named agent/task deny candidates; bind selects them after profile opt-outs.
     platform_tool_rules: tuple[ToolRule, ...] = ()

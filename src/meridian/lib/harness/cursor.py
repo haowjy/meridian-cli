@@ -14,7 +14,6 @@ from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
-    McpConfig,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -55,7 +54,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "autocompact_pct",
             "extra_args",
             "task_cwd",
-            "mcp_tools",
             "projected_roots",
             "interactive",
         }
@@ -123,7 +121,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             continue_fork=run.continue_fork and continue_session_id is not None,
             extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             task_cwd=run.task_cwd,
         )
@@ -141,12 +138,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "Cursor CLI not found on PATH. Install Cursor CLI or set PATH to include 'cursor'."
             )
         return PreflightResult.build(expanded_passthrough_args=passthrough_args)
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        _ = run
-        return None
-
-
 
 def _resolve_cursor_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:

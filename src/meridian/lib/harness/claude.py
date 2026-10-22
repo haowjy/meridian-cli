@@ -27,7 +27,6 @@ from meridian.lib.harness.adapter import (
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
-    McpConfig,
     RecordConfigDirFn,
     RunPromptPolicy,
     SpawnParams,
@@ -159,7 +158,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "continue_harness_session_id",
             "continue_fork",
             "appended_system_prompt",
-            "mcp_tools",
             "projected_roots",
             "user_turn_content",
         }
@@ -274,7 +272,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             continue_fork=run.continue_fork and continue_session_id is not None,
             extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
             agents_payload=run.adhoc_agent_payload.strip() or None,
@@ -301,11 +298,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             child_cwd=child_cwd,
             passthrough_args=passthrough_args,
         )
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        # MCP injection is off by default — agents use the CLI instead.
-        # Users who want always-on MCP can configure it in their harness settings.
-        return None
 
     def project_launch_env(
         self,

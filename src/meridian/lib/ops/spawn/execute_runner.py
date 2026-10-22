@@ -197,11 +197,7 @@ async def _prepare_execution_handoff(
                 }
             )
 
-        run_env_overrides: dict[str, str] = {}
-        if runtime.config.env or request.env:
-            resolved_env = dict(runtime.config.env)
-            resolved_env.update(request.env)
-            run_env_overrides = {**resolved_env, **run_env_overrides}
+        run_env_overrides = {**runtime.config.env, **request.env}
         runtime_work_id = session_context.work_id or work_id
         final_request = resolved_request.model_copy(update={"work_id_hint": runtime_work_id})
         launch_runtime = runtime_request.model_copy(

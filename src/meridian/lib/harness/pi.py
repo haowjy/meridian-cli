@@ -26,7 +26,6 @@ from meridian.lib.harness.adapter import (
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
-    McpConfig,
     NativePrimaryRuntimeMetadata,
     RecordConfigDirFn,
     SessionRequest,
@@ -169,7 +168,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "continue_fork",
             "appended_system_prompt",
             "user_turn_content",
-            "mcp_tools",
             "projected_roots",
             "pi_harness_profile",
         }
@@ -283,7 +281,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             continue_fork=run.continue_fork and continue_session_id is not None,
             extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
             pi_extension_entrypoints=entrypoints,
@@ -410,10 +407,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def redact_primary_command(self, command: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(redact_pi_command_for_history(command))
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        _ = run
-        return None
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         system_prompt = render_system_instruction_blocks(content)

@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Iterable
-
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_AGENTS_PREFIX,
     CODEX_CONFIG_FEATURES_PREFIX,
-    CODEX_CONFIG_MCP_SERVERS_PREFIX,
     CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY,
     CODEX_CONFIG_WEB_SEARCH_KEY,
 )
@@ -24,29 +20,6 @@ CODEX_DISABLE_BUILTIN_AGENT_FLAGS: tuple[str, ...] = (
     "-c",
     f"{CODEX_CONFIG_AGENTS_PREFIX}.max_depth=0",
 )
-
-
-def project_codex_mcp_config_flags(mcp_tools: Iterable[str]) -> tuple[str, ...]:
-    """Project ``mcp_tools`` to Codex ``-c mcp.servers.*.command=...`` flags."""
-
-    projected: list[str] = []
-    for raw_entry in mcp_tools:
-        entry = raw_entry.strip()
-        if not entry:
-            continue
-        name, separator, command = entry.partition("=")
-        if not separator or not name.strip() or not command.strip():
-            raise ValueError(
-                f"Codex mcp_tools entries must be '<name>=<command>'; got {raw_entry!r}"
-            )
-        projected.extend(
-            (
-                "-c",
-                f"{CODEX_CONFIG_MCP_SERVERS_PREFIX}.{name.strip()}.command="
-                f"{json.dumps(command.strip())}",
-            )
-        )
-    return tuple(projected)
 
 
 def project_codex_tool_switch_flags(permissions: CodexPermissions) -> tuple[str, ...]:
@@ -72,6 +45,5 @@ def project_codex_tool_switch_flags(permissions: CodexPermissions) -> tuple[str,
 
 __all__ = [
     "CODEX_DISABLE_BUILTIN_AGENT_FLAGS",
-    "project_codex_mcp_config_flags",
     "project_codex_tool_switch_flags",
 ]

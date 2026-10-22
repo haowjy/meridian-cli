@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import Annotated, cast
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     JsonValue,
+    PlainSerializer,
     TypeAdapter,
-    field_serializer,
     field_validator,
 )
 
@@ -79,6 +81,14 @@ def native_config_to_json(value: NativeConfig) -> dict[str, JsonValue]:
     return cast("dict[str, JsonValue]", _thaw_json(value))
 
 
+NativeConfigValue = Annotated[
+    NativeConfig,
+    BeforeValidator(validate_native_config),
+    AfterValidator(freeze_native_config),
+    PlainSerializer(native_config_to_json, return_type=dict[str, JsonValue]),
+]
+
+
 class ResolvedExecutionPolicy(BaseModel):
     """Typed execution-policy carrier passed through non-consuming boundaries.
 
@@ -96,25 +106,7 @@ class ResolvedExecutionPolicy(BaseModel):
     autocompact_pct: AutocompactPctValue = None
     timeout: float | None = None
     resident_rearm_budget: int | None = None
-    native_config: NativeConfig = Field(default_factory=_empty_native_config)
-
-    @field_validator("native_config", mode="before")
-    @classmethod
-    def _validate_native_config_object(cls, value: object) -> object:
-        return validate_native_config(value)
-
-    @field_validator("native_config")
-    @classmethod
-    def _freeze_native_config(
-        cls, value: NativeConfig
-    ) -> NativeConfig:
-        return freeze_native_config(value)
-
-    @field_serializer("native_config")
-    def _serialize_native_config(
-        self, value: NativeConfig
-    ) -> dict[str, JsonValue]:
-        return native_config_to_json(value)
+    native_config: NativeConfigValue = Field(default_factory=_empty_native_config)
 
     @field_validator("resident_rearm_budget")
     @classmethod
@@ -158,6 +150,7 @@ class ResolvedExecutionPolicy(BaseModel):
 
 __all__ = [
     "NativeConfig",
+    "NativeConfigValue",
     "ResolvedExecutionPolicy",
     "freeze_native_config",
     "native_config_to_json",

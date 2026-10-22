@@ -33,7 +33,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "harness",
         "continue_fork",
         "interactive",
-        "mcp_tools",
         "projected_roots",
         "effort",
         "agent_name",
@@ -55,11 +54,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
 
 
 def _assert_supported_for_mvp(spec: ResolvedLaunchSpec) -> None:
-    if spec.mcp_tools:
-        raise HarnessCapabilityMismatch(
-            "Cursor subprocess does not support per-spawn mcp_tools for MVP."
-        )
-
     if spec.continue_fork:
         raise HarnessCapabilityMismatch(
             "Cursor subprocess continue_fork is not supported for MVP."

@@ -55,7 +55,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "report_output_path",
         "skills",
         "reference_items",
-        "mcp_tools",
         "projected_roots",
         "task_cwd",
         "opencode_version",

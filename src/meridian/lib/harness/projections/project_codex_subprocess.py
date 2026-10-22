@@ -16,7 +16,6 @@ from meridian.lib.harness.projections.native_config import (
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_common import (
     CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
-    project_codex_mcp_config_flags,
     project_codex_tool_switch_flags,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -34,7 +33,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "native_config",
         "extra_args",
         "interactive",
-        "mcp_tools",
         "projected_roots",
         "report_output_path",
         "base_instructions",
@@ -108,7 +106,6 @@ def project_codex_spec_to_cli_args(
                 f"{json.dumps(permissions.approval_policy)}",
             )
         )
-    command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
     command.extend(project_codex_tool_switch_flags(permissions))
     native_config_args, _ = project_codex_native_config(spec.native_config)
     command.extend(native_config_args)

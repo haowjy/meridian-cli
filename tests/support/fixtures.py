@@ -35,7 +35,6 @@ def write_agent(
     subagents: list[str] | tuple[str, ...] = (),
     harness: str | None = None,
     sandbox: str | None = None,
-    mcp_tools: list[str] | tuple[str, ...] | None = None,
     tools: list[str] | tuple[str, ...] | None = None,
     body: str | None = None,
 ) -> Path:
@@ -53,8 +52,6 @@ def write_agent(
         lines.append(f"harness: {harness}")
     if sandbox is not None:
         lines.append(f"sandbox: {sandbox}")
-    if mcp_tools is not None:
-        lines.append(f"mcp-tools: [{', '.join(mcp_tools)}]")
     if tools is not None:
         lines.append(f"tools: [{', '.join(tools)}]")
     lines.append("---")

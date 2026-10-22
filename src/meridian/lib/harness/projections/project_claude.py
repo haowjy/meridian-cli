@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
@@ -31,7 +31,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "autocompact_pct",
         "extra_args",
         "interactive",
-        "mcp_tools",
         "projected_roots",
         "model",
         "native_config",
@@ -83,16 +82,6 @@ def _log_collision_if_needed(
     logger.debug(message, managed_flag)
 
 
-def _project_mcp_tools(mcp_tools: Iterable[str]) -> list[str]:
-    projected: list[str] = []
-    for tool in mcp_tools:
-        normalized = tool.strip()
-        if not normalized:
-            continue
-        projected.extend(("--mcp-config", normalized))
-    return projected
-
-
 def _settings_json(settings: ClaudeSettings) -> str:
     payload: dict[str, object] = {}
     permissions: dict[str, object] = {}
@@ -142,8 +131,6 @@ def project_claude_spec_to_cli_args(
 
     permissions, _ = compile_claude_permissions(spec)
     passthrough_tail = permissions.passthrough_args
-
-    command.extend(_project_mcp_tools(spec.mcp_tools))
 
     for plugin_dir in spec.claude_runtime.plugin_dirs:
         command.extend(("--plugin-dir", plugin_dir))

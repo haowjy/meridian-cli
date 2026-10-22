@@ -115,8 +115,6 @@ class CompilerResult:
     # Runtime policy
     execution_policy: ResolvedExecutionPolicy
 
-    mcp_tools: tuple[str, ...] | None = None
-
     # Selection context
     model_selection_requested_token: str = ""
     model_selection_canonical_id: str = ""

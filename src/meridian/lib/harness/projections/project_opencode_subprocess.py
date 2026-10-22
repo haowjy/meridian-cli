@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
@@ -24,7 +24,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "continue_fork",
         "extra_args",
         "interactive",
-        "mcp_tools",
         "projected_roots",
         "agent_name",
         "skills",
@@ -56,15 +55,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "task_cwd",
     }
 )
-
-
-def _normalized_nonempty(values: Iterable[str]) -> tuple[str, ...]:
-    normalized: list[str] = []
-    for value in values:
-        token = value.strip()
-        if token:
-            normalized.append(token)
-    return tuple(normalized)
 
 
 _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
@@ -106,13 +96,6 @@ def project_opencode_spec_to_cli_args(
     base_command: tuple[str, ...],
 ) -> list[str]:
     """Project one ``ResolvedLaunchSpec`` into an ordered subprocess command list."""
-
-    projected_mcp_tools = _normalized_nonempty(spec.mcp_tools)
-    if projected_mcp_tools:
-        raise HarnessCapabilityMismatch(
-            "OpenCode subprocess does not support per-spawn mcp_tools; "
-            "use streaming transport (opencode serve) for MCP session payloads."
-        )
 
     harness_session_id = (spec.continue_session_id or "").strip()
     resume_with_model = bool(harness_session_id) and spec.model is not None and not spec.interactive
@@ -166,11 +149,6 @@ def project_opencode_spec_to_cli_args(
             )
         elif spec.opencode_version == "v1":
             command.extend(("--variant", normalized_effort))
-        else:
-            logger.debug(
-                "OpenCode V2 run does not support --variant; ignoring effort=%s",
-                normalized_effort,
-            )
 
     agent_arg = None if v2_tui else spec.agent_name
     if agent_arg is not None:

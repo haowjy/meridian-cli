@@ -155,21 +155,6 @@ async def test_create_session_raises_when_continue_fork_requested() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_session_forwards_mcp_tools_in_payload() -> None:
-    connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-6"}, "")])
-    spec = ResolvedLaunchSpec(
-        prompt="hello",
-        model="openrouter/gpt-4o-mini",
-        mcp_tools=("tool-a=echo a", "tool-b=echo b"),
-    )
-
-    await connection._create_session(spec)
-
-    payload = connection.requests[0][1]
-    assert payload["mcp"] == {"servers": ["tool-a=echo a", "tool-b=echo b"]}
-
-
-@pytest.mark.asyncio
 async def test_session_creation_does_not_replay_when_projected_payload_hangs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

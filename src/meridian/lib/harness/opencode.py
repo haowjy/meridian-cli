@@ -20,7 +20,6 @@ from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
-    McpConfig,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -304,7 +303,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "interactive",
             "continue_harness_session_id",
             "continue_fork",
-            "mcp_tools",
             "projected_roots",
             "appended_system_prompt",
             "user_turn_content",
@@ -416,7 +414,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             continue_fork=run.continue_fork and continue_session_id is not None,
             extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
             # Every surface selects the one config agent that owns this launch's
@@ -437,11 +434,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             auto_reject_runtime_requests=False,
             harness_id=HarnessId.OPENCODE.value,
         )
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        # MCP injection is off by default — agents use the CLI instead.
-        # Users who want always-on MCP can configure it in their harness settings.
-        return None
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         system_prompt = render_system_instruction_blocks(content)

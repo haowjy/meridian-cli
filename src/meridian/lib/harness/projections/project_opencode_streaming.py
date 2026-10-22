@@ -32,7 +32,6 @@ _SESSION_PAYLOAD_FIELDS: frozenset[str] = frozenset(
         "continue_fork",
         "agent_name",
         "skills",
-        "mcp_tools",
     }
 )
 
@@ -152,10 +151,6 @@ def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[s
 
     if spec.skills:
         payload["skills"] = list(spec.skills)
-
-    projected_mcp_tools = [entry.strip() for entry in spec.mcp_tools if entry.strip()]
-    if projected_mcp_tools:
-        payload["mcp"] = {"servers": projected_mcp_tools}
 
     # Note: we intentionally do NOT pass continue_session_id to the server
     # via payload. POST /session ignores sessionID and always creates a new

@@ -30,6 +30,8 @@ class LaunchPolicySnapshot(BaseModel):
     platform_tool_rules: tuple[ToolRule, ...] = ()
     # Pre-rules shape; only snapshots an older build wrote still carry it. Never written.
     tools: ToolsField | None = None
+    # Legacy read-only compatibility. Older snapshots stored native permission
+    # names here; replay deliberately ignores them because they are not MCP config.
     mcp_tools: tuple[str, ...] = ()
     matched_policy_rule: str | None = None
     model_selection_requested_token: str | None = None

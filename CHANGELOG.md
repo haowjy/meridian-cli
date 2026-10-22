@@ -26,7 +26,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Agent-profile compaction settings reach Claude and Codex with the correct token/percentage units; unsupported harnesses and OpenCode effort drops are explicit in `--dry-run`, and available-skill descriptions reach the prompt.
-- Codex applies the selected agent profile's `harness-overrides.codex` values as native `-c` config on subprocess and streaming launches; other harnesses and Meridian-owned collisions are explicit in `--dry-run`.
+- Codex applies the selected agent profile's `harness-overrides.codex` values as native `-c` config on subprocess and streaming launches; other harnesses and Meridian-owned collisions are explicit in `--dry-run`. These trusted-code blocks can change any Codex config, including providers and MCP server commands; already-installed blocks that were inert now take effect.
 - Codex spawns refuse an approval request with the decision Codex reads (`decline`); `reject` made Codex answer the model `approval request failed`.
 - OpenCode 2.0.29 spawns can refuse an approval request: the reply body is `decision` (was `reply`; OpenCode answered 400, so the request stayed pending and the spawn waited). The refusal carries a reason the model sees.
 - A per-capability allowlist holds beside a broader capability's allow: `edit: allow` with `write(src/*): allow` refuses writes outside `src/` (Claude ran every write) and the reports say so.

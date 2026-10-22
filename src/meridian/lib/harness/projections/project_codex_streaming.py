@@ -21,7 +21,6 @@ from meridian.lib.harness.projections.native_config import (
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_common import (
     CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
-    project_codex_mcp_config_flags,
     project_codex_tool_switch_flags,
 )
 from meridian.lib.launch.constants import BASE_COMMAND_CODEX_STREAMING
@@ -36,7 +35,6 @@ _APP_SERVER_ARG_FIELDS: frozenset[str] = frozenset(
         "extra_args",
         "projected_roots",
         "report_output_path",
-        "mcp_tools",
     }
 )
 
@@ -195,7 +193,6 @@ def project_codex_spec_to_appserver_command(
             )
         )
 
-    command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
     command.extend(project_codex_tool_switch_flags(permissions))
 
     if spec.report_output_path is not None:

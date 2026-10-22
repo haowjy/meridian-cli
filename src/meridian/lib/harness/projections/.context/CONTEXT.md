@@ -19,9 +19,10 @@ pi_extension_projection.py → (built extension artifacts → stable -e paths, n
 ```
 
 `project_codex_common.py` is not a projector — it holds the Codex spellings both Codex
-projectors share (tool-switch, MCP and built-in-agent flags). `native_config.py` flattens
+projectors share (tool-switch and built-in-agent flags). `native_config.py` flattens
 the selected harness-native config, spells Codex TOML literals, and owns the reserved keys
-that Meridian's Codex projections write themselves. `compaction.py` owns the semantic
+that Meridian's Codex projections write themselves. Meridian writes no Codex MCP config,
+so `mcp_servers.*` passes through. `compaction.py` owns the semantic
 `autocompact` / `autocompact_pct` projection and report: Claude gets its token flag and
 percentage environment variable, Codex gets config overrides, and the other harnesses
 report both fields unsupported.
@@ -67,7 +68,6 @@ consumes it. The field is delegated/accounted to keep drift-guard coverage compl
 #### MVP capability restrictions
 
 The following raise `HarnessCapabilityMismatch` immediately:
-- `spec.mcp_tools` set — per-spawn MCP tools not supported
 - `spec.continue_fork` set — fork-based session continuation not supported
 - `spec.continue_session_id` non-empty — session resume not supported
 - `spec.interactive` set — interactive mode not supported

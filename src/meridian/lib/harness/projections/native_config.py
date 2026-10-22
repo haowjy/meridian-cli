@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from collections.abc import Mapping, Sequence
 from typing import cast
 
@@ -23,7 +25,6 @@ CODEX_CONFIG_WEB_SEARCH_KEY = "web_search"
 CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY = "tools.web_search"
 CODEX_CONFIG_FEATURES_PREFIX = "features"
 CODEX_CONFIG_AGENTS_PREFIX = "agents"
-CODEX_CONFIG_MCP_SERVERS_PREFIX = "mcp.servers"
 
 # These values are projected by Meridian's Codex process flags, app-server flags, or
 # thread request. Native passthrough may add siblings, but never replace these owners.
@@ -44,22 +45,30 @@ CODEX_RESERVED_NATIVE_CONFIG_KEYS: frozenset[str] = frozenset(
 CODEX_RESERVED_NATIVE_CONFIG_PREFIXES: tuple[str, ...] = (
     CODEX_CONFIG_FEATURES_PREFIX,
     CODEX_CONFIG_AGENTS_PREFIX,
-    CODEX_CONFIG_MCP_SERVERS_PREFIX,
 )
 
 
-def flatten_native_config(config: NativeConfig) -> tuple[tuple[str, object], ...]:
-    """Flatten nested native mappings to ordered dotted-key leaves."""
+type NativeConfigLeaf = tuple[tuple[str, ...], object]
 
-    flattened: list[tuple[str, object]] = []
+_TOML_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
-    def visit(mapping: Mapping[str, object], prefix: str = "") -> None:
+
+def flatten_native_config(config: NativeConfig) -> tuple[NativeConfigLeaf, ...]:
+    """Flatten nested mappings while retaining their original key segments."""
+
+    flattened: list[NativeConfigLeaf] = []
+
+    def visit(mapping: Mapping[str, object], prefix: tuple[str, ...] = ()) -> None:
         for key, value in mapping.items():
-            dotted = f"{prefix}.{key}" if prefix else key
+            segments = (*prefix, key)
             if isinstance(value, Mapping):
-                visit(cast("Mapping[str, object]", value), dotted)
-            else:
-                flattened.append((dotted, value))
+                nested = cast("Mapping[str, object]", value)
+                if nested:
+                    visit(nested, segments)
+                    continue
+                flattened.append((segments, nested))
+                continue
+            flattened.append((segments, value))
 
     visit(config)
     return tuple(flattened)
@@ -72,12 +81,17 @@ def _toml_basic_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def codex_toml_literal(value: object) -> str | None:
-    """Render a native Codex value as the supported TOML literal subset.
+def _toml_inline_key(value: object) -> str:
+    key = str(value)
+    return key if _TOML_BARE_KEY.fullmatch(key) else _toml_basic_string(key)
 
-    Null has no Codex override and is omitted. Mars normally removes nulls before
-    producing a launch bundle; accepting one here keeps older or hand-written
-    snapshots truncation-safe.
+
+def codex_toml_literal(value: object) -> str | None:
+    """Render a native Codex value as TOML, or return ``None`` if it cannot be encoded.
+
+    Mars emits JSON-compatible values. The defensive ``None`` result also keeps
+    older or hand-written snapshots from turning an unsupported leaf into a launch
+    traceback.
     """
 
     if value is None:
@@ -86,21 +100,39 @@ def codex_toml_literal(value: object) -> str | None:
         return str(value).lower()
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "nan"
+        if math.isinf(value):
+            return "inf" if value > 0 else "-inf"
+        return repr(value)
     if isinstance(value, str):
         return _toml_basic_string(value)
+    if isinstance(value, Mapping):
+        entries: list[str] = []
+        for key, item in cast("Mapping[object, object]", value).items():
+            literal = codex_toml_literal(item)
+            if literal is None:
+                return None
+            entries.append(f"{_toml_inline_key(key)} = {literal}")
+        return f"{{ {', '.join(entries)} }}" if entries else "{}"
     if isinstance(value, tuple | list):
         items: list[str] = []
         for item in cast("Sequence[object]", value):
             literal = codex_toml_literal(item)
             if literal is None:
-                continue
-            if isinstance(item, tuple | list | Mapping):
-                raise ValueError("Codex native_config arrays may contain only scalars")
+                return None
             items.append(literal)
         return f"[{', '.join(items)}]"
-    raise ValueError(
-        "Codex native_config values must be booleans, integers, strings, "
-        f"or arrays of those; got {value!r}"
+    return None
+
+
+def _codex_key_addressable(segments: tuple[str, ...]) -> bool:
+    return all(
+        segment
+        and not any(character in segment for character in ".='\"")
+        and not any(character.isspace() for character in segment)
+        for segment in segments
     )
 
 
@@ -123,9 +155,37 @@ def project_codex_native_config(
 
     arguments: list[str] = []
     lines: list[ReportLine] = []
-    for key, value in flatten_native_config(config):
-        literal = codex_toml_literal(value)
+    for segments, value in flatten_native_config(config):
+        key = ".".join(segments)
+        if not _codex_key_addressable(segments):
+            lines.append(
+                ReportLine(
+                    f"native_config: {key}",
+                    "unsupported",
+                    "Codex -c cannot address this key",
+                )
+            )
+            continue
+        if isinstance(value, Mapping):
+            mapping_value = cast("Mapping[str, object]", value)
+            if not mapping_value:
+                lines.append(
+                    ReportLine(
+                        f"native_config: {key} = {{}}",
+                        "unsupported",
+                        "empty mappings have no Codex -c leaf to override",
+                    )
+                )
+                continue
+        literal = codex_toml_literal(cast("object", value))
         if literal is None:
+            lines.append(
+                ReportLine(
+                    f"native_config: {key}",
+                    "unsupported",
+                    "Codex -c cannot encode this value as TOML",
+                )
+            )
             continue
         element = f"native_config: {key} = {literal}"
         if _reserved_codex_key(key):
@@ -148,7 +208,7 @@ def unsupported_native_config_report(
 ) -> EnforcementReport:
     """Report a non-empty native config that a harness does not project."""
 
-    keys = tuple(key for key, _value in flatten_native_config(config))
+    keys = tuple(".".join(segments) for segments, _value in flatten_native_config(config))
     if not keys:
         return ()
     return (
@@ -165,7 +225,6 @@ __all__ = [
     "CODEX_CONFIG_APPROVAL_POLICY_KEY",
     "CODEX_CONFIG_AUTO_COMPACT_TOKEN_LIMIT_KEY",
     "CODEX_CONFIG_FEATURES_PREFIX",
-    "CODEX_CONFIG_MCP_SERVERS_PREFIX",
     "CODEX_CONFIG_MODEL_KEY",
     "CODEX_CONFIG_NOTIFY_KEY",
     "CODEX_CONFIG_POST_TURN_COMPACT_THRESHOLD_PERCENT_KEY",

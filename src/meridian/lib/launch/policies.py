@@ -165,7 +165,6 @@ class ResolvedLaunchPolicy:
     resolved_tool_rules: tuple[ToolRule, ...] = ()
     # Candidate platform denies named for the selected harness, not yet launch-filtered.
     platform_tool_rules: tuple[ToolRule, ...] = ()
-    resolved_mcp_tools: tuple[str, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     matched_policy_rule: str | None = None
@@ -600,7 +599,6 @@ def _resolve_policy_from_snapshot(
         execution_policy=replayed.execution_policy,
         resolved_tool_rules=replayed.resolved_tool_rules,
         platform_tool_rules=replayed.platform_tool_rules,
-        resolved_mcp_tools=replayed.resolved_mcp_tools,
         terminal_surface_mode=replayed.terminal_surface_mode,
         matched_policy_rule=replayed.matched_policy_rule,
         model_selection=_model_selection_from_replayed_snapshot(replayed.model_selection),

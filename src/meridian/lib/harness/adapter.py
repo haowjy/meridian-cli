@@ -194,7 +194,6 @@ class SpawnParams(BaseModel):
     extra_args: tuple[str, ...] = ()
     control_root: str | None = None
     task_cwd: str | None = None
-    mcp_tools: tuple[str, ...] = ()
     projected_roots: tuple[Path, ...] = ()
     interactive: bool = False
     continue_harness_session_id: str | None = None
@@ -203,16 +202,6 @@ class SpawnParams(BaseModel):
     user_turn_content: str | None = None
     reference_items: tuple[Any, ...] = ()
     pi_harness_profile: PiHarnessProfileConfig | None = None
-
-
-class McpConfig(BaseModel):
-    """Harness-specific MCP wiring details for one run."""
-
-    model_config = ConfigDict(frozen=True)
-
-    command_args: tuple[str, ...] = ()
-    env_overrides: dict[str, str] = Field(default_factory=_empty_env_overrides)
-    claude_allowed_tools: tuple[str, ...] = ()
 
 
 class StreamEvent(BaseModel):
@@ -369,8 +358,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def run_prompt_policy(self) -> RunPromptPolicy: ...
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str: ...
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None: ...
 
     def env_defaults(
         self, *, run: SpawnParams, env: Mapping[str, str]
@@ -797,10 +784,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         harness-specific channel routing.
         """
         return project_inline_content(content)
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        _ = run
-        return None
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "native_file"

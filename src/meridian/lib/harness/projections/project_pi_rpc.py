@@ -32,7 +32,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "permission_policy",
         "extra_args",
         "interactive",
-        "mcp_tools",
         "projected_roots",
         "appended_system_prompt",
         "pi_extension_entrypoints",

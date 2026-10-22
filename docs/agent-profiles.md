@@ -203,9 +203,13 @@ Claude at its default, but now selects a 200000-token autocompact window.
 ## Harness-native passthrough
 
 Mars selects `harness-overrides.<resolved-harness>` and passes the block to Meridian
-without interpreting it. Codex flattens nested mappings to dotted config keys and emits
-supported boolean, integer, string, and scalar-list values as `-c` overrides. For example,
-this enables network access inside Codex's `workspace-write` sandbox:
+without interpreting it. The selected block is applied as written and can change anything
+in Codex's config, including providers and MCP server commands. Installing a package that
+carries harness overrides is therefore installing code you trust. Blocks in already-installed
+packages that older Meridian builds left inert now take effect. Codex flattens nested mappings
+to dotted config keys and emits TOML-compatible scalar, array, and inline-table values as
+`-c` overrides. For example, this enables network access inside Codex's `workspace-write`
+sandbox:
 
 ```yaml
 harness-overrides:
@@ -215,8 +219,11 @@ harness-overrides:
 ```
 
 Meridian-owned Codex settings win: native entries that collide with its model, effort,
-sandbox, approval, writable-root, tool-switch, MCP, agent, feature, or notification config
-are skipped. `--dry-run` shows each applied or skipped key, for example
+sandbox, approval, writable-root, tool-switch, agent, feature, or notification config are
+skipped. Meridian does not synthesize Codex MCP config, so `mcp_servers.*` entries pass
+through like other native config. A key segment containing `.`, `=`, whitespace, or quotes
+cannot be addressed by Codex's `-c` syntax and is reported as unsupported. `--dry-run`
+shows each applied or skipped key, for example
 `[native] native_config: sandbox_workspace_write.network_access = true -> -c sandbox_workspace_write.network_access=true`.
 Claude, OpenCode, Pi, and Cursor do not apply native config; their report lists the key
 names as `[unsupported] native_config: ... -> not applied for <Harness>`.

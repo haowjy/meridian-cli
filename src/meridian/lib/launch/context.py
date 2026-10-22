@@ -507,7 +507,6 @@ def materialize_launch_artifacts(
     extra_args: tuple[str, ...] = (),
     control_root: str | None = None,
     task_cwd: str | None = None,
-    mcp_tools: tuple[str, ...] = (),
     projected_roots: tuple[Path, ...] = (),
     interactive: bool = False,
     continue_harness_session_id: str | None = None,
@@ -557,7 +556,6 @@ def materialize_launch_artifacts(
         extra_args=extra_args,
         control_root=control_root,
         task_cwd=task_cwd,
-        mcp_tools=mcp_tools,
         projected_roots=projected_roots,
         interactive=interactive,
         continue_harness_session_id=continue_harness_session_id,
@@ -1432,11 +1430,6 @@ def prepare_launch_surface(
             "agent": resolved_agent_name,
             "skills": resolved_skills.skill_names,
             "extra_args": final_passthrough_args,
-            "mcp_tools": (
-                policies.resolved_mcp_tools
-                if (profile is not None or using_policy_snapshot)
-                else request.mcp_tools
-            ),
             "execution_policy": execution_policy,
             # Prefer the bundle's authoritative resolved tool rules whenever they exist
             # (covers spawned subagents, where profile/snapshot aren't set at bind but the
@@ -1784,7 +1777,6 @@ def bind_launch_context(
         control_root=resolved_control_root.as_posix(),
         task_cwd=(task_cwd.as_posix() if task_cwd is not None else None),
         inject_task_cwd_instruction=inject_task_cwd_instruction,
-        mcp_tools=resolved_request.mcp_tools,
         projected_roots=projected_roots,
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,

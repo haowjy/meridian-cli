@@ -20,7 +20,6 @@ from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
-    McpConfig,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -256,7 +255,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "continue_fork",
             "extra_args",
             "interactive",
-            "mcp_tools",
             "projected_roots",
             "control_root",
             "agent",
@@ -368,7 +366,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             continue_fork=run.continue_fork and continue_session_id is not None,
             extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             agent_name=run.agent,
             base_instructions=run.adhoc_agent_payload.strip() or None,
@@ -388,11 +385,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             auto_reject_runtime_requests=False,
             harness_id=HarnessId.CODEX.value,
         )
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        # MCP injection is off by default — agents use the CLI instead.
-        # Users who want always-on MCP can configure it in their harness settings.
-        return None
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         system_prompt = render_system_instruction_blocks(content)

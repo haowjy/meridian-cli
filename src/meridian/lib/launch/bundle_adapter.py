@@ -181,7 +181,9 @@ def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
                     AvailableSkillEntry(
                         name=name,
                         skill_type=skill_type,
-                        description=_normalize_str(item_dict.get("description")),
+                        description=" ".join(
+                            _normalize_str(item_dict.get("description")).split()
+                        ),
                         source_path=_normalize_str(item_dict.get("source_path")) or None,
                     )
                 )
@@ -695,10 +697,6 @@ def bundle_to_resolved_policy(
         execution_policy=execution_policy,
         resolved_tool_rules=bundle.tool_rules,
         platform_tool_rules=bundle.platform_tool_rules,
-        # tools.mcp is a deprecated flat list of native permission names derived
-        # from tools.rules, not MCP server definitions. The rules above carry its
-        # semantics; no harness config may interpret these names as commands.
-        resolved_mcp_tools=(),
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(
             model_source=_map_provenance_level(_provenance_value(effective_provenance, "model")),
