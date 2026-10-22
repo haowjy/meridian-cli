@@ -74,13 +74,14 @@ streaming.
 Per-harness commands:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: stdin/stdout NDJSON (not WebSocket despite `claude_ws.py` name)
-- **Claude built-in agent denial**: Meridian injects
-  `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
-  unconditionally so sessions use Meridian delegation instead of Claude's built-in
-  subagents. Generic `Agent` is allowed only when Mars effective config has
+- **Claude native-agent boundary**: built-in agent types are denied with scoped
+  `--disallowedTools` entries unless `[harness.claude] allow_builtin_agents = true`.
+  Generic `Agent` is allowed only when Mars effective config has
   `[settings.meridian.agent_copy] harnesses = ["claude"]` and `.claude` is a target.
-  Parent/passthrough allowed-tool tails are merged into the managed projection;
-  Meridian's Agent denies stay authoritative.
+  When built-ins are allowed, Claude cannot deny generic `Agent` without also disabling
+  them, so that part of the platform rule is reported as partial. Parent/passthrough
+  allowed-tool tails are merged by the permission compile; profile allowlists and
+  platform denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
@@ -194,8 +195,8 @@ parent report.
 - `registry.py` — `HarnessRegistry`, `with_defaults()`. The global singleton.
 - `claude.py` / `codex.py` / `opencode.py` / `cursor.py` — concrete adapter implementations.
   Claude's compile (`projections/permissions_claude.py`) reads
-  `spec.permission_policy.native_agent_copy` so parent inherited `Agent` grants cannot
-  bypass the Mars `agent_copy` boundary.
+  the bind-time agent platform rules so inherited grants cannot bypass the Mars
+  `agent_copy` or built-in-agent boundaries.
 - `__init__.py` — `HARNESS_EXTENSION_TOUCHPOINTS` and `ensure_bootstrap()`.
   Read before adding a harness — lists every file that must be touched.
 - `semantics.py` — `HarnessSemantics` port and typed `EventSemantics` descriptor.

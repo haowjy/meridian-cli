@@ -84,20 +84,31 @@ its projectors spell that value:
 
 | Harness | Compile result | Spelled by |
 |---|---|---|
-| Claude | permission mode, `--allowedTools` / `--disallowedTools` lists | `project_claude.py` (argv) |
+| Claude | tool availability, plain denies, scoped permissions, sandbox and prompt mode | `project_claude.py` (`--tools`, `--disallowedTools`, one `--settings`, permission flags) |
 | Codex | sandbox mode, approval policy | `project_codex_subprocess.py` (`--sandbox`, `-c approval_policy`), `project_codex_streaming.py` (`-c` flags and the thread payload) |
 | OpenCode | V1 permission map; `None` for primaries | `OpenCodeAdapter.project_launch_env()` (`OPENCODE_PERMISSION` JSON); the V2 connection (V2 rules merged into config content) |
 | Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
 | Pi | none: permissions are mediated through extension UI hooks | |
 
-Claude's compile treats `ask` as `allow` (no flag expresses it) and Codex has no carrier
-for tool rules, so only its two modes compile.
+Claude emits `ask` only as `settings.permissions.ask`; it never contributes to an allow
+channel. A whole-policy allowlist restricts availability with `--tools`; both whole and
+per-capability allowlists use `dontAsk` plus scoped settings allows. Parent-project and
+passthrough grants are merged in the compile and dropped where a profile allowlist owns the
+capability.
+
+When Claude's sandbox is enabled, the settings JSON always spells
+`autoAllowBashIfSandboxed`: true only for an unrestricted `approval: auto`, false for
+allowlists and `ask`. Omitting false lets Claude's sandbox auto-approval accept unmatched
+Bash calls before `dontAsk` can refuse them, which defeats the allowlist.
 
 A compile that restricts the shell must name the `completion-commands` platform rule's
 `commands` (`meridian spawn done` / `rearm`) in its own scope syntax, where a broad `bash` or
 `*` deny does not shadow them; otherwise the child cannot answer the completion confirmation.
 OpenCode does (`bash(<cmd>)` and `bash(<cmd> *)`, added only to a map that profile rules made, so
-the spawn's allow-everything default survives); the rest report it `unsupported` until their lanes land.
+the spawn's allow-everything default survives). Claude adds `Bash(<cmd>)` and
+`Bash(<cmd> *)` to `settings.permissions.allow` and, for a whole allowlist, keeps Bash
+available through `--tools`; an explicit profile deny/ask still takes precedence and the
+report says the platform allow is partial.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
 (`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying

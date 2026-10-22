@@ -110,8 +110,9 @@ Claude profile includes:
   `-c features.multi_agent_v2=false -c agents.max_depth=0`
   (on Codex 0.162 `features.multi_agent=false` leaves the v1 tools available, and
   `--disable` would fail on a Codex build that lacks the feature). Every harness
-  profile parses the key, but only Codex acts on it: Claude denies its built-in agent
-  types whatever the key says (the `builtin-agents` platform rule is not read there).
+  profile parses the key; Claude and Codex act on it. Claude omits its scoped built-in
+  `Agent(...)` denies when enabled. Because Claude's generic `Agent` tool also exposes
+  built-ins, its separate generic-agent platform deny is reported partial in that mode.
 - Generic Claude `Agent` routing is not a `meridian.toml` harness policy: it follows
   Mars `[settings.meridian.agent_copy]` with `.claude` target materialization.
 

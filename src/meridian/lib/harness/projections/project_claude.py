@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterable, Sequence
 
-from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.harness.projections.permissions_claude import (
+    ClaudeSettings,
     compile_claude_permissions,
-    is_claude_agent_tool,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 
 logger = logging.getLogger(__name__)
 
@@ -57,87 +56,8 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _split_internal_parent_allowed_tools(
-    extra_args: tuple[str, ...],
-) -> tuple[tuple[str, ...], list[str]]:
-    passthrough_tail: list[str] = []
-    parent_allowed_tools: list[str] = []
-
-    index = 0
-    while index < len(extra_args):
-        token = extra_args[index]
-        if token == CLAUDE_PARENT_ALLOWED_TOOLS_FLAG:
-            if index + 1 < len(extra_args):
-                parent_allowed_tools.extend(split_csv_entries(extra_args[index + 1]))
-                index += 2
-                continue
-            index += 1
-            continue
-        if token.startswith(f"{CLAUDE_PARENT_ALLOWED_TOOLS_FLAG}="):
-            parent_allowed_tools.extend(split_csv_entries(token.partition("=")[2]))
-            index += 1
-            continue
-        passthrough_tail.append(token)
-        index += 1
-
-    return tuple(passthrough_tail), dedupe_nonempty(parent_allowed_tools)
-
-
-def _extract_passthrough_tool_flags(
-    passthrough_args: tuple[str, ...],
-) -> tuple[list[str], list[str], list[str]]:
-    """Split user passthrough args into ``(other args, allowed tools, disallowed tools)``."""
-
-    remaining_args: list[str] = []
-    allowed_tools: list[str] = []
-    disallowed_tools: list[str] = []
-
-    index = 0
-    while index < len(passthrough_args):
-        token = passthrough_args[index]
-
-        if token == "--allowedTools":
-            if index + 1 < len(passthrough_args):
-                allowed_tools.extend(split_csv_entries(passthrough_args[index + 1]))
-                index += 2
-                continue
-            index += 1
-            continue
-
-        if token.startswith("--allowedTools="):
-            allowed_tools.extend(split_csv_entries(token.partition("=")[2]))
-            index += 1
-            continue
-
-        if token == "--disallowedTools":
-            if index + 1 < len(passthrough_args):
-                disallowed_tools.extend(split_csv_entries(passthrough_args[index + 1]))
-                index += 2
-                continue
-            index += 1
-            continue
-
-        if token.startswith("--disallowedTools="):
-            disallowed_tools.extend(split_csv_entries(token.partition("=")[2]))
-            index += 1
-            continue
-
-        remaining_args.append(token)
-        index += 1
-
-    return (
-        remaining_args,
-        dedupe_nonempty(allowed_tools),
-        dedupe_nonempty(disallowed_tools),
-    )
-
-
 def _has_flag(args: Sequence[str], flag: str) -> bool:
     return any(token == flag or token.startswith(f"{flag}=") for token in args)
-
-
-def _is_denied_tool(tool: str, denied_tools: set[str]) -> bool:
-    return tool in denied_tools or ("Agent" in denied_tools and is_claude_agent_tool(tool))
 
 
 def _log_collision_if_needed(
@@ -169,6 +89,28 @@ def _project_mcp_tools(mcp_tools: Iterable[str]) -> list[str]:
     return projected
 
 
+def _settings_json(settings: ClaudeSettings) -> str:
+    payload: dict[str, object] = {}
+    permissions: dict[str, object] = {}
+    if settings.allow:
+        permissions["allow"] = list(settings.allow)
+    if settings.deny:
+        permissions["deny"] = list(settings.deny)
+    if settings.ask:
+        permissions["ask"] = list(settings.ask)
+    if permissions:
+        payload["permissions"] = permissions
+    if settings.sandbox_enabled is not None:
+        sandbox: dict[str, object] = {"enabled": settings.sandbox_enabled}
+        if settings.sandbox_enabled:
+            sandbox["allowUnsandboxedCommands"] = False
+            sandbox["autoAllowBashIfSandboxed"] = settings.auto_allow_bash_if_sandboxed
+            if settings.sandbox_deny_write:
+                sandbox["filesystem"] = {"denyWrite": list(settings.sandbox_deny_write)}
+        payload["sandbox"] = sandbox
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
 def project_claude_spec_to_cli_args(
     spec: ResolvedLaunchSpec,
     *,
@@ -193,38 +135,8 @@ def project_claude_spec_to_cli_args(
     ):
         command.extend(("--session-id", spec.native_identity.session_id))
 
-    passthrough_tail, parent_allowed_tools = _split_internal_parent_allowed_tools(spec.extra_args)
-    projected_passthrough_tail, passthrough_allowed_tools, passthrough_disallowed_tools = (
-        _extract_passthrough_tool_flags(passthrough_tail)
-    )
-    passthrough_tail = tuple(projected_passthrough_tail)
-
     permissions, _ = compile_claude_permissions(spec)
-    allowed_tools = list(permissions.allowed_tools)
-    if not permissions.native_agents_enabled:
-        parent_allowed_tools = [
-            tool for tool in parent_allowed_tools if not is_claude_agent_tool(tool)
-        ]
-        passthrough_allowed_tools = [
-            tool for tool in passthrough_allowed_tools if not is_claude_agent_tool(tool)
-        ]
-    allowed_tools = dedupe_nonempty(
-        (*allowed_tools, *parent_allowed_tools, *passthrough_allowed_tools)
-    )
-    disallowed_tools = dedupe_nonempty(
-        (*permissions.disallowed_tools, *passthrough_disallowed_tools)
-    )
-    if disallowed_tools:
-        denied_tools = set(disallowed_tools)
-        allowed_tools = [tool for tool in allowed_tools if not _is_denied_tool(tool, denied_tools)]
-    if permissions.skip_permission_prompts:
-        command.append("--dangerously-skip-permissions")
-    if permissions.permission_mode:
-        command.extend(("--permission-mode", permissions.permission_mode))
-    if allowed_tools:
-        command.extend(("--allowedTools", ",".join(allowed_tools)))
-    if disallowed_tools:
-        command.extend(("--disallowedTools", ",".join(disallowed_tools)))
+    passthrough_tail = permissions.passthrough_args
 
     command.extend(_project_mcp_tools(spec.mcp_tools))
 
@@ -251,22 +163,28 @@ def project_claude_spec_to_cli_args(
         command.extend(("--add-dir", root.as_posix()))
 
     _log_collision_if_needed(
-        managed_flag="--allowedTools",
-        has_managed_value=bool(allowed_tools),
-        passthrough_tail=passthrough_tail,
-    )
-    _log_collision_if_needed(
-        managed_flag="--disallowedTools",
-        has_managed_value=bool(disallowed_tools),
-        passthrough_tail=passthrough_tail,
-    )
-    _log_collision_if_needed(
         managed_flag="--append-system-prompt",
         has_managed_value=bool(spec.appended_system_prompt),
         passthrough_tail=passthrough_tail,
     )
 
     command.extend(passthrough_tail)
+
+    # Permission projection comes after passthrough so a colliding raw Claude flag
+    # cannot silently weaken the profile while the enforcement report claims the
+    # managed value. Tool allow/deny inputs are consumed by the compile above.
+    if permissions.skip_permission_prompts:
+        command.append("--dangerously-skip-permissions")
+    if permissions.permission_mode:
+        command.extend(("--permission-mode", permissions.permission_mode))
+    if permissions.permission_prompts:
+        command.extend(("--permission-prompts", permissions.permission_prompts))
+    if permissions.restrict_tools:
+        command.extend(("--tools", ",".join(permissions.available_tools)))
+    if permissions.disallowed_tools:
+        command.extend(("--disallowedTools", ",".join(permissions.disallowed_tools)))
+    if not permissions.settings.empty:
+        command.extend(("--settings", _settings_json(permissions.settings)))
 
     # For interactive Claude launches, add user-turn content as positional argument
     # This routes USER_TASK_PROMPT and TASK_CONTEXT to the user-turn channel

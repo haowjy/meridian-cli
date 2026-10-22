@@ -14,8 +14,9 @@ reply evidence. OpenCode V2 is the exception: its event-named native reply wins
 over its stream text. An empty or unavailable exact lookup falls back to the
 stream, not to another message or an ambient database.
 
-Claude prefers result frames to assistant frames and sums model usage across
-result frames. Codex keeps the latest cumulative usage and the final parent-thread
+Claude prefers result frames to assistant frames, sums model usage across result frames,
+and converts well-formed `result.permission_denials` rows into idempotent attempt denials
+for finalization to journal. Codex keeps the latest cumulative usage and the final parent-thread
 agent message; later command execution invalidates that message. Pi keeps the
 latest assistant usage and agent-end text, plus typed failure evidence. OpenCode
 V1 ignores child-session assistant parts. V2 binds `assistantMessageID` to

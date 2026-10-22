@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
+from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.safety.policy import PermissionPolicy, PlatformRule, build_permission_policy
@@ -24,6 +27,14 @@ def _flag_count(argv: list[str], flag: str) -> int:
     return sum(1 for token in argv if token == flag or token.startswith(f"{flag}="))
 
 
+def _settings_permission_entries(argv: list[str], action: str) -> tuple[str, ...]:
+    if "--settings" not in argv:
+        return ()
+    settings_index = max(index for index, token in enumerate(argv) if token == "--settings")
+    payload = json.loads(argv[settings_index + 1])
+    return tuple(payload.get("permissions", {}).get(action, ()))
+
+
 def test_claude_projection_drops_inherited_agent_when_native_agents_disabled() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
@@ -39,7 +50,7 @@ def test_claude_projection_drops_inherited_agent_when_native_agents_disabled() -
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
-    assert _tool_flag_entries(command, "--allowedTools") == ("Bash(meridian spawn *)",)
+    assert _settings_permission_entries(command, "allow") == ("Bash(meridian spawn *)",)
 
 
 def test_claude_projection_keeps_inherited_agent_when_native_agents_enabled() -> None:
@@ -55,7 +66,7 @@ def test_claude_projection_keeps_inherited_agent_when_native_agents_enabled() ->
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
-    assert _tool_flag_entries(command, "--allowedTools") == (
+    assert _settings_permission_entries(command, "allow") == (
         "Agent",
         "Agent(custom)",
         "Bash(meridian spawn *)",
@@ -75,7 +86,7 @@ def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent()
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
-    assert _tool_flag_entries(command, "--allowedTools") == (
+    assert _settings_permission_entries(command, "allow") == (
         "Bash",
         "Bash(meridian spawn *)",
     )
@@ -87,27 +98,45 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
-            rules=(tool_rule("bash", "allow", "Bash"), tool_rule("agent", "deny", "Agent")),
+            rules=(
+                tool_rule("bash", "allow", "Bash"),
+                tool_rule("web", "ask", "WebSearch", pattern="query"),
+                tool_rule("agent", "deny", "Agent"),
+            ),
             sandbox=None,
         ),
         extra_args=(
             "--allowedTools=Agent,Agent(custom),Bash(meridian spawn *)",
             "--disallowedTools",
             "Write",
+            "--settings",
+            '{"permissions":{"allow":["Agent"]}}',
             "--verbose",
         ),
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
-    allowed = _tool_flag_entries(command, "--allowedTools")
+    allowed = _settings_permission_entries(command, "allow")
     disallowed = _tool_flag_entries(command, "--disallowedTools")
     assert allowed == ("Bash", "Bash(meridian spawn *)")
+    assert _settings_permission_entries(command, "ask") == ("WebSearch",)
+    assert "WebSearch" not in allowed
     assert "Agent" in disallowed
     assert "Write" in disallowed
     assert "--verbose" in command
-    assert _flag_count(command, "--allowedTools") == 1
+    assert _flag_count(command, "--allowedTools") == 0
     assert _flag_count(command, "--disallowedTools") == 1
+    assert command.index("--settings") < command.index("--disallowedTools")
+    _, report = compile_claude_permissions(spec)
+    external = next(
+        line
+        for line in report
+        if line.element == "source: Claude parent-project and passthrough tool allows"
+    )
+    assert external.status == "partial"
+    assert "Bash(meridian spawn *)" in external.note
+    assert "Agent" in external.note
 
 
 def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> None:
@@ -116,19 +145,25 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
         prompt="test",
         permission_policy=build_permission_policy(
             rules=(tool_rule("*", "deny"), tool_rule("agent", "allow", "Agent")),
-            sandbox=None,
+            sandbox="workspace-write",
+            approval="auto",
+            platform_rules=(PlatformRule(kind="builtin-agents"),),
         ),
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
-    assert _tool_flag_entries(command, "--allowedTools") == ("Agent",)
+    assert _tool_flag_entries(command, "--tools") == ("Agent",)
+    assert _settings_permission_entries(command, "allow") == ("Agent",)
     disallowed = _tool_flag_entries(command, "--disallowedTools")
     assert "Agent" not in disallowed
     assert "Agent(Explore)" in disallowed
     assert "Agent(Plan)" in disallowed
     assert "Agent(General-purpose)" in disallowed
     assert "Agent(general-purpose)" in disallowed
+    settings_index = max(index for index, token in enumerate(command) if token == "--settings")
+    settings = json.loads(command[settings_index + 1])
+    assert settings["sandbox"]["autoAllowBashIfSandboxed"] is False
 
 
 @pytest.mark.parametrize("continuation", [False, True])

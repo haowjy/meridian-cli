@@ -38,14 +38,12 @@ for streaming execution.
 Per-harness mapping:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
-- **Claude built-in agent denial**: Meridian injects `--disallowedTools
-  Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
-  unconditionally (`compile_claude_permissions()`; Claude does not read
-  `allow_builtin_agents` yet). The denials merge into permission-derived `--disallowedTools` via
-  `dedupe_nonempty()`. Generic
-  `Agent` is gated by Mars `[settings.meridian.agent_copy]`: allowed only when
+- **Claude native-agent boundary**: unless `[harness.claude]
+  allow_builtin_agents = true`, Meridian injects scoped built-in-agent denies through
+  `compile_claude_permissions()`. Generic `Agent` is gated by Mars
+  `[settings.meridian.agent_copy]`: allowed only when
   `harnesses = ["claude"]` and `.claude` is a target. Parent/passthrough allowed-tool
-  tails are merged into the managed projection; Meridian's Agent denies stay authoritative.
+  tails are merged in that compile; profile allowlists and platform denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
@@ -267,9 +265,9 @@ value. The legacy native-Windows branch attempts a fallback detection path
 Claude Code ships with three built-in subagents (Explore, Plan, General-purpose) plus
 a generic `Agent` tool. Meridian's policy distinguishes between these:
 
-- **Built-in agents are always denied.** Meridian injects
+- **Built-in agents are denied by default.** Meridian injects
   `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`.
-  There is no config toggle — built-ins are a Meridian platform policy.
+  `[harness.claude] allow_builtin_agents = true` removes this platform rule.
 
 - **Generic `Agent` follows the Mars agent-copy boundary.** Meridian reads
   `mars.toml` to check whether `[settings.meridian.agent_copy] harnesses = ["claude"]` AND
@@ -280,9 +278,10 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
 The detection runs in `bind_launch_context()` through `agent_copy_enabled(project_root,
 harness_id)` in `lib/catalog/agent_copy.py` (reads `mars.toml` and `mars.local.toml`; any
 harness, not only Claude). The result decides whether `launch_platform_rules()` puts `agent` in the `native-subagents` rule;
-`compile_claude_permissions()` reads that rule, turns every profile `agent` rule into a deny
-and, when it is present, strips `Agent` and `Agent(...)` from the parent-inherited and
-passthrough allowed-tool tails.
+`compile_claude_permissions()` reads that rule and removes generic `Agent` grants from the
+parent-inherited and passthrough allowed-tool tails. Claude has no spelling that disables
+generic `Agent` while retaining built-in agents, so with `allow_builtin_agents = true` that
+part of the platform rule is reported partial instead of silently disabling built-ins.
 
 This is a Meridian platform policy, not a per-agent `tools:` field: bind adds generic
 platform rules (`native-subagents`, `builtin-agents`) to the policy and each harness's

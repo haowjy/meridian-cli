@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.tools import LEGACY_SNAPSHOT_ORIGIN, ToolRule, unscoped_action
 
@@ -79,6 +79,9 @@ class PermissionPolicy(BaseModel):
     rules: tuple[ToolRule, ...] = ()
     platform_rules: tuple[PlatformRule, ...] = ()
     sandbox: SandboxMode = "default"
+    # Workspace roots whose writes a read-only native sandbox must block. Bind keeps
+    # these separate from projected runtime/temp roots, which must remain writable.
+    sandbox_write_roots: tuple[str, ...] = Field(default=(), exclude=True)
     approval: ApprovalMode = "default"
 
     @property
@@ -250,6 +253,7 @@ def build_permission_policy(
     sandbox: str | None,
     approval: str = "default",
     platform_rules: tuple[PlatformRule, ...] = (),
+    sandbox_write_roots: tuple[str, ...] = (),
 ) -> PermissionPolicy:
     """Build the policy from Mars's resolved tool rules and the execution policy.
 
@@ -261,6 +265,7 @@ def build_permission_policy(
         rules=rules,
         platform_rules=platform_rules,
         sandbox=_parse_sandbox_value(sandbox),
+        sandbox_write_roots=tuple(dict.fromkeys(root for root in sandbox_write_roots if root)),
         approval=_parse_approval_value(approval),
     )
 
