@@ -20,6 +20,7 @@ describe.skipIf(!existsSync(bundlePath))("meridian-permissions bundle smoke", ()
       rules: [],
       completion_commands: [],
       headless_reject_reason: "headless",
+      bash_fail_closed: false,
     });
     const bundle = await import(/* @vite-ignore */ pathToFileURL(bundlePath).href);
     const events: string[] = [];

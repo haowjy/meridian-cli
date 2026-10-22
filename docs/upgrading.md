@@ -55,7 +55,10 @@ report these allowlists but do not enforce them.
 - **Pi:** mapped plain, scoped, allowlist, and `ask` rules now bind both RPC spawns and
   primary TUI sessions. Review profiles that previously treated Pi rules as descriptive.
   Remove Pi tool-selection passthrough flags from launches with a profile policy; Meridian
-  now rejects them so they cannot override the policy.
+  now rejects them so they cannot override the policy. Under a Bash allowlist the extension
+  refuses shell syntax it cannot split into simple commands (`$VAR`, redirects such as
+  `2>/dev/null`, loops), so an allowlisted agent must run plain commands; beside
+  `bash: allow`, scoped Bash denies are best effort and such a command runs unchecked.
 - **Codex:** exact unscoped `bash`, `web`, `web_search`, and `image` allow/deny rules now use
   native per-launch switches. Scoped rules, `ask`, allowlists, and other capabilities remain
   report-only.

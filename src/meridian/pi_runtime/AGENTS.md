@@ -33,9 +33,10 @@ to `idle arm`; an over-cap command becomes `other`, and it never classifies
 Meridian commands itself.
 `meridian-permissions` owns launch-local scoped tool rules and `ask`; it has no
 disk authority. Keep it separate from managed-bash so disabling managed Bash
-does not disable policy or register shell-task tools and `/ps*` commands. When
-Bash is restricted, accept only the deliberately small simple-command grammar;
-unsupported shell syntax must fail closed. Canonicalize scoped paths before
+does not disable policy or register shell-task tools and `/ps*` commands. Keep the
+simple-command grammar deliberately small. When the policy says `bash_fail_closed`,
+unsupported shell syntax must be refused; otherwise (an open shell with scoped denies) it
+runs unchecked, and the Python report says so. Canonicalize scoped paths before
 matching, including existing symlink prefixes. A present but unusable policy must
 throw during extension load — Pi treats an explicit extension load error as a
 fatal launch error.

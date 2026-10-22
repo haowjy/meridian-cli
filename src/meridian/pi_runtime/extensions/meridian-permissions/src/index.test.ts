@@ -22,6 +22,7 @@ function policy(
     rules,
     completion_commands: [],
     headless_reject_reason: HEADLESS_REASON,
+    bash_fail_closed: false,
     ...overrides,
   };
 }
@@ -95,10 +96,14 @@ describe("permission precedence", () => {
 });
 
 describe("bash command evaluation", () => {
-  const restrictive = policy([
-    rule({ pattern: "rg *", action: "allow", label: "bash(rg *)" }),
-    rule({ pattern: "touch *", action: "deny", label: "bash(touch *)" }),
-  ]);
+  const restrictive = policy(
+    [
+      rule({ pattern: "rg *", action: "allow", label: "bash(rg *)" }),
+      rule({ pattern: "touch *", action: "deny", label: "bash(touch *)" }),
+      rule({ action: "deny", label: "bash outside its scoped allows" }),
+    ],
+    { bash_fail_closed: true },
+  );
 
   it("checks every command in a compound expression", () => {
     expect(decideToolCall(restrictive, "bash", { command: "rg x; touch y" })?.action).toBe("deny");
@@ -135,10 +140,35 @@ describe("bash command evaluation", () => {
     ).toBe("allow");
   });
 
+  it("is best effort when bash allows unmatched commands", () => {
+    // @coder's shape: an open shell with scoped denies.
+    const openShell = policy([
+      rule({ action: "allow", label: "bash" }),
+      rule({ pattern: "git revert *", action: "deny", label: "bash(git revert *)" }),
+    ]);
+
+    for (const command of [
+      "uv run pytest tests/ 2>&1 | tail -20",
+      "echo $HOME",
+      "ls > /tmp/out.txt",
+      "for f in *.py; do echo $f; done",
+      "cat <<EOF > f\nx\nEOF",
+    ]) {
+      expect(decideToolCall(openShell, "bash", { command })?.action).not.toBe("deny");
+    }
+    for (const command of ["git revert HEAD", "git log -1 && git revert HEAD"]) {
+      expect(decideToolCall(openShell, "bash", { command })?.action).toBe("deny");
+    }
+    expect(decideToolCall(openShell, "bash", {})).toBeUndefined();
+  });
+
   it("allows a fixed completion command but still checks compound commands", () => {
     const withCompletion = policy(
       [rule({ capability: "*", tool: "*", action: "deny", label: "*" })],
-      { completion_commands: ["meridian spawn done", "meridian spawn rearm"] },
+      {
+        completion_commands: ["meridian spawn done", "meridian spawn rearm"],
+        bash_fail_closed: true,
+      },
     );
     for (const command of [
       "meridian spawn done",

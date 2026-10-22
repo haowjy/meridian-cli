@@ -22,10 +22,12 @@ retain native skill, context-file, and prompt-template discovery.
 Spawned RPC suppresses ambient extensions unless `load_all_pi_extensions = true`.
 See the [integration contract](../lib/harness/.context/pi-integration.md).
 
-For restricted Bash, meridian-permissions recognizes plain words, single quotes,
-non-expanding double quotes, and `&&`, `||`, `;`, `|`, or newline separators.
-Expansion, substitution, redirection, backgrounding, grouping, and other shell
-syntax are refused before rule matching. Completion grants cover only a whole
+meridian-permissions splits Bash into simple commands: plain words, single quotes,
+non-expanding double quotes, and `&&`, `||`, `;`, `|`, or newline separators. When Bash
+is an allowlist or its unmatched commands are denied or asked, expansion, substitution,
+redirection, backgrounding, grouping, and other shell syntax are refused before rule
+matching. When Bash allows unmatched commands, scoped denies are best effort: a command
+with that syntax runs unchecked. Completion grants cover only a whole
 `meridian spawn done` or `meridian spawn rearm` command with simple arguments.
 Scoped file paths and rule roots are resolved against the working directory and
 existing symlinks before matching.

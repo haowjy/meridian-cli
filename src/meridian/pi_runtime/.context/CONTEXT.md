@@ -66,11 +66,17 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
 child-spawn observation and notification behavior belong in spawn-watch.
 
-The permissions extension never tries to understand arbitrary shell. Whenever a `bash` or
-`*` rule is scoped or not `allow` (a per-capability allowlist arrives as an unscoped deny
-beside its scoped allows), it accepts only simple words,
-single quotes, double quotes without expansion/escaping, and the separators `&&`, `||`,
-`;`, `|`, and newline. It refuses all other syntax before rule matching. A completion
+The permissions extension never tries to understand arbitrary shell. It splits a command
+into simple words, single quotes, double quotes without expansion/escaping, and the
+separators `&&`, `||`, `;`, `|`, and newline, and matches each simple command. What it does
+with other syntax is the policy's `bash_fail_closed`, which the Python compile sets: it
+refuses that syntax before rule matching when the rule deciding unmatched commands (bash's
+unscoped rule, else `*`'s) is `deny` or `ask` — every allowlist, including the unscoped
+deny the policy writes beside scoped allows — or when a scoped `ask` exists. Under an
+unscoped `allow` (or no rule) only scoped denies can refuse, so they are best effort: an
+unsplittable command runs, and the report marks those denies `partial`. Refusing there
+would break ordinary shell use (`2>&1 | tail`, `$VAR`, redirects) for every profile with
+`bash: allow` and a few scoped denies, which v0.11.8 did not enforce at all. A completion
 backstop applies only when the entire input is one `meridian spawn done` or `meridian
 spawn rearm` command whose optional arguments contain only letters, digits, `_`, `.`,
 or `-`. File-tool scopes canonicalize the requested path and the rule's non-wildcard

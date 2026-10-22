@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
@@ -28,6 +29,7 @@ _TOOL_SELECTION_FLAGS: tuple[tuple[str, ...], ...] = (
     ("--no-tools", "-nt"),
     ("--no-builtin-tools", "-nbt"),
 )
+_STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
 
 
 class PiExtensionRule(BaseModel):
@@ -51,6 +53,8 @@ class PiExtensionPolicy(BaseModel):
     rules: tuple[PiExtensionRule, ...]
     completion_commands: tuple[str, ...] = ()
     headless_reject_reason: str = HEADLESS_REJECT_REASON
+    # Whether the handler refuses a bash command it cannot split into simple commands.
+    bash_fail_closed: bool = False
 
 
 @dataclass(frozen=True)
@@ -112,6 +116,12 @@ def _completion_commands(policy: PermissionPolicy, *, interactive: bool) -> tupl
     )
 
 
+def _strictest(rules: Iterable[PiExtensionRule]) -> ToolAction | None:
+    """The strictest action among ``rules``, as the extension ranks equally specific rules."""
+
+    return max((rule.action for rule in rules), key=_STRICTNESS.__getitem__, default=None)
+
+
 def _compile_flags(
     policy: PermissionPolicy,
     rules: tuple[PiExtensionRule, ...],
@@ -133,11 +143,7 @@ def _compile_flags(
     callable_tools = tuple(
         dedupe_nonempty(split_native(native)[0] for native in policy.allowed_natives)
     )
-    wildcard = max(
-        (rule.action for rule in rules if rule.tool == "*" and rule.pattern is None),
-        key={"allow": 0, "ask": 1, "deny": 2}.__getitem__,
-        default=None,
-    )
+    wildcard = _strictest(rule for rule in rules if rule.tool == "*" and rule.pattern is None)
     if wildcard == "deny":
         allowed = tuple(dedupe_nonempty((*callable_tools, *completion_tools)))
         return allowed, exclude
@@ -145,6 +151,26 @@ def _compile_flags(
         return ("*",), exclude
     additions = tuple(f"+{tool}" for tool in callable_tools)
     return (additions or None), exclude
+
+
+def _bash_fails_closed(rules: tuple[PiExtensionRule, ...]) -> bool:
+    """Whether a bash command the handler cannot split must be refused.
+
+    It must when such a command could be refused or asked for without matching a scoped
+    rule: the rule deciding unmatched commands (bash's own unscoped rule, else ``*``'s) is
+    ``deny`` or ``ask``, as in every allowlist, or a scoped ``ask`` could match it. Under an
+    unscoped allow, or no rule, only a scoped deny refuses, so that check is best effort: a
+    command the splitter cannot read runs.
+    """
+
+    shell = tuple(rule for rule in rules if rule.tool in {"bash", "*"})
+    if any(rule.pattern is not None and rule.action == "ask" for rule in shell):
+        return True
+    for tool in ("bash", "*"):
+        unmatched = _strictest(rule for rule in shell if rule.tool == tool and rule.pattern is None)
+        if unmatched is not None:
+            return unmatched != "allow"
+    return False
 
 
 def _needs_extension(
@@ -197,9 +223,22 @@ def _rule_report_line(
         return None
     names = tuple(dedupe_nonempty(candidate.tool for candidate in projected))
     if rule.pattern is not None or rule.action == "ask":
-        return ReportLine(
-            rule_element(rule), "native", "tool_call handler for " + ",".join(rule.native)
-        )
+        note = "tool_call handler for " + ",".join(rule.native)
+        policy = permissions.extension_policy
+        if (
+            rule.action == "deny"
+            and "bash" in names
+            and policy is not None
+            and not policy.bash_fail_closed
+        ):
+            return ReportLine(
+                rule_element(rule),
+                "partial",
+                f"{note}; best effort, since bash runs unmatched commands: a command the "
+                "handler cannot split into simple commands (expansion, redirection, loops, "
+                "here-docs, a lone &) runs unchecked",
+            )
+        return ReportLine(rule_element(rule), "native", note)
     if rule.action == "deny" and all(name in permissions.exclude_tools for name in names):
         return ReportLine(rule_element(rule), "native", "--exclude-tools " + ",".join(names))
     if rule.action == "allow" and permissions.tools is not None:
@@ -262,7 +301,11 @@ def compile_pi_permissions(
     completion_commands = _completion_commands(policy, interactive=spec.interactive)
     tools, exclude_tools = _compile_flags(policy, rules, completion_commands)
     extension_policy = (
-        PiExtensionPolicy(rules=rules, completion_commands=completion_commands)
+        PiExtensionPolicy(
+            rules=rules,
+            completion_commands=completion_commands,
+            bash_fail_closed=_bash_fails_closed(rules),
+        )
         if _needs_extension(rules, completion_commands=completion_commands)
         else None
     )

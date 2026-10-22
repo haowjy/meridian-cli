@@ -51,6 +51,11 @@ export type PermissionPolicy = {
   rules: PermissionRule[];
   completion_commands: string[];
   headless_reject_reason: string;
+  // Refuse a bash command that does not split into simple commands. Meridian sets it when
+  // such a command could be refused without matching a scoped rule (an allowlist, or an
+  // unmatched-command default of deny or ask); otherwise only scoped denies can refuse, and
+  // a command the splitter cannot read runs unchecked.
+  bash_fail_closed: boolean;
 };
 
 export type PermissionDecision = {
@@ -82,6 +87,7 @@ function parsePolicy(raw: string | undefined): PermissionPolicy | undefined {
     || !isStringArray(policy.completion_commands)
     || typeof policy.headless_reject_reason !== "string"
     || !policy.headless_reject_reason.trim()
+    || typeof policy.bash_fail_closed !== "boolean"
     || policy.completion_commands.some((command) => !COMPLETION_COMMANDS.has(command))
   ) {
     throw new Error("Pi permission policy has an unsupported shape");
@@ -355,13 +361,6 @@ function isCompletionCommand(policy: PermissionPolicy, command: string): boolean
   });
 }
 
-function bashIsRestricted(policy: PermissionPolicy): boolean {
-  return policy.rules.some((rule) => (
-    (rule.tool === "bash" || rule.tool === "*")
-    && (rule.pattern != null || rule.action !== "allow")
-  ));
-}
-
 export function decideToolCall(
   policy: PermissionPolicy,
   tool: string,
@@ -372,16 +371,15 @@ export function decideToolCall(
   const detail = callDetail(tool, input);
   if (tool !== "bash") return policyDecision(policy, tool, scope, detail, workingDirectory);
 
-  const restricted = bashIsRestricted(policy);
   if (scope === undefined) {
-    return restricted
+    return policy.bash_fail_closed
       ? { action: "deny", detail, reason: `${DENIAL_PREFIX}the bash command could not be evaluated.` }
       : undefined;
   }
 
   const split = splitShellCommands(scope);
   if (!split.complete || split.commands.length === 0) {
-    return restricted
+    return policy.bash_fail_closed
       ? { action: "deny", detail, reason: SIMPLE_COMMAND_REASON }
       : undefined;
   }
