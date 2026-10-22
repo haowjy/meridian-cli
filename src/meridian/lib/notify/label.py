@@ -22,6 +22,8 @@ def _clean(value: str | None) -> str | None:
 def _current_work_id(env: Mapping[str, str], project_root: Path) -> str | None:
     """The work the sender is on now; the launch value when state can't be read."""
 
+    import sqlite3
+
     from meridian.lib.core.resolved_context import LocalFilesystemBackend, follow_current_chat
     from meridian.lib.state.history_index import HistoryIndexIncomplete
     from meridian.lib.state.paths import resolve_project_runtime_root_or_none
@@ -38,7 +40,7 @@ def _current_work_id(env: Mapping[str, str], project_root: Path) -> str | None:
         if not chat_id:
             return None
         return _clean(LocalFilesystemBackend().get_session_active_work_id(runtime_root, chat_id))
-    except (OSError, ValueError, HistoryIndexIncomplete):
+    except (OSError, ValueError, HistoryIndexIncomplete, sqlite3.Error):
         return launch_work_id
 
 
