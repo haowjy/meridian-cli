@@ -4,7 +4,7 @@ Tool rules become OpenCode's V1 permission map (``{capability-or-scoped-key: act
 The V1 launch env carries it as JSON; the V2 connection translates the same map to V2
 rules (``project_opencode_streaming.py``). Primaries return ``None``: the OpenCode TUI
 handles their permissions natively. Only tool rules compile; sandbox, approval and platform
-rules do not reach OpenCode, and the report says so.
+rules do not reach OpenCode, and the completed report says so.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from meridian.lib.safety.policy import (
     EnforcementReport,
     ReportLine,
     ToolRule,
-    platform_element,
+    complete_report,
     rule_element,
 )
 from meridian.lib.tools import ToolAction
@@ -60,19 +60,10 @@ def compile_opencode_permissions(
         lines.append(
             ReportLine(rule_element(rule), "native", f"permission {', '.join(keys)}: {rule.action}")
         )
-    lines.extend(
-        ReportLine(platform_element(platform), "unsupported", "not projected for OpenCode")
-        for platform in policy.platform_rules
+    return (
+        (dict(sorted(permissions.items())) or None),
+        complete_report(policy, lines, harness="OpenCode"),
     )
-    if policy.sandbox != "default":
-        lines.append(
-            ReportLine(f"sandbox: {policy.sandbox}", "unsupported", "OpenCode has no sandbox")
-        )
-    if policy.approval != "default":
-        lines.append(
-            ReportLine(f"approval: {policy.approval}", "unsupported", "not projected for OpenCode")
-        )
-    return (dict(sorted(permissions.items())) or None), tuple(lines)
 
 
 __all__ = ["OpenCodePermissions", "compile_opencode_permissions"]

@@ -65,19 +65,7 @@ def launch_platform_rules(
     return tuple(rules)
 
 
-def native_web_search_granted(tools: ToolsField | None) -> bool:
-    """True when the bundle explicitly granted the native ``web_search`` tool (Codex's name).
-
-    Codex exposes it only when switched on, so the grant alone is inert.
-    """
-
-    if tools is None:
-        return False
-    return tools.get("web_search") in {"allow", "ask"}
-
-
 __all__ = [
     "launch_platform_rules",
     "native_subagent_capabilities",
-    "native_web_search_granted",
 ]

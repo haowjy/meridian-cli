@@ -6,7 +6,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
-from meridian.lib.safety.policy import PermissionPolicy, build_permission_policy
+from meridian.lib.safety.policy import PermissionPolicy, PlatformRule, build_permission_policy
 
 
 def _tool_flag_entries(argv: list[str], flag: str) -> tuple[str, ...]:
@@ -27,6 +27,9 @@ def test_claude_projection_drops_inherited_agent_when_native_agents_disabled() -
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
+        permission_policy=PermissionPolicy(
+            platform_rules=(PlatformRule(kind="native-subagents", capabilities=("agent",)),)
+        ),
         extra_args=(
             CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
             "Agent,Agent(custom),Bash(meridian spawn *)",
@@ -42,7 +45,7 @@ def test_claude_projection_keeps_inherited_agent_when_native_agents_enabled() ->
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
-        permission_policy=PermissionPolicy(native_agent_copy=True),
+        permission_policy=PermissionPolicy(),
         extra_args=(
             CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
             "Agent,Agent(custom),Bash(meridian spawn *)",
@@ -109,7 +112,7 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
-            tools={"*": "deny", "agent": "allow"}, sandbox=None, native_agent_copy=True
+            tools={"*": "deny", "agent": "allow"}, sandbox=None
         ),
     )
 

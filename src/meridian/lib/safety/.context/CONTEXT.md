@@ -20,7 +20,7 @@ for terminating the harness — the tracker does not stop it.
 
 **Lazy import:** `extract_cost_usd_from_json_line` imports `harness.common` lazily
 to break a circular dependency: `safety.budget` → `harness.common` → `harness.adapter`
-→ `safety.permissions`. Do not hoist this import to the module level.
+→ `launch.launch_types` → `safety.policy`. Do not hoist this import to the module level.
 
 ## Post-Run Guardrails (`guardrails.py`)
 

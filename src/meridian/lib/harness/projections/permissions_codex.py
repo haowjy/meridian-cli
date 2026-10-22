@@ -16,6 +16,8 @@ from meridian.lib.safety.policy import (
     EnforcementReport,
     PermissionPolicy,
     ReportLine,
+    ToolRule,
+    complete_report,
     platform_element,
     rule_element,
 )
@@ -90,16 +92,8 @@ def map_codex_sandbox_mode(sandbox_mode: str) -> str | None:
 def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> EnforcementReport:
     lines: list[ReportLine] = []
     for rule in policy.rules:
-        if permissions.web_search and rule.native == ("web_search",) and rule.action != "deny":
+        if _grants_web_search(rule):
             lines.append(ReportLine(rule_element(rule), "native", "-c tools.web_search=true"))
-        else:
-            lines.append(
-                ReportLine(
-                    rule_element(rule),
-                    "unsupported",
-                    "Codex has no carrier for tool rules; only web_search is read",
-                )
-            )
     for platform in policy.platform_rules:
         if platform.kind == "builtin-agents":
             lines.append(
@@ -108,10 +102,6 @@ def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> En
                     "platform",
                     "-c features.multi_agent_v2=false -c agents.max_depth=0",
                 )
-            )
-        else:
-            lines.append(
-                ReportLine(platform_element(platform), "unsupported", "not projected for Codex")
             )
     if permissions.sandbox_mode is not None:
         lines.append(
@@ -131,7 +121,13 @@ def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> En
             )
         else:
             lines.append(ReportLine(f"approval: {policy.approval}", "native", note))
-    return tuple(lines)
+    return complete_report(policy, lines, harness="Codex")
+
+
+def _grants_web_search(rule: ToolRule) -> bool:
+    """Codex exposes ``web_search`` only when switched on, so a grant alone is inert."""
+
+    return rule.native == ("web_search",) and rule.action != "deny"
 
 
 def compile_codex_permissions(
@@ -143,7 +139,7 @@ def compile_codex_permissions(
     permissions = CodexPermissions(
         sandbox_mode=map_codex_sandbox_mode(policy.sandbox),
         approval_policy=map_codex_approval_policy(policy.approval),
-        web_search=policy.web_search,
+        web_search=any(_grants_web_search(rule) for rule in policy.rules),
         builtin_agents_disabled=any(
             rule.kind == "builtin-agents" for rule in policy.platform_rules
         ),

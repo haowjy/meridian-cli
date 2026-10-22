@@ -279,10 +279,11 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
 
 The detection runs in `bind_launch_context()` through the adapter hook
 `native_agent_copy_enabled()`, which Claude backs with `project_has_claude_agent_copy()` in
-`projections/permissions_claude.py` (reads `mars.toml` and `mars.local.toml`). The result is
-`PermissionPolicy.native_agent_copy`; `compile_claude_permissions()` strips `Agent` and
-`Agent(...)` from allowed-tools when it is false, including parent-inherited allowed-tool
-tails.
+`projections/permissions_claude.py` (reads `mars.toml` and `mars.local.toml`). The result
+decides whether `launch_platform_rules()` puts `agent` in the `native-subagents` rule;
+`compile_claude_permissions()` reads that rule, turns every profile `agent` rule into a deny
+and, when it is present, strips `Agent` and `Agent(...)` from the parent-inherited and
+passthrough allowed-tool tails.
 
 This is a Meridian platform policy, not a per-agent `tools:` field: bind adds generic
 platform rules (`native-subagents`, `builtin-agents`) to the policy and each harness's

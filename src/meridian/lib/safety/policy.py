@@ -8,12 +8,13 @@ platform rules natively; nothing here knows a harness.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.tools import ToolAction, ToolsField, resolve_tool_action, tools_field_to_map
+from meridian.lib.tools import ToolAction, ToolsField, resolve_tool_action
 
 type SandboxMode = Literal[
     "default",
@@ -77,13 +78,7 @@ class PlatformRule(BaseModel):
 
 
 class PermissionPolicy(BaseModel):
-    """Everything permission-shaped for one launch, before any harness reads it.
-
-    ``native_agent_copy``: Mars installed native agent definitions for the harness, so
-    its own agent tool is the project's delegation mechanism and stays usable.
-    ``web_search``: the bundle granted the native ``web_search`` tool, which Codex needs
-    switched on explicitly (a native key until the typed rules arrive).
-    """
+    """Everything permission-shaped for one launch, before any harness reads it."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -91,8 +86,6 @@ class PermissionPolicy(BaseModel):
     platform_rules: tuple[PlatformRule, ...] = ()
     sandbox: SandboxMode = "default"
     approval: ApprovalMode = "default"
-    native_agent_copy: bool = False
-    web_search: bool = False
 
 
 type ReportStatus = Literal["native", "partial", "unsupported", "platform"]
@@ -123,6 +116,40 @@ def platform_element(rule: PlatformRule) -> str:
     if rule.kind == "native-subagents":
         return f"platform: deny native sub-agents ({', '.join(sorted(rule.capabilities))})"
     return "platform: deny built-in agents"
+
+
+def policy_elements(policy: PermissionPolicy) -> tuple[str, ...]:
+    """Every element of the policy a report must account for, in report order."""
+
+    elements = [rule_element(rule) for rule in policy.rules]
+    elements.extend(platform_element(rule) for rule in policy.platform_rules)
+    if policy.sandbox != "default":
+        elements.append(f"sandbox: {policy.sandbox}")
+    if policy.approval != "default":
+        elements.append(f"approval: {policy.approval}")
+    return tuple(elements)
+
+
+def complete_report(
+    policy: PermissionPolicy, reported: Iterable[ReportLine], *, harness: str
+) -> EnforcementReport:
+    """Give every policy element exactly one line, in policy order.
+
+    A compile reports only what it handles or has something specific to say about; any
+    element it left out is ``unsupported`` for ``harness``. Lines for things that are not
+    policy elements (a deny the harness applies on its own) follow the elements.
+    """
+
+    by_element = {line.element: line for line in reported}
+    elements = policy_elements(policy)
+    lines = [
+        by_element.get(element)
+        or ReportLine(element, "unsupported", f"not projected for {harness}")
+        for element in elements
+    ]
+    known = set(elements)
+    lines.extend(line for line in by_element.values() if line.element not in known)
+    return tuple(lines)
 
 
 def format_report_lines(report: EnforcementReport) -> list[str]:
@@ -191,8 +218,6 @@ def build_permission_policy(
     sandbox: str | None,
     approval: str = "default",
     platform_rules: tuple[PlatformRule, ...] = (),
-    native_agent_copy: bool = False,
-    web_search: bool = False,
 ) -> PermissionPolicy:
     """Build the policy from the resolved tools map and execution policy.
 
@@ -204,7 +229,7 @@ def build_permission_policy(
     if resolved_sandbox == "default":
         resolved_sandbox = _infer_sandbox_from_tools(tools) or resolved_sandbox
     rules: list[ToolRule] = []
-    for raw_key, action in tools_field_to_map(tools).items():
+    for raw_key, action in (tools or {}).items():
         capability, pattern = _split_key(raw_key)
         rules.append(
             ToolRule(capability=capability, pattern=pattern, action=action, native=(raw_key,))
@@ -214,8 +239,6 @@ def build_permission_policy(
         platform_rules=platform_rules,
         sandbox=resolved_sandbox,
         approval=_parse_approval_value(approval),
-        native_agent_copy=native_agent_copy,
-        web_search=web_search,
     )
 
 
@@ -229,7 +252,9 @@ __all__ = [
     "SandboxMode",
     "ToolRule",
     "build_permission_policy",
+    "complete_report",
     "format_report_lines",
     "platform_element",
+    "policy_elements",
     "rule_element",
 ]

@@ -28,6 +28,7 @@ from meridian.lib.safety.policy import (
     PlatformRule,
     ReportLine,
     ToolRule,
+    complete_report,
     platform_element,
     rule_element,
 )
@@ -305,10 +306,6 @@ def _claude_report(
         else:
             lines.append(_tool_rule_line(rule, allowed, disallowed, has_allows=has_allows))
     lines.extend(_platform_lines(policy))
-    if policy.sandbox != "default":
-        lines.append(
-            ReportLine(f"sandbox: {policy.sandbox}", "unsupported", "Claude is given no sandbox")
-        )
     if permissions.skip_permission_prompts:
         approval_note = "--dangerously-skip-permissions"
     elif permissions.permission_mode is not None:
@@ -317,7 +314,7 @@ def _claude_report(
         approval_note = ""
     if approval_note:
         lines.append(ReportLine(f"approval: {policy.approval}", "native", approval_note))
-    return tuple(lines)
+    return complete_report(policy, lines, harness="Claude")
 
 
 def compile_claude_permissions(
@@ -328,8 +325,6 @@ def compile_claude_permissions(
     policy = spec.permission_policy
     effective, overridden = _effective_rules(spec)
     allowed, disallowed = _compile_tool_rules(effective)
-    if not policy.native_agent_copy:
-        allowed = tuple(tool for tool in allowed if not is_claude_agent_tool(tool))
     builtin_agent_denies = tuple(f"Agent({pattern})" for pattern in _BUILTIN_AGENT_PATTERNS)
     permissions = ClaudePermissions(
         skip_permission_prompts=policy.approval in ("yolo", "never"),
@@ -342,7 +337,11 @@ def compile_claude_permissions(
         ),
         allowed_tools=allowed,
         disallowed_tools=tuple(dedupe_nonempty((*disallowed, *builtin_agent_denies))),
-        native_agents_enabled=policy.native_agent_copy,
+        # Bind denies ``agent`` natively exactly when native agent copies are off.
+        native_agents_enabled=not any(
+            rule.kind == "native-subagents" and "agent" in rule.capabilities
+            for rule in policy.platform_rules
+        ),
     )
     return permissions, _claude_report(policy, permissions, effective, overridden)
 

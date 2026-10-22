@@ -86,7 +86,7 @@ from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILEN
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan, undo_direnv
 from .env import merge_env_overrides as _merge_env_overrides
-from .permissions import launch_platform_rules, native_web_search_granted
+from .permissions import launch_platform_rules
 from .policies import (
     ModelSelectionContext,
     ResolvedLaunchPolicy,
@@ -1704,10 +1704,6 @@ def bind_launch_context(
             native_agent_copy=native_agent_copy,
             allow_builtin_agents=allow_builtin_agents,
         ),
-        native_agent_copy=native_agent_copy,
-        # The bundle's authoritative resolved grant carries the native `web_search` token
-        # when the agent grants `web`; Codex needs it switched on to expose the tool.
-        web_search=native_web_search_granted(resolved_request.tools),
     )
 
     # Defense in depth for persisted worker requests that bypassed preparation.

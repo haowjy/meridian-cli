@@ -1,6 +1,7 @@
 """Cursor's compile of the permission policy: approval and sandbox become two flags.
 
-Cursor has no tool rules, so the report marks every rule and platform rule unsupported.
+Cursor has no tool rules, so the completed report marks every rule and platform rule
+unsupported.
 """
 
 from __future__ import annotations
@@ -14,8 +15,7 @@ from meridian.lib.safety.policy import (
     EnforcementReport,
     PermissionPolicy,
     ReportLine,
-    platform_element,
-    rule_element,
+    complete_report,
 )
 
 
@@ -28,14 +28,7 @@ class CursorPermissions:
 
 
 def _cursor_report(policy: PermissionPolicy, permissions: CursorPermissions) -> EnforcementReport:
-    lines = [
-        ReportLine(rule_element(rule), "unsupported", "Cursor has no tool rules")
-        for rule in policy.rules
-    ]
-    lines.extend(
-        ReportLine(platform_element(platform), "unsupported", "not projected for Cursor")
-        for platform in policy.platform_rules
-    )
+    lines: list[ReportLine] = []
     if permissions.sandbox is not None:
         note = f"--sandbox {permissions.sandbox}"
         if policy.sandbox == "workspace-write":
@@ -61,7 +54,7 @@ def _cursor_report(policy: PermissionPolicy, permissions: CursorPermissions) -> 
                 "Cursor has no confirm switch; no flag passed",
             )
         )
-    return tuple(lines)
+    return complete_report(policy, lines, harness="Cursor")
 
 
 def compile_cursor_permissions(

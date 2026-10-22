@@ -1,4 +1,4 @@
-"""Shared ToolsField types and normalization helpers."""
+"""Shared tool action and tools-map types."""
 
 from __future__ import annotations
 
@@ -6,46 +6,6 @@ from typing import Literal
 
 type ToolAction = Literal["allow", "deny", "ask"]
 type ToolsField = dict[str, ToolAction]
-
-_TOOL_ACTIONS: frozenset[ToolAction] = frozenset({"allow", "deny", "ask"})
-
-
-def normalize_tool_action(raw: object, *, source: str) -> ToolAction:
-    """Normalize one tool action value."""
-
-    normalized = str(raw).strip().lower()
-    if normalized in _TOOL_ACTIONS:
-        return normalized
-    allowed = ", ".join(sorted(_TOOL_ACTIONS))
-    raise ValueError(f"Invalid tools action for '{source}': expected one of {allowed}.")
-
-
-def normalize_tool_key(raw: object, *, source: str) -> str:
-    """Normalize one tools map key.
-
-    Keys are case-insensitive on the capability prefix. Scoped pattern payload
-    keeps original casing to avoid changing command/path match behavior.
-    """
-
-    key = str(raw).strip()
-    if not key:
-        raise ValueError(f"Invalid tools key for '{source}': key must not be empty.")
-    scoped_start = key.find("(")
-    if scoped_start <= 0 or not key.endswith(")"):
-        return key.lower()
-    capability = key[:scoped_start].strip().lower()
-    scoped = key[scoped_start:]
-    if not capability:
-        raise ValueError(f"Invalid tools key for '{source}': key must not be empty.")
-    return f"{capability}{scoped}"
-
-
-def tools_field_to_map(tools: ToolsField | None) -> dict[str, ToolAction]:
-    """Return a mutable copy of the tools map (empty for ``None``)."""
-
-    if tools is None:
-        return {}
-    return dict(tools)
 
 
 def resolve_tool_action(
@@ -61,7 +21,7 @@ def resolve_tool_action(
     normalized_capability = capability.strip().lower()
     if not normalized_capability:
         return None
-    rules = tools_field_to_map(tools)
+    rules = tools or {}
     if normalized_capability in rules:
         return rules[normalized_capability]
     return rules.get("*")

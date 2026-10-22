@@ -61,5 +61,5 @@ circular import dependency map
 
 ## Related
 
-- `../launch/permissions.py` — launch-side permission helpers (Claude agent-copy detection, nested denies)
+- `../launch/permissions.py` — bind-time platform rules (nested-agent denies, built-in agent denies)
 - `../harness/common.py` — provides `iter_nested_dicts` used by budget extraction
