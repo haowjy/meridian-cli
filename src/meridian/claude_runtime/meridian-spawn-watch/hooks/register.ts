@@ -11,7 +11,9 @@ import type { EngineInterface, Register } from 'claude-code'
 // `/meridian-spawn-watch` prints them on request.
 //
 // One idle stretch is one `Run`: a 2 s delay, the collector, a hold while the user types, the submit.
-// A main-loop `turn.start` aborts it wherever it is; aborting the collector's read loop kills the child.
+// A stretch begins when a main-loop turn ends, and when the session starts: a resumed, fresh or reloaded
+// session is idle with no turn to end, and results may already be owed. A main-loop `turn.start` aborts
+// the run wherever it is; aborting the collector's read loop kills the child.
 //
 // Consumption is acked only once the lead has the text. The ids of a delivery are claimed in memory
 // from the moment the collector returns, so a collector started meanwhile excludes them, and the ack
@@ -19,7 +21,7 @@ import type { EngineInterface, Register } from 'claude-code'
 // never-started prompt is never acked.
 
 const COMMAND = 'meridian-spawn-watch'
-/** The idle signal is a turn ending; a queued prompt starts its turn within this, so it costs no process. */
+/** The idle signal is a turn ending or the session starting; a queued prompt starts its turn within this, so it costs no process. */
 const IDLE_DELAY_MS = 2_000
 /** The prompt box must be empty and untouched this long before a delivery starts a turn under the user. */
 const QUIET_MS = 10_000
@@ -324,15 +326,20 @@ function mainTurnStarted($: EngineInterface, s: State, text: string): void {
   }
 }
 
+/** Begins an idle stretch, replacing the one in flight. Returns at once; the run's failures only reach the log. */
+function startRun($: EngineInterface, s: State): void {
+  endRun(s)
+  const run: Run = { ctl: new AbortController(), phase: 'delay' }
+  s.run = run
+  void idleRun($, s, run)
+}
+
 async function mainTurnCompleted($: EngineInterface, s: State): Promise<void> {
   const epoch = s.epoch
   if (!(await active($, s))) return
   await ensureCommand($, s)
   if (s.epoch !== epoch) return // a turn started while we were asking; the stretch is not idle
-  endRun(s)
-  const run: Run = { ctl: new AbortController(), phase: 'delay' }
-  s.run = run
-  void idleRun($, s, run)
+  startRun($, s)
 }
 
 function boxTouched($: EngineInterface, s: State): void {
@@ -364,7 +371,12 @@ export const register: Register = on => {
     try {
       s.startSeen = true
       if (e.isInteractive === false || e.surface === null) s.inert = true
-      else background($, s, 'setup', () => ensureCommand($, s))
+      else {
+        background($, s, 'setup', () => ensureCommand($, s))
+        // The session is idle until its first prompt: a resumed chat may owe results from before. `startRun` does
+        // not wait, so session.start stays unblocked; the first main-loop turn.start aborts the run.
+        startRun($, s)
+      }
     } catch (err) {
       note($, s, `session.start error: ${describeError(err)}`)
     }
