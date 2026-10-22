@@ -13,9 +13,11 @@ import psutil
 from pydantic import Field, StrictInt
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.json_doc import VersionedPrivateDoc, mutate_model, read_model
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import observed_spawns_path
+from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_aggregate import (
     PublishedArtifactUnavailable,
     published_artifact_lock,
@@ -45,17 +47,19 @@ def _read(path: Path, parent_spawn_id: str) -> SpawnObservations | None:
     return observations
 
 
+def _legacy_dir(runtime_root: Path, parent_spawn_id: str) -> Path:
+    return runtime_root / "pi-bash" / parent_spawn_id
+
+
 def read_legacy(runtime_root: Path, parent_spawn_id: str) -> SpawnObservations | None:
     """Read the pre-``spawns/<parent>/`` file; a damaged copy counts as absent.
 
     Builds from before the move wrote ``pi-bash/<parent>/observed-spawns.json``, and
-    a ``spawn wait`` started by one may still be writing it. Nothing here writes or
-    deletes it, so a damaged copy is never repaired.
+    a ``spawn wait`` started by one may still be writing it. Nothing here deletes it.
     """
 
-    return _read(
-        runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.json", parent_spawn_id
-    )
+    legacy_path = _legacy_dir(runtime_root, parent_spawn_id) / "observed-spawns.json"
+    return _read(legacy_path, parent_spawn_id)
 
 
 def _documents(runtime_root: Path, parent_spawn_id: str) -> tuple[SpawnObservations, ...]:
@@ -77,8 +81,8 @@ def record(
 ) -> bool:
     """Record results consumed by a parent or leased by its explicit wait.
 
-    Returns ``False`` only when the parent's published row is gone, so nothing was
-    written; there is no parent left to deliver to.
+    Returns ``False`` when the parent's published row is gone or unreadable, so
+    nothing was written; no reader selects that parent's children.
     """
 
     waiting_add_ids = tuple(waiting_add)
@@ -143,8 +147,21 @@ def record(
             read_current=lambda: _read(path, parent_spawn_id),
             indent=2,
         )
-    except PublishedArtifactUnavailable:
+    except (PublishedArtifactUnavailable, SpawnStateQuarantined):
         return False
+    # A Pi session started by an older build reads only the legacy file and outlives
+    # the upgrade, so mirror the update there wherever Pi already keeps that directory.
+    legacy_dir = _legacy_dir(runtime_root, parent_spawn_id)
+    if legacy_dir.is_dir():
+        legacy_path = legacy_dir / "observed-spawns.json"
+        mutate_model(
+            legacy_path,
+            SpawnObservations,
+            update,
+            lock=lock_file(legacy_dir / "observed-spawns.lock"),
+            read_current=lambda: _read(legacy_path, parent_spawn_id),
+            indent=2,
+        )
     return True
 
 

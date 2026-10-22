@@ -10,12 +10,14 @@ Pi, although `spawn wait`, `spawn ack` and `spawn collect` use it for every harn
 
 **What changed**
 
-- `spawn wait`, `spawn ack` and the Pi extension write only the new location.
+- `spawn wait` and `spawn ack` write the new location. Where a Pi session keeps a
+  `pi-bash/<parent>/` directory, they also update the old file, so a Pi session
+  started before the upgrade still sees results consumed after it.
 - Every reader also reads the old `pi-bash/<parent>/observed-spawns.json` and honors
   its consumed IDs and live waits, so results already consumed stay consumed and a
   `spawn wait` still running from the old build keeps holding its children. A
   damaged old file counts as empty.
-- Nothing deletes or rewrites the old file. Its location is read for one release.
+- Nothing deletes the old file. It is read, and mirrored for Pi parents, for one release.
 
 **Before installing**
 
@@ -24,10 +26,11 @@ keeps running through the upgrade is still honored.
 
 **Rolling back**
 
-An older build reads only the old location, so results consumed after the upgrade
-look unconsumed to it: `spawn collect` or the Pi spawn watcher can deliver them
-again once. Waits started after the upgrade are invisible to it for the same reason.
-No data is lost or corrupted; older builds ignore the extra file in the spawn directory.
+An older build reads only the old location. Pi parents' records are mirrored there,
+so nothing changes for them. For other parents (Claude primaries), results consumed
+after the upgrade look unconsumed to the older build, and `spawn collect` can deliver
+them again once. No data is lost or corrupted; older builds ignore the extra file in
+the spawn directory.
 
 ## Session browse redesign (history index schema 12)
 
