@@ -3,7 +3,12 @@ import { promisify } from "node:util";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { readPrivateJson, writeJsonAtomic } from "./json_file";
-import { currentSpawnIdFromEnv, resolveDeliveryReceiptsPath, resolveObservedSpawnsPath } from "./pi_state_paths";
+import {
+  currentSpawnIdFromEnv,
+  resolveDeliveryReceiptsPath,
+  resolveLegacyObservedSpawnsPath, // legacy-observed-spawns (#719)
+  resolveObservedSpawnsPath,
+} from "./pi_state_paths";
 import type { DeliveryReceiptsFile, ObservedSpawnsFile } from "./schemas";
 
 const execFileAsync = promisify(execFile);
@@ -43,7 +48,7 @@ export function admittedWorkIds(receipts: DeliveryReceiptsFile): Set<string> {
   return new Set(Object.values(receipts.messages).flat());
 }
 
-export async function readSpawnObservations(spawnId = currentSpawnIdFromEnv(), file = resolveObservedSpawnsPath(spawnId)): Promise<ObservedSpawnsFile> {
+async function readObservationsFile(file: string, spawnId: string): Promise<ObservedSpawnsFile> {
   const value = await readPrivateJson(file);
   if (value === undefined) return { v: 1, spawn_id: spawnId, updated_at_ms: 0, observed_spawn_ids: [] };
   if (!Value.Check(ObservedSchema, value) || value.spawn_id !== spawnId) throw Error("invalid spawn observations");
@@ -52,6 +57,34 @@ export async function readSpawnObservations(spawnId = currentSpawnIdFromEnv(), f
     if (![lease.owner_birth_epoch, lease.expires_at_epoch].every(Number.isFinite)) throw Error("invalid wait lease");
   }
   return { updated_at_ms: 0, ...value };
+}
+
+/**
+ * legacy-observed-spawns (#719)
+ * A `spawn wait` from a build before the move may still write the old file.
+ * Compatibility reads do not repair it, so damaged content counts as absent;
+ * an I/O failure (which carries an errno code) is still unknown. A later mirrored
+ * record may replace the damaged copy.
+ */
+async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFile> {
+  try { return await readObservationsFile(resolveLegacyObservedSpawnsPath(spawnId), spawnId); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== undefined) throw error;
+    return { v: 1, spawn_id: spawnId, updated_at_ms: 0, observed_spawn_ids: [] };
+  }
+}
+
+/** legacy-observed-spawns (#719): Merge consumed ids and leases from both files. */
+export async function readSpawnObservations(spawnId = currentSpawnIdFromEnv()): Promise<ObservedSpawnsFile> {
+  const current = await readObservationsFile(resolveObservedSpawnsPath(spawnId), spawnId);
+  const legacy = await readLegacyObservations(spawnId);
+  const legacyLeases = Object.entries(legacy.wait_reservations ?? {}).map(([token, lease]) => [`legacy:${token}`, lease] as const);
+  return {
+    v: 1, spawn_id: spawnId,
+    updated_at_ms: Math.max(current.updated_at_ms, legacy.updated_at_ms),
+    observed_spawn_ids: [...current.observed_spawn_ids, ...legacy.observed_spawn_ids],
+    wait_reservations: { ...Object.fromEntries(legacyLeases), ...current.wait_reservations },
+  };
 }
 
 export async function reservedSpawnIds(observed: ObservedSpawnsFile): Promise<Set<string>> {

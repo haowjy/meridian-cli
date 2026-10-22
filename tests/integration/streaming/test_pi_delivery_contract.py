@@ -15,7 +15,7 @@ from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.drain_policy import DrainAction
 from tests.support.history import warm_history_index
-from tests.support.pi import PiDrainScenario, pi_event
+from tests.support.pi import PiDrainScenario, pi_event, write_json
 
 
 def write_private(root: Path, name: str, value: object) -> None:
@@ -230,9 +230,8 @@ async def test_child_result_is_owed_without_origin_log_or_bash_record(
     try:
         await started.terminal()
         assert await settle(started) is None
-        write_private(
-            tmp_path,
-            "observed-spawns.json",
+        write_json(
+            tmp_path / "spawns" / "p1" / "observed-spawns.json",
             {
                 "v": 1,
                 "spawn_id": "p1",

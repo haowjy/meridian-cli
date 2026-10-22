@@ -53,6 +53,13 @@ Result fetchers that do not consume a parent's completion notification must use
 `SpawnWaitInput(observe=False)` (`spawn wait --no-observe`). Normal waits observe
 by default; formatting a notification is not delivery.
 
+Hidden `spawn collect` is the idle-runtime counterpart, not another wait mode. It
+discovers background direct children of every primary generation in the caller's
+chat, subtracts durable observations before authority reads, skips live explicit-wait
+leases, and consumes nothing. If a result was already terminal it returns the terminal
+subset immediately; otherwise it waits for the owed set to finish. Hidden `spawn ack`
+records the delivered IDs only after the harness admits their message.
+
 ## Stored vs Derived Status
 
 Use `read_derived()` / `overlay_derived()` for liveness, display, wait, and idle.

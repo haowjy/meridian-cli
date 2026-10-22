@@ -633,7 +633,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
             origin="runner",
         )
         _write_json(
-            tmp_path / "pi-bash" / str(spawn_id) / "observed-spawns.json",
+            tmp_path / "spawns" / str(spawn_id) / "observed-spawns.json",
             {
                 "v": 1,
                 "spawn_id": str(spawn_id),

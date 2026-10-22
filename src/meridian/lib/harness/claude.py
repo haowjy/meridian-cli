@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import ClassVar
 from uuid import uuid4
 
+from meridian.lib.config.loader import load_launch_config
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
@@ -95,6 +96,8 @@ from meridian.lib.launch.launch_types import (
 from meridian.lib.launch.request import SessionRequest
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
+_IDLE_PLUGIN = "meridian-idle"
+_SPAWN_WATCH_PLUGIN = "meridian-spawn-watch"
 
 
 def build_claude_adhoc_agent_json(
@@ -258,9 +261,11 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         prompt_file_path: str | None = None
         # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
-        plugin_names = (
-            (_BOUNDARY_PLUGIN, "meridian-idle") if run.interactive else (_BOUNDARY_PLUGIN,)
-        )
+        plugin_names = (_BOUNDARY_PLUGIN,)
+        if run.interactive:
+            plugin_names += (_IDLE_PLUGIN,)
+            if load_launch_config(run.control_root).harness.claude.spawn_watch.enabled:
+                plugin_names += (_SPAWN_WATCH_PLUGIN,)
         return ResolvedLaunchSpec(
             harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,

@@ -33,6 +33,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Native sub-agent denies (`Agent`, `Task*`) hold under `'*': deny`: they were left out of Claude's argv for such a profile, and the platform rule was not built for `task`.
 - Tools reach the harness under their real names. Claude: `web` denies `WebSearch`/`WebFetch` (was `Websearch`), `ask_user` denies `AskUserQuestion` (was `Askuser`), `edit` covers `Edit`/`Write`/`NotebookEdit`, scoped Bash uses `Bash(git push *)`, scoped `write`/`edit`/`notebook` use `Edit(path)` and scoped `read`/`glob`/`grep` use `Read(path)` (the only path rules Claude checks) while a `*: deny` allowlist keeps `Write`/`Grep` in `--tools`, `agent` includes `SendMessage`/`ListAgents`, and MCP refs use case-preserving `mcp__server__tool`. OpenCode: `read`, `question`, `task`, `websearch`, `webfetch`, and `server_tool` MCP names replace Meridian's guesses.
 
+## [0.11.10] - 2026-10-22
+
+### Changed
+- Which child results a parent already consumed, and which a running `spawn wait` holds, now live in `spawns/<parent>/observed-spawns.json` instead of `pi-bash/<parent>/`, for every harness. Old file still read for one release, and still updated for Pi parents; never deleted. Rollback may redeliver a non-Pi parent's results consumed after upgrade, once. See [upgrade note](docs/upgrading.md#spawn-results-consumed-by-a-parent-moved-to-spawnsparent).
+
+## [0.11.9] - 2026-10-22
+
+### Added
+- Interactive Claude primaries can receive completed background Meridian spawn
+  results while idle; `harness.claude.spawn_watch.enabled` controls the watcher
+  and defaults to enabled.
+
 ## [0.11.8] - 2026-10-21
 
 ### Added

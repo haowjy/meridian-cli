@@ -80,6 +80,26 @@ def _run_json_list(
     return payload
 
 
+def _run_default_json(
+    project_root: Path,
+    env: dict[str, str],
+    *args: str,
+) -> dict[str, Any]:
+    result = subprocess.run(
+        [sys.executable, "-m", "meridian", *args],
+        cwd=project_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert isinstance(payload, dict)
+    return payload
+
+
 def _assert_noisy_keys_absent(payload: object) -> None:
     if isinstance(payload, dict):
         assert _NOISY_KEYS.isdisjoint(payload)
@@ -272,6 +292,59 @@ def test_spawn_wait_json_contract(
     } <= payload.keys()
     assert {"spawn_id", "status", "model", "harness"} <= payload["spawns"][0].keys()
     _assert_noisy_keys_absent(payload)
+
+
+@pytest.mark.integration
+@posix_only
+def test_spawn_collect_and_ack_json_contract(
+    cli_project: tuple[Path, dict[str, str], Path],
+) -> None:
+    project_root, env, runtime_root = cli_project
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p1",
+        chat_id="c-owed",
+        model="claude-haiku-5-5",
+        agent="primary",
+        harness="claude",
+        kind="primary",
+        prompt="Coordinate work.",
+        launch_mode="foreground",
+    )
+    spawn_store.finalize_spawn(runtime_root, "p1", "succeeded", 0, origin="runner")
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p2",
+        chat_id="c-child",
+        owner_chat_id="c-owed",
+        parent_id="p1",
+        model="claude-haiku-5-5",
+        agent="coder",
+        harness="claude",
+        prompt="Report a result.",
+        launch_mode="background",
+    )
+    spawn_store.finalize_spawn(runtime_root, "p2", "succeeded", 0, origin="runner")
+    (runtime_root / "spawns" / "p2" / "report.md").write_text(
+        "Delivered from the child.\n",
+        encoding="utf-8",
+    )
+    env.update({"MERIDIAN_CHAT_ID": "c-owed", "MERIDIAN_SPAWN_ID": "p1"})
+
+    delivered = _run_default_json(project_root, env, "spawn", "collect")
+    assert set(delivered) == {"kind", "ids", "text"}
+    assert delivered["kind"] == "delivery"
+    assert delivered["ids"] == ["p2"]
+    assert "Delivered from the child." in delivered["text"]
+    assert delivered["text"].endswith("meridian spawn show p2")
+
+    acked = _run_default_json(project_root, env, "spawn", "ack", "p2")
+    assert acked == {"acked": ["p2"]}
+    assert _run_default_json(project_root, env, "spawn", "collect") == {
+        "kind": "empty",
+        "ids": [],
+        "text": "",
+    }
 
 
 @pytest.mark.integration

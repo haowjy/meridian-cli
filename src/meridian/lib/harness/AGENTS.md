@@ -248,10 +248,12 @@ parent report.
   → [passthrough/AGENTS.md](passthrough/AGENTS.md)
 
 Interactive Claude primaries receive the bundled
-`../../claude_runtime/meridian-idle/` mod. Pi primaries receive the fourth
+`../../claude_runtime/meridian-idle/` mod and, unless
+`harness.claude.spawn_watch.enabled = false`, the bundled
+`../../claude_runtime/meridian-spawn-watch/` mod. Pi primaries receive the fourth
 bundled extension, `../../pi_runtime/extensions/meridian-idle/`; spawned Pi RPC
-sessions do not. Those runtimes translate native events into the same core idle
-contract rather than owning policy.
+sessions do not. Those runtimes translate native events into core contracts
+rather than owning policy.
 
 Primary TUI injection routes through `HarnessBundle.primary_inbox`; see the
 [primary inbox contract](.context/CONTEXT.md#primary-inbox-injection).

@@ -388,3 +388,9 @@ def resolve_ambient_work_dir(
 
 def pi_lifecycle_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     return runtime_root / "spawns" / str(spawn_id) / "pi-lifecycle.json"
+
+
+def observed_spawns_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+    """Consumed-result and wait-lease record owned by one parent spawn."""
+
+    return runtime_root / "spawns" / str(spawn_id) / "observed-spawns.json"

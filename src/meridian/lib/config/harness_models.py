@@ -133,8 +133,8 @@ class OpenCodeHarnessProfileBase(HarnessProfileConfig):
         return normalized
 
 
-class PiBundleToggleConfig(ConfigModel):
-    """Per-bundle enable switch under ``[harness.pi]``."""
+class BundleToggleConfig(ConfigModel):
+    """Enable switch shared by harness-owned runtime bundles."""
 
     config_silences_extras: ClassVar[bool] = True
 
@@ -143,13 +143,19 @@ class PiBundleToggleConfig(ConfigModel):
     enabled: bool = True
 
 
+class ClaudeHarnessProfileBase(HarnessProfileConfig):
+    """Claude-only profile fields used by the generated harness model."""
+
+    spawn_watch: BundleToggleConfig = Field(default_factory=BundleToggleConfig)
+
+
 class PiHarnessProfileBase(HarnessProfileConfig):
     """Pi-only profile fields used by the generated harness model."""
 
     load_all_pi_extensions: bool = False
     extra_extension_paths: tuple[str, ...] = ()
-    background_tasks: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
-    spawn_watch: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
+    background_tasks: BundleToggleConfig = Field(default_factory=BundleToggleConfig)
+    spawn_watch: BundleToggleConfig = Field(default_factory=BundleToggleConfig)
     disable_managed_bash: bool = False
 
     @field_validator("extra_extension_paths", mode="before")
@@ -227,12 +233,12 @@ def harness_profile_model(
 
 
 if TYPE_CHECKING:
-    ClaudeHarnessProfileConfig = HarnessProfileConfig
+    ClaudeHarnessProfileConfig = ClaudeHarnessProfileBase
     CodexHarnessProfileConfig = HarnessProfileConfig
     OpenCodeHarnessProfileConfig = OpenCodeHarnessProfileBase
     PiHarnessProfileConfig = PiHarnessProfileBase
 else:
-    ClaudeHarnessProfileConfig = harness_profile_model("claude")
+    ClaudeHarnessProfileConfig = harness_profile_model("claude", base=ClaudeHarnessProfileBase)
     CodexHarnessProfileConfig = harness_profile_model(
         "codex",
         idle_defaults={"ttl_seconds": 1800},

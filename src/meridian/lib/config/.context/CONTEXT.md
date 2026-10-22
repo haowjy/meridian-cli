@@ -113,6 +113,13 @@ time. These follow the same pattern: ambient config snapshot → launch-time env
 Called from `bind_launch_context()` in `lib/launch/context.py` and threaded
 into the harness adapter's `resolve_launch_spec()`.
 
+Claude's adapter resolves `[harness.claude].spawn_watch` directly from
+`SpawnParams.control_root` when it selects interactive-primary runtime plugins.
+This keeps a Claude-only bundle toggle out of the shared `SpawnParams` surface.
+`load_launch_config()` turns a control root into config, falling back to ambient
+project-root resolution when it is absent; Pi's adapter uses the same path when
+no launch snapshot profile was threaded in.
+
 Claude native Agent routing has separate controls. The `[harness.claude]` table's
 `allow_builtin_agents` option controls the scoped built-in `Agent(...)` denies
 (default `false`). Generic `Agent` permission follows Mars

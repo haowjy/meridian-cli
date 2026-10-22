@@ -30,7 +30,10 @@ from meridian.lib.config.models import (
 from meridian.lib.config.project_paths import (
     ProjectConfigPaths,
 )
-from meridian.lib.config.project_root import resolve_user_config_path
+from meridian.lib.config.project_root import (
+    resolve_project_root_resolution,
+    resolve_user_config_path,
+)
 from meridian.lib.config.schema import parse_env_scalar, parse_toml_scalar
 from meridian.lib.utils.json_shapes import is_json_object
 
@@ -397,21 +400,27 @@ def _truthy_env_value(raw_value: str) -> bool:
     return raw_value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
+def load_launch_config(project_root: str | Path | None = None) -> MeridianConfig:
+    """Load config for a launch's control root, else for the ambient project."""
+
+    root = str(project_root or "").strip()
+    if not root:
+        return load_config(resolve_project_root_resolution().project_root)
+    return load_config(Path(root).expanduser().resolve())
+
+
 def resolve_pi_harness_profile(
     *,
     base_profile: PiHarnessProfileConfig | None = None,
-    project_root: Path | None = None,
+    project_root: str | Path | None = None,
 ) -> PiHarnessProfileConfig:
     """Resolve ``[harness.pi]`` with optional launch snapshot and env overrides."""
 
-    if base_profile is not None:
-        profile = base_profile
-    elif project_root is not None:
-        profile = load_config(project_root).harness.pi
-    else:
-        from meridian.lib.config.project_root import resolve_project_root_resolution
-
-        profile = load_config(resolve_project_root_resolution().project_root).harness.pi
+    profile = (
+        base_profile
+        if base_profile is not None
+        else load_launch_config(project_root).harness.pi
+    )
 
     raw_load_all = os.getenv("MERIDIAN_PI_LOAD_ALL_EXTENSIONS")
     if raw_load_all is not None:
