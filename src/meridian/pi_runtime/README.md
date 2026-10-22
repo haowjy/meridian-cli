@@ -22,6 +22,14 @@ retain native skill, context-file, and prompt-template discovery.
 Spawned RPC suppresses ambient extensions unless `load_all_pi_extensions = true`.
 See the [integration contract](../lib/harness/.context/pi-integration.md).
 
+For restricted Bash, meridian-permissions recognizes plain words, single quotes,
+non-expanding double quotes, and `&&`, `||`, `;`, `|`, or newline separators.
+Expansion, substitution, redirection, backgrounding, grouping, and other shell
+syntax are refused before rule matching. Completion grants cover only a whole
+`meridian spawn done` or `meridian spawn rearm` command with simple arguments.
+Scoped file paths and rule roots are resolved against the working directory and
+existing symlinks before matching.
+
 Meridian-idle marks every core call `--interactive`. User input cancels timers
 synchronously and queues its return behind any in-flight arm without awaiting the
 CLI. Due push/warn timers call `meridian idle fire`; the core decides whether to

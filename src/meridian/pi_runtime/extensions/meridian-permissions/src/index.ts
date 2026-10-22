@@ -2,9 +2,39 @@ import type {
   ExtensionAPI,
   ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, parse, resolve, sep } from "node:path";
 
 const POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY";
 const DENIAL_PREFIX = "Blocked by Meridian policy: ";
+const SIMPLE_COMMAND_REASON = `${DENIAL_PREFIX}restricted bash accepts only simple commands; run simple commands without expansion, redirection, or backgrounding.`;
+const COMPLETION_COMMANDS = new Set([
+  "meridian spawn done",
+  "meridian spawn rearm",
+]);
+const PATH_TOOLS = new Set(["read", "edit", "write", "grep", "find", "ls"]);
+const SHELL_RESERVED_WORDS = new Set([
+  "!",
+  "[[",
+  "]]",
+  "case",
+  "coproc",
+  "do",
+  "done",
+  "elif",
+  "else",
+  "esac",
+  "fi",
+  "for",
+  "function",
+  "if",
+  "in",
+  "select",
+  "then",
+  "time",
+  "until",
+  "while",
+]);
 
 type ToolAction = "allow" | "ask" | "deny";
 
@@ -35,13 +65,15 @@ type RankedDecision = PermissionDecision & {
 };
 
 type SplitResult = { commands: string[]; complete: boolean };
+type ShellWord = { value: string; quoted: boolean };
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function parsePolicy(raw: string | undefined): PermissionPolicy | undefined {
-  if (!raw?.trim()) return undefined;
+  if (raw === undefined) return undefined;
+  if (!raw.trim()) throw new Error("Pi permission policy is empty");
   const value: unknown = JSON.parse(raw);
   if (typeof value !== "object" || value === null) throw new Error("Pi permission policy is not an object");
   const policy = value as Partial<PermissionPolicy>;
@@ -52,6 +84,8 @@ function parsePolicy(raw: string | undefined): PermissionPolicy | undefined {
     || !isStringArray(policy.completion_commands)
     || typeof policy.headless_reject_reason !== "string"
     || !policy.headless_reject_reason.trim()
+    || policy.allowlist_tools.some((tool) => !tool.trim())
+    || policy.completion_commands.some((command) => !COMPLETION_COMMANDS.has(command))
   ) {
     throw new Error("Pi permission policy has an unsupported shape");
   }
@@ -60,10 +94,14 @@ function parsePolicy(raw: string | undefined): PermissionPolicy | undefined {
       typeof rule !== "object"
       || rule === null
       || typeof rule.capability !== "string"
+      || !rule.capability.trim()
       || typeof rule.tool !== "string"
+      || !rule.tool.trim()
       || (rule.pattern !== undefined && rule.pattern !== null && typeof rule.pattern !== "string")
+      || (typeof rule.pattern === "string" && !rule.pattern.trim())
       || !["allow", "ask", "deny"].includes(rule.action)
       || typeof rule.label !== "string"
+      || !rule.label.trim()
     ) {
       throw new Error("Pi permission policy contains an invalid rule");
     }
@@ -104,6 +142,7 @@ function policyDecision(
   tool: string,
   scope: string | undefined,
   detail: string,
+  workingDirectory: string,
 ): PermissionDecision | undefined {
   const candidates = policy.rules.filter((rule) => rule.tool === tool || rule.tool === "*");
   const scoped = candidates.filter((rule) => rule.pattern != null);
@@ -117,7 +156,12 @@ function policyDecision(
 
   let winner: RankedDecision | undefined;
   for (const rule of candidates) {
-    if (rule.pattern != null && (scope === undefined || !globMatches(rule.pattern, scope))) continue;
+    if (rule.pattern != null) {
+      const pattern = PATH_TOOLS.has(tool)
+        ? normalizePathPattern(rule.pattern, workingDirectory)
+        : rule.pattern;
+      if (scope === undefined || pattern === undefined || !globMatches(pattern, scope)) continue;
+    }
     const decision: RankedDecision = {
       action: rule.action,
       detail,
@@ -142,103 +186,100 @@ function policyDecision(
   return undefined;
 }
 
-function matchingClose(source: string, opening: number): number | undefined {
-  let depth = 1;
-  let quote: "'" | '"' | null = null;
-  let escaped = false;
-  for (let index = opening + 1; index < source.length; index += 1) {
-    const character = source[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (character === "\\" && quote !== "'") {
-      escaped = true;
-      continue;
-    }
-    if (character === "'" && quote !== '"') {
-      quote = quote === "'" ? null : "'";
-      continue;
-    }
-    if (character === '"' && quote !== "'") {
-      quote = quote === '"' ? null : '"';
-      continue;
-    }
-    if (quote !== null) continue;
-    if (character === "(") depth += 1;
-    if (character === ")") {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
-  }
-  return undefined;
+function isAssignment(word: ShellWord): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*=/u.test(word.value);
 }
 
 function splitShellInto(source: string, commands: string[]): boolean {
   let current = "";
   let quote: "'" | '"' | null = null;
-  let escaped = false;
-  const flush = (): void => {
+  let word = "";
+  let wordStarted = false;
+  let wordQuoted = false;
+  let words: ShellWord[] = [];
+  let commandRequired = false;
+  const finishWord = (): void => {
+    if (!wordStarted) return;
+    words.push({ value: word, quoted: wordQuoted });
+    word = "";
+    wordStarted = false;
+    wordQuoted = false;
+  };
+  const flush = (): boolean => {
+    finishWord();
     const command = current.trim();
-    if (command) commands.push(command);
+    if (!command) return false;
+    const executable = words.find((candidate) => !isAssignment(candidate));
+    if (executable !== undefined
+      && !executable.quoted
+      && SHELL_RESERVED_WORDS.has(executable.value)) {
+      return false;
+    }
+    commands.push(command);
     current = "";
+    words = [];
+    commandRequired = false;
+    return true;
   };
 
   for (let index = 0; index < source.length; index += 1) {
     const character = source[index];
-    if (escaped) {
+    if (quote === "'") {
       current += character;
-      escaped = false;
+      if (character === "'") quote = null;
+      else word += character;
       continue;
     }
-    if (character === "\\" && quote !== "'") {
+    if (quote === '"') {
       current += character;
-      escaped = true;
+      if (character === '"') {
+        quote = null;
+      } else if (character === "$" || character === "`" || character === "\\") {
+        return false;
+      } else {
+        word += character;
+      }
       continue;
     }
-    if (character === "'" && quote !== '"') {
-      quote = quote === "'" ? null : "'";
+    if (character === "'" || character === '"') {
+      quote = character;
       current += character;
+      wordStarted = true;
+      wordQuoted = true;
+      commandRequired = false;
       continue;
     }
-    if (character === '"' && quote !== "'") {
-      quote = quote === '"' ? null : '"';
-      current += character;
-      continue;
-    }
-    if (character === "$" && source[index + 1] === "(" && quote !== "'") {
-      const close = matchingClose(source, index + 1);
-      if (close === undefined) return false;
-      if (!splitShellInto(source.slice(index + 2, close), commands)) return false;
-      current += " substitution";
-      index = close;
-      continue;
-    }
-    if (character === "`" && quote !== "'") {
-      const close = source.indexOf("`", index + 1);
-      if (close < 0 || !splitShellInto(source.slice(index + 1, close), commands)) return false;
-      current += " substitution";
-      index = close;
-      continue;
-    }
-    if (quote !== null) {
+    if ("\\$`()<>#{}`".includes(character)) return false;
+    if (character === "\r") return false;
+    if (character === " " || character === "\t") {
+      finishWord();
       current += character;
       continue;
     }
-    if (character === ";" || character === "\n" || character === "|" || character === "&") {
-      flush();
-      if ((character === "|" || character === "&") && source[index + 1] === character) index += 1;
+    if (character === "\n") {
+      if (current.trim() && !flush()) return false;
       continue;
     }
-    if (character === "(" || character === ")") {
-      flush();
+    if (character === ";") {
+      if (!flush()) return false;
+      continue;
+    }
+    if (character === "|" || character === "&") {
+      const doubled = source[index + 1] === character;
+      if (character === "&" && !doubled) return false;
+      if (!flush()) return false;
+      if (doubled) index += 1;
+      commandRequired = true;
       continue;
     }
     current += character;
+    word += character;
+    wordStarted = true;
+    commandRequired = false;
   }
-  if (quote !== null || escaped) return false;
-  flush();
-  return true;
+  if (quote !== null || commandRequired) return false;
+  if (current.trim()) return flush();
+  return commands.length > 0;
 }
 
 export function splitShellCommands(source: string): SplitResult {
@@ -246,7 +287,53 @@ export function splitShellCommands(source: string): SplitResult {
   return { commands, complete: splitShellInto(source, commands) };
 }
 
-function scopeValue(tool: string, input: Record<string, unknown>): string | undefined {
+function canonicalPath(path: string): string | undefined {
+  let cursor = path;
+  const unresolved: string[] = [];
+  let symlinksFollowed = 0;
+  while (true) {
+    try {
+      return resolve(realpathSync.native(cursor), ...unresolved.reverse());
+    } catch {
+      try {
+        if (lstatSync(cursor).isSymbolicLink()) {
+          symlinksFollowed += 1;
+          if (symlinksFollowed > 40) return undefined;
+          cursor = anchorPath(readlinkSync(cursor), dirname(cursor));
+          continue;
+        }
+      } catch {
+        // Walk to the nearest existing ancestor below.
+      }
+      const parent = dirname(cursor);
+      if (parent === cursor) return undefined;
+      unresolved.push(basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+
+function anchorPath(path: string, workingDirectory: string): string {
+  if (isAbsolute(path)) return path;
+  const anchor = resolve(workingDirectory);
+  return anchor.endsWith(sep) ? anchor + path : anchor + sep + path;
+}
+
+function normalizePathScope(path: string, workingDirectory: string): string | undefined {
+  return canonicalPath(anchorPath(path, workingDirectory));
+}
+
+function normalizePathPattern(pattern: string, workingDirectory: string): string | undefined {
+  const absolute = anchorPath(pattern, workingDirectory);
+  const wildcard = absolute.indexOf("*");
+  if (wildcard < 0) return canonicalPath(absolute);
+  const boundary = absolute.lastIndexOf(sep, wildcard);
+  const root = boundary <= 0 ? parse(absolute).root : absolute.slice(0, boundary);
+  const canonicalRoot = canonicalPath(root);
+  return canonicalRoot === undefined ? undefined : canonicalRoot + absolute.slice(boundary);
+}
+
+function rawScopeValue(tool: string, input: Record<string, unknown>): string | undefined {
   if (tool === "bash") return typeof input.command === "string" ? input.command : undefined;
   if (["read", "edit", "write"].includes(tool)) {
     return typeof input.path === "string" ? input.path : undefined;
@@ -257,45 +344,66 @@ function scopeValue(tool: string, input: Record<string, unknown>): string | unde
   return undefined;
 }
 
+function scopeValue(
+  tool: string,
+  input: Record<string, unknown>,
+  workingDirectory: string,
+): string | undefined {
+  const scope = rawScopeValue(tool, input);
+  return scope !== undefined && PATH_TOOLS.has(tool)
+    ? normalizePathScope(scope, workingDirectory)
+    : scope;
+}
+
 function callDetail(tool: string, input: Record<string, unknown>): string {
-  return scopeValue(tool, input) ?? tool;
+  return rawScopeValue(tool, input) ?? tool;
 }
 
 function isCompletionCommand(policy: PermissionPolicy, command: string): boolean {
-  return policy.completion_commands.some(
-    (candidate) => command === candidate || command.startsWith(`${candidate} `),
-  );
+  return policy.completion_commands.some((candidate) => {
+    const escaped = candidate.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+    return new RegExp(`^${escaped}(?:[ \\t]+[A-Za-z0-9_.-]+)*$`, "u").test(command);
+  });
+}
+
+function bashIsRestricted(policy: PermissionPolicy): boolean {
+  return policy.allowlist_tools.length > 0
+    || policy.rules.some((rule) => (
+      (rule.tool === "bash" || rule.tool === "*")
+      && (rule.pattern != null || rule.action !== "allow")
+    ));
 }
 
 export function decideToolCall(
   policy: PermissionPolicy,
   tool: string,
   input: Record<string, unknown>,
+  workingDirectory = process.cwd(),
 ): PermissionDecision | undefined {
-  const scope = scopeValue(tool, input);
+  const scope = scopeValue(tool, input, workingDirectory);
   const detail = callDetail(tool, input);
-  if (tool !== "bash") return policyDecision(policy, tool, scope, detail);
+  if (tool !== "bash") return policyDecision(policy, tool, scope, detail, workingDirectory);
 
-  const bashIsRestricted = policy.allowlist_tools.includes("bash")
-    || policy.rules.some((rule) => rule.tool === "bash" || rule.tool === "*");
+  const restricted = bashIsRestricted(policy);
   if (scope === undefined) {
-    return bashIsRestricted
+    return restricted
       ? { action: "deny", detail, reason: `${DENIAL_PREFIX}the bash command could not be evaluated.` }
       : undefined;
   }
 
   const split = splitShellCommands(scope);
   if (!split.complete || split.commands.length === 0) {
-    return bashIsRestricted
-      ? { action: "deny", detail, reason: `${DENIAL_PREFIX}the bash command could not be evaluated.` }
+    return restricted
+      ? { action: "deny", detail, reason: SIMPLE_COMMAND_REASON }
       : undefined;
   }
 
-  const decisions = split.commands.map((command) => (
-    isCompletionCommand(policy, command)
-      ? { action: "allow" as const, detail, reason: "Meridian completion command" }
-      : policyDecision(policy, tool, command, detail)
-  ));
+  if (split.commands.length === 1 && isCompletionCommand(policy, split.commands[0])) {
+    return { action: "allow", detail, reason: "Meridian completion command" };
+  }
+  const decisions = split.commands.map(
+    (command) => policyDecision(policy, tool, command, detail, workingDirectory),
+  );
   return decisions.find((decision) => decision?.action === "deny")
     ?? decisions.find((decision) => decision?.action === "ask")
     ?? decisions.find((decision) => decision?.action === "allow");

@@ -66,6 +66,17 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
 child-spawn observation and notification behavior belong in spawn-watch.
 
+The permissions extension never tries to understand arbitrary shell. Whenever Bash has
+a scoped rule, a tool allowlist, `ask`, or `deny`, it accepts only simple words,
+single quotes, double quotes without expansion/escaping, and the separators `&&`, `||`,
+`;`, `|`, and newline. It refuses all other syntax before rule matching. A completion
+backstop applies only when the entire input is one `meridian spawn done` or `meridian
+spawn rearm` command whose optional arguments contain only letters, digits, `_`, `.`,
+or `-`. File-tool scopes canonicalize the requested path and the rule's non-wildcard
+root against the process cwd, resolving existing symlinks. Pi follows OpenCode's
+wildcard meaning — `*` can cross `/` — but canonical absolute roots prevent it from
+matching a traversal or symlink escape outside the scoped root.
+
 The managed Bash owner is launch-scoped in `globalThis`, keyed by its record
 path, so extension reload preserves live process handles and rebinds current
 hooks. `session_shutdown(reason=reload)` only clears UI hints. Normal shutdown
@@ -206,6 +217,10 @@ always loaded by the adapter and has no config toggle. Meridian-idle is selected
 only when the launch profile is interactive. Meridian-permissions is selected only
 when the bound policy needs scoped matching, `ask`, or an allowlist/platform backstop;
 its typed policy is passed in `_MERIDIAN_PI_PERMISSION_POLICY` for that launch.
+The variable is absent when no handler is needed. If it is present but empty,
+malformed, or has an unsupported shape, the extension throws during load. Pi aborts
+on an explicit extension load error, and projection refuses a missing bundle, so a
+passed policy never degrades to unchecked tool execution.
 Meridian-idle passes `--interactive` on every
 `meridian idle` call, serializes arm/return transitions without making user input
 wait for the CLI, and fires each due push/warn stage back to the core. Its arm

@@ -29,4 +29,13 @@ describe.skipIf(!existsSync(bundlePath))("meridian-permissions bundle smoke", ()
 
     expect(events).toEqual(["tool_call"]);
   });
+
+  it("throws instead of loading without a usable policy", async () => {
+    process.env._MERIDIAN_PI_PERMISSION_POLICY = "";
+    const bundle = await import(/* @vite-ignore */ pathToFileURL(bundlePath).href);
+
+    expect(() => bundle.default({ on: () => undefined })).toThrow(
+      "Pi permission policy is empty",
+    );
+  });
 });

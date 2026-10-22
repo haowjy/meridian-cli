@@ -453,7 +453,11 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = system_prompt_path, env
         permissions, _ = compile_pi_permissions(spec)
         policy = permissions.extension_policy
-        return {PI_PERMISSION_POLICY_ENV: policy.model_dump_json() if policy is not None else ""}
+        return (
+            {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()}
+            if policy is not None
+            else {}
+        )
 
     def resolve_session_file(
         self,
