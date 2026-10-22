@@ -10,36 +10,47 @@ from pathlib import Path
 from meridian.plugin_api.types import Notification
 
 
+def actor_name(agent: str | None, harness: str | None) -> str:
+    """``agent (harness)``, or whichever is known."""
+
+    if agent and harness:
+        return f"{agent} ({harness})"
+    return agent or harness or "Meridian"
+
+
 @dataclass(frozen=True)
 class SessionLabel:
-    """Optional launch context rendered for notification surfaces."""
+    """Who a notification is from: the primary session the human talks to.
+
+    A spawned agent's notification names its primary (terminal, agent, harness,
+    work) and records itself in ``child``.
+    """
 
     tmux_session: str | None = None
     project: str | None = None
     work_id: str | None = None
     agent: str | None = None
     harness: str | None = None
+    child: str | None = None
 
     @property
     def sender(self) -> str:
         """Name the terminal and actor: short enough for a notification title."""
 
-        actor = (
-            f"{self.agent} ({self.harness})"
-            if self.agent and self.harness
-            else self.agent or self.harness or "Meridian"
-        )
+        actor = actor_name(self.agent, self.harness)
         return f"{self.tmux_session}: {actor}" if self.tmux_session else actor
 
     @property
     def headline(self) -> str:
-        """The sender plus its work item or project, for the notification body."""
+        """The sender, its work item or project, and the child that sent it."""
 
         if self.work_id:
-            return f'{self.sender} on work: "{self.work_id}"'
-        if self.project:
-            return f'{self.sender} in project: "{self.project}"'
-        return self.sender
+            line = f'{self.sender} on work: "{self.work_id}"'
+        elif self.project:
+            line = f'{self.sender} in project: "{self.project}"'
+        else:
+            line = self.sender
+        return f"{line}, from child {self.child}" if self.child else line
 
     def __str__(self) -> str:
         return self.headline
@@ -51,6 +62,7 @@ class SessionLabel:
             "work_id": self.work_id,
             "agent": self.agent,
             "harness": self.harness,
+            "child": self.child,
             "sender": self.sender,
             "headline": self.headline,
         }
@@ -100,4 +112,4 @@ def manual_notification(
     )
 
 
-__all__ = ["SessionLabel", "manual_notification"]
+__all__ = ["SessionLabel", "actor_name", "manual_notification"]

@@ -235,6 +235,11 @@ Bodies carry the message: the warning details and message excerpts labelled
 item (`a2: tech-lead (claude) on work: "idle-cache-notify"`, or
 `in project: "<project>"` without one). The work item is the session's current
 one when the notification is sent.
+
+A notification names the primary session the human talks to. When a spawned
+agent sends one, the title and work item are its primary's (the root of its
+parent chain), and the body's last line adds the child:
+`a2: tech-lead (claude) on work: "x", from child p12 coder (codex)`.
 In permission notices the body contains the harness notification text. With `include_messages = false`,
 the body is the generic `Permission prompt waiting` instead.
 
@@ -313,7 +318,7 @@ enabled = false
 event receives the notification, so a Slack or desktop channel is one row and
 one script. Stdin carries the hook payload (`schema_version` 3) with a
 `notification` object: `title`, `body`, `priority`, `email`, and `label`
-(`tmux_session`, `project`, `work_id`, `agent`, `harness`, `sender`, `headline`), and
+(`tmux_session`, `project`, `work_id`, `agent`, `harness`, `child`, `sender`, `headline`), and
 `attachments` (absolute paths from `meridian notify --attach`). The
 environment adds `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`
 and `MERIDIAN_NOTIFICATION_PRIORITY` to the usual `MERIDIAN_HOOK_*` variables.
