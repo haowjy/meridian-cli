@@ -6,13 +6,13 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
 from meridian.lib.core.native_identity import NativeIdentity
-from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
+from meridian.lib.safety.policy import PermissionPolicy
 
 if TYPE_CHECKING:
     from meridian.lib.core.types import HarnessId
@@ -59,17 +59,6 @@ class ClaudeRuntimeResolution:
     warnings: tuple[CompositionWarning, ...] = ()
 
 
-@runtime_checkable
-class PermissionResolver(Protocol):
-    """Transport-neutral permission intent resolver."""
-
-    @property
-    def config(self) -> PermissionConfig: ...
-
-    def resolve_flags(self) -> tuple[str, ...]:
-        return ()
-
-
 class ResolvedLaunchSpec(BaseModel):
     """Transport-neutral resolved configuration for one harness launch."""
 
@@ -90,7 +79,7 @@ class ResolvedLaunchSpec(BaseModel):
     native_identity: NativeIdentity | None = None
 
     # Permissions: defaults to no tool rules and default sandbox/approval.
-    permission_resolver: PermissionResolver = TieredPermissionResolver(config=PermissionConfig())
+    permission_policy: PermissionPolicy = PermissionPolicy()
 
     # Passthrough args forwarded verbatim to the harness process.
     extra_args: tuple[str, ...] = ()
@@ -232,8 +221,6 @@ class ResolvedLaunchBinding:
     work_id: str | None
     child_cwd: Path
     run_params: SpawnParams
-    permission_config: PermissionConfig
-    perms: PermissionResolver
     spec: ResolvedLaunchSpec
     argv: tuple[str, ...]
     environment: ResolvedLaunchEnvironment

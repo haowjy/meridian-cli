@@ -76,113 +76,30 @@ Cursor subprocess only projects `--workspace` from `task_cwd`. If `projected_roo
 is non-empty, the projector logs a debug warning and continues — not an error, because
 `task_cwd` is the common case and extra roots are best-effort for cursor.
 
-### Permission Flags (`permission_flags.py`)
+### Permission compile (`permissions_<harness>.py`)
 
-`resolve_permission_flags(permission_resolver, harness_id)` is the single entry point
-for all permission/sandbox flag projection. It:
+`spec.permission_policy` (`lib/safety/policy.py`) is transport-neutral: tool rules plus the
+resolved sandbox and approval modes. Each harness module compiles it to a typed value and
+its projectors spell that value:
 
-1. Maps `config.approval` to harness-specific base flags via `_permission_flags_for_harness`
-2. Calls `permission_resolver.resolve_flags()` for broker-resolved extra flags
-3. Strips Claude-specific `--allowedTools`/`--disallowedTools` pairs for non-Claude harnesses
-4. Logs a warning if `--disallowedTools` is dropped for Codex (unsupported)
+| Harness | Compile result | Spelled by |
+|---|---|---|
+| Claude | permission mode, `--allowedTools` / `--disallowedTools` lists | `project_claude.py` (argv) |
+| Codex | sandbox mode, approval policy | `project_codex_subprocess.py` (`--sandbox`, `-c approval_policy`), `project_codex_streaming.py` (`-c` flags and the thread payload) |
+| OpenCode | V1 permission map; `None` for primaries | `OpenCodeAdapter.project_launch_env()` (`OPENCODE_PERMISSION` JSON); the V2 connection (V2 rules merged into config content) |
+| Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
+| Pi | none: permissions are mediated through extension UI hooks | |
 
-Approval mode → flag mapping:
-
-| Mode | Claude | Codex | Cursor |
-|---|---|---|---|
-| `yolo` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--yolo` |
-| `auto` | `--permission-mode acceptEdits` | `--full-auto` | `--force` |
-| `confirm` | `--permission-mode default` | `--ask-for-approval untrusted` | (none) |
-| `default` | (none) | (sandbox flag if non-default sandbox) | (none) |
-
-OpenCode receives no permission flags from this function — OpenCode handles approval
-through workspace env injection (see parent `.context/`).
-
-### Pi Extension Projection (`pi_extension_projection.py`)
-
-Resolves Meridian-owned Pi extension entrypoints for each launch (see `pi_paths.py`):
-
-- **Bundle lookup**: prefer package `pi_runtime/dist/extensions/`, then
-  `resolve_meridian_pi_extension_root()` → `~/.meridian/pi/extensions/`.
-  `MERIDIAN_PI_EXTENSION_SOURCE_ROOT` and `MERIDIAN_PI_EXTENSION_INSTALL_ROOT`
-  override those roots respectively.
-- **Default RPC**: `--no-extensions` plus explicit `-e` for enabled Meridian bundles.
-- **Native content discovery**: both roles retain Pi's skill, context-file, and
-  prompt-template discovery.
-- **Primary native TUI**: explicit `-e` for the same enabled bundles, retaining
-  ambient extension discovery; also adds the primary-only `meridian-idle` bundle.
-- **`load_all_pi_extensions = true`**: RPC omits `--no-extensions`; both roles scan
-  `extra_extension_paths` (default Pi agent extension dir) for additional `-e` paths.
-
-`resolve_pi_extension_entrypoints(PiExtensionLaunchProfile)` selects managed-bash
-when `background_tasks_enabled`, spawn-watch when `spawn_watch_enabled`, and
-session-boundary when `session_boundary_enabled`. The adapter always keeps the
-boundary enabled; it has no `[harness.pi]` toggle. `interactive` additionally
-selects `meridian-idle`; the other three bundles keep the same selection in both
-roles. `resolve_extra_pi_extension_entrypoints()` scans configured roots for
-`<directory>/index.js` when `load_all` is true.
-
-Launch wiring: `bind_launch_context()` sets `SpawnParams.pi_harness_profile` from
-`resolve_pi_harness_profile_for_launch(config_snapshot, project_root)`; `PiAdapter`
-does not reload config from ambient CWD in the hot path.
-
-`disable_managed_bash` / `MERIDIAN_PI_DISABLE_MANAGED_BASH` disable managed-bash.
-Native `ctx.mode === "tui"` enables custom panels; RPC slash-command output uses
-`ctx.ui.notify`, not raw stdout. Both projectors reject passthrough `--mode`,
-`-e`/`--extension`, and `--no-extensions` selectors that would bypass this policy.
-
-Raises `PiExtensionProjectionError` if a required built artifact is missing — build
-with `cd src/meridian/pi_runtime && pnpm run build:extensions`.
-
-### `HarnessCapabilityMismatch`
-
-Raised when the requested launch configuration cannot be expressed on this harness.
-Examples:
-- Unknown approval mode passed to `map_codex_approval_policy`
-- Unknown sandbox mode passed to `map_codex_sandbox_mode`
-- MVP-unsupported capability passed to cursor projection
-
-This is a caller error — the adapter layer should have validated the mode before
-reaching projection. If you catch this, something in the adapter pipeline is wrong.
-
-### OpenCode Streaming: Split Across Multiple Field Sets
-
-`project_opencode_streaming.py` projects spec fields into three distinct destinations:
-
-- `_SERVE_COMMAND_FIELDS` → CLI flags for `opencode serve` command
-- `_SESSION_PAYLOAD_FIELDS` → JSON body of the POST `/session` request
-- `_REFERENCE_FIELDS` → rendered reference blocks in the session payload
-
-The `_PROJECTED_FIELDS` frozenset is the union of all three. The drift guard validates
-the union, not each sub-group individually — the separation is for internal routing only.
-`appended_system_prompt` is in `_DELEGATED_FIELDS` here and in the subprocess projector:
-launch bind delivers it through `project_opencode_config.py`, so neither projection places it.
-
-### Claude: Parent-Allowed-Tools Flag
-
-`project_claude.py` parses `CLAUDE_PARENT_ALLOWED_TOOLS_FLAG` entries out of
-`extra_args` before passing remaining args as passthrough. This internal flag is how
-a parent Claude process grants tool permissions to a spawned child. It is stripped
-from `extra_args` and merged into `--allowedTools` on the command line — it must not
-reach the harness as-is.
-
-## Patterns
-
-### Adding a Field to a Harness LaunchSpec
-
-1. Add the field to the Pydantic spec class in `launch_types.py`
-2. In each projection module that covers this spec:
-   - Add to `_PROJECTED_FIELDS` if this projector emits the field as a flag/env
-   - Add to `_DELEGATED_FIELDS` if the field is consumed earlier in the pipeline
-3. Re-run imports to confirm the drift guard passes (it fires at import, not test time)
+Claude's compile treats `ask` as `allow` (no flag expresses it) and Codex has no carrier
+for tool rules, so only its two modes compile.
 
 ### Adding a New Harness
 
 Follow the full touchpoint list in [../../.context/CONTEXT.md](../../.context/CONTEXT.md).
 For projections specifically: add `project_<harness>_subprocess.py` and/or
 `project_<harness>_streaming.py`, declare `_PROJECTED_FIELDS` and `_DELEGATED_FIELDS`,
-call `check_projection_drift()` at module level, and add any harness-specific approval
-flag mapping to `permission_flags.py`.
+call `check_projection_drift()` at module level, and put any harness-specific permission
+compile in `permissions_<harness>.py`.
 
 ## Related .context/
 

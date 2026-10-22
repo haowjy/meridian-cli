@@ -6,11 +6,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
-from meridian.lib.safety.permissions import (
-    PermissionConfig,
-    TieredPermissionResolver,
-    ToolsPermissionResolver,
-)
+from meridian.lib.safety.policy import build_permission_policy
 
 
 def _tool_flag_entries(argv: list[str], flag: str) -> tuple[str, ...]:
@@ -31,7 +27,6 @@ def test_claude_projection_drops_inherited_agent_when_native_agents_disabled() -
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
-        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
         extra_args=(
             CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
             "Agent,Agent(custom),Bash(meridian spawn *)",
@@ -48,7 +43,6 @@ def test_claude_projection_keeps_inherited_agent_when_native_agents_enabled() ->
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
-        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
         extra_args=(
             CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
             "Agent,Agent(custom),Bash(meridian spawn *)",
@@ -69,9 +63,8 @@ def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent()
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
-        permission_resolver=ToolsPermissionResolver(
-            tools={"agent": "deny", "bash": "allow"},
-            fallback_config=PermissionConfig(),
+        permission_policy=build_permission_policy(
+            tools={"agent": "deny", "bash": "allow"}, sandbox=None
         ),
         extra_args=("--allowedTools", "Agent,Bash(meridian spawn *)"),
         claude_native_agents_enabled=False,
@@ -90,9 +83,8 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
-        permission_resolver=ToolsPermissionResolver(
-            tools={"bash": "allow", "agent": "deny"},
-            fallback_config=PermissionConfig(),
+        permission_policy=build_permission_policy(
+            tools={"bash": "allow", "agent": "deny"}, sandbox=None
         ),
         extra_args=(
             "--allowedTools=Agent,Agent(custom),Bash(meridian spawn *)",
@@ -119,9 +111,8 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
-        permission_resolver=ToolsPermissionResolver(
-            tools={"*": "deny", "agent": "allow"},
-            fallback_config=PermissionConfig(),
+        permission_policy=build_permission_policy(
+            tools={"*": "deny", "agent": "allow"}, sandbox=None
         ),
         claude_native_agents_enabled=True,
     )
@@ -146,7 +137,6 @@ def test_interactive_prompt_is_unconsumable_after_passthrough(continuation: bool
         user_turn_content=prompt,
         continue_session_id="claude-session" if continuation else None,
         extra_args=("--add-dir", "/tmp"),
-        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
@@ -167,7 +157,6 @@ def test_claude_projection_loads_selected_plugin_dirs(
         harness=HarnessId.CLAUDE,
         interactive=interactive,
         claude_runtime=ClaudeRuntimeResolution(plugin_dirs=plugin_dirs),
-        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))

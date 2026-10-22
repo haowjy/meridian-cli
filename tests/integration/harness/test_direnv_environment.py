@@ -21,7 +21,6 @@ from meridian.lib.launch.env import build_harness_child_env, undo_direnv
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.plan import build_primary_launch_runtime, build_primary_spawn_request
 from meridian.lib.launch.types import LaunchRequest
-from meridian.lib.safety.permissions import PermissionConfig
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
@@ -97,7 +96,7 @@ def test_pi_defaults_use_restored_home_and_paths(
         monkeypatch.setenv(key, value)
     env = build_harness_child_env(
         base_env=undo_direnv(active), adapter=PiAdapter(),
-        run_params=SpawnParams(prompt="test"), permission_config=PermissionConfig(),
+        run_params=SpawnParams(prompt="test"),
     )
     assert env["PI_CODING_AGENT_DIR"] == str(Path(base["HOME"]) / ".pi" / "agent")
     assert env["PI_CODING_AGENT_SESSION_DIR"] == str(
@@ -105,7 +104,7 @@ def test_pi_defaults_use_restored_home_and_paths(
     )
     explicit = build_harness_child_env(
         base_env=undo_direnv(active), adapter=PiAdapter(),
-        run_params=SpawnParams(prompt="test"), permission_config=PermissionConfig(),
+        run_params=SpawnParams(prompt="test"),
         runtime_env_overrides={"MERIDIAN_HOME": "~/explicit-state"},
     )
     assert explicit["PI_CODING_AGENT_SESSION_DIR"] == str(

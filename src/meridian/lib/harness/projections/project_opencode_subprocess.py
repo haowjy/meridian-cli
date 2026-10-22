@@ -5,12 +5,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Sequence
 
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
-from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -24,7 +22,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "prompt",
         "continue_session_id",
         "continue_fork",
-        "permission_resolver",
+        "permission_policy",
         "extra_args",
         "interactive",
         "mcp_tools",
@@ -202,8 +200,6 @@ def project_opencode_spec_to_cli_args(
         has_managed_value=has_continue_fork,
         passthrough_tail=passthrough_tail,
     )
-
-    command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.OPENCODE))
 
     command.extend(passthrough_tail)
 

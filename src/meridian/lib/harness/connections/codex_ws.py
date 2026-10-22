@@ -1101,7 +1101,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         method: str,
     ) -> bool:
         launch_spec = self._launch_spec
-        if launch_spec is None or launch_spec.permission_resolver.config.approval != "confirm":
+        if launch_spec is None or launch_spec.permission_policy.approval != "confirm":
             return False
         if not self._request_handler.no_runtime_hitl:
             return False

@@ -16,16 +16,14 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
 
 def test_project_opencode_v2_permissions_maps_aliases_and_scoped_resources() -> None:
     rules = project_opencode_v2_permissions(
-        json.dumps(
-            {
-                "*": "deny",
-                "bash": "allow",
-                "bash(git status)": "allow",
-                "write": "allow",
-                "task": "deny",
-                "websearch(foo)": "ask",
-            }
-        )
+        {
+            "*": "deny",
+            "bash": "allow",
+            "bash(git status)": "allow",
+            "write": "allow",
+            "task": "deny",
+            "websearch(foo)": "ask",
+        }
     )
 
     assert rules == [
@@ -38,15 +36,9 @@ def test_project_opencode_v2_permissions_maps_aliases_and_scoped_resources() -> 
     ]
 
 
-def test_project_opencode_v2_permissions_empty_when_no_override() -> None:
-    assert project_opencode_v2_permissions(None) == []
-    assert project_opencode_v2_permissions("") == []
-    assert project_opencode_v2_permissions("   ") == []
-
-
 def test_project_opencode_v2_permissions_rejects_bad_effect() -> None:
     with pytest.raises(HarnessCapabilityMismatch, match="effect"):
-        project_opencode_v2_permissions(json.dumps({"bash": "sometimes"}))
+        project_opencode_v2_permissions({"bash": "sometimes"})
 
 
 def test_merge_returns_raw_unchanged_without_policy() -> None:
@@ -58,7 +50,7 @@ def test_merge_returns_raw_unchanged_without_policy() -> None:
 def test_merge_emits_native_permissions_and_preserves_other_config() -> None:
     raw = json.dumps({"model": "openai/gpt-6-astra", "theme": "native"})
     merged = merge_opencode_v2_permission_config(
-        raw, json.dumps({"*": "deny", "read": "allow"})
+        raw, {"*": "deny", "read": "allow"}
     )
     assert merged is not None
     assert json.loads(merged) == {
@@ -79,7 +71,7 @@ def test_merge_places_workspace_grants_last_after_broad_deny() -> None:
             }
         }
     )
-    merged = merge_opencode_v2_permission_config(raw, json.dumps({"*": "deny"}))
+    merged = merge_opencode_v2_permission_config(raw, {"*": "deny"})
     assert merged is not None
     payload = json.loads(merged)
     assert "permission" not in payload
@@ -94,7 +86,7 @@ def test_merge_keeps_existing_native_permissions_before_tools_policy() -> None:
     raw = json.dumps(
         {"permissions": [{"action": "read", "resource": "*.env", "effect": "deny"}]}
     )
-    merged = merge_opencode_v2_permission_config(raw, json.dumps({"read": "allow"}))
+    merged = merge_opencode_v2_permission_config(raw, {"read": "allow"})
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
         {"action": "read", "resource": "*.env", "effect": "deny"},
@@ -104,7 +96,7 @@ def test_merge_keeps_existing_native_permissions_before_tools_policy() -> None:
 
 def test_merge_collapses_within_policy_alias_collision_to_deny() -> None:
     merged = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit": "deny", "write": "allow"})
+        None, {"edit": "deny", "write": "allow"}
     )
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
@@ -114,7 +106,7 @@ def test_merge_collapses_within_policy_alias_collision_to_deny() -> None:
 
 def test_merge_collapses_patch_alias_collision_to_deny() -> None:
     merged = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit": "allow", "patch": "deny"})
+        None, {"edit": "allow", "patch": "deny"}
     )
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
@@ -130,14 +122,14 @@ def test_merge_warns_on_effect_collision(
         logger="meridian.lib.harness.projections.project_opencode_streaming",
     ):
         merge_opencode_v2_permission_config(
-            None, json.dumps({"edit": "deny", "write": "allow"})
+            None, {"edit": "deny", "write": "allow"}
         )
     assert "collision" in caplog.text
 
 
 def test_merge_inherited_non_root_does_not_shadow_tools_deny() -> None:
     raw = json.dumps({"permission": {"edit": "allow"}})
-    merged = merge_opencode_v2_permission_config(raw, json.dumps({"edit": "deny"}))
+    merged = merge_opencode_v2_permission_config(raw, {"edit": "deny"})
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
         {"action": "edit", "resource": "*", "effect": "allow"},
@@ -147,7 +139,7 @@ def test_merge_inherited_non_root_does_not_shadow_tools_deny() -> None:
 
 def test_merge_inherited_broad_allow_does_not_shadow_broad_deny() -> None:
     raw = json.dumps({"permission": {"*": "allow"}})
-    merged = merge_opencode_v2_permission_config(raw, json.dumps({"*": "deny"}))
+    merged = merge_opencode_v2_permission_config(raw, {"*": "deny"})
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
         {"action": "*", "resource": "*", "effect": "allow"},
@@ -164,7 +156,7 @@ def test_merge_inherited_external_directory_grant_stays_last_after_broad_deny() 
             }
         }
     )
-    merged = merge_opencode_v2_permission_config(raw, json.dumps({"*": "deny"}))
+    merged = merge_opencode_v2_permission_config(raw, {"*": "deny"})
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
         {"action": "*", "resource": "*", "effect": "allow"},
@@ -176,7 +168,7 @@ def test_merge_inherited_external_directory_grant_stays_last_after_broad_deny() 
 
 def test_merge_scoped_exception_refines_broad_deny() -> None:
     merged = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit": "deny", "edit(foo)": "allow"})
+        None, {"edit": "deny", "edit(foo)": "allow"}
     )
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
@@ -187,7 +179,7 @@ def test_merge_scoped_exception_refines_broad_deny() -> None:
 
 def test_merge_scoped_exception_refines_broad_deny_regardless_of_declaration_order() -> None:
     merged = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit(foo)": "allow", "edit": "deny"})
+        None, {"edit(foo)": "allow", "edit": "deny"}
     )
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
@@ -198,10 +190,10 @@ def test_merge_scoped_exception_refines_broad_deny_regardless_of_declaration_ord
 
 def test_merge_broad_aliased_allow_does_not_bypass_scoped_deny() -> None:
     broad_first = merge_opencode_v2_permission_config(
-        None, json.dumps({"write": "allow", "edit(foo)": "deny"})
+        None, {"write": "allow", "edit(foo)": "deny"}
     )
     scoped_first = merge_opencode_v2_permission_config(
-        None, json.dumps({"edit(foo)": "deny", "write": "allow"})
+        None, {"edit(foo)": "deny", "write": "allow"}
     )
     assert broad_first is not None
     assert scoped_first is not None
@@ -215,10 +207,10 @@ def test_merge_broad_aliased_allow_does_not_bypass_scoped_deny() -> None:
 
 def test_merge_patch_aliased_allow_does_not_bypass_scoped_deny() -> None:
     broad_first = merge_opencode_v2_permission_config(
-        None, json.dumps({"write": "allow", "patch(foo)": "deny"})
+        None, {"write": "allow", "patch(foo)": "deny"}
     )
     scoped_first = merge_opencode_v2_permission_config(
-        None, json.dumps({"patch(foo)": "deny", "write": "allow"})
+        None, {"patch(foo)": "deny", "write": "allow"}
     )
     assert broad_first is not None
     assert scoped_first is not None
@@ -232,7 +224,7 @@ def test_merge_patch_aliased_allow_does_not_bypass_scoped_deny() -> None:
 
 def test_merge_meridian_allow_wins_over_inherited_non_root_deny() -> None:
     raw = json.dumps({"permission": {"edit": "deny"}})
-    merged = merge_opencode_v2_permission_config(raw, json.dumps({"edit": "allow"}))
+    merged = merge_opencode_v2_permission_config(raw, {"edit": "allow"})
     assert merged is not None
     assert json.loads(merged)["permissions"] == [
         {"action": "edit", "resource": "*", "effect": "deny"},

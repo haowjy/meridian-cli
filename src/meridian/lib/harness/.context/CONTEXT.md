@@ -651,7 +651,7 @@ Touch every file in `HARNESS_EXTENSION_TOUCHPOINTS` (listed in `__init__.py`):
 6. `registry.py:HarnessRegistry.with_defaults()`
 7. `launch_spec.py:_enforce_spawn_params_accounting()` — update handled fields
 8. `connections/<new_harness>_<transport>.py`
-9. `projections/permission_flags.py`
+9. `projections/permissions_<new_harness>.py`
 
 The bundle created in step 2 must also register its per-adapter `HarnessSemantics`
 table and payload resolver. Shared `semantics.py` is intentionally not an extension

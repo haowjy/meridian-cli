@@ -9,6 +9,7 @@ from typing import Literal, cast
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections.permissions_opencode import OpenCodePermissions
 from meridian.lib.harness.projections.project_opencode_config import (
     dump_opencode_config_content,
     opencode_model_parts,
@@ -25,7 +26,7 @@ _SERVE_COMMAND_FIELDS: frozenset[str] = frozenset(
         "projected_roots",
         "interactive",
         "prompt",
-        "permission_resolver",
+        "permission_policy",
     }
 )
 
@@ -89,10 +90,10 @@ def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
             "OPENCODE_CONFIG_CONTENT",
         )
 
-    config = spec.permission_resolver.config
-    if config.approval != "default" or config.sandbox != "default":
+    policy = spec.permission_policy
+    if policy.approval != "default" or policy.sandbox != "default":
         logger.debug(
-            "OpenCode streaming ignores permission resolver overrides; "
+            "OpenCode streaming ignores permission policy overrides; "
             "opencode serve has no launch-time permission mapping"
         )
 
@@ -174,24 +175,18 @@ def _opencode_v2_permission_rule(
     }
 
 
-def project_opencode_v2_permissions(override_json: str | None) -> list[dict[str, str]]:
-    """Translate Meridian's compiled OpenCode permission map to V2 native rules.
+def project_opencode_v2_permissions(permissions: OpenCodePermissions) -> list[dict[str, str]]:
+    """Translate OpenCode's compiled V1 permission map to V2 native rules.
 
-    ``override_json`` is the flat ``{capability: action}`` map emitted by
-    ``compile_tools_to_opencode_permission``. Scoped keys (``bash(git status)``)
-    become ``action``/``resource`` pairs. Order is preserved so a V2 last-match
-    evaluator keeps broad rules before the exceptions that refine them.
+    Scoped keys (``bash(git status)``) become ``action``/``resource`` pairs. Order is
+    preserved so a V2 last-match evaluator keeps broad rules before the exceptions that
+    refine them.
     """
 
-    if not override_json or not override_json.strip():
-        return []
-    parsed: object = json.loads(override_json)
-    if not isinstance(parsed, dict):
-        raise HarnessCapabilityMismatch("OpenCode permission override must be a JSON object")
     rules: list[dict[str, str]] = []
-    for raw_key, raw_action in cast("dict[str, object]", parsed).items():
-        capability, resource = _split_opencode_v2_permission_key(str(raw_key))
-        rules.append(_opencode_v2_permission_rule(capability, resource, raw_action))
+    for raw_key, action in permissions.items():
+        capability, resource = _split_opencode_v2_permission_key(raw_key)
+        rules.append(_opencode_v2_permission_rule(capability, resource, action))
     return rules
 
 
@@ -284,7 +279,7 @@ def _split_inherited_opencode_v1_permission_rules(
 
 
 def merge_opencode_v2_permission_config(
-    raw: str | None, override_json: str | None
+    raw: str | None, permissions: OpenCodePermissions | None
 ) -> str | None:
     """Inject V2-native permissions derived from Meridian's tools policy.
 
@@ -301,7 +296,7 @@ def merge_opencode_v2_permission_config(
     emitted as authored.
     """
 
-    rules = project_opencode_v2_permissions(override_json)
+    rules = project_opencode_v2_permissions(permissions) if permissions else []
     if not rules:
         return raw
     parsed: object = json.loads(raw) if raw and raw.strip() else {}

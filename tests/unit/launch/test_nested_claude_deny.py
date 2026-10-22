@@ -15,7 +15,7 @@ from meridian.lib.launch.permissions import (
     project_has_claude_agent_copy,
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
-from meridian.lib.safety.permissions import PermissionConfig, ToolsPermissionResolver
+from meridian.lib.safety.policy import build_permission_policy
 from meridian.lib.tools import ToolsField
 from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
@@ -112,14 +112,13 @@ def test_compute_nested_deny_honors_profile_opt_out() -> None:
 
 
 def test_parent_allowed_tools_cannot_readd_denied_agent() -> None:
-    resolver = ToolsPermissionResolver(
-        tools={"bash": "allow", "agent": "deny", "agent(Explore)": "deny"},
-        fallback_config=PermissionConfig(),
+    policy = build_permission_policy(
+        tools={"bash": "allow", "agent": "deny", "agent(Explore)": "deny"}, sandbox=None
     )
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         model="claude-sonnet-4-6",
-        permission_resolver=resolver,
+        permission_policy=policy,
         extra_args=(CLAUDE_PARENT_ALLOWED_TOOLS_FLAG, "Agent,Agent(Explore),Write"),
         claude_native_agents_enabled=False,
     )

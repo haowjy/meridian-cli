@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
-from typing import cast
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
-from meridian.lib.harness.projections.project_codex_common import (
-    map_codex_approval_policy,
-    map_codex_sandbox_mode,
-    project_codex_mcp_config_flags,
-)
-from meridian.lib.launch.launch_types import PermissionResolver, ResolvedLaunchSpec
+from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+from meridian.lib.harness.projections.project_codex_common import project_codex_mcp_config_flags
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
@@ -23,7 +18,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "prompt",
         "continue_session_id",
         "continue_fork",
-        "permission_resolver",
+        "permission_policy",
         "extra_args",
         "interactive",
         "mcp_tools",
@@ -57,67 +52,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _coerce_permission_flags(raw: object) -> tuple[str, ...]:
-    if raw is None:
-        return ()
-    if isinstance(raw, str):
-        return (raw,)
-    if isinstance(raw, tuple):
-        return tuple(str(token) for token in cast("tuple[object, ...]", raw))
-    if isinstance(raw, list):
-        return tuple(str(token) for token in cast("list[object]", raw))
-    if isinstance(raw, Iterable):
-        return tuple(str(token) for token in cast("Iterable[object]", raw))
-    raise TypeError(f"Permission resolver flags must be iterable, got {type(raw).__name__}")
-
-
-def _strip_tool_flags_for_codex(flags: tuple[str, ...]) -> tuple[str, ...]:
-    """Strip --allowedTools/--disallowedTools flags that Codex doesn't support."""
-    filtered: list[str] = []
-    index = 0
-    while index < len(flags):
-        token = flags[index]
-
-        if token == "--allowedTools":
-            index += 2
-            continue
-        if token.startswith("--allowedTools="):
-            index += 1
-            continue
-        if token == "--disallowedTools":
-            index += 2
-            continue
-        if token.startswith("--disallowedTools="):
-            index += 1
-            continue
-
-        filtered.append(token)
-        index += 1
-
-    return tuple(filtered)
-
-
-def project_codex_permission_flags(permission_resolver: PermissionResolver) -> tuple[str, ...]:
-    """Build Codex subprocess permission flags from resolver config and hints."""
-
-    config = permission_resolver.config
-    flags: list[str] = []
-
-    sandbox_mode = map_codex_sandbox_mode(config.sandbox)
-    if sandbox_mode is not None:
-        flags.extend(("--sandbox", sandbox_mode))
-
-    approval_policy = map_codex_approval_policy(config.approval)
-    if approval_policy is not None:
-        flags.extend(("-c", f"approval_policy={json.dumps(approval_policy)}"))
-
-    resolver_flags = _strip_tool_flags_for_codex(
-        _coerce_permission_flags(permission_resolver.resolve_flags())
-    )
-    flags.extend(resolver_flags)
-    return tuple(flags)
-
-
 def project_codex_spec_to_cli_args(
     spec: ResolvedLaunchSpec,
     *,
@@ -148,7 +82,11 @@ def project_codex_spec_to_cli_args(
     if normalized_effort:
         command.extend(("-c", f"model_reasoning_effort={json.dumps(normalized_effort)}"))
 
-    command.extend(project_codex_permission_flags(spec.permission_resolver))
+    permissions = compile_codex_permissions(spec)
+    if permissions.sandbox_mode is not None:
+        command.extend(("--sandbox", permissions.sandbox_mode))
+    if permissions.approval_policy is not None:
+        command.extend(("-c", f"approval_policy={json.dumps(permissions.approval_policy)}"))
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
 
     # Codex ignores bundle tool grants. Enable the native Responses `web_search`
@@ -186,6 +124,5 @@ __all__ = [
     "_DELEGATED_FIELDS",
     "_PROJECTED_FIELDS",
     "_check_projection_drift",
-    "project_codex_permission_flags",
     "project_codex_spec_to_cli_args",
 ]

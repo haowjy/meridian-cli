@@ -11,7 +11,7 @@ All three subsystems enforce constraints on what a spawn can do:
 
 - **Budget** — streaming cost enforcement; terminates if spend exceeds limit
 - **Guardrails** — post-run scripts that verify or audit after spawn completes
-- **Permissions** — translates sandbox/approval intent into harness-specific flags
+- **Permissions** — the transport-neutral policy each harness compiles into its own flags
 
 The launch layer assembles these; none of them drives the spawn itself.
 
@@ -35,34 +35,30 @@ Repo scripts are untrusted. Do not weaken this.
 
 **Do not hoist the lazy import in `budget.py`.** `extract_cost_usd_from_json_line`
 imports `harness.common` lazily to break a circular dependency: `safety.budget` →
-`harness.common` → `harness.adapter` → `safety.permissions`. Moving it to module
+`harness.common` → `harness.adapter` → `launch.launch_types` → `safety.policy`. Moving it to module
 level creates a circular import at load time.
 
-## Permission Resolver Selection
+## Permission Policy
 
-`build_permission_resolver()` selects a resolver based on what's configured:
-
-| Condition | Resolver |
-|---|---|
-| Neither list provided | `TieredPermissionResolver` — harness derives from sandbox/approval |
-| `tools` provided | `ToolsPermissionResolver` (abstract ToolsField compiled per harness) |
-
-Tools compilation preserves scoped patterns where the target harness supports them
-(notably OpenCode) and projects Claude capability aliases to tool names.
+`policy.py` builds one `PermissionPolicy` per launch: the tool rules, the sandbox mode and
+the approval mode, already resolved. `ResolvedLaunchSpec.permission_policy` carries it, and
+each harness compiles it in `harness/projections/permissions_<harness>.py`. Nothing in
+`safety/` knows a harness. The rules keep the bundle's native keys until the Mars-typed
+rules replace them.
 
 ## Entry Points
 
 - `budget.py` — `LiveBudgetTracker`, `Budget`, `BudgetBreach`
 - `guardrails.py` — `run_guardrails()`
-- `permissions.py` — `PermissionConfig`, `build_permission_resolver()`
+- `policy.py` — `PermissionPolicy`, `ToolRule`, `build_permission_policy()`
 
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — budget cost field ordering, guardrail
-command resolution by platform, permission resolver table,
+command resolution by platform, permission policy,
 circular import dependency map
 
 ## Related
 
-- `../launch/permissions.py` — owns the actual permission pipeline resolution
+- `../launch/permissions.py` — launch-side permission helpers (Claude agent-copy detection, nested denies)
 - `../harness/common.py` — provides `iter_nested_dicts` used by budget extraction

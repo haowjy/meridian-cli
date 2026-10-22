@@ -21,7 +21,6 @@ from meridian.lib.harness.adapter import (
     HarnessCapabilities,
     HarnessContract,
     McpConfig,
-    PermissionResolver,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -81,7 +80,6 @@ from meridian.lib.launch.constants import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
-from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -371,9 +369,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = name, description
         return prompt.strip()
 
-    def resolve_launch_spec(
-        self, run: SpawnParams, perms: PermissionResolver
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         return ResolvedLaunchSpec(
             harness=HarnessId.CODEX,
@@ -382,7 +378,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt=run.user_turn_content or run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
             # Ahead of passthrough args so a later `-c` override still wins.
             extra_args=(
                 *(() if run.allow_builtin_agents else _DISABLE_BUILTIN_AGENT_FLAGS),
@@ -435,10 +430,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 task_context="user-turn",
             ),
         )
-
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        _ = config
-        return {}
 
     def resolve_session_file(
         self,

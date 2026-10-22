@@ -38,7 +38,6 @@ from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
-    PermissionResolver,
     PreflightResult,
     PreparedLaunchContent,
     PreparedLaunchRuntimeSeeds,
@@ -52,7 +51,7 @@ from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
-from meridian.lib.safety.permissions import PermissionConfig
+from meridian.lib.safety.policy import build_permission_policy
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
@@ -90,7 +89,6 @@ from .permissions import (
     project_has_claude_agent_copy,
     resolve_claude_native_agent_permission_request,
     resolve_nested_claude_permission_request,
-    resolve_permission_pipeline,
 )
 from .policies import (
     ModelSelectionContext,
@@ -303,8 +301,6 @@ class MaterializedLaunchArtifacts:
     """Shared launch materialization below policy resolution."""
 
     run_params: SpawnParams
-    permission_config: PermissionConfig
-    perms: PermissionResolver
     spec: ResolvedLaunchSpec
     warnings: tuple[CompositionWarning, ...] = ()
 
@@ -576,12 +572,14 @@ def materialize_launch_artifacts(
         pi_harness_profile=pi_harness_profile,
         allow_builtin_agents=allow_builtin_agents,
     )
-    permission_config, perms = resolve_permission_pipeline(
-        sandbox=sandbox,
+    policy = build_permission_policy(
         tools=tools,
+        sandbox=sandbox,
         approval=approval or "default",
     )
-    spec = resolve_launch_spec_stage(adapter=harness, run_inputs=run_params, perms=perms)
+    spec = resolve_launch_spec_stage(
+        adapter=harness, run_inputs=run_params, permission_policy=policy
+    )
     if harness.id == HarnessId.CLAUDE:
         spec = spec.model_copy(
             update={"claude_native_agents_enabled": claude_native_agents_enabled}
@@ -590,8 +588,6 @@ def materialize_launch_artifacts(
         spec = spec.model_copy(update={"web_search_enabled": True})
     return MaterializedLaunchArtifacts(
         run_params=run_params,
-        permission_config=permission_config,
-        perms=perms,
         spec=spec,
         warnings=harness.launch_spec_warnings(spec),
     )
@@ -1835,9 +1831,6 @@ def bind_launch_context(
         web_search_enabled=codex_web_search_enabled,
     )
     run_params = materialized.run_params
-
-    permission_config = materialized.permission_config
-    perms = materialized.perms
     spec = materialized.spec
     composition_warnings = (*composition_warnings, *materialized.warnings)
     opencode_version: str | None = None
@@ -1910,7 +1903,6 @@ def bind_launch_context(
         base_env=base_env,
         adapter=harness,
         run_inputs=run_params,
-        permission_config=permission_config,
         runtime_env_overrides=bind_env_overrides,
     )
     env.update(
@@ -1949,8 +1941,6 @@ def bind_launch_context(
         work_id=effective_work_id,
         child_cwd=child_cwd,
         run_params=run_params,
-        permission_config=permission_config,
-        perms=perms,
         spec=spec,
         argv=argv,
         environment=environment,

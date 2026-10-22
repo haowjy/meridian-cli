@@ -42,7 +42,7 @@ instruction and user-turn channels. Declare every `SpawnParams` field in
 uncovered fields.
 
 Use `env_defaults()` for launch-aware values that explicit child environment may
-override, and reserve `env_overrides()` for forced adapter policy; agent/auth
+override, and deliver forced adapter policy through `project_launch_env()`; agent/auth
 directories and native transcript stores need explicit contracts, not blanket
 config isolation.
 

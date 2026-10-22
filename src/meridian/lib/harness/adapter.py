@@ -47,14 +47,12 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
-    PermissionResolver,
     PreflightResult,
     ResolvedLaunchSpec,
     SpecT,
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.safety.permissions import PermissionConfig
 
 if TYPE_CHECKING:
     from meridian.lib.harness.extractors.base import AttemptFold
@@ -344,7 +342,7 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
         pid: int,
     ) -> Callable[[int], NativeObservationBatch] | None: ...
 
-    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
+    def resolve_launch_spec(self, run: SpawnParams) -> AdapterSpecT: ...
 
     def launch_spec_warnings(
         self, spec: ResolvedLaunchSpec
@@ -372,10 +370,8 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None: ...
 
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]: ...
-
     def env_defaults(
-        self, config: PermissionConfig, *, run: SpawnParams, env: Mapping[str, str]
+        self, *, run: SpawnParams, env: Mapping[str, str]
     ) -> dict[str, str]: ...
 
     def project_launch_env(
@@ -653,7 +649,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return None
 
     @abstractmethod
-    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> SpecT:
+    def resolve_launch_spec(self, run: SpawnParams) -> SpecT:
         """Resolve typed launch spec from generic spawn parameters."""
         ...
 
@@ -696,10 +692,10 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return frozenset()
 
     def env_defaults(
-        self, config: PermissionConfig, *, run: SpawnParams, env: Mapping[str, str]
+        self, *, run: SpawnParams, env: Mapping[str, str]
     ) -> dict[str, str]:
         """Optional process defaults; explicit inherited or launch values win."""
-        _ = config, run, env
+        _ = run, env
         return {}
 
     def project_launch_env(
@@ -709,7 +705,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        """Env overrides that deliver the bound prompt, model and roots through harness config.
+        """Env overrides that deliver the bound prompt, model, roots and permissions.
 
         ``system_prompt_path`` is where the appended prompt is written, after bind and
         before launch, whenever ``spec.appended_system_prompt`` is non-empty; ``env`` is

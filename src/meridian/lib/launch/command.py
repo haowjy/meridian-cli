@@ -7,7 +7,8 @@ from typing import cast
 
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import project_subprocess_spec
-from meridian.lib.launch.launch_types import PermissionResolver, ResolvedLaunchSpec
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.policy import PermissionPolicy
 
 
 def normalize_system_prompt_passthrough_args(
@@ -48,9 +49,12 @@ def resolve_launch_spec_stage(
     *,
     adapter: SubprocessHarness,
     run_inputs: SpawnParams,
-    perms: PermissionResolver,
+    permission_policy: PermissionPolicy,
 ) -> ResolvedLaunchSpec:
     """Stage-owned adapter callsite for `resolve_launch_spec`.
+
+    The adapter resolves harness facts and never sees the policy; this stage
+    attaches the policy that the harness's permission compile reads.
 
     Reference delivery flow: `SpawnParams.reference_items` is selectively
     re-attached onto the resolved spec only when the active adapter advertises
@@ -59,7 +63,9 @@ def resolve_launch_spec_stage(
     the block below is a future-proofing hook.
     """
 
-    spec = adapter.resolve_launch_spec(run_inputs, perms)
+    spec = adapter.resolve_launch_spec(run_inputs).model_copy(
+        update={"permission_policy": permission_policy}
+    )
 
     # If harness supports native file injection and we have reference_items, attach them.
     if run_inputs.reference_items and adapter.capabilities.supports_native_file_injection:

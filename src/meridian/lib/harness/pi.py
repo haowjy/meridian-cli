@@ -28,7 +28,6 @@ from meridian.lib.harness.adapter import (
     HarnessPrelaunchState,
     McpConfig,
     NativePrimaryRuntimeMetadata,
-    PermissionResolver,
     RecordConfigDirFn,
     SessionRequest,
     SpawnParams,
@@ -93,7 +92,6 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_PI,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state import pi_lifecycle
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import spawn_log_subpath
@@ -244,11 +242,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)
 
-    def resolve_launch_spec(
-        self,
-        run: SpawnParams,
-        perms: PermissionResolver,
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         if run.pi_harness_profile is not None:
             pi_profile = run.pi_harness_profile
@@ -280,7 +274,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt=run.user_turn_content or run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
             extra_args=run.extra_args,
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
@@ -436,13 +429,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        return {}
-
-    def env_defaults(
-        self, config: PermissionConfig, *, run: SpawnParams, env: Mapping[str, str]
-    ) -> dict[str, str]:
-        _ = config
+    def env_defaults(self, *, run: SpawnParams, env: Mapping[str, str]) -> dict[str, str]:
         defaults = {
             "PI_CODING_AGENT_DIR": str(resolve_pi_agent_dir(env=env)),
             "PI_CODING_AGENT_SESSION_DIR": str(resolve_pi_spawn_session_root(env=env)),

@@ -9,12 +9,8 @@ from meridian.lib.harness.codex_idle import IDLE_NOTIFY_COMMAND
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
-from meridian.lib.harness.projections.project_codex_common import (
-    HarnessCapabilityMismatch,
-    map_codex_approval_policy,
-    map_codex_sandbox_mode,
-    project_codex_mcp_config_flags,
-)
+from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+from meridian.lib.harness.projections.project_codex_common import project_codex_mcp_config_flags
 from meridian.lib.launch.constants import BASE_COMMAND_CODEX_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -22,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 _APP_SERVER_ARG_FIELDS: frozenset[str] = frozenset(
     {
-        "permission_resolver",
+        "permission_policy",
         "extra_args",
         "projected_roots",
         "report_output_path",
@@ -35,7 +31,7 @@ _JSONRPC_PARAM_FIELDS: frozenset[str] = frozenset(
     {
         "model",
         "effort",
-        "permission_resolver",
+        "permission_policy",
     }
 )
 
@@ -165,13 +161,12 @@ def project_codex_spec_to_appserver_command(
     if spec.interactive:
         command.extend(("-c", f"notify={json.dumps(IDLE_NOTIFY_COMMAND)}"))
 
-    sandbox_mode = map_codex_sandbox_mode(spec.permission_resolver.config.sandbox)
-    if sandbox_mode is not None:
-        command.extend(("-c", f"sandbox_mode={json.dumps(sandbox_mode)}"))
+    permissions = compile_codex_permissions(spec)
+    if permissions.sandbox_mode is not None:
+        command.extend(("-c", f"sandbox_mode={json.dumps(permissions.sandbox_mode)}"))
 
-    approval_policy = map_codex_approval_policy(spec.permission_resolver.config.approval)
-    if approval_policy is not None:
-        command.extend(("-c", f"approval_policy={json.dumps(approval_policy)}"))
+    if permissions.approval_policy is not None:
+        command.extend(("-c", f"approval_policy={json.dumps(permissions.approval_policy)}"))
 
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
 
@@ -230,13 +225,12 @@ def project_codex_spec_to_thread_request(
     if normalized_effort:
         payload["config"] = {"model_reasoning_effort": normalized_effort}
 
-    approval_policy = map_codex_approval_policy(spec.permission_resolver.config.approval)
-    if approval_policy is not None:
-        payload["approvalPolicy"] = approval_policy
+    permissions = compile_codex_permissions(spec)
+    if permissions.approval_policy is not None:
+        payload["approvalPolicy"] = permissions.approval_policy
 
-    sandbox_mode = map_codex_sandbox_mode(spec.permission_resolver.config.sandbox)
-    if sandbox_mode is not None:
-        payload["sandbox"] = sandbox_mode
+    if permissions.sandbox_mode is not None:
+        payload["sandbox"] = permissions.sandbox_mode
 
     method = _select_thread_method(spec)
     resume_thread_id = (spec.continue_session_id or "").strip()
@@ -267,7 +261,6 @@ __all__ = [
     "_LIFECYCLE_FIELDS",
     "_METHOD_SELECTION_FIELDS",
     "_PROJECTED_FIELDS",
-    "HarnessCapabilityMismatch",
     "_build_writable_roots_config",
     "_check_projection_drift",
     "project_codex_spec_to_appserver_command",

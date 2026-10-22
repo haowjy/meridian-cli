@@ -5,13 +5,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Sequence
 
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
-from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
+from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 
@@ -37,7 +36,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "mcp_tools",
         "projected_roots",
         "model",
-        "permission_resolver",
+        "permission_policy",
         "prompt",
         "prompt_file_path",
         "claude_native_agents_enabled",
@@ -91,20 +90,22 @@ def _split_internal_parent_allowed_tools(
     return tuple(passthrough_tail), dedupe_nonempty(parent_allowed_tools)
 
 
-def _extract_claude_tool_flags(
-    permission_flags: tuple[str, ...],
+def _extract_passthrough_tool_flags(
+    passthrough_args: tuple[str, ...],
 ) -> tuple[list[str], list[str], list[str]]:
-    projected_permission_flags: list[str] = []
+    """Split user passthrough args into ``(other args, allowed tools, disallowed tools)``."""
+
+    remaining_args: list[str] = []
     allowed_tools: list[str] = []
     disallowed_tools: list[str] = []
 
     index = 0
-    while index < len(permission_flags):
-        token = permission_flags[index]
+    while index < len(passthrough_args):
+        token = passthrough_args[index]
 
         if token == "--allowedTools":
-            if index + 1 < len(permission_flags):
-                allowed_tools.extend(split_csv_entries(permission_flags[index + 1]))
+            if index + 1 < len(passthrough_args):
+                allowed_tools.extend(split_csv_entries(passthrough_args[index + 1]))
                 index += 2
                 continue
             index += 1
@@ -116,8 +117,8 @@ def _extract_claude_tool_flags(
             continue
 
         if token == "--disallowedTools":
-            if index + 1 < len(permission_flags):
-                disallowed_tools.extend(split_csv_entries(permission_flags[index + 1]))
+            if index + 1 < len(passthrough_args):
+                disallowed_tools.extend(split_csv_entries(passthrough_args[index + 1]))
                 index += 2
                 continue
             index += 1
@@ -128,11 +129,11 @@ def _extract_claude_tool_flags(
             index += 1
             continue
 
-        projected_permission_flags.append(token)
+        remaining_args.append(token)
         index += 1
 
     return (
-        projected_permission_flags,
+        remaining_args,
         dedupe_nonempty(allowed_tools),
         dedupe_nonempty(disallowed_tools),
     )
@@ -205,12 +206,13 @@ def project_claude_spec_to_cli_args(
 
     passthrough_tail, parent_allowed_tools = _split_internal_parent_allowed_tools(spec.extra_args)
     projected_passthrough_tail, passthrough_allowed_tools, passthrough_disallowed_tools = (
-        _extract_claude_tool_flags(passthrough_tail)
+        _extract_passthrough_tool_flags(passthrough_tail)
     )
     passthrough_tail = tuple(projected_passthrough_tail)
 
-    permission_flags = resolve_permission_flags(spec.permission_resolver, HarnessId.CLAUDE)
-    permission_tail, allowed_tools, disallowed_tools = _extract_claude_tool_flags(permission_flags)
+    permissions = compile_claude_permissions(spec)
+    allowed_tools = list(permissions.allowed_tools)
+    disallowed_tools = list(permissions.disallowed_tools)
     spec_disallowed: list[str] = []
     for entry in spec.disallowed_tools:
         spec_disallowed.extend(split_csv_entries(entry))
@@ -236,7 +238,10 @@ def project_claude_spec_to_cli_args(
     if disallowed_tools:
         denied_tools = set(disallowed_tools)
         allowed_tools = [tool for tool in allowed_tools if not _is_denied_tool(tool, denied_tools)]
-    command.extend(permission_tail)
+    if permissions.skip_permission_prompts:
+        command.append("--dangerously-skip-permissions")
+    if permissions.permission_mode:
+        command.extend(("--permission-mode", permissions.permission_mode))
     if allowed_tools:
         command.extend(("--allowedTools", ",".join(allowed_tools)))
     if disallowed_tools:

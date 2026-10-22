@@ -28,7 +28,6 @@ from meridian.lib.harness.adapter import (
     HarnessContract,
     HarnessPrelaunchState,
     McpConfig,
-    PermissionResolver,
     RecordConfigDirFn,
     RunPromptPolicy,
     SpawnParams,
@@ -92,7 +91,6 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.safety.permissions import PermissionConfig
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
 
@@ -239,9 +237,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             else super().assign_session_id(intent, store=store)
         )
 
-    def resolve_launch_spec(
-        self, run: SpawnParams, perms: PermissionResolver
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         effort = run.effort
         normalized_effort = None
         if effort is not None:
@@ -275,7 +271,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt=run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
             extra_args=run.extra_args,
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
@@ -311,10 +306,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # MCP injection is off by default — agents use the CLI instead.
         # Users who want always-on MCP can configure it in their harness settings.
         return None
-
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        _ = config
-        return {}
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         # Meridian manages nesting limits itself; suppress Claude's parent-session

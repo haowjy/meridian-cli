@@ -10,15 +10,12 @@ from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
 )
-from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 
 _DISABLED = ["-c", "features.multi_agent_v2=false", "-c", "agents.max_depth=0"]
 
 
 def _appserver_command(params: SpawnParams) -> list[str]:
-    spec = CodexAdapter().resolve_launch_spec(
-        params, TieredPermissionResolver(config=PermissionConfig())
-    )
+    spec = CodexAdapter().resolve_launch_spec(params)
     return project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=1)
 
 

@@ -38,8 +38,8 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "(concrete streaming transport implementation)"
     ),
     (
-        "src/meridian/lib/harness/projections/permission_flags.py "
-        "(approval/sandbox CLI flag projection)"
+        "src/meridian/lib/harness/projections/permissions_<new_harness>.py "
+        "(the harness's compile of the permission policy)"
     ),
 )
 

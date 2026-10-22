@@ -8,15 +8,6 @@ from typing import cast
 
 from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.core.types import normalize_mars_target_name
-from meridian.lib.safety.permissions import (
-    PermissionConfig,
-    TieredPermissionResolver,
-    ToolsPermissionResolver,
-    build_permission_config,
-    build_permission_resolver,
-    compile_tools_to_opencode_permission,
-    infer_codex_sandbox_from_tools,
-)
 from meridian.lib.tools import (
     ToolAction,
     ToolsField,
@@ -26,9 +17,6 @@ from meridian.lib.tools import (
     tools_field_to_map,
 )
 
-PermissionResolverImpl = TieredPermissionResolver | ToolsPermissionResolver
-
-
 _NESTED_CLAUDE_DELEGATION_CAPABILITIES: frozenset[str] = frozenset({"agent", "task"})
 _CLAUDE_BUILTIN_AGENT_DENY_RULES: tuple[str, ...] = (
     "agent(Explore)",
@@ -36,12 +24,6 @@ _CLAUDE_BUILTIN_AGENT_DENY_RULES: tuple[str, ...] = (
     "agent(General-purpose)",
     "agent(general-purpose)",
 )
-
-
-def _resolve_opencode_override(*, tools: ToolsField | None) -> str | None:
-    if tools is None:
-        return None
-    return compile_tools_to_opencode_permission(tools)
 
 
 def project_has_claude_agent_copy(project_root: Path) -> bool:
@@ -190,35 +172,9 @@ def resolve_nested_claude_permission_request(
     return resolved_tools
 
 
-def resolve_permission_pipeline(
-    *,
-    sandbox: str | None,
-    tools: ToolsField | None = None,
-    approval: str = "default",
-) -> tuple[PermissionConfig, PermissionResolverImpl]:
-    """Resolve a permission config and concrete resolver for one launch request."""
-
-    config = build_permission_config(sandbox, approval=approval)
-    opencode_override = _resolve_opencode_override(tools=tools)
-    if opencode_override is not None:
-        config = config.model_copy(update={"opencode_permission_override": opencode_override})
-    if config.sandbox == "default":
-        inferred = infer_codex_sandbox_from_tools(tools)
-        if inferred is not None:
-            config = config.model_copy(update={"sandbox": inferred})
-
-    resolver = build_permission_resolver(
-        tools=tools,
-        permission_config=config,
-    )
-    return config, resolver
-
-
 __all__ = [
-    "PermissionResolverImpl",
     "compute_nested_claude_deny_additions",
     "project_has_claude_agent_copy",
     "resolve_claude_native_agent_permission_request",
     "resolve_nested_claude_permission_request",
-    "resolve_permission_pipeline",
 ]

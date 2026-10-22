@@ -15,7 +15,6 @@ from meridian.lib.harness.adapter import (
     HarnessCapabilities,
     HarnessContract,
     McpConfig,
-    PermissionResolver,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -41,7 +40,6 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
-from meridian.lib.safety.permissions import PermissionConfig
 
 
 class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
@@ -111,11 +109,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
-    def resolve_launch_spec(
-        self,
-        run: SpawnParams,
-        perms: PermissionResolver,
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         return ResolvedLaunchSpec(
             harness=HarnessId.CURSOR,
@@ -123,7 +117,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt=run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
             extra_args=run.extra_args,
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
@@ -149,9 +142,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = run
         return None
 
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        _ = config
-        return {}
 
 
 def _resolve_cursor_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:

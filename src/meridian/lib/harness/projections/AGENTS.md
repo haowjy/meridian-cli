@@ -27,8 +27,11 @@ without updating the corresponding projector → startup failure.
   `OPENCODE_CONFIG_CONTENT` (JSON), built at bind by `project_opencode_config.py`, not
   flags. `spec.agent_name` is selected wherever a session is opened or resumed; see
   [OpenCode prompt, agent and model delivery](../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
-- **Permission flags** (`permission_flags.py`): shared across all projectors.
-  `resolve_permission_flags()` is called inside each projector — not a separate pipeline step.
+- **Permission compile** (`permissions_<harness>.py`): one module per harness turns
+  `spec.permission_policy` into a typed native value (sandbox/approval modes, tool
+  allow/deny lists, the OpenCode permission map). The harness's projectors call it and
+  spell the result as argv, env or payload; nothing outside the harness module reads the
+  policy's rules.
 
 ## Key Rules
 

@@ -5,12 +5,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.pi_identity import project_identity
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
-from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
@@ -20,7 +18,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "native_identity",
         "model",
         "effort",
-        "permission_resolver",
+        "permission_policy",
         "extra_args",
         "interactive",
         "mcp_tools",
@@ -200,7 +198,6 @@ def project_pi_spec_to_cli_args(
     for extension_entrypoint in spec.pi_extension_entrypoints:
         command.extend(("-e", extension_entrypoint))
 
-    command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.PI))
     command.extend(passthrough_tail)
 
     return command

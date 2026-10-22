@@ -48,6 +48,7 @@ from meridian.lib.harness.connections.opencode_http import (
     permission_liveness_key,
     summarize_body,
 )
+from meridian.lib.harness.projections.permissions_opencode import compile_opencode_permissions
 from meridian.lib.harness.projections.project_opencode_config import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.harness.projections.project_opencode_streaming import (
     merge_opencode_v2_permission_config,
@@ -184,12 +185,12 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         )
         env = dict(config.child_env)
         # V2 reads permissions from config content, not the V1 OPENCODE_PERMISSION
-        # env. Interactive primaries defer to the native TUI, matching V1, which
-        # drops its permission override for the primary launch.
-        permission_override = spec.permission_resolver.config.opencode_permission_override
-        if permission_override and not spec.interactive:
+        # env. Interactive primaries defer to the native TUI, matching V1: the compile
+        # returns nothing for them.
+        permissions = compile_opencode_permissions(spec)
+        if permissions:
             merged_config = merge_opencode_v2_permission_config(
-                env.get(OPENCODE_CONFIG_CONTENT_ENV), permission_override
+                env.get(OPENCODE_CONFIG_CONTENT_ENV), permissions
             )
             if merged_config is not None:
                 env[OPENCODE_CONFIG_CONTENT_ENV] = merged_config

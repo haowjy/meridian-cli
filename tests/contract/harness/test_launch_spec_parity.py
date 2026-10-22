@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from meridian.lib.harness.projections.project_codex_common import (
-    HarnessCapabilityMismatch,
-    map_codex_approval_policy,
-)
+from meridian.lib.harness.projections.permissions_codex import map_codex_approval_policy
+from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 
 
 @pytest.mark.parametrize(

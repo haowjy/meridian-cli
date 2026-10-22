@@ -109,7 +109,7 @@ context and the effective child environment; never reread ambient env for defaul
 It fills missing or blank child values after explicit inherited/runtime
 values are bound; Pi uses it for agent and session directories and to default
 `PI_CACHE_RETENTION=long` only for interactive primaries, while forced adapter
-policy remains in `env_overrides()`.
+policy rides `project_launch_env()`.
 
 **OpenCode's prompt, model and workspace grants ride `OPENCODE_CONFIG_CONTENT`, built once
 at bind by `OpenCodeAdapter.project_launch_env()`; connections never write the prompt.**

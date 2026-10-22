@@ -4,6 +4,7 @@ Upstream moved from ``opencode-ai/opencode`` to ``anomalyco/opencode`` (opencode
 The Meridian adapter targets current opencode.ai CLI releases.
 """
 
+import json
 import logging
 import re
 import sqlite3
@@ -21,7 +22,6 @@ from meridian.lib.harness.adapter import (
     HarnessCapabilities,
     HarnessContract,
     McpConfig,
-    PermissionResolver,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -59,6 +59,7 @@ from meridian.lib.harness.passthrough.opencode import (
     build_opencode_server_attach_command,
 )
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.projections.permissions_opencode import compile_opencode_permissions
 from meridian.lib.harness.projections.project_opencode_config import (
     OPENCODE_CONFIG_CONTENT_ENV,
     meridian_agent_id,
@@ -94,7 +95,6 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -386,11 +386,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             database = child_cwd / database
         return str(database.resolve())
 
-    def resolve_launch_spec(
-        self,
-        run: SpawnParams,
-        perms: PermissionResolver,
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         normalized_model: str | None = None
         if run.model:
@@ -416,7 +412,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt=run.user_turn_content or run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
             extra_args=run.extra_args,
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
@@ -472,12 +467,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        overrides: dict[str, str] = {}
-        if config.opencode_permission_override:
-            overrides["OPENCODE_PERMISSION"] = config.opencode_permission_override
-        return overrides
-
     def project_launch_env(
         self,
         *,
@@ -496,7 +485,19 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt_file=system_prompt_path,
             model=None if spec.continue_session_id else spec.model,
         )
-        return {} if config is None else {OPENCODE_CONFIG_CONTENT_ENV: config}
+        overrides: dict[str, str] = {}
+        permissions = compile_opencode_permissions(spec)
+        if permissions is not None:
+            overrides["OPENCODE_PERMISSION"] = json.dumps(
+                permissions, sort_keys=True, separators=(",", ":")
+            )
+        elif not spec.interactive:
+            # A child spawn with no explicit restriction: allow everything so
+            # `opencode run` doesn't auto-reject every tool call.
+            overrides["OPENCODE_PERMISSION"] = '{"*":"allow"}'
+        if config is not None:
+            overrides[OPENCODE_CONFIG_CONTENT_ENV] = config
+        return overrides
 
     def seed_session(
         self,
