@@ -10,7 +10,6 @@ url = "https://github.com/haowjy/meridian-base"
 [settings]
 targets = [
     ".claude",
-    ".cursor",
     ".codex",
     ".pi",
     ".opencode",
