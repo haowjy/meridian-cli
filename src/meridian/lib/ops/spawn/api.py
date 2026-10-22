@@ -479,6 +479,7 @@ def spawn_create_sync(
             task_cwd_source=getattr(prepared_request, "task_cwd_source", None),
             task_cwd_work_item=getattr(prepared_request, "task_cwd_work_item", None),
             cli_command=tuple(getattr(prepared_request, "cli_command", ()) or ()),
+            permission_report=prepared_request.permission_report,
             message="Dry run complete.",
             forked_from=forked_from,
         )

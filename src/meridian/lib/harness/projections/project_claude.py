@@ -199,7 +199,7 @@ def project_claude_spec_to_cli_args(
     )
     passthrough_tail = tuple(projected_passthrough_tail)
 
-    permissions = compile_claude_permissions(spec)
+    permissions, _ = compile_claude_permissions(spec)
     allowed_tools = list(permissions.allowed_tools)
     if not permissions.native_agents_enabled:
         parent_allowed_tools = [

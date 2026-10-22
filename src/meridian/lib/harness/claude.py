@@ -61,7 +61,10 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
-from meridian.lib.harness.projections.permissions_claude import project_has_claude_agent_copy
+from meridian.lib.harness.projections.permissions_claude import (
+    compile_claude_permissions,
+    project_has_claude_agent_copy,
+)
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
@@ -544,6 +547,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: ClaudeConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_claude_spec_to_cli_args,
+            permissions=compile_claude_permissions,
         ),
         semantics=CLAUDE_SEMANTICS,
         primary_inbox=post_primary_message,

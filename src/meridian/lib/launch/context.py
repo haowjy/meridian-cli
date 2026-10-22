@@ -36,6 +36,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
+from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     PreflightResult,
@@ -51,7 +52,7 @@ from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
-from meridian.lib.safety.policy import PermissionPolicy, build_permission_policy
+from meridian.lib.safety.policy import EnforcementReport, PermissionPolicy, build_permission_policy
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
@@ -247,6 +248,11 @@ class LaunchContext:
     # I-13: adapter input transformations surface here instead of silently mutating.
     warnings: tuple[CompositionWarning, ...] = ()
     model_selection: ModelSelectionContext | None = None
+
+    def enforcement_report(self) -> EnforcementReport:
+        """What this launch's harness enforces from the permission policy."""
+
+        return get_harness_bundle(self.harness.id).projections.permissions(self.binding.spec)[1]
 
 
 @dataclass(frozen=True)

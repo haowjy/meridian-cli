@@ -8,6 +8,7 @@ platform rules natively; nothing here knows a harness.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -92,6 +93,42 @@ class PermissionPolicy(BaseModel):
     approval: ApprovalMode = "default"
     native_agent_copy: bool = False
     web_search: bool = False
+
+
+type ReportStatus = Literal["native", "partial", "unsupported", "platform"]
+
+
+@dataclass(frozen=True)
+class ReportLine:
+    """What one harness does with one element of the policy.
+
+    ``native``: the harness enforces it as stated. ``partial``: part of its meaning reaches
+    the harness; ``note`` says which part. ``unsupported``: nothing reaches the harness.
+    ``platform``: a Meridian platform rule decides it, not the profile.
+    """
+
+    element: str
+    status: ReportStatus
+    note: str
+
+
+type EnforcementReport = tuple[ReportLine, ...]
+
+
+def rule_element(rule: ToolRule) -> str:
+    return f"tools: {rule.native[0] if rule.native else rule.capability} = {rule.action}"
+
+
+def platform_element(rule: PlatformRule) -> str:
+    if rule.kind == "native-subagents":
+        return f"platform: deny native sub-agents ({', '.join(sorted(rule.capabilities))})"
+    return "platform: deny built-in agents"
+
+
+def format_report_lines(report: EnforcementReport) -> list[str]:
+    """Render a report as indented text lines for dry-run output."""
+
+    return [f"  [{line.status}] {line.element} -> {line.note}" for line in report]
 
 
 def _split_key(raw_key: str) -> tuple[str, str | None]:
@@ -184,9 +221,15 @@ def build_permission_policy(
 
 __all__ = [
     "ApprovalMode",
+    "EnforcementReport",
     "PermissionPolicy",
     "PlatformRule",
+    "ReportLine",
+    "ReportStatus",
     "SandboxMode",
     "ToolRule",
     "build_permission_policy",
+    "format_report_lines",
+    "platform_element",
+    "rule_element",
 ]

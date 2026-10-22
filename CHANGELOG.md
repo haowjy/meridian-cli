@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `--dry-run` (spawn and primary) prints a `Permissions:` section: per profile rule, platform rule, sandbox and approval value, what the harness does with it (`native`, `partial`, `unsupported`, `platform`) and the flag it became. `--json` gains `permission_report`; `projection-manifest.json` gains `permission_report`. Report states today's projection, gaps included, e.g. OpenCode primaries get no profile rules, Pi gets none, Codex gets no tool rules.
+
 ## [0.11.8] - 2026-10-21
 
 ### Added

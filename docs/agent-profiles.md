@@ -315,7 +315,7 @@ Things the table implies:
 - **On Codex, set `sandbox` whenever `tools` is set.** The inferred sandbox is `read-only` whatever `tools` allows, so a profile that allows `bash` and `edit` still cannot write.
 - **OpenCode primaries ignore `tools`.** The same profile restricts an OpenCode spawn and not an OpenCode primary session.
 
-`meridian spawn -a NAME --dry-run` prints the command line Meridian builds, including the permission flags for Claude, Codex, Cursor, and Pi. OpenCode receives its rules in its environment instead: `OPENCODE_PERMISSION` on OpenCode 1.x, `OPENCODE_CONFIG_CONTENT` on OpenCode 2.x. `--dry-run` does not show them.
+`meridian spawn -a NAME --dry-run` and `meridian --dry-run -a NAME` print the command line Meridian builds, then a `Permissions:` section with one line per rule, platform rule, sandbox and approval value. Each line says whether the harness enforces it as written (`native`), only partly (`partial`), not at all (`unsupported`), or because a Meridian platform rule decides it (`platform`), and names the flag or setting it became. `--json` carries the same lines as `permission_report`, and a launched spawn's `projection-manifest.json` records them. OpenCode receives its rules in its environment instead of argv: `OPENCODE_PERMISSION` on OpenCode 1.x, `OPENCODE_CONFIG_CONTENT` on OpenCode 2.x; the `Permissions:` section shows what it gets.
 
 ### Who answers an approval request
 

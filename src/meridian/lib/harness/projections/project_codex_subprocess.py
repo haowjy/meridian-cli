@@ -82,7 +82,7 @@ def project_codex_spec_to_cli_args(
     if normalized_effort:
         command.extend(("-c", f"model_reasoning_effort={json.dumps(normalized_effort)}"))
 
-    permissions = compile_codex_permissions(spec)
+    permissions, _ = compile_codex_permissions(spec)
     if permissions.sandbox_mode is not None:
         command.extend(("--sandbox", permissions.sandbox_mode))
     if permissions.approval_policy is not None:

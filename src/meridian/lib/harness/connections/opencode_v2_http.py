@@ -187,7 +187,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         # V2 reads permissions from config content, not the V1 OPENCODE_PERMISSION
         # env. Interactive primaries defer to the native TUI, matching V1: the compile
         # returns nothing for them.
-        permissions = compile_opencode_permissions(spec)
+        permissions, _ = compile_opencode_permissions(spec)
         if permissions:
             merged_config = merge_opencode_v2_permission_config(
                 env.get(OPENCODE_CONFIG_CONTENT_ENV), permissions

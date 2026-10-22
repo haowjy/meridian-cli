@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -244,6 +244,7 @@ def write_projection_artifacts(
         "harness": launch_context.harness.id.value,
         "surface": surface,
         "channels": channels.to_dict(),
+        "permission_report": [asdict(line) for line in launch_context.enforcement_report()],
     }
     atomic_write_text(
         log_dir / "projection-manifest.json",

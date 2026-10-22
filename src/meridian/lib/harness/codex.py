@@ -50,6 +50,7 @@ from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
@@ -587,6 +588,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: CodexConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
+            permissions=compile_codex_permissions,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,
                 bootstrap_payload=project_codex_spec_to_thread_request_for_project,

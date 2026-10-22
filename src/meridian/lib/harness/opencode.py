@@ -485,7 +485,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             model=None if spec.continue_session_id else spec.model,
         )
         overrides: dict[str, str] = {}
-        permissions = compile_opencode_permissions(spec)
+        permissions, _ = compile_opencode_permissions(spec)
         if permissions is not None:
             overrides["OPENCODE_PERMISSION"] = json.dumps(
                 permissions, sort_keys=True, separators=(",", ":")
@@ -673,6 +673,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: OpenCodeConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_opencode_spec_to_cli_args,
+            permissions=compile_opencode_permissions,
             resolve_subprocess_spec=resolve_opencode_subprocess_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_opencode_spec_to_serve_command,

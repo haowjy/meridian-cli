@@ -2,7 +2,8 @@
 
 Tool rules and platform rules become ``--allowedTools`` / ``--disallowedTools`` entries
 and the approval mode becomes Claude's permission mode. ``project_claude.py`` turns the
-typed result into argv; nothing here builds argv.
+typed result into argv; nothing here builds argv. The compile also reports what it did
+with each element of the policy.
 
 Platform rules: ``native-subagents`` denies ``Agent`` / ``Task*`` and overrides the
 profile's own ``agent`` rules; Claude's built-in agents are always denied, because
@@ -21,6 +22,15 @@ from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.core.types import normalize_mars_target_name
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty
+from meridian.lib.safety.policy import (
+    EnforcementReport,
+    PermissionPolicy,
+    PlatformRule,
+    ReportLine,
+    ToolRule,
+    platform_element,
+    rule_element,
+)
 from meridian.lib.tools import ToolAction
 
 # Claude's tool names per capability. Unknown capabilities are re-capitalized, which
@@ -109,8 +119,7 @@ def project_has_claude_agent_copy(project_root: Path) -> bool:
         harnesses = typed_agent_copy.get("harnesses")
         if isinstance(harnesses, list):
             agent_copy_harnesses = tuple(
-                str(harness).strip().lower()
-                for harness in cast("list[object]", harnesses)
+                str(harness).strip().lower() for harness in cast("list[object]", harnesses)
             )
     return "claude" in agent_copy_harnesses and "claude" in targets
 
@@ -124,19 +133,23 @@ def _claude_tools_for_capability(capability: str) -> tuple[str, ...]:
     return (capability[:1].upper() + capability[1:],)
 
 
-def _effective_rules(spec: ResolvedLaunchSpec) -> dict[_RuleKey, ToolAction]:
+def _effective_rules(
+    spec: ResolvedLaunchSpec,
+) -> tuple[dict[_RuleKey, ToolAction], frozenset[_RuleKey]]:
     """The profile's rules with the platform's denies laid over them.
 
     A platform deny replaces a same-key rule in place and otherwise appends; for ``agent``
     it also overrides every scoped ``agent(...)`` rule. The built-in agents are always
-    denied (see the module docstring).
+    denied (see the module docstring). Also returns the profile rules a platform deny
+    changed.
     """
 
     policy = spec.permission_policy
-    effective: dict[_RuleKey, ToolAction] = {}
+    stated: dict[_RuleKey, ToolAction] = {}
     for rule in policy.rules:
         if rule.capability is not None:
-            effective[(rule.capability, rule.pattern)] = rule.action
+            stated[(rule.capability, rule.pattern)] = rule.action
+    effective = dict(stated)
     for platform in policy.platform_rules:
         if platform.kind != "native-subagents":
             continue
@@ -148,7 +161,8 @@ def _effective_rules(spec: ResolvedLaunchSpec) -> dict[_RuleKey, ToolAction]:
             effective[(capability, None)] = "deny"
     for pattern in _BUILTIN_AGENT_PATTERNS:
         effective[("agent", pattern)] = "deny"
-    return effective
+    overridden = frozenset(key for key, action in stated.items() if effective[key] != action)
+    return effective, overridden
 
 
 def _compile_tool_rules(
@@ -185,15 +199,139 @@ def _compile_tool_rules(
     return tuple(dedupe_nonempty(allowed)), tuple(dedupe_nonempty(disallowed))
 
 
-def compile_claude_permissions(spec: ResolvedLaunchSpec) -> ClaudePermissions:
-    """Compile ``spec.permission_policy`` for Claude."""
+def _tool_rule_line(
+    rule: ToolRule, allowed: frozenset[str], disallowed: frozenset[str], *, has_allows: bool
+) -> ReportLine:
+    element = rule_element(rule)
+    capability = rule.capability or ""
+    if capability == "*" and rule.pattern is None:
+        if rule.action != "deny":
+            return ReportLine(element, "unsupported", "no flag; Claude's own default decides")
+        if has_allows:
+            return ReportLine(
+                element,
+                "unsupported",
+                "not emitted: only the allow rules reach Claude, so unlisted tools stay available",
+            )
+        return ReportLine(
+            element,
+            "partial",
+            "emitted as a deny of every tool Meridian names; MCP and other tools stay available",
+        )
+    mapped = _claude_tools_for_capability(capability)
+    names = mapped if rule.pattern is None else tuple(f"{tool}({rule.pattern})" for tool in mapped)
+    if not names:
+        return ReportLine(element, "unsupported", "no Claude tool name for this capability")
+    emitted = disallowed if rule.action == "deny" else allowed
+    if not all(name in emitted for name in names):
+        why = (
+            "`*: deny` stands in for it"
+            if rule.action == "deny"
+            else "Agent grants need native agent copy"
+            if capability == "agent"
+            else "no flag carries it"
+        )
+        return ReportLine(element, "unsupported", f"not emitted: {why}")
+    flag = "--disallowedTools" if rule.action == "deny" else "--allowedTools"
+    note = f"{flag} {','.join(names)}"
+    raw = rule.native[0] if rule.native else None
+    if capability not in _CAPABILITY_TO_CLAUDE_TOOLS and names != (raw,):
+        return ReportLine(
+            element,
+            "partial",
+            f"{note}; spelling differs from the bundle's {raw}, so Claude may not match it",
+        )
+    if rule.action == "ask":
+        return ReportLine(
+            element, "partial", f"{note}; Claude has no ask flag, so ask is sent as allow"
+        )
+    if rule.action == "allow":
+        return ReportLine(element, "native", f"{note} (skips the prompt only)")
+    return ReportLine(element, "native", note)
+
+
+def _platform_lines(policy: PermissionPolicy) -> list[ReportLine]:
+    lines = [
+        ReportLine(
+            platform_element(platform),
+            "platform",
+            "--disallowedTools "
+            + ",".join(
+                tool
+                for capability in platform.capabilities
+                for tool in _claude_tools_for_capability(capability)
+            ),
+        )
+        for platform in policy.platform_rules
+        if platform.kind == "native-subagents"
+    ]
+    # ``allow_builtin_agents`` does not reach Claude: the denies apply even without the rule.
+    lines.append(
+        ReportLine(
+            platform_element(PlatformRule(kind="builtin-agents")),
+            "platform",
+            "--disallowedTools "
+            + ",".join(f"Agent({pattern})" for pattern in _BUILTIN_AGENT_PATTERNS)
+            + "; always, whatever allow_builtin_agents says",
+        )
+    )
+    return lines
+
+
+def _claude_report(
+    policy: PermissionPolicy,
+    permissions: ClaudePermissions,
+    effective: Mapping[_RuleKey, ToolAction],
+    overridden: frozenset[_RuleKey],
+) -> EnforcementReport:
+    allowed = frozenset(permissions.allowed_tools)
+    disallowed = frozenset(permissions.disallowed_tools)
+    has_allows = any(
+        action in {"allow", "ask"} for key, action in effective.items() if key != ("*", None)
+    )
+    lines: list[ReportLine] = []
+    for rule in policy.rules:
+        if rule.capability is None:
+            continue
+        key = (rule.capability, rule.pattern)
+        if key in overridden:
+            lines.append(
+                ReportLine(
+                    rule_element(rule),
+                    "platform",
+                    f"overridden to {effective[key]} by a platform rule",
+                )
+            )
+        else:
+            lines.append(_tool_rule_line(rule, allowed, disallowed, has_allows=has_allows))
+    lines.extend(_platform_lines(policy))
+    if policy.sandbox != "default":
+        lines.append(
+            ReportLine(f"sandbox: {policy.sandbox}", "unsupported", "Claude is given no sandbox")
+        )
+    if permissions.skip_permission_prompts:
+        approval_note = "--dangerously-skip-permissions"
+    elif permissions.permission_mode is not None:
+        approval_note = f"--permission-mode {permissions.permission_mode}"
+    else:
+        approval_note = ""
+    if approval_note:
+        lines.append(ReportLine(f"approval: {policy.approval}", "native", approval_note))
+    return tuple(lines)
+
+
+def compile_claude_permissions(
+    spec: ResolvedLaunchSpec,
+) -> tuple[ClaudePermissions, EnforcementReport]:
+    """Compile ``spec.permission_policy`` for Claude, with the report of what it did."""
 
     policy = spec.permission_policy
-    allowed, disallowed = _compile_tool_rules(_effective_rules(spec))
+    effective, overridden = _effective_rules(spec)
+    allowed, disallowed = _compile_tool_rules(effective)
     if not policy.native_agent_copy:
         allowed = tuple(tool for tool in allowed if not is_claude_agent_tool(tool))
     builtin_agent_denies = tuple(f"Agent({pattern})" for pattern in _BUILTIN_AGENT_PATTERNS)
-    return ClaudePermissions(
+    permissions = ClaudePermissions(
         skip_permission_prompts=policy.approval in ("yolo", "never"),
         permission_mode=(
             "acceptEdits"
@@ -206,6 +344,7 @@ def compile_claude_permissions(spec: ResolvedLaunchSpec) -> ClaudePermissions:
         disallowed_tools=tuple(dedupe_nonempty((*disallowed, *builtin_agent_denies))),
         native_agents_enabled=policy.native_agent_copy,
     )
+    return permissions, _claude_report(policy, permissions, effective, overridden)
 
 
 __all__ = [

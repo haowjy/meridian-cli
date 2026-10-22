@@ -241,6 +241,7 @@ def launch_primary(
         return LaunchResult(
             launch_plan=launch_plan,
             command=() if launch_plan is not None else preview_context.binding.argv,
+            permission_report=preview_context.enforcement_report(),
             exit_code=0,
             continue_ref=None,
             continue_chat_id=None,

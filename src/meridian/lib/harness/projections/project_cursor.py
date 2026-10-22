@@ -87,7 +87,7 @@ def project_cursor_spec_to_cli_args(
     if spec.model is not None:
         command.extend(("--model", spec.model))
 
-    permissions = compile_cursor_permissions(spec)
+    permissions, _ = compile_cursor_permissions(spec)
     if permissions.approval is not None:
         command.append(f"--{permissions.approval}")
     if permissions.sandbox is not None:

@@ -1,6 +1,7 @@
 """Spawn operation input/output models and shared lightweight helpers."""
 
 import shlex
+from dataclasses import asdict
 from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
@@ -10,6 +11,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 
@@ -199,6 +201,7 @@ class SpawnActionOutput(BaseModel):
     task_cwd_source: str | None = None
     task_cwd_work_item: str | None = None
     cli_command: tuple[str, ...] = ()
+    permission_report: EnforcementReport = ()
     exit_code: int | None = None
     duration_secs: float | None = None
     background: bool = False
@@ -325,6 +328,8 @@ class SpawnActionOutput(BaseModel):
                 wire["terminal_surface_mode"] = self.terminal_surface_mode
             if self.cli_command:
                 wire["cli_command"] = list(self.cli_command)
+            if self.permission_report:
+                wire["permission_report"] = [asdict(line) for line in self.permission_report]
         return wire
 
     def to_cli_wire(self) -> dict[str, object]:
@@ -470,6 +475,9 @@ class SpawnActionOutput(BaseModel):
             lines.append(f"Error: {self.error}")
         if self.cli_command:
             lines.append(shlex.join(self.cli_command))
+        if self.permission_report:
+            lines.append("Permissions:")
+            lines.extend(format_report_lines(self.permission_report))
         if self.exit_code is not None:
             lines.append(f"Exit code: {self.exit_code}")
         transcript_command = self._transcript_command()

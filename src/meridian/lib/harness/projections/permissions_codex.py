@@ -12,6 +12,13 @@ from dataclasses import dataclass
 
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.policy import (
+    EnforcementReport,
+    PermissionPolicy,
+    ReportLine,
+    platform_element,
+    rule_element,
+)
 
 _APPROVAL_POLICY_BY_MODE: dict[str, str | None] = {
     "default": None,
@@ -80,11 +87,60 @@ def map_codex_sandbox_mode(sandbox_mode: str) -> str | None:
     return mapped
 
 
-def compile_codex_permissions(spec: ResolvedLaunchSpec) -> CodexPermissions:
-    """Compile ``spec.permission_policy`` for Codex."""
+def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> EnforcementReport:
+    lines: list[ReportLine] = []
+    for rule in policy.rules:
+        if permissions.web_search and rule.native == ("web_search",) and rule.action != "deny":
+            lines.append(ReportLine(rule_element(rule), "native", "-c tools.web_search=true"))
+        else:
+            lines.append(
+                ReportLine(
+                    rule_element(rule),
+                    "unsupported",
+                    "Codex has no carrier for tool rules; only web_search is read",
+                )
+            )
+    for platform in policy.platform_rules:
+        if platform.kind == "builtin-agents":
+            lines.append(
+                ReportLine(
+                    platform_element(platform),
+                    "platform",
+                    "-c features.multi_agent_v2=false -c agents.max_depth=0",
+                )
+            )
+        else:
+            lines.append(
+                ReportLine(platform_element(platform), "unsupported", "not projected for Codex")
+            )
+    if permissions.sandbox_mode is not None:
+        lines.append(
+            ReportLine(
+                f"sandbox: {policy.sandbox}", "native", f"sandbox_mode={permissions.sandbox_mode}"
+            )
+        )
+    if permissions.approval_policy is not None:
+        note = f"approval_policy={permissions.approval_policy}"
+        if policy.approval == "confirm":
+            lines.append(
+                ReportLine(
+                    f"approval: {policy.approval}",
+                    "partial",
+                    f"{note}; Codex has no stricter mode, so confirm behaves as auto",
+                )
+            )
+        else:
+            lines.append(ReportLine(f"approval: {policy.approval}", "native", note))
+    return tuple(lines)
+
+
+def compile_codex_permissions(
+    spec: ResolvedLaunchSpec,
+) -> tuple[CodexPermissions, EnforcementReport]:
+    """Compile ``spec.permission_policy`` for Codex, with the report of what it did."""
 
     policy = spec.permission_policy
-    return CodexPermissions(
+    permissions = CodexPermissions(
         sandbox_mode=map_codex_sandbox_mode(policy.sandbox),
         approval_policy=map_codex_approval_policy(policy.approval),
         web_search=policy.web_search,
@@ -92,6 +148,7 @@ def compile_codex_permissions(spec: ResolvedLaunchSpec) -> CodexPermissions:
             rule.kind == "builtin-agents" for rule in policy.platform_rules
         ),
     )
+    return permissions, _codex_report(policy, permissions)
 
 
 __all__ = [

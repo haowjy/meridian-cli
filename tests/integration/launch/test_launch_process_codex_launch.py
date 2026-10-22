@@ -228,7 +228,9 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
     assert f"{harness_id.value} passthrough system prompt" in system_prompt
     assert f"{harness_id.value} passthrough system prompt" not in starting_prompt
     assert f"{harness_id.value} primary prompt" in starting_prompt
-    assert json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8")) == {
+    manifest = json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8"))
+    assert manifest.pop("permission_report")
+    assert manifest == {
         "harness": harness_id.value,
         "surface": "primary",
         "channels": {

@@ -56,6 +56,7 @@ from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
 )
+from meridian.lib.harness.projections.permissions_pi import compile_pi_permissions
 from meridian.lib.harness.projections.pi_extension_projection import (
     PiExtensionLaunchProfile,
     default_extra_extension_path,
@@ -599,6 +600,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: PiRpcConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=_project_pi_subprocess_cli_args,
+            permissions=compile_pi_permissions,
         ),
         semantics=PI_SEMANTICS,
         event_sinks=_event_sinks,

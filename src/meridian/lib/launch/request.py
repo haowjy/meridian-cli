@@ -11,6 +11,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.safety.policy import EnforcementReport
 from meridian.lib.state.session_store import ConversationModelSelection, SessionModelSelectionEvent
 from meridian.lib.tools import ToolsField
 
@@ -145,6 +146,8 @@ class SpawnRequest(BaseModel):
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     # Preview command for dry-run display only.  Executors MUST NOT use this field.
     cli_command: tuple[str, ...] = ()
+    # Dry-run display only, like ``cli_command``: what the harness enforces from the policy.
+    permission_report: EnforcementReport = ()
     authority_root: str | None = None
     task_cwd: str | None = None
     reference_anchor: str | None = None

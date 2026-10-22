@@ -181,7 +181,9 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     assert "primary prompt" in starting_prompt
     assert "passthrough system prompt" not in starting_prompt
     assert not (log_dir / "prompt.md").exists()
-    assert json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8")) == {
+    manifest = json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8"))
+    assert manifest.pop("permission_report")
+    assert manifest == {
         "harness": "claude",
         "surface": "primary",
         "channels": {

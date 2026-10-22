@@ -21,6 +21,7 @@ from meridian.lib.harness.idle_types import (
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
+from meridian.lib.safety.policy import EnforcementReport
 from meridian.lib.state.spawn.model import SpawnRecord
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
@@ -69,6 +70,9 @@ class HarnessProjectionPorts(Generic[SpecT]):
     """Projection helpers registered for one harness bundle."""
 
     subprocess_cli_args: SubprocessProjector[SpecT]
+    # The harness's one permission compile: (native projection, report of what it enforces).
+    # Live projectors, ``--dry-run`` and the projection manifest all go through it.
+    permissions: Callable[[SpecT], tuple[object, EnforcementReport]]
     resolve_subprocess_spec: Callable[[SpecT, Mapping[str, str]], SpecT] | None = None
     managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
 

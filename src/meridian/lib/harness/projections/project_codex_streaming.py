@@ -161,7 +161,7 @@ def project_codex_spec_to_appserver_command(
     if spec.interactive:
         command.extend(("-c", f"notify={json.dumps(IDLE_NOTIFY_COMMAND)}"))
 
-    permissions = compile_codex_permissions(spec)
+    permissions, _ = compile_codex_permissions(spec)
     if permissions.sandbox_mode is not None:
         command.extend(("-c", f"sandbox_mode={json.dumps(permissions.sandbox_mode)}"))
 
@@ -229,7 +229,7 @@ def project_codex_spec_to_thread_request(
     if normalized_effort:
         payload["config"] = {"model_reasoning_effort": normalized_effort}
 
-    permissions = compile_codex_permissions(spec)
+    permissions, _ = compile_codex_permissions(spec)
     if permissions.approval_policy is not None:
         payload["approvalPolicy"] = permissions.approval_policy
 

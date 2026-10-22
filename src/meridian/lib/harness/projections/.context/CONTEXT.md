@@ -93,6 +93,17 @@ its projectors spell that value:
 Claude's compile treats `ask` as `allow` (no flag expresses it) and Codex has no carrier
 for tool rules, so only its two modes compile.
 
+Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
+(`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying
+what that harness did with it. Status `native` means enforced as stated, `partial` means part
+of the meaning reaches the harness (the note says which), `unsupported` means nothing does,
+`platform` means a Meridian platform rule decided it. Pi's module (`permissions_pi.py`)
+returns no native value and reports every element unsupported. The report states today's
+projection, not the intended one: write the note from what the compile emitted. The compile
+is registered on `HarnessProjectionPorts.permissions`; `LaunchContext.enforcement_report()`
+calls it for the `--dry-run` "Permissions:" section (and `permission_report` in `--json`)
+and for `permission_report` in `projection-manifest.json`.
+
 ### Adding a New Harness
 
 Follow the full touchpoint list in [../../.context/CONTEXT.md](../../.context/CONTEXT.md).

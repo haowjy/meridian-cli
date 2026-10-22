@@ -44,7 +44,8 @@ level creates a circular import at load time.
 the approval mode, already resolved. `ResolvedLaunchSpec.permission_policy` carries it, and
 each harness compiles it in `harness/projections/permissions_<harness>.py`. Nothing in
 `safety/` knows a harness. The rules keep the bundle's native keys until the Mars-typed
-rules replace them.
+rules replace them. `EnforcementReport` (a tuple of `ReportLine`) is the shape each compile
+reports what it enforced in; the formatting helpers for it live here too.
 
 ## Entry Points
 
