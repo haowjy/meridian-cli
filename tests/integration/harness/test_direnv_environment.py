@@ -144,7 +144,15 @@ def test_opencode_workspace_projection_uses_effective_environment(
     assert ("provider" not in config) is expected
     assert ("ANTHROPIC_API_KEY" not in env) is expected
     assert env["MERIDIAN_IGNORE_DIRENV"] == str(expected).lower()
-    assert config["permission"]["external_directory"]
+    agent_key = "agent" if context.binding.spec.opencode_version == "v1" else "agents"
+    permission_key = (
+        "permission" if context.binding.spec.opencode_version == "v1" else "permissions"
+    )
+    agent_permissions = config[agent_key]["meridian"][permission_key]
+    if context.binding.spec.opencode_version == "v1":
+        assert agent_permissions["external_directory"]
+    else:
+        assert any(rule["action"] == "external_directory" for rule in agent_permissions)
     if expected:
         assert config["permission"]["bash"] == "ask"
 

@@ -54,11 +54,13 @@ def launch_platform_rules(
     spawn: bool,
     native_agent_copy: bool,
     allow_builtin_agents: bool,
+    approval: str,
 ) -> tuple[PlatformRule, ...]:
     """Return the platform rules for one launch; each harness names them natively.
 
-    A spawn that carries tool rules also gets the completion-command allow, since any of
-    them may close the shell; one without rules has an open shell and needs none.
+    A spawn that carries tool rules or lowers approval prompts to immediate rejection also
+    gets the completion-command allow, since either may close the shell. A spawn with no
+    restriction has an open shell and needs none.
     """
 
     rules: list[PlatformRule] = []
@@ -72,7 +74,7 @@ def launch_platform_rules(
         rules.append(PlatformRule(kind="native-subagents", capabilities=capabilities))
     if not allow_builtin_agents:
         rules.append(PlatformRule(kind="builtin-agents"))
-    if spawn and tool_rules:
+    if spawn and (tool_rules or approval == "confirm"):
         rules.append(PlatformRule(kind="completion-commands", commands=_COMPLETION_COMMANDS))
     return tuple(rules)
 

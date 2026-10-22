@@ -22,7 +22,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "prompt",
         "continue_session_id",
         "continue_fork",
-        "permission_policy",
         "extra_args",
         "interactive",
         "mcp_tools",
@@ -33,12 +32,13 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-# ``appended_system_prompt`` is delivered at launch bind as a config agent
-# (``project_opencode_config.py``), not by this projection.
+# ``appended_system_prompt`` and ``permission_policy`` are delivered at launch bind as a
+# config agent (``project_opencode_config.py``), not by this projection.
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
         "appended_system_prompt",
+        "permission_policy",
         "agents_payload",
         "claude_runtime",
         "base_instructions",

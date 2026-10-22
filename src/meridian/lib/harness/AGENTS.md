@@ -112,11 +112,11 @@ values are bound; Pi uses it for agent and session directories and to default
 `PI_CACHE_RETENTION=long` only for interactive primaries, while forced adapter
 policy rides `project_launch_env()`.
 
-**OpenCode's prompt, model and workspace grants ride `OPENCODE_CONFIG_CONTENT`, built once
-at bind by `OpenCodeAdapter.project_launch_env()`; connections never write the prompt.**
-`ResolvedLaunchSpec.agent_name` names Meridian's agent exactly when there is a prompt, and
-every surface that opens or resumes a session must select it, because `default_agent`
-misses resumed sessions. Detail:
+**OpenCode's prompt, permission policy, model and workspace grants ride
+`OPENCODE_CONFIG_CONTENT`, built once at bind by `OpenCodeAdapter.project_launch_env()`;
+connections never rewrite it.** Every launch names Meridian's reserved policy agent on
+`ResolvedLaunchSpec.agent_name`, whether or not it has a prompt, and every surface that
+opens or resumes a session must select it because `default_agent` misses resumed sessions. Detail:
 [.context/CONTEXT.md](.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
 
 **Pi usage is per assistant message.** Fold each `message_end` increment once;

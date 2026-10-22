@@ -320,58 +320,53 @@ registration contract for materialized Codex forks.
 
 ### OpenCode: Workspace Env Merging
 
-OpenCode workspace projection goes through `OPENCODE_CONFIG_CONTENT` (JSON env
+OpenCode launch projection goes through `OPENCODE_CONFIG_CONTENT` (JSON env
 override), built by `project_launch_env()` at bind. If the parent process already
-exported this var, Meridian merges the roots' `external_directory` grants into the
-parent config rather than suppressing projection. Suppression would silently drop
-workspace roots inherited from the spawner. `OPENCODE_CONFIG_CONTENT_ENV` lives in
+exported this var, Meridian preserves unrelated settings and agents, replaces its
+reserved agent entry, and appends the roots' `external_directory` grants to that
+agent after the compiled policy. Suppression would silently drop workspace roots
+inherited from the spawner. `OPENCODE_CONFIG_CONTENT_ENV` lives in
 `projections/project_opencode_config.py` beside the serializer.
 
-OpenCode 2.x replaced the V1 `OPENCODE_PERMISSION` env with an ordered
-`permissions` array (`{action, resource, effect}`) in config content. For V2
-spawns the transport folds Meridian's compiled tools policy into
-`OPENCODE_CONFIG_CONTENT.permissions`, mapping V1 capability names
-(`bash`→`shell`, `write`/`patch`→`edit`, `task`→`subagent`) and splitting scoped
-keys (`bash(git status)`) into `action`/`resource`. Final emitted order is
-existing native `permissions`, inherited non-root V1 `permission` rules,
-Meridian's tools rules, then inherited `external_directory` grants. Because V2
-resolves the last matching rule, Meridian's tools policy wins over inherited
-non-root config while a broad tools `deny` still cannot shadow an explicit root
-grant. Rules that alias to the same `(action, resource)` (`edit:deny` +
-`write:allow`) are collapsed to the strongest effect (`deny > ask > allow`) with
-a warning, so emission order never decides. Within the inherited non-root and
-Meridian tools groups, rules are then emitted broad-first (`resource == "*"`
-before scoped resources) so a scoped rule always refines a broad one regardless
-of declaration order; the `external_directory` grant group stays last.
-Interactive primaries defer to the
-native TUI, matching V1's dropped override. The projection functions live in
-`projections/project_opencode_streaming.py`; the server's own V1→V2 translation
-does not handle flat scoped keys correctly, which is why Meridian compiles them.
+`permissions_opencode.py` owns one ordered policy compile for spawns and primaries.
+`project_opencode_config.py` spells it as V1 `agent.<id>.permission` (nested maps for
+scoped rules) or V2 `agents.<id>.permissions` (`{action, resource, effect}` rows).
+The bind-resolved version selects the shape; connections consume the config unchanged.
+OpenCode is last-match-wins, so the compile orders the wildcard default, unscoped rules,
+and scoped rules by increasing literal specificity, with stricter equal matches last.
+Platform denies follow profile rules, completion-command exceptions follow those, and
+workspace grants are last. The compile owns V2 aliases (`bash`→`shell`,
+`write`/`patch`→`edit`, `task`→`subagent`) and resolves collisions after aliasing;
+the config projector only serializes its result.
+
+OpenCode merges same-named agent fields across config documents and appends V2 rule
+arrays. The `meridian-<profile>` prefix avoids ordinary collisions; within inherited
+`OPENCODE_CONFIG_CONTENT`, Meridian owns and replaces that reserved entry. A user who
+deliberately defines the same reserved id in another OpenCode config document can still
+participate in OpenCode's native merge, while unrelated top-level and agent settings survive.
 
 ### OpenCode: Prompt, Agent and Model Delivery
 
-Bind projects the composed prompt, a fresh session's model and the workspace roots'
-`external_directory` grants into `OPENCODE_CONFIG_CONTENT`; no launch path or
-connection writes the prompt itself. `OpenCodeAdapter.project_launch_env()` is the
-seam (the base adapter's default is a no-op) and `projections/project_opencode_config.py`
-builds the JSON with one parse and one dump. Every other key in the inherited config
-survives. The prompt, the agent id and the model travel on separate channels, each with
-one owner:
+Bind projects the optional composed prompt, permission policy, a fresh session's model
+and workspace-root grants into `OPENCODE_CONFIG_CONTENT`; no launch path or connection
+rewrites it. `OpenCodeAdapter.project_launch_env()` is the seam (the base adapter's
+default is a no-op) and `projections/project_opencode_config.py` builds the JSON with
+one parse and one dump. The prompt, agent id and model travel on separate channels,
+each with one owner:
 
-- **Prompt: config, once, from bind.** `agent.meridian-<profile>` (`meridian` alone
-  without a profile) with `mode: primary` and
-  `prompt: {file:<spawn-log-dir>/system-prompt.md}`. The id is readable in the TUI and
-  prefixed so it never merges into a user's agent and inherits their model. The agent
-  carries no `model`: V2 ignores it. V1 reads `agent.<id>.prompt`; V2's config
-  normalization maps it to `agents.<id>.system`, so both versions share one shape.
+- **Prompt: config, once, from bind.** V1 uses `agent.meridian-<profile>.prompt`;
+  V2 uses `agents.meridian-<profile>.system`. Both point at
+  `{file:<spawn-log-dir>/system-prompt.md}` and use `mode: primary`. The prompt field is
+  omitted when there is no appended prompt. The id is readable in the TUI and prefixed
+  to avoid ordinary user-agent collisions. The agent carries no `model`: V2 ignores it.
   Replacing the base prompt keeps AGENTS.md, OpenCode's skill listing and the
   environment block (probed on both versions). Every launch path (streaming spawn,
   managed primary, bare-TUI fallback) inherits the bound env, so none has its own
   prompt channel.
 - **Agent id: decided once on `ResolvedLaunchSpec.agent_name`.**
-  `resolve_launch_spec()` sets it to the id exactly when the appended prompt is
-  non-empty. Bind emits the agent and its `{file:}` reference iff `agent_name` is set,
-  so the id and the file condition cannot disagree. `default_agent` names it for
+  `resolve_launch_spec()` always sets it: the agent owns permissions and workspace
+  grants even when it has no prompt. Bind always emits the agent and emits the file
+  reference only when the appended prompt is non-empty. `default_agent` names it for
   sessions the user opens later in the TUI, but it only covers sessions with no agent
   of their own: a resumed V1 session replays its last message's agent and a V2 session
   keeps its stored agent (probed: resuming a session committed to `build` delivered no

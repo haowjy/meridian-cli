@@ -48,10 +48,7 @@ from meridian.lib.harness.connections.opencode_http import (
     permission_liveness_key,
     summarize_body,
 )
-from meridian.lib.harness.projections.permissions_opencode import compile_opencode_permissions
-from meridian.lib.harness.projections.project_opencode_config import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.harness.projections.project_opencode_streaming import (
-    merge_opencode_v2_permission_config,
     project_opencode_model,
     project_opencode_spec_to_session_payload,
 )
@@ -183,17 +180,6 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             host=host,
             port=port,
         )
-        env = dict(config.child_env)
-        # V2 reads permissions from config content, not the V1 OPENCODE_PERMISSION
-        # env. Interactive primaries defer to the native TUI, matching V1: the compile
-        # returns nothing for them.
-        permissions, _ = compile_opencode_permissions(spec)
-        if permissions:
-            merged_config = merge_opencode_v2_permission_config(
-                env.get(OPENCODE_CONFIG_CONTENT_ENV), permissions
-            )
-            if merged_config is not None:
-                env[OPENCODE_CONFIG_CONTENT_ENV] = merged_config
         runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
             config.control_root
         )
@@ -209,7 +195,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
                 harness_id=self.harness_id,
                 command=tuple(command),
                 cwd=config.control_root,
-                env=env,
+                env=config.child_env,
                 control_root=config.control_root,
                 grace_seconds=self._STOP_GRACE_SECONDS,
             ),

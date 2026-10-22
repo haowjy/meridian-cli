@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Mapping
 from typing import cast
@@ -16,6 +17,7 @@ from meridian.lib.harness.opencode_snapshot import (
     read_opencode_v2_turn,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.permission_journal import PermissionDenial
 
 from .base import AttemptFold, HarnessExtractor
 
@@ -41,6 +43,15 @@ class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
 
 class OpenCodeFold(AttemptFold):
     message_id: str | None = None
+    tool_names: dict[str, str]
+    tool_inputs: dict[str, Mapping[str, object]]
+    denied_calls: set[str]
+
+    def __init__(self, extractor: OpenCodeHarnessExtractor) -> None:
+        super().__init__(extractor)
+        self.tool_names = {}
+        self.tool_inputs = {}
+        self.denied_calls = set()
 
     def session_id(self, event: RawHarnessEvent) -> str | None:
         session_id = super().session_id(event)
@@ -53,6 +64,7 @@ class OpenCodeFold(AttemptFold):
 
     def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:
         facts = self.facts
+        self._fold_permission_denial(kind, payload)
         if kind in {"session.idle", "message.updated"}:
             usage = _try_parse_opencode_usage(payload)
             if usage is not None:
@@ -108,10 +120,117 @@ class OpenCodeFold(AttemptFold):
                 prior = facts.final_text if self.text_source == "opencode_v1_parts" else None
                 self.set_text((prior or "") + text.strip(), "opencode_v1_parts")
 
+    def _fold_permission_denial(self, kind: str, payload: Mapping[str, object]) -> None:
+        """Capture native V1/V2 permission failures that reach the event stream."""
+
+        if kind == "session.tool.input.started":
+            request_id = payload.get("id")
+            tool = payload.get("name")
+            if isinstance(request_id, str) and isinstance(tool, str):
+                self.tool_names[request_id] = tool
+            return
+        if kind == "session.tool.called":
+            request_id = payload.get("id")
+            input_value = payload.get("input")
+            if isinstance(request_id, str) and isinstance(input_value, dict):
+                self.tool_inputs[request_id] = cast("dict[str, object]", input_value)
+            return
+        if kind == "session.tool.failed":
+            error = payload.get("error")
+            if not _is_permission_error(error):
+                return
+            request_id = payload.get("id")
+            if not isinstance(request_id, str):
+                return
+            self._record_permission_denial(
+                request_id=request_id,
+                tool=self.tool_names.get(request_id, "tool"),
+                input_value=self.tool_inputs.get(request_id, {}),
+                error=error,
+            )
+            return
+        if kind != "message.part.updated":
+            return
+        properties = payload.get("properties")
+        if not isinstance(properties, dict):
+            return
+        part = cast("dict[str, object]", properties).get("part")
+        if not isinstance(part, dict):
+            return
+        part = cast("dict[str, object]", part)
+        state = part.get("state")
+        if not isinstance(state, dict):
+            return
+        state = cast("dict[str, object]", state)
+        error = state.get("error")
+        if state.get("status") != "error" or not _is_permission_error(error):
+            return
+        request_id = part.get("callID") or part.get("id")
+        if not isinstance(request_id, str):
+            return
+        input_value = state.get("input")
+        self._record_permission_denial(
+            request_id=request_id,
+            tool=str(part.get("tool") or "tool"),
+            input_value=cast("dict[str, object]", input_value)
+            if isinstance(input_value, dict)
+            else {},
+            error=error,
+        )
+
+    def _record_permission_denial(
+        self,
+        *,
+        request_id: str,
+        tool: str,
+        input_value: Mapping[str, object],
+        error: object,
+    ) -> None:
+        if request_id in self.denied_calls:
+            return
+        self.denied_calls.add(request_id)
+        self.facts.permission_denials.append(
+            PermissionDenial(
+                request_id=request_id,
+                tool=tool,
+                detail=_permission_detail(input_value),
+                reason=_permission_reason(error),
+            )
+        )
+
 
 OPENCODE_EXTRACTOR = OpenCodeHarnessExtractor()
 
 __all__ = ["OPENCODE_EXTRACTOR", "OpenCodeHarnessExtractor"]
+
+
+def _is_permission_error(error: object) -> bool:
+    def v1_rule_denial(message: object) -> bool:
+        normalized = str(message).lower()
+        return "specified a rule" in normalized and "prevents" in normalized
+
+    if isinstance(error, dict):
+        error = cast("dict[str, object]", error)
+        return error.get("type") == "permission.rejected"
+    return v1_rule_denial(error or "")
+
+
+def _permission_reason(error: object) -> str:
+    if isinstance(error, dict):
+        message = cast("dict[str, object]", error).get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+    if isinstance(error, str) and error.strip():
+        return error.strip()
+    return "OpenCode denied the tool call."
+
+
+def _permission_detail(input_value: Mapping[str, object]) -> str:
+    for key in ("command", "path", "filePath", "file_path"):
+        value = input_value.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return json.dumps(dict(input_value), sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _try_parse_opencode_usage(payload: Mapping[str, object]) -> TokenUsage | None:

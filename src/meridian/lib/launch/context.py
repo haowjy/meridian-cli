@@ -1708,6 +1708,7 @@ def bind_launch_context(
             spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
             native_agent_copy=native_agent_copy,
             allow_builtin_agents=allow_builtin_agents,
+            approval=resolved_request.execution_policy.approval or "default",
         ),
     )
 

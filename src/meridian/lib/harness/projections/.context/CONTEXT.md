@@ -86,7 +86,7 @@ its projectors spell that value:
 |---|---|---|
 | Claude | tool availability, plain denies, scoped permissions, sandbox and prompt mode | `project_claude.py` (`--tools`, `--disallowedTools`, one `--settings`, permission flags) |
 | Codex | sandbox mode, approval policy, shell/web/image switches | `project_codex_subprocess.py` (`--sandbox`, `-c`/feature flags), `project_codex_streaming.py` (process flags and the thread payload) |
-| OpenCode | V1 permission map; `None` for primaries | `OpenCodeAdapter.project_launch_env()` (`OPENCODE_PERMISSION` JSON); the V2 connection (V2 rules merged into config content) |
+| OpenCode | ordered config-agent rules for spawns and primaries | `OpenCodeAdapter.project_launch_env()` → version-native `OPENCODE_CONFIG_CONTENT` |
 | Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
 | Pi | none: permissions are mediated through extension UI hooks | |
 
@@ -109,11 +109,12 @@ and `codex app-server`; the thread payload continues to carry sandbox and approv
 A compile that restricts the shell must name the `completion-commands` platform rule's
 `commands` (`meridian spawn done` / `rearm`) in its own scope syntax, where a broad `bash` or
 `*` deny does not shadow them; otherwise the child cannot answer the completion confirmation.
-OpenCode does (`bash(<cmd>)` and `bash(<cmd> *)`, added only to a map that profile rules made, so
-the spawn's allow-everything default survives). Claude adds `Bash(<cmd>)` and
+OpenCode does (`bash(<cmd>)` and `bash(<cmd> *)`) for every spawn whose policy carries the
+platform rule, including approval-confirm spawns without profile tool rules. Claude adds `Bash(<cmd>)` and
 `Bash(<cmd> *)` to `settings.permissions.allow` and, for a whole allowlist, keeps Bash
 available through `--tools`; an explicit profile deny/ask still takes precedence and the
-report says the platform allow is partial.
+report says the platform allow is partial. Pi's permissions extension grants them; Codex
+cannot scope its shell and reports the rule `unsupported`.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
 (`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying
