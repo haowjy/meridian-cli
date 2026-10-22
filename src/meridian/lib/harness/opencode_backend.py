@@ -5,7 +5,8 @@ and on-disk storage schemas. This module resolves which major version a spawn
 talks to. V1 is frozen; V2 is the target.
 
 Nothing here starts a server or writes state. It probes ``opencode --version``
-at most once per resolution. Concrete transports live in
+at most once per resolution, and launch bind resolves once per launch: the spec carries
+the result, which every reader takes through ``bound_opencode_version``. Concrete transports live in
 ``connections/opencode_http.py`` (V1) and ``connections/opencode_v2_http.py``
 (V2); ``OpenCodeConnection`` selects one from the resolved version. Version
 capabilities are not modeled here — the adapter's ``HarnessCapabilities`` is the
@@ -27,6 +28,8 @@ OpenCodeVersion = Literal["v1", "v2"]
 OpenCodeVersionPreference = Literal["auto", "v1", "v2"]
 
 VERSION_PREFERENCES: tuple[OpenCodeVersionPreference, ...] = ("auto", "v1", "v2")
+#: The launch env carries the ``[harness.opencode] version`` preference under this name.
+OPENCODE_VERSION_ENV = "MERIDIAN_HARNESS_OPENCODE_VERSION"
 VALID_VERSION_VALUES: tuple[str, ...] = VERSION_PREFERENCES
 
 #: Version assumed when the installed binary cannot be probed. V2 is the current
@@ -102,12 +105,27 @@ def resolve_opencode_version(
     return resolved or DEFAULT_OPENCODE_VERSION
 
 
+def bound_opencode_version(version: OpenCodeVersion | None) -> OpenCodeVersion:
+    """The version launch bind resolved onto the spec (``spec.opencode_version``).
+
+    The permission compile, the config projection, the managed-primary preview and the
+    connection all read it, so the report and the launch cannot disagree. A spec that did
+    not pass through bind has none, and nothing may guess one for it.
+    """
+
+    if version is None:
+        raise ValueError("OpenCode launch spec has no backend version; bind resolves it")
+    return version
+
+
 __all__ = [
     "DEFAULT_OPENCODE_VERSION",
+    "OPENCODE_VERSION_ENV",
     "VALID_VERSION_VALUES",
     "VERSION_PREFERENCES",
     "OpenCodeVersion",
     "OpenCodeVersionPreference",
+    "bound_opencode_version",
     "detect_opencode_version",
     "normalize_version_preference",
     "parse_opencode_version",

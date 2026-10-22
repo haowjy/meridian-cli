@@ -20,7 +20,6 @@ from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.launch.env import apply_pi_bind_time_env, build_harness_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
@@ -108,7 +107,6 @@ async def test_claude_probe_and_main_process_share_sanitized_bound_environment(
         },
         adapter=ClaudeAdapter(),
         run_params=SpawnParams(prompt="test", model=ModelId("claude-sonnet-4-6")),
-        permission_config=PermissionConfig(),
     )
     connection = ClaudeConnection()
     spawn_id = SpawnId("p-env-boundary-claude")
@@ -137,7 +135,6 @@ async def test_claude_probe_and_main_process_share_sanitized_bound_environment(
         ResolvedLaunchSpec(
             harness=HarnessId.CLAUDE,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
     try:
@@ -196,7 +193,6 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
             model=ModelId("openai-codex/gpt-5.4-mini"),
             interactive=role == "primary",
         ),
-        permission_config=PermissionConfig(),
         runtime_env_overrides={
             "MERIDIAN_PI_BINARY": str(fake_pi),
             "MERIDIAN_SESSION_ROLE": "primary" if role == "primary" else "spawn",
@@ -238,7 +234,6 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
     try:

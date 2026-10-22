@@ -7,6 +7,7 @@ import logging
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections.permissions_cursor import compile_cursor_permissions
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -15,8 +16,11 @@ logger = logging.getLogger(__name__)
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
         "model",
+        "native_config",
+        "autocompact",
+        "autocompact_pct",
         "prompt",
-        "permission_resolver",
+        "permission_policy",
         "extra_args",
         "task_cwd",
         "continue_session_id",
@@ -29,69 +33,27 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "harness",
         "continue_fork",
         "interactive",
-        "mcp_tools",
         "projected_roots",
         "effort",
         "agent_name",
         "appended_system_prompt",
         "agents_payload",
-        "claude_native_agents_enabled",
         "claude_runtime",
         "prompt_file_path",
         "user_turn_content",
         "report_output_path",
         "base_instructions",
         "developer_instructions",
-        "web_search_enabled",
         "skills",
         "reference_items",
         "pi_extension_entrypoints",
         "load_all_pi_extensions",
-        "disallowed_tools",
         "opencode_version",
     }
 )
 
 
-def _project_approval_flags(spec: ResolvedLaunchSpec) -> tuple[str, ...]:
-    approval_mode = spec.permission_resolver.config.approval
-    if approval_mode in ("yolo", "never"):
-        return ("--yolo",)
-    if approval_mode == "auto":
-        return ("--force",)
-    if approval_mode in {"default", "confirm"}:
-        return ()
-    raise HarnessCapabilityMismatch(
-        f"Cursor projection does not support approval mode '{approval_mode}'."
-    )
-
-
-def _project_sandbox_flags(spec: ResolvedLaunchSpec) -> tuple[str, ...]:
-    """Map mars sandbox mode to Cursor ``--sandbox enabled|disabled``.
-
-    Cursor's sandbox is binary — ``enabled`` restricts file access to the
-    workspace, ``disabled`` removes restrictions.  Mars ``workspace-write``
-    and ``danger-full-access`` both map to ``disabled`` (overshoot for
-    ``workspace-write``, but Cursor has no fine-grained equivalent).
-    """
-    sandbox_mode = spec.permission_resolver.config.sandbox
-    if sandbox_mode == "default":
-        return ()
-    if sandbox_mode == "read-only":
-        return ("--sandbox", "enabled")
-    if sandbox_mode in ("workspace-write", "danger-full-access"):
-        return ("--sandbox", "disabled")
-    raise HarnessCapabilityMismatch(
-        f"Cursor projection does not support sandbox mode '{sandbox_mode}'."
-    )
-
-
 def _assert_supported_for_mvp(spec: ResolvedLaunchSpec) -> None:
-    if spec.mcp_tools:
-        raise HarnessCapabilityMismatch(
-            "Cursor subprocess does not support per-spawn mcp_tools for MVP."
-        )
-
     if spec.continue_fork:
         raise HarnessCapabilityMismatch(
             "Cursor subprocess continue_fork is not supported for MVP."
@@ -122,8 +84,11 @@ def project_cursor_spec_to_cli_args(
     if spec.model is not None:
         command.extend(("--model", spec.model))
 
-    command.extend(_project_approval_flags(spec))
-    command.extend(_project_sandbox_flags(spec))
+    permissions, _ = compile_cursor_permissions(spec)
+    if permissions.approval is not None:
+        command.append(f"--{permissions.approval}")
+    if permissions.sandbox is not None:
+        command.extend(("--sandbox", permissions.sandbox))
 
     chat_id = (spec.continue_session_id or "").strip()
     if chat_id:

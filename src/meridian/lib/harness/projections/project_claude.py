@@ -2,27 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 
-from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
-from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
+from meridian.lib.harness.projections.compaction import project_claude_autocompact_args
+from meridian.lib.harness.projections.permissions_claude import (
+    ClaudeSettings,
+    compile_claude_permissions,
+)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 
 logger = logging.getLogger(__name__)
-
-_CLAUDE_BUILTIN_AGENT_DENY_TOOLS: tuple[str, ...] = (
-    "Agent(Explore)",
-    "Agent(Plan)",
-    "Agent(General-purpose)",
-    "Agent(general-purpose)",
-)
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
@@ -32,18 +27,18 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "continue_fork",
         "continue_session_id",
         "effort",
+        "autocompact",
+        "autocompact_pct",
         "extra_args",
         "interactive",
-        "mcp_tools",
         "projected_roots",
         "model",
-        "permission_resolver",
+        "native_config",
+        "permission_policy",
         "prompt",
         "prompt_file_path",
-        "claude_native_agents_enabled",
         "claude_runtime",
         "user_turn_content",
-        "disallowed_tools",
     }
 )
 
@@ -58,96 +53,14 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "opencode_version",
         "reference_items",
         "report_output_path",
-        "web_search_enabled",
         "skills",
         "task_cwd",
     }
 )
 
 
-def _split_internal_parent_allowed_tools(
-    extra_args: tuple[str, ...],
-) -> tuple[tuple[str, ...], list[str]]:
-    passthrough_tail: list[str] = []
-    parent_allowed_tools: list[str] = []
-
-    index = 0
-    while index < len(extra_args):
-        token = extra_args[index]
-        if token == CLAUDE_PARENT_ALLOWED_TOOLS_FLAG:
-            if index + 1 < len(extra_args):
-                parent_allowed_tools.extend(split_csv_entries(extra_args[index + 1]))
-                index += 2
-                continue
-            index += 1
-            continue
-        if token.startswith(f"{CLAUDE_PARENT_ALLOWED_TOOLS_FLAG}="):
-            parent_allowed_tools.extend(split_csv_entries(token.partition("=")[2]))
-            index += 1
-            continue
-        passthrough_tail.append(token)
-        index += 1
-
-    return tuple(passthrough_tail), dedupe_nonempty(parent_allowed_tools)
-
-
-def _extract_claude_tool_flags(
-    permission_flags: tuple[str, ...],
-) -> tuple[list[str], list[str], list[str]]:
-    projected_permission_flags: list[str] = []
-    allowed_tools: list[str] = []
-    disallowed_tools: list[str] = []
-
-    index = 0
-    while index < len(permission_flags):
-        token = permission_flags[index]
-
-        if token == "--allowedTools":
-            if index + 1 < len(permission_flags):
-                allowed_tools.extend(split_csv_entries(permission_flags[index + 1]))
-                index += 2
-                continue
-            index += 1
-            continue
-
-        if token.startswith("--allowedTools="):
-            allowed_tools.extend(split_csv_entries(token.partition("=")[2]))
-            index += 1
-            continue
-
-        if token == "--disallowedTools":
-            if index + 1 < len(permission_flags):
-                disallowed_tools.extend(split_csv_entries(permission_flags[index + 1]))
-                index += 2
-                continue
-            index += 1
-            continue
-
-        if token.startswith("--disallowedTools="):
-            disallowed_tools.extend(split_csv_entries(token.partition("=")[2]))
-            index += 1
-            continue
-
-        projected_permission_flags.append(token)
-        index += 1
-
-    return (
-        projected_permission_flags,
-        dedupe_nonempty(allowed_tools),
-        dedupe_nonempty(disallowed_tools),
-    )
-
-
 def _has_flag(args: Sequence[str], flag: str) -> bool:
     return any(token == flag or token.startswith(f"{flag}=") for token in args)
-
-
-def _is_claude_agent_tool(tool: str) -> bool:
-    return tool == "Agent" or tool.startswith("Agent(")
-
-
-def _is_denied_tool(tool: str, denied_tools: set[str]) -> bool:
-    return tool in denied_tools or ("Agent" in denied_tools and _is_claude_agent_tool(tool))
 
 
 def _log_collision_if_needed(
@@ -169,14 +82,26 @@ def _log_collision_if_needed(
     logger.debug(message, managed_flag)
 
 
-def _project_mcp_tools(mcp_tools: Iterable[str]) -> list[str]:
-    projected: list[str] = []
-    for tool in mcp_tools:
-        normalized = tool.strip()
-        if not normalized:
-            continue
-        projected.extend(("--mcp-config", normalized))
-    return projected
+def _settings_json(settings: ClaudeSettings) -> str:
+    payload: dict[str, object] = {}
+    permissions: dict[str, object] = {}
+    if settings.allow:
+        permissions["allow"] = list(settings.allow)
+    if settings.deny:
+        permissions["deny"] = list(settings.deny)
+    if settings.ask:
+        permissions["ask"] = list(settings.ask)
+    if permissions:
+        payload["permissions"] = permissions
+    if settings.sandbox_enabled is not None:
+        sandbox: dict[str, object] = {"enabled": settings.sandbox_enabled}
+        if settings.sandbox_enabled:
+            sandbox["allowUnsandboxedCommands"] = False
+            sandbox["autoAllowBashIfSandboxed"] = settings.auto_allow_bash_if_sandboxed
+            if settings.sandbox_deny_write:
+                sandbox["filesystem"] = {"denyWrite": list(settings.sandbox_deny_write)}
+        payload["sandbox"] = sandbox
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def project_claude_spec_to_cli_args(
@@ -194,6 +119,7 @@ def project_claude_spec_to_cli_args(
         command.extend(("--model", spec.model))
     if spec.effort:
         command.extend(("--effort", spec.effort))
+    command.extend(project_claude_autocompact_args(spec.autocompact))
     if spec.agent_name:
         command.extend(("--agent", str(spec.agent_name)))
     if (
@@ -203,46 +129,8 @@ def project_claude_spec_to_cli_args(
     ):
         command.extend(("--session-id", spec.native_identity.session_id))
 
-    passthrough_tail, parent_allowed_tools = _split_internal_parent_allowed_tools(spec.extra_args)
-    projected_passthrough_tail, passthrough_allowed_tools, passthrough_disallowed_tools = (
-        _extract_claude_tool_flags(passthrough_tail)
-    )
-    passthrough_tail = tuple(projected_passthrough_tail)
-
-    permission_flags = resolve_permission_flags(spec.permission_resolver, HarnessId.CLAUDE)
-    permission_tail, allowed_tools, disallowed_tools = _extract_claude_tool_flags(permission_flags)
-    spec_disallowed: list[str] = []
-    for entry in spec.disallowed_tools:
-        spec_disallowed.extend(split_csv_entries(entry))
-    if not spec.claude_native_agents_enabled:
-        allowed_tools = [tool for tool in allowed_tools if not _is_claude_agent_tool(tool)]
-        parent_allowed_tools = [
-            tool for tool in parent_allowed_tools if not _is_claude_agent_tool(tool)
-        ]
-        passthrough_allowed_tools = [
-            tool for tool in passthrough_allowed_tools if not _is_claude_agent_tool(tool)
-        ]
-    allowed_tools = dedupe_nonempty(
-        (*allowed_tools, *parent_allowed_tools, *passthrough_allowed_tools)
-    )
-    disallowed_tools = dedupe_nonempty(
-        (
-            *disallowed_tools,
-            *spec_disallowed,
-            *passthrough_disallowed_tools,
-            *_CLAUDE_BUILTIN_AGENT_DENY_TOOLS,
-        )
-    )
-    if disallowed_tools:
-        denied_tools = set(disallowed_tools)
-        allowed_tools = [tool for tool in allowed_tools if not _is_denied_tool(tool, denied_tools)]
-    command.extend(permission_tail)
-    if allowed_tools:
-        command.extend(("--allowedTools", ",".join(allowed_tools)))
-    if disallowed_tools:
-        command.extend(("--disallowedTools", ",".join(disallowed_tools)))
-
-    command.extend(_project_mcp_tools(spec.mcp_tools))
+    permissions, _ = compile_claude_permissions(spec)
+    passthrough_tail = permissions.passthrough_args
 
     for plugin_dir in spec.claude_runtime.plugin_dirs:
         command.extend(("--plugin-dir", plugin_dir))
@@ -267,22 +155,31 @@ def project_claude_spec_to_cli_args(
         command.extend(("--add-dir", root.as_posix()))
 
     _log_collision_if_needed(
-        managed_flag="--allowedTools",
-        has_managed_value=bool(allowed_tools),
-        passthrough_tail=passthrough_tail,
-    )
-    _log_collision_if_needed(
-        managed_flag="--disallowedTools",
-        has_managed_value=bool(disallowed_tools),
-        passthrough_tail=passthrough_tail,
-    )
-    _log_collision_if_needed(
         managed_flag="--append-system-prompt",
         has_managed_value=bool(spec.appended_system_prompt),
         passthrough_tail=passthrough_tail,
     )
 
     command.extend(passthrough_tail)
+
+    # Permission projection comes after passthrough. Claude keeps only the last
+    # --settings (and --permission-mode), so the managed settings replace a raw one; the
+    # compile consumed raw tool allow/deny flags and omits its own mode when passthrough
+    # sets one. Passthrough can still widen the profile (--dangerously-skip-permissions,
+    # --permission-mode, --allow-dangerously-skip-permissions): those flags stay, and the
+    # report says so.
+    if permissions.skip_permission_prompts:
+        command.append("--dangerously-skip-permissions")
+    if permissions.permission_mode:
+        command.extend(("--permission-mode", permissions.permission_mode))
+    if permissions.permission_prompts:
+        command.extend(("--permission-prompts", permissions.permission_prompts))
+    if permissions.restrict_tools:
+        command.extend(("--tools", ",".join(permissions.available_tools)))
+    if permissions.disallowed_tools:
+        command.extend(("--disallowedTools", ",".join(permissions.disallowed_tools)))
+    if not permissions.settings.empty:
+        command.extend(("--settings", _settings_json(permissions.settings)))
 
     # For interactive Claude launches, add user-turn content as positional argument
     # This routes USER_TASK_PROMPT and TASK_CONTEXT to the user-turn channel

@@ -5,21 +5,41 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.config.loader import resolve_allow_builtin_agents_for_launch
-from meridian.lib.harness.adapter import SpawnParams
-from meridian.lib.harness.codex import CodexAdapter
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
 )
-from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
+from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 _DISABLED = ["-c", "features.multi_agent_v2=false", "-c", "agents.max_depth=0"]
 
 
-def _appserver_command(params: SpawnParams) -> list[str]:
-    spec = CodexAdapter().resolve_launch_spec(
-        params, TieredPermissionResolver(config=PermissionConfig())
+def _appserver_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    extra_args: tuple[str, ...] = (),
+) -> list[str]:
+    """The `codex app-server` command for a launch bound in ``tmp_path``'s project."""
+
+    stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.4", harness=HarnessId.CODEX)
+    context = build_launch_context(
+        spawn_id="p-codex-builtin",
+        request=SpawnRequest(
+            prompt="x", model="gpt-5.4", harness=HarnessId.CODEX.value, extra_args=extra_args
+        ),
+        runtime=LaunchRuntime(
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
     )
-    return project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=1)
+    return project_codex_spec_to_appserver_command(context.binding.spec, host="127.0.0.1", port=1)
 
 
 def _empty(path: Path) -> str:
@@ -50,7 +70,7 @@ def test_codex_builtin_agents_follow_harness_config(
         is False
     )
 
-    command = _appserver_command(SpawnParams(prompt="x", allow_builtin_agents=allowed))
+    command = _appserver_command(tmp_path, monkeypatch)
     assert _contains(command, _DISABLED) is not expected
 
 
@@ -61,8 +81,11 @@ def test_codex_builtin_agents_follow_harness_config(
         ("features.multi_agent_v2=false", "features.multi_agent_v2=true"),
     ],
 )
-def test_codex_passthrough_override_follows_default_disable(default: str, override: str) -> None:
+def test_codex_passthrough_override_follows_default_disable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, default: str, override: str
+) -> None:
     # Codex applies `-c` overrides in order, so a later passthrough value wins.
-    command = _appserver_command(SpawnParams(prompt="x", extra_args=("-c", override)))
+    monkeypatch.setenv("MERIDIAN_CONFIG", _empty(tmp_path / "user.toml"))
+    command = _appserver_command(tmp_path, monkeypatch, extra_args=("-c", override))
 
     assert command.index(override) > command.index(default)

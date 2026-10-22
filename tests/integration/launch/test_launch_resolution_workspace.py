@@ -233,7 +233,12 @@ def test_named_workspace_roots_project_through_opencode_launch_context(
     runtime_root = tmp_path / ".meridian"
     final_env = preview.binding.environment.final_env
     payload = json.loads(final_env[OPENCODE_CONFIG_CONTENT_ENV])
-    external_dirs = payload["permission"]["external_directory"]
+    permissions = payload["agents"]["meridian"]["permissions"]
+    external_dirs = {
+        rule["resource"]: rule["effect"]
+        for rule in permissions
+        if rule["action"] == "external_directory"
+    }
     assert external_dirs[docs_root.as_posix() + "/**"] == "allow"
     assert external_dirs[runtime_root.as_posix() + "/**"] == "allow"
 
@@ -286,12 +291,19 @@ def test_opencode_workspace_projection_merges_parent_env(
     runtime_root = tmp_path / ".meridian"
     final_env = preview.binding.environment.final_env
     payload = json.loads(final_env[OPENCODE_CONFIG_CONTENT_ENV])
-    external_dirs = payload["permission"]["external_directory"]
+    permissions = payload["agents"]["meridian"]["permissions"]
+    external_dirs = {
+        rule["resource"]: rule["effect"]
+        for rule in permissions
+        if rule["action"] == "external_directory"
+    }
     assert external_dirs[shared_root.as_posix() + "/**"] == "allow"
     assert external_dirs[runtime_root.as_posix() + "/**"] == "allow"
     if parent_env_present:
         assert payload["instructions"] == ["/tmp/system.md"]
-        assert external_dirs["/existing/*"] == "ask"
+        assert payload["permission"] == {
+            "external_directory": {"/existing/*": "ask"}
+        }
     assert "workspace_opencode_parent_env_suppressed" not in warning_codes
 
 
@@ -301,8 +313,6 @@ def test_opencode_workspace_projection_merges_parent_env(
         "{invalid-json",
         "[]",
         "null",
-        '{"permission":[]}',
-        '{"permission":{"external_directory":[]}}',
     ],
 )
 def test_opencode_workspace_rejects_invalid_inherited_config(tmp_path, monkeypatch, raw) -> None:
@@ -348,16 +358,11 @@ def test_opencode_workspace_preserves_native_denials_and_rule_order(
         harness_registry=get_default_harness_registry(),
         dry_run=True,
     )
-    projected = json.loads(
-        preview.binding.environment.final_env[OPENCODE_CONFIG_CONTENT_ENV]
-    )["permission"]
-    if permission == "deny":
-        assert list(projected) == ["*", "external_directory"]
-        assert projected["*"] == "deny"
-    elif "edit" in permission:
-        assert projected["edit"] == "deny"
-        assert projected["external_directory"]["*"] == "deny"
-    else:
-        assert list(projected) == ["bash", "*", "external_directory"]
-        assert projected["bash"] == "allow" and projected["*"] == "deny"
-    assert projected["external_directory"][str(tmp_path / ".meridian") + "/**"] == "allow"
+    payload = json.loads(preview.binding.environment.final_env[OPENCODE_CONFIG_CONTENT_ENV])
+    assert payload["permission"] == permission
+    projected = payload["agents"]["meridian"]["permissions"]
+    assert {
+        "action": "external_directory",
+        "resource": str(tmp_path / ".meridian") + "/**",
+        "effect": "allow",
+    } in projected

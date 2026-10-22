@@ -29,9 +29,6 @@ from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
-from meridian.lib.safety.permissions import (
-    UnsafeNoOpPermissionResolver,
-)
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
     resolve_spawn_log_dir,
@@ -413,7 +410,6 @@ async def test_opencode_start_resets_expired_liveness(
     await connection.start(
         _build_connection_config(tmp_path),
         ResolvedLaunchSpec(
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -436,7 +432,6 @@ async def test_opencode_start_primary_observer_mode_controls_initial_prompt_post
     connection = _StartProbeOpenCodeConnection()
     config = _build_connection_config(tmp_path)
     spec = ResolvedLaunchSpec(
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     if use_start_observer:
@@ -468,7 +463,6 @@ async def test_opencode_readiness_gate_retries_transient_timeout_before_session_
     await connection.start(
         _build_connection_config(tmp_path),
         ResolvedLaunchSpec(
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -492,7 +486,6 @@ async def test_opencode_launch_process_passes_child_env_to_managed_backend(
     connection = OpenCodeConnection()
     config = _build_connection_config(tmp_path)
     spec = ResolvedLaunchSpec(
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
     fake_process = FakeOpenCodeProcess()
     captured: dict[str, object] = {}
@@ -597,7 +590,6 @@ async def test_opencode_startup_exit_surfaces_stderr_and_xdg_hint(
         await connection.start(
             config,
             ResolvedLaunchSpec(
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
         )
 
@@ -639,7 +631,6 @@ async def test_opencode_startup_exit_with_claimed_port_is_retryable(
             await connection.start(
                 config,
                 ResolvedLaunchSpec(
-                    permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
                 ),
             )
     finally:
@@ -671,7 +662,6 @@ async def test_stop_waits_for_inflight_backend_publication(tmp_path, monkeypatch
 
     monkeypatch.setattr(connection, "_launch_process", launch)
     spec = ResolvedLaunchSpec(
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
     start = asyncio.create_task(connection.start(_build_connection_config(tmp_path), spec))
     stop = None

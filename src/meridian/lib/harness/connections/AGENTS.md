@@ -23,13 +23,12 @@ Transports differ at the wire level:
   (`no_runtime_hitl`) and read directly; never probe them with `getattr` defaults —
   two sites with different defaults once reported contradictory HITL support.
 - **OpenCode** (`opencode_connection.py` dispatcher → `opencode_http.py` V1 /
-  `opencode_v2_http.py` V2): one registered class resolves the backend version at
-  `start()` from `MERIDIAN_HARNESS_OPENCODE_VERSION` (projected from
-  `[harness.opencode] version` at launch bind) or probes `opencode --version`, then
-  delegates. Both transports manage `opencode serve` and share process lifecycle,
+  `opencode_v2_http.py` V2): one registered class reads the backend version launch
+  bind resolved onto the spec (`spec.opencode_version`) at `start()`, then delegates. Both transports manage `opencode serve` and share process lifecycle,
   liveness, and SSE framing; V2 overrides the `/api` session surface, basic auth,
   event envelopes, and model switch. 1.x is legacy/frozen. Connections consume the
-  bound `OPENCODE_CONFIG_CONTENT` as given and select `spec.agent_name` wherever they
+  bound `OPENCODE_CONFIG_CONTENT` as given, including the reserved agent's permission
+  rules, and select `spec.agent_name` wherever they
   create or resume a session; see
   [OpenCode prompt, agent and model delivery](../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
   V1 creation uses `{providerID, id}`; a fresh session's initial prompt carries `{providerID, modelID}`.

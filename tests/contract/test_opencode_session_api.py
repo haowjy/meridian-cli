@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from typing import cast
 
 import pytest
 
@@ -15,9 +16,6 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
     HarnessCapabilityMismatch,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import (
-    UnsafeNoOpPermissionResolver,
-)
 from tests.support.async_determinism import AsyncDeterminism
 
 
@@ -100,7 +98,6 @@ async def test_create_session_uses_spec_model_not_connection_config(tmp_path) ->
         ResolvedLaunchSpec(
             prompt="hello",
             model="openai/spec-model",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
@@ -116,7 +113,6 @@ async def test_create_session_omits_model_fields_when_launch_spec_model_is_none(
     await connection._create_session(
         ResolvedLaunchSpec(
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
@@ -135,7 +131,6 @@ async def test_create_session_forwards_agent_and_skills_from_opencode_launch_spe
             model="openai/gpt-5.3-codex",
             agent_name="worker",
             skills=("skill-a", "skill-b"),
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
@@ -152,28 +147,11 @@ async def test_create_session_raises_when_continue_fork_requested() -> None:
         model="openai/gpt-5.3-codex",
         continue_session_id="sess-parent",
         continue_fork=True,
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     with pytest.raises(HarnessCapabilityMismatch, match="continue_fork"):
         await connection._create_session(spec)
     assert connection.requests == []
-
-
-@pytest.mark.asyncio
-async def test_create_session_forwards_mcp_tools_in_payload() -> None:
-    connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-6"}, "")])
-    spec = ResolvedLaunchSpec(
-        prompt="hello",
-        model="openrouter/gpt-4o-mini",
-        mcp_tools=("tool-a=echo a", "tool-b=echo b"),
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    await connection._create_session(spec)
-
-    payload = connection.requests[0][1]
-    assert payload["mcp"] == {"servers": ["tool-a=echo a", "tool-b=echo b"]}
 
 
 @pytest.mark.asyncio
@@ -190,7 +168,6 @@ async def test_session_creation_does_not_replay_when_projected_payload_hangs(
             ResolvedLaunchSpec(
                 model="openai/gpt-5.5",
                 agent_name="prober",
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
             timeout_seconds=1.0,
         )
@@ -225,7 +202,6 @@ async def test_create_session_with_retry_fresh_retries_then_succeeds(
     spec = ResolvedLaunchSpec(
         prompt="hello",
         model="openai/gpt-5.3-codex",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     session_id = await connection._create_session_with_retry(spec, timeout_seconds=1.0)
@@ -248,7 +224,6 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
     spec = ResolvedLaunchSpec(
         prompt="hello",
         continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     session_id = await connection._create_session_with_retry(spec, timeout_seconds=1.0)
@@ -264,7 +239,6 @@ async def test_v1_resume_with_explicit_model_fails_loudly() -> None:
         prompt="hello",
         model="openai/gpt-5.3-codex",
         continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     with pytest.raises(HarnessCapabilityMismatch, match="cannot switch the model"):
@@ -281,7 +255,6 @@ async def test_v1_resume_without_model_still_verifies_and_resumes() -> None:
     spec = ResolvedLaunchSpec(
         prompt="hello",
         continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     assert await connection._create_session(spec) == "sess-parent"
@@ -293,7 +266,6 @@ async def test_create_session_uses_native_nested_model_and_never_drops_it():
     spec = ResolvedLaunchSpec(
         prompt="hello",
         model="openai/gpt-test",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
     connection = _TestableOpenCodeConnection(responses=[(200, {"id": "native"}, "")])
     assert await connection._create_session(spec) == "native"
@@ -314,7 +286,6 @@ async def test_rejected_or_uncertain_session_creation_never_replays_empty_payloa
             await connection._create_session_with_retry(
                 ResolvedLaunchSpec(
                     model="openai/selected",
-                    permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
                 ),
                 timeout_seconds=1,
             )
@@ -349,42 +320,147 @@ async def test_followup_preserves_committed_native_model_agent_and_variant(varia
     }
 
 
-def test_launch_config_preserves_unrelated_native_configuration() -> None:
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str) -> None:
     import json
     from pathlib import Path
 
+    from meridian.lib.harness.opencode_backend import OpenCodeVersion
+    from meridian.lib.harness.projections.permissions_opencode import (
+        compile_opencode_permissions,
+    )
     from meridian.lib.harness.projections.project_opencode_config import (
         project_opencode_launch_config,
     )
+    from meridian.lib.safety.policy import PermissionPolicy, PlatformRule
+    from meridian.lib.tools import ToolRule
 
     config = {
         "theme": "native",
         "agent": {"build": {"model": "old/model", "temperature": 0.2}},
+        "agents": {"build": {"model": "new/model", "temperature": 0.4}},
         "instructions": ["/user/instructions.md"],
     }
+    permissions, report = compile_opencode_permissions(
+        ResolvedLaunchSpec(
+            opencode_version=cast("OpenCodeVersion", version),
+            permission_policy=PermissionPolicy(
+                rules=(
+                    ToolRule(capability="*", action="deny"),
+                    ToolRule(
+                        capability="bash",
+                        pattern="git *",
+                        action="allow",
+                        native=("bash(git *)",),
+                    ),
+                    ToolRule(
+                        capability="bash",
+                        pattern="git push *",
+                        action="deny",
+                        native=("bash(git push *)",),
+                    ),
+                    ToolRule(
+                        capability="bash",
+                        pattern="meridian spawn done *",
+                        action="deny",
+                        native=("bash(meridian spawn done *)",),
+                    ),
+                    ToolRule(
+                        capability="write",
+                        pattern="/tmp/**",
+                        action="allow",
+                        native=("write(/tmp/**)",),
+                    ),
+                    ToolRule(capability="edit", action="deny", native=("edit",)),
+                ),
+                platform_rules=(
+                    PlatformRule(
+                        kind="completion-commands",
+                        commands=("meridian spawn done", "meridian spawn rearm"),
+                    ),
+                ),
+            )
+        ),
+    )
     projected = json.loads(
         project_opencode_launch_config(
             json.dumps(config),
-            roots=(),
+            version=cast("OpenCodeVersion", version),
+            roots=(Path("/repo"),),
             agent_id="meridian-coder",
             prompt_file=Path("/spawns/p1/system-prompt.md"),
+            permissions=permissions,
             model="openai/selected",
         )
-        or ""
     )
-    assert projected == {
-        "theme": "native",
-        "model": "openai/selected",
-        "default_agent": "meridian-coder",
-        "instructions": ["/user/instructions.md"],
-        "agent": {
-            "build": {"model": "old/model", "temperature": 0.2},
-            "meridian-coder": {
-                "prompt": "{file:/spawns/p1/system-prompt.md}",
-                "mode": "primary",
+    agents_key = "agent" if version == "v1" else "agents"
+    permission_key = "permission" if version == "v1" else "permissions"
+    prompt_key = "prompt" if version == "v1" else "system"
+    agent = projected[agents_key]["meridian-coder"]
+    assert projected["theme"] == "native"
+    assert projected["model"] == "openai/selected"
+    assert projected["default_agent"] == "meridian-coder"
+    assert projected["instructions"] == ["/user/instructions.md"]
+    assert projected["agent"]["build"] == {"model": "old/model", "temperature": 0.2}
+    assert projected["agents"]["build"] == {"model": "new/model", "temperature": 0.4}
+    assert agent["mode"] == "primary"
+    assert agent[prompt_key] == "{file:/spawns/p1/system-prompt.md}"
+    if version == "v1":
+        assert agent[permission_key] == {
+            "*": "deny",
+            "bash": {
+                "git *": "allow",
+                "git push *": "deny",
+                "meridian spawn done": "deny",
+                "meridian spawn done *": "deny",
+                "meridian spawn rearm": "allow",
+                "meridian spawn rearm *": "allow",
             },
-        },
-    }
+            "external_directory": {"/repo/**": "allow"},
+            "write": {"/tmp/**": "allow"},
+            "edit": "deny",
+        }
+    else:
+        assert agent[permission_key] == [
+            {"action": "*", "resource": "*", "effect": "deny"},
+            {"action": "edit", "resource": "*", "effect": "deny"},
+            {"action": "shell", "resource": "git *", "effect": "allow"},
+            {"action": "shell", "resource": "git push *", "effect": "deny"},
+            {
+                "action": "shell",
+                "resource": "meridian spawn done",
+                "effect": "deny",
+            },
+            {
+                "action": "shell",
+                "resource": "meridian spawn done *",
+                "effect": "deny",
+            },
+            {
+                "action": "shell",
+                "resource": "meridian spawn rearm",
+                "effect": "allow",
+            },
+            {
+                "action": "shell",
+                "resource": "meridian spawn rearm *",
+                "effect": "allow",
+            },
+            {"action": "external_directory", "resource": "/repo/**", "effect": "allow"},
+        ]
+        write_line = next(
+            line for line in report if line.element == "tools: write(/tmp/**) = allow"
+        )
+        assert write_line.status == "partial"
+        assert (
+            "conflicting semantics conservatively use permission edit(*): deny"
+            in write_line.note
+        )
+    completion_line = next(
+        line for line in report if line.element.startswith("platform: allow completion commands")
+    )
+    assert completion_line.status == "partial"
+    assert "overlapping profile rule keeps its command pair stricter" in completion_line.note
     assert config["agent"]["build"]["model"] == "old/model"
 
 

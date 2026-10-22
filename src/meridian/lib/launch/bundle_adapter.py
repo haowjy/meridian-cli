@@ -1,4 +1,14 @@
-"""Mars launch-bundle adapter for spawn/chat launch policy routing."""
+"""Mars launch-bundle adapter for spawn/chat launch policy routing.
+
+Meridian deliberately recomposes the launch prompt from the selected local profile,
+``skills.loaded``, and launch-owned context/report blocks. The bundle's precomposed
+``agent_body``, ``prompt_surface.system_instruction``, ``supplemental_documents``, and
+``scaffold_slots`` are therefore unread rather than competing instruction surfaces.
+The top-level ``agent`` duplicates the request's selected local profile. Top-level routing
+diagnostics duplicate ``route_trace`` and stay there; provenance keys without launch
+semantics remain diagnostic. ``tools.rules`` is the permission contract; the legacy
+``tools.allowed``, ``disallowed``, and ``mcp`` derivatives are not server config.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +19,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from meridian.lib.catalog.mars_roots import (
     MarsRoots,
@@ -27,7 +37,7 @@ from meridian.lib.launch.launch_types import (
     ResolvedExecutionPolicy,
     TerminalSurfaceMode,
 )
-from meridian.lib.tools import ToolAction, ToolsField
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from meridian.lib.utils.json_shapes import json_object
 
 if TYPE_CHECKING:
@@ -47,6 +57,8 @@ def _resolve_mars_min_version() -> str:
 
 _MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
+# First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
+_MARS_RULES_MIN_VERSION = "0.17.0"
 
 
 @dataclass(frozen=True)
@@ -78,7 +90,7 @@ class LoadedSkillEntry:
 
 
 @dataclass(frozen=True)
-class _BundleResult:
+class BundleResult:
     agent_source_path: str | None
     selection_report: dict[str, object]
     model: str
@@ -90,9 +102,8 @@ class _BundleResult:
     provenance: dict[str, str]
     warnings: tuple[str, ...]
     prompt_surface_inventory_prompt: str
-    tools_allowed: tuple[str, ...]
-    tools_disallowed: tuple[str, ...]
-    tools_mcp: tuple[str, ...]
+    tool_rules: tuple[ToolRule, ...]
+    platform_tool_rules: tuple[ToolRule, ...]
     skills_loaded: tuple[LoadedSkillEntry, ...]
     skills_available: tuple[AvailableSkillEntry, ...]
     skills_missing: tuple[str, ...]
@@ -156,7 +167,7 @@ def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
 
 
 def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
-    """Parse v3 skills.available field — list of {name, skill_type, description} objects."""
+    """Parse skill names, types, descriptions, and paths from ``skills.available``."""
     if not isinstance(raw, list):
         return ()
     entries: list[AvailableSkillEntry] = []
@@ -170,6 +181,9 @@ def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
                     AvailableSkillEntry(
                         name=name,
                         skill_type=skill_type,
+                        description=" ".join(
+                            _normalize_str(item_dict.get("description")).split()
+                        ),
                         source_path=_normalize_str(item_dict.get("source_path")) or None,
                     )
                 )
@@ -197,6 +211,81 @@ def _optional_object_field(payload: dict[str, object], field_name: str) -> dict[
     if not isinstance(raw_value, dict):
         raise _bundle_schema_error(f"'{field_name}' must be an object when present")
     return cast("dict[str, object]", raw_value)
+
+
+def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
+    """Read ``tools.rules``: capability for meaning, native names for emission and tools.
+
+    The flat ``allowed``/``disallowed`` lists Mars still derives from the rules cannot carry
+    ``ask``, ``*`` or the capability behind a name, so nothing here reads them.
+    """
+
+    raw_rules = tools.get("rules")
+    if raw_rules is None:
+        raise RuntimeError(
+            "Mars launch-bundle has no tools.rules, so this Mars predates typed tool rules. "
+            f"Install mars >= {_MARS_RULES_MIN_VERSION}."
+        )
+    if not isinstance(raw_rules, list):
+        raise _bundle_schema_error("'tools.rules' must be a list")
+    rules: list[ToolRule] = []
+    for raw_rule in cast("list[object]", raw_rules):
+        entry = json_object(raw_rule)
+        if entry is None or not isinstance(entry.get("capability"), str):
+            raise _bundle_schema_error("'tools.rules' entries must be objects with a capability")
+        if not isinstance(entry.get("native_tools"), list):
+            raise RuntimeError(
+                "Mars launch-bundle tools.rules entries have no native_tools, so this Mars "
+                "predates per-rule tool names. "
+                f"Install mars >= {_MARS_RULES_MIN_VERSION}."
+            )
+        try:
+            rule = ToolRule.model_validate(entry)
+        except ValidationError as exc:
+            raise _bundle_schema_error(f"invalid 'tools.rules' entry: {exc}") from exc
+        rules.append(rule)
+    return tuple(rules)
+
+
+def _parse_platform_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
+    """Read native names for Meridian's semantic agent/task platform denies."""
+
+    raw_capabilities = tools.get("capability_natives")
+    if raw_capabilities is None:
+        raise RuntimeError(
+            "Mars launch-bundle has no tools.capability_natives, so this Mars predates "
+            "platform tool metadata. "
+            f"Install mars >= {_MARS_RULES_MIN_VERSION}."
+        )
+    capabilities = json_object(raw_capabilities)
+    if capabilities is None:
+        raise _bundle_schema_error("'tools.capability_natives' must be an object")
+
+    rules: list[ToolRule] = []
+    for capability in ("agent", "task"):
+        entry = json_object(capabilities.get(capability))
+        if entry is None:
+            raise _bundle_schema_error(
+                f"'tools.capability_natives.{capability}' must be an object"
+            )
+        try:
+            # A platform deny is unscoped, so the names Mars gives are the tools too.
+            rule = ToolRule.model_validate(
+                {
+                    **entry,
+                    "native_tools": entry.get("native"),
+                    "capability": capability,
+                    "pattern": None,
+                    "action": "deny",
+                    "origin": PLATFORM_ORIGIN,
+                }
+            )
+        except ValidationError as exc:
+            raise _bundle_schema_error(
+                f"invalid 'tools.capability_natives.{capability}' entry: {exc}"
+            ) from exc
+        rules.append(rule)
+    return tuple(rules)
 
 
 def _parse_harness_id(
@@ -408,7 +497,7 @@ def _parse_bundle_payload(
     payload: dict[str, object],
     *,
     harness_registry: HarnessRegistry,
-) -> _BundleResult:
+) -> BundleResult:
     version = payload.get("version")
     if isinstance(version, bool) or not isinstance(version, int):
         raise _bundle_schema_error("missing numeric 'version'")
@@ -440,6 +529,7 @@ def _parse_bundle_payload(
         raise _bundle_schema_error("named model is missing routing.harness_model")
 
     execution_policy_payload = _required_object_field(payload, "execution_policy")
+    native_config = _optional_object_field(execution_policy_payload, "native_config")
     execution_policy = ResolvedExecutionPolicy.model_validate(
         {
             "effort": execution_policy_payload.get("effort"),
@@ -448,6 +538,7 @@ def _parse_bundle_payload(
             "autocompact": execution_policy_payload.get("autocompact"),
             "autocompact_pct": execution_policy_payload.get("autocompact_pct"),
             "timeout": execution_policy_payload.get("timeout"),
+            "native_config": native_config,
         }
     )
 
@@ -458,7 +549,7 @@ def _parse_bundle_payload(
     skills_loaded = _parse_skills_loaded(skills_obj.get("loaded"))
     skills_available = _parse_skills_available(skills_obj.get("available"))
 
-    return _BundleResult(
+    return BundleResult(
         agent_source_path=_normalize_str(payload.get("agent_source_path")) or None,
         selection_report=report.model_dump(mode="json"),
         model=model,
@@ -470,9 +561,8 @@ def _parse_bundle_payload(
         provenance=_as_str_dict(payload.get("provenance")),
         warnings=_as_str_tuple(payload.get("warnings")),
         prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
-        tools_allowed=_as_str_tuple(tools.get("allowed")),
-        tools_disallowed=_as_str_tuple(tools.get("disallowed")),
-        tools_mcp=_as_str_tuple(tools.get("mcp")),
+        tool_rules=_parse_tool_rules(tools),
+        platform_tool_rules=_parse_platform_tool_rules(tools),
         skills_loaded=skills_loaded,
         skills_available=skills_available,
         skills_missing=_as_str_tuple(skills_obj.get("missing")),
@@ -483,7 +573,7 @@ def request_and_resolve(
     request: BundleRequest,
     *,
     harness_registry: HarnessRegistry,
-) -> _BundleResult:
+) -> BundleResult:
     """Resolve launch routing and execution policy through Mars launch-bundle."""
 
     roots = resolve_mars_roots(request.project_root)
@@ -555,20 +645,9 @@ def _provenance_value(provenance: dict[str, str], field_name: str) -> str | None
     return provenance.get(f"{field_name}_source") or provenance.get(field_name)
 
 
-def _resolved_tools_field(bundle: _BundleResult) -> ToolsField | None:
-    if not bundle.tools_allowed and not bundle.tools_disallowed:
-        return None
-    tools: dict[str, ToolAction] = {}
-    for capability in bundle.tools_allowed:
-        tools[capability] = "allow"
-    for capability in bundle.tools_disallowed:
-        tools[capability] = "deny"
-    return tools
-
-
 def bundle_to_resolved_policy(
     *,
-    bundle: _BundleResult,
+    bundle: BundleResult,
     profile: AgentProfile | None,
     resolved_skills: ResolvedSkills,
     model_selection: ModelSelectionContext | None,
@@ -616,8 +695,8 @@ def bundle_to_resolved_policy(
             agent=routing_agent,
         ),
         execution_policy=execution_policy,
-        resolved_tools=_resolved_tools_field(bundle),
-        resolved_mcp_tools=bundle.tools_mcp,
+        resolved_tool_rules=bundle.tool_rules,
+        platform_tool_rules=bundle.platform_tool_rules,
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(
             model_source=_map_provenance_level(_provenance_value(effective_provenance, "model")),
@@ -653,6 +732,7 @@ def bundle_to_resolved_policy(
 
 __all__ = [
     "BundleRequest",
+    "BundleResult",
     "LoadedSkillEntry",
     "bundle_to_resolved_policy",
     "request_and_resolve",

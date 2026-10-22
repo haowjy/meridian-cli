@@ -6,19 +6,30 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
-from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
+from meridian.lib.core.execution_policy import (
+    NativeConfigValue,
+)
+from meridian.lib.core.execution_policy import (
+    ResolvedExecutionPolicy as ResolvedExecutionPolicy,
+)
 from meridian.lib.core.native_identity import NativeIdentity
+from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
+from meridian.lib.safety.policy import PermissionPolicy
 
 if TYPE_CHECKING:
     from meridian.lib.core.types import HarnessId
     from meridian.lib.harness.adapter import SpawnParams
     from meridian.lib.launch.composition import ComposedLaunchContent, ProjectedContent
     from meridian.lib.launch.reference import ReferenceItem
-    from meridian.lib.safety.permissions import PermissionConfig
 
 
 class TerminalSurfaceMode(StrEnum):
@@ -59,17 +70,6 @@ class ClaudeRuntimeResolution:
     warnings: tuple[CompositionWarning, ...] = ()
 
 
-@runtime_checkable
-class PermissionResolver(Protocol):
-    """Transport-neutral permission intent resolver."""
-
-    @property
-    def config(self) -> PermissionConfig: ...
-
-    def resolve_flags(self) -> tuple[str, ...]:
-        return ()
-
-
 class ResolvedLaunchSpec(BaseModel):
     """Transport-neutral resolved configuration for one harness launch."""
 
@@ -82,6 +82,8 @@ class ResolvedLaunchSpec(BaseModel):
 
     # Execution parameters
     effort: str | None = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
     prompt: str = ""
 
     # Session continuity
@@ -89,17 +91,18 @@ class ResolvedLaunchSpec(BaseModel):
     continue_fork: bool = False
     native_identity: NativeIdentity | None = None
 
-    # Permissions
-    permission_resolver: PermissionResolver
+    # Permissions: defaults to no tool rules and default sandbox/approval.
+    permission_policy: PermissionPolicy = PermissionPolicy()
+    # Harness-native execution settings preserved from the selected Mars profile.
+    native_config: NativeConfigValue = Field(
+        default_factory=lambda: ResolvedExecutionPolicy().native_config
+    )
 
     # Passthrough args forwarded verbatim to the harness process.
     extra_args: tuple[str, ...] = ()
 
     # Interactive mode
     interactive: bool = False
-
-    # Harness-agnostic MCP tool configuration.
-    mcp_tools: tuple[str, ...] = ()
 
     # First-class workspace root projection — harness-agnostic, deduplicated.
     projected_roots: tuple[Path, ...] = ()
@@ -115,8 +118,6 @@ class ResolvedLaunchSpec(BaseModel):
     # Claude only
     agents_payload: str | None = None
     prompt_file_path: str | None = None
-    claude_native_agents_enabled: bool = False
-    disallowed_tools: tuple[str, ...] = ()
     claude_runtime: ClaudeRuntimeResolution = ClaudeRuntimeResolution()
 
     # Claude + Codex
@@ -126,19 +127,16 @@ class ResolvedLaunchSpec(BaseModel):
     report_output_path: str | None = None
     base_instructions: str | None = None
     developer_instructions: str | None = None
-    # Codex requires `--search` to expose the native Responses `web_search` tool;
-    # Mars `tools.allowed: [web_search]` alone does not enable it.
-    web_search_enabled: bool = False
 
     # OpenCode only
     skills: tuple[str, ...] = ()
     # Using Any for reference_items to avoid circular import with ReferenceItem.
     reference_items: tuple[Any, ...] = ()
-    # Resolved ``[harness.opencode] version`` preference (``auto``/``v1``/``v2``)
-    # carried from launch bind, mirroring the child env the connection reads, so
-    # the subprocess projector applies version-specific guards without resolving
-    # config itself. ``None`` means unresolved; the projector probes.
-    opencode_version: str | None = None
+    # OpenCode's backend version, resolved once at bind from ``[harness.opencode] version``
+    # and the installed binary (the harness's ``bind_spec`` port). The permission compile,
+    # the config projection, argv guards and the connection all read it. ``None`` on a
+    # spec that did not pass through bind.
+    opencode_version: Literal["v1", "v2"] | None = None
 
     task_cwd: str | None = None
 
@@ -232,8 +230,6 @@ class ResolvedLaunchBinding:
     work_id: str | None
     child_cwd: Path
     run_params: SpawnParams
-    permission_config: PermissionConfig
-    perms: PermissionResolver
     spec: ResolvedLaunchSpec
     argv: tuple[str, ...]
     environment: ResolvedLaunchEnvironment

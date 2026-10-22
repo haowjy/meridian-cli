@@ -41,7 +41,6 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.platform.launch_gate import ProcessIdentity
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import get_spawn, list_spawns
 from tests.support.launch import (
@@ -137,7 +136,6 @@ def test_codex_managed_attach_does_not_override_remote_permissions(
         prompt="",
         user_turn_content=prompt,
         projected_roots=(tmp_path / "sibling",),
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
     command = CodexPassthrough().build_tui_command(connection, spec)("thread-123")
@@ -230,7 +228,9 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
     assert f"{harness_id.value} passthrough system prompt" in system_prompt
     assert f"{harness_id.value} passthrough system prompt" not in starting_prompt
     assert f"{harness_id.value} primary prompt" in starting_prompt
-    assert json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8")) == {
+    manifest = json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8"))
+    assert manifest.pop("permission_report")
+    assert manifest == {
         "harness": harness_id.value,
         "surface": "primary",
         "channels": {

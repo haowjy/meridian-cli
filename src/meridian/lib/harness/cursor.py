@@ -14,8 +14,6 @@ from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
-    McpConfig,
-    PermissionResolver,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -26,6 +24,7 @@ from meridian.lib.harness.bundle import (
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
+from meridian.lib.harness.projections.permissions_cursor import compile_cursor_permissions
 from meridian.lib.harness.projections.project_cursor import project_cursor_spec_to_cli_args
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
@@ -41,7 +40,6 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
-from meridian.lib.safety.permissions import PermissionConfig
 
 
 class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
@@ -52,9 +50,10 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "prompt",
             "model",
+            "autocompact",
+            "autocompact_pct",
             "extra_args",
             "task_cwd",
-            "mcp_tools",
             "projected_roots",
             "interactive",
         }
@@ -73,7 +72,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "effort",
             "model_override_explicit",
             "pi_harness_profile",
-            "allow_builtin_agents",
         }
     )
 
@@ -111,22 +109,18 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
-    def resolve_launch_spec(
-        self,
-        run: SpawnParams,
-        perms: PermissionResolver,
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         return ResolvedLaunchSpec(
             harness=HarnessId.CURSOR,
             model=str(run.model).strip() if run.model else None,
+            autocompact=run.autocompact,
+            autocompact_pct=run.autocompact_pct,
             prompt=run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
             extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             task_cwd=run.task_cwd,
         )
@@ -144,15 +138,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "Cursor CLI not found on PATH. Install Cursor CLI or set PATH to include 'cursor'."
             )
         return PreflightResult.build(expanded_passthrough_args=passthrough_args)
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        _ = run
-        return None
-
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        _ = config
-        return {}
-
 
 def _resolve_cursor_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
@@ -195,6 +180,7 @@ register_harness_bundle(
         connections={TransportId.SUBPROCESS: CursorSubprocessConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_cursor_spec_to_cli_args,
+            permission_report=lambda spec: compile_cursor_permissions(spec)[1],
         ),
         semantics=CURSOR_SEMANTICS,
     )

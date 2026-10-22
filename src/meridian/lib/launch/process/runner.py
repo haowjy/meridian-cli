@@ -745,7 +745,6 @@ def run_harness_process(
     preview_context = launch_context
     runtime_context = launch_context
     command = preview_context.binding.argv
-    spawn_request = preview_context.request
     preview_request = preview_context.resolved_request
     session_mode = resolve_primary_session_mode(preview_context)
     session_metadata = build_session_metadata(preview_request)
@@ -884,10 +883,6 @@ def run_harness_process(
                     for k, v in cast("dict[str, str]", config_env).items():
                         if k.strip():
                             plan_overrides[k] = v
-                if spawn_request.execution_policy.autocompact is not None:
-                    plan_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(
-                        spawn_request.execution_policy.autocompact
-                    )
                 runtime_context = bind_launch_context(
                     prepared=prepared,
                     bindings=RuntimeBindings(

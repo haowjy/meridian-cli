@@ -96,10 +96,12 @@ harness-default mode. A new invocation snapshot updates routing fields without
 rewriting the source snapshot.
 
 Replay preserves non-routing policy: agent/profile, skills and loaded content,
-execution policy, tool/MCP grants, terminal surface, inventory prompt, env and
-passthrough args. Exact continue permits an explicit model override with a cache/cost
-warning; it still rejects agent, skills, execution-policy, passthrough, env, work and
-task-dir mutations. Agent opt-out is also a mutation.
+execution policy, `tool_rules` and `platform_tool_rules`, terminal surface, inventory
+prompt, env and passthrough args. Legacy `mcp_tools` is accepted when reading a snapshot
+and ignored because it contains permission names, not MCP configuration. Exact continue
+permits an explicit model override with a cache/cost warning; it still rejects agent,
+skills, execution-policy, passthrough, env, work and task-dir mutations. Agent opt-out is
+also a mutation.
 
 Primary and spawn accepted-running callbacks append selection intent through
 `SessionAttempt`. Its captured generation/startup attempt also binds native-ID
@@ -229,9 +231,12 @@ ambient environment. For OpenCode, the resolved
 `[harness.opencode].version` preference (from the launch config snapshot, with a
 project-config fallback) is written to `MERIDIAN_HARNESS_OPENCODE_VERSION`.
 `resolve_opencode_version_for_launch()` owns the snapshot/env precedence; the key
-is registered child-injectable in `env_registry.py`. Because both dry-run preview
-and real connection read `binding.environment.final_env`, preview and execution
-select the same backend. Capture agrees through schema detection, not the env var.
+is registered child-injectable in `env_registry.py`. Right after `build_env_plan()`,
+bind calls `bind_launch_spec()` (the harness's `bind_spec` port), which resolves the
+version against that env once and stores it on the spec; the report, the env and argv
+projections, the preview and the connection all read the spec, so preview and
+execution select the same backend. Capture agrees through schema detection, not the
+env var.
 
 The same step lets the harness project config into the child env: after
 `build_env_plan()`, bind calls `harness.project_launch_env()` with the spec, the
@@ -570,13 +575,9 @@ OpenCode inherited config must remain a JSON object through workspace projection
 malformed input is rejected, not silently replaced with an empty configuration
 before adapter validation.
 
-OpenCode scalar permission actions expand to wildcard rules before workspace
-entries are added. Preserve native rule order: last-match semantics make sorted
-JSON serialization a permission change. Append projected root patterns within
-the external-directory rule map without reordering inherited top-level rules;
-a later native catch-all can still deny them. Do not move the whole existing
-external-directory rule past a denial or invent meanings for malformed shapes.
-For OpenCode 2.x, the V2 transport instead compiles the tools policy into the
-native ordered `permissions` array and appends root grants after it, so
-last-match keeps the grants; see
-[harness context](../../harness/.context/CONTEXT.md).
+OpenCode permissions are compiled in `harness/projections/permissions_opencode.py`
+and projected with workspace grants into the reserved config agent by
+`project_opencode_config.py`. `OpenCodeAdapter.project_launch_env()` writes
+`OPENCODE_CONFIG_CONTENT` at bind for both versions; transports consume it unchanged.
+The ordered policy precedes appended workspace grants, and JSON serialization must
+preserve rule order. See [harness context](../../harness/.context/CONTEXT.md).

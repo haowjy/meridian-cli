@@ -28,8 +28,6 @@ from meridian.lib.harness.adapter import (
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
-    McpConfig,
-    PermissionResolver,
     RecordConfigDirFn,
     RunPromptPolicy,
     SpawnParams,
@@ -63,6 +61,9 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.projections.permissions_claude import (
+    compile_claude_permissions,
+)
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
@@ -93,7 +94,6 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.safety.permissions import PermissionConfig
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
 _IDLE_PLUGIN = "meridian-idle"
@@ -150,6 +150,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "prompt",
             "model",
             "effort",
+            "autocompact",
+            "autocompact_pct",
             "skills",
             "agent",
             "adhoc_agent_payload",
@@ -159,10 +161,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "continue_harness_session_id",
             "continue_fork",
             "appended_system_prompt",
-            "mcp_tools",
             "projected_roots",
             "user_turn_content",
-            "allow_builtin_agents",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -242,9 +242,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             else super().assign_session_id(intent, store=store)
         )
 
-    def resolve_launch_spec(
-        self, run: SpawnParams, perms: PermissionResolver
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         effort = run.effort
         normalized_effort = None
         if effort is not None:
@@ -263,11 +261,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         prompt_file_path: str | None = None
         # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
-        disallowed_tools: tuple[str, ...] = ()
-        if not run.allow_builtin_agents:
-            disallowed_tools = (
-                "Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)",
-            )
         plugin_names = (_BOUNDARY_PLUGIN,)
         if run.interactive:
             plugin_names += (_IDLE_PLUGIN,)
@@ -277,20 +270,19 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,
             effort=normalized_effort,
+            autocompact=run.autocompact,
+            autocompact_pct=run.autocompact_pct,
             prompt=run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
             extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
             agents_payload=run.adhoc_agent_payload.strip() or None,
             agent_name=run.agent,
             prompt_file_path=prompt_file_path,
             user_turn_content=user_turn_content,
-            disallowed_tools=disallowed_tools,
             claude_runtime=resolve_claude_runtime(plugin_names=plugin_names),
         )
 
@@ -312,14 +304,17 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             passthrough_args=passthrough_args,
         )
 
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        # MCP injection is off by default — agents use the CLI instead.
-        # Users who want always-on MCP can configure it in their harness settings.
-        return None
-
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        _ = config
-        return {}
+    def project_launch_env(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        system_prompt_path: Path,
+        env: Mapping[str, str],
+    ) -> dict[str, str]:
+        _ = system_prompt_path, env
+        if spec.autocompact_pct is None:
+            return {}
+        return {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": str(spec.autocompact_pct)}
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         # Meridian manages nesting limits itself; suppress Claude's parent-session
@@ -561,6 +556,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: ClaudeConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_claude_spec_to_cli_args,
+            permission_report=lambda spec: compile_claude_permissions(spec)[1],
         ),
         semantics=CLAUDE_SEMANTICS,
         primary_inbox=post_primary_message,

@@ -120,10 +120,11 @@ This keeps a Claude-only bundle toggle out of the shared `SpawnParams` surface.
 project-root resolution when it is absent; Pi's adapter uses the same path when
 no launch snapshot profile was threaded in.
 
-Claude native Agent routing does not use a `meridian.toml` harness option.
-Built-in Claude agents stay denied unconditionally; generic `Agent` permission
-follows Mars `[settings.meridian.agent_copy]` via `project_has_claude_agent_copy()` in
-`lib/launch/permissions.py`.
+Claude native Agent routing has separate controls. The `[harness.claude]` table's
+`allow_builtin_agents` option controls the scoped built-in `Agent(...)` denies
+(default `false`). Generic `Agent` permission follows Mars
+`[settings.meridian.agent_copy]` via `agent_copy_enabled()` in
+`lib/catalog/agent_copy.py`.
 
 ## Schema Metadata (`schema.py`)
 

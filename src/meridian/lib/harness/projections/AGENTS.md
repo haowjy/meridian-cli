@@ -23,12 +23,18 @@ without updating the corresponding projector → startup failure.
 - **Codex** (`project_codex_subprocess.py` + `project_codex_streaming.py`): split because
   `codex exec` and `codex app-server` accept different flag sets.
 - **OpenCode** (`project_opencode_subprocess.py` + `project_opencode_streaming.py`):
-  the prompt, a fresh session's model and workspace roots go through
+  the optional prompt, compiled permission policy, fresh-session model and workspace roots go through
   `OPENCODE_CONFIG_CONTENT` (JSON), built at bind by `project_opencode_config.py`, not
-  flags. `spec.agent_name` is selected wherever a session is opened or resumed; see
+  flags or a connection-time merge. `spec.agent_name` is selected wherever a session is opened or resumed; see
   [OpenCode prompt, agent and model delivery](../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
-- **Permission flags** (`permission_flags.py`): shared across all projectors.
-  `resolve_permission_flags()` is called inside each projector — not a separate pipeline step.
+- **Permission compile** (`permissions_<harness>.py`): one module per harness turns
+  `spec.permission_policy` into a typed native value (sandbox/approval modes, tool
+  allow/deny lists, OpenCode's version-canonical ordered agent rules). The harness's projectors call it and
+  spell the result as argv, env or payload; nothing outside the harness module reads the
+  policy's rules. The compile returns `(native value, EnforcementReport)`; its report is
+  registered as `HarnessProjectionPorts.permission_report`. The projectors, `--dry-run` and
+  `projection-manifest.json` all go through that one function, so the report cannot drift
+  from what launched.
 
 ## Key Rules
 

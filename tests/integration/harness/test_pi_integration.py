@@ -21,7 +21,6 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection, PiRpcTimingPolicy
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
@@ -262,7 +261,6 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
             ),
             harness=HarnessId.PI,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -331,7 +329,6 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
             harness=HarnessId.PI,
             prompt="hello",
             extra_args=("--api-key", "secret-value", "--profile", "safe"),
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -407,7 +404,6 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -511,7 +507,6 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello auto prompt",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -630,7 +625,6 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello startup",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -703,7 +697,6 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -772,7 +765,6 @@ async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -837,7 +829,6 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -891,7 +882,6 @@ async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -945,7 +935,6 @@ async def test_pi_rpc_nonzero_exit_before_first_event_reports_exit_code(
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -990,7 +979,6 @@ async def test_pi_rpc_connection_start_fails_fast_when_runtime_resolution_fails(
             ResolvedLaunchSpec(
                 harness=HarnessId.PI,
                 prompt="hello",
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
         )
 

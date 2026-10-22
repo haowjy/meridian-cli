@@ -54,14 +54,15 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `mode` | str | `subagent` | `primary` or `subagent` — controls listing grouping |
 | `model-invocable` | bool | `true` | `false` hides agent from model-facing inventory prompt; explicit `-a NAME` invocation still works. Skills have their own `model-invocable`; see [Skills](#skills-and-skill-variants) |
 | `skills` | list[str] or `{load, available}` | `[]` | Skills the agent loads into its system prompt; the mapping form also lists skills it may load itself. See [Skills](#skills-and-skill-variants) |
-| `tools` | map or list[str] | — | Per-tool rules: `bash: allow`, `edit: deny`. A list allows each name. A scoped key such as `bash(rg *)` limits a rule to matching calls. `allow` and `deny` are the only values; `ask` is rejected. MCP grants are `mcp(server)` entries. What each harness does with the rules: [Permissions by harness](#permissions-by-harness) |
+| `tools` | map or list[str] | — | Per-tool rules: `bash: allow`, `edit: deny`, or `web: ask`. A list is an allowlist containing exactly those names. A scoped key such as `bash(rg *)` limits a rule to matching calls. MCP rules use `mcp(server)` or `mcp(server/tool)`. What each harness enforces: [Permissions by harness](#permissions-by-harness) |
 | `disallowed-tools` | list[str] | `[]` | Tools to deny, with the same names and scoped keys as `tools`. Equivalent to `deny` entries in the `tools` map |
-| `sandbox` | str | — | `default`, `read-only`, `workspace-write`, or `danger-full-access`. Applied by Codex and Cursor only: [Permissions by harness](#permissions-by-harness) |
+| `sandbox` | str | — | `default`, `read-only`, `workspace-write`, or `danger-full-access`. Harness support differs: [Permissions by harness](#permissions-by-harness) |
 | `effort` | str | — | Effort level (`low`, `medium`, `high`) |
 | `approval` | str | — | When the harness stops to ask: `default`, `confirm`, `auto`, or `never`. `yolo` is a deprecated spelling of `never`. See [Permissions by harness](#permissions-by-harness) |
-| `autocompact` | int | — | Compaction percentage threshold |
-| `timeout` | int | — | Spawn timeout in seconds |
+| `autocompact` | int | — | Context-token compaction threshold (minimum 1000); harness support differs. See [Compaction by harness](#compaction-by-harness) |
+| `autocompact_pct` | int | — | Context-window percentage that triggers compaction (1–100); harness support differs. See [Compaction by harness](#compaction-by-harness) |
 | `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited |
+| `harness-overrides` | map | `{}` | Harness-native launch config selected for the resolved harness; see [Harness-native passthrough](#harness-native-passthrough) |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
 
 ## `mode`
@@ -124,11 +125,14 @@ launchable on older Meridian versions.
 
 Scalar overrides in `override:` accept these runtime keys:
 
-`harness`, `sandbox`, `approval`, `effort`, `autocompact`, `autocompact_pct`, `timeout`
+`harness`, `sandbox`, `approval`, `effort`, `autocompact`, `autocompact_pct`
 
 `resident-rearm-budget` is a top-level profile default, not a model-policy
 override. The Mars launch-bundle schema does not currently expose a per-model
 resident rearm budget.
+
+Spawn timeout is not an agent-profile field. Set the runtime ceiling in minutes
+with `--timeout`, `MERIDIAN_TIMEOUT`, or Meridian's `primary.timeout` config.
 
 ### Precedence
 
@@ -162,7 +166,7 @@ model-policies:
     override: { effort: medium }
   - match: { model: openai/gpt-5.3-codex }
     no-fallback: true
-    override: { autocompact: 20 }
+    override: { autocompact: 200000 }
 ```
 
 Fallback only activates when:
@@ -173,6 +177,59 @@ Fallback only activates when:
 Legacy `fallback-order` and `fanout` are rejected. Order `model-policies`
 rules directly and add `no-fallback: true` for rules that should never be
 considered for fallback.
+
+## Compaction by harness
+
+`autocompact` is an absolute token value; `autocompact_pct` is a percentage. They
+are separate controls, not alternate spellings of the same number.
+
+| Harness | `autocompact` | `autocompact_pct` |
+|---|---|---|
+| **Claude** | `--autocompact <tokens>` for values from 100000 through 1000000 | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=<percent>` |
+| **Codex** | `-c model_auto_compact_token_limit=<tokens>` | `-c model_post_turn_compact_threshold_percent=<percent>` |
+| **OpenCode**, **Pi**, **Cursor** | Not applied | Not applied |
+
+Claude applies the percentage to its autocompact window, so both fields can be
+set together. A Claude token value outside its native 100000–1000000 range is
+not passed to the CLI. `--dry-run` reports every applied value and every
+unsupported value or harness.
+
+Earlier Meridian builds wrote `autocompact`'s token count into Claude's
+percentage environment variable and did not apply `autocompact_pct`. Existing
+Claude profiles using `autocompact` now set the token window instead; a value
+such as `200000` previously exceeded the effective percentage range and left
+Claude at its default, but now selects a 200000-token autocompact window.
+
+## Harness-native passthrough
+
+Mars selects `harness-overrides.<resolved-harness>` and passes the block to Meridian
+without interpreting it. The selected block is applied as written and can change anything
+in Codex's config, including providers and MCP server commands. Installing a package that
+carries harness overrides is therefore installing code you trust. Blocks in already-installed
+packages that older Meridian builds left inert now take effect. Codex flattens nested mappings
+to dotted config keys and emits TOML-compatible scalar, array, and inline-table values as
+`-c` overrides. For example, this enables network access inside Codex's `workspace-write`
+sandbox:
+
+```yaml
+harness-overrides:
+  codex:
+    sandbox_workspace_write:
+      network_access: true
+```
+
+Meridian-owned Codex settings win: native entries that collide with its model, effort,
+sandbox, approval, writable-root, tool-switch, agent, feature, or notification config are
+skipped. Meridian does not synthesize Codex MCP config, so `mcp_servers.*` entries pass
+through like other native config. A key segment containing `.`, `=`, whitespace, or quotes
+cannot be addressed by Codex's `-c` syntax and is reported as unsupported. `--dry-run`
+shows each applied or skipped key, for example
+`[native] native_config: sandbox_workspace_write.network_access = true -> -c sandbox_workspace_write.network_access=true`.
+Claude, OpenCode, Pi, and Cursor do not apply native config; their report lists the key
+names as `[unsupported] native_config: ... -> not applied for <Harness>`.
+
+The selected harness block is the config tree. A key named `native-config` inside it is a
+literal root key and is flattened like any other key; Meridian does not unwrap it.
 
 ## Skills and Skill Variants
 
@@ -202,11 +259,7 @@ directory).
 |---|---|
 | `load` (or the flat list) | The skill's full text, in the system prompt after the profile body, on every launch |
 | `--skills NAME` on `meridian spawn` or `meridian start` | Same as `load`, for that launch |
-| `available` | The skill's name under `# Available Skills`, grouped by [type](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#type). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
-
-**Known gap:** on OpenCode v2 and the `opencode run` path, the composed system
-prompt, including loaded skills and the profile body, does not reach the model.
-OpenCode v1 is unaffected.
+| `available` | The skill's name and description under `# Available Skills`, grouped by [type](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#type). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
 
 **Loaded skills ignore the skill's `model-invocable`.** A skill's own
 `model-invocable: false` only keeps it out of the harness's skill list, the list
@@ -233,7 +286,7 @@ Mars launch-bundle → skills.loaded[{name, skill_type, source_path, body}]
 
 Meridian receives already-resolved content and:
 - Renders type-group headers (`## Principle`, `## Guardrail`, etc.) for loaded skills
-- Lists available skills by name, grouped by type, with a load nudge
+- Lists available skills by name and description, grouped by type, with a load nudge
 - Unknown skill names produce a warning, not a failed launch
 
 **Variant selection** happens inside Mars. If a skill has
@@ -284,51 +337,167 @@ model-policies:
 
 ## Permissions by harness
 
-A profile has three permission fields: `tools` (which tools the agent may call), `sandbox` (what the harness may touch on disk), and `approval` (when the harness stops to ask).
+A profile has three separate permission fields:
+
+- `tools` says which tool calls the model may make. `allow` runs a matching call without
+  asking, `deny` blocks it, and `ask` requires human approval where the harness supports it.
+- `sandbox` limits what a call that does run may touch on disk.
+- `approval` supplies the harness's fallback prompt behavior for calls that `tools` does not
+  decide. It does not widen an allowlist or turn an explicit `ask` into `allow`.
+
+These fields are not substitutes for one another. `edit: deny` removes edit tools, but an
+allowed shell can still write with redirection. Use a sandbox for filesystem confinement;
+where the table says the sandbox is partial or not enforced, also restrict every tool that
+can write.
 
 ```yaml
 tools:
   'bash(rg *)': allow     # scoped key: only matching shell commands
+  'bash(git push *)': ask
   edit: deny
 sandbox: read-only
 approval: never
 ```
 
-A *spawn* is an agent Meridian launches with `meridian spawn`; a *primary* is the interactive session you start with `meridian` and work in yourself. Each harness applies only some of these fields. Meridian drops the rest without an error or a warning, so a profile that is read-only on one harness can be unrestricted on another. Read the row for the harness the profile runs on before relying on a field.
+A *spawn* is a headless agent launched with `meridian spawn`; a *primary* is the
+interactive session started with `meridian`. Supported profile rules bind both roles.
+Cursor is spawn-only. A profile limits the model, not the human operating a primary;
+for example, an OpenCode user can intentionally switch to another agent or choose
+"always allow" in the TUI.
 
-| Harness | `tools` | `sandbox` | `approval` |
-|---|---|---|---|
-| **Claude**, spawn and primary | `deny` removes the tool. `allow` only skips the prompt for it; tools you don't list stay available | No effect | `confirm` asks (permission mode `default`). `auto` approves file edits and asks for other tools. `never` skips every permission check. `default` leaves Claude's own default |
-| **Codex**, spawn and primary | No effect, except `web: allow`, which turns on Codex web search | Applied. With `tools` set and `sandbox` unset, Codex launches `read-only` | `auto` lets Codex decide when to ask (`on-request`). `never` stops Codex asking; the sandbox still applies. `confirm` is the same as `auto`: Codex has no stricter mode |
-| **OpenCode**, spawn | Applied. Denied tools are removed from the model's tool list | No effect | No effect |
-| **OpenCode**, primary | No effect: the TUI uses OpenCode's own permissions | No effect | No effect |
-| **Pi**, spawn and primary | No effect | No effect | No effect |
-| **Cursor**, spawn only | No effect | `read-only` turns Cursor's sandbox on. `workspace-write` and `danger-full-access` turn it off; Cursor's sandbox has no middle setting | `never` passes `--yolo`, `auto` passes `--force`. `default` and `confirm` pass nothing |
+The table uses **Native** when the harness carries the requested meaning, **Partial** when
+only some of it reaches the harness, and **Not enforced** when it has no carrier. A specific
+rule can still be unsupported because Mars has no native name for that capability. Run
+`meridian spawn -a NAME --dry-run` before relying on a profile: its `Permissions:` section
+is the per-launch report, including each gap and the native flag or setting used. The JSON
+form exposes the same lines as `permission_report`.
 
-The same limits apply when `approval` or `sandbox` comes from `--approval`, `--sandbox`, `--yolo`, a [Mars agent overlay](configuration/mars.md#agent-runtime-overlays), or `[primary]` in [Meridian config](configuration.md) instead of the profile. `tools` comes only from the profile.
+| Harness | `tools` | `sandbox` | `approval` | Meridian platform rules |
+|---|---|---|---|---|
+| **Claude** | **Native**, with caveats. Plain and scoped `allow`/`deny`/`ask` use native permissions; a whole-policy allowlist also limits `--tools`. Claude checks file paths only through `Edit(path)` and `Read(path)`, so scoped `write`/`edit`/`notebook` rules become `Edit(path)` and scoped `read`/`glob`/`grep` rules become `Read(path)`: a scoped deny also refuses Claude's other file edits (or reads) at that path, and `--tools` still lists the tool itself (`Write`, `Grep`). **Partial** for scoped-only allowlists because Claude's `manual` mode still auto-approves Read/Grep/Glob and Bash calls it classifies as read-only, and for a spawn's plain `bash: deny` under `approval: default` or `confirm`, which that mode carries so the completion grants can run. Only a whole-policy `*: deny` allowlist uses `dontAsk`. | **Partial** for `read-only` and `workspace-write`: the native sandbox confines Bash subprocesses, not Edit/Write. **Native** for `danger-full-access`, which disables it. | **Native** without an allowlist or `ask`: `auto` uses `acceptEdits`, `confirm` uses `manual`, and `never`/`yolo` bypass prompts. **Partial** with an allowlist or `ask`, which stays authoritative instead of being bypassed. | **Native** sub-agent and built-in-agent denies. **Partial** when built-in agents are enabled, because Claude cannot deny generic `Agent` while retaining them. Completion-command grants are native unless a stricter profile rule blocks them; adding Bash to a whole allowlist also exposes Claude's auto-approved read-only Bash class. |
+| **Codex** | **Partial**. Exact unscoped `bash`, `web`, `web_search`, and `image` allow/deny rules use native switches. A whole-policy allowlist turns off web search and image viewing but leaves the shell on because Codex reads files through it. Scoped rules, `ask`, per-capability allowlists, and every other capability are **not enforced**. | **Native** for every explicit non-default mode. An unset value is omitted; Codex chooses its default. | **Native** for `auto` (`on-request`) and `never`/`yolo` (`never`). **Partial** for `confirm`, which is also `on-request` because Codex has no stricter mode. | **Partial**. By default Meridian disables Codex's built-in multi-agent feature; `[harness.codex] allow_builtin_agents = true` removes that rule. Codex has no scoped completion-command exception and does not project the task-list deny. |
+| **OpenCode** | **Native** on the selected `meridian-<profile>` config agent in V1 and V2, for spawns and primaries. Scoped rules and allowlists work. **Partial** in V2 where distinct `write` and `patch` meanings collapse onto `edit`; the stricter conflicting effect wins. | **Not enforced**. | **Native** unless a `*` tool rule already decides unmatched calls: `confirm` asks in a primary and denies in a headless spawn; `auto` and `never`/`yolo` allow unmatched calls without prompting. `default` leaves OpenCode's behavior, except an otherwise unrestricted spawn keeps Meridian's historical allow-all fallback. | **Native** sub-agent denies and scoped completion-command grants. A profile rule that is stricter on an overlapping completion command remains authoritative, so that grant is partial. |
+| **Pi** | **Native** for mapped tools. Plain rules use `--tools`/`--exclude-tools`; scoped rules, allowlists, and `ask` use Meridian's `meridian-permissions` Pi extension, which checks each simple command of a Bash call. A Bash allowlist, a Bash `deny`/`ask` for unmatched commands, or a scoped Bash `ask` also refuses shell syntax the extension cannot split (expansion, redirection, loops, here-docs). **Partial** for scoped Bash denies when Bash allows unmatched commands (`bash: allow` or `*: allow`): a command the extension cannot split runs unchecked. | **Not enforced**. | **Not enforced**. This does not affect tool-level `ask`, which the extension enforces separately. | **Native**. Pi has no native sub-agent or built-in-agent tools, so those denies already hold; when a policy could restrict the shell, the extension grants only the spawned completion commands. |
+| **Cursor** | **Not enforced**, including restrictive profiles and `ask`. | **Native**: `read-only` enables Cursor's binary sandbox and `danger-full-access` disables it. **Partial**: `workspace-write` also disables it because Cursor has no middle setting. Unset uses Cursor's default. | **Native** for `auto` (`--force`) and `never`/`yolo` (`--yolo`). `confirm` is **not enforced**. | **Not enforced**. |
 
-Things the table implies:
+The same harness limits apply when `approval` or `sandbox` comes from a CLI flag,
+environment variable, [Mars agent overlay](configuration/mars.md#agent-runtime-overlays),
+or [Meridian config](configuration.md). `tools` comes from the profile.
 
-- **Denying `edit` does not make an agent read-only.** It removes the edit tools, and a shell command can still write a file. A sandbox stops that: `sandbox: read-only` on Codex and Cursor. Claude and OpenCode have no sandbox here, so deny `bash` too. Nothing restricts writes on Pi.
-- **On Claude, only some `tools` names reach Claude intact.** One-word tools (`bash`, `read`, `edit`, `write`, `glob`, `grep`, `agent`) work. Tools that are two words in Claude (`web`, `web_fetch`, `ask_user`) reach it with the wrong capitalization: `web: deny` becomes `Websearch`, which is not Claude's `WebSearch`, so Claude prints `Permission deny rule "Websearch" matches no known tool` and the tool stays available. Meridian also denies Claude's own sub-agent tools (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) on every launch, and the `agent` and `task` tools in spawns unless the profile allows them, so delegation goes through `meridian spawn`.
-- **On Codex, `confirm` is no stricter than `auto`.** Codex 0.163 accepts only `on-request` and `never`, so both `confirm` and `auto` launch with `on-request`, where the model decides when to ask.
-- **On Codex, set `sandbox` whenever `tools` is set.** The inferred sandbox is `read-only` whatever `tools` allows, so a profile that allows `bash` and `edit` still cannot write.
-- **OpenCode primaries ignore `tools`.** The same profile restricts an OpenCode spawn and not an OpenCode primary session.
+### Capability names
 
-`meridian spawn -a NAME --dry-run` prints the command line Meridian builds, including the permission flags for Claude, Codex, Cursor, and Pi. OpenCode receives its rules in its environment instead: `OPENCODE_PERMISSION` on OpenCode 1.x, `OPENCODE_CONFIG_CONTENT` on OpenCode 2.x. `--dry-run` does not show them.
+A `tools` rule names a capability, not a harness tool. Mars translates each capability into
+the target harness's own tool names when it compiles the profile; Meridian applies what Mars
+names. These are the capabilities a profile can write:
 
-### Who answers an approval request
-
-A request arises when a tool call needs approval under the harness's approval mode. A profile cannot set a tool to `ask`; requests come from `approval` and the harness's own defaults.
-
-| Where | What happens |
+| Capability | Covers |
 |---|---|
-| Codex or OpenCode spawn | Meridian rejects the request and records it in the spawn's `permission_requests.jsonl`. The agent's tool call fails |
-| Claude spawn | Claude blocks the call and returns an approval-required error to the agent. This applies to the agent's Meridian commands too: under `approval: confirm` a spawn can be refused its own `meridian spawn done` |
-| Pi spawn | Pi has no approval prompts |
-| Claude or OpenCode primary | The harness asks the user in its own TUI |
-| Codex primary | Codex sends approval requests to Meridian instead of showing them in its TUI. Meridian records them and nothing answers, so the tool call does not run. Avoid profiles that need approvals on a Codex primary |
-| Cursor | Unknown: not observed. Don't rely on approval prompts in Cursor spawns |
+| `bash` | shell commands; scope with a command prefix, `bash(git log *)` |
+| `read` | reading a file |
+| `write` | creating or overwriting a file |
+| `edit` | changing a file (on Claude and Pi this also covers writing) |
+| `notebook` | editing a Jupyter notebook |
+| `glob` | finding files by name |
+| `grep` | searching file contents |
+| `image` | viewing an image file |
+| `web` | `web_search` and `web_fetch` together |
+| `web_search` | searching the web |
+| `web_fetch` | fetching a URL |
+| `agent` | starting or messaging sub-agents |
+| `task` | the task list (todo tools) |
+| `skill` | loading a skill on demand; scope with a skill name, `skill(init)` |
+| `ask_user` | asking the human a question |
+| `plan_mode` | entering or leaving plan mode |
+| `workflow`, `cron`, `notifications`, `worktree`, `lsp`, `monitor`, `send_user_file`, `schedule_wakeup`, `remote_trigger`, `tool_search` | Claude-specific tools of the same names (`tool_search` also exists on Codex, `lsp` on OpenCode) |
+| `*` | every tool no other rule names; `'*': deny` makes the profile an allowlist |
+| `mcp(server)`, `mcp(server/tool)` | MCP tools |
+
+The harness name each capability becomes, and which harnesses have no tool for it, is in
+Mars's [tool name projection table](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/agent-compilation.md#tool-name-projection).
+A capability a harness lacks shows in `--dry-run`: a deny of a tool it does not have is
+already met, and a rule Mars cannot name there is reported `unsupported`.
+
+### Allowlists and scoped rules
+
+- A map containing `'*': deny` is a whole-policy allowlist: only the tools it allows
+  exist. The list form `tools: [read, grep]` is deprecated and only pre-approves.
+- A capability with scoped allows and no unscoped rule is an allowlist for that
+  capability. With only `'bash(rg *)': allow`, unmatched Bash calls are denied. Add
+  `bash: allow` to allow the rest. An unscoped `*` rule also decides unmatched calls
+  and ends the scoped-only allowlist.
+- Narrower capabilities win where they overlap. `edit` covers writes too, but
+  `edit: allow` with `'write(src/*)': allow` still permits writes only under `src/`, just
+  as `edit: deny` with `write: allow` leaves writes allowed.
+- `approval: never` means "do not prompt"; it does not mean "ignore `tools`."
+- On a Claude spawn under `approval: default` or `confirm`, a plain `bash: deny` is not
+  emitted as `--disallowedTools Bash`, which would also block the spawn's
+  `meridian spawn done`/`rearm` grants. The permission mode (`manual`) refuses the other
+  Bash calls instead, but Claude still runs Bash calls it classifies as read-only, such as
+  `cat` or `ls`; the dry-run marks the rule `partial`. Under `auto`, `never`, or `yolo` the
+  deny is native and those grants are blocked (also reported). A primary has no such grants,
+  so its deny is always native.
+- Mars normalizes a Bash prefix ending in `:*` to a space before the wildcard:
+  `bash(git push:*)` becomes `bash(git push *)`. Write the space form in new profiles.
+  Colons in non-Bash patterns remain literal.
+- MCP rules use `mcp(server)`, `mcp(server/tool)`, `mcp(server/*)`, `mcp(*/tool)`, or
+  `mcp(*/*)`. `*` is the only wildcard, names are case-sensitive, and bare `mcp` is
+  invalid. Mars supplies each harness's native spelling; do not put `mcp__...` or
+  `Mcp(...)` wire names in a Mars-native profile.
+- MCP rules grant or deny tools; they do not register servers. Package
+  `mcp/<name>/mcp.toml` definitions are installed into harness config by
+  `meridian mars sync`. The launch bundle does not carry those server definitions.
+
+### Your own settings stay in force
+
+Meridian does not strip a harness's own configuration to make a profile stricter.
+Claude reads your user, project and local settings files as it always does, so their
+`permissions.allow` entries run even under an allowlist; `--dry-run` lists them on a
+`[partial] source:` line. Under OpenCode, a headless spawn with `approval: default` and
+no rule naming an OpenCode tool gets an allow-all fallback; once the profile names a
+tool, OpenCode's defaults and your OpenCode config decide the rest.
+
+### `ask` and headless spawns
+
+A primary can put a human in the loop: Claude, OpenCode, and Pi present a native prompt
+for a mapped `ask` rule. Codex and Cursor do not enforce tool-level `ask`.
+
+A spawn has no human to answer, so a supported `ask` is refused immediately and never
+routed to the parent agent. Claude disables permission prompts, OpenCode lowers the rule
+to native `deny`, and Pi's extension blocks it with Meridian's headless reason. Refusals
+that the harness reports are recorded in `permission_requests.jsonl` and shown by
+`meridian spawn show`. OpenCode supplies its own denial text, and a tool removed from its
+catalog produces no attempted-call event to journal.
+
+Runtime approval requests caused by Codex or OpenCode's approval mode are also refused
+and journaled in spawns. In a managed Codex primary they are recorded and remain pending
+for a controller; the Codex TUI itself cannot answer them. Do not rely on Cursor approval
+prompts; that path is unobserved.
+
+### Platform rules
+
+Meridian adds launch rules independently of the profile so delegation stays observable:
+
+- Native sub-agent tools (`agent`) are denied on every launch unless the project's Mars
+  config makes native agent copies the delegation mechanism for that harness. No profile
+  rule opts out of this deny.
+- Spawns also deny task-list tools (`task`) unless the profile has an explicit unscoped
+  `task: allow` or `task: ask`. A `'*': allow` does not count.
+- A platform deny overrides the profile's rules for its capability, scoped allows such as
+  `agent(coder): allow` included.
+- Claude/Codex built-in agents are denied unless the corresponding
+  `[harness.<id>] allow_builtin_agents = true` setting applies.
+
+Every spawn also gets narrow
+grants for `meridian spawn done` and
+`meridian spawn rearm`, including their optional spawn-id argument. These grants do not open
+the rest of the shell. The dry-run report marks platform decisions as `platform` and calls
+out partial or missing projections. Mars supplies each harness's native agent/task names in
+the launch bundle; Meridian does not keep a second name table. A launch snapshot written
+before that metadata existed takes the names from a fresh bundle for the same harness when it
+replays; only if Mars cannot build one are those platform denies reported as unsupported.
+
+OpenCode receives all Meridian-owned launch settings in `OPENCODE_CONFIG_CONTENT`, including
+the reserved config agent. Meridian no longer sets `OPENCODE_PERMISSION`.
 
 ## Example Profiles
 

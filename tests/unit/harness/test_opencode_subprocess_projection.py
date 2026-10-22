@@ -17,7 +17,6 @@ from meridian.lib.harness.projections.project_opencode_subprocess import (
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 _SUBPROCESS_BASE = ("opencode", "run")
 _INTERACTIVE_BASE = ("opencode",)
@@ -26,7 +25,6 @@ _INTERACTIVE_BASE = ("opencode",)
 def _spec(**overrides: object) -> ResolvedLaunchSpec:
     values: dict[str, object] = {
         "prompt": "hello",
-        "permission_resolver": UnsafeNoOpPermissionResolver(_suppress_warning=True),
     }
     values.update(overrides)
     return ResolvedLaunchSpec(**values)

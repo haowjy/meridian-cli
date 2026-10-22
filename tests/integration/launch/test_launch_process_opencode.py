@@ -32,7 +32,6 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.platform.launch_gate import ProcessIdentity
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
@@ -116,7 +115,6 @@ def test_run_primary_attach_preserves_startup_failure_cause(
             task_cwd=tmp_path,
             env={},
             spec=ResolvedLaunchSpec(
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
             process_launcher=lambda **_kwargs: (1, None),
         )
@@ -231,7 +229,6 @@ def test_opencode_streaming_logs_effort_warning_without_failure(
         ResolvedLaunchSpec(
             model="google/gemini-2.5-pro",
             effort="medium",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
@@ -283,7 +280,6 @@ def test_managed_primary_dryrun_has_one_truthful_structured_plan(
 def test_project_config_opencode_version_selects_v2_without_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from meridian.lib.harness.connections.base import ConnectionConfig
     from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
     from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 
@@ -300,14 +296,6 @@ def test_project_config_opencode_version_selects_v2_without_env(
     final_env = launch_context.binding.environment.final_env
     assert final_env["MERIDIAN_HARNESS_OPENCODE_VERSION"] == "v2"
 
-    connection = OpenCodeConnection()
-    selected = connection._select(
-        ConnectionConfig(
-            spawn_id="p-opencode-v2-config",
-            harness_id=HarnessId.OPENCODE,
-            prompt="hello",
-            control_root=tmp_path,
-            child_env=dict(final_env),
-        )
-    )
+    assert launch_context.binding.spec.opencode_version == "v2"
+    selected = OpenCodeConnection()._select(launch_context.binding.spec)
     assert isinstance(selected, OpenCodeV2Connection)

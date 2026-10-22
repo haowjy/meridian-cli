@@ -11,8 +11,9 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.safety.policy import EnforcementReport
 from meridian.lib.state.session_store import ConversationModelSelection, SessionModelSelectionEvent
-from meridian.lib.tools import ToolsField
+from meridian.lib.tools import ToolRule
 
 
 def _empty_template_vars() -> dict[str, str]:
@@ -108,8 +109,9 @@ class SpawnRequest(BaseModel):
 
     # Harness shape
     extra_args: tuple[str, ...] = ()
-    mcp_tools: tuple[str, ...] = ()
-    tools: ToolsField | None = None
+    tool_rules: tuple[ToolRule, ...] = ()
+    # Mars-named agent/task deny candidates; bind selects them after profile opt-outs.
+    platform_tool_rules: tuple[ToolRule, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)
     ignore_direnv: bool | None = None
 
@@ -145,6 +147,8 @@ class SpawnRequest(BaseModel):
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     # Preview command for dry-run display only.  Executors MUST NOT use this field.
     cli_command: tuple[str, ...] = ()
+    # Dry-run display only, like ``cli_command``: what the harness enforces from the policy.
+    permission_report: EnforcementReport = ()
     authority_root: str | None = None
     task_cwd: str | None = None
     reference_anchor: str | None = None
@@ -179,7 +183,6 @@ class LaunchRuntime(BaseModel):
     composition_surface: LaunchCompositionSurface = LaunchCompositionSurface.DIRECT
     config_snapshot: dict[str, object] = Field(default_factory=_empty_config_snapshot)
     runtime_override_snapshot: dict[str, object] | None = None
-    unsafe_no_permissions: bool = False
     debug: bool = False
     runtime_root: str
     config_root: str | None = None

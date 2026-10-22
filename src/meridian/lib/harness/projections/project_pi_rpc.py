@@ -5,12 +5,18 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.pi_identity import project_identity
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
-from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
+from meridian.lib.harness.projections.permissions_pi import (
+    compile_pi_permissions,
+    project_pi_permission_args,
+    reject_passthrough_tool_flags,
+)
+from meridian.lib.harness.projections.pi_extension_projection import (
+    resolve_pi_permissions_entrypoint,
+)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
@@ -19,11 +25,13 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
         "model",
+        "native_config",
+        "autocompact",
+        "autocompact_pct",
         "effort",
-        "permission_resolver",
+        "permission_policy",
         "extra_args",
         "interactive",
-        "mcp_tools",
         "projected_roots",
         "appended_system_prompt",
         "pi_extension_entrypoints",
@@ -38,19 +46,16 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "harness",
         "agent_name",
         "agents_payload",
-        "claude_native_agents_enabled",
         "claude_runtime",
         "prompt",
         "prompt_file_path",
         "base_instructions",
         "developer_instructions",
         "report_output_path",
-        "web_search_enabled",
         "user_turn_content",
         "skills",
         "reference_items",
         "task_cwd",
-        "disallowed_tools",
         "opencode_version",
     }
 )
@@ -165,6 +170,7 @@ def project_pi_spec_to_cli_args(
 
     _reject_mode_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
+    reject_passthrough_tool_flags(passthrough_tail, spec.permission_policy)
 
     _log_collision_if_needed(
         managed_flag="--model",
@@ -193,14 +199,20 @@ def project_pi_spec_to_cli_args(
     )
 
     command.extend(project_identity(spec.native_identity))
+    permissions, _ = compile_pi_permissions(spec)
+    command.extend(project_pi_permission_args(permissions))
 
     if not spec.load_all_pi_extensions:
         command.append("--no-extensions")
 
-    for extension_entrypoint in spec.pi_extension_entrypoints:
+    permission_entrypoints = (
+        resolve_pi_permissions_entrypoint() if permissions.extension_policy is not None else ()
+    )
+    for extension_entrypoint in dict.fromkeys(
+        (*spec.pi_extension_entrypoints, *permission_entrypoints)
+    ):
         command.extend(("-e", extension_entrypoint))
 
-    command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.PI))
     command.extend(passthrough_tail)
 
     return command

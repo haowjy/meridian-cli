@@ -275,7 +275,10 @@ def build_create_payload(
                 harness_registry=harness_registry,
             )
             resolved_request = preview_context.resolved_request.model_copy(
-                update={"cli_command": preview_context.binding.argv}
+                update={
+                    "cli_command": preview_context.binding.argv,
+                    "permission_report": preview_context.enforcement_report(),
+                }
             )
         else:
             resolved_request = prepared_surface.request

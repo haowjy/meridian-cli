@@ -109,6 +109,7 @@ from .models import (
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
+    denied_requests,
     detail_from_row,
     read_spawn_row,
     resolve_spawn_reference,
@@ -474,6 +475,7 @@ def spawn_create_sync(
             task_cwd_source=getattr(prepared_request, "task_cwd_source", None),
             task_cwd_work_item=getattr(prepared_request, "task_cwd_work_item", None),
             cli_command=tuple(getattr(prepared_request, "cli_command", ()) or ()),
+            permission_report=prepared_request.permission_report,
             message="Dry run complete.",
             forked_from=forked_from,
         )
@@ -880,6 +882,7 @@ def spawn_show_sync(
     surfaced_activity = _surface_primary_activity(row.status, activity)
     return detail.model_copy(
         update={
+            "denied_requests": denied_requests(runtime_root, spawn_id),
             "kind": kind,
             "activity": surfaced_activity,
             "managed_backend": managed_backend,

@@ -25,7 +25,6 @@ from meridian.lib.launch.signals import (
     signal_to_exit_code,
 )
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 
@@ -167,7 +166,6 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         ),
         spec=ResolvedLaunchSpec(
             prompt="hello",
-            permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
         ),
         runtime_root=runtime_root,
         project_root=tmp_path,

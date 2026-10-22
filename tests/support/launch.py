@@ -30,6 +30,7 @@ from meridian.lib.launch.policy_snapshot import build_launch_policy_snapshot
 from meridian.lib.launch.reference import load_reference_items
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.state.paths import resolve_kb_dir
+from meridian.lib.tools import NativeStatus, ToolAction, ToolRule, split_native
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -37,6 +38,32 @@ class BuiltLaunchContext(LaunchContext):
     """Launch context plus the prepared surface required by the primary runner."""
 
     prepared: PreparedLaunchSurface
+
+
+def tool_rule(
+    capability: str,
+    action: ToolAction,
+    *native: str,
+    pattern: str | None = None,
+    status: NativeStatus = "known",
+    tools: tuple[str, ...] | None = None,
+) -> ToolRule:
+    """One Mars-resolved tool rule; ``native`` are the harness's names, already scoped.
+
+    ``tools`` is Mars's ``native_tools``; by default each native name unscoped, which is
+    what Mars gives wherever the permission spelling names its own tool.
+    """
+
+    return ToolRule(
+        capability=capability,
+        pattern=pattern,
+        action=action,
+        native=native,
+        native_tools=(
+            tools if tools is not None else tuple(dict.fromkeys(split_native(n)[0] for n in native))
+        ),
+        native_status=status,
+    )
 
 
 @dataclass(frozen=True)
@@ -52,9 +79,8 @@ class FakeBundleResult:
     selection_report: dict[str, object] | None = None
     warnings: tuple[str, ...] = ()
     prompt_surface_inventory_prompt: str = ""
-    tools_allowed: tuple[str, ...] = ()
-    tools_disallowed: tuple[str, ...] = ()
-    tools_mcp: tuple[str, ...] = ()
+    tool_rules: tuple[ToolRule, ...] = ()
+    platform_tool_rules: tuple[ToolRule, ...] = ()
     skills_loaded: tuple[LoadedSkillEntry, ...] = ()
     skills_available: tuple[AvailableSkillEntry, ...] = ()
     skills_missing: tuple[str, ...] = ()
@@ -114,8 +140,7 @@ def _direct_prepared_surface(
                 (request.session.requested_harness_session_id or "").strip() or None
             )
         ),
-        profile_tools_for_nested_deny=None,
-        has_profile_for_nested_deny=False,
+        profile_tool_rules=(),
         model_selection=None,
         launch_request=resolved_request,
     )
@@ -211,9 +236,8 @@ def stub_bundle_request_and_resolve(
     provenance: dict[str, str] | None = None,
     warnings: tuple[str, ...] = (),
     prompt_surface_inventory_prompt: str = "",
-    tools_allowed: tuple[str, ...] = (),
-    tools_disallowed: tuple[str, ...] = (),
-    tools_mcp: tuple[str, ...] = (),
+    tool_rules: tuple[ToolRule, ...] = (),
+    platform_tool_rules: tuple[ToolRule, ...] = (),
     skills_loaded: tuple[LoadedSkillEntry, ...] = (),
 ) -> list[bundle_adapter.BundleRequest]:
     captured_requests: list[bundle_adapter.BundleRequest] = []
@@ -240,9 +264,8 @@ def stub_bundle_request_and_resolve(
             provenance=resolved_provenance,
             warnings=warnings,
             prompt_surface_inventory_prompt=prompt_surface_inventory_prompt,
-            tools_allowed=tools_allowed,
-            tools_disallowed=tools_disallowed,
-            tools_mcp=tools_mcp,
+            tool_rules=tool_rules,
+            platform_tool_rules=platform_tool_rules,
             skills_loaded=skills_loaded,
         )
 

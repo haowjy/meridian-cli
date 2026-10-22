@@ -20,8 +20,6 @@ from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
-    McpConfig,
-    PermissionResolver,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -39,7 +37,11 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
-from meridian.lib.harness.opencode_backend import resolve_opencode_version
+from meridian.lib.harness.opencode_backend import (
+    OPENCODE_VERSION_ENV,
+    bound_opencode_version,
+    resolve_opencode_version,
+)
 from meridian.lib.harness.opencode_idle import (
     detect_ttl,
     primary_idle_sensor,
@@ -59,6 +61,7 @@ from meridian.lib.harness.passthrough.opencode import (
     build_opencode_server_attach_command,
 )
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.projections.permissions_opencode import compile_opencode_permissions
 from meridian.lib.harness.projections.project_opencode_config import (
     OPENCODE_CONFIG_CONTENT_ENV,
     meridian_agent_id,
@@ -94,7 +97,6 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -148,21 +150,22 @@ def project_opencode_spec_to_session_payload_for_project(
     return project_opencode_spec_to_session_payload(spec)
 
 
-def resolve_opencode_subprocess_spec(
-    spec: ResolvedLaunchSpec, env: Mapping[str, str]
-) -> ResolvedLaunchSpec:
-    """Resolve version-dependent argv using the launch environment; projection stays pure.
+def bind_opencode_spec(spec: ResolvedLaunchSpec, env: Mapping[str, str]) -> ResolvedLaunchSpec:
+    """Resolve the backend version once, at bind, from the launch environment.
 
-    Two projections branch on the version: the resume-with-model guard and the bare
-    TUI's V2-only flags. Both take the managed connection's decision, including its
-    V2 default when the binary cannot be probed, so the fallback never disagrees
-    with the transport it replaces.
+    The preference is the ``[harness.opencode] version`` bind put in the env; ``auto``
+    probes the binary on the env's ``PATH``, and an unprobeable one gets V2. The permission
+    compile and its report, the config projection, the argv guards (resume with a model, the
+    bare TUI's V2 flags), the managed-primary preview and the connection all read the
+    result, so none of them can disagree with another.
     """
-    resumes_with_model = bool(spec.continue_session_id) and spec.model is not None
-    if not spec.interactive and not resumes_with_model:
-        return spec
+
     return spec.model_copy(
-        update={"opencode_version": resolve_opencode_version(spec.opencode_version, env=env)}
+        update={
+            "opencode_version": resolve_opencode_version(
+                env.get(OPENCODE_VERSION_ENV), env=env
+            )
+        }
     )
 
 
@@ -170,13 +173,8 @@ def project_opencode_primary_preview(
     spec: ResolvedLaunchSpec,
     *,
     project_root: Path,
-    env: Mapping[str, str] | None = None,
 ) -> ManagedPrimaryPreview:
-    version = resolve_opencode_version(
-        (env or {}).get("MERIDIAN_HARNESS_OPENCODE_VERSION"),
-        binary="opencode",
-        env=env if env is not None else {},
-    )
+    version = bound_opencode_version(spec.opencode_version)
     backend = project_opencode_spec_to_serve_command(spec, host="127.0.0.1", port=0)
     backend[backend.index("--port") + 1] = "<port>"
     continuing = bool(spec.continue_session_id)
@@ -222,7 +220,7 @@ def project_opencode_primary_preview(
         steps=(
             *steps,
             "Preserve inherited configuration; the bound config selects Meridian's "
-            "default agent when a system prompt is supplied.",
+            "policy agent.",
             "Launch, inspections and bootstrap share one startup deadline.",
             "Native configuration and actual message model are unavailable in dry-run.",
             "Fail on rejected configuration; no black-box fallback.",
@@ -295,6 +293,8 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "model",
             "model_override_explicit",
             "effort",
+            "autocompact",
+            "autocompact_pct",
             "skills",
             "agent",
             "adhoc_agent_payload",
@@ -303,7 +303,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "interactive",
             "continue_harness_session_id",
             "continue_fork",
-            "mcp_tools",
             "projected_roots",
             "appended_system_prompt",
             "user_turn_content",
@@ -314,7 +313,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
-            "allow_builtin_agents",
         }
     )
 
@@ -386,11 +384,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             database = child_cwd / database
         return str(database.resolve())
 
-    def resolve_launch_spec(
-        self,
-        run: SpawnParams,
-        perms: PermissionResolver,
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         normalized_model: str | None = None
         if run.model:
@@ -413,23 +407,18 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             harness=HarnessId.OPENCODE,
             model=normalized_model,
             effort=run.effort,
+            autocompact=run.autocompact,
+            autocompact_pct=run.autocompact_pct,
             prompt=run.user_turn_content or run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
             extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
-            # The one place Meridian's default agent is decided. Bind emits the agent
-            # and its ``{file:}`` prompt exactly when this is set, and every surface
-            # that opens or resumes a session selects it explicitly.
-            agent_name=(
-                meridian_agent_id(run.agent)
-                if (run.appended_system_prompt or "").strip()
-                else None
-            ),
+            # Every surface selects the one config agent that owns this launch's
+            # prompt (when present), permission policy and workspace grants.
+            agent_name=meridian_agent_id(run.agent),
             skills=(),
         )
 
@@ -445,11 +434,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             auto_reject_runtime_requests=False,
             harness_id=HarnessId.OPENCODE.value,
         )
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        # MCP injection is off by default — agents use the CLI instead.
-        # Users who want always-on MCP can configure it in their harness settings.
-        return None
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         system_prompt = render_system_instruction_blocks(content)
@@ -472,12 +456,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        overrides: dict[str, str] = {}
-        if config.opencode_permission_override:
-            overrides["OPENCODE_PERMISSION"] = config.opencode_permission_override
-        return overrides
-
     def project_launch_env(
         self,
         *,
@@ -485,18 +463,19 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        # ``spec.agent_name`` is set exactly when the appended prompt is non-empty, which
-        # is when ``system-prompt.md`` is written after the spawn is persisted and before
-        # launch (a missing ``{file:}`` target fails OpenCode's whole config). A continued
-        # session keeps its model.
+        permissions, _ = compile_opencode_permissions(spec)
         config = project_opencode_launch_config(
             env.get(OPENCODE_CONFIG_CONTENT_ENV),
+            version=bound_opencode_version(spec.opencode_version),
             roots=spec.projected_roots,
-            agent_id=spec.agent_name,
-            prompt_file=system_prompt_path,
+            agent_id=spec.agent_name or meridian_agent_id(None),
+            prompt_file=(
+                system_prompt_path if (spec.appended_system_prompt or "").strip() else None
+            ),
+            permissions=permissions,
             model=None if spec.continue_session_id else spec.model,
         )
-        return {} if config is None else {OPENCODE_CONFIG_CONTENT_ENV: config}
+        return {OPENCODE_CONFIG_CONTENT_ENV: config}
 
     def seed_session(
         self,
@@ -598,6 +577,9 @@ _OPENCODE_V2_ACTIVITY_EVENTS: tuple[str, ...] = (
     "session.reasoning.ended",
     "session.step.started",
     "session.step.ended",
+    "session.tool.input.started",
+    "session.tool.called",
+    "session.tool.failed",
 )
 
 # OpenCode 2 emits ``session.execution.*`` instead of ``session.idle``; the
@@ -673,7 +655,8 @@ register_harness_bundle(
         connections={TransportId.STREAMING: OpenCodeConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_opencode_spec_to_cli_args,
-            resolve_subprocess_spec=resolve_opencode_subprocess_spec,
+            permission_report=lambda spec: compile_opencode_permissions(spec)[1],
+            bind_spec=bind_opencode_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_opencode_spec_to_serve_command,
                 bootstrap_payload=project_opencode_spec_to_session_payload_for_project,

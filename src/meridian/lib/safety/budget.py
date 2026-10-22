@@ -90,7 +90,7 @@ def extract_cost_usd_from_json_line(raw_line: bytes) -> float | None:
     """Extract the first recognized cost field from one JSON line payload."""
 
     # Import lazily to avoid package init cycles:
-    # safety -> budget -> harness._common -> harness.adapter -> safety.permissions.
+    # safety -> budget -> harness._common -> harness.adapter -> safety.policy.
     from meridian.lib.harness.common import coerce_optional_float, iter_nested_dicts
 
     try:

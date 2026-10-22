@@ -7,14 +7,12 @@ from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 
 
 def _spec(*, interactive: bool) -> ResolvedLaunchSpec:
     return ResolvedLaunchSpec(
         harness=HarnessId.CODEX,
         prompt="test",
-        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
         interactive=interactive,
     )
 

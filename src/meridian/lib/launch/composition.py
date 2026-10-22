@@ -64,6 +64,7 @@ class AvailableSkillEntry:
 
     name: str
     skill_type: str = "reference"
+    description: str = ""
     source_path: str | None = None
 
 
@@ -342,11 +343,7 @@ def _loaded_skill_type_header(skill_type: str) -> str:
 
 
 def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, ...]) -> str:
-    """Render the available skills listing — names only, grouped by type.
-
-    NOTE: mars-agents has a parallel implementation in `src/build/prompt.rs`
-    (compose_system_instruction). Keep format in sync.
-    """
+    """Render the available skills listing with bundle-provided descriptions."""
     if not available_skills:
         return ""
 
@@ -378,7 +375,8 @@ def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, 
         else:
             lines.append(f"\n## {label}")
         for skill in group:
-            lines.append(f"- {skill.name}")
+            suffix = f": {skill.description}" if skill.description else ""
+            lines.append(f"- {skill.name}{suffix}")
 
     return "\n".join(lines)
 
@@ -388,7 +386,7 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
 
     Order: agent_profile_body, completion_contract, auto-loaded skills
     (grouped by type: principles first, then guardrails, then others,
-    then bootstrap), available skills listing (names only),
+    then bootstrap), available skills listing,
     guidance_blocks (sorted by phase then priority), report_instruction,
     then passthrough fragments.
     """

@@ -14,13 +14,21 @@ reply evidence. OpenCode V2 is the exception: its event-named native reply wins
 over its stream text. An empty or unavailable exact lookup falls back to the
 stream, not to another message or an ambient database.
 
-Claude prefers result frames to assistant frames and sums model usage across
-result frames. Codex keeps the latest cumulative usage and the final parent-thread
+Claude prefers result frames to assistant frames, sums model usage across result frames,
+and converts well-formed `result.permission_denials` rows into idempotent attempt denials
+for finalization to journal. Codex keeps the latest cumulative usage and the final parent-thread
 agent message; later command execution invalidates that message. Pi keeps the
 latest assistant usage and agent-end text, plus typed failure evidence. OpenCode
 V1 ignores child-session assistant parts. V2 binds `assistantMessageID` to
 `session_message.id` within the recorded session/database. Unknown usage fields
 stay `None`; an explicitly reported zero is preserved.
+
+OpenCode's fold also records native permission failures that reach the V1 tool-part
+or V2 `session.tool.failed` stream as `PermissionDenial` facts. V2 requires the structured
+`permission.rejected` type; V1 recognizes its rule-prevents message, rather than treating
+an ordinary filesystem `permission denied` as policy. A deny that removes a tool from the
+model's catalog produces no attempted-call event and therefore no row; the fold never
+fabricates a request that OpenCode did not report.
 
 `detect_session_id_from_event` is separate from report extraction: Codex accepts
 owned thread/session envelopes, Claude top-level owned frame IDs, and OpenCode

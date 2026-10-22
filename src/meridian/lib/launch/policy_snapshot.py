@@ -16,7 +16,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.launch_types import ResolvedLaunchRouting, TerminalSurfaceMode
-from meridian.lib.tools import ToolsField
+from meridian.lib.tools import ToolRule, legacy_tool_rules
 
 from .request import SpawnRequest
 from .resolve import ResolvedSkills
@@ -77,8 +77,10 @@ class ReplayedLaunchPolicySnapshot:
     resolved_skills: ResolvedSkills
     routing: ResolvedLaunchRouting
     execution_policy: ResolvedExecutionPolicy
-    resolved_tools: ToolsField | None = None
-    resolved_mcp_tools: tuple[str, ...] = ()
+    resolved_tool_rules: tuple[ToolRule, ...] = ()
+    # Candidate platform denies named for the snapshotted harness; empty when an older build
+    # wrote the snapshot (the policy layer then asks Mars for them).
+    platform_tool_rules: tuple[ToolRule, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     matched_policy_rule: str | None = None
     model_selection: ReplayedModelSelection | None = None
@@ -147,8 +149,8 @@ def build_launch_policy_snapshot(
         skills=request.skills,
         loaded_skills=loaded_skills,
         execution_policy=request.execution_policy,
-        tools=request.tools,
-        mcp_tools=request.mcp_tools,
+        tool_rules=request.tool_rules,
+        platform_tool_rules=request.platform_tool_rules,
         extra_args=request.extra_args,
         env=request.env,
         model_selection_requested_token=request.model_selection_requested_token,
@@ -210,8 +212,8 @@ def replay_launch_policy_snapshot(
             agent=snapshot_agent,
         ),
         execution_policy=snapshot.execution_policy,
-        resolved_tools=snapshot.tools,
-        resolved_mcp_tools=snapshot.mcp_tools,
+        resolved_tool_rules=snapshot.tool_rules or legacy_tool_rules(snapshot.tools),
+        platform_tool_rules=snapshot.platform_tool_rules,
         terminal_surface_mode=terminal_surface_mode,
         matched_policy_rule=snapshot.matched_policy_rule,
         model_selection=model_selection,

@@ -10,10 +10,8 @@ from typing import cast
 
 from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
 from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.connections.base import PiSessionRole
-from meridian.lib.safety.permissions import PermissionConfig
 
 from .constants import BLOCKED_CHILD_ENV_VARS
 
@@ -128,36 +126,10 @@ def inherit_child_env(
     return inherited
 
 
-def build_harness_env_overrides(
-    *,
-    adapter: SubprocessHarness,
-    run_params: SpawnParams,
-    permission_config: PermissionConfig,
-    runtime_env_overrides: Mapping[str, str] | None = None,
-) -> dict[str, str]:
-    """Merge runtime + adapter + MCP env overrides for one harness launch."""
-
-    merged: dict[str, str] = dict(runtime_env_overrides or {})
-    merged.update(adapter.env_overrides(permission_config))
-    mcp_config = adapter.mcp_config(run_params)
-    if mcp_config is not None:
-        merged.update(mcp_config.env_overrides)
-    if adapter.id == HarnessId.OPENCODE:
-        if run_params.interactive:
-            # Primary launch: let the OpenCode TUI handle permissions natively.
-            merged.pop("OPENCODE_PERMISSION", None)
-        elif "OPENCODE_PERMISSION" not in merged:
-            # Child spawn with no explicit restriction: allow everything so
-            # `opencode run` (subprocess mode) doesn't auto-reject all tool calls.
-            merged["OPENCODE_PERMISSION"] = '{"*":"allow"}'
-    return merged
-
-
 def resolve_pi_session_role(*, interactive: bool) -> PiSessionRole:
     """Resolve canonical Pi role used by both runtime env and manager policy."""
 
     return "primary" if interactive else "spawned"
-
 
 
 def merge_env_overrides(
@@ -200,17 +172,10 @@ def build_harness_child_env(
     base_env: Mapping[str, str],
     adapter: SubprocessHarness,
     run_params: SpawnParams,
-    permission_config: PermissionConfig,
     runtime_env_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Build one inherited child env for a trusted harness launch."""
 
-    merged_env = build_harness_env_overrides(
-        adapter=adapter,
-        run_params=run_params,
-        permission_config=permission_config,
-        runtime_env_overrides=runtime_env_overrides,
-    )
     blocked_child_env_vars = getattr(adapter, "blocked_child_env_vars", None)
     adapter_blocked: frozenset[str]
     if callable(blocked_child_env_vars):
@@ -219,12 +184,10 @@ def build_harness_child_env(
         adapter_blocked = cast("frozenset[str]", frozenset())
     child_env = inherit_child_env(
         base_env=base_env,
-        env_overrides=merged_env,
+        env_overrides=runtime_env_overrides,
         blocked=BLOCKED_CHILD_ENV_VARS | adapter_blocked | RUNTIME_OVERRIDE_ENV_VARS,
     )
-    for key, value in adapter.env_defaults(
-        permission_config, run=run_params, env=child_env
-    ).items():
+    for key, value in adapter.env_defaults(run=run_params, env=child_env).items():
         if not child_env.get(key, "").strip():
             child_env[key] = value
     return child_env
@@ -235,7 +198,6 @@ def build_env_plan(
     base_env: Mapping[str, str],
     adapter: SubprocessHarness,
     run_inputs: SpawnParams,
-    permission_config: PermissionConfig,
     runtime_env_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Stage-owned entrypoint for launch child-environment construction."""
@@ -244,6 +206,5 @@ def build_env_plan(
         base_env=base_env,
         adapter=adapter,
         run_params=run_inputs,
-        permission_config=permission_config,
         runtime_env_overrides=runtime_env_overrides,
     )

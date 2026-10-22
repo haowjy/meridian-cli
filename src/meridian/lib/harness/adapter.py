@@ -32,6 +32,7 @@ from meridian.lib.core.native_identity import (
     Operation,
     PostExit,
 )
+from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -47,14 +48,12 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
-    PermissionResolver,
     PreflightResult,
     ResolvedLaunchSpec,
     SpecT,
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.safety.permissions import PermissionConfig
 
 if TYPE_CHECKING:
     from meridian.lib.harness.extractors.base import AttemptFold
@@ -186,6 +185,8 @@ class SpawnParams(BaseModel):
     model: ModelId | None = None
     model_override_explicit: bool = False
     effort: str | None = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
     skills: tuple[str, ...] = ()
     agent: str | None = None
     # Pre-built ad-hoc native-agent payload. Empty string when not used.
@@ -193,7 +194,6 @@ class SpawnParams(BaseModel):
     extra_args: tuple[str, ...] = ()
     control_root: str | None = None
     task_cwd: str | None = None
-    mcp_tools: tuple[str, ...] = ()
     projected_roots: tuple[Path, ...] = ()
     interactive: bool = False
     continue_harness_session_id: str | None = None
@@ -202,17 +202,6 @@ class SpawnParams(BaseModel):
     user_turn_content: str | None = None
     reference_items: tuple[Any, ...] = ()
     pi_harness_profile: PiHarnessProfileConfig | None = None
-    allow_builtin_agents: bool = False
-
-
-class McpConfig(BaseModel):
-    """Harness-specific MCP wiring details for one run."""
-
-    model_config = ConfigDict(frozen=True)
-
-    command_args: tuple[str, ...] = ()
-    env_overrides: dict[str, str] = Field(default_factory=_empty_env_overrides)
-    claude_allowed_tools: tuple[str, ...] = ()
 
 
 class StreamEvent(BaseModel):
@@ -344,7 +333,7 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
         pid: int,
     ) -> Callable[[int], NativeObservationBatch] | None: ...
 
-    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
+    def resolve_launch_spec(self, run: SpawnParams) -> AdapterSpecT: ...
 
     def launch_spec_warnings(
         self, spec: ResolvedLaunchSpec
@@ -370,12 +359,8 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str: ...
 
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None: ...
-
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]: ...
-
     def env_defaults(
-        self, config: PermissionConfig, *, run: SpawnParams, env: Mapping[str, str]
+        self, *, run: SpawnParams, env: Mapping[str, str]
     ) -> dict[str, str]: ...
 
     def project_launch_env(
@@ -653,7 +638,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return None
 
     @abstractmethod
-    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> SpecT:
+    def resolve_launch_spec(self, run: SpawnParams) -> SpecT:
         """Resolve typed launch spec from generic spawn parameters."""
         ...
 
@@ -696,10 +681,10 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return frozenset()
 
     def env_defaults(
-        self, config: PermissionConfig, *, run: SpawnParams, env: Mapping[str, str]
+        self, *, run: SpawnParams, env: Mapping[str, str]
     ) -> dict[str, str]:
         """Optional process defaults; explicit inherited or launch values win."""
-        _ = config, run, env
+        _ = run, env
         return {}
 
     def project_launch_env(
@@ -709,7 +694,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        """Env overrides that deliver the bound prompt, model and roots through harness config.
+        """Env overrides that deliver the bound prompt, model, roots and permissions.
 
         ``system_prompt_path`` is where the appended prompt is written, after bind and
         before launch, whenever ``spec.appended_system_prompt`` is non-empty; ``env`` is
@@ -799,10 +784,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         harness-specific channel routing.
         """
         return project_inline_content(content)
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        _ = run
-        return None
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "native_file"

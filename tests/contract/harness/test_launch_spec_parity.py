@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from meridian.lib.harness.projections.project_codex_common import (
-    HarnessCapabilityMismatch,
-    map_codex_approval_policy,
-)
+from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.policy import build_permission_policy
 
 
 @pytest.mark.parametrize(
@@ -20,9 +20,9 @@ from meridian.lib.harness.projections.project_codex_common import (
     ],
 )
 def test_codex_approval_policy_mapping_contract(approval_mode: str, expected: str | None) -> None:
-    assert map_codex_approval_policy(approval_mode) == expected
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CODEX,
+        permission_policy=build_permission_policy(sandbox=None, approval=approval_mode),
+    )
 
-
-def test_codex_approval_policy_rejects_unsupported_modes_fail_closed() -> None:
-    with pytest.raises(HarnessCapabilityMismatch, match="approval mode 'legacy-mode'"):
-        map_codex_approval_policy("legacy-mode")
+    assert compile_codex_permissions(spec)[0].approval_policy == expected

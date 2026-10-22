@@ -15,7 +15,6 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection, PiRpcTimingPolicy
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.spawn_store import start_spawn
 
 HELP = (
@@ -75,7 +74,6 @@ async def rpc_process(
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
         prompt=prompt,
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
     try:
         await connection.start(config, spec)
@@ -276,7 +274,6 @@ async def test_live_budget_stops_on_sum_of_pi_message_costs(tmp_path: Path) -> N
                     ),
                     run_spec=ResolvedLaunchSpec(
                         harness=HarnessId.PI,
-                        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
                     ),
                     budget_tracker=LiveBudgetTracker(budget=Budget(per_run_usd=1.5)),
                     signal_event=asyncio.Event(),

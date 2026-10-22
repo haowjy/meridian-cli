@@ -11,7 +11,7 @@ All three subsystems enforce constraints on what a spawn can do:
 
 - **Budget** — streaming cost enforcement; terminates if spend exceeds limit
 - **Guardrails** — post-run scripts that verify or audit after spawn completes
-- **Permissions** — translates sandbox/approval intent into harness-specific flags
+- **Permissions** — the transport-neutral policy each harness compiles into its own flags
 
 The launch layer assembles these; none of them drives the spawn itself.
 
@@ -35,35 +35,33 @@ Repo scripts are untrusted. Do not weaken this.
 
 **Do not hoist the lazy import in `budget.py`.** `extract_cost_usd_from_json_line`
 imports `harness.common` lazily to break a circular dependency: `safety.budget` →
-`harness.common` → `harness.adapter` → `safety.permissions`. Moving it to module
+`harness.common` → `harness.adapter` → `launch.launch_types` → `safety.policy`. Moving it to module
 level creates a circular import at load time.
 
-## Permission Resolver Selection
+## Permission Policy
 
-`build_permission_resolver()` selects a resolver based on what's configured:
-
-| Condition | Resolver |
-|---|---|
-| Neither list provided | `TieredPermissionResolver` — harness derives from sandbox/approval |
-| `tools` provided | `ToolsPermissionResolver` (abstract ToolsField compiled per harness) |
-| Explicit unsafe opt-out | `UnsafeNoOpPermissionResolver` + warning |
-
-Tools compilation preserves scoped patterns where the target harness supports them
-(notably OpenCode) and projects Claude capability aliases to tool names.
+`policy.py` builds one `PermissionPolicy` per launch: the tool and platform rules, the
+sandbox mode, the explicit workspace roots a native read-only sandbox must protect, and
+the approval mode, already resolved. `ResolvedLaunchSpec.permission_policy` carries it, and
+each harness compiles it in `harness/projections/permissions_<harness>.py`. Nothing in
+`safety/` knows a harness. The tool rules are Mars's typed rules (`lib/tools.py`). The policy
+answers the allowlist questions (`is_allowlist`, `allowed_tools`) and writes each
+per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them. `EnforcementReport` (a tuple of `ReportLine`) is the shape each compile
+reports what it enforced in; the formatting helpers for it live here too.
 
 ## Entry Points
 
 - `budget.py` — `LiveBudgetTracker`, `Budget`, `BudgetBreach`
 - `guardrails.py` — `run_guardrails()`
-- `permissions.py` — `PermissionConfig`, `build_permission_resolver()`
+- `policy.py` — `PermissionPolicy`, `build_permission_policy()`, `complete_report()`
 
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — budget cost field ordering, guardrail
-command resolution by platform, permission resolver table,
+command resolution by platform, permission policy,
 circular import dependency map
 
 ## Related
 
-- `../launch/permissions.py` — owns the actual permission pipeline resolution
+- `../launch/permissions.py` — bind-time platform rules (nested-agent denies, built-in agent denies, the completion-command allow)
 - `../harness/common.py` — provides `iter_nested_dicts` used by budget extraction

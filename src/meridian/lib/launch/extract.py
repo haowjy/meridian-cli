@@ -22,6 +22,7 @@ from meridian.lib.launch.constants import (
 )
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.permission_journal import PermissionJournal
 
 # ---------------------------------------------------------------------------
 # Finalization pipeline
@@ -122,6 +123,10 @@ def enrich_finalize(
         else None
     )
     harness_session_id = facts.first_session_id
+    if facts.permission_denials:
+        journal = PermissionJournal(log_dir)
+        for denial in facts.permission_denials:
+            journal.record_denial(denial)
     report = extract_or_fallback_report(
         log_dir,
         facts=facts,

@@ -19,7 +19,6 @@ from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import EventSemantics, NormalizedHarnessEvent
 from meridian.lib.launch import constants as launch_constants
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
@@ -252,7 +251,6 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
             run_spec=ResolvedLaunchSpec(
                 model=str(run.model),
                 harness=HarnessId.CODEX,
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
             budget_tracker=None,
             signal_event=asyncio.Event(),
@@ -363,7 +361,6 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
             run_spec=ResolvedLaunchSpec(
                 model=str(run.model),
                 harness=HarnessId.CURSOR,
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
             budget_tracker=None,
             signal_event=asyncio.Event(),

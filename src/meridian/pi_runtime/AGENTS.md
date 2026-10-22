@@ -31,6 +31,15 @@ persistence decision. At `agent_end` it reads valid tracked background
 managed-bash rows that are still running and forwards a bounded task snapshot
 to `idle arm`; an over-cap command becomes `other`, and it never classifies
 Meridian commands itself.
+`meridian-permissions` owns launch-local scoped tool rules and `ask`; it has no
+disk authority. Keep it separate from managed-bash so disabling managed Bash
+does not disable policy or register shell-task tools and `/ps*` commands. Keep the
+simple-command grammar deliberately small. When the policy says `bash_fail_closed`,
+unsupported shell syntax must be refused; otherwise (an open shell with scoped denies) it
+runs unchecked, and the Python report says so. Canonicalize scoped paths before
+matching, including existing symlink prefixes. A present but unusable policy must
+throw during extension load — Pi treats an explicit extension load error as a
+fatal launch error.
 
 ## Key Rules
 

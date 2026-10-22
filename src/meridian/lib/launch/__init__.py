@@ -234,13 +234,13 @@ def launch_primary(
             preview_context.harness.id,
             preview_context.binding.spec,
             project_root=resolved_project_root,
-            env=preview_context.binding.environment.final_env,
         )
         if launch_plan is not None:
             launch_plan = launch_plan.model_copy(update={"requested_model": request.model})
         return LaunchResult(
             launch_plan=launch_plan,
             command=() if launch_plan is not None else preview_context.binding.argv,
+            permission_report=preview_context.enforcement_report(),
             exit_code=0,
             continue_ref=None,
             continue_chat_id=None,

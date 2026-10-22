@@ -14,12 +14,10 @@ from meridian.lib.harness.passthrough.opencode import (
     build_opencode_server_attach_command,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
 def _spec(**overrides: object) -> ResolvedLaunchSpec:
     values: dict[str, object] = {
-        "permission_resolver": UnsafeNoOpPermissionResolver(_suppress_warning=True),
     }
     values.update(overrides)
     return ResolvedLaunchSpec(**values)

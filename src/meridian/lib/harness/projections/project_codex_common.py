@@ -2,88 +2,48 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Iterable
+from meridian.lib.harness.projections.native_config import (
+    CODEX_CONFIG_AGENTS_PREFIX,
+    CODEX_CONFIG_FEATURES_PREFIX,
+    CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY,
+    CODEX_CONFIG_WEB_SEARCH_KEY,
+)
+from meridian.lib.harness.projections.permissions_codex import CodexPermissions
 
-from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
-
-_APPROVAL_POLICY_BY_MODE: dict[str, str | None] = {
-    "default": None,
-    "auto": "on-request",
-    # Codex 0.163 accepts only ``on-request`` and ``never``; ``untrusted`` is rejected
-    # at startup, so ``confirm`` cannot be stricter than ``auto`` here.
-    "confirm": "on-request",
-    "never": "never",
-    "yolo": "never",
-}
-
-_SANDBOX_MODE_BY_MODE: dict[str, str | None] = {
-    "default": None,
-    "read-only": "read-only",
-    "workspace-write": "workspace-write",
-    "danger-full-access": "danger-full-access",
-}
+# Codex 0.162: disabling v2 falls back to v1, whose tools survive `--disable multi_agent`;
+# only a zero spawn depth removes them. Config overrides, not `--disable`: Codex rejects
+# `--disable` for a feature it does not know (older builds), but ignores an unknown
+# `features.<name>=false`.
+CODEX_DISABLE_BUILTIN_AGENT_FLAGS: tuple[str, ...] = (
+    "-c",
+    f"{CODEX_CONFIG_FEATURES_PREFIX}.multi_agent_v2=false",
+    "-c",
+    f"{CODEX_CONFIG_AGENTS_PREFIX}.max_depth=0",
+)
 
 
-def map_codex_approval_policy(approval_mode: str) -> str | None:
-    """Map Meridian approval mode to Codex approval policy."""
-
-    if approval_mode not in _APPROVAL_POLICY_BY_MODE:
-        raise HarnessCapabilityMismatch(
-            "Codex cannot express requested approval mode "
-            f"'{approval_mode}' on this CLI/protocol version"
-        )
-    mapped = _APPROVAL_POLICY_BY_MODE[approval_mode]
-    if mapped is None and approval_mode != "default":
-        raise HarnessCapabilityMismatch(
-            "Codex cannot express requested approval mode "
-            f"'{approval_mode}' on this CLI/protocol version"
-        )
-    return mapped
-
-
-def map_codex_sandbox_mode(sandbox_mode: str) -> str | None:
-    """Map Meridian sandbox mode to Codex sandbox mode."""
-
-    if sandbox_mode not in _SANDBOX_MODE_BY_MODE:
-        raise HarnessCapabilityMismatch(
-            "Codex cannot express requested sandbox mode "
-            f"'{sandbox_mode}' on this CLI/protocol version"
-        )
-    mapped = _SANDBOX_MODE_BY_MODE[sandbox_mode]
-    if mapped is None and sandbox_mode != "default":
-        raise HarnessCapabilityMismatch(
-            "Codex cannot express requested sandbox mode "
-            f"'{sandbox_mode}' on this CLI/protocol version"
-        )
-    return mapped
-
-
-def project_codex_mcp_config_flags(mcp_tools: Iterable[str]) -> tuple[str, ...]:
-    """Project ``mcp_tools`` to Codex ``-c mcp.servers.*.command=...`` flags."""
+def project_codex_tool_switch_flags(permissions: CodexPermissions) -> tuple[str, ...]:
+    """Spell Codex's process-level tool switches for either launch transport."""
 
     projected: list[str] = []
-    for raw_entry in mcp_tools:
-        entry = raw_entry.strip()
-        if not entry:
-            continue
-        name, separator, command = entry.partition("=")
-        if not separator or not name.strip() or not command.strip():
-            raise ValueError(
-                f"Codex mcp_tools entries must be '<name>=<command>'; got {raw_entry!r}"
-            )
+    if permissions.shell_tool is not None:
         projected.extend(
             (
                 "-c",
-                f"mcp.servers.{name.strip()}.command={json.dumps(command.strip())}",
+                f"{CODEX_CONFIG_FEATURES_PREFIX}.shell_tool="
+                f"{str(permissions.shell_tool).lower()}",
             )
         )
+    if permissions.web_search is True:
+        projected.extend(("-c", f"{CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY}=true"))
+    elif permissions.web_search is False:
+        projected.extend(("-c", f'{CODEX_CONFIG_WEB_SEARCH_KEY}="disabled"'))
+    if permissions.view_image is not None:
+        projected.extend(("--enable" if permissions.view_image else "--disable", "view_image"))
     return tuple(projected)
 
 
 __all__ = [
-    "HarnessCapabilityMismatch",
-    "map_codex_approval_policy",
-    "map_codex_sandbox_mode",
-    "project_codex_mcp_config_flags",
+    "CODEX_DISABLE_BUILTIN_AGENT_FLAGS",
+    "project_codex_tool_switch_flags",
 ]

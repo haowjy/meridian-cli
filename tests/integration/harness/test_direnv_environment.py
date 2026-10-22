@@ -8,10 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
-from meridian.lib.harness.bundle import project_subprocess_spec
-from meridian.lib.harness.connections.base import ConnectionConfig
+from meridian.lib.harness.bundle import bind_launch_spec, project_subprocess_spec
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.opencode import project_opencode_primary_preview
 from meridian.lib.harness.pi import PiAdapter
@@ -21,7 +20,6 @@ from meridian.lib.launch.env import build_harness_child_env, undo_direnv
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.plan import build_primary_launch_runtime, build_primary_spawn_request
 from meridian.lib.launch.types import LaunchRequest
-from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
@@ -97,7 +95,7 @@ def test_pi_defaults_use_restored_home_and_paths(
         monkeypatch.setenv(key, value)
     env = build_harness_child_env(
         base_env=undo_direnv(active), adapter=PiAdapter(),
-        run_params=SpawnParams(prompt="test"), permission_config=PermissionConfig(),
+        run_params=SpawnParams(prompt="test"),
     )
     assert env["PI_CODING_AGENT_DIR"] == str(Path(base["HOME"]) / ".pi" / "agent")
     assert env["PI_CODING_AGENT_SESSION_DIR"] == str(
@@ -105,7 +103,7 @@ def test_pi_defaults_use_restored_home_and_paths(
     )
     explicit = build_harness_child_env(
         base_env=undo_direnv(active), adapter=PiAdapter(),
-        run_params=SpawnParams(prompt="test"), permission_config=PermissionConfig(),
+        run_params=SpawnParams(prompt="test"),
         runtime_env_overrides={"MERIDIAN_HOME": "~/explicit-state"},
     )
     assert explicit["PI_CODING_AGENT_SESSION_DIR"] == str(
@@ -145,15 +143,22 @@ def test_opencode_workspace_projection_uses_effective_environment(
     assert ("provider" not in config) is expected
     assert ("ANTHROPIC_API_KEY" not in env) is expected
     assert env["MERIDIAN_IGNORE_DIRENV"] == str(expected).lower()
-    assert config["permission"]["external_directory"]
+    agent_key = "agent" if context.binding.spec.opencode_version == "v1" else "agents"
+    permission_key = (
+        "permission" if context.binding.spec.opencode_version == "v1" else "permissions"
+    )
+    agent_permissions = config[agent_key]["meridian"][permission_key]
+    if context.binding.spec.opencode_version == "v1":
+        assert agent_permissions["external_directory"]
+    else:
+        assert any(rule["action"] == "external_directory" for rule in agent_permissions)
     if expected:
         assert config["permission"]["bash"] == "ask"
 
 
-@pytest.mark.parametrize("surface", ["connection", "preview", "subprocess"])
 @pytest.mark.parametrize("version", ["v1", "v2"])
-def test_opencode_probes_use_bound_path_and_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surface: str, version: str,
+def test_opencode_bind_probes_once_with_bound_path_and_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str,
 ) -> None:
     bound_bin = tmp_path / "bound"
     ambient_bin = tmp_path / "ambient"
@@ -172,26 +177,26 @@ def test_opencode_probes_use_bound_path_and_environment(
     monkeypatch.setenv("PATH", str(ambient_bin))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-ambient-key")
     env = {"PATH": str(bound_bin), "MERIDIAN_HARNESS_OPENCODE_VERSION": "auto"}
-    spec = ResolvedLaunchSpec(
-        harness=HarnessId.OPENCODE,
-        model="anthropic/claude-sonnet-4", continue_session_id="session-review",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    spec = bind_launch_spec(
+        HarnessId.OPENCODE,
+        ResolvedLaunchSpec(
+            harness=HarnessId.OPENCODE,
+            model="anthropic/claude-sonnet-4", continue_session_id="session-review",
+        ),
+        env=env,
     )
-    if surface == "connection":
-        config = ConnectionConfig(
-            spawn_id=SpawnId("p-review"), harness_id=HarnessId.OPENCODE,
-            prompt="", control_root=tmp_path, child_env=env,
-        )
-        assert OpenCodeConnection()._resolve_version(config) == version
-    elif surface == "preview":
-        project_opencode_primary_preview(spec, project_root=tmp_path, env=env)
-    elif version == "v1":
-        with pytest.raises(HarnessCapabilityMismatch, match="cannot switch the model"):
-            project_subprocess_spec(
-                HarnessId.OPENCODE, spec, base_command=("opencode", "run"), env=env,
-            )
-    else:
-        project_subprocess_spec(
-            HarnessId.OPENCODE, spec, base_command=("opencode", "run"), env=env,
-        )
+    assert spec.opencode_version == version
     assert marker.read_text() == "bound:unset"
+
+    # The connection, the preview and the argv guard read the bound version: no re-probe.
+    marker.unlink()
+    connection = OpenCodeConnection()
+    connection._select(spec)
+    assert connection.resolved_version == version
+    project_opencode_primary_preview(spec, project_root=tmp_path)
+    if version == "v1":
+        with pytest.raises(HarnessCapabilityMismatch, match="cannot switch the model"):
+            project_subprocess_spec(HarnessId.OPENCODE, spec, base_command=("opencode", "run"))
+    else:
+        project_subprocess_spec(HarnessId.OPENCODE, spec, base_command=("opencode", "run"))
+    assert not marker.exists()

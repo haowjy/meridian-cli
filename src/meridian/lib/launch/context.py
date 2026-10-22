@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 import structlog
 from pydantic import ValidationError
 
+from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.context_config import (
@@ -32,13 +33,14 @@ from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.context_ref import ContextRef, render_context_refs
+from meridian.lib.core.execution_policy import NativeConfig
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
+from meridian.lib.harness.bundle import bind_launch_spec, get_harness_bundle
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
-    PermissionResolver,
     PreflightResult,
     PreparedLaunchContent,
     PreparedLaunchRuntimeSeeds,
@@ -52,7 +54,7 @@ from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
-from meridian.lib.safety.permissions import PermissionConfig
+from meridian.lib.safety.policy import EnforcementReport, PermissionPolicy, build_permission_policy
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
@@ -64,7 +66,7 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.telemetry import emit_telemetry
-from meridian.lib.tools import ToolsField, tools_field_to_map
+from meridian.lib.tools import ToolRule
 from meridian.plugin_api.git import resolve_clone_path
 
 from .command import (
@@ -86,13 +88,7 @@ from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILEN
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan, undo_direnv
 from .env import merge_env_overrides as _merge_env_overrides
-from .permissions import (
-    CLAUDE_NATIVE_DELEGATION_TOOLS,
-    project_has_claude_agent_copy,
-    resolve_claude_native_agent_permission_request,
-    resolve_nested_claude_permission_request,
-    resolve_permission_pipeline,
-)
+from .permissions import launch_permission_rules
 from .policies import (
     ModelSelectionContext,
     ResolvedLaunchPolicy,
@@ -255,6 +251,13 @@ class LaunchContext:
     warnings: tuple[CompositionWarning, ...] = ()
     model_selection: ModelSelectionContext | None = None
 
+    def enforcement_report(self) -> EnforcementReport:
+        """What this launch's harness enforces from the permission policy."""
+
+        return get_harness_bundle(self.harness.id).projections.permission_report(
+            self.binding.spec
+        )
+
 
 @dataclass(frozen=True)
 class PreparedLaunchSurface:
@@ -270,8 +273,7 @@ class PreparedLaunchSurface:
     composition_warnings: tuple[CompositionWarning, ...]
     content: PreparedLaunchContent
     runtime_seeds: PreparedLaunchRuntimeSeeds
-    profile_tools_for_nested_deny: ToolsField | None
-    has_profile_for_nested_deny: bool
+    profile_tool_rules: tuple[ToolRule, ...]
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
     # Original launch request preserved for LaunchContext.request compatibility.
@@ -304,8 +306,6 @@ class MaterializedLaunchArtifacts:
     """Shared launch materialization below policy resolution."""
 
     run_params: SpawnParams
-    permission_config: PermissionConfig
-    perms: PermissionResolver
     spec: ResolvedLaunchSpec
     warnings: tuple[CompositionWarning, ...] = ()
 
@@ -493,28 +493,20 @@ def _request_prompt_payload(prompt_payload: PreparedPromptPayload) -> RequestPro
     )
 
 
-def _codex_web_search_enabled(tools: ToolsField | None) -> bool:
-    """True when Mars launch-bundle explicitly granted codex ``web_search``."""
-
-    if tools is None:
-        return False
-    action = tools_field_to_map(tools).get("web_search")
-    return action in ("allow", "ask")
-
-
 def materialize_launch_artifacts(
     *,
     harness: SubprocessHarness,
     prompt: str,
     model: str | None,
     effort: str | None,
+    autocompact: int | None,
+    autocompact_pct: int | None,
     skills: tuple[str, ...],
     agent: str | None,
     prompt_payload: PreparedPromptPayload,
     extra_args: tuple[str, ...] = (),
     control_root: str | None = None,
     task_cwd: str | None = None,
-    mcp_tools: tuple[str, ...] = (),
     projected_roots: tuple[Path, ...] = (),
     interactive: bool = False,
     continue_harness_session_id: str | None = None,
@@ -522,14 +514,9 @@ def materialize_launch_artifacts(
     model_override_explicit: bool = False,
     reference_items: tuple[ReferenceItem, ...] = (),
     inject_task_cwd_instruction: bool = False,
-    sandbox: str | None = None,
-    tools: ToolsField | None = None,
-    approval: str | None = None,
-    unsafe_no_permissions: bool = False,
+    permission_policy: PermissionPolicy,
+    native_config: NativeConfig,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
-    claude_native_agents_enabled: bool = False,
-    allow_builtin_agents: bool = False,
-    web_search_enabled: bool = False,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
@@ -561,13 +548,14 @@ def materialize_launch_artifacts(
         model=ModelId(model) if model else None,
         model_override_explicit=model_override_explicit,
         effort=effort,
+        autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
         skills=skills,
         agent=agent,
         adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
         extra_args=extra_args,
         control_root=control_root,
         task_cwd=task_cwd,
-        mcp_tools=mcp_tools,
         projected_roots=projected_roots,
         interactive=interactive,
         continue_harness_session_id=continue_harness_session_id,
@@ -576,25 +564,15 @@ def materialize_launch_artifacts(
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
         pi_harness_profile=pi_harness_profile,
-        allow_builtin_agents=allow_builtin_agents,
     )
-    permission_config, perms = resolve_permission_pipeline(
-        sandbox=sandbox,
-        tools=tools,
-        approval=approval or "default",
-        unsafe_no_permissions=unsafe_no_permissions,
+    spec = resolve_launch_spec_stage(
+        adapter=harness,
+        run_inputs=run_params,
+        permission_policy=permission_policy,
+        native_config=native_config,
     )
-    spec = resolve_launch_spec_stage(adapter=harness, run_inputs=run_params, perms=perms)
-    if harness.id == HarnessId.CLAUDE:
-        spec = spec.model_copy(
-            update={"claude_native_agents_enabled": claude_native_agents_enabled}
-        )
-    elif harness.id == HarnessId.CODEX and web_search_enabled:
-        spec = spec.model_copy(update={"web_search_enabled": True})
     return MaterializedLaunchArtifacts(
         run_params=run_params,
-        permission_config=permission_config,
-        perms=perms,
         spec=spec,
         warnings=harness.launch_spec_warnings(spec),
     )
@@ -1336,7 +1314,6 @@ def prepare_launch_surface(
         )
     profile = policies.profile
     using_policy_snapshot = request.launch_policy_snapshot is not None
-    has_profile = profile is not None
     execution_policy = policies.execution_policy
     model_selection = policies.model_selection
     harness = policies.adapter
@@ -1442,8 +1419,8 @@ def prepare_launch_surface(
         projected_content=content.projected_content,
         composed_content=content.composed_content,
     )
-    profile_tools_for_nested_deny = (
-        policies.resolved_tools if (profile is not None or using_policy_snapshot) else None
+    profile_tool_rules = (
+        policies.resolved_tool_rules if (profile is not None or using_policy_snapshot) else ()
     )
 
     resolved_request = request.model_copy(
@@ -1453,19 +1430,13 @@ def prepare_launch_surface(
             "agent": resolved_agent_name,
             "skills": resolved_skills.skill_names,
             "extra_args": final_passthrough_args,
-            "mcp_tools": (
-                policies.resolved_mcp_tools
-                if (profile is not None or using_policy_snapshot)
-                else request.mcp_tools
-            ),
             "execution_policy": execution_policy,
-            # Prefer the bundle's authoritative resolved tool grant whenever it exists
+            # Prefer the bundle's authoritative resolved tool rules whenever they exist
             # (covers spawned subagents, where profile/snapshot aren't set at bind but the
-            # resolved grant — e.g. codex `web_search` — must still propagate). Falls back
-            # to request.tools only when no resolved grant was produced.
-            "tools": (
-                policies.resolved_tools if policies.resolved_tools is not None else request.tools
-            ),
+            # resolved rules — e.g. a Codex web grant — must still propagate). Falls back
+            # to request.tool_rules only when no rules were resolved.
+            "tool_rules": policies.resolved_tool_rules or request.tool_rules,
+            "platform_tool_rules": policies.platform_tool_rules,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,
@@ -1545,8 +1516,7 @@ def prepare_launch_surface(
             seed_harness_session_id=seed_harness_session_id,
             seed_session_args=seed_session_args,
         ),
-        profile_tools_for_nested_deny=profile_tools_for_nested_deny,
-        has_profile_for_nested_deny=has_profile or using_policy_snapshot,
+        profile_tool_rules=profile_tool_rules,
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1601,8 +1571,7 @@ def bind_launch_context(
     composition_warnings = prepared.composition_warnings
     prompt_payload = prepared.prompt_payload
     loaded_references = prepared.loaded_references
-    profile_tools_for_nested_deny = prepared.profile_tools_for_nested_deny
-    has_profile_for_nested_deny = prepared.has_profile_for_nested_deny
+    profile_tool_rules = prepared.profile_tool_rules
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
@@ -1722,46 +1691,32 @@ def bind_launch_context(
     if model_selection is not None and model_selection.harness_model_id is not None:
         effective_model = model_selection.harness_model_id
 
-    claude_native_agents_enabled = harness.id == HarnessId.CLAUDE and project_has_claude_agent_copy(
-        project_paths.project_root
-    )
     allow_builtin_agents = resolve_allow_builtin_agents_for_launch(
         harness_id=harness.id.value,
         config_snapshot=runtime.config_snapshot,
         project_root=project_paths.project_root,
     )
-    # resolved_request.tools carries the bundle's authoritative resolved grant, which
-    # includes the codex `web_search` token when the agent grants `web`. Codex needs
-    # `--search` to actually expose the native tool; the grant alone is inert.
-    codex_web_search_enabled = harness.id == HarnessId.CODEX and _codex_web_search_enabled(
-        resolved_request.tools
+    native_agent_copy = agent_copy_enabled(project_paths.project_root, harness.id)
+    platform_tool_rules, platform_rules = launch_permission_rules(
+        tool_rules=resolved_request.tool_rules,
+        profile_tool_rules=profile_tool_rules,
+        platform_tool_rules=resolved_request.platform_tool_rules,
+        spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
+        native_agent_copy=native_agent_copy,
+        allow_builtin_agents=allow_builtin_agents,
     )
-
-    if (
-        runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
-        and harness.id == HarnessId.CLAUDE
-        and CLAUDE_NATIVE_DELEGATION_TOOLS
-    ):
-        tools = resolve_nested_claude_permission_request(
-            tools=resolved_request.tools,
-            profile_tools=profile_tools_for_nested_deny,
-            has_profile=has_profile_for_nested_deny,
-            allow_native_agent_tool=claude_native_agents_enabled,
-        )
-        if tools != resolved_request.tools:
-            resolved_request = resolved_request.model_copy(
-                update={
-                    "tools": tools,
-                }
+    permission_policy = build_permission_policy(
+        rules=(*resolved_request.tool_rules, *platform_tool_rules),
+        sandbox=resolved_request.execution_policy.sandbox,
+        sandbox_write_roots=tuple(
+            root.as_posix()
+            for root in _dedupe_roots_in_order(
+                (resolved_control_root, *workspace_authority_roots)
             )
-
-    if harness.id == HarnessId.CLAUDE:
-        tools = resolve_claude_native_agent_permission_request(
-            tools=resolved_request.tools,
-            has_claude_agent_copy=claude_native_agents_enabled,
-        )
-        if tools != resolved_request.tools:
-            resolved_request = resolved_request.model_copy(update={"tools": tools})
+        ),
+        approval=resolved_request.execution_policy.approval or "default",
+        platform_rules=platform_rules,
+    )
 
     # Defense in depth for persisted worker requests that bypassed preparation.
     _enforce_headless_harness_policy(
@@ -1813,6 +1768,8 @@ def bind_launch_context(
         model=effective_model,
         model_override_explicit=model_override_explicit,
         effort=resolved_request.execution_policy.effort,
+        autocompact=resolved_request.execution_policy.autocompact,
+        autocompact_pct=resolved_request.execution_policy.autocompact_pct,
         skills=resolved_request.skills,
         agent=resolved_request.agent,
         prompt_payload=prompt_payload,
@@ -1820,7 +1777,6 @@ def bind_launch_context(
         control_root=resolved_control_root.as_posix(),
         task_cwd=(task_cwd.as_posix() if task_cwd is not None else None),
         inject_task_cwd_instruction=inject_task_cwd_instruction,
-        mcp_tools=resolved_request.mcp_tools,
         projected_roots=projected_roots,
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,
@@ -1830,32 +1786,21 @@ def bind_launch_context(
             else resolved_request.session.continue_fork
         ),
         reference_items=loaded_references,
-        sandbox=resolved_request.execution_policy.sandbox,
-        tools=resolved_request.tools,
-        approval=resolved_request.execution_policy.approval,
-        unsafe_no_permissions=runtime.unsafe_no_permissions,
+        permission_policy=permission_policy,
+        native_config=resolved_request.execution_policy.native_config,
         pi_harness_profile=pi_harness_profile,
-        claude_native_agents_enabled=claude_native_agents_enabled,
-        allow_builtin_agents=allow_builtin_agents,
-        web_search_enabled=codex_web_search_enabled,
     )
     run_params = materialized.run_params
-
-    permission_config = materialized.permission_config
-    perms = materialized.perms
     spec = materialized.spec
     composition_warnings = (*composition_warnings, *materialized.warnings)
-    opencode_version: str | None = None
+    opencode_version_preference: str | None = None
     if harness.id == HarnessId.OPENCODE:
-        # Resolve once and carry the preference on the spec so the dry-run argv
-        # preview applies the same version-specific guard as the connection
-        # instead of probing/config-reading on its own. The same value is
-        # projected into the child env below for the connection and preview.
-        opencode_version = resolve_opencode_version_for_launch(
+        # The config preference reaches the launch env below, where bind resolves it
+        # against the installed binary (``bind_launch_spec``) and descendants inherit it.
+        opencode_version_preference = resolve_opencode_version_for_launch(
             config_snapshot=runtime.config_snapshot,
             project_root=project_paths.project_root,
         )
-        spec = spec.model_copy(update={"opencode_version": opencode_version})
     if harness.id == HarnessId.CODEX and not spec.interactive:
         spec = spec.model_copy(
             update={
@@ -1870,8 +1815,8 @@ def bind_launch_context(
     # Resolve before restoring the environment, then carry the decision to
     # descendants even when direnv originally supplied the setting itself.
     launch_env_overrides["MERIDIAN_IGNORE_DIRENV"] = str(ignore_direnv).lower()
-    if opencode_version is not None:
-        launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version
+    if opencode_version_preference is not None:
+        launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version_preference
     child_context_env = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,
@@ -1915,9 +1860,11 @@ def bind_launch_context(
         base_env=base_env,
         adapter=harness,
         run_inputs=run_params,
-        permission_config=permission_config,
         runtime_env_overrides=bind_env_overrides,
     )
+    # Facts that depend on the launch environment (OpenCode's backend version) are resolved
+    # once, here; the env projection, the argv, the report and the connection read the spec.
+    spec = bind_launch_spec(harness.id, spec, env=env)
     env.update(
         harness.project_launch_env(
             spec=spec,
@@ -1944,20 +1891,12 @@ def bind_launch_context(
     )
     argv: tuple[str, ...] = ()
     if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
-        argv = build_launch_argv(
-            adapter=harness,
-            run_inputs=run_params,
-            perms=perms,
-            projected_spec=spec,
-            env=env,
-        )
+        argv = build_launch_argv(adapter=harness, projected_spec=spec)
 
     binding = ResolvedLaunchBinding(
         work_id=effective_work_id,
         child_cwd=child_cwd,
         run_params=run_params,
-        permission_config=permission_config,
-        perms=perms,
         spec=spec,
         argv=argv,
         environment=environment,

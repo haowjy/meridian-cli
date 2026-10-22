@@ -3,15 +3,36 @@
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
+from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 
 
 def test_attempt_facts_reset_and_unknown_usage():
     fold = CLAUDE_EXTRACTOR.create_fold()
     first = fold.facts
-    _fold(fold, {"type": "result", "session_id": "first", "result": "done"})
+    _fold(
+        fold,
+        {
+            "type": "result",
+            "session_id": "first",
+            "result": "done",
+            "permission_denials": [
+                {
+                    "tool_name": "Bash",
+                    "tool_use_id": "toolu_denied",
+                    "tool_input": {"command": "touch denied"},
+                },
+                {"tool_name": "Write"},
+                "malformed",
+            ],
+        },
+    )
     assert first.final_text == "done"
     assert first.first_session_id == "first"
     assert first.usage is None
+    assert len(first.permission_denials) == 1
+    assert first.permission_denials[0].request_id == "toolu_denied"
+    assert first.permission_denials[0].detail == "touch denied"
+    assert first.permission_denials[0].reason == HEADLESS_REJECT_REASON
     second = AttemptFacts()
     assert second.first_session_id is None
     assert second.final_text is None

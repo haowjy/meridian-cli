@@ -26,9 +26,7 @@ from meridian.lib.harness.adapter import (
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
-    McpConfig,
     NativePrimaryRuntimeMetadata,
-    PermissionResolver,
     RecordConfigDirFn,
     SessionRequest,
     SpawnParams,
@@ -56,6 +54,10 @@ from meridian.lib.harness.pi_paths import (
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
+)
+from meridian.lib.harness.projections.permissions_pi import (
+    PI_PERMISSION_POLICY_ENV,
+    compile_pi_permissions,
 )
 from meridian.lib.harness.projections.pi_extension_projection import (
     PiExtensionLaunchProfile,
@@ -93,7 +95,6 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_PI,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state import pi_lifecycle
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import spawn_log_subpath
@@ -158,6 +159,8 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "prompt",
             "model",
             "effort",
+            "autocompact",
+            "autocompact_pct",
             "extra_args",
             "control_root",
             "interactive",
@@ -165,7 +168,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "continue_fork",
             "appended_system_prompt",
             "user_turn_content",
-            "mcp_tools",
             "projected_roots",
             "pi_harness_profile",
         }
@@ -178,7 +180,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "model_override_explicit",
             "reference_items",
             "task_cwd",
-            "allow_builtin_agents",
         }
     )
 
@@ -244,11 +245,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)
 
-    def resolve_launch_spec(
-        self,
-        run: SpawnParams,
-        perms: PermissionResolver,
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         if run.pi_harness_profile is not None:
             pi_profile = run.pi_harness_profile
@@ -274,13 +271,13 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             harness=HarnessId.PI,
             model=str(run.model).strip() if run.model else None,
             effort=run.effort,
+            autocompact=run.autocompact,
+            autocompact_pct=run.autocompact_pct,
             prompt=run.user_turn_content or run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
             extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
             pi_extension_entrypoints=entrypoints,
@@ -408,10 +405,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def redact_primary_command(self, command: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(redact_pi_command_for_history(command))
 
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        _ = run
-        return None
-
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         system_prompt = render_system_instruction_blocks(content)
         reference_routing = build_reference_routing(content.reference_items)
@@ -433,13 +426,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        return {}
-
-    def env_defaults(
-        self, config: PermissionConfig, *, run: SpawnParams, env: Mapping[str, str]
-    ) -> dict[str, str]:
-        _ = config
+    def env_defaults(self, *, run: SpawnParams, env: Mapping[str, str]) -> dict[str, str]:
         defaults = {
             "PI_CODING_AGENT_DIR": str(resolve_pi_agent_dir(env=env)),
             "PI_CODING_AGENT_SESSION_DIR": str(resolve_pi_spawn_session_root(env=env)),
@@ -447,6 +434,24 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if run.interactive:
             defaults["PI_CACHE_RETENTION"] = "long"
         return defaults
+
+    def project_launch_env(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        system_prompt_path: Path,
+        env: Mapping[str, str],
+    ) -> dict[str, str]:
+        """Pass the bound policy directly to Pi's launch-local extension."""
+
+        _ = system_prompt_path, env
+        permissions, _ = compile_pi_permissions(spec)
+        policy = permissions.extension_policy
+        return (
+            {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()}
+            if policy is not None
+            else {}
+        )
 
     def resolve_session_file(
         self,
@@ -610,6 +615,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: PiRpcConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=_project_pi_subprocess_cli_args,
+            permission_report=lambda spec: compile_pi_permissions(spec)[1],
         ),
         semantics=PI_SEMANTICS,
         event_sinks=_event_sinks,

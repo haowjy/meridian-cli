@@ -21,6 +21,7 @@ from meridian.lib.harness.idle_types import (
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
+from meridian.lib.safety.policy import EnforcementReport
 from meridian.lib.state.spawn.model import SpawnRecord
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
@@ -51,7 +52,6 @@ class ManagedPrimaryPreviewProjector(Protocol[ProjectorSpecT]):
         spec: ProjectorSpecT,
         *,
         project_root: Path,
-        env: Mapping[str, str] | None = None,
     ) -> ManagedPrimaryPreview: ...
 
 
@@ -69,7 +69,13 @@ class HarnessProjectionPorts(Generic[SpecT]):
     """Projection helpers registered for one harness bundle."""
 
     subprocess_cli_args: SubprocessProjector[SpecT]
-    resolve_subprocess_spec: Callable[[SpecT, Mapping[str, str]], SpecT] | None = None
+    # What the harness enforces from the spec's permission policy: its compile's report.
+    # ``--dry-run`` and the projection manifest read it; the live projectors call the typed
+    # compile (``permissions_<harness>.py``) directly for its native projection.
+    permission_report: Callable[[SpecT], EnforcementReport]
+    # Resolves the spec's facts that depend on the launch environment, once, at bind (the
+    # OpenCode backend version), so every projection and the connection read one value.
+    bind_spec: Callable[[SpecT, Mapping[str, str]], SpecT] | None = None
     managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
 
 
@@ -309,20 +315,24 @@ def _require_bundle_spec(
     return bundle
 
 
+def bind_launch_spec(harness_id: HarnessId, spec: SpecT, *, env: Mapping[str, str]) -> SpecT:
+    """Resolve the spec's environment-dependent facts through the harness's ``bind_spec``."""
+
+    bundle = _require_bundle_spec(harness_id, spec)
+    if bundle.projections.bind_spec is None:
+        return spec
+    return cast("SpecT", bundle.projections.bind_spec(spec, env))
+
+
 def project_subprocess_spec(
     harness_id: HarnessId,
     spec: object,
     *,
     base_command: tuple[str, ...],
-    env: Mapping[str, str],
 ) -> list[str]:
     """Project one resolved spec to subprocess argv through the bundle registry."""
 
     bundle = _require_bundle_spec(harness_id, spec)
-    if bundle.projections.resolve_subprocess_spec is not None:
-        spec = bundle.projections.resolve_subprocess_spec(
-            cast("Any", spec), env
-        )
     return bundle.projections.subprocess_cli_args(
         cast("Any", spec),
         base_command=base_command,
@@ -368,13 +378,12 @@ def project_managed_primary_preview(
     spec: object,
     *,
     project_root: Path,
-    env: Mapping[str, str] | None = None,
 ) -> ManagedPrimaryPreview | None:
     bundle = _require_bundle_spec(harness_id, spec)
     managed = bundle.projections.managed_primary
     if managed is None or managed.preview is None:
         return None
-    return managed.preview(cast("Any", spec), project_root=project_root, env=env)
+    return managed.preview(cast("Any", spec), project_root=project_root)
 
 
 __all__ = [
@@ -383,6 +392,7 @@ __all__ = [
     "ManagedPrimaryProjectionPorts",
     "PrimaryInbox",
     "PrimaryInboxError",
+    "bind_launch_spec",
     "get_bundle_registry",
     "get_connection_cls",
     "get_harness_bundle",

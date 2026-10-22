@@ -1,25 +1,17 @@
-import json
 
 import pytest
 
-from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.core.types import ModelId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.pi import PiAdapter
-from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.env import (
     apply_pi_bind_time_env,
     build_harness_child_env,
     inherit_child_env,
     merge_env_overrides,
 )
-from meridian.lib.safety.permissions import (
-    PermissionConfig,
-    ToolsPermissionResolver,
-    build_permission_config,
-    compile_tools_to_opencode_permission,
-    resolve_permission_pipeline,
-)
+from meridian.lib.safety.policy import build_permission_policy
 
 _MERIDIAN_RUNTIME_KEYS = (
     "MERIDIAN_PROJECT_DIR",
@@ -35,119 +27,7 @@ _MERIDIAN_RUNTIME_KEYS = (
 
 def test_invalid_approval_raises() -> None:
     with pytest.raises(ValueError, match="Unsupported approval mode"):
-        build_permission_config("danger-full-access", approval="sometimes")
-
-
-def test_opencode_tools_map_normalizes_and_sets_explicit_override() -> None:
-    normalized = json.loads(
-        compile_tools_to_opencode_permission(
-            {
-                "*": "deny",
-                "read": "allow",
-                "glob": "allow",
-                "grep": "allow",
-                "bash(git status)": "allow",
-                "web": "allow",
-            }
-        )
-    )
-    assert normalized == {
-        "*": "deny",
-        "read": "allow",
-        "glob": "allow",
-        "grep": "allow",
-        "bash(git status)": "allow",
-        "webfetch": "allow",
-        "websearch": "allow",
-    }
-
-    config, resolver = resolve_permission_pipeline(
-        sandbox="workspace-write",
-        tools={"*": "deny", "read": "allow", "write": "allow"},
-        approval="confirm",
-    )
-    assert isinstance(resolver, ToolsPermissionResolver)
-    assert config.sandbox == "workspace-write"
-    assert json.loads(config.opencode_permission_override or "{}") == {
-        "*": "deny",
-        "read": "allow",
-        "write": "allow",
-    }
-
-
-def test_opencode_deny_defaults_and_claude_tool_projection() -> None:
-    normalized = json.loads(
-        compile_tools_to_opencode_permission(
-            {
-                "*": "allow",
-                "read": "deny",
-                "glob": "deny",
-                "grep": "deny",
-                "bash(git status)": "deny",
-                "web": "deny",
-            }
-        )
-    )
-    assert normalized == {
-        "*": "allow",
-        "read": "deny",
-        "glob": "deny",
-        "grep": "deny",
-        "bash(git status)": "deny",
-        "webfetch": "deny",
-        "websearch": "deny",
-    }
-
-    deny_only_config, deny_only_resolver = resolve_permission_pipeline(
-        sandbox="workspace-write",
-        tools={"*": "allow", "read": "deny", "write": "deny"},
-        approval="confirm",
-    )
-    assert isinstance(deny_only_resolver, ToolsPermissionResolver)
-    assert json.loads(deny_only_config.opencode_permission_override or "{}") == {
-        "*": "allow",
-        "read": "deny",
-        "write": "deny",
-    }
-
-    combined_config, combined_resolver = resolve_permission_pipeline(
-        sandbox="workspace-write",
-        tools={"*": "deny", "bash": "allow", "agent": "deny"},
-    )
-    assert isinstance(combined_resolver, ToolsPermissionResolver)
-    assert resolve_permission_flags(combined_resolver, HarnessId.CLAUDE) == (
-        "--allowedTools",
-        "Bash",
-    )
-    assert json.loads(combined_config.opencode_permission_override or "{}") == {
-        "*": "deny",
-        "bash": "allow",
-        "agent": "deny",
-    }
-
-
-def test_claude_tool_projection_keeps_allow_rules_without_deny_default() -> None:
-    _config, resolver = resolve_permission_pipeline(
-        sandbox="danger-full-access",
-        tools={
-            "bash": "allow",
-            "bash(meridian spawn *)": "allow",
-            "bash(meridian session *)": "allow",
-            "agent": "deny",
-            "write": "deny",
-        },
-        approval="auto",
-    )
-
-    assert isinstance(resolver, ToolsPermissionResolver)
-    assert resolve_permission_flags(resolver, HarnessId.CLAUDE) == (
-        "--permission-mode",
-        "acceptEdits",
-        "--allowedTools",
-        "Bash,Bash(meridian spawn *),Bash(meridian session *)",
-        "--disallowedTools",
-        "Agent,Write",
-    )
+        build_permission_policy(sandbox="danger-full-access", approval="sometimes")
 
 
 def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars() -> None:
@@ -163,7 +43,6 @@ def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars()
         },
         adapter=ClaudeAdapter(),
         run_params=SpawnParams(prompt="test", model=ModelId("claude-sonnet-4-6")),
-        permission_config=PermissionConfig(),
         runtime_env_overrides={"_MERIDIAN_DEPTH": "2"},
     )
 
@@ -204,7 +83,6 @@ def test_build_harness_child_env_pi_state_dir_from_runtime_root() -> None:
         },
         adapter=PiAdapter(),
         run_params=SpawnParams(prompt="test", model=ModelId("openai-codex/gpt-5.4-mini")),
-        permission_config=PermissionConfig(),
         runtime_env_overrides={
             "_MERIDIAN_PI_STATE_DIR": runtime_root,
             "MERIDIAN_PROJECT_DIR": "/repo",
@@ -225,7 +103,6 @@ def test_pi_directory_defaults_preserve_explicit_launch_environment() -> None:
         },
         adapter=PiAdapter(),
         run_params=SpawnParams(prompt="test"),
-        permission_config=PermissionConfig(),
     )
     assert env["PI_CODING_AGENT_DIR"] == "/requested/auth"
     assert env["PI_CODING_AGENT_SESSION_DIR"] == "/requested/sessions"
@@ -233,7 +110,6 @@ def test_pi_directory_defaults_preserve_explicit_launch_environment() -> None:
         base_env={"PI_CODING_AGENT_DIR": "/inherited/auth"},
         adapter=PiAdapter(),
         run_params=SpawnParams(prompt="test"),
-        permission_config=PermissionConfig(),
         runtime_env_overrides={
             "PI_CODING_AGENT_DIR": "/launch/auth",
             "PI_CODING_AGENT_SESSION_DIR": "/launch/sessions",
@@ -248,7 +124,6 @@ def test_pi_bind_time_env_contains_agent_dir_timeout_and_task_ping() -> None:
         base_env={"PATH": "/usr/bin", "HOME": "/home/tester"},
         adapter=PiAdapter(),
         run_params=SpawnParams(prompt="test", model=ModelId("openai-codex/gpt-5.4-mini")),
-        permission_config=PermissionConfig(),
     )
 
     apply_pi_bind_time_env(

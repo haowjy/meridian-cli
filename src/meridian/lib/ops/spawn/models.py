@@ -2,7 +2,7 @@
 
 import shlex
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
@@ -12,6 +12,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 _SPAWN_DELIVERY_SEPARATOR = "\n\n"
@@ -203,6 +204,7 @@ class SpawnActionOutput(BaseModel):
     task_cwd_source: str | None = None
     task_cwd_work_item: str | None = None
     cli_command: tuple[str, ...] = ()
+    permission_report: EnforcementReport = ()
     exit_code: int | None = None
     duration_secs: float | None = None
     background: bool = False
@@ -329,6 +331,8 @@ class SpawnActionOutput(BaseModel):
                 wire["terminal_surface_mode"] = self.terminal_surface_mode
             if self.cli_command:
                 wire["cli_command"] = list(self.cli_command)
+            if self.permission_report:
+                wire["permission_report"] = [asdict(line) for line in self.permission_report]
         return wire
 
     def to_cli_wire(self) -> dict[str, object]:
@@ -474,6 +478,9 @@ class SpawnActionOutput(BaseModel):
             lines.append(f"Error: {self.error}")
         if self.cli_command:
             lines.append(shlex.join(self.cli_command))
+        if self.permission_report:
+            lines.append("Permissions:")
+            lines.extend(format_report_lines(self.permission_report))
         if self.exit_code is not None:
             lines.append(f"Exit code: {self.exit_code}")
         transcript_command = self._transcript_command()
@@ -787,6 +794,28 @@ class SpawnCancelAllOutput(BaseModel):
         return "\n".join(lines)
 
 
+_DENIED_REQUEST_WHAT_LIMIT = 160
+
+
+class DeniedRequestOutput(BaseModel):
+    """A call the model made that was refused because nobody could approve it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    request_id: str
+    method: str
+    summary: str | None = None
+    reason: str | None = None
+
+    def format_line(self) -> str:
+        """One line: what was tried (a multi-line command folded, long ones cut) and why not."""
+
+        what = " ".join((self.summary or self.method).split())
+        if len(what) > _DENIED_REQUEST_WHAT_LIMIT:
+            what = what[: _DENIED_REQUEST_WHAT_LIMIT - 1] + "…"
+        return f"{what} ({self.reason})" if self.reason else what
+
+
 class SpawnDetailOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -838,6 +867,7 @@ class SpawnDetailOutput(BaseModel):
     last_attempt_exit_code: int | None = None
     session_config_dir: str | None = None
     session_log_available: bool = False
+    denied_requests: tuple[DeniedRequestOutput, ...] = ()
 
     def _normalized_report_body(self) -> str | None:
         report_text = (self.report_body or "").strip()
@@ -859,6 +889,14 @@ class SpawnDetailOutput(BaseModel):
             return None
         label = "Warning" if self.status == "succeeded" else "Failure"
         return label, failure_value
+
+    def _denied_requests_lines(self) -> list[str]:
+        if not self.denied_requests:
+            return []
+        return [
+            f"Denied requests ({len(self.denied_requests)}):",
+            *(f"  - {request.format_line()}" for request in self.denied_requests),
+        ]
 
     def _report_suffix(self) -> str:
         report_text = self._normalized_report_body()
@@ -967,6 +1005,11 @@ class SpawnDetailOutput(BaseModel):
             wire["report_body"] = self.report_body
         if self.session_config_dir is not None:
             wire["session_config_dir"] = self.session_config_dir
+        if self.denied_requests:
+            wire["denied_requests"] = [
+                request.model_dump(mode="json", exclude_none=True)
+                for request in self.denied_requests
+            ]
         return wire
 
     def to_cli_output(
@@ -1081,6 +1124,7 @@ class SpawnDetailOutput(BaseModel):
         if failure_line is not None:
             label, value = failure_line
             lines.append(f"{label}: {value}")
+        lines.extend(self._denied_requests_lines())
 
         report_text = self._normalized_report_body()
         if report_text is not None:
@@ -1191,7 +1235,9 @@ class SpawnDetailOutput(BaseModel):
                 else None,
             ),
         ]
-        return kv_block(pairs) + self._report_suffix()
+        denied_lines = self._denied_requests_lines()
+        denied_block = "\n" + "\n".join(denied_lines) if denied_lines else ""
+        return kv_block(pairs) + denied_block + self._report_suffix()
 
 
 class SpawnSubagentsInput(BaseModel):

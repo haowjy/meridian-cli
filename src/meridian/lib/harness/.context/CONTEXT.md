@@ -38,13 +38,14 @@ for streaming execution.
 Per-harness mapping:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
-- **Claude built-in agent denial**: Meridian injects `--disallowedTools
-  Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
-  unconditionally. The denials merge into permission-derived `--disallowedTools` via
-  `dedupe_nonempty()`. Generic
-  `Agent` is gated by Mars `[settings.meridian.agent_copy]`: allowed only when
-  `harnesses = ["claude"]` and `.claude` is a target. Parent/passthrough allowed-tool
-  tails are merged into the managed projection; Meridian's Agent denies stay authoritative.
+- **Claude native-agent boundary**: unless `[harness.claude]
+  allow_builtin_agents = true`, Meridian injects scoped built-in-agent denies through
+  `compile_claude_permissions()`. Generic `Agent` is gated by Mars
+  `[settings.meridian.agent_copy]`: allowed only when
+  `harnesses = ["claude"]` and `.claude` is a target. Passthrough `--allowedTools` is
+  merged in that compile; profile allowlists and platform denies stay authoritative. The
+  `agent` platform deny also names `SendMessage` and `ListAgents`, which reach other agents
+  and local Claude sessions outside Meridian.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
@@ -267,9 +268,9 @@ value. The legacy native-Windows branch attempts a fallback detection path
 Claude Code ships with three built-in subagents (Explore, Plan, General-purpose) plus
 a generic `Agent` tool. Meridian's policy distinguishes between these:
 
-- **Built-in agents are always denied.** Meridian injects
+- **Built-in agents are denied by default.** Meridian injects
   `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`.
-  There is no config toggle — built-ins are a Meridian platform policy.
+  `[harness.claude] allow_builtin_agents = true` removes this platform rule.
 
 - **Generic `Agent` follows the Mars agent-copy boundary.** Meridian reads
   `mars.toml` to check whether `[settings.meridian.agent_copy] harnesses = ["claude"]` AND
@@ -277,15 +278,20 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
   native agent surface is Meridian-owned through agent copy). Otherwise, generic
   `Agent` is denied by default and delegation routes through `meridian spawn`.
 
-The detection runs in `bind_launch_context()` via `project_has_claude_agent_copy()` in
-`permissions.py`, which reads `mars.toml` and `mars.local.toml`. The result flows into
-`ResolvedLaunchSpec.claude_native_agents_enabled` and is projected by
-`project_claude.py`. The projection strips `Agent` and `Agent(...)` from allowed-tools
-when `claude_native_agents_enabled=False`, including parent-inherited allowed-tool tails.
+The detection runs in `bind_launch_context()` through `agent_copy_enabled(project_root,
+harness_id)` in `lib/catalog/agent_copy.py` (reads `mars.toml` and `mars.local.toml`; any
+harness, not only Claude). The result decides whether `launch_permission_rules()` adds the
+platform `agent` deny (named by Mars's `tools.capability_natives`); without agent copies it
+always does, and it overrides the profile's agent rules. `compile_claude_permissions()` reads
+that deny and removes generic `Agent` grants from passthrough `--allowedTools`. Claude has no spelling that disables generic `Agent` while
+retaining built-in agents, so with `allow_builtin_agents = true` the compile still denies
+`SendMessage`/`ListAgents` but not `Agent`, and reports that part of the platform rule
+partial instead of silently disabling built-ins.
 
-This is implemented as a Meridian platform policy (harness adapter injection), not as
-a per-agent `tools:` field. Agent profiles do not need to carry `agent: deny` entries —
-the denial is inherited from the harness adapter when agent copy is absent.
+This is a Meridian platform policy, not a per-agent `tools:` field: bind adds the
+platform `agent`/`task` denies (origin `platform`) and the `builtin-agents` rule to the
+policy, and each harness's compile emits them. Agent profiles do not need to carry `agent: deny` entries —
+the denial is inherited from the platform rule when agent copy is absent.
 
 ### Claude: System-Prompt File Channel
 
@@ -301,6 +307,16 @@ with `"omitted"` for empty-body files. `supports_native_file_injection=False` fo
 all current harnesses — `--file` flags are not used.
 
 ### Codex: Managed-Primary Approval Routing
+
+Mars's selected `harness-overrides.codex` block reaches the launch as
+`execution_policy.native_config`. Bind preserves it on the launch spec; both `codex exec`
+and the one-spawn `codex app-server` process receive its flattened dotted keys as `-c`
+overrides. `projections/native_config.py` owns the TOML spelling, the applied/skipped
+report lines, and the reserved config-key set. Meridian's model, effort, sandbox, approval,
+writable roots, tool switches, multi-agent controls, and interactive `notify` remain
+authoritative. Meridian writes no Codex MCP config; `mcp_servers.*` passes through as
+native config. The other harness compiles report their selected native config but do not
+project it.
 
 In managed-primary mode, Meridian is the first WebSocket client (turn owner).
 `requestApproval` and `requestUserInput` are routed to the turn owner by the app
@@ -319,58 +335,53 @@ registration contract for materialized Codex forks.
 
 ### OpenCode: Workspace Env Merging
 
-OpenCode workspace projection goes through `OPENCODE_CONFIG_CONTENT` (JSON env
+OpenCode launch projection goes through `OPENCODE_CONFIG_CONTENT` (JSON env
 override), built by `project_launch_env()` at bind. If the parent process already
-exported this var, Meridian merges the roots' `external_directory` grants into the
-parent config rather than suppressing projection. Suppression would silently drop
-workspace roots inherited from the spawner. `OPENCODE_CONFIG_CONTENT_ENV` lives in
+exported this var, Meridian preserves unrelated settings and agents, replaces its
+reserved agent entry, and appends the roots' `external_directory` grants to that
+agent after the compiled policy. Suppression would silently drop workspace roots
+inherited from the spawner. `OPENCODE_CONFIG_CONTENT_ENV` lives in
 `projections/project_opencode_config.py` beside the serializer.
 
-OpenCode 2.x replaced the V1 `OPENCODE_PERMISSION` env with an ordered
-`permissions` array (`{action, resource, effect}`) in config content. For V2
-spawns the transport folds Meridian's compiled tools policy into
-`OPENCODE_CONFIG_CONTENT.permissions`, mapping V1 capability names
-(`bash`→`shell`, `write`/`patch`→`edit`, `task`→`subagent`) and splitting scoped
-keys (`bash(git status)`) into `action`/`resource`. Final emitted order is
-existing native `permissions`, inherited non-root V1 `permission` rules,
-Meridian's tools rules, then inherited `external_directory` grants. Because V2
-resolves the last matching rule, Meridian's tools policy wins over inherited
-non-root config while a broad tools `deny` still cannot shadow an explicit root
-grant. Rules that alias to the same `(action, resource)` (`edit:deny` +
-`write:allow`) are collapsed to the strongest effect (`deny > ask > allow`) with
-a warning, so emission order never decides. Within the inherited non-root and
-Meridian tools groups, rules are then emitted broad-first (`resource == "*"`
-before scoped resources) so a scoped rule always refines a broad one regardless
-of declaration order; the `external_directory` grant group stays last.
-Interactive primaries defer to the
-native TUI, matching V1's dropped override. The projection functions live in
-`projections/project_opencode_streaming.py`; the server's own V1→V2 translation
-does not handle flat scoped keys correctly, which is why Meridian compiles them.
+`permissions_opencode.py` owns one ordered policy compile for spawns and primaries.
+`project_opencode_config.py` spells it as V1 `agent.<id>.permission` (nested maps for
+scoped rules) or V2 `agents.<id>.permissions` (`{action, resource, effect}` rows).
+The bind-resolved version selects the shape; connections consume the config unchanged.
+OpenCode is last-match-wins, so the compile orders the wildcard default, unscoped rules,
+and scoped rules by increasing literal specificity, with stricter equal matches last.
+Platform denies follow profile rules, completion-command exceptions follow those, and
+workspace grants are last. The compile owns V2 aliases (`bash`→`shell`,
+`write`/`patch`→`edit`, `task`→`subagent`) and resolves collisions after aliasing;
+the config projector only serializes its result.
+
+OpenCode merges same-named agent fields across config documents and appends V2 rule
+arrays. The `meridian-<profile>` prefix avoids ordinary collisions; within inherited
+`OPENCODE_CONFIG_CONTENT`, Meridian owns and replaces that reserved entry. A user who
+deliberately defines the same reserved id in another OpenCode config document can still
+participate in OpenCode's native merge, while unrelated top-level and agent settings survive.
 
 ### OpenCode: Prompt, Agent and Model Delivery
 
-Bind projects the composed prompt, a fresh session's model and the workspace roots'
-`external_directory` grants into `OPENCODE_CONFIG_CONTENT`; no launch path or
-connection writes the prompt itself. `OpenCodeAdapter.project_launch_env()` is the
-seam (the base adapter's default is a no-op) and `projections/project_opencode_config.py`
-builds the JSON with one parse and one dump. Every other key in the inherited config
-survives. The prompt, the agent id and the model travel on separate channels, each with
-one owner:
+Bind projects the optional composed prompt, permission policy, a fresh session's model
+and workspace-root grants into `OPENCODE_CONFIG_CONTENT`; no launch path or connection
+rewrites it. `OpenCodeAdapter.project_launch_env()` is the seam (the base adapter's
+default is a no-op) and `projections/project_opencode_config.py` builds the JSON with
+one parse and one dump. The prompt, agent id and model travel on separate channels,
+each with one owner:
 
-- **Prompt: config, once, from bind.** `agent.meridian-<profile>` (`meridian` alone
-  without a profile) with `mode: primary` and
-  `prompt: {file:<spawn-log-dir>/system-prompt.md}`. The id is readable in the TUI and
-  prefixed so it never merges into a user's agent and inherits their model. The agent
-  carries no `model`: V2 ignores it. V1 reads `agent.<id>.prompt`; V2's config
-  normalization maps it to `agents.<id>.system`, so both versions share one shape.
+- **Prompt: config, once, from bind.** V1 uses `agent.meridian-<profile>.prompt`;
+  V2 uses `agents.meridian-<profile>.system`. Both point at
+  `{file:<spawn-log-dir>/system-prompt.md}` and use `mode: primary`. The prompt field is
+  omitted when there is no appended prompt. The id is readable in the TUI and prefixed
+  to avoid ordinary user-agent collisions. The agent carries no `model`: V2 ignores it.
   Replacing the base prompt keeps AGENTS.md, OpenCode's skill listing and the
   environment block (probed on both versions). Every launch path (streaming spawn,
   managed primary, bare-TUI fallback) inherits the bound env, so none has its own
   prompt channel.
 - **Agent id: decided once on `ResolvedLaunchSpec.agent_name`.**
-  `resolve_launch_spec()` sets it to the id exactly when the appended prompt is
-  non-empty. Bind emits the agent and its `{file:}` reference iff `agent_name` is set,
-  so the id and the file condition cannot disagree. `default_agent` names it for
+  `resolve_launch_spec()` always sets it: the agent owns permissions and workspace
+  grants even when it has no prompt. Bind always emits the agent and emits the file
+  reference only when the appended prompt is non-empty. `default_agent` names it for
   sessions the user opens later in the TUI, but it only covers sessions with no agent
   of their own: a resumed V1 session replays its last message's agent and a V2 session
   keeps its stored agent (probed: resuming a session committed to `build` delivered no
@@ -392,9 +403,10 @@ one owner:
   explicit). The config key is the only channel the V2 bare TUI has (`--model` is
   rejected), so the subprocess projector drops `--model` for a V2 TUI and keeps it
   elsewhere (`opencode run`, V1's TUI). Effort has no working V2 channel.
-- **Config writers.** The hook is the one producer at bind. The V2 connection still
-  folds Meridian's tool policy into the config at launch (V2 reads `permissions`, not
-  `permission`); it must serialize through `dump_opencode_config_content()` too.
+- **Config writer.** `OpenCodeAdapter.project_launch_env()` is the sole producer, at
+  bind. It compiles tool policy and workspace grants into the reserved config agent for
+  both versions and serializes through `dump_opencode_config_content()`. Connections
+  consume the bound `OPENCODE_CONFIG_CONTENT` unchanged.
 - **Path limits.** OpenCode expands `{file:}` on the raw config text before parsing it,
   stopping at the first `}` and treating `"`, `\` and control characters as literal
   path text. A prompt path containing any of them fails the launch with
@@ -407,10 +419,9 @@ one owner:
 - **Bare TUI needs `--standalone` on V2.** Without it the TUI is a client of the
   shared `opencode serve --service` process, which was configured by whoever
   started it: the launch env (config content, `OPENCODE_DB`) never applies.
-  `resolve_opencode_subprocess_spec` resolves the version for interactive launches
-  with the managed connection's resolver (including its V2 default when the probe
-  fails), so the fallback never disagrees with the transport it replaces; V1 rejects
-  `--standalone`.
+  The flag reads the version bind resolved, the one the managed connection uses
+  (including its V2 default when the probe fails), so the fallback never disagrees
+  with the transport it replaces; V1 rejects `--standalone`.
 - **Rejected:** a plugin `context` hook (V2-only, ships code that must load),
   session instruction entries (experimental, no black-box coverage), and repairing
   `instructions` (the V2 loader ignores it upstream).
@@ -421,22 +432,22 @@ one owner:
 (`auto`/`v1`/`v2`, default `auto`) is a first-class config field; `auto` probes
 `opencode --version` and prefers V2, falling back to `DEFAULT_OPENCODE_VERSION`
 when the binary cannot be probed. `resolve_opencode_version()` never downgrades
-an explicit `v2`. The resolved preference is projected into the OpenCode child
+an explicit `v2`. The config preference is projected into the OpenCode child
 env as `MERIDIAN_HARNESS_OPENCODE_VERSION` at launch bind (see
-[launch context](../../launch/.context/CONTEXT.md)), so TOML config reaches the
-connection and dry-run preview instead of being silently ignored. The same
-preference is carried on `ResolvedLaunchSpec.opencode_version`: the non-interactive
-subprocess projector rejects resume-with-model only for a known V1 and keeps
-`--model` for V2; a failed `auto` probe resolves to V2, as in the connection.
-All version probes require an explicit environment, including executable `PATH`
-lookup. The bundle's optional `resolve_subprocess_spec` port runs adapter-owned
-environment-dependent resolution before the pure argv projector; OpenCode uses it
-to probe the resume guard and the bare-TUI `--standalone` flag with the bound
-environment. Primary previews and the
-connection dispatcher pass the same bound environment to version detection.
+[launch context](../../launch/.context/CONTEXT.md)), and descendants inherit it.
+Bind then resolves the version once, through the bundle's `bind_spec` port
+(`bind_opencode_spec`), against the bound environment (its `PATH` finds the binary to
+probe), and stores `v1`/`v2` on `ResolvedLaunchSpec.opencode_version`. Every reader takes
+that field through `bound_opencode_version()`, which refuses a spec that skipped bind:
+the permission compile and its dry-run report, the config projection, the
+subprocess projector's resume-with-model guard (rejected only for V1) and bare-TUI
+`--standalone`, the managed-primary preview and the connection dispatcher. One
+resolution means the report can never describe a different version than the launch
+emits (a report compiled for V2 while an `auto` launch emitted V1 was the bug this
+replaced).
 
 `connections/opencode_connection.py` is the single registered OpenCode transport.
-At `start()` it resolves the version and delegates to `OpenCodeV2Connection`
+At `start()` it reads the spec's bound version and delegates to `OpenCodeV2Connection`
 (`opencode_v2_http.py`) or the frozen `OpenCodeV1Connection`
 (`opencode_http.py`). The V2 transport subclasses V1 to reuse process lifecycle,
 `BackendLivenessPolicy`, retry classification, and SSE framing, overriding only
@@ -583,8 +594,8 @@ to set its working directory — system-prompt injection alone is insufficient.
 runs, `spec.model` already contains the effort-resolved model string; `effort` has
 served its purpose and is not passed to the CLI.
 
-MVP scope exclusions (enforced by `_assert_supported_for_mvp()`): per-spawn
-`mcp_tools`, `continue_fork`, `continue_session_id`, and `interactive` all raise
+MVP scope exclusions (enforced by `_assert_supported_for_mvp()`):
+`continue_fork`, `continue_session_id`, and `interactive` all raise
 `HarnessCapabilityMismatch` at projection time.
 
 ### Pi: Quiescence Instead of Process Exit
@@ -652,7 +663,7 @@ Touch every file in `HARNESS_EXTENSION_TOUCHPOINTS` (listed in `__init__.py`):
 6. `registry.py:HarnessRegistry.with_defaults()`
 7. `launch_spec.py:_enforce_spawn_params_accounting()` — update handled fields
 8. `connections/<new_harness>_<transport>.py`
-9. `projections/permission_flags.py`
+9. `projections/permissions_<new_harness>.py`
 
 The bundle created in step 2 must also register its per-adapter `HarnessSemantics`
 table and payload resolver. Shared `semantics.py` is intentionally not an extension

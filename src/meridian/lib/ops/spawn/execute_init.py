@@ -111,28 +111,10 @@ def depth_exceeded_output(current_depth: int, max_depth: int) -> SpawnActionOutp
     )
 
 
-def _spawn_child_env(
-    spawn_id: str | None = None,
-    *,
-    work_id: str | None = None,
-    runtime_root: Path | None = None,
-    autocompact: int | None = None,
-    ctx: RuntimeContext | None = None,
-) -> dict[str, str]:
-    _ = spawn_id, work_id, runtime_root, ctx
-    child_env: dict[str, str] = {}
-    # K5 boundary: ChildEnvContext.child_context() in launch/context.py is the sole
-    # producer of MERIDIAN_* child overrides. Plan overrides stay non-MERIDIAN.
-    if autocompact is not None:
-        child_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(autocompact)
-    return child_env
-
-
 def _spawn_background_worker_env(
     *,
     project_root: Path,
     work_id: str | None = None,
-    autocompact: int | None = None,
 ) -> dict[str, str]:
     """Build child env overrides for the detached background worker process.
 
@@ -159,8 +141,6 @@ def _spawn_background_worker_env(
         work_id=normalized_work_id,
         work_dir=work_dir,
     ).child_env_overrides(increment_depth=False)
-    if autocompact is not None:
-        child_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(autocompact)
     return child_env
 
 
@@ -410,7 +390,6 @@ __all__ = [
     "_materialize_spawn_work_item",
     "_reserve_spawn",
     "_spawn_background_worker_env",
-    "_spawn_child_env",
     "_write_params_json",
     "build_spawn_mars_runtime",
     "build_spawn_reservation",

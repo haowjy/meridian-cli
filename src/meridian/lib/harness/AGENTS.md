@@ -9,12 +9,13 @@ The Meridian OpenCode adapter targets current opencode.ai CLI releases.
 `opencode_backend.py` is the version seam: it resolves V1 vs V2 from
 `[harness.opencode] version` (`auto`/`v1`/`v2`, default `auto`; `auto` probes
 `opencode --version` and prefers V2).
-`connections/opencode_connection.py` is the dispatcher: one registered transport
-resolves the version at `start()` and delegates to the V2 session + `/api/event`
-transport (`opencode_v2_http.py`) or the frozen V1 JSON + SSE transport
-(`opencode_http.py`). The launch bind seam projects the version preference into
-`MERIDIAN_HARNESS_OPENCODE_VERSION`; the dispatcher resolves it once and exposes
-`resolved_version` to consumers such as the idle sensor. Capture and
+Launch bind resolves the version once (`bind_opencode_spec`, the bundle's `bind_spec`
+port) from the preference it projects into `MERIDIAN_HARNESS_OPENCODE_VERSION`, and
+stores it on `ResolvedLaunchSpec.opencode_version`. `connections/opencode_connection.py`
+is the dispatcher: one registered transport reads that version at `start()` and
+delegates to the V2 session + `/api/event` transport (`opencode_v2_http.py`) or the
+frozen V1 JSON + SSE transport (`opencode_http.py`), exposing `resolved_version` to
+consumers such as the idle sensor. Capture and
 storage/transcript reads select their OpenCode dialect by DB schema (`session_v2`
 → V2, `session` → V1) through
 `detect_opencode_db_schema` in `opencode_transcript.py`, never by the installed
@@ -74,13 +75,16 @@ streaming.
 Per-harness commands:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: stdin/stdout NDJSON (not WebSocket despite `claude_ws.py` name)
-- **Claude built-in agent denial**: Meridian injects
-  `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
-  unconditionally so sessions use Meridian delegation instead of Claude's built-in
-  subagents. Generic `Agent` is allowed only when Mars effective config has
-  `[settings.meridian.agent_copy] harnesses = ["claude"]` and `.claude` is a target.
-  Parent/passthrough allowed-tool tails are merged into the managed projection;
-  Meridian's Agent denies stay authoritative.
+- **Claude native-agent boundary**: Mars's launch bundle owns the native names for the
+  platform's ordinary `agent`/`task` deny rules. Built-in agent types are also denied with
+  scoped `--disallowedTools` entries unless
+  `[harness.claude] allow_builtin_agents = true`. Generic `Agent` is retained when Mars
+  effective config uses copied agents (`[settings.meridian.agent_copy] harnesses =
+  ["claude"]` with `.claude` as a target). It is also retained when built-ins are allowed:
+  Claude cannot deny generic `Agent` without disabling them, so that part of the platform
+  rule is reported as partial. Parent/passthrough
+  allowed-tool tails are merged by the permission compile; profile allowlists and
+  platform denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
@@ -109,13 +113,13 @@ context and the effective child environment; never reread ambient env for defaul
 It fills missing or blank child values after explicit inherited/runtime
 values are bound; Pi uses it for agent and session directories and to default
 `PI_CACHE_RETENTION=long` only for interactive primaries, while forced adapter
-policy remains in `env_overrides()`.
+policy rides `project_launch_env()`.
 
-**OpenCode's prompt, model and workspace grants ride `OPENCODE_CONFIG_CONTENT`, built once
-at bind by `OpenCodeAdapter.project_launch_env()`; connections never write the prompt.**
-`ResolvedLaunchSpec.agent_name` names Meridian's agent exactly when there is a prompt, and
-every surface that opens or resumes a session must select it, because `default_agent`
-misses resumed sessions. Detail:
+**OpenCode's prompt, permission policy, model and workspace grants ride
+`OPENCODE_CONFIG_CONTENT`, built once at bind by `OpenCodeAdapter.project_launch_env()`;
+connections never rewrite it.** Every launch names Meridian's reserved policy agent on
+`ResolvedLaunchSpec.agent_name`, whether or not it has a prompt, and every surface that
+opens or resumes a session must select it because `default_agent` misses resumed sessions. Detail:
 [.context/CONTEXT.md](.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
 
 **Pi usage is per assistant message.** Fold each `message_end` increment once;
@@ -193,8 +197,9 @@ parent report.
   Source of truth for what every adapter must implement.
 - `registry.py` — `HarnessRegistry`, `with_defaults()`. The global singleton.
 - `claude.py` / `codex.py` / `opencode.py` / `cursor.py` — concrete adapter implementations.
-  Claude adapter threads `ResolvedLaunchSpec.claude_native_agents_enabled` into projection so
-  parent inherited `Agent` grants cannot bypass the Mars `agent_copy` boundary.
+  Claude's compile (`projections/permissions_claude.py`) reads
+  the bind-time platform-origin tool rules so inherited grants cannot bypass the Mars
+  `agent_copy` or built-in-agent boundaries.
 - `__init__.py` — `HARNESS_EXTENSION_TOUCHPOINTS` and `ensure_bootstrap()`.
   Read before adding a harness — lists every file that must be touched.
 - `semantics.py` — `HarnessSemantics` port and typed `EventSemantics` descriptor.

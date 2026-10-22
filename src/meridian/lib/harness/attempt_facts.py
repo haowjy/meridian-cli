@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from meridian.lib.core.domain import TokenUsage
+from meridian.lib.state.permission_journal import PermissionDenial
 
 _TEXT_LIMIT = 1024 * 1024
 
@@ -27,6 +28,8 @@ class AttemptFacts:
     incomplete: bool = False
     text_capped: bool = False
     completion_text_capped: bool = False
+    permission_denials: list[PermissionDenial] = field(default_factory=list[PermissionDenial])
+    """Calls the harness refused under the profile's policy; finalization journals them."""
 
     def set_text(self, text: str) -> None:
         encoded = text.encode("utf-8")

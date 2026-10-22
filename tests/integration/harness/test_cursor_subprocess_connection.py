@@ -15,7 +15,6 @@ from meridian.lib.harness.connections import cursor_subprocess
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from tests.support.executables import prepend_fake_executables
@@ -142,7 +141,6 @@ async def _start(
             harness=HarnessId.CURSOR,
             prompt="hello",
             continue_session_id=continue_session_id,
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
     return connection

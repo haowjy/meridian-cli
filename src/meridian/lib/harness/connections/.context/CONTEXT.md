@@ -2,13 +2,16 @@
 
 ## Architecture
 
-Five concrete transports share the `HarnessConnection[SpecT]` ABC from `base.py`:
+`HarnessConnection[SpecT]` implementations include an OpenCode version dispatcher and
+separate V1/V2 transports:
 
 | File | Class | Transport | Protocol |
 |---|---|---|---|
 | `claude_ws.py` | `ClaudeConnection` | stdin/stdout NDJSON | stream-json |
 | `codex_ws.py` | `CodexConnection` | WebSocket | JSON-RPC 2.0 |
-| `opencode_http.py` | `OpenCodeConnection` | HTTP + SSE | REST + event stream |
+| `opencode_connection.py` | `OpenCodeConnection` | V1/V2 dispatcher | delegates by bound version |
+| `opencode_http.py` | `OpenCodeV1Connection` | HTTP + SSE | V1 REST + event stream |
+| `opencode_v2_http.py` | `OpenCodeV2Connection` | HTTP + SSE | V2 `/api` + event stream |
 | `cursor_subprocess.py` | `CursorSubprocessConnection` | stdout NDJSON (read-only) | stream-json |
 | `pi_rpc.py` | `PiRpcConnection` | stdin/stdout JSONL | JSON-RPC (Pi RPC mode) |
 
@@ -138,11 +141,16 @@ Inbound harness requests (tool approvals, user-input prompts) are dispatched thr
 injected `ServerRequestHandler`:
 
 - `PermissionBroker` (`harness/permission_broker.py`) — journals each request to the
-  spawn's `permission_requests.jsonl` and emits `request/opened`. Spawn dispatch
-  (`streaming/spawn_dispatch.py`) builds it for Codex and OpenCode with
-  `auto_reject_runtime_requests=True`, so a spawn's approval request is answered
-  `reject`; managed-primary attach builds it with `False`, so it only records and
-  surfaces the request. `no_runtime_hitl = False`.
+  spawn's `permission_requests.jsonl` (format and reader: `state/permission_journal.py`)
+  and emits `request/opened`. Spawn dispatch (`streaming/spawn_dispatch.py`) builds it for
+  Codex and OpenCode with `auto_reject_runtime_requests=True`, so a spawn's approval
+  request is answered `reject` with a reason (`HEADLESS_REJECT_REASON`, journaled as the
+  resolution's `message`); managed-primary attach builds it with `False`, so it only
+  records and surfaces the request. `no_runtime_hitl = False`. Meridian's vocabulary is
+  `accept`/`reject`; a connection translates at the wire. Codex reads `decline` (it cannot
+  read `reject`, and the model sees "approval request failed"), and has no field for a
+  reason; OpenCode V2's reply carries `message`, V1's does not. A connection fills
+  `HarnessRequest.summary` (what the model tried) so `spawn show` needs no harness knowledge.
 - `AutoAcceptHandler` — auto-approves all approvals, sends empty dict for user-input.
   The connection default when no handler is injected, and the handler for the
   `NONE` / `AUTO_ACCEPT` primary runtime-request policies. `no_runtime_hitl = True`.
@@ -163,7 +171,7 @@ drain path; the background dispatch is bounded by
 `_REQUEST_DISPATCH_TIMEOUT_SECONDS` and reports a dispatch failure through the handler
 on timeout or error. `respond_request` replies over the version's HTTP endpoint
 (`POST /session/{id}/permissions/{permissionID}` with `{"response": …}` for V1;
-`POST /api/session/{id}/permission/{requestID}/reply` with `{"reply": …}` for V2) and
+`POST /api/session/{id}/permission/{requestID}/reply` with `{"decision": …}` for V2) and
 fails fast when the request id is unknown instead of falling back to the session id.
 
 Because `inject_runtime_event` can be called from another task (e.g. the handler
@@ -275,7 +283,7 @@ their values with `<redacted>` before writing to history.
 
 ### OpenCode model and startup ownership
 
-Connections add no launch-local model or prompt override: both ride the bound
+Connections add no launch-local model, prompt or permission override: all ride the bound
 `OPENCODE_CONFIG_CONTENT` (see [OpenCode prompt, agent and model
 delivery](../../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)), and
 Meridian's default config agent carries no model, so a native agent's model cannot

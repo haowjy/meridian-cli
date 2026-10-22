@@ -545,7 +545,7 @@ show = ["lifecycle", "error"]
 verbosity = "verbose"
 
 [primary]
-autocompact = 70
+autocompact_pct = 70
 
 [state]
 retention_days = 30   # -1 = never prune, 0 = prune immediately

@@ -473,7 +473,8 @@ def test_start_spawn_persists_launch_policy_snapshot(tmp_path: Path) -> None:
             effort="high",
         ),
         tools={"write": "allow"},
-        mcp_tools=("github",),
+        # Retained only to prove older snapshots with this legacy field still load.
+        mcp_tools=("legacy-native-permission",),
         extra_args=("--append-system-prompt", "stable"),
         terminal_surface_mode="pty_mediated",
         matched_policy_rule="profile-default",

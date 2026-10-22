@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
-from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -24,10 +22,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "prompt",
         "continue_session_id",
         "continue_fork",
-        "permission_resolver",
         "extra_args",
         "interactive",
-        "mcp_tools",
         "projected_roots",
         "agent_name",
         "skills",
@@ -35,38 +31,30 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-# ``appended_system_prompt`` is delivered at launch bind as a config agent
-# (``project_opencode_config.py``), not by this projection.
+# ``appended_system_prompt`` and ``permission_policy`` are delivered at launch bind as a
+# config agent (``project_opencode_config.py``), not by this projection.
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
+        "native_config",
+        "autocompact",
+        "autocompact_pct",
         "appended_system_prompt",
+        "permission_policy",
         "agents_payload",
-        "claude_native_agents_enabled",
         "claude_runtime",
         "base_instructions",
         "developer_instructions",
         "harness",
         "pi_extension_entrypoints",
         "load_all_pi_extensions",
-        "disallowed_tools",
         "prompt_file_path",
         "reference_items",
         "report_output_path",
-        "web_search_enabled",
         "user_turn_content",
         "task_cwd",
     }
 )
-
-
-def _normalized_nonempty(values: Iterable[str]) -> tuple[str, ...]:
-    normalized: list[str] = []
-    for value in values:
-        token = value.strip()
-        if token:
-            normalized.append(token)
-    return tuple(normalized)
 
 
 _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
@@ -108,13 +96,6 @@ def project_opencode_spec_to_cli_args(
     base_command: tuple[str, ...],
 ) -> list[str]:
     """Project one ``ResolvedLaunchSpec`` into an ordered subprocess command list."""
-
-    projected_mcp_tools = _normalized_nonempty(spec.mcp_tools)
-    if projected_mcp_tools:
-        raise HarnessCapabilityMismatch(
-            "OpenCode subprocess does not support per-spawn mcp_tools; "
-            "use streaming transport (opencode serve) for MCP session payloads."
-        )
 
     harness_session_id = (spec.continue_session_id or "").strip()
     resume_with_model = bool(harness_session_id) and spec.model is not None and not spec.interactive
@@ -161,12 +142,12 @@ def project_opencode_spec_to_cli_args(
     if normalized_effort:
         if spec.interactive:
             # The bare ``opencode`` TUI command does not accept ``--variant``;
-            # only ``opencode run`` does.  Silently drop it for interactive launches.
+            # only legacy ``opencode run`` does. The projection report exposes this gap.
             logger.debug(
                 "OpenCode TUI does not support --variant; ignoring effort=%s",
                 normalized_effort,
             )
-        else:
+        elif spec.opencode_version == "v1":
             command.extend(("--variant", normalized_effort))
 
     agent_arg = None if v2_tui else spec.agent_name
@@ -184,7 +165,11 @@ def project_opencode_spec_to_cli_args(
     )
     _log_collision_if_needed(
         managed_flag="--variant",
-        has_managed_value=bool(normalized_effort) and not spec.interactive,
+        has_managed_value=(
+            bool(normalized_effort)
+            and not spec.interactive
+            and spec.opencode_version == "v1"
+        ),
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(
@@ -202,8 +187,6 @@ def project_opencode_spec_to_cli_args(
         has_managed_value=has_continue_fork,
         passthrough_tail=passthrough_tail,
     )
-
-    command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.OPENCODE))
 
     command.extend(passthrough_tail)
 

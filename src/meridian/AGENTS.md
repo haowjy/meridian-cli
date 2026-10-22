@@ -64,7 +64,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/notify/` | Harness-agnostic notification labels, delivery policy, and channel registry |
 | `lib/idle/` | Harness-agnostic idle timeline, guards, persisted state machine, and sensor sidecar |
 | `claude_runtime/` | Bundled Claude Code runtime mods; idle and enabled spawn-watch plugins are injected only for interactive launches |
-| `pi_runtime/` | Bundled Pi extensions; the fourth bundle, `meridian-idle`, is projected only into primary TUIs |
+| `pi_runtime/` | Bundled Pi extensions; `meridian-idle` is primary-only and `meridian-permissions` is policy-triggered |
 | `lib/observability/` | Spawn-scoped JSONL tracing |
 | `lib/telemetry/` | Process telemetry routing, sinks, lifecycle correlation, and retention |
 | `lib/mermaid/` | Mermaid syntax validation and style checks |

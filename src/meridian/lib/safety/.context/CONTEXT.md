@@ -20,7 +20,7 @@ for terminating the harness — the tracker does not stop it.
 
 **Lazy import:** `extract_cost_usd_from_json_line` imports `harness.common` lazily
 to break a circular dependency: `safety.budget` → `harness.common` → `harness.adapter`
-→ `safety.permissions`. Do not hoist this import to the module level.
+→ `launch.launch_types` → `safety.policy`. Do not hoist this import to the module level.
 
 ## Post-Run Guardrails (`guardrails.py`)
 
@@ -46,49 +46,98 @@ Injected env vars available to guardrail scripts:
 
 Exit code conventions: non-zero → `GuardrailFailure`; timeout → 124; `OSError` → 127.
 
-## Permission Resolution (`permissions.py`)
+## Permission Policy (`policy.py`)
 
-`PermissionConfig` holds transport-neutral intent: `sandbox` and `approval` modes,
-plus `opencode_permission_override`, the OpenCode permission JSON compiled from
-`tools`. The resolver translates intent into harness flags.
+`build_permission_policy(rules, sandbox, approval, platform_rules, sandbox_write_roots)`
+returns the frozen `PermissionPolicy`: `rules` (Mars's typed tool rules), `platform_rules`,
+`sandbox`, the protected workspace roots and `approval`. Bind supplies control/task/context
+roots separately from projected runtime and temp roots so a native read-only sandbox does
+not block Meridian state. The roots are bind-time projection data and are excluded from
+serialized policy dumps. The builder validates the two modes and never re-resolves
+precedence; `launch/policies.py` already did. Each harness compiles the policy in
+`harness/projections/permissions_<harness>.py`
+and returns `(native value, EnforcementReport)`; User-facing behavior is in
+`docs/agent-profiles.md#permissions-by-harness`.
 
-**Resolver selection via `build_permission_resolver()`:**
+**`ToolRule`** (`lib/tools.py`) is Mars's rule from the launch bundle's `tools.rules[]`:
+`capability` + `pattern` carry meaning, and Mars gives two native facts that nothing derives
+from each other or from the capability. `native` is the permission-rule spelling, already
+scoped; a compile emits it as given. `native_tools` (read through `ToolRule.tools`) is the
+unscoped harness tools the rule concerns; every question of which tools a rule leaves
+callable or removes reads it: Claude and Pi `--tools`, Pi `--exclude-tools`, Claude's
+gating, `PermissionPolicy.allowed_tools` and the allowlist deny below. The two differ where
+a harness scopes a tool through another's permission: Claude checks paths only through
+`Edit(path)` and `Read(path)`, so `write(src/*)` is `Edit(src/*)` but concerns `Write`, and
+`grep(src/*)` is `Read(src/*)` but concerns `Grep`. `native_status` is `known`, `absent`
+(the harness has no such tool) or `unknown` (Mars has no name: a gap). A compile reads
+`capability` only for mechanism it owns, such as Codex's switches and platform-rule
+overrides. Meridian keeps no tool-name table. A scoped native is spelled `tool(scope)`;
+`split_native` is its one reader, so compiles never parse it themselves. A bundle without
+`tools.rules`, or whose rules lack `native_tools`, fails with "install Mars >= 0.17.0"; the
+flat `allowed`/`disallowed` lists are not read. `tools.capability_natives` (the platform
+denies) carries no `native_tools`: those names are unscoped, so the reader gives them as
+the tools too.
 
-| Condition | Resolver | Emits |
-|---|---|---|
-| `tools` is `None` | `TieredPermissionResolver` | `()` — harness derives from sandbox/approval |
-| `tools` is a `ToolsField` | `ToolsPermissionResolver` | Claude `--allowedTools` / `--disallowedTools` from `compile_tools_to_claude_flags`; OpenCode JSON from `opencode_permission_json()` |
-| Explicit unsafe opt-out | `UnsafeNoOpPermissionResolver` | `()` + warning log |
+**Legacy snapshots.** A launch snapshot an older build wrote holds `tools` (native key ->
+action). `legacy_tool_rules` reads it as native-only rules (`capability=None`, origin
+`legacy-snapshot`; the `*` key stays the `*` rule). A harness that can emit natives
+(Claude, OpenCode) does; Codex's capability-keyed switches cannot interpret them. Report
+lines for these rules carry `[legacy snapshot]`. Rules from such a snapshot, and
+`tool_rules` persisted before Mars gave `native_tools`, have `native_tools=None`;
+`ToolRule.tools` then reads each native name unscoped. That is right wherever the spelling
+names its own tool and wrong for Claude's category spellings (`Edit(src/*)` for a scoped
+write), so Claude reports a scoped allow or ask read that way as `partial`.
 
-**`tools` is the abstract `ToolsField`** (`lib/tools.py`): a map from capability
-(or scoped `bash(rg *)` key) to `allow` / `deny` / `ask`, or the `allow` / `deny`
-shorthand. Each harness compiles it differently: Claude flags treat `ask` as
-`allow` (no flag expresses it), OpenCode keeps `ask`, and Codex ignores the map
-except for `infer_codex_sandbox_from_tools`. Profiles reach this type through
-`launch/bundle_adapter.py`, which rebuilds it from Mars's `tools.allowed` /
-`tools.disallowed` lists, so a profile never produces `ask`.
+**Allowlists.** Two kinds. `is_allowlist` is the whole-policy kind: a `*: deny` rule a map
+writes; `allowed_tools` names every
+tool a rule leaves callable (from `native_tools`, unscoped). The per-capability kind is a capability whose rules are scoped
+allows and nothing unscoped: only those scopes may run, whatever `approval` says. A `*` rule
+decides every unmatched call itself, so it ends that kind, as an unscoped rule for the
+capability does. `build_permission_policy` writes each such allowlist into `rules` as the
+unscoped deny it means (origin `allowlist`; its natives and tools are the `native_tools`
+of the capability's scoped rules, since an unscoped rule's spelling is its tool; report
+element `tools: <capability> allowlist ...`), placed before Mars's rules.
+Mars resolved overlap among the rules it wrote (for natives two unscoped rules share, the
+capability whose natives are a strict subset wins when the actions differ) but never saw
+this deny, so `build_permission_policy` resolves it the same way against the other unscoped
+rules: `edit: allow` beside `write(src/*): allow` loses `Write`, and `edit(src/*): allow`
+beside `write: allow` leaves `Write` out of the deny. Otherwise each compile would read
+the broad allow its own way (Claude ran every write). So no compile has an allowlist path: each emits that deny as it emits a profile's plain deny
+beside scoped allows. The one exception is Codex, whose shell switch would also refuse the
+scoped allows and leave nothing to read files with, so its switches skip the origin. The
+deny exists only on the bound policy; launch snapshots keep Mars's rules and the policy is
+rebuilt at bind. Platform rules do not depend on the allowlist: `launch_permission_rules`
+denies `agent` on every launch without native agent copies, whatever the profile says, and
+skips a spawn's `task` deny only for the profile's explicit unscoped `task: allow|ask` or an
+existing unscoped deny of it (`unscoped_action`), never for a `*` rule.
 
-**`resolve_permission_pipeline()` in this module** is a re-export shim that delegates
-to `lib/launch/permissions.py`. The launch layer owns the actual pipeline.
-`PermissionConfig` and the resolver types live here.
+**Completion commands.** `launch_platform_rules` gives every spawn a `completion-commands`
+platform rule: an allow, not a deny, for the shell commands a child runs to answer
+Meridian's completion confirmation (`meridian spawn done` / `rearm`). It cannot depend on
+the profile: a harness's own defaults can close the shell to a headless child (Claude asks
+before any command that changes files). A child that cannot run them still closes when its
+completion window runs out, but cannot reject a premature completion. `PlatformRule.commands`
+names them bare; the compile of any harness that restricts the shell spells each command and
+its argument form in its own scope syntax and puts them where a deny of `bash` or `*` does
+not shadow them (OpenCode V1: `bash(<cmd>)` / `bash(<cmd> *)`; V2: the corresponding `shell`
+rules). A compile whose shell is open has nothing to add. A harness that has not projected
+it reports `unsupported`.
 
-**Known gaps.** Mars lowers tool names to the target harness's native names before
-Meridian sees them (Codex `exec_command` / `apply_patch`, Claude `Bash` / `Edit`),
-and two compilers here assume capability names:
+**Reports.** `complete_report` gives every policy element exactly one line, in policy order.
+A compile reports what it enforces or has something specific to say about; the rest is
+`unsupported` ("not projected for <Harness>"), a rule with `native_status: unknown` is a gap
+("Mars has no <Harness> name"), and a deny of a tool the harness lacks (`absent`) is
+satisfied.
 
-- `infer_codex_sandbox_from_tools` looks for `bash` and `edit`, so on Codex it never
-  matches and returns `read-only` whenever `tools` is set and `sandbox` is not.
-- `compile_tools_to_claude_flags` lowercases each key and re-capitalizes only its
-  first letter, so multi-word Claude tools (`WebSearch`, `WebFetch`,
-  `AskUserQuestion`) become `Websearch` etc., which Claude ignores.
-
-User-facing behavior is in `docs/agent-profiles.md#permissions-by-harness`.
+**Codex switches.** Exact, unscoped `allow`/`deny` rules for `bash`, `web`, and `image`
+become process-level shell, web-search, and image-viewing switches. The web-search grant
+also accepts the exact `web_search` capability. Scoped rules and `ask` have no switch and
+are reported unsupported. An unset sandbox is left unset, so Codex chooses its default.
 
 ## Circular Import Constraints
 
 The dependency graph must remain:
 - `budget.py` → `harness.common` (lazy only)
-- `permissions.py` → `launch.permissions` (re-export only)
 
 Do not add direct top-level imports between these modules and `harness.*` or `launch.*`.
 The lazy import in `extract_cost_usd_from_json_line` is load-bearing.

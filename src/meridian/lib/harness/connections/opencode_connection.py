@@ -1,15 +1,15 @@
 """Version-dispatching OpenCode connection.
 
 The harness registry holds exactly one connection class per transport. OpenCode
-1.x and 2.x speak different server APIs, so the registered class resolves the
-installed major version at ``start()`` and delegates to the matching transport:
+1.x and 2.x speak different server APIs, so the registered class reads the spec's
+backend version at ``start()`` and delegates to the matching transport:
 
 - 1.x → :class:`OpenCodeV1Connection` (frozen legacy JSON API)
 - 2.x → :class:`OpenCodeV2Connection` (``/api`` session + event stream)
 
-Version comes from ``MERIDIAN_HARNESS_OPENCODE_VERSION`` in the child env when
-set, otherwise from probing ``opencode --version``. Everything else is a
-straight pass-through to the selected transport.
+Launch bind resolved the version onto the spec (``spec.opencode_version``), so the
+transport always matches the config and permission report bind projected. Everything
+else is a straight pass-through to the selected transport.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from meridian.lib.harness.connections.opencode_http import (
     OpenCodeV1Connection,
 )
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
-from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
+from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 if TYPE_CHECKING:
@@ -43,11 +43,8 @@ if TYPE_CHECKING:
     from meridian.lib.harness.semantics import EventSemantics, PrimaryEventScope
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
-_VERSION_ENV = "MERIDIAN_HARNESS_OPENCODE_VERSION"
-
-
 class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
-    """Resolve the OpenCode version, then defer to the matching transport."""
+    """Select the transport for the spec's OpenCode version, then defer to it."""
 
     _CAPABILITIES = OPENCODE_V1_CAPABILITIES
 
@@ -56,7 +53,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._resolved_version: OpenCodeVersion | None = None
         self._request_handler = request_handler
         # Managed-primary callers configure the runtime-request policy before
-        # ``start()`` resolves the version. Hold it until ``_select()`` builds the
+        # ``start()`` selects the transport. Hold it until ``_select()`` builds the
         # transport, then apply it to that transport.
         self._primary_runtime_config: (
             tuple[
@@ -72,12 +69,8 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise RuntimeError("OpenCode connection has not been started")
         return self._impl
 
-    def _resolve_version(self, config: ConnectionConfig) -> OpenCodeVersion:
-        preference = config.child_env.get(_VERSION_ENV)
-        return resolve_opencode_version(preference, binary="opencode", env=config.child_env)
-
-    def _select(self, config: ConnectionConfig) -> HarnessConnection[ResolvedLaunchSpec]:
-        self._resolved_version = self._resolve_version(config)
+    def _select(self, spec: ResolvedLaunchSpec) -> HarnessConnection[ResolvedLaunchSpec]:
+        self._resolved_version = bound_opencode_version(spec.opencode_version)
         if self._resolved_version == "v2":
             impl: HarnessConnection[ResolvedLaunchSpec] = OpenCodeV2Connection(
                 request_handler=self._request_handler
@@ -145,11 +138,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return self._impl.observer_endpoint if self._impl is not None else None
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        self._impl = self._select(config)
+        self._impl = self._select(spec)
         await self._impl.start(config, spec)
 
     async def start_observer(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        self._impl = self._select(config)
+        self._impl = self._select(spec)
         await self._impl.start_observer(config, spec)
 
     async def stop(

@@ -5,7 +5,6 @@ from pathlib import Path
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 
 
 def _write_manifest(plugin_dir: Path) -> None:
@@ -38,7 +37,6 @@ def test_resolution_preserves_plugin_selection_and_warnings(tmp_path: Path) -> N
     }
     spec = ResolvedLaunchSpec(
         claude_runtime=resolution,
-        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
     )
     (cached / ".claude-plugin/plugin.json").unlink()
     assert ClaudeAdapter().launch_spec_warnings(spec) == resolution.warnings

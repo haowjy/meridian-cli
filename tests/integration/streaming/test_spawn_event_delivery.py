@@ -6,7 +6,6 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.streaming.drain_policy import PersistentDrainPolicy
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.pi import NoopControlServer, start_row
@@ -54,7 +53,6 @@ async def test_delivered_sequence_is_identical_with_and_without_fold(tmp_path, m
                 ResolvedLaunchSpec(
                     harness="claude",
                     prompt="test",
-                    permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
                 ),
                 drain_policy=PersistentDrainPolicy(),
                 event_hook=fold if with_fold else None,

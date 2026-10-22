@@ -24,7 +24,6 @@ from meridian.lib.harness.semantics import (
     normalize_event,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.spawn_signals import write_spawn_signal
@@ -297,7 +296,6 @@ async def start_manager(
         ResolvedLaunchSpec(
             harness=connection.harness_id.value,
             prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
         drain_policy=drain_policy,
     )

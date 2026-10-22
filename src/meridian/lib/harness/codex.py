@@ -20,8 +20,6 @@ from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
-    McpConfig,
-    PermissionResolver,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -51,6 +49,7 @@ from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
@@ -81,7 +80,6 @@ from meridian.lib.launch.constants import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
-from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -160,11 +158,9 @@ def project_codex_primary_preview(
     spec: ResolvedLaunchSpec,
     *,
     project_root: Path,
-    env: Mapping[str, str] | None = None,
 ) -> ManagedPrimaryPreview:
     """Describe the managed Codex backend, JSON-RPC bootstrap, and TUI attach."""
 
-    _ = env
     backend = project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=0)
     listen_index = backend.index("--listen") + 1
     backend[listen_index] = "ws://127.0.0.1:<port>"
@@ -239,20 +235,6 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
     return False
 
 
-# Codex's own multi-agent tools are invisible to Meridian, and v2 tells a lone
-# spawn it is `/root` of a team, so it can message itself and wait forever.
-# Codex 0.162: disabling v2 falls back to v1, whose tools survive
-# `--disable multi_agent`; only a zero spawn depth removes them. Config
-# overrides, not `--disable`: Codex rejects `--disable` for a feature it does
-# not know (older builds), but ignores an unknown `features.<name>=false`.
-_DISABLE_BUILTIN_AGENT_FLAGS: tuple[str, ...] = (
-    "-c",
-    "features.multi_agent_v2=false",
-    "-c",
-    "agents.max_depth=0",
-)
-
-
 class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
 
@@ -266,19 +248,19 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "model",
             "effort",
+            "autocompact",
+            "autocompact_pct",
             "prompt",
             "continue_harness_session_id",
             "continue_fork",
             "extra_args",
             "interactive",
-            "mcp_tools",
             "projected_roots",
             "control_root",
             "agent",
             "adhoc_agent_payload",
             "appended_system_prompt",
             "user_turn_content",
-            "allow_builtin_agents",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -371,25 +353,19 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = name, description
         return prompt.strip()
 
-    def resolve_launch_spec(
-        self, run: SpawnParams, perms: PermissionResolver
-    ) -> ResolvedLaunchSpec:
+    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         return ResolvedLaunchSpec(
             harness=HarnessId.CODEX,
             model=str(run.model).strip() if run.model else None,
             effort=run.effort,
+            autocompact=run.autocompact,
+            autocompact_pct=run.autocompact_pct,
             prompt=run.user_turn_content or run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
-            permission_resolver=perms,
-            # Ahead of passthrough args so a later `-c` override still wins.
-            extra_args=(
-                *(() if run.allow_builtin_agents else _DISABLE_BUILTIN_AGENT_FLAGS),
-                *run.extra_args,
-            ),
+            extra_args=run.extra_args,
             interactive=run.interactive,
-            mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             agent_name=run.agent,
             base_instructions=run.adhoc_agent_payload.strip() or None,
@@ -409,11 +385,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             auto_reject_runtime_requests=False,
             harness_id=HarnessId.CODEX.value,
         )
-
-    def mcp_config(self, run: SpawnParams) -> McpConfig | None:
-        # MCP injection is off by default — agents use the CLI instead.
-        # Users who want always-on MCP can configure it in their harness settings.
-        return None
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         system_prompt = render_system_instruction_blocks(content)
@@ -435,10 +406,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 task_context="user-turn",
             ),
         )
-
-    def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        _ = config
-        return {}
 
     def resolve_session_file(
         self,
@@ -615,6 +582,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: CodexConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
+            permission_report=lambda spec: compile_codex_permissions(spec)[1],
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,
                 bootstrap_payload=project_codex_spec_to_thread_request_for_project,

@@ -23,7 +23,6 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.pi_rpc import pi_subprocess_exit_error
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.streaming import pi_completion_profile as profile_module
@@ -442,5 +441,4 @@ def _spec() -> ResolvedLaunchSpec:
     return ResolvedLaunchSpec(
         harness=HarnessId.PI,
         prompt="hello",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )

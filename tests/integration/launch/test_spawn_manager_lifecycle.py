@@ -22,7 +22,6 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.control_action import ControlActionCoordinator
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.spawn_store import start_spawn
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
@@ -55,7 +54,6 @@ def _build_config(
 def _build_spec() -> ResolvedLaunchSpec:
     return ResolvedLaunchSpec(
         prompt="hello",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
 

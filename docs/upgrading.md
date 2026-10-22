@@ -1,5 +1,156 @@
 # Upgrade notes
 
+## Agent-profile permissions
+
+Agent permission profiles are now binding on more harnesses and use typed rules from Mars.
+Audit every profile that sets `tools`, `sandbox`, or `approval`; use
+`meridian spawn -a NAME --dry-run` to see the exact projection and its gaps.
+
+**Before installing**
+
+Upgrade Meridian so its installed `mars-agents` dependency is 0.17.0 or later:
+
+```bash
+uv tool upgrade meridian-cli
+meridian mars --version
+```
+
+Meridian no longer reads the launch bundle's flat `allowed`/`disallowed` lists. An older
+Mars stops every launch with `Install mars >= 0.17.0`. `meridian mars upgrade` updates
+package sources; it does not upgrade the Mars executable.
+
+**List and scoped-allow profiles**
+
+- The list form `tools: [read, grep]` is deprecated; Mars warns. It still only pre-approves
+  the listed tools and leaves everything else at the harness default. Write a map instead,
+  and add `'*': deny` when the list meant "only these tools":
+
+  ```yaml
+  tools:
+    '*': deny
+    read: allow
+    grep: allow
+  ```
+
+- A capability with only scoped allows is an allowlist for that capability. With only
+  `'bash(rg *)': allow`, unmatched Bash calls are denied, whatever `approval` says. Add
+  `bash: allow` if the unmatched calls should remain available.
+- `approval: never` means "do not prompt"; it does not override an allowlist.
+
+Claude, OpenCode, and Pi enforce whole-policy and scoped-only allowlists, subject to the
+gaps in the [permissions table](agent-profiles.md#permissions-by-harness). Codex and Cursor
+report these allowlists but do not enforce them.
+
+**Harness behavior to review**
+
+- **Claude:** scoped rules and `ask` now use native settings instead of sending every
+  non-deny as an allowed tool. Allowlists refuse unmatched state-changing calls even with
+  `approval: never`. Claude also applies profile sandbox modes, although its sandbox confines
+  Bash subprocesses rather than Edit/Write. Review profiles that relied on unmatched calls
+  running, and set `[harness.claude] allow_builtin_agents = false` if they must remain disabled;
+  `true` now takes effect. A spawn whose profile sets `'*': allow` now has the task-list tools
+  (`TaskCreate`…`TodoWrite`) denied too; only an explicit `task: allow` (or `ask`) keeps them.
+- **OpenCode:** profile `tools` now bind the selected `meridian-<profile>` config agent in
+  primary sessions as well as spawns, on V1 and V2. Review profiles whose primary was
+  intentionally unrestricted. A primary `ask` prompts the human; a spawned `ask` becomes
+  an immediate native denial.
+- **Pi:** mapped plain, scoped, allowlist, and `ask` rules now bind both RPC spawns and
+  primary TUI sessions. Review profiles that previously treated Pi rules as descriptive.
+  Remove Pi tool-selection passthrough flags from launches with a profile policy; Meridian
+  now rejects them so they cannot override the policy. Under a Bash allowlist the extension
+  refuses shell syntax it cannot split into simple commands (`$VAR`, redirects such as
+  `2>/dev/null`, loops), so an allowlisted agent must run plain commands; beside
+  `bash: allow`, scoped Bash denies are best effort and such a command runs unchecked.
+- **Codex:** exact unscoped `bash`, `web`, `web_search`, and `image` allow/deny rules now use
+  native per-launch switches. Scoped rules, `ask`, allowlists, and other capabilities remain
+  report-only.
+
+**Claude compaction settings**
+
+Audit Claude profiles that set `autocompact`. Its token count was written to a percentage
+variable and had no effect. It selects Claude's `--autocompact` window when the value is from
+100,000 through 1,000,000 tokens; other values are reported and omitted. `autocompact_pct`
+applies separately as a percentage.
+
+**Codex harness overrides**
+
+Treat installed `harness-overrides.codex` blocks as trusted package content. Codex applies
+them as native configuration, including provider and MCP server commands; installed blocks
+that were inert take effect after upgrading.
+
+**Set Codex and Cursor sandboxes explicitly**
+
+Profiles that set `tools` but leave `sandbox` unset no longer receive a sandbox inferred from
+their tool rules. In 0.11.8, Codex used this inference:
+
+- `danger-full-access` when `external_directory` resolved to `allow` or `ask`;
+- `danger-full-access` when `*` resolved to `allow` or `ask` and both `edit` and `bash`
+  also resolved to `allow` or `ask`;
+- `workspace-write` when either `edit` or `bash` resolved to `allow` or `ask`;
+- `read-only` for every other profile with `tools`.
+
+Mars supplied harness-native names then, so most Codex profiles missed the semantic checks
+and took the `read-only` branch. Meridian now omits the sandbox when it is unset and Codex
+uses its own default. Set `sandbox` explicitly to preserve the mode you intended.
+
+Cursor previously received the same shared inference: inferred `read-only` became
+`--sandbox enabled`, while inferred `workspace-write` or `danger-full-access` became
+`--sandbox disabled`. Meridian now omits `--sandbox` when the profile leaves it unset, so
+Cursor uses its own default. Set `sandbox: read-only` to preserve the former restriction,
+or set the intended permissive mode explicitly.
+
+**Move OpenCode permission configuration out of `OPENCODE_PERMISSION`**
+
+Meridian no longer sets `OPENCODE_PERMISSION`. It puts the compiled rules on its reserved
+`meridian-<profile>` agent inside `OPENCODE_CONFIG_CONTENT` for both OpenCode versions.
+Remove wrapper logic that reads or sets `OPENCODE_PERMISSION`; express the policy in the
+profile's `tools` field. Do not reuse the reserved `meridian-<profile>` name for a user
+agent, because OpenCode can merge non-colliding user fields into Meridian's entry.
+
+**Use canonical MCP spellings**
+
+Write MCP rules as `mcp(server)`, `mcp(server/tool)`, `mcp(server/*)`, `mcp(*/tool)`, or
+`mcp(*/*)`. A bare `mcp` or `MCP` is now a validation error; replace it with an explicit
+server/tool reference. `*` is the only wildcard, and server/tool case is preserved. Do not
+write harness wire names in Mars-native profiles.
+
+Mars now carries the native spelling separately: for example, `mcp(github/create_issue)`
+reaches Claude as `mcp__github__create_issue` and OpenCode as `github_create_issue` instead
+of being re-cased by Meridian. Review MCP rules that previously relied on a misspelled rule
+doing nothing. Codex and Pi cannot project individual MCP references and report the gap;
+Cursor does not enforce profile tool rules.
+
+**Approval requests in spawns**
+
+A runtime request nobody can answer is refused immediately and never sent to the parent
+agent. Codex and observable OpenCode refusals are written to
+`permission_requests.jsonl`, now with a one-line `summary`, and `meridian spawn show` lists
+them. OpenCode controls the reason shown to the model and can remove a denied tool from its
+catalog without emitting an attempted-call event, so not every native denial has a journal
+row. Claude and Pi journal the native denials they report.
+
+Spawns with tool rules keep narrow grants for `meridian spawn done` and
+`meridian spawn rearm`, so an allowlisted child can answer Meridian's completion
+confirmation without gaining a general shell. A stricter overlapping Claude or OpenCode
+profile rule can still block a spelling; the dry-run report marks that grant partial.
+
+**Launches you continue or fork**
+
+A spawn's launch policy snapshot written by an older build holds the old tools map. This
+build reads it as native-only rules, emits the recorded names as they were written through
+this build's channels (a Claude scoped deny now lands in `--settings` rather than
+`--disallowedTools`), and marks those lines `[legacy snapshot]` in `--dry-run`. It cannot
+interpret them by capability, so Codex keeps only the `web_search` switch from them.
+
+Such a snapshot also lacks the native names of the platform sub-agent and task-list denies.
+A replay takes them from a fresh Mars bundle for the same harness, so the denies hold as on
+a new launch. Only if Mars cannot build that bundle are the platform denies unnamed:
+`--dry-run` reports both as `unsupported`. On Claude a profile rule for the same capability,
+whose own tool names the snapshot kept, is still turned into a deny. The continued launch writes a new snapshot that
+carries the names. Probed with a snapshot written by 0.11.8: a Claude `--continue` denies
+`Agent`, `SendMessage`, `ListAgents`, and the `Task*`/`TodoWrite` tools, and a Codex
+`--continue` kept web search.
+
 ## Spawn results consumed by a parent moved to `spawns/<parent>/`
 
 `observed-spawns.json` records which child results a parent has already seen and

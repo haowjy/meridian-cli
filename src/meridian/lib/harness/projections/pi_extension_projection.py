@@ -26,6 +26,10 @@ _MERIDIAN_IDLE_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
     "meridian-idle",
     "meridian-idle/index.js",
 )
+_MERIDIAN_PERMISSIONS_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
+    "meridian-permissions",
+    "meridian-permissions/index.js",
+)
 
 
 class PiExtensionProjectionError(RuntimeError):
@@ -64,6 +68,12 @@ def resolve_pi_idle_entrypoint() -> tuple[str, ...]:
     """Resolve the primary-only Meridian idle Pi extension entrypoint."""
 
     return (_resolve_bundle_entrypoint(*_MERIDIAN_IDLE_EXTENSION_RELATIVE_PATH),)
+
+
+def resolve_pi_permissions_entrypoint() -> tuple[str, ...]:
+    """Resolve the launch-local Meridian permission extension entrypoint."""
+
+    return (_resolve_bundle_entrypoint(*_MERIDIAN_PERMISSIONS_EXTENSION_RELATIVE_PATH),)
 
 
 def resolve_pi_lifecycle_extension_entrypoint() -> tuple[str, ...]:
@@ -186,5 +196,6 @@ __all__ = [
     "resolve_pi_idle_entrypoint",
     "resolve_pi_lifecycle_extension_entrypoint",
     "resolve_pi_managed_bash_entrypoint",
+    "resolve_pi_permissions_entrypoint",
     "resolve_pi_spawn_watch_entrypoint",
 ]
