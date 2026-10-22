@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-22
+
 ### Upgrade notes
 - Agent-profile permissions change meaning and enforcement: `'*': deny` and scoped-only allows are allowlists; Claude, OpenCode primaries, and Pi enforce more tool rules; Codex and Cursor no longer infer a sandbox when it is unset; and OpenCode no longer receives `OPENCODE_PERMISSION`. Review affected profiles and set the intended sandbox explicitly. See [agent-profile permission upgrade notes](docs/upgrading.md#agent-profile-permissions).
 - Requires Mars >= 0.17.0 for typed `tools.rules`. Older Mars stops launches with `Install mars >= 0.17.0`; bare `mcp` is invalid, and MCP rules must use canonical `mcp(server)` or `mcp(server/tool)` spellings. See [agent-profile permission upgrade notes](docs/upgrading.md#agent-profile-permissions).
