@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import meridianPermissionsExtension, {
@@ -106,15 +110,68 @@ describe("bash command evaluation", () => {
     expect(splitShellCommands("rg 'x; y'")).toEqual({ commands: ["rg 'x; y'"], complete: true });
   });
 
+  it.each([
+    "rg $'x\\''; printf hidden; printf %s $'y\\''",
+    "rg $(printf hidden)",
+    "rg `printf hidden`",
+    "rg $HOME",
+    "rg x > output",
+    "rg x < input",
+    "rg x <<EOF\nhidden\nEOF",
+    "rg {x,y}",
+    "rg <(printf hidden)",
+    "rg x & printf hidden",
+  ])("refuses unsupported shell syntax: %s", (command) => {
+    expect(decideToolCall(restrictive, "bash", { command })).toMatchObject({
+      action: "deny",
+      reason: expect.stringContaining("run simple commands"),
+    });
+  });
+
+  it("accepts the modeled simple-command subset", () => {
+    expect(
+      decideToolCall(restrictive, "bash", {
+        command: "rg 'x; y' && rg \"z | q\"\nrg final",
+      })?.action,
+    ).toBe("allow");
+  });
+
   it("allows a fixed completion command but still checks compound commands", () => {
     const withCompletion = policy(
       [rule({ capability: "*", tool: "*", action: "deny", label: "*" })],
-      { completion_commands: ["meridian spawn done"] },
+      { completion_commands: ["meridian spawn done", "meridian spawn rearm"] },
     );
-    expect(decideToolCall(withCompletion, "bash", { command: "meridian spawn done p-1" })?.action).toBe("allow");
+    for (const command of [
+      "meridian spawn done",
+      "meridian spawn done p-1",
+      "meridian spawn rearm --candidate_1.v2",
+    ]) {
+      expect(decideToolCall(withCompletion, "bash", { command })?.action).toBe("allow");
+    }
+    for (const command of [
+      "meridian spawn done --flag=value",
+      "meridian spawn done 'p-1'",
+      "meridian spawn done p/1",
+      "meridian spawn donex",
+      "meridian spawn done p-1; touch y",
+      "meridian spawn done; meridian spawn rearm",
+      "meridian spawn done > output",
+    ]) {
+      expect(decideToolCall(withCompletion, "bash", { command })?.action).toBe("deny");
+    }
+  });
+
+  it("does not restrict ordinary bash when completion is the only policy", () => {
+    const completionOnly = policy([], {
+      completion_commands: ["meridian spawn done", "meridian spawn rearm"],
+    });
+
     expect(
-      decideToolCall(withCompletion, "bash", { command: "meridian spawn done p-1; touch y" })?.action,
-    ).toBe("deny");
+      decideToolCall(completionOnly, "bash", { command: "printf ordinary > output" }),
+    ).toBeUndefined();
+    expect(
+      decideToolCall(completionOnly, "bash", { command: "meridian spawn done > output" }),
+    ).toBeUndefined();
   });
 
   it("fails closed when a restricted tool's scope cannot be read", () => {
@@ -126,6 +183,97 @@ describe("bash command evaluation", () => {
         { path: "safe/file" },
       )?.action,
     ).toBe("deny");
+  });
+});
+
+describe("path scope evaluation", () => {
+  it("normalizes paths without changing OpenCode's recursive star semantics", () => {
+    const root = mkdtempSync(join(tmpdir(), "meridian-pi-path-"));
+    const project = join(root, "project");
+    const outside = join(root, "outside");
+    mkdirSync(join(project, "src", "nested"), { recursive: true });
+    mkdirSync(outside);
+    try {
+      const scoped = policy(
+        [rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" })],
+        { allowlist_tools: ["read"] },
+      );
+
+      expect(
+        decideToolCall(scoped, "read", { path: "src/nested/file.ts" }, project)?.action,
+      ).toBe("allow");
+      expect(
+        decideToolCall(scoped, "read", { path: join(project, "src", "file.ts") }, project)?.action,
+      ).toBe("allow");
+      expect(
+        decideToolCall(scoped, "read", { path: "src/../../outside/secret" }, project)?.action,
+      ).toBe("deny");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let a symlink carry a scoped allow outside its canonical root", () => {
+    const root = mkdtempSync(join(tmpdir(), "meridian-pi-symlink-"));
+    const project = join(root, "project");
+    const outside = join(root, "outside");
+    mkdirSync(join(project, "src"), { recursive: true });
+    mkdirSync(outside);
+    symlinkSync(outside, join(project, "src", "link"));
+    symlinkSync(join(outside, "new-file"), join(project, "src", "link-file"));
+    try {
+      const scoped = policy(
+        [rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" })],
+        { allowlist_tools: ["read"] },
+      );
+      const writeScoped = policy(
+        [rule({ capability: "write", tool: "write", pattern: "src/*", action: "allow" })],
+        { allowlist_tools: ["write"] },
+      );
+
+      expect(
+        decideToolCall(scoped, "read", { path: "src/link/secret" }, project)?.action,
+      ).toBe("deny");
+      expect(
+        decideToolCall(scoped, "read", { path: "src/link/../secret" }, project)?.action,
+      ).toBe("deny");
+      expect(
+        decideToolCall(writeScoped, "write", { path: "src/link-file" }, project)?.action,
+      ).toBe("deny");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("policy loading", () => {
+  it("is a no-op only when the policy variable is absent", () => {
+    const handlers = new Map<string, (...args: any[]) => any>();
+    meridianPermissionsExtension({
+      on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
+    } as any);
+    expect(handlers).toEqual(new Map());
+  });
+
+  it("fails closed when the policy variable is empty", () => {
+    process.env._MERIDIAN_PI_PERMISSION_POLICY = "";
+    expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow(
+      "Pi permission policy is empty",
+    );
+  });
+
+  it("fails closed when the policy is malformed JSON", () => {
+    process.env._MERIDIAN_PI_PERMISSION_POLICY = "{";
+    expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow();
+  });
+
+  it("refuses completion grants outside the fixed command set", () => {
+    process.env._MERIDIAN_PI_PERMISSION_POLICY = JSON.stringify(
+      policy([], { completion_commands: ["meridian spawn done; printf hidden"] }),
+    );
+    expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow(
+      "Pi permission policy has an unsupported shape",
+    );
   });
 });
 

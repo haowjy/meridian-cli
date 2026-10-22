@@ -113,7 +113,8 @@ OpenCode does (`bash(<cmd>)` and `bash(<cmd> *)`) for every spawn whose policy c
 platform rule, including approval-confirm spawns without profile tool rules. Claude adds `Bash(<cmd>)` and
 `Bash(<cmd> *)` to `settings.permissions.allow` and, for a whole allowlist, keeps Bash
 available through `--tools`; an explicit profile deny/ask still takes precedence and the
-report says the platform allow is partial. Pi's permissions extension grants them; Codex
+report says the platform allow is partial. Pi's permissions extension grants only a whole
+command with optional `[A-Za-z0-9_.-]+` arguments; Codex
 cannot scope its shell and reports the rule `unsupported`.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
