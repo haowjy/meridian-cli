@@ -447,6 +447,15 @@ already met, and a rule Mars cannot name there is reported `unsupported`.
   `mcp/<name>/mcp.toml` definitions are installed into harness config by
   `meridian mars sync`. The launch bundle does not carry those server definitions.
 
+### Your own settings stay in force
+
+Meridian does not strip a harness's own configuration to make a profile stricter.
+Claude reads your user, project and local settings files as it always does, so their
+`permissions.allow` entries run even under an allowlist; `--dry-run` lists them on a
+`[partial] source:` line. Under OpenCode, a headless spawn with `approval: default` and
+no rule naming an OpenCode tool gets an allow-all fallback; once the profile names a
+tool, OpenCode's defaults and your OpenCode config decide the rest.
+
 ### `ask` and headless spawns
 
 A primary can put a human in the loop: Claude, OpenCode, and Pi present a native prompt

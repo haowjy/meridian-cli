@@ -149,8 +149,9 @@ sandbox, and approval fields, so those native collisions are skipped and reporte
 
 OpenCode decides a headless `approval: default` spawn's unmatched calls by a toggle carried
 from v0.11.8: without a `*` rule, the compile emits `*: allow` only when no profile rule
-names an OpenCode tool; one such rule leaves OpenCode's own defaults in charge. Whether to
-keep the toggle is an owner question. The compile reports whichever branch applied as an
+names an OpenCode tool; one such rule leaves OpenCode's own defaults, and the user's OpenCode config, in charge.
+The toggle is deliberate: Meridian stays out of a user's OpenCode setup whenever the profile
+says something. The compile reports whichever branch applied as an
 `approval: default` line, which follows the policy elements since `default` approval is
 not one.
 

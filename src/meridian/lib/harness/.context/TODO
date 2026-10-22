@@ -16,7 +16,3 @@
 - `projections/permissions_claude.py`: settings-file allows reach the compile through the internal
   `--meridian-claude-settings-allows` argument that preflight appends and the compile parses back. Make them
   a typed field on the Claude runtime resolution.
-- Owner questions, behavior reported in `--dry-run` meanwhile: (1) pass `--setting-sources` without
-  project/local for Claude allowlist profiles, since those files' `permissions.allow` widen the allowlist
-  (it also drops their hooks); (2) OpenCode headless `approval: default` spawns get the `*: allow`
-  fallback only while no rule names a known OpenCode tool: always or never.
