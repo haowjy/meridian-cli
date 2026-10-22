@@ -82,7 +82,12 @@ decides every unmatched call itself, so it ends that kind, as an unscoped rule f
 capability does. `build_permission_policy` writes each such allowlist into `rules` as the
 unscoped deny it means (origin `allowlist`, natives the bases of the capability's scoped
 natives, report element `tools: <capability> allowlist ...`), placed before Mars's rules.
-So no compile has an allowlist path: each emits that deny as it emits a profile's plain deny
+Mars resolved overlap among the rules it wrote (for natives two unscoped rules share, the
+capability whose natives are a strict subset wins when the actions differ) but never saw
+this deny, so `build_permission_policy` resolves it the same way against the other unscoped
+rules: `edit: allow` beside `write(src/*): allow` loses `Write`, and `edit(src/*): allow`
+beside `write: allow` leaves `Write` out of the deny. Otherwise each compile would read
+the broad allow its own way (Claude ran every write). So no compile has an allowlist path: each emits that deny as it emits a profile's plain deny
 beside scoped allows. The one exception is Codex, whose shell switch would also refuse the
 scoped allows and leave nothing to read files with, so its switches skip the origin. The
 deny exists only on the bound policy; launch snapshots keep Mars's rules and the policy is

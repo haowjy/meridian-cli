@@ -339,6 +339,9 @@ or [Meridian config](configuration.md). `tools` comes from the profile.
   capability. With only `'bash(rg *)': allow`, unmatched Bash calls are denied. Add
   `bash: allow` to allow the rest. An unscoped `*` rule also decides unmatched calls
   and ends the scoped-only allowlist.
+- Narrower capabilities win where they overlap. `edit` covers writes too, but
+  `edit: allow` with `'write(src/*)': allow` still permits writes only under `src/`, just
+  as `edit: deny` with `write: allow` leaves writes allowed.
 - `approval: never` means "do not prompt"; it does not mean "ignore `tools`."
 - Mars normalizes a Bash prefix ending in `:*` to a space before the wildcard:
   `bash(git push:*)` becomes `bash(git push *)`. Write the space form in new profiles.

@@ -27,6 +27,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Codex spawns refuse an approval request with the decision Codex reads (`decline`); `reject` made Codex answer the model `approval request failed`.
 - OpenCode 2.0.29 spawns can refuse an approval request: the reply body is `decision` (was `reply`; OpenCode answered 400, so the request stayed pending and the spawn waited). The refusal carries a reason the model sees.
+- A per-capability allowlist holds beside a broader capability's allow: `edit: allow` with `write(src/*): allow` refuses writes outside `src/` (Claude ran every write) and the reports say so.
 - Native sub-agent denies (`Agent`, `Task*`) hold under `'*': deny`: they were left out of Claude's argv for such a profile, and the platform rule was not built for `task`.
 - Tools reach the harness under their real names. Claude: `web` denies `WebSearch`/`WebFetch` (was `Websearch`), `ask_user` denies `AskUserQuestion` (was `Askuser`), `edit` covers `Edit`/`Write`/`NotebookEdit`, scoped Bash uses `Bash(git push *)`, `agent` includes `SendMessage`/`ListAgents`, and MCP refs use case-preserving `mcp__server__tool`. OpenCode: `read`, `question`, `task`, `websearch`, `webfetch`, and `server_tool` MCP names replace Meridian's guesses.
 

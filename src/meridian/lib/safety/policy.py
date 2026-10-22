@@ -286,6 +286,53 @@ def _allowlist_denies(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
     return tuple(denies)
 
 
+def _resolves_by_specificity(rule: ToolRule) -> bool:
+    return (
+        rule.capability not in {None, "*", "mcp"}
+        and rule.pattern is None
+        and rule.origin != PLATFORM_ORIGIN
+        and bool(rule.native)
+    )
+
+
+def _resolve_allowlist_overlap(
+    denies: tuple[ToolRule, ...], rules: tuple[ToolRule, ...]
+) -> tuple[tuple[ToolRule, ...], tuple[ToolRule, ...]]:
+    """Resolve each allowlist deny against the other unscoped rules, as Mars resolves its own.
+
+    For the natives two unscoped rules share, the narrower capability wins when their actions
+    differ; narrower means its natives are a strict subset of the other's. Mars did this for
+    every rule it wrote, but it never saw these denies: without it, ``edit: allow`` beside
+    ``write(src/*): allow`` keeps naming ``Write`` unscoped, and every write runs. Mars's own
+    rules are not re-resolved against each other. Equal sets stay in conflict, as in Mars.
+    """
+
+    participants = [rule for rule in (*denies, *rules) if _resolves_by_specificity(rule)]
+    allowlist = [rule for rule in denies if _resolves_by_specificity(rule)]
+
+    def narrowed(rule: ToolRule, against: list[ToolRule]) -> ToolRule:
+        if not _resolves_by_specificity(rule):
+            return rule
+        broad = rule.native
+        kept = tuple(
+            native
+            for native in broad
+            if not any(
+                other.action != rule.action
+                and len(other.native) < len(broad)
+                and all(name in broad for name in other.native)
+                and native in other.native
+                for other in against
+            )
+        )
+        return rule if kept == broad else rule.model_copy(update={"native": kept})
+
+    return (
+        tuple(narrowed(deny, participants) for deny in denies),
+        tuple(narrowed(rule, allowlist) for rule in rules),
+    )
+
+
 def build_permission_policy(
     *,
     rules: tuple[ToolRule, ...] = (),
@@ -298,14 +345,16 @@ def build_permission_policy(
 
     ``sandbox`` and ``approval`` are the already-resolved execution policy values; this
     validates them and never re-resolves precedence. Each per-capability allowlist gains
-    the unscoped deny it means (see ``PermissionPolicy``).
+    the unscoped deny it means (see ``PermissionPolicy``), resolved against the other
+    unscoped rules by specificity, so every compile reads the same rules.
     """
 
+    denies, resolved = _resolve_allowlist_overlap(_allowlist_denies(rules), rules)
     return PermissionPolicy(
         # First, as the broad rule its scoped allows are exceptions to: OpenCode orders equally
         # specific rules by policy order, and this keeps its config what it was before the
         # allowlist became a rule.
-        rules=(*_allowlist_denies(rules), *rules),
+        rules=(*denies, *resolved),
         platform_rules=platform_rules,
         sandbox=_parse_sandbox_value(sandbox),
         sandbox_write_roots=tuple(dict.fromkeys(root for root in sandbox_write_roots if root)),
