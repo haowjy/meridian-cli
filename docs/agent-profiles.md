@@ -59,8 +59,8 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `sandbox` | str | — | `default`, `read-only`, `workspace-write`, or `danger-full-access`. Harness support differs: [Permissions by harness](#permissions-by-harness) |
 | `effort` | str | — | Effort level (`low`, `medium`, `high`) |
 | `approval` | str | — | When the harness stops to ask: `default`, `confirm`, `auto`, or `never`. `yolo` is a deprecated spelling of `never`. See [Permissions by harness](#permissions-by-harness) |
-| `autocompact` | int | — | Compaction percentage threshold |
-| `timeout` | int | — | Spawn timeout in seconds |
+| `autocompact` | int | — | Context-token compaction threshold (minimum 1000); harness support differs. See [Compaction by harness](#compaction-by-harness) |
+| `autocompact_pct` | int | — | Context-window percentage that triggers compaction (1–100); harness support differs. See [Compaction by harness](#compaction-by-harness) |
 | `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited |
 | `harness-overrides` | map | `{}` | Harness-native launch config selected for the resolved harness; see [Harness-native passthrough](#harness-native-passthrough) |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
@@ -125,11 +125,14 @@ launchable on older Meridian versions.
 
 Scalar overrides in `override:` accept these runtime keys:
 
-`harness`, `sandbox`, `approval`, `effort`, `autocompact`, `autocompact_pct`, `timeout`
+`harness`, `sandbox`, `approval`, `effort`, `autocompact`, `autocompact_pct`
 
 `resident-rearm-budget` is a top-level profile default, not a model-policy
 override. The Mars launch-bundle schema does not currently expose a per-model
 resident rearm budget.
+
+Spawn timeout is not an agent-profile field. Set the runtime ceiling in minutes
+with `--timeout`, `MERIDIAN_TIMEOUT`, or Meridian's `primary.timeout` config.
 
 ### Precedence
 
@@ -163,7 +166,7 @@ model-policies:
     override: { effort: medium }
   - match: { model: openai/gpt-5.3-codex }
     no-fallback: true
-    override: { autocompact: 20 }
+    override: { autocompact: 200000 }
 ```
 
 Fallback only activates when:
@@ -174,6 +177,28 @@ Fallback only activates when:
 Legacy `fallback-order` and `fanout` are rejected. Order `model-policies`
 rules directly and add `no-fallback: true` for rules that should never be
 considered for fallback.
+
+## Compaction by harness
+
+`autocompact` is an absolute token value; `autocompact_pct` is a percentage. They
+are separate controls, not alternate spellings of the same number.
+
+| Harness | `autocompact` | `autocompact_pct` |
+|---|---|---|
+| **Claude** | `--autocompact <tokens>` for values from 100000 through 1000000 | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=<percent>` |
+| **Codex** | `-c model_auto_compact_token_limit=<tokens>` | `-c model_post_turn_compact_threshold_percent=<percent>` |
+| **OpenCode**, **Pi**, **Cursor** | Not applied | Not applied |
+
+Claude applies the percentage to its autocompact window, so both fields can be
+set together. A Claude token value outside its native 100000–1000000 range is
+not passed to the CLI. `--dry-run` reports every applied value and every
+unsupported value or harness.
+
+Earlier Meridian builds wrote `autocompact`'s token count into Claude's
+percentage environment variable and did not apply `autocompact_pct`. Existing
+Claude profiles using `autocompact` now set the token window instead; a value
+such as `200000` previously exceeded the effective percentage range and left
+Claude at its default, but now selects a 200000-token autocompact window.
 
 ## Harness-native passthrough
 
@@ -227,11 +252,7 @@ directory).
 |---|---|
 | `load` (or the flat list) | The skill's full text, in the system prompt after the profile body, on every launch |
 | `--skills NAME` on `meridian spawn` or `meridian start` | Same as `load`, for that launch |
-| `available` | The skill's name under `# Available Skills`, grouped by [type](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#type). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
-
-**Known gap:** on OpenCode v2 and the `opencode run` path, the composed system
-prompt, including loaded skills and the profile body, does not reach the model.
-OpenCode v1 is unaffected.
+| `available` | The skill's name and description under `# Available Skills`, grouped by [type](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#type). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
 
 **Loaded skills ignore the skill's `model-invocable`.** A skill's own
 `model-invocable: false` only keeps it out of the harness's skill list, the list
@@ -258,7 +279,7 @@ Mars launch-bundle → skills.loaded[{name, skill_type, source_path, body}]
 
 Meridian receives already-resolved content and:
 - Renders type-group headers (`## Principle`, `## Guardrail`, etc.) for loaded skills
-- Lists available skills by name, grouped by type, with a load nudge
+- Lists available skills by name and description, grouped by type, with a load nudge
 - Unknown skill names produce a warning, not a failed launch
 
 **Variant selection** happens inside Mars. If a skill has
@@ -415,6 +436,9 @@ already met, and a rule Mars cannot name there is reported `unsupported`.
   `mcp(*/*)`. `*` is the only wildcard, names are case-sensitive, and bare `mcp` is
   invalid. Mars supplies each harness's native spelling; do not put `mcp__...` or
   `Mcp(...)` wire names in a Mars-native profile.
+- MCP rules grant or deny tools; they do not register servers. Package
+  `mcp/<name>/mcp.toml` definitions are installed into harness config by
+  `meridian mars sync`. The launch bundle does not carry those server definitions.
 
 ### `ask` and headless spawns
 

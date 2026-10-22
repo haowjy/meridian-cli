@@ -10,6 +10,7 @@ from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
+from meridian.lib.harness.projections.compaction import project_claude_autocompact_args
 from meridian.lib.harness.projections.permissions_claude import (
     ClaudeSettings,
     compile_claude_permissions,
@@ -26,6 +27,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "continue_fork",
         "continue_session_id",
         "effort",
+        "autocompact",
+        "autocompact_pct",
         "extra_args",
         "interactive",
         "mcp_tools",
@@ -127,6 +130,7 @@ def project_claude_spec_to_cli_args(
         command.extend(("--model", spec.model))
     if spec.effort:
         command.extend(("--effort", spec.effort))
+    command.extend(project_claude_autocompact_args(spec.autocompact))
     if spec.agent_name:
         command.extend(("--agent", str(spec.agent_name)))
     if (

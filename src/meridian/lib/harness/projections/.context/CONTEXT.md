@@ -21,7 +21,10 @@ pi_extension_projection.py → (built extension artifacts → stable -e paths, n
 `project_codex_common.py` is not a projector — it holds the Codex spellings both Codex
 projectors share (tool-switch, MCP and built-in-agent flags). `native_config.py` flattens
 the selected harness-native config, spells Codex TOML literals, and owns the reserved keys
-that Meridian's Codex projections write themselves.
+that Meridian's Codex projections write themselves. `compaction.py` owns the semantic
+`autocompact` / `autocompact_pct` projection and report: Claude gets its token flag and
+percentage environment variable, Codex gets config overrides, and the other harnesses
+report both fields unsupported.
 
 `pi_extension_projection.py` is not a spec projector — it resolves stable
 Meridian-owned Pi extension entrypoints without copying or materializing them.

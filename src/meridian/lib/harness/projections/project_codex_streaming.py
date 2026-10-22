@@ -9,6 +9,7 @@ from meridian.lib.harness.codex_idle import IDLE_NOTIFY_COMMAND
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections.compaction import project_codex_autocompact_args
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_APPROVAL_POLICY_KEY,
     CODEX_CONFIG_NOTIFY_KEY,
@@ -43,6 +44,8 @@ _JSONRPC_PARAM_FIELDS: frozenset[str] = frozenset(
     {
         "model",
         "effort",
+        "autocompact",
+        "autocompact_pct",
         "permission_policy",
     }
 )
@@ -167,6 +170,9 @@ def project_codex_spec_to_appserver_command(
         "--listen",
         f"ws://{host}:{port}",
     ]
+    command.extend(
+        project_codex_autocompact_args(spec.autocompact, spec.autocompact_pct)
+    )
 
     if spec.interactive:
         command.extend(("-c", f"{CODEX_CONFIG_NOTIFY_KEY}={json.dumps(IDLE_NOTIFY_COMMAND)}"))

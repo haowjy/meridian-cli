@@ -25,4 +25,11 @@
   TUI with `--server`; or use a `--agent` flag if a later v2 adds one.
 - OpenCode 2 has no effort channel that reaches the request: config parses
   `provider/model#variant` and agent `model.variant`, but probes saw no reasoning field
-  in provider requests. Revisit when upstream wires variants through.
+  in provider requests. TUI and streaming launches now report the field unsupported;
+  revisit when upstream wires variants through.
+- Per-launch MCP server injection needs a launch-bundle field containing server
+  definitions. `tools.mcp` cannot supply it: that compatibility field contains
+  harness-native permission names derived from `tools.rules`, while Mars installs
+  package `mcp/<name>/mcp.toml` definitions during sync. OpenCode config can carry local
+  definitions under `mcp.servers`, but Meridian must not reconstruct commands from tool
+  permission names.

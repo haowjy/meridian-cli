@@ -16,6 +16,7 @@ from fnmatch import fnmatchcase
 from typing import Literal, cast
 
 from meridian.lib.harness.claude_preflight import CLAUDE_SETTINGS_ALLOWS_FLAG
+from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
@@ -870,6 +871,7 @@ def compile_claude_permissions(
         _source_lines(policy, permissions, channels, passthrough, policy_mode=policy_mode)
     )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Claude"))
+    lines.extend(compaction_report(spec, harness="Claude"))
     return permissions, complete_report(policy, lines, harness="Claude")
 
 

@@ -249,6 +249,8 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "model",
             "effort",
+            "autocompact",
+            "autocompact_pct",
             "prompt",
             "continue_harness_session_id",
             "continue_fork",
@@ -359,6 +361,8 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             harness=HarnessId.CODEX,
             model=str(run.model).strip() if run.model else None,
             effort=run.effort,
+            autocompact=run.autocompact,
+            autocompact_pct=run.autocompact_pct,
             prompt=run.user_turn_content or run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,

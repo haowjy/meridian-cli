@@ -148,6 +148,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "prompt",
             "model",
             "effort",
+            "autocompact",
+            "autocompact_pct",
             "skills",
             "agent",
             "adhoc_agent_payload",
@@ -265,6 +267,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,
             effort=normalized_effort,
+            autocompact=run.autocompact,
+            autocompact_pct=run.autocompact_pct,
             prompt=run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
@@ -302,6 +306,18 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # MCP injection is off by default — agents use the CLI instead.
         # Users who want always-on MCP can configure it in their harness settings.
         return None
+
+    def project_launch_env(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        system_prompt_path: Path,
+        env: Mapping[str, str],
+    ) -> dict[str, str]:
+        _ = system_prompt_path, env
+        if spec.autocompact_pct is None:
+            return {}
+        return {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": str(spec.autocompact_pct)}
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         # Meridian manages nesting limits itself; suppress Claude's parent-session

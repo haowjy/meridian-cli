@@ -32,6 +32,7 @@ from meridian.lib.core.native_identity import (
     Operation,
     PostExit,
 )
+from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -184,6 +185,8 @@ class SpawnParams(BaseModel):
     model: ModelId | None = None
     model_override_explicit: bool = False
     effort: str | None = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
     skills: tuple[str, ...] = ()
     agent: str | None = None
     # Pre-built ad-hoc native-agent payload. Empty string when not used.

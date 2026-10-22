@@ -43,11 +43,10 @@ from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.session_store import update_session_claude_config_dir
 from meridian.lib.state.spawn.model import SpawnRecord
 
-from ..runtime import OperationRuntime, runtime_context
+from ..runtime import OperationRuntime
 from .execute_init import (
     LaunchUserInputError,
     ParamsRequestMetadata,
-    _spawn_child_env,
     _write_params_json,
 )
 from .execute_session import (
@@ -113,7 +112,6 @@ async def _prepare_execution_handoff(
 ) -> PreparedExecutionHandoff:
     """Prepare execution context; close session scope before re-raising on failure."""
 
-    resolved_context = runtime_context(ctx)
     local_stack = ExitStack()
     request_before_session = request
     try:
@@ -199,13 +197,7 @@ async def _prepare_execution_handoff(
                 }
             )
 
-        run_env_overrides = _spawn_child_env(
-            str(spawn.spawn_id),
-            work_id=session_context.work_id or work_id,
-            runtime_root=runtime_root,
-            autocompact=request.execution_policy.autocompact,
-            ctx=resolved_context,
-        )
+        run_env_overrides: dict[str, str] = {}
         if runtime.config.env or request.env:
             resolved_env = dict(runtime.config.env)
             resolved_env.update(request.env)

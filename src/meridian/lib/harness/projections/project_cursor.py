@@ -17,6 +17,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
         "model",
         "native_config",
+        "autocompact",
+        "autocompact_pct",
         "prompt",
         "permission_policy",
         "extra_args",

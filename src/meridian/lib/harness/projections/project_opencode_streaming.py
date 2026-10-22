@@ -48,6 +48,8 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
         "native_config",
+        "autocompact",
+        "autocompact_pct",
         "appended_system_prompt",
         "permission_policy",
         "agents_payload",

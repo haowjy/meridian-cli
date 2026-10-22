@@ -28,6 +28,7 @@ from meridian.lib.core.execution_policy import (
     ResolvedExecutionPolicy as ResolvedExecutionPolicy,
 )
 from meridian.lib.core.native_identity import NativeIdentity
+from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
 from meridian.lib.safety.policy import PermissionPolicy
 
 if TYPE_CHECKING:
@@ -87,6 +88,8 @@ class ResolvedLaunchSpec(BaseModel):
 
     # Execution parameters
     effort: str | None = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
     prompt: str = ""
 
     # Session continuity

@@ -25,6 +25,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent-copy detection is `agent_copy_enabled(project_root, harness_id)` in the catalog layer for every harness; the adapter hook is gone.
 
 ### Fixed
+- Agent-profile compaction settings reach Claude and Codex with the correct token/percentage units; unsupported harnesses and OpenCode effort drops are explicit in `--dry-run`, and available-skill descriptions reach the prompt.
 - Codex applies the selected agent profile's `harness-overrides.codex` values as native `-c` config on subprocess and streaming launches; other harnesses and Meridian-owned collisions are explicit in `--dry-run`.
 - Codex spawns refuse an approval request with the decision Codex reads (`decline`); `reject` made Codex answer the model `approval request failed`.
 - OpenCode 2.0.29 spawns can refuse an approval request: the reply body is `decision` (was `reply`; OpenCode answered 400, so the request stayed pending and the spawn waited). The refusal carries a reason the model sees.

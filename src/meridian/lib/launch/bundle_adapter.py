@@ -1,4 +1,14 @@
-"""Mars launch-bundle adapter for spawn/chat launch policy routing."""
+"""Mars launch-bundle adapter for spawn/chat launch policy routing.
+
+Meridian deliberately recomposes the launch prompt from the selected local profile,
+``skills.loaded``, and launch-owned context/report blocks. The bundle's precomposed
+``agent_body``, ``prompt_surface.system_instruction``, ``supplemental_documents``, and
+``scaffold_slots`` are therefore unread rather than competing instruction surfaces.
+The top-level ``agent`` duplicates the request's selected local profile. Top-level routing
+diagnostics duplicate ``route_trace`` and stay there; provenance keys without launch
+semantics remain diagnostic. ``tools.rules`` is the permission contract; the legacy
+``tools.allowed``, ``disallowed``, and ``mcp`` derivatives are not server config.
+"""
 
 from __future__ import annotations
 
@@ -94,7 +104,6 @@ class BundleResult:
     prompt_surface_inventory_prompt: str
     tool_rules: tuple[ToolRule, ...]
     platform_tool_rules: tuple[ToolRule, ...]
-    tools_mcp: tuple[str, ...]
     skills_loaded: tuple[LoadedSkillEntry, ...]
     skills_available: tuple[AvailableSkillEntry, ...]
     skills_missing: tuple[str, ...]
@@ -158,7 +167,7 @@ def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
 
 
 def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
-    """Parse skill names, types, and source paths from ``skills.available``."""
+    """Parse skill names, types, descriptions, and paths from ``skills.available``."""
     if not isinstance(raw, list):
         return ()
     entries: list[AvailableSkillEntry] = []
@@ -172,6 +181,7 @@ def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
                     AvailableSkillEntry(
                         name=name,
                         skill_type=skill_type,
+                        description=_normalize_str(item_dict.get("description")),
                         source_path=_normalize_str(item_dict.get("source_path")) or None,
                     )
                 )
@@ -551,7 +561,6 @@ def _parse_bundle_payload(
         prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
         tool_rules=_parse_tool_rules(tools),
         platform_tool_rules=_parse_platform_tool_rules(tools),
-        tools_mcp=_as_str_tuple(tools.get("mcp")),
         skills_loaded=skills_loaded,
         skills_available=skills_available,
         skills_missing=_as_str_tuple(skills_obj.get("missing")),
@@ -686,7 +695,10 @@ def bundle_to_resolved_policy(
         execution_policy=execution_policy,
         resolved_tool_rules=bundle.tool_rules,
         platform_tool_rules=bundle.platform_tool_rules,
-        resolved_mcp_tools=bundle.tools_mcp,
+        # tools.mcp is a deprecated flat list of native permission names derived
+        # from tools.rules, not MCP server definitions. The rules above carry its
+        # semantics; no harness config may interpret these names as commands.
+        resolved_mcp_tools=(),
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(
             model_source=_map_provenance_level(_provenance_value(effective_provenance, "model")),

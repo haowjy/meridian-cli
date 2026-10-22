@@ -7,6 +7,7 @@ import json
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections.compaction import project_codex_autocompact_args
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_APPROVAL_POLICY_KEY,
     CODEX_CONFIG_REASONING_EFFORT_KEY,
@@ -24,6 +25,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
         "model",
         "effort",
+        "autocompact",
+        "autocompact_pct",
         "prompt",
         "continue_session_id",
         "continue_fork",
@@ -90,6 +93,9 @@ def project_codex_spec_to_cli_args(
         command.extend(
             ("-c", f"{CODEX_CONFIG_REASONING_EFFORT_KEY}={json.dumps(normalized_effort)}")
         )
+    command.extend(
+        project_codex_autocompact_args(spec.autocompact, spec.autocompact_pct)
+    )
 
     permissions, _ = compile_codex_permissions(spec)
     if permissions.sandbox_mode is not None:

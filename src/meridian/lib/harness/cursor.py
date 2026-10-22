@@ -51,6 +51,8 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "prompt",
             "model",
+            "autocompact",
+            "autocompact_pct",
             "extra_args",
             "task_cwd",
             "mcp_tools",
@@ -114,6 +116,8 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return ResolvedLaunchSpec(
             harness=HarnessId.CURSOR,
             model=str(run.model).strip() if run.model else None,
+            autocompact=run.autocompact,
+            autocompact_pct=run.autocompact_pct,
             prompt=run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,

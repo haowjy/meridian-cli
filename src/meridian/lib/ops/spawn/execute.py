@@ -412,7 +412,6 @@ def execute_spawn_background(
             _spawn_background_worker_env(
                 project_root=execution_contract.control_root,
                 work_id=context.work_id,
-                autocompact=request.execution_policy.autocompact,
             )
         )
         try:

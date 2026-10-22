@@ -38,6 +38,8 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
         "native_config",
+        "autocompact",
+        "autocompact_pct",
         "appended_system_prompt",
         "permission_policy",
         "agents_payload",
@@ -157,13 +159,18 @@ def project_opencode_spec_to_cli_args(
     if normalized_effort:
         if spec.interactive:
             # The bare ``opencode`` TUI command does not accept ``--variant``;
-            # only ``opencode run`` does.  Silently drop it for interactive launches.
+            # only legacy ``opencode run`` does. The projection report exposes this gap.
             logger.debug(
                 "OpenCode TUI does not support --variant; ignoring effort=%s",
                 normalized_effort,
             )
-        else:
+        elif spec.opencode_version == "v1":
             command.extend(("--variant", normalized_effort))
+        else:
+            logger.debug(
+                "OpenCode V2 run does not support --variant; ignoring effort=%s",
+                normalized_effort,
+            )
 
     agent_arg = None if v2_tui else spec.agent_name
     if agent_arg is not None:
@@ -180,7 +187,11 @@ def project_opencode_spec_to_cli_args(
     )
     _log_collision_if_needed(
         managed_flag="--variant",
-        has_managed_value=bool(normalized_effort) and not spec.interactive,
+        has_managed_value=(
+            bool(normalized_effort)
+            and not spec.interactive
+            and spec.opencode_version == "v1"
+        ),
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import project_codex_native_config
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
@@ -88,6 +89,7 @@ def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
 
 
 def _codex_report(
+    spec: ResolvedLaunchSpec,
     policy: PermissionPolicy,
     permissions: CodexPermissions,
     native_config_report: EnforcementReport,
@@ -179,6 +181,7 @@ def _codex_report(
         else:
             lines.append(ReportLine(f"approval: {policy.approval}", "native", note))
     lines.extend(native_config_report)
+    lines.extend(compaction_report(spec, harness="Codex"))
     return complete_report(policy, lines, harness="Codex")
 
 
@@ -212,7 +215,7 @@ def compile_codex_permissions(
         ),
     )
     _, native_config_report = project_codex_native_config(spec.native_config)
-    return permissions, _codex_report(policy, permissions, native_config_report)
+    return permissions, _codex_report(spec, policy, permissions, native_config_report)
 
 
 __all__ = ["CodexPermissions", "compile_codex_permissions"]

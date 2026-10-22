@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
@@ -83,6 +84,7 @@ def _cursor_report(
             )
         )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Cursor"))
+    lines.extend(compaction_report(spec, harness="Cursor"))
     return complete_report(policy, lines, harness="Cursor")
 
 
