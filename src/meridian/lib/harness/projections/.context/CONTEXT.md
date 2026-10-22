@@ -102,10 +102,15 @@ they are not ordinary tool denies.
 
 Claude emits `ask` only as `settings.permissions.ask`; it never contributes to an allow
 channel. Claude checks deny, then ask, then allow, so a plain deny or ask beside scoped
-allows of the same tool would shadow them. The compile therefore emits no such plain rule
-(a per-capability allowlist arrives as one, written by the policy) and gates the capability
-through the permission mode instead: a mode in which unmatched calls need approval, which a
-headless spawn refuses.
+allows of the same tool would shadow them. "The same tool" is either a tool the scoped
+allow concerns (its `native_tools`) or the permission it is spelled with: Claude checks
+paths only through `Edit(path)`/`Read(path)`, so a scoped write allow is `Edit(src/*)`, and a
+plain `Write` (the write allowlist's deny) and a plain `Edit` (`edit: deny`) both shadow it.
+The compile therefore emits no such plain rule (a per-capability allowlist arrives as one,
+written by the policy) and gates the capability through the permission mode instead: a
+mode in which unmatched calls need approval, which a headless spawn refuses. `--tools`
+under a whole allowlist is `PermissionPolicy.allowed_tools` plus Bash for the completion
+commands: the tools, not the permission spellings, so `write(src/*)` keeps `Write` callable.
 `approval: auto|never|yolo` gates with `acceptEdits` (edits keep running; it also runs file
 commands such as `touch`, `rm` and redirects inside the working directories), unless an
 edit capability is gated, which needs `manual`; `default` and `confirm` gate with `manual`.

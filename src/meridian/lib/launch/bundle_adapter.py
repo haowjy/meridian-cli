@@ -202,7 +202,7 @@ def _optional_object_field(payload: dict[str, object], field_name: str) -> dict[
 
 
 def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
-    """Read ``tools.rules``: capability for meaning, native names for emission.
+    """Read ``tools.rules``: capability for meaning, native names for emission and tools.
 
     The flat ``allowed``/``disallowed`` lists Mars still derives from the rules cannot carry
     ``ask``, ``*`` or the capability behind a name, so nothing here reads them.
@@ -221,6 +221,12 @@ def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
         entry = json_object(raw_rule)
         if entry is None or not isinstance(entry.get("capability"), str):
             raise _bundle_schema_error("'tools.rules' entries must be objects with a capability")
+        if not isinstance(entry.get("native_tools"), list):
+            raise RuntimeError(
+                "Mars launch-bundle tools.rules entries have no native_tools, so this Mars "
+                "predates per-rule tool names. "
+                f"Install mars >= {_MARS_RULES_MIN_VERSION}."
+            )
         try:
             rule = ToolRule.model_validate(entry)
         except ValidationError as exc:
@@ -251,9 +257,11 @@ def _parse_platform_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]
                 f"'tools.capability_natives.{capability}' must be an object"
             )
         try:
+            # A platform deny is unscoped, so the names Mars gives are the tools too.
             rule = ToolRule.model_validate(
                 {
                     **entry,
+                    "native_tools": entry.get("native"),
                     "capability": capability,
                     "pattern": None,
                     "action": "deny",

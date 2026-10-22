@@ -127,22 +127,24 @@ def _compile_flags(
     rules: tuple[PiExtensionRule, ...],
     completion_commands: tuple[str, ...],
 ) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
-    exact = tuple(rule for rule in rules if rule.tool != "*" and rule.pattern is None)
-    scoped_tools = frozenset(rule.tool for rule in rules if rule.pattern is not None)
+    named = tuple(
+        rule for rule in policy.rules if rule.native_status == "known" and not rule.is_wildcard
+    )
+    # A plain deny removes its tools unless a scoped rule still needs them; the extension
+    # then refuses what the scoped rules don't allow.
+    scoped_tools = frozenset(tool for rule in named if rule.is_scoped for tool in rule.tools)
     completion_tools = frozenset({"bash"} if completion_commands else ())
 
     exclude = tuple(
         dedupe_nonempty(
-            rule.tool
-            for rule in exact
-            if rule.action == "deny"
-            and rule.tool not in scoped_tools
-            and rule.tool not in completion_tools
+            tool
+            for rule in named
+            if rule.action == "deny" and not rule.is_scoped
+            for tool in rule.tools
+            if tool not in scoped_tools and tool not in completion_tools
         )
     )
-    callable_tools = tuple(
-        dedupe_nonempty(split_native(native)[0] for native in policy.allowed_natives)
-    )
+    callable_tools = policy.allowed_tools
     wildcard = _strictest(rule for rule in rules if rule.tool == "*" and rule.pattern is None)
     if wildcard == "deny":
         allowed = tuple(dedupe_nonempty((*callable_tools, *completion_tools)))
@@ -221,7 +223,7 @@ def _rule_report_line(
         return ReportLine(rule_element(rule), "native", "--tools *")
     if not projected:
         return None
-    names = tuple(dedupe_nonempty(candidate.tool for candidate in projected))
+    names = rule.tools
     if rule.pattern is not None or rule.action == "ask":
         note = "tool_call handler for " + ",".join(rule.native)
         policy = permissions.extension_policy

@@ -30,7 +30,7 @@ from meridian.lib.launch.policy_snapshot import build_launch_policy_snapshot
 from meridian.lib.launch.reference import load_reference_items
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.state.paths import resolve_kb_dir
-from meridian.lib.tools import NativeStatus, ToolAction, ToolRule
+from meridian.lib.tools import NativeStatus, ToolAction, ToolRule, split_native
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -46,11 +46,23 @@ def tool_rule(
     *native: str,
     pattern: str | None = None,
     status: NativeStatus = "known",
+    tools: tuple[str, ...] | None = None,
 ) -> ToolRule:
-    """One Mars-resolved tool rule; ``native`` are the harness's names, already scoped."""
+    """One Mars-resolved tool rule; ``native`` are the harness's names, already scoped.
+
+    ``tools`` is Mars's ``native_tools``; by default each native name unscoped, which is
+    what Mars gives wherever the permission spelling names its own tool.
+    """
 
     return ToolRule(
-        capability=capability, pattern=pattern, action=action, native=native, native_status=status
+        capability=capability,
+        pattern=pattern,
+        action=action,
+        native=native,
+        native_tools=(
+            tools if tools is not None else tuple(dict.fromkeys(split_native(n)[0] for n in native))
+        ),
+        native_status=status,
     )
 
 

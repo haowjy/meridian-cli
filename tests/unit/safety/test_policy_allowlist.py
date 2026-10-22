@@ -22,12 +22,12 @@ _SESSION_MINER = (
     ("rules", "whole_policy", "denied", "allowed"),
     [
         # Scoped allows with no unscoped `bash` rule: only those commands may run, so the
-        # policy writes the unscoped deny that means, naming the scoped tools' base.
-        (_SESSION_MINER, False, (("bash", ("Bash",)),), (_RG, _SESSION)),
+        # policy writes the unscoped deny that means, naming the scoped rules' tools.
+        (_SESSION_MINER, False, (("bash", ("Bash",)),), ("Bash",)),
         # An unscoped rule for the capability decides every call, so nothing is implied.
-        ((*_SESSION_MINER, tool_rule("bash", "ask", "Bash")), False, (), (_RG, _SESSION, "Bash")),
+        ((*_SESSION_MINER, tool_rule("bash", "ask", "Bash")), False, (), ("Bash",)),
         # A `*` rule decides every unmatched call; `*: deny` makes the whole policy an allowlist.
-        ((*_SESSION_MINER, tool_rule("*", "allow")), False, (), (_RG, _SESSION)),
+        ((*_SESSION_MINER, tool_rule("*", "allow")), False, (), ("Bash",)),
         (
             (
                 tool_rule("*", "deny"),
@@ -56,4 +56,4 @@ def test_allowlist_queries(
     assert all(rule.pattern is None for rule in written)
     assert policy.is_allowlist is whole_policy
     assert tuple((rule.capability, rule.native) for rule in written) == denied
-    assert policy.allowed_natives == allowed
+    assert policy.allowed_tools == allowed

@@ -328,12 +328,16 @@ def _compile_channels(
     passthrough: _Passthrough,
 ) -> _Channels:
     completion = _completion_tools(policy)
-    profile_scoped_bases = {
-        base
+    # A plain rule shadows a scoped allow when Claude checks it for the calls the allow lets
+    # through: it names a tool the allow concerns, or the permission the allow is spelled
+    # with. A scoped write allow is Edit(src/*), so both a plain Write and a plain Edit do.
+    profile_scoped = {
+        name
         for entry in effective
         if entry.action == "allow" and entry.rule.native_status == "known"
         for base, scope in map(split_native, entry.rule.native)
         if scope is not None
+        for name in (base, *entry.rule.tools)
     }
 
     allow: list[str] = []
@@ -357,7 +361,7 @@ def _compile_channels(
     gates: dict[tuple[str | None, str], _Gate] = {
         (entry.rule.capability, native): _Gate(entry.rule.capability, native, entry.action)
         for entry, native in plain
-        if native in profile_scoped_bases and entry.rule.origin != PLATFORM_ORIGIN
+        if native in profile_scoped and entry.rule.origin != PLATFORM_ORIGIN
     }
     # The completion allows alone never change the profile's mode: they gate a plain rule
     # only where the mode already makes unmatched calls ask. Elsewhere the plain rule
@@ -412,12 +416,8 @@ def _compile_channels(
 def _available_tools(policy: PermissionPolicy) -> tuple[str, ...]:
     if not policy.is_allowlist:
         return ()
-    return tuple(
-        dedupe_nonempty(
-            split_native(native)[0]
-            for native in (*policy.allowed_natives, *_completion_tools(policy))
-        )
-    )
+    completion = (split_native(native)[0] for native in _completion_tools(policy))
+    return tuple(dedupe_nonempty((*policy.allowed_tools, *completion)))
 
 
 def _compile_sandbox(
@@ -618,18 +618,19 @@ def _tool_rule_line(
         if blocker is not None:
             notes.append(f"Claude checks {blocker} first, so {native} never applies")
             partial = True
-        elif (
-            entry.action == "allow"
-            and permissions.restrict_tools
-            and split_native(native)[0] not in permissions.available_tools
-        ):
-            notes.append(f"{split_native(native)[0]} is not in --tools")
-            partial = True
         if entry.action == "ask" and permissions.permission_mode == "dontAsk" and interactive:
             notes.append("dontAsk refuses it instead of asking the human")
             partial = True
     if rule.capability is None:
         notes.append("emitted as an older build wrote it")
+        partial = True
+    elif rule.native_tools is None and entry.action != "deny" and rule.is_scoped:
+        # Claude scopes some tools through another's permission (Write through Edit(path)),
+        # so the fallback can name the wrong tool for --tools and gating.
+        notes.append(
+            f"the launch snapshot predates per-rule tool names, so {','.join(rule.tools)} "
+            "is read from the permission name"
+        )
         partial = True
     note = "; ".join(part for part in (_render_placed(placed), *notes) if part)
     return ReportLine(element, "partial" if partial else "native", note)
@@ -653,8 +654,7 @@ def _completion_line(
         ]
         return ReportLine(platform_element(platform), "partial", "; ".join(problems))
     note = "--settings permissions.allow " + ",".join(emitted)
-    profile_bases = {split_native(native)[0] for native in policy.allowed_natives}
-    if permissions.restrict_tools and "Bash" not in profile_bases:
+    if permissions.restrict_tools and "Bash" not in policy.allowed_tools:
         return ReportLine(
             platform_element(platform),
             "partial",

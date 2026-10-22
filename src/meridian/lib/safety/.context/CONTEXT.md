@@ -60,28 +60,43 @@ and returns `(native value, EnforcementReport)`; User-facing behavior is in
 `docs/agent-profiles.md#permissions-by-harness`.
 
 **`ToolRule`** (`lib/tools.py`) is Mars's rule from the launch bundle's `tools.rules[]`:
-`capability` + `pattern` carry meaning, `native` carries emission, and neither is derived
-from the other. `native_status` is `known`, `absent` (the harness has no such tool) or
-`unknown` (Mars has no name: a gap). A compile emits `native` as given and reads
+`capability` + `pattern` carry meaning, and Mars gives two native facts that nothing derives
+from each other or from the capability. `native` is the permission-rule spelling, already
+scoped; a compile emits it as given. `native_tools` (read through `ToolRule.tools`) is the
+unscoped harness tools the rule concerns; every question of which tools a rule leaves
+callable or removes reads it: Claude and Pi `--tools`, Pi `--exclude-tools`, Claude's
+gating, `PermissionPolicy.allowed_tools` and the allowlist deny below. The two differ where
+a harness scopes a tool through another's permission: Claude checks paths only through
+`Edit(path)` and `Read(path)`, so `write(src/*)` is `Edit(src/*)` but concerns `Write`, and
+`grep(src/*)` is `Read(src/*)` but concerns `Grep`. `native_status` is `known`, `absent`
+(the harness has no such tool) or `unknown` (Mars has no name: a gap). A compile reads
 `capability` only for mechanism it owns, such as Codex's switches and platform-rule
 overrides. Meridian keeps no tool-name table. A scoped native is spelled `tool(scope)`;
-`split_native` is its one reader, so compiles never parse it themselves. A bundle without `tools.rules`
-fails with "install Mars >= 0.17.0"; the flat `allowed`/`disallowed` lists are not read.
+`split_native` is its one reader, so compiles never parse it themselves. A bundle without
+`tools.rules`, or whose rules lack `native_tools`, fails with "install Mars >= 0.17.0"; the
+flat `allowed`/`disallowed` lists are not read. `tools.capability_natives` (the platform
+denies) carries no `native_tools`: those names are unscoped, so the reader gives them as
+the tools too.
 
 **Legacy snapshots.** A launch snapshot an older build wrote holds `tools` (native key ->
 action). `legacy_tool_rules` reads it as native-only rules (`capability=None`, origin
 `legacy-snapshot`; the `*` key stays the `*` rule). A harness that can emit natives
 (Claude, OpenCode) does; Codex's capability-keyed switches cannot interpret them. Report
-lines for these rules carry `[legacy snapshot]`.
+lines for these rules carry `[legacy snapshot]`. Rules from such a snapshot, and
+`tool_rules` persisted before Mars gave `native_tools`, have `native_tools=None`;
+`ToolRule.tools` then reads each native name unscoped. That is right wherever the spelling
+names its own tool and wrong for Claude's category spellings (`Edit(src/*)` for a scoped
+write), so Claude reports a scoped allow or ask read that way as `partial`.
 
 **Allowlists.** Two kinds. `is_allowlist` is the whole-policy kind: a `*: deny` rule, which
-Mars adds for list-form `tools: [a, b]` and a map may write; `allowed_natives` names every
-tool a rule leaves callable. The per-capability kind is a capability whose rules are scoped
+Mars adds for list-form `tools: [a, b]` and a map may write; `allowed_tools` names every
+tool a rule leaves callable (from `native_tools`, unscoped). The per-capability kind is a capability whose rules are scoped
 allows and nothing unscoped: only those scopes may run, whatever `approval` says. A `*` rule
 decides every unmatched call itself, so it ends that kind, as an unscoped rule for the
 capability does. `build_permission_policy` writes each such allowlist into `rules` as the
-unscoped deny it means (origin `allowlist`, natives the bases of the capability's scoped
-natives, report element `tools: <capability> allowlist ...`), placed before Mars's rules.
+unscoped deny it means (origin `allowlist`; its natives and tools are the `native_tools`
+of the capability's scoped rules, since an unscoped rule's spelling is its tool; report
+element `tools: <capability> allowlist ...`), placed before Mars's rules.
 Mars resolved overlap among the rules it wrote (for natives two unscoped rules share, the
 capability whose natives are a strict subset wins when the actions differ) but never saw
 this deny, so `build_permission_policy` resolves it the same way against the other unscoped

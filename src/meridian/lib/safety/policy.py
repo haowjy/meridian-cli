@@ -18,7 +18,6 @@ from meridian.lib.tools import (
     LEGACY_SNAPSHOT_ORIGIN,
     PLATFORM_ORIGIN,
     ToolRule,
-    split_native,
     unscoped_action,
 )
 
@@ -100,17 +99,17 @@ class PermissionPolicy(BaseModel):
         return unscoped_action(self.rules, "*") == "deny"
 
     @property
-    def allowed_natives(self) -> tuple[str, ...]:
-        """The harness's names for every rule that leaves a tool callable (``allow``, ``ask``).
+    def allowed_tools(self) -> tuple[str, ...]:
+        """The harness tools some rule leaves callable (``allow``, ``ask``), unscoped.
 
-        Policy order, deduplicated, exactly as Mars named them (scoped rules arrive scoped).
-        Under ``is_allowlist`` these are the tools that remain; ``ask`` stays on the list
-        because the harness, not the rule, decides that call.
+        Policy order, deduplicated, from each rule's ``tools``. Under ``is_allowlist`` these
+        are the tools that remain; ``ask`` stays on the list because the harness, not the
+        rule, decides that call.
         """
 
         return tuple(
             dict.fromkeys(
-                name for rule in self.rules if rule.action != "deny" for name in rule.native
+                tool for rule in self.rules if rule.action != "deny" for tool in rule.tools
             )
         )
 
@@ -251,8 +250,9 @@ def _allowlist_denies(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
 
     A capability with scoped allows and no unscoped rule refuses every call they don't
     match. A ``*`` rule decides those calls itself, so it ends every such allowlist. The
-    deny names the tools the scoped rules name, unscoped; a capability Mars could not name
-    keeps its rules' status, so the report states the same gap.
+    deny names the tools the capability's scoped rules concern (their ``tools``): for an
+    unscoped rule the permission spelling and the tool are the same name. A capability Mars
+    could not name keeps its rules' status, so the report states the same gap.
     """
 
     if unscoped_action(rules, "*") is not None:
@@ -269,9 +269,8 @@ def _allowlist_denies(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
             dict.fromkeys(
                 tool
                 for rule in rules
-                if rule.capability == capability
-                for tool, scope in map(split_native, rule.native)
-                if scope is not None
+                if rule.capability == capability and rule.pattern is not None
+                for tool in rule.tools
             )
         )
         denies.append(
@@ -279,6 +278,7 @@ def _allowlist_denies(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
                 capability=capability,
                 action="deny",
                 native=natives,
+                native_tools=natives,
                 native_status="known" if natives else allow.native_status,
                 origin=ALLOWLIST_ORIGIN,
             )
@@ -305,6 +305,7 @@ def _resolve_allowlist_overlap(
     every rule it wrote, but it never saw these denies: without it, ``edit: allow`` beside
     ``write(src/*): allow`` keeps naming ``Write`` unscoped, and every write runs. Mars's own
     rules are not re-resolved against each other. Equal sets stay in conflict, as in Mars.
+    Every participant is unscoped, so its natives are its tools and a narrowing drops both.
     """
 
     participants = [rule for rule in (*denies, *rules) if _resolves_by_specificity(rule)]
@@ -325,7 +326,9 @@ def _resolve_allowlist_overlap(
                 for other in against
             )
         )
-        return rule if kept == broad else rule.model_copy(update={"native": kept})
+        if kept == broad:
+            return rule
+        return rule.model_copy(update={"native": kept, "native_tools": kept})
 
     return (
         tuple(narrowed(deny, participants) for deny in denies),

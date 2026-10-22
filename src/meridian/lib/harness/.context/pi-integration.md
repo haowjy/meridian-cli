@@ -17,8 +17,8 @@ Meridian loads five TypeScript extensions inside Pi:
 Both primary and spawned launches load managed-bash and spawn-watch when their
 `[harness.pi]` toggles are enabled. Session-boundary is always loaded, with no
 config toggle. Primary keeps the native TUI and does not auto-stop on quiescence.
-Permission projection uses Pi's `--tools` / `--exclude-tools` for plain native
-names. When flags are not enough, both launch projectors add meridian-permissions
+Permission projection uses Pi's `--tools` / `--exclude-tools` for the tools
+(`native_tools`) plain rules name. When flags are not enough, both launch projectors add meridian-permissions
 and `PiAdapter.project_launch_env()` passes its typed policy in
 `_MERIDIAN_PI_PERMISSION_POLICY`; ambient values are stripped between launches and
 the variable is omitted when no extension policy exists. A present invalid policy
