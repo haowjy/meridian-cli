@@ -265,6 +265,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "_MERIDIAN_PI_BACKGROUND_TASKS_ENABLED", "Resolved Pi background-task bundle toggle."
     ),
     _internal_handle("_MERIDIAN_PI_SPAWN_WATCH_ENABLED", "Resolved Pi spawn-watch bundle toggle."),
+    _internal_handle(
+        "_MERIDIAN_PI_PERMISSION_POLICY",
+        "Launch-local Pi permission-extension policy.",
+        child=False,
+    ),
 )
 
 ENV_FAMILIES: tuple[EnvFamily, ...] = (

@@ -8,6 +8,8 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
+from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
+from meridian.lib.state.permission_journal import PermissionDenial
 
 
 def _output_store(spawn_id: SpawnId, lines: list[dict[str, object]]) -> AttemptFacts:
@@ -140,6 +142,31 @@ def test_pi_usage_malformed_cost_is_unknown(cost: object) -> None:
     )
     assert fold.facts.usage is not None
     assert fold.facts.usage.total_cost_usd is None
+
+
+def test_pi_permission_extension_output_contract_reaches_attempt_facts() -> None:
+    fold = PI_EXTRACTOR.create_fold()
+    _fold(
+        fold,
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "call-1",
+            "toolName": "bash",
+            "isError": True,
+            "result": {
+                "content": [{"type": "text", "text": HEADLESS_REJECT_REASON}],
+            },
+        },
+    )
+
+    assert fold.facts.permission_denials == [
+        PermissionDenial(
+            request_id="call-1",
+            tool="bash",
+            detail="bash",
+            reason=HEADLESS_REJECT_REASON,
+        )
+    ]
 
 
 def _fold(fold, payload):

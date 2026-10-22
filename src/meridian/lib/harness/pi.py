@@ -56,7 +56,10 @@ from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
 )
-from meridian.lib.harness.projections.permissions_pi import compile_pi_permissions
+from meridian.lib.harness.projections.permissions_pi import (
+    PI_PERMISSION_POLICY_ENV,
+    compile_pi_permissions,
+)
 from meridian.lib.harness.projections.pi_extension_projection import (
     PiExtensionLaunchProfile,
     default_extra_extension_path,
@@ -437,6 +440,20 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if run.interactive:
             defaults["PI_CACHE_RETENTION"] = "long"
         return defaults
+
+    def project_launch_env(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        system_prompt_path: Path,
+        env: Mapping[str, str],
+    ) -> dict[str, str]:
+        """Pass the bound policy directly to Pi's launch-local extension."""
+
+        _ = system_prompt_path, env
+        permissions, _ = compile_pi_permissions(spec)
+        policy = permissions.extension_policy
+        return {PI_PERMISSION_POLICY_ENV: policy.model_dump_json() if policy is not None else ""}
 
     def resolve_session_file(
         self,

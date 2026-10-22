@@ -1,8 +1,9 @@
 # Meridian Pi extensions
 
 Meridian-owned TypeScript extensions run inside the separately installed Pi
-runtime. The three coordination bundles load in both spawned RPC and primary
-native TUI sessions; `meridian-idle` loads only for interactive primaries.
+runtime. Coordination bundles load according to the launch profile;
+`meridian-idle` loads only for interactive primaries and `meridian-permissions`
+only when the bound policy needs its handler.
 Meridian does not bundle or control Pi itself.
 
 | Bundle | Responsibility |
@@ -11,10 +12,13 @@ Meridian does not bundle or control Pi itself.
 | `meridian-spawn-watch` | Canonical child-spawn observation, result notifications, `/spawn*` |
 | `session-boundary` | Bounded launch-correlated native entry/exit observations |
 | `meridian-idle` | Primary TUI idle sensing and push/warn notification timers |
+| `meridian-permissions` | Scoped tool rules, allowlist backstops, and interactive/headless `ask` |
 
 Both launch roles load managed-bash and spawn-watch when enabled in `[harness.pi]`.
 Session-boundary is always loaded. Meridian-idle loads only for interactive primary
-launches. Both roles retain native skill, context-file, and prompt-template discovery.
+launches. Meridian-permissions receives a typed launch-local policy in an internal
+environment variable and loads only when flags alone are insufficient. Both roles
+retain native skill, context-file, and prompt-template discovery.
 Spawned RPC suppresses ambient extensions unless `load_all_pi_extensions = true`.
 See the [integration contract](../lib/harness/.context/pi-integration.md).
 
@@ -35,7 +39,7 @@ pnpm run verify:extensions:loop     # repeat locally
 ```
 
 `pnpm run build:extensions` builds without running tests. It writes stable bundles
-under `dist/extensions/<name>/index.js` for all four extensions. Change source,
+under `dist/extensions/<name>/index.js` for all five extensions. Change source,
 never generated output. Projection prefers the package's built bundles, then the
 stable install root `~/.meridian/pi/extensions/`; missing artifacts fail launch.
 
