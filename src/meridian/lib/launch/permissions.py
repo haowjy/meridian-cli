@@ -6,14 +6,9 @@ from meridian.lib.safety.policy import PlatformRule
 from meridian.lib.tools import (
     PLATFORM_ORIGIN,
     ToolRule,
-    capability_action,
     legacy_platform_tool_rules,
     unscoped_action,
 )
-
-# Capabilities whose native tools let an agent delegate outside Meridian's tracking.
-# Sorted: the order is the order a harness's compile emits them in.
-_NATIVE_SUBAGENT_CAPABILITIES: tuple[str, ...] = ("agent", "task")
 
 # What a child runs inside itself to answer Meridian's completion confirmation (the inherited
 # spawn id targets it). Without them a child cannot reject a premature completion; it closes
@@ -30,25 +25,24 @@ def _native_subagent_capabilities(
 ) -> tuple[str, ...]:
     """Return the delegation capabilities the platform denies for this launch.
 
-    ``agent`` is denied everywhere and spawns also deny ``task``, unless native agent copies
-    are the project's delegation mechanism, the profile's own rules allow or ask for the
-    capability, or a rule naming it already denies it. A ``*: deny`` does not stand in for
-    that rule: a platform deny is a rule of its own, so it holds under an allowlist too.
-    ``profile_tool_rules`` are the profile-declared rules: only a profile can opt out, never
-    a request-level rule.
+    ``agent`` is denied on every launch unless native agent copies are the project's
+    delegation mechanism; no profile rule opts out of it. Spawns also deny ``task`` unless the
+    profile has an explicit unscoped ``task: allow`` or ``ask`` (``*: allow`` does not count:
+    it says nothing about delegation), or an unscoped rule already denies it. A ``*: deny``
+    does not stand in for that rule: a platform deny is a rule of its own, so it holds under
+    an allowlist too. ``profile_tool_rules`` are the profile-declared rules: only a profile
+    can opt out, never a request-level rule.
     """
 
     capabilities: list[str] = []
-    for capability in _NATIVE_SUBAGENT_CAPABILITIES:
-        if capability == "task" and not spawn:
-            continue
-        if capability == "agent" and native_agent_copy:
-            continue
-        if capability_action(profile_tool_rules, capability) in {"allow", "ask"}:
-            continue
-        if unscoped_action(tool_rules, capability) == "deny":
-            continue
-        capabilities.append(capability)
+    if not native_agent_copy:
+        capabilities.append("agent")
+    if (
+        spawn
+        and unscoped_action(profile_tool_rules, "task") not in {"allow", "ask"}
+        and unscoped_action(tool_rules, "task") != "deny"
+    ):
+        capabilities.append("task")
     return tuple(capabilities)
 
 

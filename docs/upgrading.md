@@ -47,7 +47,8 @@ report these allowlists but do not enforce them.
   `approval: never`. Claude also applies profile sandbox modes, although its sandbox confines
   Bash subprocesses rather than Edit/Write. Review profiles that relied on unmatched calls
   running, and set `[harness.claude] allow_builtin_agents = false` if they must remain disabled;
-  `true` now takes effect.
+  `true` now takes effect. A spawn whose profile sets `'*': allow` now has the task-list tools
+  (`TaskCreate`…`TodoWrite`) denied too; only an explicit `task: allow` (or `ask`) keeps them.
 - **OpenCode:** profile `tools` now bind the selected `meridian-<profile>` config agent in
   primary sessions as well as spawns, on V1 and V2. Review profiles whose primary was
   intentionally unrestricted. A primary `ask` prompts the human; a spawned `ask` becomes

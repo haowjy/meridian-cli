@@ -83,9 +83,13 @@ resolved sandbox and approval modes. Each harness module compiles it to a typed 
 its projectors spell that value:
 
 Mars names the candidate `agent` and `task` platform denies in
-`tools.capability_natives`. Bind selects them after profile opt-outs and adds them to the
-ordinary rule sequence with `origin="platform"`; compiles must not keep a second native-name
-table. `builtin-agents` and `completion-commands` remain separate platform mechanisms because
+`tools.capability_natives`. Bind selects them (`agent` unless native agent copies are on;
+`task` on spawns unless the profile has an unscoped `task: allow|ask`) and appends them to
+the ordinary rule sequence with `origin="platform"`; compiles must not keep a second
+native-name table. A platform deny overrides the profile's rules for its capability rather
+than taking part in specificity: Claude turns those rules into denies (else its plain deny
+beside a scoped allow would compile as a gated allowlist), and OpenCode emits the deny after
+every profile rule in place of the profile's entries for that action. `builtin-agents` and `completion-commands` remain separate platform mechanisms because
 they are not ordinary tool denies.
 
 | Harness | Compile result | Spelled by |

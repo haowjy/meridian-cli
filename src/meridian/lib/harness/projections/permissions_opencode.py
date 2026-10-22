@@ -3,8 +3,9 @@
 OpenCode resolves the last matching rule. Meridian's policy is order-independent and
 resolves the most specific match, so the compile orders the global default first,
 unscoped tool rules next, and scoped rules from least to most literal specificity.
-Equal matches are ordered ``allow``, ``ask``, ``deny``. Platform denies follow the
-profile, and the spawn-completion exceptions follow those denies.
+Equal matches are ordered ``allow``, ``ask``, ``deny``. Platform denies hold whatever the
+profile says, so they follow every profile rule and replace the profile's rules for the
+same action; the spawn-completion exceptions follow those denies.
 
 The compile also canonicalizes V2 action aliases before resolving collisions. Because
 V2 merges ``write`` and ``patch`` into ``edit``, conflicting rules for those semantic
@@ -195,7 +196,7 @@ def _tool_rule_lines(
     spec: ResolvedLaunchSpec,
     entries_by_rule: list[tuple[ToolRule, tuple[OpenCodePermissionRule, ...]]],
     final_by_key: dict[tuple[str, str], OpenCodePermissionRule],
-    platform_denied_actions: frozenset[str],
+    platform_actions: frozenset[str],
     *,
     version: OpenCodeVersion,
     edit_conflict: ToolAction | None,
@@ -206,8 +207,12 @@ def _tool_rule_lines(
             continue
         rendered = ", ".join(f"{entry.action}({entry.resource})" for entry in entries)
         effective = _effective_action(rule.action, interactive=spec.interactive)
+        # A platform deny replaced this rule's entries for its action: the rule is not emitted
+        # as written, unless it was that same deny.
         if rule.origin != PLATFORM_ORIGIN and any(
-            entry.action in platform_denied_actions for entry in entries
+            entry.action in platform_actions
+            and final_by_key.get((entry.action, entry.resource)) != entry
+            for entry in entries
         ):
             lines.append(
                 ReportLine(rule_element(rule), "platform", "overridden to deny by a platform rule")
@@ -303,21 +308,32 @@ def compile_opencode_permissions(
     default = _default_entry(spec, has_profile_native=has_profile_native)
     if default is not None:
         profile_entries.append(default)
-    profile_entries.extend(entry for _, entries in entries_by_rule for entry in entries)
+    profile_entries.extend(
+        entry
+        for rule, entries in entries_by_rule
+        if rule.origin != PLATFORM_ORIGIN
+        for entry in entries
+    )
     if edit_conflict is not None:
         profile_entries = [entry for entry in profile_entries if entry.action != "edit"]
         profile_entries.append(
             OpenCodePermissionRule(action="edit", resource="*", effect=edit_conflict)
         )
-    ordered = list(_collapse_exact_rules(profile_entries))
-
-    platform_denied_actions = {
-        entry.action
-        for rule, entries in entries_by_rule
-        if rule.origin == PLATFORM_ORIGIN
-        for entry in entries
-        if entry.effect == "deny" and entry.resource == "*"
-    }
+    platform_entries = tuple(
+        dict.fromkeys(
+            entry
+            for rule, entries in entries_by_rule
+            if rule.origin == PLATFORM_ORIGIN
+            for entry in entries
+        )
+    )
+    platform_actions = frozenset(entry.action for entry in platform_entries)
+    ordered = [
+        entry
+        for entry in _collapse_exact_rules(profile_entries)
+        if entry.action not in platform_actions
+    ]
+    ordered.extend(platform_entries)
 
     final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
 
@@ -396,7 +412,7 @@ def compile_opencode_permissions(
             spec,
             entries_by_rule,
             final_by_key,
-            frozenset(platform_denied_actions),
+            platform_actions,
             version=resolved_version,
             edit_conflict=edit_conflict,
         )

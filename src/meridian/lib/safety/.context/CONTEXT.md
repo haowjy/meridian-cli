@@ -86,9 +86,10 @@ So no compile has an allowlist path: each emits that deny as it emits a profile'
 beside scoped allows. The one exception is Codex, whose shell switch would also refuse the
 scoped allows and leave nothing to read files with, so its switches skip the origin. The
 deny exists only on the bound policy; launch snapshots keep Mars's rules and the policy is
-rebuilt at bind. Platform rules do not depend on the allowlist: `launch_platform_rules`
-reads Mars's rules, and skips a platform deny only for an explicit deny of that capability
-(`unscoped_action`), never for `*: deny`.
+rebuilt at bind. Platform rules do not depend on the allowlist: `launch_permission_rules`
+denies `agent` on every launch without native agent copies, whatever the profile says, and
+skips a spawn's `task` deny only for the profile's explicit unscoped `task: allow|ask` or an
+existing unscoped deny of it (`unscoped_action`), never for a `*` rule.
 
 **Completion commands.** `launch_platform_rules` gives every spawn a `completion-commands`
 platform rule: an allow, not a deny, for the shell commands a child runs to answer

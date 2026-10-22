@@ -368,9 +368,18 @@ prompts; that path is unobserved.
 ### Platform rules
 
 Meridian adds launch rules independently of the profile so delegation stays observable:
-native sub-agent/task tools are denied unless the relevant project/profile opt-out applies,
-and Claude/Codex built-in agents are denied unless the corresponding
-`[harness.<id>] allow_builtin_agents = true` setting applies. Every spawn also gets narrow
+
+- Native sub-agent tools (`agent`) are denied on every launch unless the project's Mars
+  config makes native agent copies the delegation mechanism for that harness. No profile
+  rule opts out of this deny.
+- Spawns also deny task-list tools (`task`) unless the profile has an explicit unscoped
+  `task: allow` or `task: ask`. A `'*': allow` does not count.
+- A platform deny overrides the profile's rules for its capability, scoped allows such as
+  `agent(coder): allow` included.
+- Claude/Codex built-in agents are denied unless the corresponding
+  `[harness.<id>] allow_builtin_agents = true` setting applies.
+
+Every spawn also gets narrow
 grants for `meridian spawn done` and
 `meridian spawn rearm`, including their optional spawn-id argument. These grants do not open
 the rest of the shell. The dry-run report marks platform decisions as `platform` and calls

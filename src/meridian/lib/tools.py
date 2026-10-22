@@ -108,11 +108,3 @@ def unscoped_action(rules: Iterable[ToolRule], capability: str) -> ToolAction | 
         if rule.capability == capability and rule.pattern is None:
             action = rule.action
     return action
-
-
-def capability_action(rules: Iterable[ToolRule], capability: str) -> ToolAction | None:
-    """The action for ``capability``: its unscoped rule, else the ``*`` rule's, else ``None``."""
-
-    rules = tuple(rules)
-    exact = unscoped_action(rules, capability)
-    return exact if exact is not None else unscoped_action(rules, "*")

@@ -182,14 +182,31 @@ def _projected_natives(policy: PermissionPolicy, rule: ToolRule) -> tuple[str, .
 
 
 def _effective_rules(policy: PermissionPolicy) -> tuple[_Effective, ...]:
+    """Apply the platform rules that override profile rules.
+
+    A platform deny holds whatever the profile says, scoped allows included, so every profile
+    rule of its capability becomes a deny; otherwise Claude would read the platform's plain
+    deny beside a profile's scoped allow as an allowlist and gate it. The one exception is
+    ``agent`` with built-in agents allowed: generic ``Agent`` cannot be denied without them,
+    so the platform deny leaves it out and the profile's agent rules stand.
+    """
+
     deny_builtins = _platform_rule(policy, "builtin-agents") is not None
+    platform_denied = {
+        rule.capability
+        for rule in policy.rules
+        if rule.origin == PLATFORM_ORIGIN and (rule.capability != "agent" or deny_builtins)
+    }
     effective: list[_Effective] = []
     for rule in policy.rules:
         action = rule.action
-        if (
-            rule.capability == "agent"
-            and rule.pattern in _BUILTIN_AGENT_PATTERNS
-            and deny_builtins
+        if rule.origin != PLATFORM_ORIGIN and (
+            rule.capability in platform_denied
+            or (
+                rule.capability == "agent"
+                and rule.pattern in _BUILTIN_AGENT_PATTERNS
+                and deny_builtins
+            )
         ):
             action = "deny"
         effective.append(_Effective(rule, action))
@@ -335,11 +352,12 @@ def _compile_channels(
             else:
                 plain.append((entry, native))
 
-    # A plain deny or ask beside scoped allows of the same tool would shadow them.
+    # A plain deny or ask beside scoped allows of the same tool would shadow them. A platform
+    # deny is meant to: it holds whatever the profile says, so it is never gated.
     gates: dict[tuple[str | None, str], _Gate] = {
         (entry.rule.capability, native): _Gate(entry.rule.capability, native, entry.action)
         for entry, native in plain
-        if native in profile_scoped_bases
+        if native in profile_scoped_bases and entry.rule.origin != PLATFORM_ORIGIN
     }
     # The completion allows alone never change the profile's mode: they gate a plain rule
     # only where the mode already makes unmatched calls ask. Elsewhere the plain rule
@@ -536,6 +554,7 @@ def _gate_is_exact(gate: _Gate, permissions: ClaudePermissions, *, interactive: 
 
 
 def _tool_rule_line(
+    policy: PermissionPolicy,
     entry: _Effective,
     permissions: ClaudePermissions,
     channels: _Channels,
@@ -574,27 +593,25 @@ def _tool_rule_line(
                 permissions, capability=rule.capability, bases=gated, interactive=interactive
             )
         )
+    projected = _projected_natives(policy, rule)
     for native in rule.native:
         if native in gated:
+            continue
+        if native not in projected:
+            notes.append(
+                f"{native} omitted: generic Agent cannot be denied without also disabling "
+                "allowed built-in agents"
+            )
+            partial = True
             continue
         channel = _channel_of(native, permissions)
         blocker = _shadow(native, permissions) if entry.action == "allow" else None
         if channel is None:
-            if (
-                rule.origin == PLATFORM_ORIGIN
-                and rule.capability == "agent"
-                and split_native(native)[0] == "Agent"
-            ):
-                notes.append(
-                    f"{native} omitted: generic Agent cannot be denied without also disabling "
-                    "allowed built-in agents"
-                )
-            else:
-                notes.append(
-                    f"{native} omitted: Claude checks {blocker} first"
-                    if blocker is not None
-                    else f"{native} omitted"
-                )
+            notes.append(
+                f"{native} omitted: Claude checks {blocker} first"
+                if blocker is not None
+                else f"{native} omitted"
+            )
             partial = True
             continue
         placed.append((channel, native))
@@ -835,7 +852,9 @@ def compile_claude_permissions(
         line
         for entry in effective
         if (
-            line := _tool_rule_line(entry, permissions, channels, interactive=interactive)
+            line := _tool_rule_line(
+                policy, entry, permissions, channels, interactive=interactive
+            )
         )
         is not None
     ]

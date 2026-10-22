@@ -279,16 +279,17 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
 
 The detection runs in `bind_launch_context()` through `agent_copy_enabled(project_root,
 harness_id)` in `lib/catalog/agent_copy.py` (reads `mars.toml` and `mars.local.toml`; any
-harness, not only Claude). The result decides whether `launch_platform_rules()` puts `agent` in the `native-subagents` rule;
-`compile_claude_permissions()` reads that rule and removes generic `Agent` grants from
-passthrough `--allowedTools`. Claude has no spelling that disables generic `Agent` while
+harness, not only Claude). The result decides whether `launch_permission_rules()` adds the
+platform `agent` deny (named by Mars's `tools.capability_natives`); without agent copies it
+always does, and it overrides the profile's agent rules. `compile_claude_permissions()` reads
+that deny and removes generic `Agent` grants from passthrough `--allowedTools`. Claude has no spelling that disables generic `Agent` while
 retaining built-in agents, so with `allow_builtin_agents = true` the compile still denies
 `SendMessage`/`ListAgents` but not `Agent`, and reports that part of the platform rule
 partial instead of silently disabling built-ins.
 
-This is a Meridian platform policy, not a per-agent `tools:` field: bind adds generic
-platform rules (`native-subagents`, `builtin-agents`) to the policy and each harness's
-compile names them natively. Agent profiles do not need to carry `agent: deny` entries —
+This is a Meridian platform policy, not a per-agent `tools:` field: bind adds the
+platform `agent`/`task` denies (origin `platform`) and the `builtin-agents` rule to the
+policy, and each harness's compile emits them. Agent profiles do not need to carry `agent: deny` entries —
 the denial is inherited from the platform rule when agent copy is absent.
 
 ### Claude: System-Prompt File Channel
