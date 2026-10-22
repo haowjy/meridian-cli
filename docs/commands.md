@@ -299,8 +299,10 @@ Fires the `notify.manual` hook event, which the built-in `notify` hook delivers
 through the configured push and email backends unless config routes it
 elsewhere. The title is one line: what the human needs to decide or see. If the
 first argument contains several lines, the first non-empty line becomes the
-title and the remaining lines are prepended to the optional body; the session
-headline (tmux session, agent, work item) always ends it. `--no-email` keeps it
+message at the start of the title and the remaining lines are prepended to the
+optional body. The shared session headline (tmux session, agent, harness, and
+current work item) follows the message in the title and still ends the body.
+`--no-email` keeps it
 off the email backends (`smtp`, `gmail`), however a route names them.
 
 `--attach <path>` (repeatable) sends a file with it: email attaches every file

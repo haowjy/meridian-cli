@@ -44,14 +44,16 @@ def test_a_notification_reaches_command_hooks_and_its_route(
     assert payload["event_name"] == "notify.manual"
     assert payload["spawn"]["id"] == "p7"
     assert payload["notification"] == {
-        "title": "Pick a store",
+        "title": 'Pick a store — coder in project: "demo"',
         "body": 'Tradeoffs in decisions.md\ncoder in project: "demo"',
         "priority": 3,
         "email": True,
         "label": label.to_dict(),
         "attachments": [],
     }
-    assert (tmp_path / "title.txt").read_text(encoding="utf-8") == "Pick a store\n"
+    assert (tmp_path / "title.txt").read_text(encoding="utf-8") == (
+        'Pick a store — coder in project: "demo"\n'
+    )
     # The row replaced the default route and sent only to push (the none backend),
     # never to the smtp email backend.
     assert [(result.route, result.status) for result in report.results] == [

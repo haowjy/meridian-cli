@@ -58,12 +58,12 @@ def test_push_warn_and_missing_message_rendering() -> None:
         warn_email=False,
     )
 
-    assert push.title == '[idle] main: tech-lead on work: "idle-cache-notify"'
+    assert push.title == '[idle] main: tech-lead (codex) on work: "idle-cache-notify"'
     assert push.body == (
         "You: can u first test/install it locally?\n"
         "Assistant: Your installed meridian is exactly the PR's latest code."
     )
-    assert warn.title == '[cache warning] main: tech-lead on work: "idle-cache-notify"'
+    assert warn.title == '[cache warning] main: tech-lead (codex) on work: "idle-cache-notify"'
     assert warn.body.startswith("Cache expiry warning: reply to keep it warm\nYou: ")
     assert (hidden.title, hidden.body, hidden.priority, hidden.email) == (
         '[idle] coder in project: "meridian-cli"',

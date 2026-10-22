@@ -24,7 +24,11 @@ class SessionLabel:
     def headline(self) -> str:
         """Name the terminal, actor, and explicitly labelled work or project."""
 
-        description = self.agent or self.harness or "Meridian"
+        description = (
+            f"{self.agent} ({self.harness})"
+            if self.agent and self.harness
+            else self.agent or self.harness or "Meridian"
+        )
         if self.work_id:
             description += f' on work: "{self.work_id}"'
         elif self.project:
@@ -54,7 +58,7 @@ def manual_notification(
     email: bool = True,
     attachments: Sequence[Path] = (),
 ) -> Notification:
-    """Build a `meridian notify` message; its body always ends with where it came from.
+    """Build a `meridian notify` message with its source visible in the title.
 
     Every attachment must be a readable file now, before any route runs.
     """
@@ -75,10 +79,12 @@ def manual_notification(
     else:
         notification_title = title_lines[title_index].strip()
         title_detail = "\n".join(title_lines[title_index + 1 :]).strip()
+    if not notification_title:
+        raise ValueError("title must not be empty")
 
     lines = [title_detail, body.strip() if body else "", label.headline]
     return Notification(
-        title=notification_title,
+        title=f"{notification_title} — {label.headline}",
         body="\n".join(line for line in lines if line),
         priority=priority,
         email=email,

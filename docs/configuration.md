@@ -218,8 +218,9 @@ once per selected backend; one backend failing does not prevent the other from
 running.
 
 Idle notification titles put the reason first, followed by the tmux session
-when available, the agent (or harness), and an explicitly labelled work item:
-`[idle] a2: pi on work: "idle-cache-notify"`. The only other reason is
+when available, the agent and harness, and an explicitly labelled work item:
+`[idle] a2: tech-lead (claude) on work: "idle-cache-notify"`. With no agent,
+the harness appears alone, as in `a2: pi`. The only other reason is
 `[cache warning]`. Without a work
 item, the title uses `in project: "<project>"`; outside tmux, it omits the terminal
 prefix. Idle and cache-warning titles also show the remaining cache lifetime,
@@ -237,9 +238,11 @@ the body is the generic `Permission prompt waiting` instead.
 
 Excerpts are plain text, whitespace-collapsed, and shortened before storage.
 Because they leave the machine through ntfy or email, set
-`include_messages = false` to omit both. `meridian notify` uses its first
-argument as the title and always ends the body with the session headline, so
-the terminal/agent/work description stays visible.
+`include_messages = false` to omit both. `meridian notify` puts its first
+argument before the same session headline in the title, separated by an em
+dash, so the message and its terminal/agent/harness/current-work source are
+visible in phone previews. The headline also remains the body's final line,
+after any optional detail.
 
 Put SMTP credentials in `smtp_password_file` and set its mode to `0600`.
 Meridian refuses a password file readable by the group or other users. The
