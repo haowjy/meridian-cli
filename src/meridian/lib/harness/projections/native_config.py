@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import cast
 
@@ -77,8 +78,10 @@ def flatten_native_config(config: NativeConfig) -> tuple[NativeConfigLeaf, ...]:
 def _toml_basic_string(value: str) -> str:
     # JSON's double-quoted escaping is also TOML basic-string escaping for the
     # control characters accepted here. Keep Unicode literal so astral characters
-    # do not become JSON surrogate pairs, which TOML rejects.
-    return json.dumps(value, ensure_ascii=False)
+    # do not become JSON surrogate pairs, which TOML rejects. JSON leaves DEL literal;
+    # TOML basic strings forbid it, and Codex would silently reparse the argument as a
+    # plain string.
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
 def _toml_inline_key(value: object) -> str:
@@ -99,7 +102,8 @@ def codex_toml_literal(value: object) -> str | None:
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, int):
-        return str(value)
+        # TOML integers are 64-bit signed; Codex reparses anything larger as a string.
+        return str(value) if -(2**63) <= value < 2**63 else None
     if isinstance(value, float):
         if math.isnan(value):
             return "nan"
@@ -131,7 +135,10 @@ def _codex_key_addressable(segments: tuple[str, ...]) -> bool:
     return all(
         segment
         and not any(character in segment for character in ".='\"")
-        and not any(character.isspace() for character in segment)
+        and not any(
+            character.isspace() or unicodedata.category(character) == "Cc"
+            for character in segment
+        )
         for segment in segments
     )
 

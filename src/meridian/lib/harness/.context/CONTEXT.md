@@ -592,8 +592,8 @@ to set its working directory — system-prompt injection alone is insufficient.
 runs, `spec.model` already contains the effort-resolved model string; `effort` has
 served its purpose and is not passed to the CLI.
 
-MVP scope exclusions (enforced by `_assert_supported_for_mvp()`): per-spawn
-`mcp_tools`, `continue_fork`, `continue_session_id`, and `interactive` all raise
+MVP scope exclusions (enforced by `_assert_supported_for_mvp()`):
+`continue_fork`, `continue_session_id`, and `interactive` all raise
 `HarnessCapabilityMismatch` at projection time.
 
 ### Pi: Quiescence Instead of Process Exit
