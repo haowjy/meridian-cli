@@ -113,7 +113,8 @@ fresh launch nonce and the actual Claude child PID. Its initial key must match
 the planned entry; only final `SessionEnd` reasons can supply an exit key, and
 the exact native transcript must validate before allocation. `clear` and
 `resume` are switches, not final exits. The separate boundary plugin loads for
-primary and spawned launches; the idle plugin remains interactive-only.
+primary and spawned launches; the idle plugin and enabled spawn-watch plugin
+remain interactive-only.
 Claude's trampoline-successor evidence remains diagnostic-only and never
 allocates a verified exit. Missing receipts never fall back to transcript scans.
 

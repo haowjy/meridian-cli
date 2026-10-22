@@ -134,11 +134,12 @@ It is accepted only from `~/.meridian/config.toml` (or `MERIDIAN_CONFIG`) and
 `MERIDIAN_STATE_ADHOC_RETENTION_DAYS` for doctor retention decisions. A value
 in the current project's `meridian.toml` is ignored by the machine-wide scan.
 
-The following Pi extension settings are TOML-only; generic `config set/get/reset`
-does not yet support them:
+The following harness runtime-bundle settings are TOML-only; generic
+`config set/get/reset` does not yet support them:
 
 | Key | Type | Purpose |
 |---|---|---|
+| `harness.claude.spawn_watch.enabled` | bool | Loads `meridian-spawn-watch` for interactive Claude primaries (default `true`) |
 | `harness.pi.load_all_pi_extensions` | bool | Retain ambient extensions in spawned RPC and scan `extra_extension_paths` in both roles (default `false`; primary always retains native discovery) |
 | `harness.pi.extra_extension_paths` | array[str] | Extra extension roots scanned only when `load_all_pi_extensions = true` (default: Pi user extension dir) |
 | `harness.pi.background_tasks.enabled` | bool | Toggles `managed-bash` in primary and spawned sessions (`bash` / `bash_manage`, `/ps*`; default `true`) |
@@ -535,6 +536,9 @@ load_all_pi_extensions = false
 background_tasks.enabled = true
 spawn_watch.enabled = true
 # disable_managed_bash = false  # legacy alias for background_tasks.enabled
+
+[harness.claude.spawn_watch]
+enabled = true
 
 [output]
 show = ["lifecycle", "error"]

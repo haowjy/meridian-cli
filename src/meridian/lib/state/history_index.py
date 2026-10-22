@@ -1374,6 +1374,7 @@ class HistoryIndex:
             "work_id": RECORDS.c.work,
             "status": RECORDS.c.status,
             "spawn_id": RECORDS.c.local_id,
+            "kind": RECORDS.c.kind,
         }
         conditions: list[ColumnElement[bool]] = [RECORDS.c.archive_id.is_(None)]
         if related_chat_ids is not None:

@@ -19,8 +19,8 @@ from meridian.lib.harness.pi_private_state import (
     DeliveryFault,
     DeliveryObservations,
     DeliveryReceipts,
-    SpawnObservations,
 )
+from meridian.lib.state.spawn_observations import SpawnObservations
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 

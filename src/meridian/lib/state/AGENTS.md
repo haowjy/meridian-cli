@@ -40,6 +40,9 @@ bare path
     process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
     report.md · stderr.log · params.json · tokens.json
+  pi-bash/<primary_spawn_id>/observed-spawns.json
+                                    — explicit-wait leases and consumed child IDs;
+                                      shared by Pi and Claude delivery
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
   __status.json                     — mutable per-work-item metadata; readers accept
                                       absent v as v1, writers do not emit v yet
@@ -263,7 +266,8 @@ model lookups rather than scanning observations once per row.
   codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event I/O, lease ownership, and the canonical
   `session_exists()` predicate (a chat record exists; a harness ID is not required).
-- `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars.
+- `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars,
+  and the `VersionedPrivateDoc` base for private coordination files.
 - `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC;
   a version mismatch remains absent behaviorally but warns that another build wrote the file.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
@@ -271,6 +275,8 @@ model lookups rather than scanning observations once per row.
 - `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.
 - `spawn_status.py` — lock-consistent status for every reader and
   `claim_dead_launch()`'s typed writer-side claim.
+- `spawn_observations.py` — locked atomic consumption records and birth-verified
+  explicit-wait leases across primary generations.
 - `reaper.py` — root-only repair that claims dead launches, persists their projected
   outcome through the application service, then cleans claimed process scopes.
 

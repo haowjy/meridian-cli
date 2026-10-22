@@ -23,10 +23,13 @@ with an actionable message listing pending spawn IDs and suggested next commands
 
 **Fail-fast** (`fail_fast=True`): after each poll, if any completed spawn has status `failed` or
 `timed_out` AND spawns are still pending, returns early with `fail_fast=True` and `pending_ids`
-in the output. `cancelled` does not trigger fail-fast. Snapshot consistency: the pending set is
-derived from the same re-read snapshot used to build the result, so a spawn that goes terminal
-during the re-read appears correctly in one category. If everything went terminal mid-snapshot,
-the normal completed output is returned instead of a fail-fast result.
+in the output. `cancelled` does not trigger fail-fast. Snapshot consistency: each poll pass keeps
+the latest row of every waited spawn, and every exit builds its result and pending set from that
+one pass, so each spawn appears in exactly one category.
+
+With `observe` (the default), the wait leases its pending IDs in `observed-spawns.json` while it
+polls. Every exit, including errors and the hard timeout, makes one write in `finally` that
+releases the lease and records the terminal spawns it returned as consumed.
 
 The yield interval is resolved from `_MERIDIAN_HARNESS` env var (parent harness's prompt-cache TTL
 awareness) unless `yield_after_secs` is explicitly passed.
@@ -38,6 +41,32 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
 - **When called from a nested spawn**, scopes to descendants only — not siblings, ancestors, or the
   primary session. This prevents a nested spawn's `wait` from blocking on the entire chat tree.
 - If `MERIDIAN_CHAT_ID` is absent, raises `ValueError` (not in a session)
+
+## Idle Spawn Delivery Contract
+
+`owed.py` owns the hidden Claude runtime protocol:
+
+- `spawn collect --exclude p1,p2` returns exactly one JSON object with
+  `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. It never
+  consumes. Index discovery is parent-scoped; polling re-reads only still-owed
+  authority rows with derived status.
+- Owed membership is background direct children of all primary generations for
+  `MERIDIAN_CHAT_ID`, minus consumption read across those same generations and
+  minus `--exclude`. Birth-verified explicit-wait leases skip a child without
+  letting the collector exit early.
+- An initially ready result returns the ready terminal subset. Otherwise the fixed
+  owed set settles together. A final consumption/lease check precedes return.
+- A delivery admits at most 32 results and 64 KiB of valid UTF-8 (`owed.py` applies
+  both limits). `models.render_delivery()` reserves each identity/outcome and
+  `meridian spawn show <id>` lookup before sharing the remaining bytes among report
+  bodies, following Pi's `pi_runtime/.context/delivery-contract.md`.
+- `spawn ack <ids...>` writes those IDs under the caller's current primary and
+  returns exactly `{acked: [...]}`. Reading across the chat is what makes an ack
+  written after resume consume a child of an earlier primary.
+
+Both commands use `observed-spawns.json`, the same state as explicit `spawn wait`.
+The collector retries index contention and malformed owned authority internally,
+and exits cleanly when its parent PID changes.
 
 ## Cancel-All Identity Model
 

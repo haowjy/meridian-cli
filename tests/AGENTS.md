@@ -49,6 +49,8 @@ Runtime adapter changes also have local package gates:
 cd src/meridian/pi_runtime && pnpm run verify:extensions
 claude plugin validate src/meridian/claude_runtime/meridian-idle
 claude plugin test src/meridian/claude_runtime/meridian-idle
+claude plugin validate src/meridian/claude_runtime/meridian-spawn-watch
+claude plugin test src/meridian/claude_runtime/meridian-spawn-watch
 ```
 
 The Claude commands are required for every change under

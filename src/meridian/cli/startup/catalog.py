@@ -291,6 +291,16 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Wait for spawns.",
         default_output_mode="text",
     ),
+    _read_runtime(
+        ("spawn", "collect"),
+        "Collect unconsumed background spawn results.",
+        default_output_mode="json",
+    ),
+    _read_runtime(
+        ("spawn", "ack"),
+        "Acknowledge delivered background spawn results.",
+        default_output_mode="json",
+    ),
     _write_runtime(
         ("spawn", "cancel"),
         "Cancel a spawn.",

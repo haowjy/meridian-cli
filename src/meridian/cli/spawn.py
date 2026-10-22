@@ -65,6 +65,12 @@ from meridian.lib.ops.spawn.api import (
     spawn_wait_sync,
 )
 from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
+from meridian.lib.ops.spawn.owed import (
+    SpawnAckInput,
+    SpawnCollectInput,
+    ack_owed_sync,
+    collect_owed_sync,
+)
 
 logger = structlog.get_logger(__name__)
 _SPAWN_STATUS_VALUES = tuple(ALL_SPAWN_STATUSES)
@@ -1124,6 +1130,36 @@ def _spawn_wait(
         raise SystemExit(1)
 
 
+def _spawn_collect(
+    emit: Emitter,
+    exclude: Annotated[
+        str,
+        Parameter(name="--exclude", show=False),
+    ] = "",
+) -> None:
+    result = collect_owed_sync(
+        SpawnCollectInput(
+            exclude=parse_csv_list(exclude, field_name="exclude"),
+        ),
+        prepared=_prepare_spawn_runtime_read(),
+    )
+    emit(result.to_wire())
+
+
+def _spawn_ack(
+    emit: Emitter,
+    spawn_ids: Annotated[
+        tuple[str, ...],
+        Parameter(name="spawn_id", show=False),
+    ],
+) -> None:
+    result = ack_owed_sync(
+        SpawnAckInput(spawn_ids=spawn_ids),
+        prepared=_prepare_spawn_runtime_read(),
+    )
+    emit(result.to_wire())
+
+
 def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
     if result.spawn_id is None or result.background or result.status == "dry-run":
         return None
@@ -1332,6 +1368,20 @@ def register_spawn_commands(app: App) -> None:
         help="Reject the current candidate and open another completion window.",
     )
     registered.add("spawn.rearm")
+    app.command(
+        partial(_spawn_collect, emit),
+        name="collect",
+        help="Collect unconsumed background spawn results.",
+        show=False,
+    )
+    registered.add("spawn.collect")
+    app.command(
+        partial(_spawn_ack, emit),
+        name="ack",
+        help="Acknowledge delivered background spawn results.",
+        show=False,
+    )
+    registered.add("spawn.ack")
     app.command(
         _spawn_inject,
         name="inject",

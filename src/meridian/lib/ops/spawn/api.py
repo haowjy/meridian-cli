@@ -2,14 +2,11 @@
 
 import asyncio
 import os
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-import psutil
 
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -37,7 +34,6 @@ from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.pi_private_state import SpawnObservations, WaitReservation
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
@@ -58,15 +54,14 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
-from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_observations import record as record_spawn_observation
 from meridian.lib.state.spawn_signals import (
     SpawnSignalKind,
     read_accepted_signals,
@@ -1624,6 +1619,50 @@ def _build_wait_multi_output(
     )
 
 
+def _build_wait_checkpoint_output(
+    details: tuple[SpawnDetailOutput, ...],
+    *,
+    total_runs: int,
+    pending_ids: tuple[str, ...],
+    runtime_root: Path,
+    chat_id: str | None,
+    elapsed_secs: float,
+) -> SpawnWaitMultiOutput:
+    tree_rows = overlay_derived(
+        runtime_root,
+        spawn_store.list_spawns(runtime_root).records,
+    )
+    checkpoint_descendants = {
+        spawn_id: tuple(
+            row.id
+            for row in collect_descendants(spawn_id, tree_rows)
+            if row.id != spawn_id and is_active_spawn_status(row.status)
+        )
+        for spawn_id in pending_ids
+    }
+    return SpawnWaitMultiOutput(
+        spawns=details,
+        total_runs=total_runs,
+        succeeded_runs=sum(1 for detail in details if detail.status == "succeeded"),
+        failed_runs=sum(1 for detail in details if detail.status == "failed"),
+        cancelled_runs=sum(1 for detail in details if detail.status == "cancelled"),
+        timed_out_runs=sum(1 for detail in details if detail.status == "timed_out"),
+        any_failed=any(
+            detail.status in FAILURE_SPAWN_STATUSES or detail.status == "cancelled"
+            for detail in details
+        ),
+        checkpoint=True,
+        checkpoint_pending_ids=pending_ids,
+        checkpoint_descendants={
+            spawn_id: descendants
+            for spawn_id, descendants in checkpoint_descendants.items()
+            if descendants
+        },
+        checkpoint_chat_id=chat_id,
+        checkpoint_elapsed_secs=elapsed_secs,
+    )
+
+
 def _resolve_wait_progress_mode(*, verbose: bool, quiet: bool, config_verbosity: str | None) -> str:
     if quiet:
         return "quiet"
@@ -1666,73 +1705,6 @@ def _resolve_wait_checkpoint_seconds(
     return float(config.wait_yield_seconds_for_harness(parent_harness))
 
 
-def _update_pi_wait_observation(
-    *,
-    runtime_root: Path,
-    parent_spawn_id: str | None,
-    waiting_add: tuple[str, ...] = (),
-    waiting_remove: tuple[str, ...] = (),
-    observed_add: tuple[str, ...] = (),
-    lease_seconds: float = 30.0,
-) -> None:
-    """Record spawn IDs the parent session is explicitly waiting for or saw.
-
-    The Pi spawn watcher uses this as a suppression marker for implicit
-    completion notifications. ``state.json`` remains authority for spawn state;
-    this file is UI policy state under the parent Pi session's coordination dir.
-    """
-
-    if not parent_spawn_id or not (waiting_add or waiting_remove or observed_add):
-        return
-
-    observed_path = runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.json"
-    lock_path = runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.lock"
-    with lock_file(lock_path):
-        try:
-            existing = SpawnObservations.model_validate_json(
-                observed_path.read_text(encoding="utf-8")
-            )
-        except FileNotFoundError:
-            existing = SpawnObservations(v=1, spawn_id=parent_spawn_id, observed_spawn_ids=[])
-        if existing.spawn_id != parent_spawn_id:
-            raise ValueError("Pi spawn observation parent mismatch")
-        observed_ids = set(existing.observed_spawn_ids)
-        now = time.time()
-        reservations = {
-            token: lease
-            for token, lease in existing.wait_reservations.items()
-            if lease.expires_at_epoch > now
-        }
-        token = f"{os.getpid()}:{threading.get_ident()}"
-        own_lease = reservations.get(token)
-        own_ids = set(own_lease.spawn_ids if own_lease else ())
-        own_ids.update(waiting_add)
-        own_ids.difference_update(waiting_remove)
-        if own_ids:
-            reservations[token] = WaitReservation(
-                owner_pid=os.getpid(),
-                owner_birth_epoch=psutil.Process().create_time(),
-                expires_at_epoch=now + lease_seconds,
-                spawn_ids=sorted(own_ids),
-            )
-        else:
-            reservations.pop(token, None)
-        waiting_ids = {item for lease in reservations.values() for item in lease.spawn_ids}
-        observed_ids.update(observed_add)
-        atomic_write_text(
-            observed_path,
-            SpawnObservations(
-                v=1,
-                spawn_id=parent_spawn_id,
-                updated_at_ms=time.time() * 1000,
-                observed_spawn_ids=sorted(observed_ids),
-                waiting_spawn_ids=sorted(waiting_ids),
-                wait_reservations=reservations,
-            ).model_dump_json(indent=2)
-            + "\n",
-        )
-
-
 def spawn_wait_sync(
     payload: SpawnWaitInput,
     ctx: RuntimeContext | None = None,
@@ -1772,8 +1744,6 @@ def spawn_wait_sync(
     use_checkpoint = not payload.timeout_explicit
     wait_seconds = checkpoint_seconds if use_checkpoint else timeout_seconds
     wait_deadline = started + max(wait_seconds, 0.0)
-    checkpoint_deadline = wait_deadline if use_checkpoint else None
-    hard_deadline = None if use_checkpoint else wait_deadline
     targets = _resolve_wait_targets(
         payload,
         runtime_root,
@@ -1831,7 +1801,7 @@ def spawn_wait_sync(
     if poll <= 0:
         poll = _WAIT_POLL_INTERVAL_SECS
 
-    completed_rows: dict[str, SpawnRecord] = {}
+    rows: dict[str, SpawnRecord] = {}
     pending: set[str] = set(spawn_ids)
     progress_mode = _resolve_wait_progress_mode(
         verbose=payload.verbose,
@@ -1844,19 +1814,21 @@ def spawn_wait_sync(
     parent_wait_observer_id = (
         str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
     )
-    _update_pi_wait_observation(
+    lease_seconds = max(30.0, poll * 2 + 5)
+    record_spawn_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_wait_observer_id,
         waiting_add=spawn_ids,
-        lease_seconds=max(30.0, poll * 2 + 5),
+        lease_seconds=lease_seconds,
     )
+    details: tuple[SpawnDetailOutput, ...] = ()
     try:
         while True:
-            _update_pi_wait_observation(
+            record_spawn_observation(
                 runtime_root=runtime_root,
                 parent_spawn_id=parent_wait_observer_id,
                 waiting_add=tuple(pending),
-                lease_seconds=max(30.0, poll * 2 + 5),
+                lease_seconds=lease_seconds,
             )
             for spawn_id in tuple(pending):
                 row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
@@ -1866,175 +1838,63 @@ def spawn_wait_sync(
                     # No-arg discovery is chat-scoped: if a discovered spawn vanishes while
                     # waiting, treat it as resolved instead of failing unrelated waits.
                     pending.discard(spawn_id)
+                    rows.pop(spawn_id, None)
                     continue
-
+                rows[spawn_id] = row
                 if _spawn_is_terminal(row.status):
-                    completed_rows[spawn_id] = row
                     pending.remove(spawn_id)
 
-            failed_rows = tuple(
-                row for row in completed_rows.values() if row.status in FAILURE_SPAWN_STATUSES
-            )
-            if payload.fail_fast and failed_rows and pending:
-                snapshot_rows = dict(completed_rows)
-                for spawn_id in tuple(pending):
-                    row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-                    if row is None:
-                        if has_explicit_ids:
-                            raise ValueError(f"Spawn '{spawn_id}' not found")
-                        continue
-                    snapshot_rows[spawn_id] = row
-                details = tuple(
-                    detail_from_row(
-                        project_root=project_root,
-                        row=snapshot_rows[spawn_id],
-                        include_report_body=payload.include_report_body,
-                        runtime_root=runtime_root,
-                    )
-                    for spawn_id in spawn_ids
-                    if spawn_id in snapshot_rows
-                )
-                pending_ids = tuple(
-                    sorted(
-                        detail.spawn_id
-                        for detail in details
-                        if not _spawn_is_terminal(detail.status)
-                    )
-                )
-                _update_pi_wait_observation(
-                    runtime_root=runtime_root,
-                    parent_spawn_id=parent_wait_observer_id,
-                    waiting_remove=spawn_ids,
-                    observed_add=tuple(
-                        detail.spawn_id for detail in details if _spawn_is_terminal(detail.status)
-                    ),
-                )
-                if not pending_ids:
-                    return _build_wait_multi_output(details)
-                return _build_wait_multi_output(
-                    details,
-                    fail_fast=True,
-                    pending_ids=pending_ids,
-                )
-
-            if not pending:
-                details = tuple(
-                    detail_from_row(
-                        project_root=project_root,
-                        row=completed_rows[spawn_id],
-                        include_report_body=payload.include_report_body,
-                        runtime_root=runtime_root,
-                    )
-                    for spawn_id in spawn_ids
-                    if spawn_id in completed_rows
-                )
-                _update_pi_wait_observation(
-                    runtime_root=runtime_root,
-                    parent_spawn_id=parent_wait_observer_id,
-                    waiting_remove=spawn_ids,
-                    observed_add=tuple(detail.spawn_id for detail in details),
-                )
-                return _build_wait_multi_output(details)
-
             now = time.monotonic()
-            if checkpoint_deadline is not None and now >= checkpoint_deadline:
-                checkpoint_rows: list[SpawnRecord] = []
-                for spawn_id in spawn_ids:
-                    if spawn_id in completed_rows:
-                        checkpoint_rows.append(completed_rows[spawn_id])
-                        continue
-                    row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-                    if row is not None:
-                        checkpoint_rows.append(row)
-                checkpoint_details = tuple(
-                    detail_from_row(
-                        project_root=project_root,
-                        row=row,
-                        include_report_body=payload.include_report_body,
-                        runtime_root=runtime_root,
-                    )
-                    for row in checkpoint_rows
-                )
-                pending_ids = tuple(
-                    sorted(
-                        detail.spawn_id
-                        for detail in checkpoint_details
-                        if not _spawn_is_terminal(detail.status)
-                    )
-                )
-                _update_pi_wait_observation(
-                    runtime_root=runtime_root,
-                    parent_spawn_id=parent_wait_observer_id,
-                    waiting_remove=spawn_ids,
-                    observed_add=tuple(
-                        detail.spawn_id
-                        for detail in checkpoint_details
-                        if _spawn_is_terminal(detail.status)
-                    ),
-                )
-                if not pending_ids:
-                    return _build_wait_multi_output(checkpoint_details)
-                tree_rows = overlay_derived(
-                    runtime_root,
-                    spawn_store.list_spawns(runtime_root).records,
-                )
-                checkpoint_descendants = {
-                    spawn_id: tuple(
-                        row.id
-                        for row in collect_descendants(spawn_id, tree_rows)
-                        if row.id != spawn_id and is_active_spawn_status(row.status)
-                    )
-                    for spawn_id in pending_ids
-                }
-                checkpoint_descendants = {
-                    spawn_id: descendants
-                    for spawn_id, descendants in checkpoint_descendants.items()
-                    if descendants
-                }
-                return SpawnWaitMultiOutput(
-                    spawns=checkpoint_details,
-                    total_runs=len(spawn_ids),
-                    succeeded_runs=sum(
-                        1 for detail in checkpoint_details if detail.status == "succeeded"
-                    ),
-                    failed_runs=sum(
-                        1 for detail in checkpoint_details if detail.status == "failed"
-                    ),
-                    cancelled_runs=sum(
-                        1 for detail in checkpoint_details if detail.status == "cancelled"
-                    ),
-                    timed_out_runs=sum(
-                        1 for detail in checkpoint_details if detail.status == "timed_out"
-                    ),
-                    any_failed=any(
-                        detail.status in FAILURE_SPAWN_STATUSES or detail.status == "cancelled"
-                        for detail in checkpoint_details
-                    ),
-                    checkpoint=True,
-                    checkpoint_pending_ids=pending_ids,
-                    checkpoint_descendants=checkpoint_descendants,
-                    checkpoint_chat_id=wait_chat_id,
-                    checkpoint_elapsed_secs=now - started,
-                )
+            failed_fast = payload.fail_fast and any(
+                row.status in FAILURE_SPAWN_STATUSES for row in rows.values()
+            )
+            if pending and not failed_fast:
+                if now < wait_deadline:
+                    if now >= next_progress:
+                        progress = _render_wait_progress(
+                            pending,
+                            elapsed_secs=max(now - started, 0.0),
+                            mode=progress_mode,
+                        )
+                        if progress is not None:
+                            _emit_wait_progress(progress, sink=active_sink)
+                        next_progress = now + progress_interval
+                    time.sleep(min(poll, max(0.0, wait_deadline - time.monotonic())))
+                    continue
+                if not use_checkpoint:
+                    raise TimeoutError(_build_wait_timeout_message(pending, now - started))
 
-            if hard_deadline is not None and now >= hard_deadline:
-                elapsed = now - started
-                raise TimeoutError(_build_wait_timeout_message(pending, elapsed))
-            if now >= next_progress:
-                progress = _render_wait_progress(
-                    pending,
-                    elapsed_secs=max(now - started, 0.0),
-                    mode=progress_mode,
+            details = tuple(
+                detail_from_row(
+                    project_root=project_root,
+                    row=rows[spawn_id],
+                    include_report_body=payload.include_report_body,
+                    runtime_root=runtime_root,
                 )
-                if progress is not None:
-                    _emit_wait_progress(progress, sink=active_sink)
-                next_progress = now + progress_interval
-            time.sleep(min(poll, max(0.0, wait_deadline - time.monotonic())))
+                for spawn_id in spawn_ids
+                if spawn_id in rows
+            )
+            pending_ids = tuple(sorted(pending))
+            if not pending_ids:
+                return _build_wait_multi_output(details)
+            if failed_fast:
+                return _build_wait_multi_output(details, fail_fast=True, pending_ids=pending_ids)
+            return _build_wait_checkpoint_output(
+                details,
+                total_runs=len(spawn_ids),
+                pending_ids=pending_ids,
+                runtime_root=runtime_root,
+                chat_id=wait_chat_id,
+                elapsed_secs=now - started,
+            )
     finally:
-        _update_pi_wait_observation(
+        record_spawn_observation(
             runtime_root=runtime_root,
             parent_spawn_id=parent_wait_observer_id,
             waiting_remove=spawn_ids,
+            observed_add=tuple(
+                detail.spawn_id for detail in details if _spawn_is_terminal(detail.status)
+            ),
         )
 
 

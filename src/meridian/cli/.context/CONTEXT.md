@@ -274,6 +274,10 @@ KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`):
 
 Rule: if you add a new spawn subcommand, default to `"json"` unless it surfaces content agents need to read directly.
 
+The hidden runtime-only `spawn collect` and `spawn ack` commands default to JSON
+and stay out of help. Their shapes are a protocol with the Claude runtime mod, not
+human-facing spawn output.
+
 ### `--metadata` flag
 
 `_spawn_create` and `_spawn_wait` accept `--metadata`. In text mode it shows detailed inline accounting (model, harness, exit code, duration, cost, tokens, report path) while still including report body and transcript pointer.
