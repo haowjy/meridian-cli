@@ -15,7 +15,7 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived
 
 from .query import (
-    read_report_text,
+    read_report,
     read_spawn_row,
     resolve_spawn_reference,
 )
@@ -75,7 +75,7 @@ def _is_tracked_session(project_root: Path, chat_id: str) -> bool:
 
 
 def _load_report_text(project_root: Path, spawn_id: str) -> str | None:
-    _, report_text = read_report_text(project_root, spawn_id)
+    _, report_text, _ = read_report(project_root, spawn_id)
     return report_text
 
 

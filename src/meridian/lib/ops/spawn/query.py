@@ -132,42 +132,29 @@ def read_report(
     project_root: Path,
     spawn_id: str,
     *,
-    include_body: bool,
     runtime_root: Path | None = None,
-) -> tuple[str | None, str | None]:
+    max_bytes: int | None = None,
+) -> tuple[str | None, str | None, bool]:
+    """Return a report's path, stripped body, and whether ``max_bytes`` cut it short.
+
+    A bounded read decodes a byte window, so it cuts at a UTF-8 code-point boundary.
+    """
+
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
-        return None, None
+        return None, None, False
     report_path = resolved_runtime_root / "spawns" / spawn_id / "report.md"
     if not report_path.is_file():
-        return None, None
-    if not include_body:
-        return report_path.as_posix(), None
-    text = report_path.read_text(encoding="utf-8", errors="ignore").strip() or None
-    return report_path.as_posix(), text
-
-
-def read_bounded_report(
-    project_root: Path,
-    spawn_id: str,
-    *,
-    max_bytes: int,
-    runtime_root: Path | None = None,
-) -> tuple[str | None, str | None, bool]:
-    """Read one report through a UTF-8-safe byte window."""
-
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
         return None, None, False
-    report_path = resolved_runtime_root / "spawns" / spawn_id / "report.md"
-    try:
+    truncated = False
+    if max_bytes is None:
+        text = report_path.read_text(encoding="utf-8", errors="ignore")
+    else:
         with report_path.open("rb") as report_file:
             window = report_file.read(max_bytes + 1)
-    except FileNotFoundError:
-        return None, None, False
-    truncated = len(window) > max_bytes
-    body = window[:max_bytes].decode("utf-8", errors="ignore").strip() or None
-    return report_path.as_posix(), body, truncated
+        truncated = len(window) > max_bytes
+        text = window[:max_bytes].decode("utf-8", errors="ignore")
+    return report_path.as_posix(), text.strip() or None, truncated
 
 
 def read_report_summary(
@@ -189,15 +176,6 @@ def read_report_summary(
         prefix = report_file.read(500 * 4)
     summary = prefix.decode("utf-8", errors="ignore").strip()[:500] or None
     return report_path.as_posix(), summary
-
-
-def read_report_text(
-    project_root: Path,
-    spawn_id: str,
-    *,
-    runtime_root: Path | None = None,
-) -> tuple[str | None, str | None]:
-    return read_report(project_root, spawn_id, include_body=True, runtime_root=runtime_root)
 
 
 def _truncate_log_message(value: str, *, max_chars: int = _RUNNING_LOG_MESSAGE_LIMIT) -> str:
@@ -360,21 +338,12 @@ def detail_from_row(
     report_body_max_bytes: int | None = None,
 ) -> SpawnDetailOutput:
     if include_report_body:
-        if report_body_max_bytes is None:
-            report_path, report_body = read_report(
-                project_root,
-                row.id,
-                include_body=True,
-                runtime_root=runtime_root,
-            )
-            report_body_truncated = False
-        else:
-            report_path, report_body, report_body_truncated = read_bounded_report(
-                project_root,
-                row.id,
-                max_bytes=report_body_max_bytes,
-                runtime_root=runtime_root,
-            )
+        report_path, report_body, report_body_truncated = read_report(
+            project_root,
+            row.id,
+            runtime_root=runtime_root,
+            max_bytes=report_body_max_bytes,
+        )
         report_summary = report_body[:500] if report_body else None
     else:
         report_path, report_summary = read_report_summary(
@@ -466,7 +435,6 @@ __all__ = [
     "detail_from_row",
     "extract_last_assistant_message",
     "read_report",
-    "read_report_text",
     "read_spawn_row",
     "resolve_spawn_reference",
     "resolve_spawn_references",

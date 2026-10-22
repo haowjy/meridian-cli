@@ -636,10 +636,9 @@ def execute_spawn_blocking(
 
         duration = time.monotonic() - started
         row = read_spawn_row(project_paths.project_root, str(spawn.spawn_id))
-        _, report_body = read_report(
+        _, report_body, _ = read_report(
             project_paths.project_root,
             str(spawn.spawn_id),
-            include_body=True,
             runtime_root=context.runtime_root,
         )
         status = "failed"
