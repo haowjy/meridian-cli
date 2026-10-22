@@ -18,6 +18,7 @@ from meridian.lib.tools import (
     LEGACY_SNAPSHOT_ORIGIN,
     PLATFORM_ORIGIN,
     ToolRule,
+    split_native,
     unscoped_action,
 )
 
@@ -180,6 +181,33 @@ def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
     return ReportLine(element, "unsupported", f"not projected for {harness}")
 
 
+def _spilled_permissions(rules: Iterable[ToolRule]) -> dict[str, str]:
+    """Unscoped rules a scoped rule's permission spelling reaches past its own tools.
+
+    Mars may spell a scoped rule with another tool's permission (Claude scopes Write through
+    ``Edit(path)``) and notes it. That permission also governs the other tool at that scope,
+    so an unscoped rule of the opposite action on that tool no longer holds there.
+    """
+
+    rules = tuple(rules)
+    spilled: dict[str, str] = {}
+    for scoped in rules:
+        if not scoped.note or not scoped.is_scoped:
+            continue
+        for native in scoped.native:
+            base = split_native(native)[0]
+            if base in scoped.tools:
+                continue
+            for plain in rules:
+                if plain.is_scoped or plain.action == scoped.action or base not in plain.tools:
+                    continue
+                spilled.setdefault(
+                    rule_element(plain),
+                    f"{rule_element(scoped)} is spelled {native}, which also governs {base} there",
+                )
+    return spilled
+
+
 def complete_report(
     policy: PermissionPolicy, reported: Iterable[ReportLine], *, harness: str
 ) -> EnforcementReport:
@@ -190,7 +218,8 @@ def complete_report(
     A compile reports only what it enforces or has something specific to say about; any
     element it left out gets the default line: a rule Mars could not name for ``harness`` is
     a gap, a deny of a tool ``harness`` lacks is satisfied, and anything else is
-    ``unsupported``. Lines for things that are not policy elements (a deny the harness
+    ``unsupported``. A rule Mars attached a note to is at best ``partial``, with the note. Lines
+    for things that are not policy elements (a deny the harness
     applies on its own) follow the elements.
     """
 
@@ -211,12 +240,20 @@ def complete_report(
         )
     by_element = {line.element: line for line in reported}
     rules_by_element = {rule_element(rule): rule for rule in policy.rules}
+    spilled = _spilled_permissions(policy.rules)
     lines: list[ReportLine] = []
     for default in defaults:
         line = by_element.get(default.element, default)
         rule = rules_by_element.get(default.element)
         if rule is not None and rule.origin == PLATFORM_ORIGIN and line.status == "native":
             line = ReportLine(line.element, "platform", line.note)
+        elif rule is not None and rule.note and line.status == "native":
+            # Mars notes a rule only when its native spelling does not carry the rule exactly
+            # (a shared permission name, an overlap, a shadowed scope), so it is not native.
+            note = rule.note if not line.note else f"{line.note}; {rule.note}"
+            line = ReportLine(line.element, "partial", note)
+        if line.element in spilled and line.status == "native":
+            line = ReportLine(line.element, "partial", f"{line.note}; {spilled[line.element]}")
         lines.append(line)
     known = {default.element for default in defaults}
     lines.extend(line for line in by_element.values() if line.element not in known)

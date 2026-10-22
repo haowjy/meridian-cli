@@ -240,6 +240,17 @@ def _rule_report_line(
                 "handler cannot split into simple commands (expansion, redirection, loops, "
                 "here-docs, a lone &) runs unchecked",
             )
+        if (
+            rule.pattern is not None
+            and "bash" in names
+            and policy is not None
+            and policy.bash_fail_closed
+        ):
+            note += (
+                "; bash fails closed: any command the handler cannot split into simple "
+                "commands (expansion, redirection, loops, here-docs, a lone &) is refused, "
+                "even one no rule names"
+            )
         return ReportLine(rule_element(rule), "native", note)
     if rule.action == "deny" and all(name in permissions.exclude_tools for name in names):
         return ReportLine(rule_element(rule), "native", "--exclude-tools " + ",".join(names))

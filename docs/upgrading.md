@@ -130,8 +130,9 @@ interpret them by capability, so Codex keeps only the `web_search` switch from t
 
 Such a snapshot also lacks the native names of the platform sub-agent and task-list denies.
 A replay takes them from a fresh Mars bundle for the same harness, so the denies hold as on
-a new launch; only if Mars cannot build that bundle does the launch run without them, and
-`--dry-run` reports both as `unsupported`. The continued launch writes a new snapshot that
+a new launch. Only if Mars cannot build that bundle are the platform denies unnamed:
+`--dry-run` reports both as `unsupported`. On Claude a profile rule for the same capability,
+whose own tool names the snapshot kept, is still turned into a deny. The continued launch writes a new snapshot that
 carries the names. Probed with a snapshot written by 0.11.8: a Claude `--continue` denies
 `Agent`, `SendMessage`, `ListAgents`, and the `Task*`/`TodoWrite` tools, and a Codex
 `--continue` kept web search.
