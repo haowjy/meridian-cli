@@ -39,15 +39,19 @@ _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
 )
 
 
-type PlatformRuleKind = Literal["native-subagents", "builtin-agents"]
+type PlatformRuleKind = Literal["native-subagents", "builtin-agents", "completion-commands"]
 
 
 class PlatformRule(BaseModel):
-    """A restriction Meridian puts on a launch whatever the profile says.
+    """A rule Meridian puts on a launch whatever the profile says.
 
     ``native-subagents`` denies the harness's own sub-agent tools so delegation goes
     through Meridian; ``capabilities`` lists the ones to deny (``agent``, ``task``), already
     net of profile opt-outs. ``builtin-agents`` denies the harness's built-in agents.
+    ``completion-commands`` is the one allow: ``commands`` are the shell commands a child
+    runs to confirm or reject its own completion (``meridian spawn done`` / ``rearm``), which
+    must stay runnable under any allowlist or deny of the shell. A harness spells each command
+    and its argument form in its own scope syntax.
     A harness that has no native name for a rule leaves it out of its projection.
     """
 
@@ -55,6 +59,7 @@ class PlatformRule(BaseModel):
 
     kind: PlatformRuleKind
     capabilities: tuple[str, ...] = ()
+    commands: tuple[str, ...] = ()
 
 
 class PermissionPolicy(BaseModel):
@@ -154,6 +159,8 @@ def allowlist_element(capability: str) -> str:
 def platform_element(rule: PlatformRule) -> str:
     if rule.kind == "native-subagents":
         return f"platform: deny native sub-agents ({', '.join(sorted(rule.capabilities))})"
+    if rule.kind == "completion-commands":
+        return f"platform: allow completion commands ({', '.join(rule.commands)})"
     return "platform: deny built-in agents"
 
 

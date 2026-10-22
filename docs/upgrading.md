@@ -30,11 +30,9 @@ once and recorded in the spawn's `permission_requests.jsonl`, now with a one-lin
 which it cannot read, so the model saw `Rejected("approval request failed")`; it now receives
 `decline` and sees `Rejected("rejected by user")`.
 
-**Before installing**
-
-Check profiles that write `tools` as a list, or only scoped allows: a spawn that cannot run
-`meridian spawn done` cannot finish cleanly, so list `bash(meridian spawn *)` if the agent
-needs it.
+Spawns with tool rules keep `meridian spawn done` and `meridian spawn rearm` runnable under any
+of this, so an allowlisted agent can still answer Meridian's completion confirmation; no profile
+change is needed. OpenCode applies it today.
 
 ## Typed tool rules (Mars 0.17)
 

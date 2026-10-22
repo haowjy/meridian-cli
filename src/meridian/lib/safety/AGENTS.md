@@ -62,5 +62,5 @@ circular import dependency map
 
 ## Related
 
-- `../launch/permissions.py` — bind-time platform rules (nested-agent denies, built-in agent denies)
+- `../launch/permissions.py` — bind-time platform rules (nested-agent denies, built-in agent denies, the completion-command allow)
 - `../harness/common.py` — provides `iter_nested_dicts` used by budget extraction

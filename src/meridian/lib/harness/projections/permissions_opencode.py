@@ -4,14 +4,22 @@ Tool rules become OpenCode's V1 permission map (``{tool-or-scoped-key: action}``
 contributes the native keys Mars resolved for OpenCode, and the ``*`` rule contributes the
 ``*`` key. The V1 launch env carries the map as JSON; the V2 connection translates the same
 map to V2 rules (``project_opencode_streaming.py``). Primaries return ``None``: the OpenCode
-TUI handles their permissions natively. Only tool rules compile; sandbox, approval and
-platform rules do not reach OpenCode, and the completed report says so.
+TUI handles their permissions natively. Tool rules compile, and so does the platform's
+``completion-commands`` allow (as scoped ``bash`` keys, which a broad ``bash`` or ``*``
+deny does not shadow); sandbox, approval and the other platform rules do not reach
+OpenCode, and the completed report says so.
 """
 
 from __future__ import annotations
 
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import EnforcementReport, ReportLine, complete_report, rule_element
+from meridian.lib.safety.policy import (
+    EnforcementReport,
+    ReportLine,
+    complete_report,
+    platform_element,
+    rule_element,
+)
 from meridian.lib.tools import ToolAction, ToolRule
 
 type OpenCodePermissions = dict[str, ToolAction]
@@ -27,6 +35,12 @@ def _opencode_keys(rule: ToolRule) -> tuple[str, ...]:
     return rule.native if rule.native_status == "known" else ()
 
 
+def _completion_command_keys(commands: tuple[str, ...]) -> tuple[str, ...]:
+    """Scoped ``bash`` keys for each command, bare and with arguments (an optional spawn id)."""
+
+    return tuple(key for command in commands for key in (f"bash({command})", f"bash({command} *)"))
+
+
 def compile_opencode_permissions(
     spec: ResolvedLaunchSpec,
 ) -> tuple[OpenCodePermissions | None, EnforcementReport]:
@@ -36,6 +50,8 @@ def compile_opencode_permissions(
     OpenCode, or that OpenCode lacks, set no key and are left to the completed report.
     Two rules can name the same OpenCode tool (``write`` and ``edit`` both resolve to
     ``edit``); the stricter action (deny over ask over allow) wins, as in the V2 translation.
+    The completion-command allow joins a map that profile rules produced; it never makes
+    one, because a map with only those keys would replace the spawn's allow-everything default.
     """
 
     policy = spec.permission_policy
@@ -74,6 +90,34 @@ def compile_opencode_permissions(
             )
         else:
             lines.append(ReportLine(element, "native", note))
+    for platform in policy.platform_rules:
+        if platform.kind != "completion-commands" or spec.interactive:
+            continue
+        if not permissions:
+            lines.append(
+                ReportLine(
+                    platform_element(platform),
+                    "platform",
+                    "no profile rule reaches OpenCode, so nothing blocks these commands",
+                )
+            )
+            continue
+        keys = _completion_command_keys(platform.commands)
+        for key in keys:
+            # Allow is the least strict action, so a profile rule for the same scope stays.
+            permissions.setdefault(key, "allow")
+        kept = [f"{key}: {permissions[key]}" for key in keys if permissions[key] != "allow"]
+        note = f"permission {', '.join(keys)}: allow"
+        if kept:
+            lines.append(
+                ReportLine(
+                    platform_element(platform),
+                    "partial",
+                    f"{note}; a profile rule keeps {', '.join(kept)}",
+                )
+            )
+        else:
+            lines.append(ReportLine(platform_element(platform), "platform", note))
     return (
         (dict(sorted(permissions.items())) or None),
         complete_report(policy, lines, harness="OpenCode"),

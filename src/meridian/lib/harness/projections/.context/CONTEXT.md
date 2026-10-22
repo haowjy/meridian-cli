@@ -93,6 +93,12 @@ its projectors spell that value:
 Claude's compile treats `ask` as `allow` (no flag expresses it) and Codex has no carrier
 for tool rules, so only its two modes compile.
 
+A compile that restricts the shell must name the `completion-commands` platform rule's
+`commands` (`meridian spawn done` / `rearm`) in its own scope syntax, where a broad `bash` or
+`*` deny does not shadow them; otherwise the child cannot answer the completion confirmation.
+OpenCode does (`bash(<cmd>)` and `bash(<cmd> *)`, added only to a map that profile rules made, so
+the spawn's allow-everything default survives); the rest report it `unsupported` until their lanes land.
+
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
 (`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying
 what that harness did with it. Status `native` means enforced as stated, `partial` means part

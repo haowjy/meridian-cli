@@ -9,6 +9,11 @@ from meridian.lib.tools import ToolRule, capability_action, unscoped_action
 # Sorted: the order is the order a harness's compile emits them in.
 _NATIVE_SUBAGENT_CAPABILITIES: tuple[str, ...] = ("agent", "task")
 
+# What a child runs inside itself to answer Meridian's completion confirmation (the inherited
+# spawn id targets it). Without them a child cannot reject a premature completion; it closes
+# only when its completion window runs out.
+_COMPLETION_COMMANDS: tuple[str, ...] = ("meridian spawn done", "meridian spawn rearm")
+
 
 def _native_subagent_capabilities(
     *,
@@ -50,7 +55,11 @@ def launch_platform_rules(
     native_agent_copy: bool,
     allow_builtin_agents: bool,
 ) -> tuple[PlatformRule, ...]:
-    """Return the platform rules for one launch; each harness names them natively."""
+    """Return the platform rules for one launch; each harness names them natively.
+
+    A spawn that carries tool rules also gets the completion-command allow, since any of
+    them may close the shell; one without rules has an open shell and needs none.
+    """
 
     rules: list[PlatformRule] = []
     capabilities = _native_subagent_capabilities(
@@ -63,6 +72,8 @@ def launch_platform_rules(
         rules.append(PlatformRule(kind="native-subagents", capabilities=capabilities))
     if not allow_builtin_agents:
         rules.append(PlatformRule(kind="builtin-agents"))
+    if spawn and tool_rules:
+        rules.append(PlatformRule(kind="completion-commands", commands=_COMPLETION_COMMANDS))
     return tuple(rules)
 
 
