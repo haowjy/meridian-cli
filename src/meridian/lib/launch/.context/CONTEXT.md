@@ -96,10 +96,12 @@ harness-default mode. A new invocation snapshot updates routing fields without
 rewriting the source snapshot.
 
 Replay preserves non-routing policy: agent/profile, skills and loaded content,
-execution policy, tool/MCP grants, terminal surface, inventory prompt, env and
-passthrough args. Exact continue permits an explicit model override with a cache/cost
-warning; it still rejects agent, skills, execution-policy, passthrough, env, work and
-task-dir mutations. Agent opt-out is also a mutation.
+execution policy, `tool_rules` and `platform_tool_rules`, terminal surface, inventory
+prompt, env and passthrough args. Legacy `mcp_tools` is accepted when reading a snapshot
+and ignored because it contains permission names, not MCP configuration. Exact continue
+permits an explicit model override with a cache/cost warning; it still rejects agent,
+skills, execution-policy, passthrough, env, work and task-dir mutations. Agent opt-out is
+also a mutation.
 
 Primary and spawn accepted-running callbacks append selection intent through
 `SessionAttempt`. Its captured generation/startup attempt also binds native-ID
@@ -573,13 +575,9 @@ OpenCode inherited config must remain a JSON object through workspace projection
 malformed input is rejected, not silently replaced with an empty configuration
 before adapter validation.
 
-OpenCode scalar permission actions expand to wildcard rules before workspace
-entries are added. Preserve native rule order: last-match semantics make sorted
-JSON serialization a permission change. Append projected root patterns within
-the external-directory rule map without reordering inherited top-level rules;
-a later native catch-all can still deny them. Do not move the whole existing
-external-directory rule past a denial or invent meanings for malformed shapes.
-For OpenCode 2.x, the V2 transport instead compiles the tools policy into the
-native ordered `permissions` array and appends root grants after it, so
-last-match keeps the grants; see
-[harness context](../../harness/.context/CONTEXT.md).
+OpenCode permissions are compiled in `harness/projections/permissions_opencode.py`
+and projected with workspace grants into the reserved config agent by
+`project_opencode_config.py`. `OpenCodeAdapter.project_launch_env()` writes
+`OPENCODE_CONFIG_CONTENT` at bind for both versions; transports consume it unchanged.
+The ordered policy precedes appended workspace grants, and JSON serialization must
+preserve rule order. See [harness context](../../harness/.context/CONTEXT.md).

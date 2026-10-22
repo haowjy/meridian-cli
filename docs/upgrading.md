@@ -65,6 +65,19 @@ report these allowlists but do not enforce them.
   native per-launch switches. Scoped rules, `ask`, allowlists, and other capabilities remain
   report-only.
 
+**Claude compaction settings**
+
+Audit Claude profiles that set `autocompact`. Its token count was written to a percentage
+variable and had no effect. It selects Claude's `--autocompact` window when the value is from
+100,000 through 1,000,000 tokens; other values are reported and omitted. `autocompact_pct`
+applies separately as a percentage.
+
+**Codex harness overrides**
+
+Treat installed `harness-overrides.codex` blocks as trusted package content. Codex applies
+them as native configuration, including provider and MCP server commands; installed blocks
+that were inert take effect after upgrading.
+
 **Set Codex and Cursor sandboxes explicitly**
 
 Profiles that set `tools` but leave `sandbox` unset no longer receive a sandbox inferred from

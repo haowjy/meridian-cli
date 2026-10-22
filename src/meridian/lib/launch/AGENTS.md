@@ -14,6 +14,10 @@ workspace projection. It reconstructs a primary-root path only for older produce
 provenance. Snapshot replay uses only its persisted `loaded_skills`; an empty field means no
 skills are loaded.
 
+The `bundle_adapter.py` module docstring inventories bundle fields Meridian deliberately does
+not read. `tools.rules` is the permission contract; `tools.mcp` is a flat list of permission
+names, never MCP server configuration.
+
 ## The Composition Seam (Invariant I-1)
 
 All launch state assembly — argv, env, permissions, prompt, workspace roots — happens

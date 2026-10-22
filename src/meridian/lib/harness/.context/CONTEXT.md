@@ -402,9 +402,10 @@ each with one owner:
   explicit). The config key is the only channel the V2 bare TUI has (`--model` is
   rejected), so the subprocess projector drops `--model` for a V2 TUI and keeps it
   elsewhere (`opencode run`, V1's TUI). Effort has no working V2 channel.
-- **Config writers.** The hook is the one producer at bind. The V2 connection still
-  folds Meridian's tool policy into the config at launch (V2 reads `permissions`, not
-  `permission`); it must serialize through `dump_opencode_config_content()` too.
+- **Config writer.** `OpenCodeAdapter.project_launch_env()` is the sole producer, at
+  bind. It compiles tool policy and workspace grants into the reserved config agent for
+  both versions and serializes through `dump_opencode_config_content()`. Connections
+  consume the bound `OPENCODE_CONFIG_CONTENT` unchanged.
 - **Path limits.** OpenCode expands `{file:}` on the raw config text before parsing it,
   stopping at the first `}` and treating `"`, `\` and control characters as literal
   path text. A prompt path containing any of them fails the launch with

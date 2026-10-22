@@ -113,9 +113,10 @@ time. These follow the same pattern: ambient config snapshot → launch-time env
 Called from `bind_launch_context()` in `lib/launch/context.py` and threaded
 into the harness adapter's `resolve_launch_spec()`.
 
-Claude native Agent routing does not use a `meridian.toml` harness option.
-Built-in Claude agents stay denied unconditionally; generic `Agent` permission
-follows Mars `[settings.meridian.agent_copy]` via `agent_copy_enabled()` in
+Claude native Agent routing has separate controls. The `[harness.claude]` table's
+`allow_builtin_agents` option controls the scoped built-in `Agent(...)` denies
+(default `false`). Generic `Agent` permission follows Mars
+`[settings.meridian.agent_copy]` via `agent_copy_enabled()` in
 `lib/catalog/agent_copy.py`.
 
 ## Schema Metadata (`schema.py`)

@@ -2,13 +2,16 @@
 
 ## Architecture
 
-Five concrete transports share the `HarnessConnection[SpecT]` ABC from `base.py`:
+`HarnessConnection[SpecT]` implementations include an OpenCode version dispatcher and
+separate V1/V2 transports:
 
 | File | Class | Transport | Protocol |
 |---|---|---|---|
 | `claude_ws.py` | `ClaudeConnection` | stdin/stdout NDJSON | stream-json |
 | `codex_ws.py` | `CodexConnection` | WebSocket | JSON-RPC 2.0 |
-| `opencode_http.py` | `OpenCodeConnection` | HTTP + SSE | REST + event stream |
+| `opencode_connection.py` | `OpenCodeConnection` | V1/V2 dispatcher | delegates by bound version |
+| `opencode_http.py` | `OpenCodeV1Connection` | HTTP + SSE | V1 REST + event stream |
+| `opencode_v2_http.py` | `OpenCodeV2Connection` | HTTP + SSE | V2 `/api` + event stream |
 | `cursor_subprocess.py` | `CursorSubprocessConnection` | stdout NDJSON (read-only) | stream-json |
 | `pi_rpc.py` | `PiRpcConnection` | stdin/stdout JSONL | JSON-RPC (Pi RPC mode) |
 
