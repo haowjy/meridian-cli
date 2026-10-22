@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -21,16 +22,14 @@ from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_observations import consumed_ids, leased_ids, record
 from meridian.lib.state.spawn_status import read_derived
 
-from .api import (
-    SpawnPollSnapshot,
-    build_wait_multi_output,
-    poll_spawn_rows,
-    settle_spawn_rows,
-)
-from .models import SPAWN_DELIVERY_MAX_BYTES, SPAWN_DELIVERY_MAX_MEMBERS
+from .models import render_delivery
+from .query import detail_from_row
 
 _COLLECT_POLL_INTERVAL_SECS = 1.0
 _REPORT_READ_MAX_BYTES = 64 * 1024
+# One delivery's limits, matching Pi's (pi_runtime/.context/delivery-contract.md).
+_DELIVERY_MAX_MEMBERS = 32
+_DELIVERY_MAX_BYTES = 64 * 1024
 
 
 class SpawnCollectInput(BaseModel):
@@ -67,8 +66,19 @@ class SpawnAckOutput(BaseModel):
         return {"acked": list(self.acked)}
 
 
+_EMPTY = SpawnCollectOutput(kind="empty", ids=(), text="")
+
+
 class _CollectorParentChanged(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class _OwedSnapshot:
+    """Unleased owed rows (any status) and the ids still running or leased."""
+
+    rows: tuple[SpawnRecord, ...]
+    pending_ids: tuple[str, ...]
 
 
 def _roots(
@@ -137,20 +147,15 @@ def _authoritative_snapshot(
     runtime_root: Path,
     primary_ids: tuple[str, ...],
     candidate_ids: tuple[str, ...],
-    excluded: frozenset[str],
     parent_pid: int,
-) -> SpawnPollSnapshot:
+) -> _OwedSnapshot:
     """Read only still-owed candidates; malformed owned rows keep the batch pending."""
 
     while os.getppid() == parent_pid:
         consumed = consumed_ids(runtime_root, primary_ids)
-        owed_ids = tuple(
-            spawn_id
-            for spawn_id in candidate_ids
-            if spawn_id not in consumed and spawn_id not in excluded
-        )
+        owed_ids = tuple(spawn_id for spawn_id in candidate_ids if spawn_id not in consumed)
         if not owed_ids:
-            return SpawnPollSnapshot(rows=(), pending_ids=())
+            return _OwedSnapshot(rows=(), pending_ids=())
         leased = leased_ids(runtime_root, primary_ids)
         rows: list[SpawnRecord] = []
         pending: list[str] = []
@@ -167,27 +172,10 @@ def _authoritative_snapshot(
                 rows.append(row)
                 if not is_terminal_spawn_status(row.status):
                     pending.append(spawn_id)
-            return SpawnPollSnapshot(rows=tuple(rows), pending_ids=tuple(pending))
+            return _OwedSnapshot(rows=tuple(rows), pending_ids=tuple(pending))
         except (OSError, SpawnStateQuarantined):
             time.sleep(_COLLECT_POLL_INTERVAL_SECS)
     raise _CollectorParentChanged
-
-
-def _eligible_terminal_rows(
-    rows: tuple[SpawnRecord, ...],
-    *,
-    runtime_root: Path,
-    primary_ids: tuple[str, ...],
-) -> tuple[SpawnRecord, ...]:
-    consumed = consumed_ids(runtime_root, primary_ids)
-    leased = leased_ids(runtime_root, primary_ids)
-    return tuple(
-        row
-        for row in rows
-        if is_terminal_spawn_status(row.status)
-        and row.id not in consumed
-        and row.id not in leased
-    )
 
 
 def collect_owed_sync(
@@ -207,7 +195,7 @@ def collect_owed_sync(
         raise ValueError("Spawn collection requires MERIDIAN_SPAWN_ID")
     project_root, runtime_root = _roots(payload.project_root, prepared)
     if runtime_root is None:
-        return SpawnCollectOutput(kind="empty", ids=(), text="")
+        return _EMPTY
 
     excluded = frozenset(spawn_id.strip() for spawn_id in payload.exclude if spawn_id.strip())
     parent_pid = os.getppid()
@@ -219,86 +207,45 @@ def collect_owed_sync(
             excluded=excluded,
             parent_pid=parent_pid,
         )
-        if not candidate_ids:
-            return SpawnCollectOutput(kind="empty", ids=(), text="")
-
-        first_snapshot = True
-        deliver_when_any_terminal = False
-
-        def _read_snapshot(_spawn_ids: tuple[str, ...]) -> SpawnPollSnapshot:
-            return _authoritative_snapshot(
+        # Set from the first snapshot: when nothing was finished yet, wait for the
+        # whole owed batch instead of delivering the first child to finish.
+        wait_for_batch: bool | None = None
+        while os.getppid() == parent_pid:
+            snapshot = _authoritative_snapshot(
                 runtime_root=runtime_root,
                 primary_ids=primary_ids,
                 candidate_ids=candidate_ids,
-                excluded=excluded,
                 parent_pid=parent_pid,
             )
-
-        def _ready(snapshot: SpawnPollSnapshot) -> bool:
-            nonlocal first_snapshot, deliver_when_any_terminal
-            terminal = any(is_terminal_spawn_status(row.status) for row in snapshot.rows)
-            if first_snapshot:
-                deliver_when_any_terminal = terminal
-                first_snapshot = False
             if not snapshot.rows and not snapshot.pending_ids:
-                return True
-            if deliver_when_any_terminal:
-                return terminal
-            return not snapshot.pending_ids
-
-        while True:
-            polled = poll_spawn_rows(
-                candidate_ids,
-                read_snapshot=_read_snapshot,
-                ready=_ready,
-                deadline=None,
-                poll_interval_secs=_COLLECT_POLL_INTERVAL_SECS,
-                should_abort=lambda: os.getppid() != parent_pid,
-            )
-            if polled.aborted:
-                return SpawnCollectOutput(kind="empty", ids=(), text="")
-            selected_rows = _eligible_terminal_rows(
-                polled.snapshot.rows,
-                runtime_root=runtime_root,
-                primary_ids=primary_ids,
-            )[:SPAWN_DELIVERY_MAX_MEMBERS]
-            if not selected_rows:
-                if not polled.snapshot.rows and not polled.snapshot.pending_ids:
-                    return SpawnCollectOutput(kind="empty", ids=(), text="")
+                return _EMPTY
+            terminal = [row for row in snapshot.rows if is_terminal_spawn_status(row.status)]
+            if wait_for_batch is None:
+                wait_for_batch = not terminal
+            if terminal and not (wait_for_batch and snapshot.pending_ids):
+                details = tuple(
+                    detail_from_row(
+                        project_root=project_root,
+                        row=row,
+                        include_report_body=True,
+                        runtime_root=runtime_root,
+                        report_body_max_bytes=_REPORT_READ_MAX_BYTES,
+                    )
+                    for row in terminal[:_DELIVERY_MAX_MEMBERS]
+                )
+                text = render_delivery(details, max_bytes=_DELIVERY_MAX_BYTES)
+                # An explicit wait or ack may have taken a result while it was read.
+                taken = consumed_ids(runtime_root, primary_ids) | leased_ids(
+                    runtime_root, primary_ids
+                )
+                if not any(detail.spawn_id in taken for detail in details):
+                    ids = tuple(detail.spawn_id for detail in details)
+                    return SpawnCollectOutput(kind="delivery", ids=ids, text=text)
                 continue
-
-            selected_ids = tuple(row.id for row in selected_rows)
-            details = settle_spawn_rows(
-                selected_ids,
-                selected_rows,
-                project_root=project_root,
-                runtime_root=runtime_root,
-                include_report_body=True,
-                report_body_max_bytes=_REPORT_READ_MAX_BYTES,
-            )
-            wait_output = build_wait_multi_output(details)
-            text = wait_output.format_text(
-                max_bytes=SPAWN_DELIVERY_MAX_BYTES,
-                max_members=SPAWN_DELIVERY_MAX_MEMBERS,
-            )
-            final_consumed = consumed_ids(runtime_root, primary_ids)
-            final_leased = leased_ids(runtime_root, primary_ids)
-            final_details = tuple(
-                detail
-                for detail in details
-                if detail.spawn_id not in final_consumed
-                and detail.spawn_id not in final_leased
-            )
-            if not final_details:
-                continue
-            if final_details != details:
-                continue
-            if os.getppid() != parent_pid:
-                return SpawnCollectOutput(kind="empty", ids=(), text="")
-            ids = tuple(detail.spawn_id for detail in details)
-            return SpawnCollectOutput(kind="delivery", ids=ids, text=text)
+            time.sleep(_COLLECT_POLL_INTERVAL_SECS)
     except _CollectorParentChanged:
-        return SpawnCollectOutput(kind="empty", ids=(), text="")
+        pass
+    return _EMPTY
 
 
 def ack_owed_sync(

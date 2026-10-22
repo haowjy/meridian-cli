@@ -125,54 +125,6 @@ class _WaitTargetDiscovery:
     discovery_pending: bool = False
 
 
-@dataclass(frozen=True)
-class SpawnPollSnapshot:
-    """One authoritative polling pass over a fixed candidate set."""
-
-    rows: tuple[SpawnRecord, ...]
-    pending_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class SpawnPollResult:
-    snapshot: SpawnPollSnapshot
-    deadline_reached: bool = False
-    aborted: bool = False
-
-
-def poll_spawn_rows(
-    spawn_ids: tuple[str, ...],
-    *,
-    read_snapshot: Callable[[tuple[str, ...]], SpawnPollSnapshot],
-    ready: Callable[[SpawnPollSnapshot], bool],
-    deadline: float | None,
-    poll_interval_secs: float,
-    should_abort: Callable[[], bool],
-    on_waiting: Callable[[SpawnPollSnapshot, float], None] | None = None,
-) -> SpawnPollResult:
-    """Poll one fixed membership set until its caller-defined condition is ready."""
-
-    snapshot = SpawnPollSnapshot(rows=(), pending_ids=spawn_ids)
-    while True:
-        if should_abort():
-            return SpawnPollResult(snapshot=snapshot, aborted=True)
-
-        snapshot = read_snapshot(spawn_ids)
-        if ready(snapshot):
-            return SpawnPollResult(snapshot=snapshot)
-
-        now = time.monotonic()
-        if deadline is not None and now >= deadline:
-            return SpawnPollResult(snapshot=snapshot, deadline_reached=True)
-        if on_waiting is not None:
-            on_waiting(snapshot, now)
-
-        sleep_for = poll_interval_secs
-        if deadline is not None:
-            sleep_for = min(sleep_for, max(0.0, deadline - time.monotonic()))
-        time.sleep(sleep_for)
-
-
 def _looks_like_spawn_ref(ref: str) -> bool:
     normalized = ref.strip()
     return len(normalized) > 1 and normalized[0] == "p" and normalized[1:].isdigit()
@@ -1628,7 +1580,7 @@ def _emit_wait_set(
     sink.status("\n".join(lines))
 
 
-def build_wait_multi_output(
+def _build_wait_multi_output(
     results: tuple[SpawnDetailOutput, ...],
     *,
     fail_fast: bool = False,
@@ -1667,39 +1619,48 @@ def build_wait_multi_output(
     )
 
 
-def settle_spawn_rows(
-    spawn_ids: tuple[str, ...],
-    rows: tuple[SpawnRecord, ...],
+def _build_wait_checkpoint_output(
+    details: tuple[SpawnDetailOutput, ...],
     *,
-    project_root: Path,
+    total_runs: int,
+    pending_ids: tuple[str, ...],
     runtime_root: Path,
-    include_report_body: bool,
-    observation_parent_id: str | None = None,
-    report_body_max_bytes: int | None = None,
-) -> tuple[SpawnDetailOutput, ...]:
-    """Build ordered details and atomically settle any explicit-wait observation."""
-
-    rows_by_id = {row.id: row for row in rows}
-    details = tuple(
-        detail_from_row(
-            project_root=project_root,
-            row=rows_by_id[spawn_id],
-            include_report_body=include_report_body,
-            runtime_root=runtime_root,
-            report_body_max_bytes=report_body_max_bytes,
+    chat_id: str | None,
+    elapsed_secs: float,
+) -> SpawnWaitMultiOutput:
+    tree_rows = overlay_derived(
+        runtime_root,
+        spawn_store.list_spawns(runtime_root).records,
+    )
+    checkpoint_descendants = {
+        spawn_id: tuple(
+            row.id
+            for row in collect_descendants(spawn_id, tree_rows)
+            if row.id != spawn_id and is_active_spawn_status(row.status)
         )
-        for spawn_id in spawn_ids
-        if spawn_id in rows_by_id
-    )
-    record_spawn_observation(
-        runtime_root=runtime_root,
-        parent_spawn_id=observation_parent_id,
-        waiting_remove=spawn_ids,
-        observed_add=tuple(
-            detail.spawn_id for detail in details if _spawn_is_terminal(detail.status)
+        for spawn_id in pending_ids
+    }
+    return SpawnWaitMultiOutput(
+        spawns=details,
+        total_runs=total_runs,
+        succeeded_runs=sum(1 for detail in details if detail.status == "succeeded"),
+        failed_runs=sum(1 for detail in details if detail.status == "failed"),
+        cancelled_runs=sum(1 for detail in details if detail.status == "cancelled"),
+        timed_out_runs=sum(1 for detail in details if detail.status == "timed_out"),
+        any_failed=any(
+            detail.status in FAILURE_SPAWN_STATUSES or detail.status == "cancelled"
+            for detail in details
         ),
+        checkpoint=True,
+        checkpoint_pending_ids=pending_ids,
+        checkpoint_descendants={
+            spawn_id: descendants
+            for spawn_id, descendants in checkpoint_descendants.items()
+            if descendants
+        },
+        checkpoint_chat_id=chat_id,
+        checkpoint_elapsed_secs=elapsed_secs,
     )
-    return details
 
 
 def _resolve_wait_progress_mode(*, verbose: bool, quiet: bool, config_verbosity: str | None) -> str:
@@ -1783,8 +1744,6 @@ def spawn_wait_sync(
     use_checkpoint = not payload.timeout_explicit
     wait_seconds = checkpoint_seconds if use_checkpoint else timeout_seconds
     wait_deadline = started + max(wait_seconds, 0.0)
-    checkpoint_deadline = wait_deadline if use_checkpoint else None
-    hard_deadline = None if use_checkpoint else wait_deadline
     targets = _resolve_wait_targets(
         payload,
         runtime_root,
@@ -1842,7 +1801,7 @@ def spawn_wait_sync(
     if poll <= 0:
         poll = _WAIT_POLL_INTERVAL_SECS
 
-    completed_rows: dict[str, SpawnRecord] = {}
+    rows: dict[str, SpawnRecord] = {}
     pending: set[str] = set(spawn_ids)
     progress_mode = _resolve_wait_progress_mode(
         verbose=payload.verbose,
@@ -1855,197 +1814,88 @@ def spawn_wait_sync(
     parent_wait_observer_id = (
         str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
     )
+    lease_seconds = max(30.0, poll * 2 + 5)
     record_spawn_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_wait_observer_id,
         waiting_add=spawn_ids,
-        lease_seconds=max(30.0, poll * 2 + 5),
+        lease_seconds=lease_seconds,
     )
-    observation_settled = False
-
-    def _read_snapshot(_spawn_ids: tuple[str, ...]) -> SpawnPollSnapshot:
-        record_spawn_observation(
-            runtime_root=runtime_root,
-            parent_spawn_id=parent_wait_observer_id,
-            waiting_add=tuple(pending),
-            lease_seconds=max(30.0, poll * 2 + 5),
-        )
-        for spawn_id in tuple(pending):
-            row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-            if row is None:
-                if has_explicit_ids:
-                    raise ValueError(f"Spawn '{spawn_id}' not found")
-                # No-arg discovery is chat-scoped: if a discovered spawn vanishes while
-                # waiting, treat it as resolved instead of failing unrelated waits.
-                pending.discard(spawn_id)
-                continue
-            if _spawn_is_terminal(row.status):
-                completed_rows[spawn_id] = row
-                pending.remove(spawn_id)
-        return SpawnPollSnapshot(
-            rows=tuple(completed_rows.values()),
-            pending_ids=tuple(pending),
-        )
-
-    def _ready(snapshot: SpawnPollSnapshot) -> bool:
-        if not snapshot.pending_ids:
-            return True
-        return payload.fail_fast and any(
-            row.status in FAILURE_SPAWN_STATUSES for row in snapshot.rows
-        )
-
-    def _on_waiting(snapshot: SpawnPollSnapshot, now: float) -> None:
-        nonlocal next_progress
-        if now < next_progress:
-            return
-        progress = _render_wait_progress(
-            set(snapshot.pending_ids),
-            elapsed_secs=max(now - started, 0.0),
-            mode=progress_mode,
-        )
-        if progress is not None:
-            _emit_wait_progress(progress, sink=active_sink)
-        next_progress = now + progress_interval
-
-    def _reread_pending() -> tuple[SpawnRecord, ...]:
-        rows = dict(completed_rows)
-        for spawn_id in tuple(pending):
-            row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-            if row is None:
-                if has_explicit_ids:
-                    raise ValueError(f"Spawn '{spawn_id}' not found")
-                continue
-            rows[spawn_id] = row
-        return tuple(rows.values())
-
+    details: tuple[SpawnDetailOutput, ...] = ()
     try:
-        poll_result = poll_spawn_rows(
-            spawn_ids,
-            read_snapshot=_read_snapshot,
-            ready=_ready,
-            deadline=wait_deadline,
-            poll_interval_secs=poll,
-            should_abort=lambda: False,
-            on_waiting=_on_waiting,
-        )
-        if poll_result.aborted:
-            raise RuntimeError("Spawn wait aborted")
-
-        if not poll_result.snapshot.pending_ids:
-            details = settle_spawn_rows(
-                spawn_ids,
-                poll_result.snapshot.rows,
-                project_root=project_root,
-                runtime_root=runtime_root,
-                include_report_body=payload.include_report_body,
-                observation_parent_id=parent_wait_observer_id,
-            )
-            observation_settled = True
-            return build_wait_multi_output(details)
-
-        failed_rows = tuple(
-            row
-            for row in poll_result.snapshot.rows
-            if row.status in FAILURE_SPAWN_STATUSES
-        )
-        if payload.fail_fast and failed_rows:
-            details = settle_spawn_rows(
-                spawn_ids,
-                _reread_pending(),
-                project_root=project_root,
-                runtime_root=runtime_root,
-                include_report_body=payload.include_report_body,
-                observation_parent_id=parent_wait_observer_id,
-            )
-            observation_settled = True
-            pending_ids = tuple(
-                sorted(
-                    detail.spawn_id
-                    for detail in details
-                    if not _spawn_is_terminal(detail.status)
-                )
-            )
-            if not pending_ids:
-                return build_wait_multi_output(details)
-            return build_wait_multi_output(
-                details,
-                fail_fast=True,
-                pending_ids=pending_ids,
-            )
-
-        now = time.monotonic()
-        if checkpoint_deadline is not None and poll_result.deadline_reached:
-            checkpoint_details = settle_spawn_rows(
-                spawn_ids,
-                _reread_pending(),
-                project_root=project_root,
-                runtime_root=runtime_root,
-                include_report_body=payload.include_report_body,
-                observation_parent_id=parent_wait_observer_id,
-            )
-            observation_settled = True
-            pending_ids = tuple(
-                sorted(
-                    detail.spawn_id
-                    for detail in checkpoint_details
-                    if not _spawn_is_terminal(detail.status)
-                )
-            )
-            if not pending_ids:
-                return build_wait_multi_output(checkpoint_details)
-            tree_rows = overlay_derived(
-                runtime_root,
-                spawn_store.list_spawns(runtime_root).records,
-            )
-            checkpoint_descendants = {
-                spawn_id: tuple(
-                    row.id
-                    for row in collect_descendants(spawn_id, tree_rows)
-                    if row.id != spawn_id and is_active_spawn_status(row.status)
-                )
-                for spawn_id in pending_ids
-            }
-            checkpoint_descendants = {
-                spawn_id: descendants
-                for spawn_id, descendants in checkpoint_descendants.items()
-                if descendants
-            }
-            return SpawnWaitMultiOutput(
-                spawns=checkpoint_details,
-                total_runs=len(spawn_ids),
-                succeeded_runs=sum(
-                    1 for detail in checkpoint_details if detail.status == "succeeded"
-                ),
-                failed_runs=sum(
-                    1 for detail in checkpoint_details if detail.status == "failed"
-                ),
-                cancelled_runs=sum(
-                    1 for detail in checkpoint_details if detail.status == "cancelled"
-                ),
-                timed_out_runs=sum(
-                    1 for detail in checkpoint_details if detail.status == "timed_out"
-                ),
-                any_failed=any(
-                    detail.status in FAILURE_SPAWN_STATUSES or detail.status == "cancelled"
-                    for detail in checkpoint_details
-                ),
-                checkpoint=True,
-                checkpoint_pending_ids=pending_ids,
-                checkpoint_descendants=checkpoint_descendants,
-                checkpoint_chat_id=wait_chat_id,
-                checkpoint_elapsed_secs=now - started,
-            )
-
-        if hard_deadline is not None and poll_result.deadline_reached:
-            raise TimeoutError(_build_wait_timeout_message(pending, now - started))
-        raise RuntimeError("Spawn polling ended without a terminal condition")
-    finally:
-        if not observation_settled:
+        while True:
             record_spawn_observation(
                 runtime_root=runtime_root,
                 parent_spawn_id=parent_wait_observer_id,
-                waiting_remove=spawn_ids,
+                waiting_add=tuple(pending),
+                lease_seconds=lease_seconds,
             )
+            for spawn_id in tuple(pending):
+                row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+                if row is None:
+                    if has_explicit_ids:
+                        raise ValueError(f"Spawn '{spawn_id}' not found")
+                    # No-arg discovery is chat-scoped: if a discovered spawn vanishes while
+                    # waiting, treat it as resolved instead of failing unrelated waits.
+                    pending.discard(spawn_id)
+                    rows.pop(spawn_id, None)
+                    continue
+                rows[spawn_id] = row
+                if _spawn_is_terminal(row.status):
+                    pending.remove(spawn_id)
+
+            now = time.monotonic()
+            failed_fast = payload.fail_fast and any(
+                row.status in FAILURE_SPAWN_STATUSES for row in rows.values()
+            )
+            if pending and not failed_fast:
+                if now < wait_deadline:
+                    if now >= next_progress:
+                        progress = _render_wait_progress(
+                            pending,
+                            elapsed_secs=max(now - started, 0.0),
+                            mode=progress_mode,
+                        )
+                        if progress is not None:
+                            _emit_wait_progress(progress, sink=active_sink)
+                        next_progress = now + progress_interval
+                    time.sleep(min(poll, max(0.0, wait_deadline - time.monotonic())))
+                    continue
+                if not use_checkpoint:
+                    raise TimeoutError(_build_wait_timeout_message(pending, now - started))
+
+            details = tuple(
+                detail_from_row(
+                    project_root=project_root,
+                    row=rows[spawn_id],
+                    include_report_body=payload.include_report_body,
+                    runtime_root=runtime_root,
+                )
+                for spawn_id in spawn_ids
+                if spawn_id in rows
+            )
+            pending_ids = tuple(sorted(pending))
+            if not pending_ids:
+                return _build_wait_multi_output(details)
+            if failed_fast:
+                return _build_wait_multi_output(details, fail_fast=True, pending_ids=pending_ids)
+            return _build_wait_checkpoint_output(
+                details,
+                total_runs=len(spawn_ids),
+                pending_ids=pending_ids,
+                runtime_root=runtime_root,
+                chat_id=wait_chat_id,
+                elapsed_secs=now - started,
+            )
+    finally:
+        record_spawn_observation(
+            runtime_root=runtime_root,
+            parent_spawn_id=parent_wait_observer_id,
+            waiting_remove=spawn_ids,
+            observed_add=tuple(
+                detail.spawn_id for detail in details if _spawn_is_terminal(detail.status)
+            ),
+        )
 
 
 async def spawn_wait(

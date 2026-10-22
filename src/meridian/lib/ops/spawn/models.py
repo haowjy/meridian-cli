@@ -1,6 +1,7 @@
 """Spawn operation input/output models and shared lightweight helpers."""
 
 import shlex
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict
 
@@ -13,8 +14,6 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
-SPAWN_DELIVERY_MAX_BYTES = 64 * 1024
-SPAWN_DELIVERY_MAX_MEMBERS = 32
 _SPAWN_DELIVERY_SEPARATOR = "\n\n"
 
 
@@ -1000,7 +999,7 @@ class SpawnDetailOutput(BaseModel):
         return self._format_compact_text()
 
     def delivery_frame(self) -> "_SpawnDeliveryFrame":
-        """Build the bounded wait-renderer frame for this spawn."""
+        """Build this spawn's frame for ``render_delivery``."""
 
         outcome: list[str] = []
         if self.duration_secs is not None:
@@ -1309,17 +1308,9 @@ class SpawnWaitMultiOutput(BaseModel):
     status: str | None = None
     exit_code: int | None = None
 
-    def format_text(
-        self,
-        ctx: FormatContext | None = None,
-        *,
-        max_bytes: int | None = None,
-        max_members: int = SPAWN_DELIVERY_MAX_MEMBERS,
-    ) -> str:
+    def format_text(self, ctx: FormatContext | None = None) -> str:
         """Render waited spawns, expanding report content when available."""
         effective_ctx = ctx or FormatContext()
-        if max_bytes is not None:
-            return self._format_bounded_text(max_bytes=max_bytes, max_members=max_members)
         if self.checkpoint:
             return self._format_checkpoint_text()
         if self.fail_fast:
@@ -1360,48 +1351,6 @@ class SpawnWaitMultiOutput(BaseModel):
         if not report_sections:
             return table
         return f"{table}\n\n" + "\n\n".join(report_sections)
-
-    def _format_bounded_text(self, *, max_bytes: int, max_members: int) -> str:
-        """Render fair per-spawn excerpts while reserving every outcome and lookup."""
-
-        if max_bytes <= 0:
-            raise ValueError("Spawn delivery byte budget must be positive")
-        if max_members <= 0:
-            raise ValueError("Spawn delivery member budget must be positive")
-        members = self.spawns[:max_members]
-        if not members:
-            return ""
-
-        frames = tuple(spawn.delivery_frame() for spawn in members)
-        mandatory_bytes = tuple(_utf8_len(frame.mandatory()) for frame in frames)
-        separator_bytes = _utf8_len(_SPAWN_DELIVERY_SEPARATOR)
-        required = sum(mandatory_bytes) + separator_bytes * (len(frames) - 1)
-        if required > max_bytes:
-            raise ValueError("Spawn delivery identities exceed the byte budget")
-
-        rendered: list[str] = []
-        rendered_bytes = 0
-        remaining_mandatory = sum(mandatory_bytes)
-        for index, (frame, frame_mandatory_bytes) in enumerate(
-            zip(frames, mandatory_bytes, strict=True)
-        ):
-            leading_separator_bytes = separator_bytes if index else 0
-            remaining_mandatory -= frame_mandatory_bytes
-            remaining_members = len(frames) - index
-            remaining_separator_bytes = (remaining_members - 1) * separator_bytes
-            optional_bytes = (
-                max_bytes
-                - rendered_bytes
-                - leading_separator_bytes
-                - frame_mandatory_bytes
-                - remaining_mandatory
-                - remaining_separator_bytes
-            )
-            frame_budget = frame_mandatory_bytes + optional_bytes // remaining_members
-            member_text = frame.render(frame_budget)
-            rendered.append(member_text)
-            rendered_bytes += leading_separator_bytes + _utf8_len(member_text)
-        return _SPAWN_DELIVERY_SEPARATOR.join(rendered)
 
     def _format_checkpoint_text(self) -> str:
         if self.checkpoint_elapsed_secs is None:
@@ -1505,6 +1454,48 @@ class SpawnWaitMultiOutput(BaseModel):
         return self.to_cli_wire()
 
 
+def render_delivery(details: Sequence[SpawnDetailOutput], *, max_bytes: int) -> str:
+    """Render fair per-spawn excerpts while reserving every outcome and lookup.
+
+    Same budget rules as Pi's spawn watcher (``pi_runtime/.context/delivery-contract.md``):
+    every member's mandatory frame is reserved first, then report bodies share the
+    remaining bytes, cut at a UTF-8 code-point boundary.
+    """
+
+    if not details:
+        return ""
+    frames = tuple(detail.delivery_frame() for detail in details)
+    mandatory_bytes = tuple(_utf8_len(frame.mandatory()) for frame in frames)
+    separator_bytes = _utf8_len(_SPAWN_DELIVERY_SEPARATOR)
+    required = sum(mandatory_bytes) + separator_bytes * (len(frames) - 1)
+    if required > max_bytes:
+        raise ValueError("Spawn delivery identities exceed the byte budget")
+
+    rendered: list[str] = []
+    rendered_bytes = 0
+    remaining_mandatory = sum(mandatory_bytes)
+    for index, (frame, frame_mandatory_bytes) in enumerate(
+        zip(frames, mandatory_bytes, strict=True)
+    ):
+        leading_separator_bytes = separator_bytes if index else 0
+        remaining_mandatory -= frame_mandatory_bytes
+        remaining_members = len(frames) - index
+        remaining_separator_bytes = (remaining_members - 1) * separator_bytes
+        optional_bytes = (
+            max_bytes
+            - rendered_bytes
+            - leading_separator_bytes
+            - frame_mandatory_bytes
+            - remaining_mandatory
+            - remaining_separator_bytes
+        )
+        frame_budget = frame_mandatory_bytes + optional_bytes // remaining_members
+        member_text = frame.render(frame_budget)
+        rendered.append(member_text)
+        rendered_bytes += leading_separator_bytes + _utf8_len(member_text)
+    return _SPAWN_DELIVERY_SEPARATOR.join(rendered)
+
+
 @dataclass(frozen=True)
 class _SpawnDeliveryFrame:
     prefix: str
@@ -1540,8 +1531,6 @@ def _truncate_utf8(value: str, max_bytes: int) -> str:
 
 
 __all__ = [
-    "SPAWN_DELIVERY_MAX_BYTES",
-    "SPAWN_DELIVERY_MAX_MEMBERS",
     "SpawnActionOutput",
     "SpawnCancelInput",
     "SpawnContinueInput",
@@ -1564,4 +1553,5 @@ __all__ = [
     "SpawnWaitMultiOutput",
     "build_goal_contract_preview",
     "normalize_goal",
+    "render_delivery",
 ]
