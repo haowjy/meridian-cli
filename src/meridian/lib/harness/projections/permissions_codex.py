@@ -67,11 +67,6 @@ def map_codex_approval_policy(approval_mode: str) -> str | None:
             f"'{approval_mode}' on this CLI/protocol version"
         )
     mapped = _APPROVAL_POLICY_BY_MODE[approval_mode]
-    if mapped is None and approval_mode != "default":
-        raise HarnessCapabilityMismatch(
-            "Codex cannot express requested approval mode "
-            f"'{approval_mode}' on this CLI/protocol version"
-        )
     return mapped
 
 
@@ -84,11 +79,6 @@ def map_codex_sandbox_mode(sandbox_mode: str) -> str | None:
             f"'{sandbox_mode}' on this CLI/protocol version"
         )
     mapped = _SANDBOX_MODE_BY_MODE[sandbox_mode]
-    if mapped is None and sandbox_mode != "default":
-        raise HarnessCapabilityMismatch(
-            "Codex cannot express requested sandbox mode "
-            f"'{sandbox_mode}' on this CLI/protocol version"
-        )
     return mapped
 
 
@@ -136,6 +126,15 @@ def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> En
                     "Codex has no per-launch tool approval rule",
                 )
             )
+        elif rule.capability == "*" and rule.action == "deny" and rule.pattern is None:
+            lines.append(
+                ReportLine(
+                    rule_element(rule),
+                    "partial",
+                    "web search and image viewing off unless allowed; the shell stays on, "
+                    "since Codex reads files through it",
+                )
+            )
     for platform in policy.platform_rules:
         if platform.kind == "builtin-agents":
             lines.append(
@@ -174,10 +173,13 @@ def compile_codex_permissions(
     """Compile ``spec.permission_policy`` for Codex, with the report of what it did."""
 
     policy = spec.permission_policy
+    # Under an allowlist, search and image viewing are off unless a rule allows them. The shell
+    # stays on: Codex reads files through it, so turning it off would leave nothing to read with.
+    off = False if policy.is_allowlist else None
     switches: dict[str, bool | None] = {
         "shell_tool": None,
-        "web_search": None,
-        "view_image": None,
+        "web_search": off,
+        "view_image": off,
     }
     # `web_search` is narrower than `web`, so it decides the search switch whatever the order.
     for rule in sorted(policy.rules, key=lambda rule: rule.capability == "web_search"):

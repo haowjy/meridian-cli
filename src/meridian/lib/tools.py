@@ -42,11 +42,6 @@ class ToolRule(BaseModel):
     def is_wildcard(self) -> bool:
         return self.capability == "*"
 
-    @property
-    def is_legacy(self) -> bool:
-        return self.capability is None
-
-
 def legacy_tool_rules(tools: ToolsField | None) -> tuple[ToolRule, ...]:
     """Read an old snapshot's tools map as native-only rules (no capability).
 
