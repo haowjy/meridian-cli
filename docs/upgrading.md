@@ -422,8 +422,7 @@ silencing and extra channels are `[[hooks]]` rows; see
 With no hook config, delivery is unchanged.
 
 - **CLI.** `meridian notify "<title>" ["<body>"]`: the title is positional and
-  required, the body optional, and the session headline follows the message in
-  the title as well as ending the body.
+  required, the body optional, and the session headline always ends the body.
   `--title` is gone; replace `meridian notify "msg" --title T` with
   `meridian notify T "msg"`. `--no-email`, `--priority` and `--json` are
   unchanged, but the results list one entry per route (the default route is

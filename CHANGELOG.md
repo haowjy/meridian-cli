@@ -4,8 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-- Notification titles: `[<reason>] <tmux>: <agent> (<harness>) <title>`. Harness always shown. Work item moved to body's last line, resolved at send time (follows `work switch`). `meridian notify` title: sender, then message.
+### Changed
+- Notification titles: `[<reason>] <tmux>: <agent> (<harness>) <title>`; harness shown when known. Work item moved to body's last line, resolved at send time from the sender's current chat (follows `work switch`, spawns included). `meridian notify` title: sender, then message. Hook `label` gains `sender`.
 
 ## [0.12.0] - 2026-10-22
 
