@@ -5,3 +5,7 @@
   gaps (work item `idle-ttl-detection`,
   `evidence/openai-codex-observed-cache.md`). Revisit if OpenAI publishes a
   ChatGPT-backend TTL or observed hit rates at 20–30 min drop.
+- `extractors/opencode.py`: native OpenCode denials provide OpenCode's generic reason,
+  not Meridian's `HEADLESS_REJECT_REASON`, and an unavailable tool produces no attempted-call
+  event to journal. Closing either gap requires an upstream custom-denial-reason/event seam
+  or a Meridian hook that mediates calls instead of native policy; do not fabricate events.

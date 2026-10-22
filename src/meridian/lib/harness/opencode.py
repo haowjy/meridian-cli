@@ -4,7 +4,6 @@ Upstream moved from ``opencode-ai/opencode`` to ``anomalyco/opencode`` (opencode
 The Meridian adapter targets current opencode.ai CLI releases.
 """
 
-import json
 import logging
 import re
 import sqlite3
@@ -222,7 +221,7 @@ def project_opencode_primary_preview(
         steps=(
             *steps,
             "Preserve inherited configuration; the bound config selects Meridian's "
-            "default agent when a system prompt is supplied.",
+            "policy agent.",
             "Launch, inspections and bootstrap share one startup deadline.",
             "Native configuration and actual message model are unavailable in dry-run.",
             "Fail on rejected configuration; no black-box fallback.",
@@ -416,14 +415,9 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
-            # The one place Meridian's default agent is decided. Bind emits the agent
-            # and its ``{file:}`` prompt exactly when this is set, and every surface
-            # that opens or resumes a session selects it explicitly.
-            agent_name=(
-                meridian_agent_id(run.agent)
-                if (run.appended_system_prompt or "").strip()
-                else None
-            ),
+            # Every surface selects the one config agent that owns this launch's
+            # prompt (when present), permission policy and workspace grants.
+            agent_name=meridian_agent_id(run.agent),
             skills=(),
         )
 
@@ -473,30 +467,20 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        # ``spec.agent_name`` is set exactly when the appended prompt is non-empty, which
-        # is when ``system-prompt.md`` is written after the spawn is persisted and before
-        # launch (a missing ``{file:}`` target fails OpenCode's whole config). A continued
-        # session keeps its model.
+        version = resolve_opencode_version(spec.opencode_version, env=env)
+        permissions, _ = compile_opencode_permissions(spec, version=version)
         config = project_opencode_launch_config(
             env.get(OPENCODE_CONFIG_CONTENT_ENV),
+            version=version,
             roots=spec.projected_roots,
-            agent_id=spec.agent_name,
-            prompt_file=system_prompt_path,
+            agent_id=spec.agent_name or meridian_agent_id(None),
+            prompt_file=(
+                system_prompt_path if (spec.appended_system_prompt or "").strip() else None
+            ),
+            permissions=permissions,
             model=None if spec.continue_session_id else spec.model,
         )
-        overrides: dict[str, str] = {}
-        permissions, _ = compile_opencode_permissions(spec)
-        if permissions is not None:
-            overrides["OPENCODE_PERMISSION"] = json.dumps(
-                permissions, sort_keys=True, separators=(",", ":")
-            )
-        elif not spec.interactive:
-            # A child spawn with no explicit restriction: allow everything so
-            # `opencode run` doesn't auto-reject every tool call.
-            overrides["OPENCODE_PERMISSION"] = '{"*":"allow"}'
-        if config is not None:
-            overrides[OPENCODE_CONFIG_CONTENT_ENV] = config
-        return overrides
+        return {OPENCODE_CONFIG_CONTENT_ENV: config}
 
     def seed_session(
         self,
@@ -598,6 +582,9 @@ _OPENCODE_V2_ACTIVITY_EVENTS: tuple[str, ...] = (
     "session.reasoning.ended",
     "session.step.started",
     "session.step.ended",
+    "session.tool.input.started",
+    "session.tool.called",
+    "session.tool.failed",
 )
 
 # OpenCode 2 emits ``session.execution.*`` instead of ``session.idle``; the

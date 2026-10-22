@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from typing import cast
 
 import pytest
 
@@ -334,42 +335,147 @@ async def test_followup_preserves_committed_native_model_agent_and_variant(varia
     }
 
 
-def test_launch_config_preserves_unrelated_native_configuration() -> None:
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str) -> None:
     import json
     from pathlib import Path
 
+    from meridian.lib.harness.opencode_backend import OpenCodeVersion
+    from meridian.lib.harness.projections.permissions_opencode import (
+        compile_opencode_permissions,
+    )
     from meridian.lib.harness.projections.project_opencode_config import (
         project_opencode_launch_config,
     )
+    from meridian.lib.safety.policy import PermissionPolicy, PlatformRule
+    from meridian.lib.tools import ToolRule
 
     config = {
         "theme": "native",
         "agent": {"build": {"model": "old/model", "temperature": 0.2}},
+        "agents": {"build": {"model": "new/model", "temperature": 0.4}},
         "instructions": ["/user/instructions.md"],
     }
+    permissions, report = compile_opencode_permissions(
+        ResolvedLaunchSpec(
+            permission_policy=PermissionPolicy(
+                rules=(
+                    ToolRule(capability="*", action="deny"),
+                    ToolRule(
+                        capability="bash",
+                        pattern="git *",
+                        action="allow",
+                        native=("bash(git *)",),
+                    ),
+                    ToolRule(
+                        capability="bash",
+                        pattern="git push *",
+                        action="deny",
+                        native=("bash(git push *)",),
+                    ),
+                    ToolRule(
+                        capability="bash",
+                        pattern="meridian spawn done *",
+                        action="deny",
+                        native=("bash(meridian spawn done *)",),
+                    ),
+                    ToolRule(
+                        capability="write",
+                        pattern="/tmp/**",
+                        action="allow",
+                        native=("write(/tmp/**)",),
+                    ),
+                    ToolRule(capability="edit", action="deny", native=("edit",)),
+                ),
+                platform_rules=(
+                    PlatformRule(
+                        kind="completion-commands",
+                        commands=("meridian spawn done", "meridian spawn rearm"),
+                    ),
+                ),
+            )
+        ),
+        version=cast("OpenCodeVersion", version),
+    )
     projected = json.loads(
         project_opencode_launch_config(
             json.dumps(config),
-            roots=(),
+            version=cast("OpenCodeVersion", version),
+            roots=(Path("/repo"),),
             agent_id="meridian-coder",
             prompt_file=Path("/spawns/p1/system-prompt.md"),
+            permissions=permissions,
             model="openai/selected",
         )
-        or ""
     )
-    assert projected == {
-        "theme": "native",
-        "model": "openai/selected",
-        "default_agent": "meridian-coder",
-        "instructions": ["/user/instructions.md"],
-        "agent": {
-            "build": {"model": "old/model", "temperature": 0.2},
-            "meridian-coder": {
-                "prompt": "{file:/spawns/p1/system-prompt.md}",
-                "mode": "primary",
+    agents_key = "agent" if version == "v1" else "agents"
+    permission_key = "permission" if version == "v1" else "permissions"
+    prompt_key = "prompt" if version == "v1" else "system"
+    agent = projected[agents_key]["meridian-coder"]
+    assert projected["theme"] == "native"
+    assert projected["model"] == "openai/selected"
+    assert projected["default_agent"] == "meridian-coder"
+    assert projected["instructions"] == ["/user/instructions.md"]
+    assert projected["agent"]["build"] == {"model": "old/model", "temperature": 0.2}
+    assert projected["agents"]["build"] == {"model": "new/model", "temperature": 0.4}
+    assert agent["mode"] == "primary"
+    assert agent[prompt_key] == "{file:/spawns/p1/system-prompt.md}"
+    if version == "v1":
+        assert agent[permission_key] == {
+            "*": "deny",
+            "bash": {
+                "git *": "allow",
+                "git push *": "deny",
+                "meridian spawn done": "deny",
+                "meridian spawn done *": "deny",
+                "meridian spawn rearm": "allow",
+                "meridian spawn rearm *": "allow",
             },
-        },
-    }
+            "external_directory": {"/repo/**": "allow"},
+            "write": {"/tmp/**": "allow"},
+            "edit": "deny",
+        }
+    else:
+        assert agent[permission_key] == [
+            {"action": "*", "resource": "*", "effect": "deny"},
+            {"action": "edit", "resource": "*", "effect": "deny"},
+            {"action": "shell", "resource": "git *", "effect": "allow"},
+            {"action": "shell", "resource": "git push *", "effect": "deny"},
+            {
+                "action": "shell",
+                "resource": "meridian spawn done",
+                "effect": "deny",
+            },
+            {
+                "action": "shell",
+                "resource": "meridian spawn done *",
+                "effect": "deny",
+            },
+            {
+                "action": "shell",
+                "resource": "meridian spawn rearm",
+                "effect": "allow",
+            },
+            {
+                "action": "shell",
+                "resource": "meridian spawn rearm *",
+                "effect": "allow",
+            },
+            {"action": "external_directory", "resource": "/repo/**", "effect": "allow"},
+        ]
+        write_line = next(
+            line for line in report if line.element == "tools: write(/tmp/**) = allow"
+        )
+        assert write_line.status == "partial"
+        assert (
+            "conflicting semantics conservatively use permission edit(*): deny"
+            in write_line.note
+        )
+    completion_line = next(
+        line for line in report if line.element.startswith("platform: allow completion commands")
+    )
+    assert completion_line.status == "partial"
+    assert "overlapping profile rule keeps its command pair stricter" in completion_line.note
     assert config["agent"]["build"]["model"] == "old/model"
 
 

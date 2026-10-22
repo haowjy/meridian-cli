@@ -29,7 +29,8 @@ Transports differ at the wire level:
   delegates. Both transports manage `opencode serve` and share process lifecycle,
   liveness, and SSE framing; V2 overrides the `/api` session surface, basic auth,
   event envelopes, and model switch. 1.x is legacy/frozen. Connections consume the
-  bound `OPENCODE_CONFIG_CONTENT` as given and select `spec.agent_name` wherever they
+  bound `OPENCODE_CONFIG_CONTENT` as given, including the reserved agent's permission
+  rules, and select `spec.agent_name` wherever they
   create or resume a session; see
   [OpenCode prompt, agent and model delivery](../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
   V1 creation uses `{providerID, id}`; a fresh session's initial prompt carries `{providerID, modelID}`.

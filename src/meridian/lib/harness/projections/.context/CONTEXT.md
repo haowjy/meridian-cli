@@ -86,7 +86,7 @@ its projectors spell that value:
 |---|---|---|
 | Claude | permission mode, `--allowedTools` / `--disallowedTools` lists | `project_claude.py` (argv) |
 | Codex | sandbox mode, approval policy | `project_codex_subprocess.py` (`--sandbox`, `-c approval_policy`), `project_codex_streaming.py` (`-c` flags and the thread payload) |
-| OpenCode | V1 permission map; `None` for primaries | `OpenCodeAdapter.project_launch_env()` (`OPENCODE_PERMISSION` JSON); the V2 connection (V2 rules merged into config content) |
+| OpenCode | ordered config-agent rules for spawns and primaries | `OpenCodeAdapter.project_launch_env()` → version-native `OPENCODE_CONFIG_CONTENT` |
 | Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
 | Pi | none: permissions are mediated through extension UI hooks | |
 
@@ -96,8 +96,9 @@ for tool rules, so only its two modes compile.
 A compile that restricts the shell must name the `completion-commands` platform rule's
 `commands` (`meridian spawn done` / `rearm`) in its own scope syntax, where a broad `bash` or
 `*` deny does not shadow them; otherwise the child cannot answer the completion confirmation.
-OpenCode does (`bash(<cmd>)` and `bash(<cmd> *)`, added only to a map that profile rules made, so
-the spawn's allow-everything default survives); the rest report it `unsupported` until their lanes land.
+OpenCode does (`bash(<cmd>)` and `bash(<cmd> *)`) for every spawn whose policy carries the
+platform rule, including approval-confirm spawns without profile tool rules; the rest report
+it `unsupported` until their lanes land.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
 (`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying

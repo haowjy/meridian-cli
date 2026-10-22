@@ -168,7 +168,7 @@ drain path; the background dispatch is bounded by
 `_REQUEST_DISPATCH_TIMEOUT_SECONDS` and reports a dispatch failure through the handler
 on timeout or error. `respond_request` replies over the version's HTTP endpoint
 (`POST /session/{id}/permissions/{permissionID}` with `{"response": …}` for V1;
-`POST /api/session/{id}/permission/{requestID}/reply` with `{"reply": …}` for V2) and
+`POST /api/session/{id}/permission/{requestID}/reply` with `{"decision": …}` for V2) and
 fails fast when the request id is unknown instead of falling back to the session id.
 
 Because `inject_runtime_event` can be called from another task (e.g. the handler
@@ -280,7 +280,7 @@ their values with `<redacted>` before writing to history.
 
 ### OpenCode model and startup ownership
 
-Connections add no launch-local model or prompt override: both ride the bound
+Connections add no launch-local model, prompt or permission override: all ride the bound
 `OPENCODE_CONFIG_CONTENT` (see [OpenCode prompt, agent and model
 delivery](../../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)), and
 Meridian's default config agent carries no model, so a native agent's model cannot

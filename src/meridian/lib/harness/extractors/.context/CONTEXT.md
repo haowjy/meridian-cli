@@ -22,6 +22,13 @@ V1 ignores child-session assistant parts. V2 binds `assistantMessageID` to
 `session_message.id` within the recorded session/database. Unknown usage fields
 stay `None`; an explicitly reported zero is preserved.
 
+OpenCode's fold also records native permission failures that reach the V1 tool-part
+or V2 `session.tool.failed` stream as `PermissionDenial` facts. V2 requires the structured
+`permission.rejected` type; V1 recognizes its rule-prevents message, rather than treating
+an ordinary filesystem `permission denied` as policy. A deny that removes a tool from the
+model's catalog produces no attempted-call event and therefore no row; the fold never
+fabricates a request that OpenCode did not report.
+
 `detect_session_id_from_event` is separate from report extraction: Codex accepts
 owned thread/session envelopes, Claude top-level owned frame IDs, and OpenCode
 its session envelope fields. `conclude_native_run` observes the first attempt
