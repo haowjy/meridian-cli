@@ -91,15 +91,29 @@ its projectors spell that value:
 | Pi | `--tools`/`--exclude-tools`, plus rules for the `meridian-permissions` extension's `tool_call` block | `project_pi_rpc.py` / `project_pi_native_tui.py` (argv); `PiAdapter` env `_MERIDIAN_PI_PERMISSION_POLICY` (extension rules) |
 
 Claude emits `ask` only as `settings.permissions.ask`; it never contributes to an allow
-channel. A whole-policy allowlist restricts availability with `--tools`; both whole and
-per-capability allowlists use `dontAsk` plus scoped settings allows. Parent-project and
-passthrough grants are merged in the compile and dropped where a profile allowlist owns the
-capability.
+channel. Claude checks deny, then ask, then allow, so a plain deny or ask beside scoped
+allows of the same tool would shadow them. The compile therefore emits no such plain rule
+and gates the capability through the permission mode instead, like a per-capability
+allowlist: a mode in which unmatched calls need approval, which a headless spawn refuses.
+`approval: auto|never|yolo` gates with `acceptEdits` (edits keep running; it also runs file
+commands such as `touch`, `rm` and redirects inside the working directories), unless an
+edit capability is gated, which needs `manual`; `default` and `confirm` gate with `manual`.
+`dontAsk` is reserved for a whole-policy allowlist (`*: deny`), which also limits
+`--tools`; it refuses every tool not allowed, so it would turn a bash allowlist into a
+whole-policy one. Ask rules hold under every mode, bypass included, so they do not change
+the mode. Passthrough `--allowedTools` grants are merged and dropped where a profile
+allowlist or gate owns the tool. Passthrough `--dangerously-skip-permissions`,
+`--allow-dangerously-skip-permissions` and `--permission-mode` stay (the compile omits its
+own mode when passthrough sets one) and the report says they override the profile; the
+user, project and local settings files' allows, which Claude merges itself, are read by
+preflight (`CLAUDE_SETTINGS_ALLOWS_FLAG`) and reported when an allowlist or gate is present.
+Every Claude report line is read back from the emitted channels, so a rule the deny/ask
+order shadows or the compile left out is `partial`.
 
 When Claude's sandbox is enabled, the settings JSON always spells
 `autoAllowBashIfSandboxed`: true only for an unrestricted `approval: auto`, false for
-allowlists and `ask`. Omitting false lets Claude's sandbox auto-approval accept unmatched
-Bash calls before `dontAsk` can refuse them, which defeats the allowlist.
+allowlists, gates and `ask`. Omitting false lets Claude's sandbox auto-approval accept
+unmatched Bash calls before the mode can refuse them, which defeats the allowlist.
 
 Codex compiles exact unscoped `bash`, `web`/`web_search` (the narrower wins), and `image` allow/deny rules to process-level
 switches. Its scoped rules, `ask`, and allowlists have no native carrier and remain
@@ -109,13 +123,15 @@ and `codex app-server`; the thread payload continues to carry sandbox and approv
 A compile that restricts the shell must name the `completion-commands` platform rule's
 `commands` (`meridian spawn done` / `rearm`) in its own scope syntax, where a broad `bash` or
 `*` deny does not shadow them; otherwise the child cannot answer the completion confirmation.
-OpenCode does (`bash(<cmd>)` and `bash(<cmd> *)`) for every spawn whose policy carries the
-platform rule, including approval-confirm spawns without profile tool rules. Claude adds `Bash(<cmd>)` and
-`Bash(<cmd> *)` to `settings.permissions.allow` and, for a whole allowlist, keeps Bash
-available through `--tools`; an explicit profile deny/ask still takes precedence and the
-report says the platform allow is partial. Pi's permissions extension grants only a whole
-command with optional `[A-Za-z0-9_.-]+` arguments; Codex
-cannot scope its shell and reports the rule `unsupported`.
+Every spawn carries the rule. OpenCode adds `bash(<cmd>)` and `bash(<cmd> *)` after its
+own `*` default, so the rule never makes a map on its own. Claude adds `Bash(<cmd>)` and
+`Bash(<cmd> *)` to `settings.permissions.allow` on every spawn (Claude's default mode asks
+before commands that change files, and a spawn has no one to answer) and, for a whole
+allowlist, keeps Bash available through `--tools`; a plain `bash` deny or ask is gated
+rather than emitted so it cannot shadow them, and a scoped profile deny or ask that covers
+them still wins and makes the platform line partial. Pi's permissions extension grants
+only the whole command with optional `[A-Za-z0-9_.-]+` arguments, and loads for them only when some rule could restrict the shell; Codex cannot scope
+its shell and reports the rule `unsupported`.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
 (`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying

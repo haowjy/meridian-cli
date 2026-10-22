@@ -8,12 +8,8 @@ import pytest
 
 from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
-from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
-from meridian.lib.safety.policy import build_permission_policy
 from meridian.lib.tools import ToolRule
 from tests.support.fixtures import allow_headless_claude, write_agent
 from tests.support.launch import (
@@ -154,33 +150,6 @@ def test_profile_opt_out_keeps_task_off_the_platform_deny_list(
     assert {"TaskCreate", "TaskGet"}.issubset(_settings_permission_entries(argv, "allow"))
     assert _TASK_DENIES.isdisjoint(_tool_flag_entries(argv, "--disallowedTools"))
     assert "Agent" in _tool_flag_entries(argv, "--disallowedTools")
-
-
-def test_parent_allowed_tools_cannot_readd_denied_agent() -> None:
-    policy = build_permission_policy(
-        rules=(
-            tool_rule("bash", "allow", "Bash"),
-            tool_rule("agent", "deny", "Agent"),
-            tool_rule("agent", "deny", "Agent(Explore)", pattern="Explore"),
-        ),
-        sandbox=None,
-    )
-    spec = ResolvedLaunchSpec(
-        harness=HarnessId.CLAUDE,
-        model="claude-sonnet-4-6",
-        permission_policy=policy,
-        extra_args=(CLAUDE_PARENT_ALLOWED_TOOLS_FLAG, "Agent,Agent(Explore),Write"),
-    )
-
-    argv = tuple(project_claude_spec_to_cli_args(spec, base_command=("claude",)))
-    allowed = _settings_permission_entries(argv, "allow")
-    disallowed = _tool_flag_entries(argv, "--disallowedTools")
-
-    assert "Write" in allowed
-    assert "Agent" not in allowed
-    assert "Agent(Explore)" not in allowed
-    assert "Agent" in disallowed
-    assert "Agent(Explore)" in _settings_permission_entries(argv, "deny")
 
 
 def test_primary_surface_denies_agent_but_not_task(

@@ -144,6 +144,17 @@ def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> En
                     "-c features.multi_agent_v2=false -c agents.max_depth=0",
                 )
             )
+        elif platform.kind == "completion-commands":
+            lines.append(
+                ReportLine(
+                    platform_element(platform),
+                    "unsupported",
+                    "Codex cannot grant single shell commands; with the shell off they cannot run"
+                    if permissions.shell_tool is False
+                    else "Codex cannot grant single shell commands; they run as ordinary "
+                    "shell calls, subject to its sandbox and approval policy",
+                )
+            )
     if permissions.sandbox_mode is not None:
         lines.append(
             ReportLine(

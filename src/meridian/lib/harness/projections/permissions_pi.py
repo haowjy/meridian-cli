@@ -163,9 +163,11 @@ def _needs_extension(
     allowlist_tools: tuple[str, ...],
     completion_commands: tuple[str, ...],
 ) -> bool:
+    # Every spawn carries the completion commands; they need the extension only when a
+    # rule could otherwise restrict the shell.
     return bool(
         allowlist_tools
-        or completion_commands
+        or (completion_commands and rules)
         or any(
             rule.pattern is not None
             or rule.action == "ask"
@@ -253,7 +255,9 @@ def _report(
                 ReportLine(
                     platform_element(platform),
                     "platform",
-                    "--tools bash plus fixed tool_call grants",
+                    "--tools bash plus fixed tool_call grants"
+                    if permissions.extension_policy is not None
+                    else "no rule restricts bash, so they run",
                 )
             )
         elif platform.kind == "native-subagents":

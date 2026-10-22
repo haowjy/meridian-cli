@@ -24,8 +24,9 @@ from meridian.lib.platform.atomic import atomic_replace
 
 logger = structlog.get_logger(__name__)
 
-# Internal sentinel consumed by Claude projection; never forwarded to the CLI.
-CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
+# Internal sentinel carrying ``read_claude_settings_allows`` to the permission compile,
+# which consumes it; never forwarded to the CLI.
+CLAUDE_SETTINGS_ALLOWS_FLAG = "--meridian-claude-settings-allows"
 
 
 def ensure_claude_session_accessible(
@@ -55,82 +56,48 @@ def ensure_claude_session_accessible(
             temporary.unlink(missing_ok=True)
 
 
-def read_parent_claude_permissions(execution_cwd: Path) -> tuple[list[str], list[str]]:
-    """Read parent Claude settings and return add-dir + allowed-tools payloads."""
+def read_claude_settings_allows(
+    child_cwd: Path, env: Mapping[str, str]
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return the ``permissions.allow`` entries of each settings file Claude loads itself.
 
-    additional_directories: list[str] = []
-    allowed_tools: list[str] = []
+    Claude merges the user, project and local settings files into every launch; Meridian
+    passes no ``--setting-sources``, so their allows widen a profile allowlist. The
+    permission compile reports them; it cannot remove them.
+    """
 
-    settings_dir = execution_cwd / ".claude"
-    settings_files = (
+    settings_dir = child_cwd / ".claude"
+    sources = (
+        resolve_claude_config_root(env, child_cwd) / "settings.json",
         settings_dir / "settings.json",
         settings_dir / "settings.local.json",
     )
-
-    for settings_path in settings_files:
-        if not settings_path.exists():
+    found: list[tuple[str, tuple[str, ...]]] = []
+    for settings_path in dict.fromkeys(sources):
+        if not settings_path.is_file():
             continue
-
         try:
             raw_payload = json.loads(settings_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             logger.warning(
-                "Failed to parse parent Claude settings while forwarding child permissions",
+                "Failed to parse Claude settings while reporting permissions",
                 path=str(settings_path),
             )
             continue
-
         if not isinstance(raw_payload, dict):
             continue
-        payload = cast("dict[str, object]", raw_payload)
-        raw_permissions = payload.get("permissions")
+        raw_permissions = cast("dict[str, object]", raw_payload).get("permissions")
         if not isinstance(raw_permissions, dict):
             continue
-        permissions = cast("dict[str, object]", raw_permissions)
-
-        raw_additional_directories = permissions.get("additionalDirectories")
-        if isinstance(raw_additional_directories, list):
-            for directory in cast("list[object]", raw_additional_directories):
-                if isinstance(directory, str):
-                    additional_directories.append(directory)
-
-        raw_allowed_tools = permissions.get("allow")
-        if isinstance(raw_allowed_tools, list):
-            for tool in cast("list[object]", raw_allowed_tools):
-                if isinstance(tool, str):
-                    allowed_tools.append(tool)
-
-    return dedupe_nonempty(additional_directories), dedupe_nonempty(allowed_tools)
-
-
-def expand_claude_passthrough_args(
-    *,
-    execution_cwd: Path,
-    child_cwd: Path,
-    passthrough_args: tuple[str, ...],
-) -> tuple[str, ...]:
-    """Apply Claude-specific passthrough expansion for child execution."""
-
-    if child_cwd.resolve() == execution_cwd.resolve():
-        return passthrough_args
-
-    expanded_args: list[str] = [*passthrough_args, "--add-dir", execution_cwd.as_posix()]
-    _parent_additional_directories, parent_allowed_tools = read_parent_claude_permissions(
-        execution_cwd
-    )
-
-    # NOTE: parent additionalDirectories are intentionally not forwarded as
-    # passthrough --add-dir entries. Workspace roots flow via projected_roots.
-
-    if parent_allowed_tools:
-        expanded_args.extend(
-            (
-                CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
-                ",".join(parent_allowed_tools),
-            )
+        raw_allow = cast("dict[str, object]", raw_permissions).get("allow")
+        if not isinstance(raw_allow, list):
+            continue
+        allows = dedupe_nonempty(
+            entry for entry in cast("list[object]", raw_allow) if isinstance(entry, str)
         )
-
-    return tuple(expanded_args)
+        if allows:
+            found.append((settings_path.as_posix(), tuple(allows)))
+    return tuple(found)
 
 
 def build_claude_preflight_result(
@@ -140,23 +107,27 @@ def build_claude_preflight_result(
     passthrough_args: tuple[str, ...],
     extra_env: Mapping[str, str] | None = None,
 ) -> PreflightResult:
-    """Build Claude preflight output with immutable env overrides."""
+    """Build Claude preflight output: passthrough plus the settings-file allows sentinel."""
 
+    _ = execution_cwd
+    expanded = passthrough_args
+    settings_allows = read_claude_settings_allows(child_cwd, os.environ)
+    if settings_allows:
+        expanded = (
+            *passthrough_args,
+            CLAUDE_SETTINGS_ALLOWS_FLAG,
+            json.dumps([[path, list(allows)] for path, allows in settings_allows]),
+        )
     return PreflightResult.build(
-        expanded_passthrough_args=expand_claude_passthrough_args(
-            execution_cwd=execution_cwd,
-            child_cwd=child_cwd,
-            passthrough_args=passthrough_args,
-        ),
+        expanded_passthrough_args=expanded,
         extra_env=dict(extra_env or {}),
     )
 
 
 __all__ = [
-    "CLAUDE_PARENT_ALLOWED_TOOLS_FLAG",
+    "CLAUDE_SETTINGS_ALLOWS_FLAG",
     "build_claude_preflight_result",
     "ensure_claude_session_accessible",
-    "expand_claude_passthrough_args",
     "project_slug",
-    "read_parent_claude_permissions",
+    "read_claude_settings_allows",
 ]

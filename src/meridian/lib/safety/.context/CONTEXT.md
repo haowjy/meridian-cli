@@ -84,16 +84,17 @@ unscoped rule for the capability does the same. Platform rules do not depend on 
 (`unscoped_action`), never for `*: deny`. Each allowlisted capability is a report element
 (`allowlist_element`), so a harness that does not enforce it says `unsupported` by default.
 
-**Completion commands.** `launch_platform_rules` gives a spawn that carries tool rules or
-approval `confirm` a `completion-commands` platform rule: an allow, not a deny, for the shell
-commands a child runs to answer Meridian's completion confirmation (`meridian spawn done` /
-`rearm`). A child that cannot run them still closes when its completion window runs out, but
-cannot reject a premature completion. `PlatformRule.commands` names them bare; the compile of
-any harness that restricts the shell spells each command and its argument form in its own scope
-syntax and puts them where a deny of `bash` or `*` does not shadow them (OpenCode V1:
-`bash(<cmd>)` / `bash(<cmd> *)`; V2: the corresponding `shell` rules). A spawn with neither
-tool rules nor approval `confirm` has an open shell and gets no rule. A harness that has not
-projected it reports `unsupported`.
+**Completion commands.** `launch_platform_rules` gives every spawn a `completion-commands`
+platform rule: an allow, not a deny, for the shell commands a child runs to answer
+Meridian's completion confirmation (`meridian spawn done` / `rearm`). It cannot depend on
+the profile: a harness's own defaults can close the shell to a headless child (Claude asks
+before any command that changes files). A child that cannot run them still closes when its
+completion window runs out, but cannot reject a premature completion. `PlatformRule.commands`
+names them bare; the compile of any harness that restricts the shell spells each command and
+its argument form in its own scope syntax and puts them where a deny of `bash` or `*` does
+not shadow them (OpenCode V1: `bash(<cmd>)` / `bash(<cmd> *)`; V2: the corresponding `shell`
+rules). A compile whose shell is open has nothing to add. A harness that has not projected
+it reports `unsupported`.
 
 **Reports.** `complete_report` gives every policy element exactly one line, in policy order.
 A compile reports what it enforces or has something specific to say about; the rest is

@@ -5,7 +5,6 @@ import json
 import pytest
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
@@ -35,17 +34,14 @@ def _settings_permission_entries(argv: list[str], action: str) -> tuple[str, ...
     return tuple(payload.get("permissions", {}).get(action, ()))
 
 
-def test_claude_projection_drops_inherited_agent_when_native_agents_disabled() -> None:
+def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
             platform_rules=(PlatformRule(kind="native-subagents", capabilities=("agent",)),)
         ),
-        extra_args=(
-            CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
-            "Agent,Agent(custom),Bash(meridian spawn *)",
-        ),
+        extra_args=("--allowedTools", "Agent,Agent(custom),Bash(meridian spawn *)"),
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
@@ -53,15 +49,12 @@ def test_claude_projection_drops_inherited_agent_when_native_agents_disabled() -
     assert _settings_permission_entries(command, "allow") == ("Bash(meridian spawn *)",)
 
 
-def test_claude_projection_keeps_inherited_agent_when_native_agents_enabled() -> None:
+def test_claude_projection_keeps_passthrough_agent_when_native_agents_enabled() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(),
-        extra_args=(
-            CLAUDE_PARENT_ALLOWED_TOOLS_FLAG,
-            "Agent,Agent(custom),Bash(meridian spawn *)",
-        ),
+        extra_args=("--allowedTools", "Agent,Agent(custom),Bash(meridian spawn *)"),
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
@@ -132,7 +125,7 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
     external = next(
         line
         for line in report
-        if line.element == "source: Claude parent-project and passthrough tool allows"
+        if line.element == "source: passthrough --allowedTools"
     )
     assert external.status == "partial"
     assert "Bash(meridian spawn *)" in external.note
