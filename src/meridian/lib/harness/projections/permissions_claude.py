@@ -629,7 +629,7 @@ def _tool_rule_line(
             notes.append("dontAsk refuses it instead of asking the human")
             partial = True
     if rule.capability is None:
-        notes.append("emitted as an older build wrote it; Claude ignores a name that is no tool")
+        notes.append("emitted as an older build wrote it")
         partial = True
     note = "; ".join(part for part in (_render_placed(placed), *notes) if part)
     return ReportLine(element, "partial" if partial else "native", note)
