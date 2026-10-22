@@ -88,7 +88,7 @@ its projectors spell that value:
 | Codex | sandbox mode, approval policy, shell/web/image switches | `project_codex_subprocess.py` (`--sandbox`, `-c`/feature flags), `project_codex_streaming.py` (process flags and the thread payload) |
 | OpenCode | ordered config-agent rules for spawns and primaries | `OpenCodeAdapter.project_launch_env()` → version-native `OPENCODE_CONFIG_CONTENT` |
 | Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
-| Pi | none: permissions are mediated through extension UI hooks | |
+| Pi | `--tools`/`--exclude-tools`, plus rules for the `meridian-permissions` extension's `tool_call` block | `project_pi_rpc.py` / `project_pi_native_tui.py` (argv); `PiAdapter` env `_MERIDIAN_PI_PERMISSION_POLICY` (extension rules) |
 
 Claude emits `ask` only as `settings.permissions.ask`; it never contributes to an allow
 channel. A whole-policy allowlist restricts availability with `--tools`; both whole and
@@ -120,8 +120,7 @@ Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `
 (`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying
 what that harness did with it. Status `native` means enforced as stated, `partial` means part
 of the meaning reaches the harness (the note says which), `unsupported` means nothing does,
-`platform` means a Meridian platform rule decided it. Pi's module (`permissions_pi.py`)
-returns no native value and reports every element unsupported. The report states today's
+`platform` means a Meridian platform rule decided it. The report states today's
 projection, not the intended one: write the note from what the compile emitted. The compile
 is registered on `HarnessProjectionPorts.permissions`; `LaunchContext.enforcement_report()`
 calls it for the `--dry-run` "Permissions:" section (and `permission_report` in `--json`)
