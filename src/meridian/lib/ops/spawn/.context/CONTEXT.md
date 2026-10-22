@@ -27,8 +27,9 @@ in the output. `cancelled` does not trigger fail-fast. Snapshot consistency: eac
 the latest row of every waited spawn, and every exit builds its result and pending set from that
 one pass, so each spawn appears in exactly one category.
 
-With `observe` (the default), the wait leases its pending IDs in `observed-spawns.json` while it
-polls. Every exit, including errors and the hard timeout, makes one write in `finally` that
+With `observe` (the default), the wait leases its pending IDs in the caller's
+`spawns/<caller>/observed-spawns.json` while it polls. A caller whose spawn row is gone writes
+nothing. Every exit, including errors and the hard timeout, makes one write in `finally` that
 releases the lease and records the terminal spawns it returned as consumed.
 
 The yield interval is resolved from `_MERIDIAN_HARNESS` env var (parent harness's prompt-cache TTL
@@ -61,7 +62,7 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   `meridian spawn show <id>` lookup before sharing the remaining bytes among report
   bodies, following Pi's `pi_runtime/.context/delivery-contract.md`.
 - `spawn ack <ids...>` writes those IDs under the caller's current primary and
-  returns exactly `{acked: [...]}`. Reading across the chat is what makes an ack
+  returns exactly `{acked: [...]}`; it fails when that primary's row is gone. Reading across the chat is what makes an ack
   written after resume consume a child of an earlier primary.
 
 Both commands use `observed-spawns.json`, the same state as explicit `spawn wait`.

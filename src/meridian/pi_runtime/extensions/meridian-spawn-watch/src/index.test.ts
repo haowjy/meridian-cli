@@ -62,6 +62,9 @@ async function setup() {
 async function file(root: string, name: string, value: unknown) {
   await writeJsonAtomic(path.join(root, 'pi-bash', 'p-parent', name), value);
 }
+async function observations(root: string, value: unknown) {
+  await writeJsonAtomic(path.join(root, 'spawns', 'p-parent', 'observed-spawns.json'), value);
+}
 async function bash(root: string, ...records: BashRecord[]) {
   await file(root, 'bash-records.json', {
     v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), records: Object.fromEntries(records.map(r => [r.bash_id, r]))
@@ -824,12 +827,12 @@ describe('durable result delivery', () => {
         }
       }
     };
-    await file(root, 'observed-spawns.json', observation);
+    await observations(root, observation);
     const h = host();
     owner(h);
     await pause(800);
     expect(h.notices).toHaveLength(0);
-    await file(root, 'observed-spawns.json', {
+    await observations(root, {
       ...observation, wait_reservations: {}, waiting_spawn_ids: []
     });
     await eventually(() => h.notices.length === 1);
@@ -848,7 +851,7 @@ describe('durable result delivery', () => {
     const runtime = owner(h);
     const delivery = idle ? undefined : runtime.deliverAtBoundary(new AbortController().signal);
     await eventually(() => exists(held.enteredPath));
-    await file(root, 'observed-spawns.json', {
+    await observations(root, {
       v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_spawn_ids: ['p1'], wait_reservations: {}
     });
     writeFileSync(held.releasePath, 'release');

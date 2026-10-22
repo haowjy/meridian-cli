@@ -1,6 +1,8 @@
 # Pi result delivery
 
-All coordination files in the table live under `pi-bash/<parent>/`. Missing
+Every coordination file in the table lives under `pi-bash/<parent>/` except
+`observed-spawns.json`, which lives in the parent's spawn directory,
+`spawns/<parent>/`. Missing
 coordination files mean empty; present malformed or wrong-parent authority means
 unknown, never successful empty. Task logs are different: missing, unreadable or
 non-regular logs are unavailable, not empty output.
@@ -12,7 +14,7 @@ one launch-scoped notification owner, and one Python public-event observer.
 | `bash-records.json` | managed Bash | v1 task records, written at lifecycle transitions only (`log_bytes` is the size at the last one); a terminal status is present only once published; tracked terminal background rows stay owed until wait/output consumption or admission. `execution_error` on a row and file-level `runtime_error` preserve unresolved execution/storage evidence. |
 | `delivery-receipts.json` | spawn watcher | `{v:1,spawn_id,messages:{delivery_id:work_ids[]}}`; exact native custom-message admission, never `sendMessage()` return. |
 | `delivery-observations.json` | Python | `{v:1,spawn_id,observed_message_ids:[]}`; exact public admission event observed after marking the parent active. |
-| `observed-spawns.json` | CLI `spawn wait`, `spawn ack` | v1 parent, durable `observed_spawn_ids`, diagnostic `waiting_spawn_ids`, `wait_reservations` keyed by caller with `owner_pid`, `owner_birth_epoch`, `expires_at_epoch`, `spawn_ids`. Only live matching process leases suppress temporarily. Shared beyond Pi: Python's model of the same schema is `lib/state/spawn_observations.py`, and Claude's `spawn collect` reads this file for every primary spawn of a chat, so a schema change updates the extension and that module in the same change. |
+| `observed-spawns.json` (in `spawns/<parent>/`) | CLI `spawn wait`, `spawn ack` | v1 parent, durable `observed_spawn_ids`, diagnostic `waiting_spawn_ids`, `wait_reservations` keyed by caller with `owner_pid`, `owner_birth_epoch`, `expires_at_epoch`, `spawn_ids`. Only live matching process leases suppress temporarily. Writers write only the current location, under the parent's published-spawn lock; every reader also reads the legacy `pi-bash/<parent>/observed-spawns.json` an older `spawn wait` may still write, unions consumed IDs and leases, and treats a damaged legacy copy as absent because no new build repairs it (a damaged current file is unknown, as for the other files). Shared beyond Pi: Python's model of the same schema is `lib/state/spawn_observations.py`, and Claude's `spawn collect` reads this file for every primary spawn of a chat, so a schema change updates the extension and that module in the same change. |
 | `cleared-spawns.json` | spawn watcher UI | v1 parent, finite `updated_at_ms`, `cleared_spawn_ids`; explicit dismissal. |
 | `delivery-fault.json` | spawn watcher | `{v:1,spawn_id,operation:"scan"|"admission"|null,error:string|null}`; bounded delivery diagnostics independent of execution records. |
 

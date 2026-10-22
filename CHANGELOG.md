@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Which child results a parent already consumed, and which a running `spawn wait` holds, now live in `spawns/<parent>/observed-spawns.json` instead of `pi-bash/<parent>/`, for every harness. Old file still read, never deleted. Rollback may redeliver results consumed after upgrade. See [upgrade note](docs/upgrading.md#spawn-results-consumed-by-a-parent-moved-to-spawnsparent).
+
 ## [0.11.9] - 2026-10-22
 
 ### Added

@@ -86,7 +86,9 @@ Pi extensions coordinate through disk files, not a separate lifecycle transport:
 - bash state under `runtime_root/pi-bash/<parent>/bash-records.json`
 - exact custom-message admission receipts and Python public-event observations under
   `runtime_root/pi-bash/<parent>/delivery-receipts.json` and `delivery-observations.json`
-- explicit result consumption and supervised delivery faults in the same parent directory
+- explicit result consumption in `runtime_root/spawns/<parent>/observed-spawns.json` (legacy
+  copy under `pi-bash/<parent>/` still read) and cleared-spawn marks plus supervised delivery
+  faults in the `pi-bash/<parent>/` directory
 
 The retired timestamp marker is ignored. See the
 [delivery contract](../../../pi_runtime/.context/delivery-contract.md) for schemas and

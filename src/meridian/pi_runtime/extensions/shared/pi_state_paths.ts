@@ -30,7 +30,13 @@ export function resolveDeliveryReceiptsPath(spawnId = currentSpawnIdFromEnv()): 
   return path.join(resolvePiBashDir(spawnId), "delivery-receipts.json");
 }
 
+/** Mirrors ``paths.observed_spawns_path``: the parent's own spawn directory. */
 export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolveSpawnsDir(), spawnId, "observed-spawns.json");
+}
+
+/** Where builds before the move wrote it; read-only here, never created or repaired. */
+export function resolveLegacyObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "observed-spawns.json");
 }
 

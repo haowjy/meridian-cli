@@ -1,5 +1,34 @@
 # Upgrade notes
 
+## Spawn results consumed by a parent moved to `spawns/<parent>/`
+
+`observed-spawns.json` records which child results a parent has already seen and
+which children a running `spawn wait` holds. It now lives in the parent's own spawn
+directory, `spawns/<parent>/observed-spawns.json`, and goes away when that spawn is
+pruned or archived. It used to sit under `pi-bash/<parent>/`, a name left over from
+Pi, although `spawn wait`, `spawn ack` and `spawn collect` use it for every harness.
+
+**What changed**
+
+- `spawn wait`, `spawn ack` and the Pi extension write only the new location.
+- Every reader also reads the old `pi-bash/<parent>/observed-spawns.json` and honors
+  its consumed IDs and live waits, so results already consumed stay consumed and a
+  `spawn wait` still running from the old build keeps holding its children. A
+  damaged old file counts as empty.
+- Nothing deletes or rewrites the old file. Its location is read for one release.
+
+**Before installing**
+
+Nothing is required. Finish or cancel `spawn wait` commands you can, but one that
+keeps running through the upgrade is still honored.
+
+**Rolling back**
+
+An older build reads only the old location, so results consumed after the upgrade
+look unconsumed to it: `spawn collect` or the Pi spawn watcher can deliver them
+again once. Waits started after the upgrade are invisible to it for the same reason.
+No data is lost or corrupted; older builds ignore the extra file in the spawn directory.
+
 ## Session browse redesign (history index schema 12)
 
 `meridian session browse` was rewritten (see the changelog). The on-disk changes

@@ -12,9 +12,14 @@ from typing import Literal
 import psutil
 from pydantic import Field, StrictInt
 
-from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.json_doc import VersionedPrivateDoc, read_model, write_model
+from meridian.lib.core.types import SpawnId
+from meridian.lib.state.json_doc import VersionedPrivateDoc, mutate_model, read_model
 from meridian.lib.state.liveness import is_process_alive_with_birth
+from meridian.lib.state.paths import observed_spawns_path
+from meridian.lib.state.spawn_aggregate import (
+    PublishedArtifactUnavailable,
+    published_artifact_lock,
+)
 
 
 class WaitReservation(VersionedPrivateDoc):
@@ -33,19 +38,32 @@ class SpawnObservations(VersionedPrivateDoc):
     wait_reservations: dict[str, WaitReservation] = Field(default_factory=dict)
 
 
-def _path(runtime_root: Path, parent_spawn_id: str) -> Path:
-    return runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.json"
-
-
-def _lock_path(runtime_root: Path, parent_spawn_id: str) -> Path:
-    return runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.lock"
-
-
-def _read(runtime_root: Path, parent_spawn_id: str) -> SpawnObservations | None:
-    observations = read_model(_path(runtime_root, parent_spawn_id), SpawnObservations)
+def _read(path: Path, parent_spawn_id: str) -> SpawnObservations | None:
+    observations = read_model(path, SpawnObservations)
     if observations is None or observations.spawn_id != parent_spawn_id:
         return None
     return observations
+
+
+def read_legacy(runtime_root: Path, parent_spawn_id: str) -> SpawnObservations | None:
+    """Read the pre-``spawns/<parent>/`` file; a damaged copy counts as absent.
+
+    Builds from before the move wrote ``pi-bash/<parent>/observed-spawns.json``, and
+    a ``spawn wait`` started by one may still be writing it. Nothing here writes or
+    deletes it, so a damaged copy is never repaired.
+    """
+
+    return _read(
+        runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.json", parent_spawn_id
+    )
+
+
+def _documents(runtime_root: Path, parent_spawn_id: str) -> tuple[SpawnObservations, ...]:
+    found = (
+        _read(observed_spawns_path(runtime_root, parent_spawn_id), parent_spawn_id),
+        read_legacy(runtime_root, parent_spawn_id),
+    )
+    return tuple(document for document in found if document is not None)
 
 
 def record(
@@ -56,8 +74,12 @@ def record(
     waiting_remove: Iterable[str] = (),
     observed_add: Iterable[str] = (),
     lease_seconds: float = 30.0,
-) -> None:
-    """Record results consumed by a parent or leased by its explicit wait."""
+) -> bool:
+    """Record results consumed by a parent or leased by its explicit wait.
+
+    Returns ``False`` only when the parent's published row is gone, so nothing was
+    written; there is no parent left to deliver to.
+    """
 
     waiting_add_ids = tuple(waiting_add)
     waiting_remove_ids = tuple(waiting_remove)
@@ -65,11 +87,12 @@ def record(
     if not parent_spawn_id or not (
         waiting_add_ids or waiting_remove_ids or observed_add_ids
     ):
-        return
+        return True
 
-    path = _path(runtime_root, parent_spawn_id)
-    with lock_file(_lock_path(runtime_root, parent_spawn_id)):
-        existing = _read(runtime_root, parent_spawn_id) or SpawnObservations(
+    path = observed_spawns_path(runtime_root, parent_spawn_id)
+
+    def update(existing: SpawnObservations | None) -> tuple[SpawnObservations, None]:
+        existing = existing or SpawnObservations(
             v=1,
             spawn_id=parent_spawn_id,
             observed_spawn_ids=[],
@@ -97,8 +120,7 @@ def record(
             reservations.pop(token, None)
         waiting_ids = {item for lease in reservations.values() for item in lease.spawn_ids}
         observed_ids.update(observed_add_ids)
-        write_model(
-            path,
+        return (
             SpawnObservations(
                 v=1,
                 spawn_id=parent_spawn_id,
@@ -107,8 +129,23 @@ def record(
                 waiting_spawn_ids=sorted(waiting_ids),
                 wait_reservations=reservations,
             ),
+            None,
+        )
+
+    # The file lives in the parent's spawn directory, which pruning and archiving
+    # delete: write only while the published row exists, never recreate the directory.
+    try:
+        mutate_model(
+            path,
+            SpawnObservations,
+            update,
+            lock=published_artifact_lock(runtime_root, SpawnId(parent_spawn_id)),
+            read_current=lambda: _read(path, parent_spawn_id),
             indent=2,
         )
+    except PublishedArtifactUnavailable:
+        return False
+    return True
 
 
 def consumed_ids(runtime_root: Path, parent_ids: Iterable[str]) -> frozenset[str]:
@@ -116,8 +153,7 @@ def consumed_ids(runtime_root: Path, parent_ids: Iterable[str]) -> frozenset[str
 
     consumed: set[str] = set()
     for parent_id in set(parent_ids):
-        observations = _read(runtime_root, parent_id)
-        if observations is not None:
+        for observations in _documents(runtime_root, parent_id):
             consumed.update(observations.observed_spawn_ids)
     return frozenset(consumed)
 
@@ -128,18 +164,16 @@ def leased_ids(runtime_root: Path, parent_ids: Iterable[str]) -> frozenset[str]:
     now = time.time()
     leased: set[str] = set()
     for parent_id in set(parent_ids):
-        observations = _read(runtime_root, parent_id)
-        if observations is None:
-            continue
-        for reservation in observations.wait_reservations.values():
-            if reservation.expires_at_epoch <= now:
-                continue
-            if not is_process_alive_with_birth(
-                reservation.owner_pid,
-                reservation.owner_birth_epoch,
-            ):
-                continue
-            leased.update(reservation.spawn_ids)
+        for observations in _documents(runtime_root, parent_id):
+            for reservation in observations.wait_reservations.values():
+                if reservation.expires_at_epoch <= now:
+                    continue
+                if not is_process_alive_with_birth(
+                    reservation.owner_pid,
+                    reservation.owner_birth_epoch,
+                ):
+                    continue
+                leased.update(reservation.spawn_ids)
     return frozenset(leased)
 
 
@@ -147,5 +181,6 @@ __all__ = [
     "SpawnObservations",
     "consumed_ids",
     "leased_ids",
+    "read_legacy",
     "record",
 ]

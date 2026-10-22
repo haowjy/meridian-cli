@@ -101,7 +101,7 @@ async def test_pi_tree_authority_polls_until_live_grandchild_finishes(
             origin="runner",
         )
         write_json(
-            tmp_path / "pi-bash" / "p1" / "observed-spawns.json",
+            tmp_path / "spawns" / "p1" / "observed-spawns.json",
             {
                 "v": 1,
                 "spawn_id": "p1",

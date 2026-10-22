@@ -14,7 +14,6 @@ import pytest
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
@@ -57,13 +56,21 @@ def test_wait_can_fetch_results_without_consuming_parent_notifications(
         prompt="finished",
     )
     spawn_store.finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
+    observer_id = spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c-wait-observation",
+        model="test",
+        agent="coder",
+        harness="pi",
+        prompt="observer",
+    )
     result = spawn_api.spawn_wait_sync(
         SpawnWaitInput(project_root=str(project_root), spawn_ids=(str(spawn_id),), observe=observe),
-        ctx=RuntimeContext(spawn_id=SpawnId("p-wait-observer")),
+        ctx=RuntimeContext(spawn_id=observer_id),
     )
     assert result.total_runs == 1
     assert result.spawns[0].status == "succeeded"
-    observed_path = runtime_root / "pi-bash" / "p-wait-observer" / "observed-spawns.json"
+    observed_path = runtime_root / "spawns" / str(observer_id) / "observed-spawns.json"
     if observe:
         observed = json.loads(observed_path.read_text())
         assert observed["observed_spawn_ids"] == [str(spawn_id)]
