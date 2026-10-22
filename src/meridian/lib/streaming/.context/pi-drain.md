@@ -91,7 +91,10 @@ Pi extensions coordinate private work with Python through disk files:
 - bash state under `runtime_root/pi-bash/<parent>/bash-records.json`
 - exact admission receipts under `runtime_root/pi-bash/<parent>/delivery-receipts.json`
 - Python's exact public-event acknowledgements in `delivery-observations.json`
-- explicit CLI observations/dismissals in `observed-spawns.json` / `cleared-spawns.json`
+- explicit CLI observations/dismissals in `runtime_root/spawns/<parent>/observed-spawns.json`
+  (`legacy-observed-spawns (#719)`: readers also merge the mirrored copy under
+  `pi-bash/<parent>/`) and `pi-bash/<parent>/cleared-spawns.json`; the disk watcher
+  watches both directories and wakes only for the files it reads
 - supervised watcher/storage diagnostics in `delivery-fault.json`
 
 See [the delivery contract](../../../pi_runtime/.context/delivery-contract.md) for full

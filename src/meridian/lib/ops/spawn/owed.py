@@ -268,11 +268,12 @@ def ack_owed_sync(
             spawn_id.strip() for spawn_id in payload.spawn_ids if spawn_id.strip()
         )
     )
-    record(
+    if not record(
         runtime_root=runtime_root,
         parent_spawn_id=parent_spawn_id,
         observed_add=acked,
-    )
+    ):
+        raise ValueError(f"Spawn acknowledgement: spawn '{parent_spawn_id}' is not published")
     return SpawnAckOutput(acked=acked)
 
 

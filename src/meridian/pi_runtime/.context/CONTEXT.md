@@ -230,7 +230,10 @@ quiescence inputs:
 - `runtime_root/pi-bash/<parent>/bash-records.json` — tracked/detached bash records
 - exact admission and public observation files — causal notification membership,
   fenced by the matching public message event
-- explicit result consumption/dismissal, process-owned wait leases and delivery faults
+- explicit result consumption/dismissal, process-owned wait leases and delivery faults;
+  `observed-spawns.json` lives in the parent's `runtime_root/spawns/<parent>/`, with the
+  `legacy-observed-spawns (#719)` copy under `pi-bash/` still read and mirrored for Pi
+  parents
 
 Writes must use the shared JSON-file helpers so readers never observe half-written JSON.
 Missing authority is empty. Present malformed, truncated, wrong-parent or invalid
@@ -238,7 +241,8 @@ schema evidence is unknown; readers recheck disk before final quiescence. Retire
 `last-notification.json` is ignored.
 
 `PiDiskWatcher` reads only private task/delivery coordination files. It does not scan spawn
-directories or infer descendants from newer IDs. Both Pi and resident drains use
+directories or infer descendants from newer IDs; in the parent's spawn directory it wakes
+only for the files it reads. Both Pi and resident drains use
 the shared reconciled transitive tree; keep extension notification and bash state
 independent of persisted descendant state.
 

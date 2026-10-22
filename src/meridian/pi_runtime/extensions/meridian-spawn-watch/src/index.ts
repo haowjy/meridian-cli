@@ -62,7 +62,7 @@ export class SpawnWatchRuntime {
   private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
   private readonly clearedPath = resolveClearedSpawnsPath(this.currentSpawnId);
   private readonly receiptsPath = path.join(this.bashDir, "delivery-receipts.json");
-  private readonly observationsPath = path.join(this.bashDir, "observed-spawns.json");
+  private readonly spawnDir = path.join(this.spawnsDir, this.currentSpawnId);
   private readonly queued = new Map<string, string[]>();
   private candidateChildIds = new Set<string>();
   private watchers: FSWatcher[] = [];
@@ -96,13 +96,18 @@ export class SpawnWatchRuntime {
     this.running = true;
     mkdirSync(this.spawnsDir, { recursive: true });
     mkdirSync(this.bashDir, { recursive: true });
-    const watched: Array<[string, () => void]> = [
+    const watched: Array<[string, (filename: string | null) => void]> = [
       [this.spawnsDir, () => { this.discoveryRevision++; this.requestIdleDelivery(); }],
+      // legacy-observed-spawns (#719): old writes wake the Pi coordination watch.
       [this.bashDir, () => this.requestIdleDelivery()],
+      // Current home. The directory also holds frequently rewritten spawn files
+      // (state, logs); only the observations file is read here.
+      [this.spawnDir, (filename) => { if (filename === null || filename === "observed-spawns.json") this.requestIdleDelivery(); }],
     ];
     for (const [dir, onChange] of watched) {
+      if (!existsSync(dir)) continue; // no spawn directory outside a Meridian launch; the idle poll still covers it
       try {
-        const watcher = watch(dir, { recursive: false }, onChange);
+        const watcher = watch(dir, { recursive: false }, (_event, filename) => onChange(filename));
         watcher.on("error", (error) => { this.logWarning(error); watcher.close(); });
         watcher.unref(); this.watchers.push(watcher);
       } catch (error) { this.logWarning(error); }
@@ -223,7 +228,7 @@ export class SpawnWatchRuntime {
   private async collectEligible(states: SpawnStateFile[]): Promise<NotificationItem[]> {
     const [bash, receipts, observed, cleared] = await Promise.all([
       this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
-      readSpawnObservations(this.currentSpawnId, this.observationsPath), this.readCleared(),
+      readSpawnObservations(this.currentSpawnId), this.readCleared(),
     ]);
     const consumed = admittedWorkIds(receipts);
     for (const id of [...observed.observed_spawn_ids, ...cleared]) consumed.add(id);

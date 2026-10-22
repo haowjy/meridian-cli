@@ -23,3 +23,8 @@
   structural — move the identity-transition mechanism into a state-owned
   project_identity module and leave ops with only active-spawn policy + CLI
   rendering. (B3)
+- Legacy `observed-spawns.json` under `pi-bash/<parent>/`: one minor release after
+  the move ships, delete everything tagged `legacy-observed-spawns (#719)`, keep the
+  `pi-bash` watch (it serves the other Pi coordination files), then remove the
+  `docs/upgrading.md` topic. Until then, never delete the legacy file: an older
+  `spawn wait` may still be writing it.

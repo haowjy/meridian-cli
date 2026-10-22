@@ -101,7 +101,7 @@ async def test_pi_tree_authority_polls_until_live_grandchild_finishes(
             origin="runner",
         )
         write_json(
-            tmp_path / "pi-bash" / "p1" / "observed-spawns.json",
+            tmp_path / "spawns" / "p1" / "observed-spawns.json",
             {
                 "v": 1,
                 "spawn_id": "p1",
@@ -151,7 +151,7 @@ async def test_pi_tree_authority_waits_for_finalizing_child_publication_and_cons
         spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
         child_runner.close()
         write_json(
-            tmp_path / "pi-bash" / "p1" / "observed-spawns.json",
+            tmp_path / "spawns" / "p1" / "observed-spawns.json",
             {
                 "v": 1,
                 "spawn_id": "p1",

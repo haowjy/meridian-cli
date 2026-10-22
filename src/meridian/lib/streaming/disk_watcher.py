@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import suppress
 from pathlib import Path
 from typing import TypeVar
 
 from pydantic import BaseModel
 from watchfiles import (
+    Change,
     awatch,  # pyright: ignore[reportUnknownVariableType]  # watchfiles exposes an incompletely typed async generator.
 )
 
@@ -20,11 +22,32 @@ from meridian.lib.harness.pi_private_state import (
     DeliveryObservations,
     DeliveryReceipts,
 )
-from meridian.lib.state.spawn_observations import SpawnObservations
+from meridian.lib.state.paths import observed_spawns_path
+from meridian.lib.state.spawn_observations import (
+    SpawnObservations,
+    read_legacy,  # legacy-observed-spawns (#719)
+)
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 
 _Model = TypeVar("_Model", bound=BaseModel)
+
+# Everything `_refresh_cached_state` reads. The parent's spawn directory also holds
+# unrelated, frequently rewritten files, so only these names may wake the watcher.
+_WATCHED_NAMES = frozenset(
+    {
+        "bash-records.json",
+        "delivery-receipts.json",
+        "delivery-observations.json",
+        "observed-spawns.json",
+        "cleared-spawns.json",
+        "delivery-fault.json",
+    }
+)
+
+
+def _is_watched_file(_change: Change, path: str) -> bool:
+    return os.path.basename(path) in _WATCHED_NAMES
 
 
 class PiDiskWatcher:
@@ -35,7 +58,9 @@ class PiDiskWatcher:
         ledger: PiPrivateWorkLedger | None = None,
     ) -> None:
         self._spawn_id = str(current_spawn_id)
+        self._runtime_root = runtime_root
         self._bash_dir = runtime_root / "pi-bash" / self._spawn_id
+        self._observations_path = observed_spawns_path(runtime_root, self._spawn_id)
         self._ledger = ledger or PiPrivateWorkLedger()
         self._tasks: list[asyncio.Task[None]] = []
         self._state_changed = asyncio.Event()
@@ -49,7 +74,7 @@ class PiDiskWatcher:
         self._delivered_change_generation = self._change_generation
         self._state_changed = asyncio.Event()
         self._stop_event = asyncio.Event()
-        self._tasks = [asyncio.create_task(self._watch_bash_dir())]
+        self._tasks = [asyncio.create_task(self._watch_state_dirs())]
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -77,12 +102,14 @@ class PiDiskWatcher:
 
     def _refresh_cached_state(self) -> bool:
         prior = self._ledger.blocker_snapshot()
-        bash = self._read("bash-records.json", BashEvidenceFile)
-        receipts = self._read("delivery-receipts.json", DeliveryReceipts)
-        observed = self._read("delivery-observations.json", DeliveryObservations)
-        explicit = self._read("observed-spawns.json", SpawnObservations)
-        cleared = self._read("cleared-spawns.json", ClearedSpawns)
-        fault = self._read("delivery-fault.json", DeliveryFault)
+        bash = self._read(self._bash_dir / "bash-records.json", BashEvidenceFile)
+        receipts = self._read(self._bash_dir / "delivery-receipts.json", DeliveryReceipts)
+        observed = self._read(self._bash_dir / "delivery-observations.json", DeliveryObservations)
+        explicit = self._read(self._observations_path, SpawnObservations)
+        # legacy-observed-spawns (#719): merge the old file leniently during transition.
+        legacy_explicit = read_legacy(self._runtime_root, self._spawn_id)
+        cleared = self._read(self._bash_dir / "cleared-spawns.json", ClearedSpawns)
+        fault = self._read(self._bash_dir / "delivery-fault.json", DeliveryFault)
         if fault is not None and fault.error:
             self._ledger.record_read_failure(self._bash_dir / "delivery-fault.json", fault.error)
         if bash is not None:
@@ -100,6 +127,7 @@ class PiDiskWatcher:
             else set()
         )
         consumed.update(explicit.observed_spawn_ids if explicit else ())
+        consumed.update(legacy_explicit.observed_spawn_ids if legacy_explicit else ())
         consumed.update(cleared.cleared_spawn_ids if cleared else ())
         unobserved = set(receipts.messages if receipts else ()) - set(
             observed.observed_message_ids if observed else ()
@@ -121,10 +149,17 @@ class PiDiskWatcher:
     def evidence_failure(self) -> EvidenceFailure | None:
         return self._ledger.evidence_failure()
 
-    async def _watch_bash_dir(self) -> None:
+    async def _watch_state_dirs(self) -> None:
+        # Pi coordination files keep the bash-directory watch. The spawn-directory
+        # watch adds the current observed-spawns.json without waking on unrelated files.
+        # legacy-observed-spawns (#719): old observation writes also wake the bash watch.
+        watched = [self._bash_dir]
+        if self._observations_path.parent.is_dir():
+            watched.append(self._observations_path.parent)
         try:
             async for _changes in awatch(
-                self._bash_dir,
+                *watched,
+                watch_filter=_is_watched_file,
                 recursive=False,
                 stop_event=self._stop_event,
                 rust_timeout=100,
@@ -135,11 +170,10 @@ class PiDiskWatcher:
             self._change_generation += 1
             self._state_changed.set()
 
-    def _read(self, name: str, model: type[_Model], *, scoped: bool = True) -> _Model | None:
-        file = self._bash_dir / name
+    def _read(self, file: Path, model: type[_Model]) -> _Model | None:
         try:
             value = model.model_validate_json(file.read_text(encoding="utf-8"))
-            if scoped and getattr(value, "spawn_id", None) != self._spawn_id:
+            if getattr(value, "spawn_id", None) != self._spawn_id:
                 raise ValueError("private-file parent identity mismatch")
         except FileNotFoundError:
             self._ledger.clear_read_failure(file)
