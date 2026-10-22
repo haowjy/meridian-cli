@@ -30,7 +30,7 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import ToolAction, ToolRule
+from meridian.lib.tools import ToolAction, ToolRule, split_native
 
 type PermissionMode = Literal["acceptEdits", "manual", "dontAsk"]
 
@@ -154,20 +154,8 @@ class _Channels:
         return frozenset(gate.base for gate in self.gates)
 
 
-def _native_base(name: str) -> str:
-    """Strip one native scope for ``--tools`` availability and comparisons."""
-
-    return name.partition("(")[0].strip()
-
-
-def _native_scope(name: str) -> str | None:
-    if "(" not in name:
-        return None
-    return name.partition("(")[2].removesuffix(")")
-
-
 def _is_agent_tool(name: str) -> bool:
-    return _native_base(name) == "Agent"
+    return split_native(name)[0] == "Agent"
 
 
 def _builtin_agent_tool(name: str) -> bool:
@@ -321,7 +309,7 @@ def _filter_passthrough_allows(
     kept: list[str] = []
     dropped: list[str] = []
     for native in allowed:
-        drop = _native_base(native) in gated_bases
+        drop = split_native(native)[0] in gated_bases
         if generic_agent_denied and _is_agent_tool(native):
             drop = drop or builtins_denied or not _builtin_agent_tool(native)
         (dropped if drop else kept).append(native)
@@ -335,11 +323,11 @@ def _compile_channels(
 ) -> _Channels:
     completion = _completion_tools(policy)
     profile_scoped_bases = {
-        _native_base(native)
+        base
         for entry in effective
         if entry.action == "allow" and entry.rule.native_status == "known"
-        for native in entry.rule.native
-        if _native_scope(native) is not None
+        for base, scope in map(split_native, entry.rule.native)
+        if scope is not None
     }
 
     allow: list[str] = []
@@ -353,7 +341,7 @@ def _compile_channels(
         for native in rule.native:
             if entry.action == "allow":
                 allow.append(native)
-            elif _native_scope(native) is not None:
+            elif split_native(native)[1] is not None:
                 (deny if entry.action == "deny" else ask).append(native)
             else:
                 plain.append((entry, native))
@@ -368,9 +356,8 @@ def _compile_channels(
         for entry in effective:
             if entry.rule.capability != capability or entry.action != "allow":
                 continue
-            for native in entry.rule.native:
-                if _native_scope(native) is not None:
-                    base = _native_base(native)
+            for base, scope in map(split_native, entry.rule.native):
+                if scope is not None:
                     gates.setdefault((capability, base), _Gate(capability, base, None))
     # The completion allows alone never change the profile's mode: they gate a plain rule
     # only where the mode already makes unmatched calls ask. Elsewhere the plain rule
@@ -381,7 +368,7 @@ def _compile_channels(
         or required_mode == "manual"
         or (required_mode is None and policy.approval in ("default", "confirm"))
     )
-    completion_bases = {_native_base(native) for native in completion}
+    completion_bases = {split_native(native)[0] for native in completion}
     disallowed: list[str] = []
     for entry, native in plain:
         if (entry.rule.capability, native) in gates:
@@ -415,7 +402,7 @@ def _compile_channels(
         allow=tuple(
             native
             for native in dedupe_nonempty(allow)
-            if native not in blockers and _native_base(native) not in blockers
+            if native not in blockers and split_native(native)[0] not in blockers
         ),
         deny=compiled_deny,
         ask=compiled_ask,
@@ -429,7 +416,7 @@ def _available_tools(policy: PermissionPolicy) -> tuple[str, ...]:
         return ()
     return tuple(
         dedupe_nonempty(
-            _native_base(native)
+            split_native(native)[0]
             for native in (*policy.allowed_natives, *_completion_tools(policy))
         )
     )
@@ -509,15 +496,15 @@ def _channel_of(native: str, permissions: ClaudePermissions) -> str | None:
 def _shadow(native: str, permissions: ClaudePermissions) -> str | None:
     """The emitted deny or ask Claude checks before this allow and that covers it."""
 
-    base, scope = _native_base(native), _native_scope(native)
+    base, scope = split_native(native)
     for blocker in (
         *permissions.disallowed_tools,
         *permissions.settings.deny,
         *permissions.settings.ask,
     ):
-        if _native_base(blocker) != base:
+        blocker_base, blocker_scope = split_native(blocker)
+        if blocker_base != base:
             continue
-        blocker_scope = _native_scope(blocker)
         if blocker_scope is None or (scope is not None and fnmatchcase(scope, blocker_scope)):
             return blocker
     return None
@@ -627,9 +614,9 @@ def _tool_rule_line(
         elif (
             entry.action == "allow"
             and permissions.restrict_tools
-            and _native_base(native) not in permissions.available_tools
+            and split_native(native)[0] not in permissions.available_tools
         ):
-            notes.append(f"{_native_base(native)} is not in --tools")
+            notes.append(f"{split_native(native)[0]} is not in --tools")
             partial = True
         if entry.action == "ask" and permissions.permission_mode == "dontAsk" and interactive:
             notes.append("dontAsk refuses it instead of asking the human")
@@ -699,7 +686,7 @@ def _completion_line(
         ]
         return ReportLine(platform_element(platform), "partial", "; ".join(problems))
     note = "--settings permissions.allow " + ",".join(emitted)
-    profile_bases = {_native_base(native) for native in policy.allowed_natives}
+    profile_bases = {split_native(native)[0] for native in policy.allowed_natives}
     if permissions.restrict_tools and "Bash" not in profile_bases:
         return ReportLine(
             platform_element(platform),
@@ -816,7 +803,7 @@ def _source_lines(
                 entry
                 for entry in allows
                 if not permissions.restrict_tools
-                or _native_base(entry) in permissions.available_tools
+                or split_native(entry)[0] in permissions.available_tools
                 or entry.startswith("mcp__")
             )
             if widening:

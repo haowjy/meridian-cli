@@ -42,6 +42,20 @@ class ToolRule(BaseModel):
     def is_wildcard(self) -> bool:
         return self.capability == "*"
 
+
+def split_native(name: str) -> tuple[str, str | None]:
+    """Split a native ``tool(scope)`` name into the tool and its scope (``None`` if unscoped).
+
+    The one reader of the spelling: Mars writes it for every harness, and Claude's own
+    permission strings (passthrough grants, emitted channels) share it.
+    """
+
+    tool, paren, rest = name.partition("(")
+    if paren and tool and rest.endswith(")"):
+        return tool, rest[:-1]
+    return name, None
+
+
 def legacy_tool_rules(tools: ToolsField | None) -> tuple[ToolRule, ...]:
     """Read an old snapshot's tools map as native-only rules (no capability).
 

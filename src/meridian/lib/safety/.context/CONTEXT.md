@@ -64,7 +64,8 @@ and returns `(native value, EnforcementReport)`; User-facing behavior is in
 from the other. `native_status` is `known`, `absent` (the harness has no such tool) or
 `unknown` (Mars has no name: a gap). A compile emits `native` as given and reads
 `capability` only for mechanism it owns, such as Codex's switches and platform-rule
-overrides. Meridian keeps no tool-name table. A bundle without `tools.rules`
+overrides. Meridian keeps no tool-name table. A scoped native is spelled `tool(scope)`;
+`split_native` is its one reader, so compiles never parse it themselves. A bundle without `tools.rules`
 fails with "install Mars >= 0.17.0"; the flat `allowed`/`disallowed` lists are not read.
 
 **Legacy snapshots.** A launch snapshot an older build wrote holds `tools` (native key ->

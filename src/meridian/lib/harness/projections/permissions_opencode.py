@@ -28,7 +28,7 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import ToolAction, ToolRule, unscoped_action
+from meridian.lib.tools import ToolAction, ToolRule, split_native, unscoped_action
 
 _STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
 
@@ -59,15 +59,6 @@ class OpenCodePermissionRule:
 type OpenCodePermissions = tuple[OpenCodePermissionRule, ...]
 
 
-def _split_native_rule(native: str) -> tuple[str, str]:
-    """Split Mars's native ``action(resource)`` spelling without renaming it."""
-
-    scoped_start = native.find("(")
-    if scoped_start > 0 and native.endswith(")"):
-        return native[:scoped_start], native[scoped_start + 1 : -1]
-    return native, "*"
-
-
 def _effective_action(action: ToolAction, *, interactive: bool) -> ToolAction:
     return "deny" if action == "ask" and not interactive else action
 
@@ -87,10 +78,10 @@ def _rule_entries(
     return tuple(
         OpenCodePermissionRule(
             action=_native_action(action, version=version),
-            resource=resource,
+            resource=resource if resource is not None else "*",
             effect=effect,
         )
-        for action, resource in map(_split_native_rule, rule.native)
+        for action, resource in map(split_native, rule.native)
     )
 
 
@@ -133,7 +124,7 @@ def _allowlist_entries(
     for capability in policy.allowlisted_capabilities:
         actions = tuple(
             dict.fromkeys(
-                _native_action(_split_native_rule(native)[0], version=version)
+                _native_action(split_native(native)[0], version=version)
                 for rule in policy.rules
                 if rule.capability == capability and rule.native_status == "known"
                 for native in rule.native
@@ -196,9 +187,9 @@ def _v2_edit_conflict(
             continue
         effect = _effective_action(rule.action, interactive=interactive)
         native_sources = {
-            _split_native_rule(native)[0]
+            split_native(native)[0]
             for native in rule.native
-            if _native_action(_split_native_rule(native)[0], version="v2") == "edit"
+            if _native_action(split_native(native)[0], version="v2") == "edit"
         }
         source = (
             rule.capability
@@ -220,7 +211,7 @@ def _v2_edit_conflict(
 
 def _uses_v2_write_patch_alias(rule: ToolRule) -> bool:
     return rule.capability in {"write", "patch"} or any(
-        _split_native_rule(native)[0] in {"write", "patch"} for native in rule.native
+        split_native(native)[0] in {"write", "patch"} for native in rule.native
     )
 
 

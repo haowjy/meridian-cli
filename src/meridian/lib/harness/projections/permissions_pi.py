@@ -18,7 +18,7 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import ToolAction, ToolRule
+from meridian.lib.tools import ToolAction, ToolRule, split_native
 
 PI_PERMISSION_POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY"
 
@@ -61,19 +61,6 @@ class PiPermissions:
     extension_policy: PiExtensionPolicy | None = None
 
 
-def _native_parts(native: str, pattern: str | None) -> tuple[str, str | None]:
-    """Return Pi's base tool name and scope without deriving a native name."""
-
-    stripped = native.strip()
-    if pattern is not None:
-        marker = f"({pattern})"
-        return (stripped[: -len(marker)] if stripped.endswith(marker) else stripped, pattern)
-    if stripped.endswith(")") and "(" in stripped:
-        tool, _, scope = stripped.partition("(")
-        return tool, scope[:-1]
-    return stripped, None
-
-
 def _extension_rules(rules: tuple[ToolRule, ...]) -> tuple[PiExtensionRule, ...]:
     projected: list[PiExtensionRule] = []
     for rule in rules:
@@ -90,9 +77,7 @@ def _extension_rules(rules: tuple[ToolRule, ...]) -> tuple[PiExtensionRule, ...]
         if rule.native_status != "known":
             continue
         for native in rule.native:
-            tool, pattern = _native_parts(native, rule.pattern)
-            if not tool:
-                continue
+            tool, pattern = split_native(native)
             projected.append(
                 PiExtensionRule(
                     capability=rule.capability or tool,
@@ -124,6 +109,7 @@ def _allowlist_tools(
 
 
 def _compile_flags(
+    policy: PermissionPolicy,
     rules: tuple[PiExtensionRule, ...],
     completion_commands: tuple[str, ...],
 ) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
@@ -141,7 +127,7 @@ def _compile_flags(
         )
     )
     callable_tools = tuple(
-        dedupe_nonempty(rule.tool for rule in rules if rule.tool != "*" and rule.action != "deny")
+        dedupe_nonempty(split_native(native)[0] for native in policy.allowed_natives)
     )
     wildcard = max(
         (rule.action for rule in rules if rule.tool == "*" and rule.pattern is None),
@@ -288,7 +274,7 @@ def compile_pi_permissions(
     rules = _extension_rules(policy.rules)
     completion_commands = _completion_commands(policy, interactive=spec.interactive)
     allowlist_tools = _allowlist_tools(policy, rules)
-    tools, exclude_tools = _compile_flags(rules, completion_commands)
+    tools, exclude_tools = _compile_flags(policy, rules, completion_commands)
     extension_policy = (
         PiExtensionPolicy(
             rules=rules,
