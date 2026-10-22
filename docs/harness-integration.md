@@ -107,6 +107,23 @@ its recorded store. Stderr is diagnostic, not identity or completion authority.
 Bootstrap order is load-bearing: adapter bundle registration, projection drift
 guards, extractor wiring, then cross-adapter field accounting.
 
+## Claude: bundled mods
+
+Interactive Claude primaries load Meridian's Claude Code mods from
+`src/meridian/claude_runtime/` with `--plugin-dir`; spawned (`claude -p`)
+sessions load only session-boundary.
+
+- **meridian-session-boundary**, always: records the native session and
+  messaging socket at SessionStart.
+- **meridian-idle**, interactive primaries: idle push and cache warning; core
+  (`meridian idle`) makes every decision.
+- **meridian-spawn-watch**, interactive primaries when
+  `harness.claude.spawn_watch.enabled` is true (default): when the lead goes
+  idle it runs `meridian spawn collect`, submits the owed background-child
+  results as a new turn, and runs `meridian spawn ack` once that turn starts.
+  Core decides what is owed (`lib/ops/spawn/owed.py`); the mod's README covers
+  its delivery rules.
+
 ## Pi: installed runtime and four extensions
 
 Meridian resolves `MERIDIAN_PI_BINARY`, otherwise `pi` on `PATH`, and probes
