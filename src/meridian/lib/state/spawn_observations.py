@@ -44,16 +44,16 @@ class SpawnObservations(_ObservationModel):
     wait_reservations: dict[str, WaitReservation] = Field(default_factory=dict)
 
 
-def observation_path(runtime_root: Path, parent_spawn_id: str) -> Path:
+def _path(runtime_root: Path, parent_spawn_id: str) -> Path:
     return runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.json"
 
 
-def observation_lock_path(runtime_root: Path, parent_spawn_id: str) -> Path:
+def _lock_path(runtime_root: Path, parent_spawn_id: str) -> Path:
     return runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.lock"
 
 
 def _read(runtime_root: Path, parent_spawn_id: str) -> SpawnObservations | None:
-    observations = read_model(observation_path(runtime_root, parent_spawn_id), SpawnObservations)
+    observations = read_model(_path(runtime_root, parent_spawn_id), SpawnObservations)
     if observations is None or observations.spawn_id != parent_spawn_id:
         return None
     return observations
@@ -78,8 +78,8 @@ def record(
     ):
         return
 
-    path = observation_path(runtime_root, parent_spawn_id)
-    with lock_file(observation_lock_path(runtime_root, parent_spawn_id)):
+    path = _path(runtime_root, parent_spawn_id)
+    with lock_file(_lock_path(runtime_root, parent_spawn_id)):
         existing = _read(runtime_root, parent_spawn_id) or SpawnObservations(
             v=1,
             spawn_id=parent_spawn_id,
@@ -156,10 +156,7 @@ def leased_ids(runtime_root: Path, parent_ids: Iterable[str]) -> frozenset[str]:
 
 __all__ = [
     "SpawnObservations",
-    "WaitReservation",
     "consumed_ids",
     "leased_ids",
-    "observation_lock_path",
-    "observation_path",
     "record",
 ]

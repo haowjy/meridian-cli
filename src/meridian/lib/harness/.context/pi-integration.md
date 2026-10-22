@@ -18,7 +18,8 @@ config toggle. Primary keeps the native TUI and does not auto-stop on quiescence
 
 Shared helpers under `src/meridian/pi_runtime/extensions/shared/` provide schemas,
 validated receipt/reservation readers, atomic JSON, paths and UI. Python's matching
-models live in `pi_private_state.py`. The coordination boundary is
+models live in `pi_private_state.py`, except `observed-spawns.json`, which
+`lib/state/spawn_observations.py` owns because Claude's spawn watch uses it too. The coordination boundary is
 the disk state the extensions write and the Python side observes.
 
 Extensions are built with `pnpm run build:extensions`. Projection prefers the
