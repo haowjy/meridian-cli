@@ -9,8 +9,10 @@ from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.attempt_facts import HarnessFailure
 from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int
 from meridian.lib.harness.connections.base import RawHarnessEvent
+from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 from meridian.lib.harness.pi_failure import compact_pi_failure_output, pi_failure_from_payload
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.permission_journal import PermissionDenial
 
 from .base import AttemptFold, HarnessExtractor
 
@@ -80,6 +82,50 @@ def _add_usage(prior: TokenUsage | None, usage: TokenUsage) -> TokenUsage:
     )
 
 
+def _permission_denial(payload: Mapping[str, object]) -> PermissionDenial | None:
+    """Read the policy error the Pi permission extension returns for a blocked call."""
+
+    request_id = payload.get("toolCallId")
+    tool = payload.get("toolName")
+    result = payload.get("result")
+    if (
+        payload.get("isError") is not True
+        or not isinstance(request_id, str)
+        or not isinstance(tool, str)
+        or not isinstance(result, dict)
+    ):
+        return None
+    content = cast("dict[str, object]", result).get("content")
+    if not isinstance(content, list):
+        return None
+    text: str | None = None
+    for item in cast("list[object]", content):
+        if not isinstance(item, dict):
+            continue
+        part = cast("dict[str, object]", item)
+        text_value = part.get("text")
+        if part.get("type") == "text" and isinstance(text_value, str):
+            text = text_value
+            break
+    if text is None:
+        return None
+    normalized = " ".join(text.split())
+    if normalized == HEADLESS_REJECT_REASON:
+        detail, reason = tool, normalized
+    elif normalized.startswith("Blocked by Meridian policy: "):
+        reason, marker, detail = normalized.rpartition(" Attempted: ")
+        if not marker:
+            reason, detail = normalized, tool
+    else:
+        return None
+    return PermissionDenial(
+        request_id=request_id,
+        tool=tool,
+        detail=" ".join(detail.split())[:1024],
+        reason=" ".join(reason.split())[:1024],
+    )
+
+
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Pi artifacts and events."""
 
@@ -123,6 +169,8 @@ class PiFold(AttemptFold):
                     ):
                         self.set_text(text, "pi_agent_end")
                         break
+        elif kind == "tool_execution_end" and (denial := _permission_denial(payload)):
+            facts.permission_denials.append(denial)
 
 
 PI_EXTRACTOR = PiHarnessExtractor()

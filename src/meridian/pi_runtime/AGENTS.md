@@ -31,6 +31,9 @@ persistence decision. At `agent_end` it reads valid tracked background
 managed-bash rows that are still running and forwards a bounded task snapshot
 to `idle arm`; an over-cap command becomes `other`, and it never classifies
 Meridian commands itself.
+`meridian-permissions` owns launch-local scoped tool rules and `ask`; it has no
+disk authority. Keep it separate from managed-bash so disabling managed Bash
+does not disable policy or register shell-task tools and `/ps*` commands.
 
 ## Key Rules
 

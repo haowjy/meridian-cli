@@ -10,6 +10,13 @@ from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
+from meridian.lib.harness.projections.permissions_pi import (
+    compile_pi_permissions,
+    project_pi_permission_args,
+)
+from meridian.lib.harness.projections.pi_extension_projection import (
+    resolve_pi_permissions_entrypoint,
+)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
@@ -58,6 +65,10 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--mode": ("--mode",),
     "--no-extensions": ("--no-extensions",),
     "-e": ("-e", "--extension"),
+    "--tools": ("--tools", "-t"),
+    "--exclude-tools": ("--exclude-tools", "-xt"),
+    "--no-tools": ("--no-tools", "-nt"),
+    "--no-builtin-tools": ("--no-builtin-tools", "-nbt"),
 }
 
 _EFFORT_TO_THINKING: dict[str, str] = {
@@ -121,6 +132,22 @@ def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
         )
 
 
+def _reject_permission_collisions(passthrough_tail: tuple[str, ...], *, policy_bound: bool) -> None:
+    if not policy_bound:
+        return
+    for managed_flag in (
+        "--tools",
+        "--exclude-tools",
+        "--no-tools",
+        "--no-builtin-tools",
+    ):
+        if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES[managed_flag]):
+            raise ValueError(
+                "Pi launches with a profile cannot accept tool-selection flags from "
+                f"passthrough extra_args; remove {managed_flag} so the profile remains binding"
+            )
+
+
 def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     model = (spec.model or "").strip()
     if not model:
@@ -160,6 +187,7 @@ def project_pi_native_tui_spec_to_cli_args(
 
     _reject_mode_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
+    _reject_permission_collisions(passthrough_tail, policy_bound=bool(spec.permission_policy.rules))
 
     _log_collision_if_needed(
         managed_flag="--model",
@@ -183,8 +211,15 @@ def project_pi_native_tui_spec_to_cli_args(
     )
 
     command.extend(project_identity(spec.native_identity))
+    permissions, _ = compile_pi_permissions(spec)
+    command.extend(project_pi_permission_args(permissions))
 
-    for extension_entrypoint in spec.pi_extension_entrypoints:
+    permission_entrypoints = (
+        resolve_pi_permissions_entrypoint() if permissions.extension_policy is not None else ()
+    )
+    for extension_entrypoint in dict.fromkeys(
+        (*spec.pi_extension_entrypoints, *permission_entrypoints)
+    ):
         command.extend(("-e", extension_entrypoint))
 
     command.extend(passthrough_tail)

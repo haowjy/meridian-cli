@@ -6,15 +6,21 @@ remain in [CONTEXT.md](CONTEXT.md).
 
 ## Extension Architecture
 
-Meridian loads three TypeScript extensions inside Pi:
+Meridian loads five TypeScript extensions inside Pi:
 
 - **managed-bash** — shell execution, `bash` / `bash_manage`, `/ps*` UI, and durable task records.
 - **meridian-spawn-watch** — canonical direct-child observation, `/spawn*` UI, and tool-boundary or idle result delivery.
 - **session-boundary** — bounded native lifecycle observations for post-exit identity verification.
+- **meridian-idle** — primary-only idle/input sensing and notification timers.
+- **meridian-permissions** — launch-local scoped tool rules, allowlist backstops, and `ask`.
 
 Both primary and spawned launches load managed-bash and spawn-watch when their
 `[harness.pi]` toggles are enabled. Session-boundary is always loaded, with no
 config toggle. Primary keeps the native TUI and does not auto-stop on quiescence.
+Permission projection uses Pi's `--tools` / `--exclude-tools` for plain native
+names. When flags are not enough, both launch projectors add meridian-permissions
+and `PiAdapter.project_launch_env()` passes its typed policy in
+`_MERIDIAN_PI_PERMISSION_POLICY`; ambient values are stripped between launches.
 
 Shared helpers under `src/meridian/pi_runtime/extensions/shared/` provide schemas,
 validated receipt/reservation readers, atomic JSON, paths and UI. Python's matching

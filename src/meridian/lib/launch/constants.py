@@ -41,6 +41,8 @@ BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         "MERIDIAN_SESSION_AGENT",
         # Runtime root is resolved at launch/bind; do not inherit parent override.
         "_MERIDIAN_RUNTIME_DIR",
+        # Pi permission policy is compiled afresh for each launch.
+        "_MERIDIAN_PI_PERMISSION_POLICY",
     }
 )
 
