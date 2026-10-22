@@ -11,6 +11,7 @@ from meridian.lib.harness.projections.permissions_codex import compile_codex_per
 from meridian.lib.harness.projections.project_codex_common import (
     CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
     project_codex_mcp_config_flags,
+    project_codex_tool_switch_flags,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -88,13 +89,7 @@ def project_codex_spec_to_cli_args(
     if permissions.approval_policy is not None:
         command.extend(("-c", f"approval_policy={json.dumps(permissions.approval_policy)}"))
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
-
-    # Codex ignores bundle tool grants. Enable the native Responses `web_search`
-    # tool via the config knob (`-c tools.web_search=true`) rather than the `exec`-only
-    # `--search` flag: the streaming transport launches `codex app-server`, which rejects
-    # `--search` but accepts `-c key=value`. One mechanism works for both transports.
-    if permissions.web_search:
-        command.extend(("-c", "tools.web_search=true"))
+    command.extend(project_codex_tool_switch_flags(permissions))
 
     if harness_session_id:
         command.extend(("resume", harness_session_id))
