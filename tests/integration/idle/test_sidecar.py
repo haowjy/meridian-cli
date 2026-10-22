@@ -183,7 +183,7 @@ async def test_sidecar_drives_idle_push_and_warn(tmp_path: Path) -> None:
     await task
 
     state = store.read("codex", "session-1")
-    assert [notice.body for notice in sender.notices] == [
+    assert [notice.body.splitlines()[0] for notice in sender.notices] == [
         "Your turn",
         "est. 15 min until cold: reply to keep it warm",
     ]
@@ -314,7 +314,7 @@ async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path
     alive[0] = False
     await task
 
-    assert [notice.body for notice in sender.notices] == [
+    assert [notice.body.splitlines()[0] for notice in sender.notices] == [
         "Your turn",
         "est. 15 min until cold: reply to keep it warm",
     ]

@@ -23,7 +23,7 @@ from meridian.plugin_api import Hook, HookContext, HookResult, HookOutcome, Spaw
 | `SpawnKind` | Spawn kind literal — `"child"` \| `"primary"` \| `"streaming"` |
 | `SpawnStatus` | Hook terminal status literal — `"success"` \| `"failure"` \| `"cancelled"` \| `"timeout"` |
 | `NOTIFICATION_EVENTS` | Every notification event, each carrying `HookContext.notification` |
-| `Notification` | One notice — `title`, `body`, `priority` (1–5), `email`, `label` (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), `attachments` (absolute file paths) |
+| `Notification` | One notice — `title`, `body`, `priority` (1–5), `email`, `label` (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `child_spawn_id`, `child_agent`, `child_harness`, `sender`, `headline`), `attachments` (absolute file paths) |
 
 `HookResult.details` is a mapping that builtin hook implementations may set with
 JSON-serializable structured data. Builtins document their keys in

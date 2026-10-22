@@ -6,13 +6,16 @@ from meridian.lib.notify import SessionLabel, manual_notification
 from meridian.lib.notify.label import build_session_label
 
 
-def test_manual_notification_keeps_the_title_and_ends_the_body_with_its_source() -> None:
+def test_manual_notification_titles_the_sender_then_the_message() -> None:
     label = SessionLabel(harness="codex", project="meridian-cli", tmux_session="main")
 
     detailed = manual_notification("Done", "build passed", label)
     bare = manual_notification("Done", None, label)
 
-    assert (detailed.title, detailed.label) == ("Done", label.to_dict())
+    assert (detailed.title, detailed.label) == (
+        "main: codex Done",
+        label.to_dict(),
+    )
     assert detailed.body == 'build passed\nmain: codex in project: "meridian-cli"'
     assert bare.body == 'main: codex in project: "meridian-cli"'
     assert "·" not in detailed.title + detailed.body
@@ -31,7 +34,8 @@ def test_session_label_resolves_agent_harness_work_and_tmux_from_launch_env() ->
         resolve_tmux_session=lambda pane: "main" if pane == "%3" else None,
     )
 
-    assert label.headline == 'main: tech-lead on work: "idle-cache-notify"'
+    assert label.sender == "main: tech-lead (codex)"
+    assert label.headline == 'main: tech-lead (codex) on work: "idle-cache-notify"'
     assert label.to_dict()["tmux_session"] == "main"
 
 

@@ -58,16 +58,17 @@ def test_push_warn_and_missing_message_rendering() -> None:
         warn_email=False,
     )
 
-    assert push.title == '[idle] main: tech-lead on work: "idle-cache-notify"'
+    assert push.title == "[idle] main: tech-lead (codex)"
     assert push.body == (
         "You: can u first test/install it locally?\n"
-        "Assistant: Your installed meridian is exactly the PR's latest code."
+        "Assistant: Your installed meridian is exactly the PR's latest code.\n"
+        'main: tech-lead (codex) on work: "idle-cache-notify"'
     )
-    assert warn.title == '[cache warning] main: tech-lead on work: "idle-cache-notify"'
+    assert warn.title == "[cache warning] main: tech-lead (codex)"
     assert warn.body.startswith("Cache expiry warning: reply to keep it warm\nYou: ")
     assert (hidden.title, hidden.body, hidden.priority, hidden.email) == (
-        '[idle] coder in project: "meridian-cli"',
-        "Your turn",
+        "[idle] coder",
+        'Your turn\ncoder in project: "meridian-cli"',
         3,
         False,
     )
@@ -99,8 +100,9 @@ def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:
         for stage in ("push", "warn")
         for label in labels
     ]
-    assert notices[0].body == "Your turn"
-    assert notices[1].title == '[idle] pi on work: "idle-cache-notify"'
+    assert notices[0].body == 'Your turn\ncoder in project: "meridian-cli"'
+    assert notices[1].title == "[idle] pi"
+    assert notices[1].body == 'Your turn\npi on work: "idle-cache-notify"'
     assert notices[3].title == "[idle] Meridian"
     assert notices[7].title == "[cache warning] Meridian"
     assert all("·" not in notice.title and "·" not in notice.body for notice in notices)
@@ -134,8 +136,8 @@ def test_countdown_uses_current_time_and_persisted_ttl_confidence(
         now_ms=now,
         warn_email=False,
     )
-    expected = '[idle] a2: pi on work: "idle-cache-notify"'
-    assert notice.title == expected + (f" — {suffix}" if suffix else "")
+    expected = "[idle] a2: pi"
+    assert notice.title == expected + (f" {suffix}" if suffix else "")
 
 
 def test_excerpt_trimming_collapses_whitespace_cuts_at_words_and_strips_reminders() -> None:

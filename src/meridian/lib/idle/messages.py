@@ -16,11 +16,9 @@ STAGE_EVENTS: dict[Literal["push", "warn"], HookEventName] = {
 NEEDS_PERMISSION_EVENT: HookEventName = "notify.needs_permission"
 
 
-def _body(lines: list[str | None], *, fallback: str | None = None) -> str:
-    rendered = [line for line in lines if line]
-    if rendered:
-        return "\n".join(rendered)
-    return fallback or ""
+def _body(lines: list[str | None], label: SessionLabel, *, fallback: str | None = None) -> str:
+    rendered = [line for line in lines if line] or ([fallback] if fallback else [])
+    return "\n".join([*rendered, label.headline])
 
 
 def _cache_countdown(state: IdleState, now_ms: int) -> str | None:
@@ -49,9 +47,9 @@ def stage_notice(
     """Build a waiting or cache-warning notice from persisted turn context."""
 
     countdown = _cache_countdown(state, now_ms)
-    title = f"[{'cache warning' if stage == 'warn' else 'idle'}] {label.headline}"
+    title = f"[{'cache warning' if stage == 'warn' else 'idle'}] {label.sender}"
     if countdown is not None:
-        title += f" — {countdown}"
+        title += f" {countdown}"
     event = (
         f"{countdown or 'Cache expiry warning'}: reply to keep it warm"
         if stage == "warn"
@@ -71,6 +69,7 @@ def stage_notice(
         title=title,
         body=_body(
             [event, user, assistant],
+            label,
             fallback="Your turn" if stage == "push" else None,
         ),
         priority=3 if stage == "push" else 4,
@@ -88,9 +87,10 @@ def needs_permission_notice(
     """Build a stateless notice from a still-waiting permission signal."""
 
     return Notification(
-        title=f"[permission] {label.headline}",
+        title=f"[permission] {label.sender}",
         body=_body(
             [message.strip() if include_messages else None],
+            label,
             fallback="Permission prompt waiting",
         ),
         priority=3,

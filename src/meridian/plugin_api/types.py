@@ -59,7 +59,7 @@ class Notification:
     priority: int = 3
     # Whether the producer wants email channels to carry it.
     email: bool = True
-    # Where it came from: tmux_session, project, work_id, agent, harness, headline.
+    # Where it came from: tmux_session, project, work_id, agent, harness, child_*, sender, headline.
     label: Mapping[str, str | None] = field(default_factory=_empty_label)
     # Absolute paths of files to send with it, checked readable when it was made.
     attachments: tuple[str, ...] = ()

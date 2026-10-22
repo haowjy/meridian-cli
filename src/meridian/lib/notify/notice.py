@@ -10,26 +10,52 @@ from pathlib import Path
 from meridian.plugin_api.types import Notification
 
 
+def actor_name(agent: str | None, harness: str | None) -> str:
+    """``agent (harness)``, or whichever is known."""
+
+    if agent and harness:
+        return f"{agent} ({harness})"
+    return agent or harness or "Meridian"
+
+
 @dataclass(frozen=True)
 class SessionLabel:
-    """Optional launch context rendered for notification surfaces."""
+    """Who a notification is from: the primary session the human talks to.
+
+    A spawned agent's notification names its primary (terminal, agent, harness,
+    work) and records itself in the ``child_*`` fields.
+    """
 
     tmux_session: str | None = None
     project: str | None = None
     work_id: str | None = None
     agent: str | None = None
     harness: str | None = None
+    child_spawn_id: str | None = None
+    child_agent: str | None = None
+    child_harness: str | None = None
+
+    @property
+    def sender(self) -> str:
+        """Name the terminal and actor: short enough for a notification title."""
+
+        actor = actor_name(self.agent, self.harness)
+        return f"{self.tmux_session}: {actor}" if self.tmux_session else actor
 
     @property
     def headline(self) -> str:
-        """Name the terminal, actor, and explicitly labelled work or project."""
+        """The sender, its work item or project, and the child that sent it."""
 
-        description = self.agent or self.harness or "Meridian"
         if self.work_id:
-            description += f' on work: "{self.work_id}"'
+            line = f'{self.sender} on work: "{self.work_id}"'
         elif self.project:
-            description += f' in project: "{self.project}"'
-        return f"{self.tmux_session}: {description}" if self.tmux_session else description
+            line = f'{self.sender} in project: "{self.project}"'
+        else:
+            line = self.sender
+        if self.child_spawn_id:
+            child = actor_name(self.child_agent, self.child_harness)
+            return f"{line}, from child {self.child_spawn_id} {child}"
+        return line
 
     def __str__(self) -> str:
         return self.headline
@@ -41,6 +67,10 @@ class SessionLabel:
             "work_id": self.work_id,
             "agent": self.agent,
             "harness": self.harness,
+            "child_spawn_id": self.child_spawn_id,
+            "child_agent": self.child_agent,
+            "child_harness": self.child_harness,
+            "sender": self.sender,
             "headline": self.headline,
         }
 
@@ -54,7 +84,7 @@ def manual_notification(
     email: bool = True,
     attachments: Sequence[Path] = (),
 ) -> Notification:
-    """Build a `meridian notify` message; its body always ends with where it came from.
+    """Build a `meridian notify` message with its source visible in the title.
 
     Every attachment must be a readable file now, before any route runs.
     """
@@ -75,10 +105,12 @@ def manual_notification(
     else:
         notification_title = title_lines[title_index].strip()
         title_detail = "\n".join(title_lines[title_index + 1 :]).strip()
+    if not notification_title:
+        raise ValueError("title must not be empty")
 
     lines = [title_detail, body.strip() if body else "", label.headline]
     return Notification(
-        title=notification_title,
+        title=f"{label.sender} {notification_title}",
         body="\n".join(line for line in lines if line),
         priority=priority,
         email=email,
@@ -87,4 +119,4 @@ def manual_notification(
     )
 
 
-__all__ = ["SessionLabel", "manual_notification"]
+__all__ = ["SessionLabel", "actor_name", "manual_notification"]

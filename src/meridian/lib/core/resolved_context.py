@@ -4,6 +4,7 @@ This module defines the canonical environment-to-context translation used by
 launch, ops, and child-environment composition paths.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, Self
@@ -45,6 +46,27 @@ class LocalFilesystemBackend:
     def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
         row = spawn_store.get_spawn(runtime_root, spawn_id)
         return row.continue_chat_id if row is not None and row.current_chat_id else None
+
+
+def follow_current_chat(
+    env: Mapping[str, str],
+    runtime_root: Path,
+    backend: ContextBackend | None = None,
+) -> str | None:
+    """The spawn's current conversation, once it has moved off the launch snapshot.
+
+    ``MERIDIAN_CHAT_ID`` (and with it ``MERIDIAN_ACTIVE_WORK_ID``) is fixed at
+    launch, and a spawned process inherits its parent's. Once the launcher has
+    admitted an owned native observation, the spawn's durable current pointer names
+    the conversation, and its work comes from that conversation's session.
+    """
+
+    spawn_id = env.get("MERIDIAN_SPAWN_ID", "").strip()
+    if not spawn_id:
+        return None
+    return (backend or LocalFilesystemBackend()).get_current_chat_id(
+        runtime_root, SpawnId(spawn_id)
+    )
 
 
 @dataclass(frozen=True)
@@ -132,12 +154,8 @@ class ResolvedContext:
         # an owned native observation, ambient commands follow the spawn's
         # durable current pointer and resolve work from that chat. Explicit chat
         # and work arguments retain their normal precedence.
-        if (
-            not explicit_chat_id_raw
-            and spawn_id is not None
-            and runtime_root is not None
-        ):
-            current_chat_id = backend_impl.get_current_chat_id(runtime_root, spawn_id)
+        if not explicit_chat_id_raw and runtime_root is not None:
+            current_chat_id = follow_current_chat(os.environ, runtime_root, backend_impl)
             if current_chat_id:
                 chat_id_raw = current_chat_id
                 work_id_raw = ""

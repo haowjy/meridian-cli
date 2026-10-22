@@ -217,29 +217,40 @@ The ntfy backend tags each message with the event name. Delivery is attempted
 once per selected backend; one backend failing does not prevent the other from
 running.
 
-Idle notification titles put the reason first, followed by the tmux session
-when available, the agent (or harness), and an explicitly labelled work item:
-`[idle] a2: pi on work: "idle-cache-notify"`. The only other reason is
-`[cache warning]`. Without a work
-item, the title uses `in project: "<project>"`; outside tmux, it omits the terminal
-prefix. Idle and cache-warning titles also show the remaining cache lifetime,
-computed at send time: `— 48 min until cold` or `— est. 18 min until cold`.
+Notification titles name the sender: the reason in brackets, then the tmux
+session when available, then the agent and harness, as in
+`[idle] a2: tech-lead (claude)`. With no agent, the harness appears alone
+(`a2: pi`); outside tmux, the terminal prefix is omitted. The other automatic
+reasons are `[cache warning]` and `[permission]`. Idle and cache-warning titles
+end with the remaining cache lifetime, computed at send time:
+`[cache warning] a2: tech-lead (claude) 48 min until cold`, or
+`est. 18 min until cold`.
 Claude's observed TTL and Pi's Anthropic retention use an unqualified countdown;
 OpenAI heuristics and configured/default TTLs use `est.`. An unknown TTL has no
 countdown. Under a minute reads `<1 min until cold`; an elapsed deadline reads
 `cache cold` (still qualified with `est.` for estimates).
 
-Bodies retain the warning details and message excerpts labelled
-`You` and `Assistant`, without repeating the tmux session.
-Permission notices use `[permission]` followed by the same session headline;
-the body contains the harness notification text. With `include_messages = false`,
-the body is the generic `Permission prompt waiting` instead.
+Bodies carry the message: the warning details and message excerpts labelled
+`You` and `Assistant`, then a last line naming the sender with its current work
+item (`a2: tech-lead (claude) on work: "idle-cache-notify"`, or
+`in project: "<project>"` without one). The work item is the session's current
+one when the notification is sent.
+
+In permission notices the body contains the harness notification text. With
+`include_messages = false`, the body is the generic `Permission prompt waiting`
+instead.
+
+A notification names the primary session the human talks to. When a spawned
+agent sends one, the title and work item are those of its nearest primary
+ancestor, and the body's last line adds the child:
+`a2: tech-lead (claude) on work: "x", from child p12 coder (codex)`. When no
+primary ancestor can be read, the notification names the spawn itself.
 
 Excerpts are plain text, whitespace-collapsed, and shortened before storage.
 Because they leave the machine through ntfy or email, set
-`include_messages = false` to omit both. `meridian notify` uses its first
-argument as the title and always ends the body with the session headline, so
-the terminal/agent/work description stays visible.
+`include_messages = false` to omit both. `meridian notify` titles have no reason
+tag: the sender, then the first argument (`a2: tech-lead (claude) Review ready`). The body holds any detail,
+then the same sender-and-work line.
 
 Put SMTP credentials in `smtp_password_file` and set its mode to `0600`.
 Meridian refuses a password file readable by the group or other users. The
@@ -310,7 +321,7 @@ enabled = false
 event receives the notification, so a Slack or desktop channel is one row and
 one script. Stdin carries the hook payload (`schema_version` 3) with a
 `notification` object: `title`, `body`, `priority`, `email`, and `label`
-(`tmux_session`, `project`, `work_id`, `agent`, `harness`, `headline`), and
+(`tmux_session`, `project`, `work_id`, `agent`, `harness`, `child_spawn_id`, `child_agent`, `child_harness`, `sender`, `headline`), and
 `attachments` (absolute paths from `meridian notify --attach`). The
 environment adds `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`
 and `MERIDIAN_NOTIFICATION_PRIORITY` to the usual `MERIDIAN_HOOK_*` variables.
