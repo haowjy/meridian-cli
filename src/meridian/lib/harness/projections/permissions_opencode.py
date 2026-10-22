@@ -170,6 +170,28 @@ def _default_entry(
     return None
 
 
+def _headless_default_line(default: OpenCodePermissionRule | None) -> ReportLine:
+    """What decides a headless ``approval: default`` spawn's unmatched calls.
+
+    Not a policy element (``default`` approval has none), so it follows the elements. Which
+    branch applies depends on the profile's other rules; the line makes that visible.
+    """
+
+    if default is not None:
+        return ReportLine(
+            "approval: default",
+            "platform",
+            f"permission *(*): {default.effect}; no profile rule names an OpenCode tool, so "
+            "Meridian allows the calls a headless spawn has no one to approve",
+        )
+    return ReportLine(
+        "approval: default",
+        "native",
+        "no permission *(*) rule, so OpenCode's own defaults decide unmatched calls; Meridian "
+        "adds its allow-all fallback only when no profile rule names an OpenCode tool",
+    )
+
+
 def _tool_rule_lines(
     spec: ResolvedLaunchSpec,
     entries_by_rule: list[tuple[ToolRule, tuple[OpenCodePermissionRule, ...]]],
@@ -394,13 +416,13 @@ def compile_opencode_permissions(
         )
     )
 
-    if policy.approval != "default" and unscoped_action(policy.rules, "*") is None:
-        approval = _default_entry(spec, has_profile_native=has_profile_native)
-        if approval is not None:
-            note = f"permission *(*): {approval.effect}"
-            if policy.approval == "confirm" and not spec.interactive:
-                note += "; a headless spawn cannot confirm, so calls are refused"
-            lines.append(ReportLine(f"approval: {policy.approval}", "native", note))
+    if default is not None and policy.approval != "default":
+        note = f"permission *(*): {default.effect}"
+        if policy.approval == "confirm" and not spec.interactive:
+            note += "; a headless spawn cannot confirm, so calls are refused"
+        lines.append(ReportLine(f"approval: {policy.approval}", "native", note))
+    elif not spec.interactive and unscoped_action(policy.rules, "*") is None:
+        lines.append(_headless_default_line(default))
 
     return tuple(ordered), complete_report(policy, lines, harness="OpenCode")
 

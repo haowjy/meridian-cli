@@ -122,6 +122,13 @@ unsupported; a per-capability allowlist's deny (origin `allowlist`) sets no swit
 shell stays on for Codex to read files with. `project_codex_tool_switch_flags` is the one spelling shared by `codex exec`
 and `codex app-server`; the thread payload continues to carry sandbox and approval only.
 
+OpenCode decides a headless `approval: default` spawn's unmatched calls by a toggle carried
+from v0.11.8: without a `*` rule, the compile emits `*: allow` only when no profile rule
+names an OpenCode tool; one such rule leaves OpenCode's own defaults in charge. Whether to
+keep the toggle is an owner question. The compile reports whichever branch applied as an
+`approval: default` line, which follows the policy elements since `default` approval is
+not one.
+
 A compile that restricts the shell must name the `completion-commands` platform rule's
 `commands` (`meridian spawn done` / `rearm`) in its own scope syntax, where a broad `bash` or
 `*` deny does not shadow them; otherwise the child cannot answer the completion confirmation.
