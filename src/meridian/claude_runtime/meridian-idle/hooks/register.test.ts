@@ -48,7 +48,6 @@ function install(on: On, h: Host) {
     }
   })
   on('session.id', () => ({ value: 'sess-1' }))
-  on('session.surfaces', () => ({ value: ['terminal'] }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.start', () => ({ turnId: 't1' }))

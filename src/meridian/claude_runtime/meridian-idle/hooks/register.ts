@@ -37,8 +37,6 @@ type Armed = {
 }
 
 type State = {
-  /** `session.start` ran, so its `isInteractive`/`surface` verdict is authoritative. */
-  startSeen: boolean
   /** Print mode or no surface: the whole session is ignored. */
   inert: boolean
   /** Memoised `idle config --interactive` verdict. */
@@ -60,7 +58,6 @@ type State = {
 
 function newState(): State {
   return {
-    startSeen: false,
     inert: false,
     gate: undefined,
     armed: undefined,
@@ -144,23 +141,6 @@ function who(armed: Armed): string[] {
 // -- gate: is this a primary TUI session with idle enabled? ----------------
 
 async function checkGate($: EngineInterface, s: State): Promise<boolean> {
-  if (s.inert) return false
-  if (!s.startSeen) {
-    // Loaded after `session.start` (a plugin install or reload that skipped it): ask the host directly.
-    try {
-      if ((await $.session.surfaces()).length === 0) {
-        s.inert = true
-        note($, s, 'inert: no surface (print mode)')
-        return false
-      }
-    } catch (err) {
-      note($, s, `inert: cannot read surfaces: ${describeError(err)}`)
-      // Surface discovery can fail transiently during startup or reload. Keep
-      // the gate fail-closed for this call, but let the next event retry it.
-      s.gate = undefined
-      return false
-    }
-  }
   const reply = await cli($, s, ['config', '--harness', HARNESS])
   const problem = failure(reply)
   if (problem !== undefined || !isRecord(reply)) {
@@ -422,7 +402,6 @@ export const register: Register = on => {
   const s = newState()
 
   on('session.start', async ($, e, next) => {
-    s.startSeen = true
     if (e.isInteractive === false || e.surface === null) {
       s.inert = true
     } else {

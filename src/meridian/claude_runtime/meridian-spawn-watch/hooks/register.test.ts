@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On, RenderSurface } from 'claude-code'
+import type { On } from 'claude-code'
 
 const START = 1_000_000
 const TUI = { cwd: '/work/project', surface: 'terminal', isInteractive: true } as const
@@ -33,7 +33,6 @@ type Host = {
   box: string
   /** `$.process.spawn` itself fails (meridian not on PATH). */
   spawnFails: boolean
-  surfaces: RenderSurface[]
 }
 
 function host(): Host {
@@ -50,7 +49,6 @@ function host(): Host {
     duringSubmit: undefined,
     box: '',
     spawnFails: false,
-    surfaces: ['terminal'],
   }
 }
 
@@ -92,7 +90,6 @@ function install(on: On, h: Host, options: { store?: boolean } = {}) {
   on('prompt.read', () => ({ value: { text: h.box, cursor: h.box.length } }))
   on('prompt.edit', (_$, e) => ({ text: e.text, cursor: e.cursor }))
   on('prompt.change', (_$, e) => ({ text: e.text }))
-  on('session.surfaces', () => ({ value: h.surfaces }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', () => ({ sessionId: 'sess-1' }))
@@ -431,8 +428,8 @@ test('an ack that fails is logged and keeps its ids excluded instead of redelive
   expect(h.acks).toEqual([['p12']])
 
   const second = await idle($, clock, h)
-  expect(exclude(second)).toBe('p12')
-  second.finish(delivery(['p12']))
+  expect(exclude(second)).toBe('p12') // core honours it, so the answer is empty
+  second.finish(EMPTY)
   await clock.settle()
   expect(h.submits).toHaveLength(1)
 
@@ -527,25 +524,6 @@ test('a collector that fails or answers badly submits nothing and the next idle 
   good.finish(delivery(['p12']))
   await clock.settle()
   expect(h.submits).toHaveLength(1)
-})
-
-test('a reload mid-session (no session.start) starts clean from the next turn', async ($, on) => {
-  const h = host()
-  const clock = install(on, h)
-
-  await deliverOnce($, clock, h, ['p12'])
-  expect(h.submits).toHaveLength(1)
-  expect(exclude(h.collectors[0] as Collector)).toBeUndefined()
-})
-
-test('a reload into a session with no surface stays inert', async ($, on) => {
-  const h = host()
-  h.surfaces = []
-  const clock = install(on, h)
-
-  await $.turn.complete(mainTurn())
-  await clock.advance(100_000)
-  expect(h.collectors).toEqual([])
 })
 
 test('hooks never throw: a collector that cannot start, a store that fails, an ack that errors', async ($, on) => {

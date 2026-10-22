@@ -51,14 +51,9 @@ type Claim = { ids: string[]; phase: 'pending' | 'queued' | 'acking' | 'unacked'
 type Reply = { kind: 'empty' } | { kind: 'delivery'; ids: string[]; text: string }
 
 type State = {
-  /** `session.start` ran, so its `isInteractive`/`surface` verdict is authoritative. */
-  startSeen: boolean
   /** Print mode or no surface: the whole session is ignored. */
   inert: boolean
-  setup: Promise<void> | undefined
   run: Run | undefined
-  /** Bumped by every main-loop `turn.start`; async work compares it to see that a turn began meanwhile. */
-  epoch: number
   claims: Map<string, Claim>
   /** When the box was last touched (`prompt.edit` or `prompt.change`), as `$.clock.now()` answered it. Kept as the pending answer so the hooks never wait on it. */
   lastChange: Promise<number>
@@ -71,11 +66,8 @@ type State = {
 
 function newState(): State {
   return {
-    startSeen: false,
     inert: false,
-    setup: undefined,
     run: undefined,
-    epoch: 0,
     claims: new Map(),
     lastChange: Promise.resolve(Number.NEGATIVE_INFINITY),
     queue: Promise.resolve(),
@@ -109,11 +101,6 @@ function note($: EngineInterface, s: State, line: string): void {
   }
 }
 
-/** Runs async work off the hook's path. A hook must never throw or wait on it, so failures only reach the log. */
-function background($: EngineInterface, s: State, label: string, task: () => Promise<unknown>): void {
-  void task().catch(err => note($, s, `${label}: ${describeError(err)}`))
-}
-
 function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
   const run = s.queue.then(task).catch(() => undefined)
   s.queue = run
@@ -129,36 +116,6 @@ function claimedIds(s: State): Set<string> {
 function endRun(s: State): void {
   s.run?.ctl.abort()
   s.run = undefined
-}
-
-// -- gate and registration -------------------------------------------------
-
-/** False for print mode or a host with no surface. Loaded after `session.start` (a reload), the host is asked directly. */
-async function active($: EngineInterface, s: State): Promise<boolean> {
-  if (s.inert) return false
-  if (!s.startSeen) {
-    try {
-      if ((await $.session.surfaces()).length === 0) {
-        s.inert = true
-        note($, s, 'inert: no surface (print mode)')
-        return false
-      }
-    } catch (err) {
-      note($, s, `inert for now: cannot read surfaces: ${describeError(err)}`)
-      return false
-    }
-    s.startSeen = true // surfaces exist: an interactive session that loaded this copy mid-flight
-  }
-  return true
-}
-
-/** Registers `/meridian-spawn-watch` once per module copy; a reload gets a fresh copy and registers again. */
-function ensureCommand($: EngineInterface, s: State): Promise<void> {
-  s.setup ??= $.command
-    .register({ name: COMMAND, description: 'Show Meridian spawn-watch state' })
-    .then(() => undefined)
-    .catch(err => note($, s, `command registration failed: ${describeError(err)}`))
-  return s.setup
 }
 
 // -- collector -------------------------------------------------------------
@@ -239,11 +196,6 @@ function newNonce(): string {
 }
 
 async function deliver($: EngineInterface, s: State, run: Run, reply: Extract<Reply, { kind: 'delivery' }>): Promise<void> {
-  const claimed = claimedIds(s)
-  if (reply.ids.every(id => claimed.has(id))) {
-    note($, s, `collect returned only claimed ids ${reply.ids.join(',')}; skipped`)
-    return
-  }
   const nonce = newNonce()
   const claim: Claim = { ids: reply.ids, phase: 'pending' }
   s.claims.set(nonce, claim)
@@ -317,7 +269,6 @@ async function ackTask($: EngineInterface, s: State, nonce: string, claim: Claim
 
 /** A main-loop turn started: whatever the idle stretch was doing ends, and a delivery turn is acked. */
 function mainTurnStarted($: EngineInterface, s: State, text: string): void {
-  s.epoch += 1
   endRun(s)
   for (const [nonce, claim] of s.claims) {
     if (claim.phase === 'acking' || claim.phase === 'unacked' || !text.includes(nonce)) continue
@@ -332,14 +283,6 @@ function startRun($: EngineInterface, s: State): void {
   const run: Run = { ctl: new AbortController(), phase: 'delay' }
   s.run = run
   void idleRun($, s, run)
-}
-
-async function mainTurnCompleted($: EngineInterface, s: State): Promise<void> {
-  const epoch = s.epoch
-  if (!(await active($, s))) return
-  await ensureCommand($, s)
-  if (s.epoch !== epoch) return // a turn started while we were asking; the stretch is not idle
-  startRun($, s)
 }
 
 function boxTouched($: EngineInterface, s: State): void {
@@ -369,10 +312,12 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     try {
-      s.startSeen = true
       if (e.isInteractive === false || e.surface === null) s.inert = true
       else {
-        background($, s, 'setup', () => ensureCommand($, s))
+        // Off the startup path; a reload is a fresh module copy and registers again.
+        $.command
+          .register({ name: COMMAND, description: 'Show Meridian spawn-watch state' })
+          .catch(err => note($, s, `command registration failed: ${describeError(err)}`))
         // The session is idle until its first prompt: a resumed chat may owe results from before. `startRun` does
         // not wait, so session.start stays unblocked; the first main-loop turn.start aborts the run.
         startRun($, s)
@@ -398,9 +343,7 @@ export const register: Register = on => {
     try {
       // Not after an Esc (do not resume what the user stopped), a rate or context limit, or a refusal: the next
       // request would likely fail the same way. The results stay owed; the next normal idle delivers them.
-      if (e.agentId === undefined && e.reason === 'answer' && !s.inert) {
-        background($, s, 'idle', () => mainTurnCompleted($, s))
-      }
+      if (e.agentId === undefined && e.reason === 'answer' && !s.inert) startRun($, s)
     } catch (err) {
       note($, s, `turn.complete error: ${describeError(err)}`)
     }
@@ -430,7 +373,6 @@ export const register: Register = on => {
 
   on('session.end', async ($, e, next) => {
     try {
-      s.epoch += 1
       endRun(s)
     } catch (err) {
       note($, s, `session.end error: ${describeError(err)}`)
