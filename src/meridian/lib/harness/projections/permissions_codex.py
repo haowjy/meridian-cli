@@ -101,11 +101,9 @@ def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
     if rule.capability == "bash":
         value = str(enabled).lower()
         return "shell_tool", enabled, f"-c features.shell_tool={value}"
-    if rule.capability == "web":
+    if rule.capability in {"web", "web_search"}:
         note = "-c tools.web_search=true" if enabled else '-c web_search="disabled"'
         return "web_search", enabled, note
-    if rule.capability == "web_search" and enabled:
-        return "web_search", True, "-c tools.web_search=true"
     if rule.capability == "image":
         verb = "--enable" if enabled else "--disable"
         return "view_image", enabled, f"{verb} view_image"
@@ -116,7 +114,11 @@ def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> En
     lines: list[ReportLine] = []
     for rule in policy.rules:
         switch = _tool_switch(rule)
-        if switch is not None:
+        if switch is not None and getattr(permissions, switch[0]) != switch[1]:
+            lines.append(
+                ReportLine(rule_element(rule), "partial", "overridden by a narrower rule")
+            )
+        elif switch is not None:
             lines.append(ReportLine(rule_element(rule), "native", switch[2]))
         elif rule.pattern is not None and rule.capability in {"bash", "web", "web_search", "image"}:
             lines.append(
@@ -177,7 +179,8 @@ def compile_codex_permissions(
         "web_search": None,
         "view_image": None,
     }
-    for rule in policy.rules:
+    # `web_search` is narrower than `web`, so it decides the search switch whatever the order.
+    for rule in sorted(policy.rules, key=lambda rule: rule.capability == "web_search"):
         switch = _tool_switch(rule)
         if switch is not None:
             switches[switch[0]] = switch[1]
