@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.notify.notice import SessionLabel, actor_name
+from meridian.lib.notify.notice import SessionLabel
 from meridian.lib.platform.tmux import resolve_tmux_session
 
 if TYPE_CHECKING:
@@ -82,7 +82,9 @@ def build_session_label(
     agent = _clean(env.get("MERIDIAN_SESSION_AGENT"))
     harness = _clean(env.get("_MERIDIAN_HARNESS"))
     work_id = _clean(env.get("MERIDIAN_ACTIVE_WORK_ID"))
-    child: str | None = None
+    child_spawn_id: str | None = None
+    child_agent: str | None = None
+    child_harness: str | None = None
     # State modules load lazily: the label is built on `meridian notify` startup.
     from meridian.lib.state.history_index import HistoryIndexIncomplete
     from meridian.lib.state.paths import resolve_project_runtime_root_or_none
@@ -93,9 +95,14 @@ def build_session_label(
         if runtime_root is not None:
             primary = _primary_of(runtime_root, spawn_id) if spawn_id else None
             if primary is not None and primary.id != spawn_id:
-                child = f"{spawn_id} {actor_name(agent, harness)}"
+                child_spawn_id, child_agent, child_harness = spawn_id, agent, harness
                 agent, harness = primary.agent, primary.harness
-                work_id = _session_work_id({"MERIDIAN_SPAWN_ID": primary.id}, runtime_root)
+                # The launch chat covers a primary with no recorded current chat.
+                primary_env = {
+                    "MERIDIAN_SPAWN_ID": primary.id,
+                    "MERIDIAN_CHAT_ID": primary.chat_id or "",
+                }
+                work_id = _session_work_id(primary_env, runtime_root) or work_id
             else:
                 work_id = _session_work_id(env, runtime_root)
     except (OSError, ValueError, HistoryIndexIncomplete, sqlite3.Error):
@@ -106,7 +113,9 @@ def build_session_label(
         work_id=work_id,
         agent=agent,
         harness=harness,
-        child=child,
+        child_spawn_id=child_spawn_id,
+        child_agent=child_agent,
+        child_harness=child_harness,
     )
 
 

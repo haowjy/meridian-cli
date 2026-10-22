@@ -23,7 +23,7 @@ class SessionLabel:
     """Who a notification is from: the primary session the human talks to.
 
     A spawned agent's notification names its primary (terminal, agent, harness,
-    work) and records itself in ``child``.
+    work) and records itself in the ``child_*`` fields.
     """
 
     tmux_session: str | None = None
@@ -31,7 +31,9 @@ class SessionLabel:
     work_id: str | None = None
     agent: str | None = None
     harness: str | None = None
-    child: str | None = None
+    child_spawn_id: str | None = None
+    child_agent: str | None = None
+    child_harness: str | None = None
 
     @property
     def sender(self) -> str:
@@ -50,7 +52,10 @@ class SessionLabel:
             line = f'{self.sender} in project: "{self.project}"'
         else:
             line = self.sender
-        return f"{line}, from child {self.child}" if self.child else line
+        if self.child_spawn_id:
+            child = actor_name(self.child_agent, self.child_harness)
+            return f"{line}, from child {self.child_spawn_id} {child}"
+        return line
 
     def __str__(self) -> str:
         return self.headline
@@ -62,7 +67,9 @@ class SessionLabel:
             "work_id": self.work_id,
             "agent": self.agent,
             "harness": self.harness,
-            "child": self.child,
+            "child_spawn_id": self.child_spawn_id,
+            "child_agent": self.child_agent,
+            "child_harness": self.child_harness,
             "sender": self.sender,
             "headline": self.headline,
         }
