@@ -26,6 +26,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
         "model",
+        "native_config",
         "effort",
         "permission_policy",
         "extra_args",

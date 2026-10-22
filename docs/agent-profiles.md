@@ -62,6 +62,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `autocompact` | int | — | Compaction percentage threshold |
 | `timeout` | int | — | Spawn timeout in seconds |
 | `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited |
+| `harness-overrides` | map | `{}` | Harness-native launch config selected for the resolved harness; see [Harness-native passthrough](#harness-native-passthrough) |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
 
 ## `mode`
@@ -173,6 +174,30 @@ Fallback only activates when:
 Legacy `fallback-order` and `fanout` are rejected. Order `model-policies`
 rules directly and add `no-fallback: true` for rules that should never be
 considered for fallback.
+
+## Harness-native passthrough
+
+Mars selects `harness-overrides.<resolved-harness>` and passes the block to Meridian
+without interpreting it. Codex flattens nested mappings to dotted config keys and emits
+supported boolean, integer, string, and scalar-list values as `-c` overrides. For example,
+this enables network access inside Codex's `workspace-write` sandbox:
+
+```yaml
+harness-overrides:
+  codex:
+    sandbox_workspace_write:
+      network_access: true
+```
+
+Meridian-owned Codex settings win: native entries that collide with its model, effort,
+sandbox, approval, writable-root, tool-switch, MCP, agent, feature, or notification config
+are skipped. `--dry-run` shows each applied or skipped key, for example
+`[native] native_config: sandbox_workspace_write.network_access = true -> -c sandbox_workspace_write.network_access=true`.
+Claude, OpenCode, Pi, and Cursor do not apply native config; their report lists the key
+names as `[unsupported] native_config: ... -> not applied for <Harness>`.
+
+The selected harness block is the config tree. A key named `native-config` inside it is a
+literal root key and is flattened like any other key; Meridian does not unwrap it.
 
 ## Skills and Skill Variants
 
@@ -356,7 +381,7 @@ names. These are the capabilities a profile can write:
 | `ask_user` | asking the human a question |
 | `plan_mode` | entering or leaving plan mode |
 | `workflow`, `cron`, `notifications`, `worktree`, `lsp`, `monitor`, `send_user_file`, `schedule_wakeup`, `remote_trigger`, `tool_search` | Claude-specific tools of the same names (`tool_search` also exists on Codex, `lsp` on OpenCode) |
-| `*` | every tool no other rule names; `tools: [read, grep]` writes `'*': deny` |
+| `*` | every tool no other rule names; `'*': deny` makes the profile an allowlist |
 | `mcp(server)`, `mcp(server/tool)` | MCP tools |
 
 The harness name each capability becomes, and which harnesses have no tool for it, is in
@@ -366,8 +391,8 @@ already met, and a rule Mars cannot name there is reported `unsupported`.
 
 ### Allowlists and scoped rules
 
-- `tools: [read, grep]` is a whole-policy allowlist: it means `'*': deny` plus the
-  two allows. A map containing `'*': deny` has the same meaning.
+- A map containing `'*': deny` is a whole-policy allowlist: only the tools it allows
+  exist. The list form `tools: [read, grep]` is deprecated and only pre-approves.
 - A capability with scoped allows and no unscoped rule is an allowlist for that
   capability. With only `'bash(rg *)': allow`, unmatched Bash calls are denied. Add
   `bash: allow` to allow the rest. An unscoped `*` rule also decides unmatched calls

@@ -307,6 +307,15 @@ all current harnesses — `--file` flags are not used.
 
 ### Codex: Managed-Primary Approval Routing
 
+Mars's selected `harness-overrides.codex` block reaches the launch as
+`execution_policy.native_config`. Bind preserves it on the launch spec; both `codex exec`
+and the one-spawn `codex app-server` process receive its flattened dotted keys as `-c`
+overrides. `projections/native_config.py` owns the TOML spelling, the applied/skipped
+report lines, and the reserved config-key set. Meridian's model, effort, sandbox, approval,
+writable roots, tool switches, MCP servers, multi-agent controls, and interactive `notify`
+remain authoritative. The other harness compiles report their selected native config but
+do not project it.
+
 In managed-primary mode, Meridian is the first WebSocket client (turn owner).
 `requestApproval` and `requestUserInput` are routed to the turn owner by the app
 server — the TUI (secondary observer) can only observe notifications.

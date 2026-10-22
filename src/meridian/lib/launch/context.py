@@ -33,6 +33,7 @@ from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.context_ref import ContextRef, render_context_refs
+from meridian.lib.core.execution_policy import NativeConfig
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
@@ -513,6 +514,7 @@ def materialize_launch_artifacts(
     reference_items: tuple[ReferenceItem, ...] = (),
     inject_task_cwd_instruction: bool = False,
     permission_policy: PermissionPolicy,
+    native_config: NativeConfig,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
@@ -562,7 +564,10 @@ def materialize_launch_artifacts(
         pi_harness_profile=pi_harness_profile,
     )
     spec = resolve_launch_spec_stage(
-        adapter=harness, run_inputs=run_params, permission_policy=permission_policy
+        adapter=harness,
+        run_inputs=run_params,
+        permission_policy=permission_policy,
+        native_config=native_config,
     )
     return MaterializedLaunchArtifacts(
         run_params=run_params,
@@ -1784,6 +1789,7 @@ def bind_launch_context(
         ),
         reference_items=loaded_references,
         permission_policy=permission_policy,
+        native_config=resolved_request.execution_policy.native_config,
         pi_harness_profile=pi_harness_profile,
     )
     run_params = materialized.run_params

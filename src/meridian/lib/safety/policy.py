@@ -75,7 +75,7 @@ class PermissionPolicy(BaseModel):
 
     Two kinds of allowlist:
 
-    - ``*: deny`` (the list form of ``tools`` writes one; a map may too): the policy is an
+    - ``*: deny`` (a map writes it): the policy is an
       allowlist, and only the tools it allows exist. ``is_allowlist`` asks about it.
     - A capability whose rules are scoped allows and nothing unscoped (``bash(rg *): allow``
       and no ``bash`` rule): only those scopes may run, whatever ``approval`` says. The

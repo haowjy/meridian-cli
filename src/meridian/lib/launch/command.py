@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
+from meridian.lib.core.execution_policy import NativeConfig
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -49,11 +50,13 @@ def resolve_launch_spec_stage(
     adapter: SubprocessHarness,
     run_inputs: SpawnParams,
     permission_policy: PermissionPolicy,
+    native_config: NativeConfig,
 ) -> ResolvedLaunchSpec:
     """Stage-owned adapter callsite for `resolve_launch_spec`.
 
-    The adapter resolves harness facts and never sees the policy; this stage
-    attaches the policy that the harness's permission compile reads.
+    The adapter resolves harness facts and never sees the policies; this stage
+    attaches the transport-neutral permission policy and the selected harness's
+    native execution config that its compile reads.
 
     Reference delivery flow: `SpawnParams.reference_items` is selectively
     re-attached onto the resolved spec only when the active adapter advertises
@@ -63,7 +66,7 @@ def resolve_launch_spec_stage(
     """
 
     spec = adapter.resolve_launch_spec(run_inputs).model_copy(
-        update={"permission_policy": permission_policy}
+        update={"permission_policy": permission_policy, "native_config": native_config}
     )
 
     # If harness supports native file injection and we have reference_items, attach them.

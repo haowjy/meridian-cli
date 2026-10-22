@@ -47,6 +47,7 @@ _PROJECTED_FIELDS: frozenset[str] = _ACCOUNTED_FIELDS
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
+        "native_config",
         "appended_system_prompt",
         "permission_policy",
         "agents_payload",

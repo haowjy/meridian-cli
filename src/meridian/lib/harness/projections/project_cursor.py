@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
         "model",
+        "native_config",
         "prompt",
         "permission_policy",
         "extra_args",

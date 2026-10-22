@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
+from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     EnforcementReport,
@@ -426,6 +427,7 @@ def compile_opencode_permissions(
     elif not spec.interactive and unscoped_action(policy.rules, "*") is None:
         lines.append(_headless_default_line(default))
 
+    lines.extend(unsupported_native_config_report(spec.native_config, harness="OpenCode"))
     return tuple(ordered), complete_report(policy, lines, harness="OpenCode")
 
 

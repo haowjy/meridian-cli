@@ -19,7 +19,9 @@ pi_extension_projection.py → (built extension artifacts → stable -e paths, n
 ```
 
 `project_codex_common.py` is not a projector — it holds the Codex spellings both Codex
-projectors share (tool-switch, MCP and built-in-agent flags).
+projectors share (tool-switch, MCP and built-in-agent flags). `native_config.py` flattens
+the selected harness-native config, spells Codex TOML literals, and owns the reserved keys
+that Meridian's Codex projections write themselves.
 
 `pi_extension_projection.py` is not a spec projector — it resolves stable
 Meridian-owned Pi extension entrypoints without copying or materializing them.
@@ -138,7 +140,9 @@ so the shell stays on for Codex to read files with. A whole-policy allowlist dis
 search and image viewing but deliberately leaves that shell on. Platform-origin rules never
 drive these tool switches; the built-in-agent mechanism still drives Codex's multi-agent
 feature switch. `project_codex_tool_switch_flags` is the one spelling shared by `codex exec`
-and `codex app-server`; the thread payload continues to carry sandbox and approval only.
+and `codex app-server`. Native config also goes to both paths as process-level `-c`
+overrides; the app-server thread payload remains authoritative for its model, effort,
+sandbox, and approval fields, so those native collisions are skipped and reported.
 
 OpenCode decides a headless `approval: default` spawn's unmatched calls by a toggle carried
 from v0.11.8: without a `*` rule, the compile emits `*: allow` only when no profile rule

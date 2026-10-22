@@ -8,9 +8,25 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
-from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
+from meridian.lib.core.execution_policy import (
+    NativeConfig,
+    freeze_native_config,
+    native_config_to_json,
+    validate_native_config,
+)
+from meridian.lib.core.execution_policy import (
+    ResolvedExecutionPolicy as ResolvedExecutionPolicy,
+)
 from meridian.lib.core.native_identity import NativeIdentity
 from meridian.lib.safety.policy import PermissionPolicy
 
@@ -80,6 +96,24 @@ class ResolvedLaunchSpec(BaseModel):
 
     # Permissions: defaults to no tool rules and default sandbox/approval.
     permission_policy: PermissionPolicy = PermissionPolicy()
+    # Harness-native execution settings preserved from the selected Mars profile.
+    native_config: NativeConfig = Field(
+        default_factory=lambda: ResolvedExecutionPolicy().native_config
+    )
+
+    @field_validator("native_config", mode="before")
+    @classmethod
+    def _validate_native_config(cls, value: object) -> object:
+        return validate_native_config(value)
+
+    @field_validator("native_config")
+    @classmethod
+    def _freeze_native_config(cls, value: NativeConfig) -> NativeConfig:
+        return freeze_native_config(value)
+
+    @field_serializer("native_config")
+    def _serialize_native_config(self, value: NativeConfig) -> dict[str, JsonValue]:
+        return native_config_to_json(value)
 
     # Passthrough args forwarded verbatim to the harness process.
     extra_args: tuple[str, ...] = ()

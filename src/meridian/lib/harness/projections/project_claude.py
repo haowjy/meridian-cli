@@ -31,6 +31,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "mcp_tools",
         "projected_roots",
         "model",
+        "native_config",
         "permission_policy",
         "prompt",
         "prompt_file_path",

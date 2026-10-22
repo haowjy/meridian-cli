@@ -9,6 +9,14 @@ from meridian.lib.harness.codex_idle import IDLE_NOTIFY_COMMAND
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections.native_config import (
+    CODEX_CONFIG_APPROVAL_POLICY_KEY,
+    CODEX_CONFIG_NOTIFY_KEY,
+    CODEX_CONFIG_REASONING_EFFORT_KEY,
+    CODEX_CONFIG_SANDBOX_MODE_KEY,
+    CODEX_CONFIG_WRITABLE_ROOTS_KEY,
+    project_codex_native_config,
+)
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_common import (
     CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
@@ -23,6 +31,7 @@ logger = logging.getLogger(__name__)
 _APP_SERVER_ARG_FIELDS: frozenset[str] = frozenset(
     {
         "permission_policy",
+        "native_config",
         "extra_args",
         "projected_roots",
         "report_output_path",
@@ -96,7 +105,7 @@ def _build_writable_roots_config(paths: tuple[str, ...]) -> tuple[str, ...]:
     if not paths:
         return ()
     paths_json = json.dumps(list(paths))
-    return ("-c", f"sandbox_workspace_write.writable_roots={paths_json}")
+    return ("-c", f"{CODEX_CONFIG_WRITABLE_ROOTS_KEY}={paths_json}")
 
 
 def _select_thread_method(spec: ResolvedLaunchSpec) -> str:
@@ -160,14 +169,25 @@ def project_codex_spec_to_appserver_command(
     ]
 
     if spec.interactive:
-        command.extend(("-c", f"notify={json.dumps(IDLE_NOTIFY_COMMAND)}"))
+        command.extend(("-c", f"{CODEX_CONFIG_NOTIFY_KEY}={json.dumps(IDLE_NOTIFY_COMMAND)}"))
 
     permissions, _ = compile_codex_permissions(spec)
     if permissions.sandbox_mode is not None:
-        command.extend(("-c", f"sandbox_mode={json.dumps(permissions.sandbox_mode)}"))
+        command.extend(
+            (
+                "-c",
+                f"{CODEX_CONFIG_SANDBOX_MODE_KEY}={json.dumps(permissions.sandbox_mode)}",
+            )
+        )
 
     if permissions.approval_policy is not None:
-        command.extend(("-c", f"approval_policy={json.dumps(permissions.approval_policy)}"))
+        command.extend(
+            (
+                "-c",
+                f"{CODEX_CONFIG_APPROVAL_POLICY_KEY}="
+                f"{json.dumps(permissions.approval_policy)}",
+            )
+        )
 
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
     command.extend(project_codex_tool_switch_flags(permissions))
@@ -186,6 +206,9 @@ def project_codex_spec_to_appserver_command(
             [root.as_posix() for root in spec.projected_roots],
         )
         command.extend(writable_roots_config)
+
+    native_config_args, _ = project_codex_native_config(spec.native_config)
+    command.extend(native_config_args)
 
     # Ahead of passthrough args so a later `-c` override still wins.
     if permissions.builtin_agents_disabled:
@@ -223,7 +246,7 @@ def project_codex_spec_to_thread_request(
 
     normalized_effort = (spec.effort or "").strip()
     if normalized_effort:
-        payload["config"] = {"model_reasoning_effort": normalized_effort}
+        payload["config"] = {CODEX_CONFIG_REASONING_EFFORT_KEY: normalized_effort}
 
     permissions, _ = compile_codex_permissions(spec)
     if permissions.approval_policy is not None:

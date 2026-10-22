@@ -7,6 +7,11 @@ import json
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections.native_config import (
+    CODEX_CONFIG_APPROVAL_POLICY_KEY,
+    CODEX_CONFIG_REASONING_EFFORT_KEY,
+    project_codex_native_config,
+)
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_common import (
     CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
@@ -23,6 +28,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "continue_session_id",
         "continue_fork",
         "permission_policy",
+        "native_config",
         "extra_args",
         "interactive",
         "mcp_tools",
@@ -81,15 +87,25 @@ def project_codex_spec_to_cli_args(
 
     normalized_effort = (spec.effort or "").strip()
     if normalized_effort:
-        command.extend(("-c", f"model_reasoning_effort={json.dumps(normalized_effort)}"))
+        command.extend(
+            ("-c", f"{CODEX_CONFIG_REASONING_EFFORT_KEY}={json.dumps(normalized_effort)}")
+        )
 
     permissions, _ = compile_codex_permissions(spec)
     if permissions.sandbox_mode is not None:
         command.extend(("--sandbox", permissions.sandbox_mode))
     if permissions.approval_policy is not None:
-        command.extend(("-c", f"approval_policy={json.dumps(permissions.approval_policy)}"))
+        command.extend(
+            (
+                "-c",
+                f"{CODEX_CONFIG_APPROVAL_POLICY_KEY}="
+                f"{json.dumps(permissions.approval_policy)}",
+            )
+        )
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
     command.extend(project_codex_tool_switch_flags(permissions))
+    native_config_args, _ = project_codex_native_config(spec.native_config)
+    command.extend(native_config_args)
 
     if harness_session_id:
         command.extend(("resume", harness_session_id))

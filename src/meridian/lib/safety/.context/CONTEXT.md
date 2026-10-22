@@ -88,8 +88,8 @@ lines for these rules carry `[legacy snapshot]`. Rules from such a snapshot, and
 names its own tool and wrong for Claude's category spellings (`Edit(src/*)` for a scoped
 write), so Claude reports a scoped allow or ask read that way as `partial`.
 
-**Allowlists.** Two kinds. `is_allowlist` is the whole-policy kind: a `*: deny` rule, which
-Mars adds for list-form `tools: [a, b]` and a map may write; `allowed_tools` names every
+**Allowlists.** Two kinds. `is_allowlist` is the whole-policy kind: a `*: deny` rule a map
+writes; `allowed_tools` names every
 tool a rule leaves callable (from `native_tools`, unscoped). The per-capability kind is a capability whose rules are scoped
 allows and nothing unscoped: only those scopes may run, whatever `approval` says. A `*` rule
 decides every unmatched call itself, so it ends that kind, as an unscoped rule for the

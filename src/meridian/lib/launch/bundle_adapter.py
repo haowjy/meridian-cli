@@ -158,7 +158,7 @@ def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
 
 
 def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
-    """Parse v3 skills.available field — list of {name, skill_type, description} objects."""
+    """Parse skill names, types, and source paths from ``skills.available``."""
     if not isinstance(raw, list):
         return ()
     entries: list[AvailableSkillEntry] = []
@@ -517,6 +517,7 @@ def _parse_bundle_payload(
         raise _bundle_schema_error("named model is missing routing.harness_model")
 
     execution_policy_payload = _required_object_field(payload, "execution_policy")
+    native_config = _optional_object_field(execution_policy_payload, "native_config")
     execution_policy = ResolvedExecutionPolicy.model_validate(
         {
             "effort": execution_policy_payload.get("effort"),
@@ -525,6 +526,7 @@ def _parse_bundle_payload(
             "autocompact": execution_policy_payload.get("autocompact"),
             "autocompact_pct": execution_policy_payload.get("autocompact_pct"),
             "timeout": execution_policy_payload.get("timeout"),
+            "native_config": native_config,
         }
     )
 

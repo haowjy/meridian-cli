@@ -21,12 +21,13 @@ package sources; it does not upgrade the Mars executable.
 
 **List and scoped-allow profiles**
 
-- `tools: [read, grep]` now means exactly those tools (`'*': deny` plus the two allows).
-  If the list was meant only to pre-approve tools while leaving everything else at the
-  harness default, change it to a map:
+- The list form `tools: [read, grep]` is deprecated; Mars warns. It still only pre-approves
+  the listed tools and leaves everything else at the harness default. Write a map instead,
+  and add `'*': deny` when the list meant "only these tools":
 
   ```yaml
   tools:
+    '*': deny
     read: allow
     grep: allow
   ```
@@ -34,7 +35,7 @@ package sources; it does not upgrade the Mars executable.
 - A capability with only scoped allows is an allowlist for that capability. With only
   `'bash(rg *)': allow`, unmatched Bash calls are denied, whatever `approval` says. Add
   `bash: allow` if the unmatched calls should remain available.
-- `approval: never` means "do not prompt"; it does not override either allowlist.
+- `approval: never` means "do not prompt"; it does not override an allowlist.
 
 Claude, OpenCode, and Pi enforce whole-policy and scoped-only allowlists, subject to the
 gaps in the [permissions table](agent-profiles.md#permissions-by-harness). Codex and Cursor

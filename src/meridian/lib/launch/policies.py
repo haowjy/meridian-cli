@@ -502,6 +502,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         autocompact_pct=resolved_execution_policy_overrides.autocompact_pct,
         timeout=resolved_execution_policy_overrides.timeout,
         resident_rearm_budget=resolved_execution_policy_overrides.resident_rearm_budget,
+        native_config=bundle_result.execution_policy.native_config,
     )
 
     resolved_skills = _build_resolved_skills_from_bundle(

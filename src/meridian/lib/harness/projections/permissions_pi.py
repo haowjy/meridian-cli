@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
+from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.safety.policy import (
@@ -301,6 +302,7 @@ def _report(
                     "Pi has no built-in agents",
                 )
             )
+    lines.extend(unsupported_native_config_report(spec.native_config, harness="Pi"))
     return complete_report(policy, lines, harness="Pi")
 
 

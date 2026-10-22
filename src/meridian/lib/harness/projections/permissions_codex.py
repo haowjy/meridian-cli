@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from meridian.lib.harness.projections.native_config import project_codex_native_config
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
@@ -86,7 +87,11 @@ def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
     return None
 
 
-def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> EnforcementReport:
+def _codex_report(
+    policy: PermissionPolicy,
+    permissions: CodexPermissions,
+    native_config_report: EnforcementReport,
+) -> EnforcementReport:
     lines: list[ReportLine] = []
     for rule in policy.rules:
         switch = _tool_switch(rule)
@@ -173,6 +178,7 @@ def _codex_report(policy: PermissionPolicy, permissions: CodexPermissions) -> En
             )
         else:
             lines.append(ReportLine(f"approval: {policy.approval}", "native", note))
+    lines.extend(native_config_report)
     return complete_report(policy, lines, harness="Codex")
 
 
@@ -205,7 +211,8 @@ def compile_codex_permissions(
             rule.kind == "builtin-agents" for rule in policy.platform_rules
         ),
     )
-    return permissions, _codex_report(policy, permissions)
+    _, native_config_report = project_codex_native_config(spec.native_config)
+    return permissions, _codex_report(policy, permissions, native_config_report)
 
 
 __all__ = ["CodexPermissions", "compile_codex_permissions"]

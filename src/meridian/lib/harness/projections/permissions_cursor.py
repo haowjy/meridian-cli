@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     ApprovalMode,
@@ -49,7 +50,9 @@ class CursorPermissions:
     sandbox: CursorSandbox | None
 
 
-def _cursor_report(policy: PermissionPolicy, permissions: CursorPermissions) -> EnforcementReport:
+def _cursor_report(
+    spec: ResolvedLaunchSpec, policy: PermissionPolicy, permissions: CursorPermissions
+) -> EnforcementReport:
     unsupported_note = "Cursor does not enforce tool rules or restrictive tool profiles"
     lines = [
         ReportLine(rule_element(rule), "unsupported", unsupported_note) for rule in policy.rules
@@ -79,6 +82,7 @@ def _cursor_report(policy: PermissionPolicy, permissions: CursorPermissions) -> 
                 "Cursor has no confirm switch; no flag passed",
             )
         )
+    lines.extend(unsupported_native_config_report(spec.native_config, harness="Cursor"))
     return complete_report(policy, lines, harness="Cursor")
 
 
@@ -91,7 +95,7 @@ def compile_cursor_permissions(
     permissions = CursorPermissions(
         approval=_APPROVAL_FLAG[policy.approval], sandbox=_SANDBOX_VALUE[policy.sandbox]
     )
-    return permissions, _cursor_report(policy, permissions)
+    return permissions, _cursor_report(spec, policy, permissions)
 
 
 __all__ = ["CursorPermissions", "compile_cursor_permissions"]
