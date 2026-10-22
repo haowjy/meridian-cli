@@ -634,7 +634,7 @@ def _tool_rule_line(
         if entry.action == "ask" and permissions.permission_mode == "dontAsk" and interactive:
             notes.append("dontAsk refuses it instead of asking the human")
             partial = True
-    if rule.is_legacy:
+    if rule.capability is None:
         notes.append("emitted as an older build wrote it; Claude ignores a name that is no tool")
         partial = True
     note = "; ".join(part for part in (_render_placed(placed), *notes) if part)
