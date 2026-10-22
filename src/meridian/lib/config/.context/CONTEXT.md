@@ -115,8 +115,10 @@ into the harness adapter's `resolve_launch_spec()`.
 
 Claude's adapter resolves `[harness.claude].spawn_watch` directly from
 `SpawnParams.control_root` when it selects interactive-primary runtime plugins.
-This keeps a Claude-only bundle toggle out of the shared `SpawnParams` surface;
-an absent control root falls back to ambient project-root resolution.
+This keeps a Claude-only bundle toggle out of the shared `SpawnParams` surface.
+`load_launch_config()` turns a control root into config, falling back to ambient
+project-root resolution when it is absent; Pi's adapter uses the same path when
+no launch snapshot profile was threaded in.
 
 Claude native Agent routing does not use a `meridian.toml` harness option.
 Built-in Claude agents stay denied unconditionally; generic `Agent` permission

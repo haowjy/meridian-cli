@@ -253,10 +253,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if run.pi_harness_profile is not None:
             pi_profile = run.pi_harness_profile
         else:
-            control_root = (run.control_root or "").strip()
-            pi_profile = resolve_pi_harness_profile(
-                project_root=Path(control_root).expanduser().resolve() if control_root else None,
-            )
+            pi_profile = resolve_pi_harness_profile(project_root=run.control_root)
         meridian_entrypoints = resolve_pi_extension_entrypoints(
             PiExtensionLaunchProfile(
                 background_tasks_enabled=pi_profile.background_tasks_enabled(),

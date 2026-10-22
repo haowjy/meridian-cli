@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import ClassVar
 from uuid import uuid4
 
-from meridian.lib.config.loader import load_config
-from meridian.lib.config.project_root import resolve_project_root_resolution
+from meridian.lib.config.loader import load_launch_config
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
@@ -271,15 +270,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             )
         plugin_names = (_BOUNDARY_PLUGIN,)
         if run.interactive:
-            control_root = (run.control_root or "").strip()
-            project_root = (
-                Path(control_root).expanduser().resolve()
-                if control_root
-                else resolve_project_root_resolution().project_root
-            )
-            claude_profile = load_config(project_root).harness.claude
             plugin_names += (_IDLE_PLUGIN,)
-            if claude_profile.spawn_watch.enabled:
+            if load_launch_config(run.control_root).harness.claude.spawn_watch.enabled:
                 plugin_names += (_SPAWN_WATCH_PLUGIN,)
         return ResolvedLaunchSpec(
             harness=HarnessId.CLAUDE,
