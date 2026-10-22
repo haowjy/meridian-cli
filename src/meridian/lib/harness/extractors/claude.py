@@ -8,7 +8,9 @@ from typing import cast
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int, extract_text
 from meridian.lib.harness.connections.base import RawHarnessEvent
+from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.permission_journal import PermissionDenial
 
 from .base import AttemptFold, HarnessExtractor
 
@@ -27,6 +29,16 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
 
     def create_fold(self) -> AttemptFold:
         return ClaudeFold(self)
+
+
+def _permission_denial_detail(tool: str, tool_input: object) -> str:
+    if isinstance(tool_input, dict):
+        values = cast("dict[str, object]", tool_input)
+        for key in ("command", "file_path", "path"):
+            value = values.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return tool
 
 
 class ClaudeFold(AttemptFold):
@@ -84,6 +96,32 @@ class ClaudeFold(AttemptFold):
             elif (cost := coerce_optional_float(payload.get("total_cost_usd"))) is not None:
                 self.usage_is_specific = True
                 facts.usage = TokenUsage(total_cost_usd=cost)
+            raw_denials = payload.get("permission_denials")
+            if isinstance(raw_denials, list):
+                recorded = {denial.request_id for denial in facts.permission_denials}
+                for raw_denial in cast("list[object]", raw_denials):
+                    if not isinstance(raw_denial, dict):
+                        continue
+                    denial = cast("dict[str, object]", raw_denial)
+                    request_id = denial.get("tool_use_id")
+                    tool = denial.get("tool_name")
+                    if (
+                        not isinstance(request_id, str)
+                        or not request_id.strip()
+                        or not isinstance(tool, str)
+                        or not tool.strip()
+                        or request_id in recorded
+                    ):
+                        continue
+                    facts.permission_denials.append(
+                        PermissionDenial(
+                            request_id=request_id,
+                            tool=tool,
+                            detail=_permission_denial_detail(tool, denial.get("tool_input")),
+                            reason=HEADLESS_REJECT_REASON,
+                        )
+                    )
+                    recorded.add(request_id)
         elif kind == "assistant" and self.text_source != "claude_result":
             text = extract_text(payload.get("content")) or extract_text(payload.get("message"))
             if text:

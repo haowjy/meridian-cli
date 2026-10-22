@@ -48,10 +48,14 @@ Exit code conventions: non-zero → `GuardrailFailure`; timeout → 124; `OSErro
 
 ## Permission Policy (`policy.py`)
 
-`build_permission_policy(rules, sandbox, approval, platform_rules)` returns the frozen
-`PermissionPolicy`: `rules` (Mars's typed tool rules), `platform_rules`, `sandbox` and
-`approval`. It validates the two modes and never re-resolves precedence; `launch/policies.py`
-already did. Each harness compiles the policy in `harness/projections/permissions_<harness>.py`
+`build_permission_policy(rules, sandbox, approval, platform_rules, sandbox_write_roots)`
+returns the frozen `PermissionPolicy`: `rules` (Mars's typed tool rules), `platform_rules`,
+`sandbox`, the protected workspace roots and `approval`. Bind supplies control/task/context
+roots separately from projected runtime and temp roots so a native read-only sandbox does
+not block Meridian state. The roots are bind-time projection data and are excluded from
+serialized policy dumps. The builder validates the two modes and never re-resolves
+precedence; `launch/policies.py` already did. Each harness compiles the policy in
+`harness/projections/permissions_<harness>.py`
 and returns `(native value, EnforcementReport)`; User-facing behavior is in
 `docs/agent-profiles.md#permissions-by-harness`.
 

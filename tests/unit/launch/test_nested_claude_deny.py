@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -95,6 +96,13 @@ def _tool_flag_entries(argv: tuple[str, ...], flag: str) -> tuple[str, ...]:
     return tuple(filter(None, entries))
 
 
+def _settings_permission_entries(argv: tuple[str, ...], action: str) -> tuple[str, ...]:
+    if "--settings" not in argv:
+        return ()
+    payload = json.loads(argv[argv.index("--settings") + 1])
+    return tuple(payload.get("permissions", {}).get(action, ()))
+
+
 @pytest.mark.parametrize(
     "tool_rules",
     [
@@ -143,7 +151,7 @@ def test_profile_opt_out_keeps_task_off_the_platform_deny_list(
     )
 
     argv = context.binding.argv
-    assert {"TaskCreate", "TaskGet"}.issubset(_tool_flag_entries(argv, "--allowedTools"))
+    assert {"TaskCreate", "TaskGet"}.issubset(_settings_permission_entries(argv, "allow"))
     assert _TASK_DENIES.isdisjoint(_tool_flag_entries(argv, "--disallowedTools"))
     assert "Agent" in _tool_flag_entries(argv, "--disallowedTools")
 
@@ -165,13 +173,14 @@ def test_parent_allowed_tools_cannot_readd_denied_agent() -> None:
     )
 
     argv = tuple(project_claude_spec_to_cli_args(spec, base_command=("claude",)))
-    allowed = _tool_flag_entries(argv, "--allowedTools")
+    allowed = _settings_permission_entries(argv, "allow")
     disallowed = _tool_flag_entries(argv, "--disallowedTools")
 
     assert "Write" in allowed
     assert "Agent" not in allowed
     assert "Agent(Explore)" not in allowed
-    assert {"Agent", "Agent(Explore)"}.issubset(disallowed)
+    assert "Agent" in disallowed
+    assert "Agent(Explore)" in _settings_permission_entries(argv, "deny")
 
 
 def test_primary_surface_denies_agent_but_not_task(
@@ -221,7 +230,7 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         dry_run=True,
     )
 
-    allowed = _tool_flag_entries(context.binding.argv, "--allowedTools")
+    allowed = _settings_permission_entries(context.binding.argv, "allow")
     disallowed = _tool_flag_entries(context.binding.argv, "--disallowedTools")
     assert "Agent" in allowed
     assert "Agent" not in disallowed
@@ -250,3 +259,23 @@ def test_agent_copy_setting_comes_from_ancestor_mars_root(tmp_path: Path) -> Non
     )
 
     assert agent_copy_enabled(nested, HarnessId.CLAUDE)
+
+
+def test_allow_builtin_agents_claude_cross_module_contract(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        "[harness.claude]\nallow_builtin_agents = true\n", encoding="utf-8"
+    )
+
+    argv = _launch_argv(
+        tmp_path,
+        monkeypatch,
+        surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+
+    disallowed = set(_tool_flag_entries(argv, "--disallowedTools"))
+    assert _BUILTIN_AGENT_DENIES.isdisjoint(disallowed)
+    assert "Agent" not in disallowed
+    assert _TASK_DENIES.issubset(disallowed)
