@@ -331,6 +331,39 @@ The same harness limits apply when `approval` or `sandbox` comes from a CLI flag
 environment variable, [Mars agent overlay](configuration/mars.md#agent-runtime-overlays),
 or [Meridian config](configuration.md). `tools` comes from the profile.
 
+### Capability names
+
+A `tools` rule names a capability, not a harness tool. Mars translates each capability into
+the target harness's own tool names when it compiles the profile; Meridian applies what Mars
+names. These are the capabilities a profile can write:
+
+| Capability | Covers |
+|---|---|
+| `bash` | shell commands; scope with a command prefix, `bash(git log *)` |
+| `read` | reading a file |
+| `write` | creating or overwriting a file |
+| `edit` | changing a file (on Claude and Pi this also covers writing) |
+| `notebook` | editing a Jupyter notebook |
+| `glob` | finding files by name |
+| `grep` | searching file contents |
+| `image` | viewing an image file |
+| `web` | `web_search` and `web_fetch` together |
+| `web_search` | searching the web |
+| `web_fetch` | fetching a URL |
+| `agent` | starting or messaging sub-agents |
+| `task` | the task list (todo tools) |
+| `skill` | loading a skill on demand; scope with a skill name, `skill(init)` |
+| `ask_user` | asking the human a question |
+| `plan_mode` | entering or leaving plan mode |
+| `workflow`, `cron`, `notifications`, `worktree`, `lsp`, `monitor`, `send_user_file`, `schedule_wakeup`, `remote_trigger`, `tool_search` | Claude-specific tools of the same names (`tool_search` also exists on Codex, `lsp` on OpenCode) |
+| `*` | every tool no other rule names; `tools: [read, grep]` writes `'*': deny` |
+| `mcp(server)`, `mcp(server/tool)` | MCP tools |
+
+The harness name each capability becomes, and which harnesses have no tool for it, is in
+Mars's [tool name projection table](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/agent-compilation.md#tool-name-projection).
+A capability a harness lacks shows in `--dry-run`: a deny of a tool it does not have is
+already met, and a rule Mars cannot name there is reported `unsupported`.
+
 ### Allowlists and scoped rules
 
 - `tools: [read, grep]` is a whole-policy allowlist: it means `'*': deny` plus the
