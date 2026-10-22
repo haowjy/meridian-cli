@@ -58,12 +58,12 @@ Roots are deduplicated and resolved to absolute paths before projection. Paths t
 
 Managed primary sessions surface approval requests instead of auto-accepting or rejecting them.
 
-In the managed architecture Meridian is the websocket client connected to the Codex app-server. When Codex issues a `*/requestApproval` or `item/tool/requestUserInput` JSON-RPC server request, it goes to Meridian — not to the TUI. Meridian dispatches these through an interactive handler (`ManagedPrimaryRequestHandler`) that records them as `request/opened` events in the spawn's harness history. A controller (CLI or API) can then answer via `respond_request()` or `respond_user_input()`.
+In the managed architecture Meridian is the websocket client connected to the Codex app-server. When Codex issues a `*/requestApproval` or `item/tool/requestUserInput` JSON-RPC server request, it goes to Meridian — not to the TUI. Meridian's permission broker records it in the session's `permission_requests.jsonl` and publishes the transition to runtime consumers. A controller can then answer through the connection API.
 
 Key properties:
 
 - **Requests are surfaced, not auto-accepted.** Pending requests stay open until a controller responds or Codex times out.
-- **Subagent spawns are unaffected.** Spawn/subagent sessions continue using `AutoAcceptHandler` (auto-approve everything). Approval events from a spawn do not propagate to the parent session.
+- **Subagent spawns fail closed.** The permission broker refuses requests immediately, journals the refusal, and does not route it to the parent session.
 - **Unsupported server request methods** (anything other than approval and user-input variants) still return a transport-level error.
 
 ## Instruction Routing
