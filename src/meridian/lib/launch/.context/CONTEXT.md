@@ -372,10 +372,11 @@ Two steps inside `bind_launch_context()`:
 
 Roots include workspace roots, git context clone roots, context projection roots
 (work, kb, extras), task cwd when task cwd is external, runtime root, and system
-temp dir. POSIX launches also project the private socket directory
-`/tmp/meridian-<uid>` so a sandboxed runner can bind its control endpoint. Roots
-are deduplicated in order. Extra args remain user-owned passthrough; they are not a
-workspace projection channel.
+temp dir. Bind creates and projects the runtime root's sibling `.locks` directory so
+sandboxed Meridian commands can acquire the project lifetime lock. POSIX launches also
+project the private socket directory `/tmp/meridian-<uid>` so a sandboxed runner can bind
+its control endpoint. Roots are deduplicated in order. Extra args remain user-owned
+passthrough; they are not a workspace projection channel.
 
 **Task CWD projection gap.** When `task_cwd` is outside both `control_root` and
 all projected workspace roots, launch composition projects the exact task cwd

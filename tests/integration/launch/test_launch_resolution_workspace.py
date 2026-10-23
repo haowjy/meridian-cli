@@ -16,6 +16,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.platform import IS_POSIX
+from meridian.lib.state.user_paths import project_lifetime_lock_path
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.plugin_api.git import resolve_clone_path
 from tests.support.launch import build_launch_context
@@ -63,6 +64,7 @@ def test_workspace_roots_append_after_claude_passthrough_args(
     )
 
     runtime_root = tmp_path / ".meridian"
+    locks_root = project_lifetime_lock_path(runtime_root).parent
     assert preview.binding.child_cwd == tmp_path
     args = preview.binding.run_params.extra_args
     assert args[:2] == ("--user-tail", "1")
@@ -70,10 +72,13 @@ def test_workspace_roots_append_after_claude_passthrough_args(
     projected_roots = {path.as_posix() for path in preview.binding.spec.projected_roots}
     assert shared_root.as_posix() in projected_roots
     assert runtime_root.as_posix() in projected_roots
+    assert locks_root.as_posix() in projected_roots
+    assert locks_root.is_dir()
     if IS_POSIX:
         assert socket_directory().as_posix() in projected_roots
     assert shared_root.as_posix() in preview.binding.argv
     assert runtime_root.as_posix() in preview.binding.argv
+    assert locks_root.as_posix() in preview.binding.argv
     if IS_POSIX:
         assert socket_directory().as_posix() in preview.binding.argv
 

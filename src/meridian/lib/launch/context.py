@@ -64,6 +64,7 @@ from meridian.lib.state.paths import (
     resolve_spawn_log_dir,
 )
 from meridian.lib.state.spawn.model import LaunchMode
+from meridian.lib.state.user_paths import project_lifetime_lock_path
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
@@ -1541,6 +1542,8 @@ def bind_launch_context(
         project_paths.project_root, context_config
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
+    project_locks_root = project_lifetime_lock_path(runtime_root).parent
+    project_locks_root.mkdir(parents=True, exist_ok=True)
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     socket_roots = (socket_directory(),) if IS_POSIX else ()
     resolved_request = prepared.request
@@ -1606,6 +1609,7 @@ def bind_launch_context(
         (
             *workspace_authority_roots,
             runtime_root,
+            project_locks_root,
             system_temp_root,
             *socket_roots,
         )
