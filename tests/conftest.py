@@ -2,7 +2,9 @@
 
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 import structlog
@@ -67,6 +69,19 @@ def _isolate_meridian_home(tmp_path_factory: pytest.TempPathFactory) -> None:
 
     test_home = tmp_path_factory.mktemp("meridian-home")
     os.environ["MERIDIAN_HOME"] = str(test_home)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_control_sockets() -> Iterator[None]:
+    from meridian.lib.streaming import control_socket
+
+    # pytest's usual temp paths can exceed sockaddr_un.sun_path on macOS.
+    with (
+        TemporaryDirectory(prefix="meridian-test-", dir="/tmp") as root,
+        pytest.MonkeyPatch.context() as patch,
+    ):
+        patch.setattr(control_socket, "_POSIX_SOCKET_ROOT", Path(root))
+        yield
 
 
 _NATIVE_STORE_ENV = frozenset({

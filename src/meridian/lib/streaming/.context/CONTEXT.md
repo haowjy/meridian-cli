@@ -273,6 +273,23 @@ runtime/project path depth cannot exceed `sockaddr_un.sun_path` and concurrent s
 remain isolated. Control injection is POSIX-only; the server's legacy native-Windows
 branch has no supported client.
 
+Startup sweeps only current-user `control-<32 hex>.sock` files older than 120 seconds.
+A nonblocking **datagram** connect must return `ECONNREFUSED`, and the file identity
+must still match before unlink. Linux and macOS reject a datagram connect to a bound
+stream socket with `EPROTOTYPE` before testing listen/backlog state: this preserves
+paused runners and endpoints between bind and listen without filling their queues.
+A stream probe is unsafe here: macOS can refuse a live listener with a full backlog.
+Uncertain errors, symlinks, other owners and other names are left alone.
+
+Each runner holds its spawn's `launch.lock` for the endpoint lifetime; a continued
+spawn gets a new ID and socket name. The sweep skips its own endpoint, whose
+startup/stop unlink remains owned by that runner. No extra socket registry or lock
+files are needed. Recovery runs on the next spawn start, not a timer.
+
+Tests patch the socket root to a short, session-private directory. Subprocess test
+drivers must carry that patch into their runner interpreters too; the root pytest
+fixture cannot isolate a new interpreter by itself.
+
 All control actions (inject, interrupt, permission reply, user input reply) are
 serialized through `ControlActionCoordinator`. Concurrent actions queue behind it —
 do not call `connection.send_user_message()` directly.

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -25,6 +24,7 @@ from meridian.lib.state.spawn.repository import Applied
 from meridian.lib.streaming.control_socket import (
     bounded_socket_path,
     prepare_socket_directory,
+    socket_directory,
 )
 from meridian.lib.streaming.signal_canceller import SignalCanceller
 
@@ -269,7 +269,7 @@ async def test_signal_canceller_app_lane_cross_process_http_success(
     runtime_root = resolve_runtime_paths(tmp_path).root_dir
     spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="app")
     socket_path = bounded_socket_path(runtime_root, "app")
-    assert socket_path.parent == Path("/tmp") / f"meridian-{os.getuid()}"
+    assert socket_path.parent == socket_directory()
 
     def _finalize_spawn() -> None:
         spawn_store.finalize_spawn(

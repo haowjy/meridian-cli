@@ -70,9 +70,11 @@ def main() -> None:
 
     from meridian.lib.core.types import HarnessId
     from meridian.lib.ops.spawn import execute
+    from meridian.lib.streaming import control_socket
     from tests.support.launch import stub_bundle_request_and_resolve
 
     patch = pytest.MonkeyPatch()
+    patch.setattr(control_socket, "_POSIX_SOCKET_ROOT", Path(os.environ["FAKE_SOCKET_ROOT"]))
     stub_bundle_request_and_resolve(patch, model="claude-haiku-4-5", harness=HarnessId.CLAUDE)
     patch.setattr(execute, "_build_background_worker_command", lambda **kw: (
         sys.executable, __file__, "worker", "--spawn-id", str(kw["spawn_id"]),

@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Spawn startup removes abandoned control sockets; live sockets stay put. Tests keep sockets out of the user directory (#733).
+
 ## [0.12.4] - 2026-10-23
 
 ### Changed

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import os
+import re
+import socket
 import stat
 import sys
+import time
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -27,6 +31,7 @@ UNIX_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
 # Runner and client processes may have different TMPDIR values; the shared
 # discovery path must not depend on either process's environment.
 _POSIX_SOCKET_ROOT = Path("/tmp")
+_STALE_SOCKET_AGE_SECONDS = 120
 
 
 def socket_directory() -> Path:
@@ -75,6 +80,41 @@ def prepare_socket_directory(path: Path) -> None:
         msg = f"socket directory is not owned by the current user: {path}"
         raise PermissionError(msg)
     path.chmod(0o700)
+
+
+def _sweep_stale_sockets(own_path: Path) -> None:
+    """Recover abandoned endpoints without connecting to a live stream server."""
+
+    cutoff = time.time() - _STALE_SOCKET_AGE_SECONDS
+    uid = os.getuid()
+    with os.scandir(own_path.parent) as entries:
+        for entry in entries:
+            if entry.name == own_path.name or not re.fullmatch(
+                r"control-[0-9a-f]{32}\.sock", entry.name
+            ):
+                continue
+            # Other runners may remove entries while we scan; inaccessible entries
+            # are not evidence of an abandoned endpoint either.
+            with suppress(OSError):
+                before = entry.stat(follow_symlinks=False)
+                if (
+                    not stat.S_ISSOCK(before.st_mode)
+                    or before.st_uid != uid
+                    or before.st_mtime > cutoff
+                ):
+                    continue
+                # A datagram probe gets EPROTOTYPE for a bound stream socket, even
+                # before listen() or with a full backlog. A stream probe can get
+                # ECONNREFUSED for a live, backlog-full listener on macOS.
+                with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as probe:
+                    probe.setblocking(False)
+                    if probe.connect_ex(entry.path) != errno.ECONNREFUSED:
+                        continue
+                after = os.lstat(entry.path)
+                if (before.st_dev, before.st_ino, before.st_ctime_ns) == (
+                    after.st_dev, after.st_ino, after.st_ctime_ns
+                ):
+                    os.unlink(entry.path)
 
 
 class ControlSocketServer:
@@ -136,6 +176,8 @@ class ControlSocketServer:
             return
 
         prepare_socket_directory(self._socket_path.parent)
+        _sweep_stale_sockets(self._socket_path)
+        # The runner holds this spawn's launch.lock for the endpoint lifetime.
         self._socket_path.unlink(missing_ok=True)
         self._server = await asyncio.start_unix_server(
             self._handle_client, path=str(self._socket_path)
