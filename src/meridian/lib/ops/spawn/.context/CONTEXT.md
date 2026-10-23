@@ -45,11 +45,18 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   consumption and live leases read across those generations. A nested caller owns only its own
   background direct children, with consumption and leases read from its own observation file.
   Foreground, archived, retired, historical, and quarantined rows are not owed wait targets.
+- Takes at most the oldest 32 rows already terminal when target resolution runs, using the same
+  `_DELIVERY_MAX_MEMBERS` bound as collection. Later owed rows remain eligible for the next wait
+  or collection. Active targets are not capped.
+- Carries the target-resolution classification through polling and output. Owed-finished rows use
+  `owed.py:render_delivery` (status/outcome, worker, failure, distinct task directory, and show
+  lookup) and never carry `report_body`, including JSON `--full`. Rows active at resolution keep
+  normal wait rendering and their requested report body after the wait blocks for them.
 - An observing wait leases the combined set before polling. A normal return consumes every
   terminal target, including one already finished when the wait began, so `spawn collect` cannot
   deliver it later.
 - `--no-observe` still includes owed terminal results because it means fetch without consuming; it
-  creates no lease or observation, so the same result can appear again until a normal wait or ack.
+  creates no lease or observation, so the same header can appear again until a normal wait or ack.
 - If `MERIDIAN_CHAT_ID` is absent, raises `ValueError` (not in a session)
 
 ## Idle Spawn Delivery Contract

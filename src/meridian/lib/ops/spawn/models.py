@@ -5,7 +5,15 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Literal, NotRequired, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    computed_field,
+    field_validator,
+    model_serializer,
+)
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
@@ -13,7 +21,7 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_termina
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
-from meridian.lib.state.spawn.model import RunBoundaryOutcome
+from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord
 
 
 def task_dir_line(task_cwd: str | None, work_id: str | None) -> str:
@@ -1315,6 +1323,8 @@ class SpawnWaitMultiOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spawns: tuple[SpawnDetailOutput, ...]
+    # Rendering-only classification; JSON carries the distinction through report_body.
+    _owed_finished_rows: tuple[SpawnRecord, ...] = PrivateAttr(default=())
     total_runs: int
     succeeded_runs: int
     failed_runs: int
@@ -1334,11 +1344,24 @@ class SpawnWaitMultiOutput(BaseModel):
     status: str | None = None
     exit_code: int | None = None
 
+    def with_owed_finished_rows(
+        self,
+        rows: tuple[SpawnRecord, ...],
+    ) -> "SpawnWaitMultiOutput":
+        carried = self.model_copy()
+        carried._owed_finished_rows = rows
+        return carried
+
     def format_text(self, ctx: FormatContext | None = None) -> str:
         """Render waited spawns, expanding report content when available."""
         effective_ctx = ctx or FormatContext()
         if self.checkpoint:
-            return self._format_checkpoint_text()
+            checkpoint = self._format_checkpoint_text()
+            if not self._owed_finished_rows:
+                return checkpoint
+            from .owed import render_delivery
+
+            return f"{checkpoint}\n\n{render_delivery(self._owed_finished_rows)}"
         if self.fail_fast:
             failed_ids = ", ".join(
                 spawn.spawn_id for spawn in self.spawns if spawn.status in {"failed", "timed_out"}
@@ -1349,10 +1372,28 @@ class SpawnWaitMultiOutput(BaseModel):
             )
             summary = f"Fail-fast: {failed_ids} failed or timed out. Still pending: {pending_ids}."
             return f"{summary}\n\n{details}" if details else summary
-        if not self.spawns:
+        return self._format_results_text(effective_ctx)
+
+    def _format_results_text(self, ctx: FormatContext) -> str:
+        owed_finished_ids = {row.id for row in self._owed_finished_rows}
+        blocked_on = tuple(
+            spawn for spawn in self.spawns if spawn.spawn_id not in owed_finished_ids
+        )
+        sections: list[str] = []
+        if len(blocked_on) == 1:
+            sections.append(blocked_on[0].format_wait_text(ctx))
+        elif blocked_on:
+            sections.append(self._format_multiple_results_text(blocked_on))
+        if self._owed_finished_rows:
+            from .owed import render_delivery
+
+            sections.append(render_delivery(self._owed_finished_rows))
+        return "\n\n".join(section for section in sections if section)
+
+    @staticmethod
+    def _format_multiple_results_text(spawns: tuple[SpawnDetailOutput, ...]) -> str:
+        if not spawns:
             return ""
-        if len(self.spawns) == 1:
-            return self.spawns[0].format_wait_text(effective_ctx)
 
         from meridian.lib.core.formatting import tabular
 
@@ -1365,12 +1406,12 @@ class SpawnWaitMultiOutput(BaseModel):
                 str(run.exit_code) if run.exit_code is not None else "-",
                 run.report_table_value(),
             ]
-            for run in self.spawns
+            for run in spawns
         )
         table = tabular(rows)
 
         report_sections: list[str] = []
-        for run in self.spawns:
+        for run in spawns:
             section = run.report_section()
             if section is not None:
                 report_sections.append(section)

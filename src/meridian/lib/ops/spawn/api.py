@@ -110,7 +110,7 @@ from .models import (
     SpawnWaitMultiOutput,
     format_spawn_identity_table,
 )
-from .owed import discover_owed_scope, read_owed_snapshot
+from .owed import discover_owed_scope, read_owed_snapshot, select_delivery_rows
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
@@ -128,6 +128,7 @@ _WAIT_POLL_INTERVAL_SECS = 0.25
 @dataclass(frozen=True)
 class _WaitTargetDiscovery:
     spawn_ids: tuple[str, ...] = ()
+    owed_finished_rows: tuple[SpawnRecord, ...] = ()
     discovery_pending: bool = False
 
 
@@ -1519,10 +1520,11 @@ def _resolve_wait_targets(
             # must not prevent the unchanged active wait set from making progress.
             owed_terminal = ()
 
+    owed_finished_rows = select_delivery_rows(owed_terminal)
     target_ids = tuple(
-        dict.fromkeys((*[row.id for row in pending], *[row.id for row in owed_terminal]))
+        dict.fromkeys((*[row.id for row in pending], *[row.id for row in owed_finished_rows]))
     )
-    return _WaitTargetDiscovery(target_ids)
+    return _WaitTargetDiscovery(target_ids, owed_finished_rows=owed_finished_rows)
 
 
 def _discover_pending_spawns(
@@ -1629,6 +1631,7 @@ def _emit_wait_set(
 def _build_wait_multi_output(
     results: tuple[SpawnDetailOutput, ...],
     *,
+    owed_finished_rows: tuple[SpawnRecord, ...] = (),
     fail_fast: bool = False,
     pending_ids: tuple[str, ...] = (),
 ) -> SpawnWaitMultiOutput:
@@ -1649,7 +1652,9 @@ def _build_wait_multi_output(
         status = results[0].status
         exit_code = results[0].exit_code
 
-    return SpawnWaitMultiOutput(
+    result_ids = {result.spawn_id for result in results}
+
+    output = SpawnWaitMultiOutput(
         spawns=results,
         total_runs=total_runs,
         succeeded_runs=succeeded_runs,
@@ -1663,11 +1668,15 @@ def _build_wait_multi_output(
         status=status,
         exit_code=exit_code,
     )
+    return output.with_owed_finished_rows(
+        tuple(row for row in owed_finished_rows if row.id in result_ids)
+    )
 
 
 def _build_wait_checkpoint_output(
     details: tuple[SpawnDetailOutput, ...],
     *,
+    owed_finished_rows: tuple[SpawnRecord, ...] = (),
     total_runs: int,
     pending_ids: tuple[str, ...],
     runtime_root: Path,
@@ -1686,7 +1695,8 @@ def _build_wait_checkpoint_output(
         )
         for spawn_id in pending_ids
     }
-    return SpawnWaitMultiOutput(
+    detail_ids = {detail.spawn_id for detail in details}
+    output = SpawnWaitMultiOutput(
         spawns=details,
         total_runs=total_runs,
         succeeded_runs=sum(1 for detail in details if detail.status == "succeeded"),
@@ -1706,6 +1716,9 @@ def _build_wait_checkpoint_output(
         },
         checkpoint_chat_id=chat_id,
         checkpoint_elapsed_secs=elapsed_secs,
+    )
+    return output.with_owed_finished_rows(
+        tuple(row for row in owed_finished_rows if row.id in detail_ids)
     )
 
 
@@ -1810,6 +1823,7 @@ def spawn_wait_sync(
             checkpoint_elapsed_secs=time.monotonic() - started,
         )
     spawn_ids = targets.spawn_ids
+    owed_finished_ids = frozenset(row.id for row in targets.owed_finished_rows)
 
     if not spawn_ids:
         chat_display = wait_chat_id or "current chat"
@@ -1914,19 +1928,35 @@ def spawn_wait_sync(
                 detail_from_row(
                     project_root=project_root,
                     row=rows[spawn_id],
-                    include_report_body=payload.include_report_body,
+                    include_report_body=(
+                        payload.include_report_body and spawn_id not in owed_finished_ids
+                    ),
                     runtime_root=runtime_root,
                 )
                 for spawn_id in spawn_ids
                 if spawn_id in rows
             )
+            owed_finished_rows = tuple(
+                rows[resolved.id]
+                for resolved in targets.owed_finished_rows
+                if resolved.id in rows
+            )
             pending_ids = tuple(sorted(pending))
             if not pending_ids:
-                return _build_wait_multi_output(details)
+                return _build_wait_multi_output(
+                    details,
+                    owed_finished_rows=owed_finished_rows,
+                )
             if failed_fast:
-                return _build_wait_multi_output(details, fail_fast=True, pending_ids=pending_ids)
+                return _build_wait_multi_output(
+                    details,
+                    owed_finished_rows=owed_finished_rows,
+                    fail_fast=True,
+                    pending_ids=pending_ids,
+                )
             return _build_wait_checkpoint_output(
                 details,
+                owed_finished_rows=owed_finished_rows,
                 total_runs=len(spawn_ids),
                 pending_ids=pending_ids,
                 runtime_root=runtime_root,

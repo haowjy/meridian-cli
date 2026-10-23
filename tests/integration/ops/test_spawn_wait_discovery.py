@@ -100,9 +100,20 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
     legacy_child = _spawn(root, "p-legacy", owner=None, parent=primary)
     continued_child = _spawn(root, "p-continued", chat="c-continued", parent=primary)
     unrelated = _spawn(root, "p-unrelated", chat="c-other", owner=None)
-    owed = _spawn(root, "p-owed", parent=primary, launch_mode="background")
+    owed_ids = tuple(
+        _spawn(root, f"p-owed-{index:02d}", parent=primary, launch_mode="background")
+        for index in range(34)
+    )
     foreground = _spawn(root, "p-foreground", parent=primary, launch_mode="foreground")
-    spawn_store.finalize_spawn(root, owed, "succeeded", 0, origin="runner")
+    for index, spawn_id in enumerate(owed_ids):
+        spawn_store.finalize_spawn(
+            root,
+            spawn_id,
+            "succeeded",
+            0,
+            origin="runner",
+            finished_at=f"2026-01-01T00:00:{index:02d}Z",
+        )
     spawn_store.finalize_spawn(root, foreground, "succeeded", 0, origin="runner")
     history_index.HistoryIndex(root).rebuild()
     original = SpawnRecord.model_validate_json
@@ -121,7 +132,10 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
     )
 
     assert not targets.discovery_pending
-    assert set(targets.spawn_ids) == {legacy_child, continued_child, owed}
+    assert targets.spawn_ids[:2] == (continued_child, legacy_child)
+    assert targets.spawn_ids[2:] == owed_ids[:32]
+    assert tuple(row.id for row in targets.owed_finished_rows) == owed_ids[:32]
+    assert set(owed_ids[32:]).isdisjoint(targets.spawn_ids)
     assert foreground not in targets.spawn_ids
 
 
@@ -171,6 +185,7 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
     )
 
     assert set(targets.spawn_ids) == {"p3", owed}
+    assert tuple(row.id for row in targets.owed_finished_rows) == (owed,)
     assert "p-sibling" not in targets.spawn_ids
     assert foreground not in targets.spawn_ids
 

@@ -44,8 +44,12 @@ still produce one later header-only ping.
 A normal no-argument `meridian spawn wait` uses the same owed-child definition. It
 leases its targets while running and consumes terminal results on return, so the
 collector skips those children during the wait and does not deliver them afterward.
+Wait takes at most the oldest 32 children that were already finished when target
+resolution ran and renders them through the same header-only delivery formatter.
+Running targets are uncapped and keep their full report output after wait blocks for
+them. The remaining finished children stay owed for the next wait or collection.
 `spawn wait --no-observe` deliberately does neither and may return the same finished
-child again until a normal wait or `spawn ack` consumes it.
+child again until a normal wait or `spawn ack` consumes it; its rendering is unchanged.
 
 ## Delivery, step by step
 

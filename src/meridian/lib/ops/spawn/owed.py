@@ -115,6 +115,12 @@ def render_delivery(rows: Sequence[SpawnRecord]) -> str:
     return "\n\n".join(rendered)
 
 
+def select_delivery_rows(rows: Sequence[SpawnRecord]) -> tuple[SpawnRecord, ...]:
+    """Take one oldest-first delivery batch under the shared member bound."""
+
+    return tuple(rows[:_DELIVERY_MAX_MEMBERS])
+
+
 def _roots(
     project_root: str | None,
     prepared: RuntimeReadContext | None,
@@ -280,7 +286,7 @@ def collect_owed_sync(
         if wait_for_batch is None:
             wait_for_batch = not terminal
         if terminal and not (wait_for_batch and snapshot.pending_ids):
-            delivered_rows = tuple(terminal[:_DELIVERY_MAX_MEMBERS])
+            delivered_rows = select_delivery_rows(terminal)
             text = render_delivery(delivered_rows)
             # An explicit wait or ack may have taken a result meanwhile.
             taken = consumed_ids(runtime_root, scope.parent_ids) | leased_ids(
@@ -335,4 +341,5 @@ __all__ = [
     "discover_owed_scope",
     "read_owed_snapshot",
     "render_delivery",
+    "select_delivery_rows",
 ]

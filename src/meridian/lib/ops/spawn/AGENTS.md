@@ -39,8 +39,11 @@ primary, recursive subtree SQL for a nested spawn. Discovery then re-reads only 
 selected `state.json` files with derived status before answering liveness. Recursive traversal keeps
 archived ancestors as edges so active descendants beneath them remain visible.
 `owed.py` separately owns the shared wait/collect definition of finished unconsumed,
-unleased background children. `--no-observe` includes them but neither leases nor consumes
-them, so they remain eligible for a later normal wait or delivery.
+unleased background children. No-arg wait takes at most the oldest 32 already-finished
+members, carries that classification from resolution through output, and uses collect's
+shared header-only renderer; active targets remain uncapped and keep report output.
+`--no-observe` includes owed children with the same rendering but neither leases nor
+consumes them, so they remain eligible for a later normal wait or delivery.
 
 `--fail-fast` exits as soon as any spawn reaches `failed` or `timed_out`, reporting
 which spawns failed and which are still pending. `cancelled` does not trigger

@@ -14,9 +14,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - A no-argument `spawn wait` now returns finished background children that are still
-  owed as well as running descendants, then consumes them on normal return. Wait and
-  Claude collection share one owed-child definition, so a child cannot fall between
-  their discovery rules.
+  owed as well as running descendants, then consumes them on normal return. It returns
+  at most the oldest 32 already-finished children as the same header-only lookup used
+  by Claude collection; running targets remain uncapped and retain their full reports.
+  Wait and collection share one owed-child definition, so a child cannot fall between
+  their discovery rules and excess finished results remain owed for the next delivery.
 
 ## [0.12.7] - 2026-10-23
 

@@ -90,7 +90,9 @@ _SPAWN_USAGE_EPILOGUE = (
 )
 _SPAWN_WAIT_HELP_EPILOGUE = (
     "Without spawn ids, discovers running descendants and finished background\n"
-    "children whose results you have not consumed.\n"
+    "children whose results you have not consumed. Returns at most 32 already-\n"
+    "finished children as lookup headers; children waited to completion keep\n"
+    "their report bodies.\n"
     "Exits cleanly at a safe checkpoint;\n"
     "re-invoke to keep waiting.\n\n"
     "Examples:\n\n"
