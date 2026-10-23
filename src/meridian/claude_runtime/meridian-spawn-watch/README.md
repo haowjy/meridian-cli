@@ -4,7 +4,8 @@ A Claude Code mod that wakes a lead whose background children finished while
 it sat idle. When the main loop goes idle (a turn ends, or the session starts
 with nothing to do), the mod runs `meridian spawn collect`, which blocks until
 child results are owed and ready; the mod submits
-that text as a new turn and then records the results as consumed with
+their status headers and `meridian spawn show <id>` lookup commands as a new turn,
+then records the results as consumed with
 `meridian spawn ack`. Meridian decides which children are owed, when they are
 done, what the lead sees and what counts as consumed. The mod only senses idle,
 runs the two commands, and keeps the delivery safe against the ways a turn can
@@ -33,6 +34,12 @@ The collector prints one JSON object and exits 0:
 
 Anything else (non-zero exit, unparseable output, no usable ids) is logged and
 retried at the next idle. Its stderr is diagnostics.
+
+Delivery text is intentionally header-only: status/outcome, worker, failure and
+distinct task directory when present, plus the exact `spawn show` lookup. It never
+contains or reads the report body. A lead that wants the body runs the lookup.
+Report reads do not consume the notification, so a result read before delivery may
+still produce one later header-only ping.
 
 ## Delivery, step by step
 
