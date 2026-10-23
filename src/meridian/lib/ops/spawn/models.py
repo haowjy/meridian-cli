@@ -2,7 +2,7 @@
 
 import shlex
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
@@ -15,7 +15,15 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
-_SPAWN_DELIVERY_SEPARATOR = "\n\n"
+
+def task_dir_line(task_cwd: str | None, work_id: str | None) -> str:
+    """The line telling a reader where a spawn was told to edit; shared by every spawn header."""
+
+    task_line = f"Spawn is instructed to implement in this task dir: {task_cwd}"
+    work_value = (work_id or "").strip()
+    if work_value:
+        task_line += f"  (work: {work_value})"
+    return task_line
 
 
 def _empty_template_vars() -> dict[str, str]:
@@ -866,7 +874,6 @@ class SpawnDetailOutput(BaseModel):
     report_path: str | None
     report_summary: str | None
     report_body: str | None
-    report_body_truncated: bool = False
     harness_session_id: str | None = None
     pi_lifecycle_phase: str | None = None
     pi_cleanup_status: str | None = None
@@ -936,11 +943,7 @@ class SpawnDetailOutput(BaseModel):
         return self.task_cwd != self.authority_root
 
     def _task_dir_line(self) -> str:
-        task_line = f"Spawn is instructed to implement in this task dir: {self.task_cwd}"
-        work_value = (self.work_id or "").strip()
-        if work_value:
-            task_line += f"  (work: {work_value})"
-        return task_line
+        return task_dir_line(self.task_cwd, self.work_id)
 
     def to_cli_wire(self) -> dict[str, object]:
         """Project slim JSON shape for wire serialization. Omits internal fields."""
@@ -1052,41 +1055,6 @@ class SpawnDetailOutput(BaseModel):
         if effective_ctx.verbosity > 0:
             return self._format_verbose_text(always_show_transcript=True)
         return self._format_compact_text()
-
-    def delivery_frame(self) -> "_SpawnDeliveryFrame":
-        """Build this spawn's frame for ``render_delivery``."""
-
-        outcome: list[str] = []
-        if self.duration_secs is not None:
-            outcome.append(f"{self.duration_secs:.1f}s")
-        if self.exit_code is not None:
-            outcome.append(f"exit {self.exit_code}")
-        if self.failure_reason is not None:
-            outcome.append("result error")
-        outcome_suffix = f" ({', '.join(outcome)})" if outcome else ""
-
-        details = [f"Worker: {self.model} ({self.harness})"]
-        if self.failure_reason is not None:
-            details.append(f"Failure: {self.failure_reason}")
-        if self._has_distinct_task_cwd():
-            details.append(self._task_dir_line())
-        details.append("")
-        details.append(
-            self._normalized_report_body()
-            or "No durable report content was published."
-        )
-        if self.report_body_truncated:
-            details.append(
-                "[Report excerpt truncated; use the lookup command below for the rest.]"
-            )
-        return _SpawnDeliveryFrame(
-            prefix=f"{self.spawn_id} {self.status}{outcome_suffix}",
-            detail="\n".join(details),
-            truncation_notice=(
-                "[Optional spawn details truncated to fit the delivery budget.]"
-            ),
-            lookup=f"meridian spawn show {self.spawn_id}",
-        )
 
     def _format_compact_text(self) -> str:
         status_str = self._status_for_compact_or_moderate()
@@ -1512,82 +1480,6 @@ class SpawnWaitMultiOutput(BaseModel):
         return self.to_cli_wire()
 
 
-def render_delivery(details: Sequence[SpawnDetailOutput], *, max_bytes: int) -> str:
-    """Render fair per-spawn excerpts while reserving every outcome and lookup.
-
-    Same budget rules as Pi's spawn watcher (``pi_runtime/.context/delivery-contract.md``):
-    every member's mandatory frame is reserved first, then report bodies share the
-    remaining bytes, cut at a UTF-8 code-point boundary.
-    """
-
-    if not details:
-        return ""
-    frames = tuple(detail.delivery_frame() for detail in details)
-    mandatory_bytes = tuple(_utf8_len(frame.mandatory()) for frame in frames)
-    separator_bytes = _utf8_len(_SPAWN_DELIVERY_SEPARATOR)
-    required = sum(mandatory_bytes) + separator_bytes * (len(frames) - 1)
-    if required > max_bytes:
-        raise ValueError("Spawn delivery identities exceed the byte budget")
-
-    rendered: list[str] = []
-    rendered_bytes = 0
-    remaining_mandatory = sum(mandatory_bytes)
-    for index, (frame, frame_mandatory_bytes) in enumerate(
-        zip(frames, mandatory_bytes, strict=True)
-    ):
-        leading_separator_bytes = separator_bytes if index else 0
-        remaining_mandatory -= frame_mandatory_bytes
-        remaining_members = len(frames) - index
-        remaining_separator_bytes = (remaining_members - 1) * separator_bytes
-        optional_bytes = (
-            max_bytes
-            - rendered_bytes
-            - leading_separator_bytes
-            - frame_mandatory_bytes
-            - remaining_mandatory
-            - remaining_separator_bytes
-        )
-        frame_budget = frame_mandatory_bytes + optional_bytes // remaining_members
-        member_text = frame.render(frame_budget)
-        rendered.append(member_text)
-        rendered_bytes += leading_separator_bytes + _utf8_len(member_text)
-    return _SPAWN_DELIVERY_SEPARATOR.join(rendered)
-
-
-@dataclass(frozen=True)
-class _SpawnDeliveryFrame:
-    prefix: str
-    detail: str
-    truncation_notice: str
-    lookup: str
-
-    def mandatory(self) -> str:
-        return f"{self.prefix}\n{self.truncation_notice}\n{self.lookup}"
-
-    def render(self, max_bytes: int) -> str:
-        full = f"{self.prefix}\n{self.detail}\n{self.lookup}"
-        if _utf8_len(full) <= max_bytes:
-            return full
-        detail_prefix = f"{self.prefix}\n"
-        suffix = f"\n{self.truncation_notice}\n{self.lookup}"
-        detail_budget = max_bytes - _utf8_len(detail_prefix) - _utf8_len(suffix)
-        if detail_budget < 0:
-            raise ValueError("Spawn delivery identity exceeds its reserved byte budget")
-        detail = _truncate_utf8(self.detail, detail_budget).rstrip()
-        return f"{detail_prefix}{detail}{suffix}"
-
-
-def _utf8_len(value: str) -> int:
-    return len(value.encode("utf-8"))
-
-
-def _truncate_utf8(value: str, max_bytes: int) -> str:
-    encoded = value.encode("utf-8")
-    if len(encoded) <= max_bytes:
-        return value
-    return encoded[:max_bytes].decode("utf-8", errors="ignore")
-
-
 __all__ = [
     "SpawnActionOutput",
     "SpawnCancelInput",
@@ -1611,5 +1503,5 @@ __all__ = [
     "SpawnWaitMultiOutput",
     "build_goal_contract_preview",
     "normalize_goal",
-    "render_delivery",
+    "task_dir_line",
 ]
