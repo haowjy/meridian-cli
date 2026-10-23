@@ -48,7 +48,6 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
-    PreflightResult,
     ResolvedLaunchSpec,
     SpecT,
     TerminalSurfaceMode,
@@ -338,14 +337,6 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     def launch_spec_warnings(
         self, spec: ResolvedLaunchSpec
     ) -> tuple[CompositionWarning, ...]: ...
-
-    def preflight(
-        self,
-        *,
-        execution_cwd: Path,
-        child_cwd: Path,
-        passthrough_args: tuple[str, ...],
-    ) -> PreflightResult: ...
 
 
 @runtime_checkable
@@ -649,16 +640,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
         _ = spec
         return ()
-
-    def preflight(
-        self,
-        *,
-        execution_cwd: Path,
-        child_cwd: Path,
-        passthrough_args: tuple[str, ...],
-    ) -> PreflightResult:
-        _ = execution_cwd, child_cwd
-        return PreflightResult.build(expanded_passthrough_args=passthrough_args)
 
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy()

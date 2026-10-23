@@ -184,6 +184,7 @@ def test_opencode_bind_probes_once_with_bound_path_and_environment(
             model="anthropic/claude-sonnet-4", continue_session_id="session-review",
         ),
         env=env,
+        child_cwd=tmp_path,
     )
     assert spec.opencode_version == version
     assert marker.read_text() == "bound:unset"

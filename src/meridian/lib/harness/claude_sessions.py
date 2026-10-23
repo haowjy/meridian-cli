@@ -6,10 +6,12 @@ import json
 import logging
 import os
 import re
+import shutil
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -18,7 +20,8 @@ from meridian.lib.core.native_identity import (
     NativeKeyFields,
     NativeSessionUnavailable,
 )
-from meridian.lib.platform import get_home_path
+from meridian.lib.platform import IS_WINDOWS, get_home_path
+from meridian.lib.platform.atomic import atomic_replace
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,33 @@ def resolve_claude_config_root(env: Mapping[str, str], cwd: Path) -> Path:
     if not root.is_absolute():
         root = cwd / root
     return root.resolve()
+
+
+def ensure_claude_session_accessible(
+    source_session_id: str,
+    child_cwd: Path,
+    *,
+    source_native_store: Path,
+    target_config_root: Path | None = None,
+) -> None:
+    """Seed the child's project from exactly the recorded store/ID pair."""
+    source_file = source_native_store / f"{source_session_id}.jsonl"
+    validate_claude_session_file(source_file, source_session_id)
+    target_root = target_config_root or resolve_claude_config_root(os.environ, Path.cwd())
+    target_file = target_root / "projects" / project_slug(child_cwd) / source_file.name
+    if target_file.exists() and target_file.samefile(source_file):
+        return
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    if IS_WINDOWS or source_native_store.parent.parent.resolve() != target_root.resolve():
+        with source_file.open("rb") as source, atomic_replace(target_file, mode="wb") as target:
+            shutil.copyfileobj(source, target)
+    else:
+        temporary = target_file.with_name(f".{target_file.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.symlink_to(source_file)
+            os.replace(temporary, target_file)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def _claude_config_root() -> Path:

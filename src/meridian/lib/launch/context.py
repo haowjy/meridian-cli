@@ -41,7 +41,6 @@ from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import bind_launch_spec, get_harness_bundle
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
-    PreflightResult,
     PreparedLaunchContent,
     PreparedLaunchRuntimeSeeds,
     PreparedPromptPayload,
@@ -88,8 +87,7 @@ from .composition import (
 )
 from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
 from .cwd import LaunchDirectoryContext
-from .env import build_env_plan, undo_direnv
-from .env import merge_env_overrides as _merge_env_overrides
+from .env import build_env_plan, merge_env_overrides, undo_direnv
 from .permissions import launch_permission_rules
 from .policies import (
     ModelSelectionContext,
@@ -372,21 +370,6 @@ def resolve_task_context_inputs(
     return TaskContextInputs(
         reference_items=loaded_references,
         prior_output=sanitize_prior_output(prior_output) if prior_output.strip() else "",
-    )
-
-
-def merge_env_overrides(
-    *,
-    plan_overrides: Mapping[str, str],
-    runtime_overrides: Mapping[str, str],
-    preflight_overrides: Mapping[str, str],
-) -> dict[str, str]:
-    """Merge launch env overrides with `MERIDIAN_*` leak checks."""
-
-    return _merge_env_overrides(
-        plan_overrides=plan_overrides,
-        runtime_overrides=runtime_overrides,
-        preflight_overrides=preflight_overrides,
     )
 
 
@@ -1598,16 +1581,6 @@ def bind_launch_context(
     # Invariant: harness subprocess cwd always stays at control_root.
     # Distinct task directories are exposed via task_cwd/env/instructions only.
     child_cwd = resolved_control_root
-    try:
-        preflight = harness.preflight(
-            execution_cwd=resolved_control_root,
-            child_cwd=resolved_control_root,
-            passthrough_args=tuple(resolved_request.extra_args),
-        )
-    except AttributeError:
-        preflight = PreflightResult.build(
-            expanded_passthrough_args=tuple(resolved_request.extra_args)
-        )
 
     workspace_authority_roots = _dedupe_roots_in_order(
         (
@@ -1639,7 +1612,6 @@ def bind_launch_context(
         harness_id=harness.id,
         roots=projected_roots,
     )
-    projected_extra_args = preflight.expanded_passthrough_args
     if workspace_projection.diagnostics:
         composition_warnings = (
             *composition_warnings,
@@ -1777,7 +1749,7 @@ def bind_launch_context(
         skills=resolved_request.skills,
         agent=resolved_request.agent,
         prompt_payload=prompt_payload,
-        extra_args=projected_extra_args,
+        extra_args=tuple(resolved_request.extra_args),
         control_root=resolved_control_root.as_posix(),
         task_cwd=(task_cwd.as_posix() if task_cwd is not None else None),
         inject_task_cwd_instruction=inject_task_cwd_instruction,
@@ -1858,7 +1830,6 @@ def bind_launch_context(
     bind_env_overrides = merge_env_overrides(
         plan_overrides=bindings.plan_overrides,
         runtime_overrides={**runtime_override_env, **child_context_env},
-        preflight_overrides=preflight.extra_env,
     )
     env = build_env_plan(
         base_env=base_env,
@@ -1866,9 +1837,9 @@ def bind_launch_context(
         run_inputs=run_params,
         runtime_env_overrides=bind_env_overrides,
     )
-    # Facts that depend on the launch environment (OpenCode's backend version) are resolved
-    # once, here; the env projection, the argv, the report and the connection read the spec.
-    spec = bind_launch_spec(harness.id, spec, env=env)
+    # Facts that depend on the final launch environment or child cwd are resolved once here;
+    # the env projection, argv, report and connection all read the same bound spec.
+    spec = bind_launch_spec(harness.id, spec, env=env, child_cwd=child_cwd)
     env.update(
         harness.project_launch_env(
             spec=spec,
@@ -1887,7 +1858,6 @@ def bind_launch_context(
     environment = ResolvedLaunchEnvironment.build(
         child_context_env=child_context_env,
         plan_env=dict(bindings.plan_overrides),
-        preflight_env=dict(preflight.extra_env),
         runtime_override_env=runtime_override_env,
         bind_env_overrides=bind_env_overrides,
         runner_overlay_env={},
@@ -1943,7 +1913,6 @@ __all__ = [
     "build_launch_policy_snapshot",
     "compile_prepared_policy_surface",
     "materialize_launch_artifacts",
-    "merge_env_overrides",
     "normalize_usage_model_family",
     "prepare_launch_surface",
     "prepare_prompt_payload",

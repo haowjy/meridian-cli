@@ -1,4 +1,4 @@
-"""Shared text helpers used by launch preflight and projection code."""
+"""Shared text helpers used by launch composition and projection code."""
 
 from __future__ import annotations
 

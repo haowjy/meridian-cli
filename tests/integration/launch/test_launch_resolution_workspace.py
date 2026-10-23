@@ -30,7 +30,7 @@ def _write_minimal_mars_config(project_root: Path) -> None:
     )
 
 
-def test_workspace_roots_append_after_claude_preflight_projection(
+def test_workspace_roots_append_after_claude_passthrough_args(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

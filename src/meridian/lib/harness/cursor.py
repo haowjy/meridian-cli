@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
 from typing import ClassVar
 
 from meridian.lib.core.domain import SpawnStatus
@@ -36,7 +34,6 @@ from meridian.lib.harness.semantics import (
 )
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import (
-    PreflightResult,
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
@@ -125,19 +122,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             task_cwd=run.task_cwd,
         )
 
-    def preflight(
-        self,
-        *,
-        execution_cwd: Path,
-        child_cwd: Path,
-        passthrough_args: tuple[str, ...],
-    ) -> PreflightResult:
-        _ = execution_cwd, child_cwd
-        if shutil.which(self.BASE_COMMAND[0]) is None:
-            raise FileNotFoundError(
-                "Cursor CLI not found on PATH. Install Cursor CLI or set PATH to include 'cursor'."
-            )
-        return PreflightResult.build(expanded_passthrough_args=passthrough_args)
 
 def _resolve_cursor_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:

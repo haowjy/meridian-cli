@@ -157,7 +157,7 @@ def test_exact_sources_refuse_invalid_headers(
     import json
 
     from meridian.lib.core.native_identity import NativeEntryMismatch, NativeSessionUnavailable
-    from meridian.lib.harness.claude_preflight import ensure_claude_session_accessible
+    from meridian.lib.harness.claude_sessions import ensure_claude_session_accessible
 
     store = tmp_path / "sessions"
     store.mkdir()

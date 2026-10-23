@@ -4,6 +4,7 @@ import json
 import secrets
 import sys
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 from uuid import uuid4
@@ -43,13 +44,10 @@ from meridian.lib.harness.claude_boundary import (
 )
 from meridian.lib.harness.claude_idle import detect_ttl
 from meridian.lib.harness.claude_inbox import post_primary_message
-from meridian.lib.harness.claude_preflight import (
-    build_claude_preflight_result,
-    ensure_claude_session_accessible,
-)
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
+    ensure_claude_session_accessible,
     reconcile_tui_trampoline_session_id,
     resolve_claude_config_root,
     resolve_claude_native_session_file,
@@ -57,6 +55,7 @@ from meridian.lib.harness.claude_sessions import (
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
 )
+from meridian.lib.harness.claude_settings import read_claude_settings_allows
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
@@ -89,7 +88,6 @@ from meridian.lib.launch.constants import (
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
-    PreflightResult,
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
@@ -122,6 +120,23 @@ def build_claude_adhoc_agent_json(
 
 
 _candidate_claude_project_dirs = candidate_claude_project_dirs
+
+
+def bind_claude_spec(
+    spec: ResolvedLaunchSpec,
+    env: Mapping[str, str],
+    child_cwd: Path,
+) -> ResolvedLaunchSpec:
+    """Resolve settings-file allows once from the launch environment and cwd."""
+
+    return spec.model_copy(
+        update={
+            "claude_runtime": replace(
+                spec.claude_runtime,
+                settings_allows=read_claude_settings_allows(child_cwd, env),
+            )
+        }
+    )
 
 
 def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
@@ -290,19 +305,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self, spec: ResolvedLaunchSpec
     ) -> tuple[CompositionWarning, ...]:
         return spec.claude_runtime.warnings
-
-    def preflight(
-        self,
-        *,
-        execution_cwd: Path,
-        child_cwd: Path,
-        passthrough_args: tuple[str, ...],
-    ) -> PreflightResult:
-        return build_claude_preflight_result(
-            execution_cwd=execution_cwd,
-            child_cwd=child_cwd,
-            passthrough_args=passthrough_args,
-        )
 
     def project_launch_env(
         self,
@@ -557,6 +559,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_claude_spec_to_cli_args,
             permission_report=lambda spec: compile_claude_permissions(spec)[1],
+            bind_spec=bind_claude_spec,
         ),
         semantics=CLAUDE_SEMANTICS,
         primary_inbox=post_primary_message,
