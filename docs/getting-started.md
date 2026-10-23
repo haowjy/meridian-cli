@@ -19,7 +19,9 @@ Meridian is a coordination layer — it needs at least one harness installed to 
 
 ## Performance Tip: Keep Prompt Cache Warm
 
-Long-running spawns can lose prompt-cache warmth while Meridian waits for them to finish. When the cache goes cold, the harness reprocesses the full context on resume — costing extra tokens and time.
+An agent waiting for child spawns can outlive its provider's prompt cache. Its
+next model request then reprocesses the conversation instead of reading it from
+cache, adding input cost and latency.
 
 | Harness | Cache behavior | What to configure |
 | --- | --- | --- |

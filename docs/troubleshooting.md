@@ -8,9 +8,10 @@ For 0.7 upgrade and unbound-chat repair steps, see
 If long-running spawns feel expensive or slow to resume, the harness prompt cache may be going cold while Meridian waits.
 
 **Root cause:** Meridian's default `spawn wait` yield interval is 50 minutes. If
-the calling harness's prompt-cache TTL is shorter than that, its next turn may
+the waiting agent's prompt-cache TTL is shorter than that, its next turn may
 reprocess the full context. The wait checkpoint and a child's completion deadline
 are operational bounds, not promises about provider cache retention.
+A wait yield returns control to the waiting agent even if its children are still running.
 
 | Harness   | Cache TTL | Fix |
 |-----------|-----------|-----|
