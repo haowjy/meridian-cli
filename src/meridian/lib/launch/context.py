@@ -36,6 +36,7 @@ from meridian.lib.core.context_ref import ContextRef, render_context_refs
 from meridian.lib.core.execution_policy import NativeConfig
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.core.sandbox_boundary import LAUNCHER_PID_NAMESPACE_ENV
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import bind_launch_spec, get_harness_bundle
@@ -1820,9 +1821,9 @@ def bind_launch_context(
     if launcher_pid_namespace is None:
         # Never propagate a namespace recorded by an ancestor when this launcher
         # cannot observe its own (for example, on macOS without procfs).
-        child_context_env.pop("_MERIDIAN_LAUNCHER_PID_NAMESPACE", None)
+        child_context_env.pop(LAUNCHER_PID_NAMESPACE_ENV, None)
     else:
-        child_context_env["_MERIDIAN_LAUNCHER_PID_NAMESPACE"] = launcher_pid_namespace
+        child_context_env[LAUNCHER_PID_NAMESPACE_ENV] = launcher_pid_namespace
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     resolved_agent = (resolved_request.agent or "").strip()
     if resolved_agent:

@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from structlog.testing import capture_logs
 
+import meridian.lib.core.sandbox_boundary as sandbox_boundary
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.prepare as spawn_prepare
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
@@ -311,7 +312,7 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-    monkeypatch.setattr(spawn_api, "current_pid_namespace", lambda: "pid:[sandbox]")
+    monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
 
     result = spawn_api.spawn_create_sync(SpawnCreateInput(prompt="run"))
 
@@ -329,9 +330,9 @@ def test_spawn_create_skips_pid_namespace_check_without_procfs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-    monkeypatch.setattr(spawn_api, "current_pid_namespace", lambda: None)
+    monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: None)
 
-    spawn_api._refuse_sandboxed_spawn_launch(dry_run=False)
+    sandbox_boundary.refuse_sandboxed_spawn_launch(dry_run=False)
 
 
 def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_error(

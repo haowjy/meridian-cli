@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import pytest
 
+import meridian.lib.core.sandbox_boundary as sandbox_boundary
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
@@ -140,7 +141,7 @@ def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_rea
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-    monkeypatch.setattr(spawn_api, "current_pid_namespace", lambda: "pid:[sandbox]")
+    monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
 
     with pytest.raises(ValueError, match="standalone shell command"):
         spawn_api.spawn_continue_sync(

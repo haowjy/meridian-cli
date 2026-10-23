@@ -7,9 +7,10 @@ import os
 import sys
 import types
 
-import pytest  # noqa: TC002
+import pytest
 
 import meridian.cli.entrypoint as entrypoint_module
+import meridian.lib.core.sandbox_boundary as sandbox_boundary
 
 
 class _FakeTextIOWrapper(io.TextIOWrapper):
@@ -143,6 +144,62 @@ def test_entrypoint_preserves_outer_meridian_managed(
     assert captured["argv"] == ["spawn", "list"]
     assert captured["managed"] == "0"
     assert os.environ["MERIDIAN_MANAGED"] == "0"
+
+
+def test_entrypoint_refuses_sandboxed_spawn_before_full_cli_import(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+    fake_main_module = _make_fake_main_module(captured)
+    original = sys.modules.get("meridian.cli.main")
+    sys.modules["meridian.cli.main"] = fake_main_module
+
+    try:
+        monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
+        monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "--bg", "-p", "child"])
+
+        with pytest.raises(SystemExit) as caught:
+            entrypoint_module.main()
+    finally:
+        if original is not None:
+            sys.modules["meridian.cli.main"] = original
+        else:
+            sys.modules.pop("meridian.cli.main", None)
+
+    assert caught.value.code == 1
+    assert captured == {}
+    stderr = capsys.readouterr().err
+    assert "Spawn setup failed before initialization" in stderr
+    assert "standalone shell command" in stderr
+
+
+def test_entrypoint_allows_sandboxed_spawn_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    fake_main_module = _make_fake_main_module(captured)
+    original = sys.modules.get("meridian.cli.main")
+    sys.modules["meridian.cli.main"] = fake_main_module
+
+    try:
+        monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
+        monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["meridian", "spawn", "--dry-run", "-p", "preview"],
+        )
+
+        entrypoint_module.main()
+    finally:
+        if original is not None:
+            sys.modules["meridian.cli.main"] = original
+        else:
+            sys.modules.pop("meridian.cli.main", None)
+
+    assert captured["argv"] == ["spawn", "--dry-run", "-p", "preview"]
 
 
 def test_reconfigure_skipped_when_stream_lacks_reconfigure(
