@@ -308,8 +308,10 @@ def complete_report(
     defaults.append(
         ReportLine(
             f"network: {policy.network}",
-            "unsupported",
-            f"not projected for {harness}",
+            "native" if policy.network == "allow" else "unsupported",
+            f"{harness} leaves shell network unrestricted"
+            if policy.network == "allow"
+            else f"not enforced by {harness}; shell network remains available",
         )
     )
     if policy.approval != "default":

@@ -36,12 +36,12 @@ continue, and fork operations now refuse when:
   spawn capability);
 - the child's resolved sandbox is weaker than the caller's;
 - the child's harness-effective shell network is weaker than the caller's (`allow` is
-  weaker than `deny`). Claude `approval: never` makes `network: deny` effectively `allow`;
+  weaker than `deny`);
 - native harness arguments follow `--`, because they could override the resolved policy.
 
 These calls worked without this boundary before. Put the intended children in the caller
 profile's `subagents:` list and move required harness-native arguments into the profile.
-Approval is not compared independently, but it can change effective network enforcement.
+Approval is not compared independently.
 Child write roots and `--env` are not part of the guardrail. Profiles using
 `sandbox: default` or `danger-full-access`, and top-level shells not launched by Meridian,
 carry no floor.

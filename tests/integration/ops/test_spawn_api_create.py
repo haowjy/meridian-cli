@@ -499,7 +499,7 @@ def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
     [
         ("allow", "default", "failed", "effective network 'allow' is weaker"),
         ("deny", "default", "dry-run", None),
-        ("deny", "never", "failed", "effective network 'allow' is weaker"),
+        ("deny", "never", "dry-run", None),
     ],
 )
 def test_spawn_create_caller_guardrail_compares_effective_network(

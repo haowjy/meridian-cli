@@ -45,6 +45,16 @@ class EffectiveNetwork(Protocol):
     ) -> NetworkMode: ...
 
 
+def unenforced_network(
+    policy: PermissionPolicy,
+    *,
+    native_config: Mapping[str, object] | None = None,
+) -> NetworkMode:
+    """Return the effective mode for harnesses that leave shell network unrestricted."""
+
+    return "allow"
+
+
 class ManagedPrimaryBackendProjector(Protocol[ProjectorSpecT]):
     """Project one managed-primary observer backend command."""
 
@@ -438,4 +448,5 @@ __all__ = [
     "project_managed_primary_bootstrap",
     "project_subprocess_spec",
     "register_harness_bundle",
+    "unenforced_network",
 ]

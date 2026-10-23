@@ -854,8 +854,6 @@ def effective_claude_network(
 
     if policy.sandbox not in {"read-only", "workspace-write"}:
         return "allow"
-    if policy.approval in {"never", "yolo"}:
-        return "allow"
     return policy.network
 
 
@@ -865,39 +863,32 @@ def _network_line(
     settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> ReportLine:
     element = f"network: {policy.network}"
-    effective_network = effective_claude_network(policy)
     sandbox = permissions.settings.sandbox
-    if effective_network == "allow" and policy.network == "deny":
-        if permissions.skip_permission_prompts:
-            note = (
-                "approval never uses --dangerously-skip-permissions, which leaves Claude's "
-                "sandbox network proxy unrestricted even though filesystem confinement remains"
-            )
-        else:
-            note = "not enforced because the Claude Bash sandbox is off"
-        return ReportLine(element, "unsupported", note)
-
     if sandbox is None or not sandbox.enabled:
         if policy.network == "allow":
             return ReportLine(
                 element,
                 "native",
-                "sandbox is off, so shell network is available",
+                "shell network is available without a projected Claude Bash sandbox",
             )
-        raise RuntimeError("Claude network projection disagrees with its effective policy.")
+        return ReportLine(
+            element,
+            "unsupported",
+            "no Claude Bash sandbox is projected; shell network remains available",
+        )
 
     if policy.network == "allow":
+        domains = ",".join(f'"{domain}"' for domain in CLAUDE_NETWORK_ALLOW_DOMAINS)
         note = (
-            '--settings sandbox.network.allowedDomains=["*","localhost","127.0.0.1"], '
-            "allowLocalBinding=true, allowAllUnixSockets=true"
+            f"--settings sandbox.network.allowedDomains=[{domains}], "
+            "sandbox.network.allowLocalBinding=true, "
+            "sandbox.network.allowAllUnixSockets=true"
         )
         if sys.platform.startswith("linux"):
             return ReportLine(
                 element,
                 "partial",
-                note
-                + "; on Linux, host localhost is reachable only through Claude's proxy, and "
-                "clients honoring NO_PROXY bypass it (for curl, use --noproxy '')",
+                note + "; host localhost remains mediated by Claude's proxy on Linux",
             )
         return ReportLine(element, "native", note)
 

@@ -18,13 +18,13 @@ from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
     register_harness_bundle,
+    unenforced_network,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.harness.projections.permissions_cursor import (
     compile_cursor_permissions,
-    effective_cursor_network,
 )
 from meridian.lib.harness.projections.project_cursor import project_cursor_spec_to_cli_args
 from meridian.lib.harness.semantics import (
@@ -168,7 +168,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_cursor_spec_to_cli_args,
             permission_report=lambda spec: compile_cursor_permissions(spec)[1],
-            effective_network=effective_cursor_network,
+            effective_network=unenforced_network,
         ),
         semantics=CURSOR_SEMANTICS,
     )

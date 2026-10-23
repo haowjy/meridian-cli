@@ -197,10 +197,9 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
     assert "runs fully outside the sandbox" in sandbox_line.note
     network_line = next(item for item in report if item.element == "network: allow")
     assert network_line.status == "partial"
-    assert "--noproxy ''" in network_line.note
 
 
-def test_claude_network_deny_reports_settings_and_command_widening(
+def test_claude_network_deny_projects_strict_allowlist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("meridian.lib.harness.projections.permissions_claude.sys.platform", "linux")
@@ -231,9 +230,6 @@ def test_claude_network_deny_reports_settings_and_command_widening(
     line = next(item for item in report if item.element == "network: deny")
     assert line.status == "partial"
     assert effective_claude_network(spec.permission_policy) == "deny"
-    assert "private TCP loopback" in line.note
-    assert "can be widened outside Meridian" in line.note
-    assert "meridian spawn *" in line.note
 
     bypassed = spec.model_copy(
         update={
@@ -247,9 +243,8 @@ def test_claude_network_deny_reports_settings_and_command_widening(
     )
     _, bypassed_report = compile_claude_permissions(bypassed)
     bypassed_line = next(item for item in bypassed_report if item.element == "network: deny")
-    assert bypassed_line.status == "unsupported"
-    assert effective_claude_network(bypassed.permission_policy) == "allow"
-    assert "network proxy unrestricted" in bypassed_line.note
+    assert bypassed_line.status == "partial"
+    assert effective_claude_network(bypassed.permission_policy) == "deny"
 
 
 def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
@@ -269,6 +264,7 @@ def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
 
     assert settings["sandbox"]["network"] == {"strictAllowlist": True}
     assert "--dangerously-skip-permissions" not in command
+    assert effective_claude_network(spec.permission_policy) == "deny"
 
 
 def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> None:

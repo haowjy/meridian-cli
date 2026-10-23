@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
@@ -15,7 +15,6 @@ from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
     EnforcementReport,
-    NetworkMode,
     PermissionPolicy,
     PlatformCommand,
     ReportLine,
@@ -35,16 +34,6 @@ _TOOL_SELECTION_FLAGS: tuple[tuple[str, ...], ...] = (
     ("--no-builtin-tools", "-nbt"),
 )
 _STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
-
-
-def effective_pi_network(
-    policy: PermissionPolicy,
-    *,
-    native_config: Mapping[str, object] | None = None,
-) -> NetworkMode:
-    """Return Pi's unrestricted shell-network policy."""
-
-    return "allow"
 
 
 class PiExtensionRule(BaseModel):
@@ -281,7 +270,6 @@ def _report(
     extension_rules: tuple[PiExtensionRule, ...],
 ) -> EnforcementReport:
     policy = spec.permission_policy
-    effective_network = effective_pi_network(policy)
     lines = [
         line
         for rule in policy.rules
@@ -330,15 +318,6 @@ def _report(
                     "Pi has no built-in agents",
                 )
             )
-    lines.append(
-        ReportLine(
-            f"network: {policy.network}",
-            "native" if effective_network == policy.network else "unsupported",
-            "Pi leaves shell network unrestricted"
-            if policy.network == "allow"
-            else "not enforced by Pi; shell network remains available",
-        )
-    )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Pi"))
     lines.extend(compaction_report(spec, harness="Pi"))
     return complete_report(policy, lines, harness="Pi")
@@ -410,7 +389,6 @@ __all__ = [
     "PiExtensionRule",
     "PiPermissions",
     "compile_pi_permissions",
-    "effective_pi_network",
     "project_pi_permission_args",
     "reject_passthrough_tool_flags",
 ]
