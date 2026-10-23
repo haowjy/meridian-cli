@@ -264,9 +264,9 @@ def _codex_report(
             lines.append(
                 ReportLine(
                     network_element,
-                    "partial",
-                    "network was left unset; Codex read-only keeps shell network off, so no "
-                    "authored allow request is reported as unsupported",
+                    "native",
+                    "network was left unset; Codex read-only keeps its native shell "
+                    "network-off behavior, with no authored allow request to report as a gap",
                 )
             )
         else:

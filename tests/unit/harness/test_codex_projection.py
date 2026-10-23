@@ -147,8 +147,8 @@ def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
 
     defaulted_line = next(line for line in defaulted_report if line.element == "network: allow")
     authored_line = next(line for line in authored_report if line.element == "network: allow")
-    assert defaulted_line.status == "partial"
-    assert "no authored allow request" in defaulted_line.note
+    assert defaulted_line.status == "native"
+    assert "no authored allow request to report as a gap" in defaulted_line.note
     assert authored_line.status == "unsupported"
 
 
