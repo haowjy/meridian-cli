@@ -94,7 +94,7 @@ def build_create_payload(
     preflight_warning: str | None = None,
     ctx: RuntimeContext | None = None,
     bind_preview: bool = True,
-    policy_readonly: bool = False,
+    models_readonly: bool = False,
 ) -> SpawnCreateArtifacts:
     """Build a spawn request and prepared launch surface for create/execute handoff."""
 
@@ -258,7 +258,7 @@ def build_create_payload(
             request=raw_request,
             runtime=preview_runtime,
             harness_registry=harness_registry,
-            dry_run=composition_dry_run or policy_readonly,
+            dry_run=composition_dry_run or models_readonly,
             launch_mode=(BACKGROUND_LAUNCH_MODE if payload.background else FOREGROUND_LAUNCH_MODE),
         )
         logger.debug(

@@ -107,7 +107,6 @@ def test_background_headless_deny_rejects_before_reservation_without_affecting_a
             project_root=project_root.as_posix(),
             background=True,
         ),
-        prepared=prepared,
     )
     allowed = spawn_api.spawn_create_sync(
         SpawnCreateInput(
@@ -117,7 +116,6 @@ def test_background_headless_deny_rejects_before_reservation_without_affecting_a
             project_root=project_root.as_posix(),
             background=True,
         ),
-        prepared=prepared,
     )
 
     assert denied.status == "failed"
@@ -246,44 +244,6 @@ def test_spawn_create_dry_run_emits_usage_events(
     assert usage_events["usage.spawn.launched"].data == {"harness": "codex"}
 
 
-def test_spawn_create_with_prepared_skips_self_bootstrap(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / ".git").mkdir()
-    (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
-
-    def _forbidden(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("self-bootstrap helper should not be called")
-
-    monkeypatch.setattr(spawn_api, "setup_telemetry", _forbidden)
-    monkeypatch.setattr(spawn_api, "load_config", _forbidden)
-    monkeypatch.setattr(spawn_api, "resolve_runtime_root_and_config", _forbidden)
-    monkeypatch.setattr(spawn_api, "resolve_runtime_root", _forbidden)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.3-codex",
-        harness=HarnessId.CODEX,
-    )
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            model="gpt-5.3-codex",
-            harness="codex",
-            project_root=project_root.as_posix(),
-            dry_run=True,
-        ),
-        prepared=prepared,
-    )
-
-    assert result.status == "dry-run"
-    assert result.harness_id == "codex"
-
-
 def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -292,7 +252,6 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
     project_root.mkdir()
     (project_root / ".git").mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
 
     def _raise_build_create_payload(*_args: object, **_kwargs: object) -> object:
         raise ValueError("model resolution failed")
@@ -309,7 +268,6 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
             task_dir=(tmp_path / "task").as_posix(),
             work="browser-investigation",
         ),
-        prepared=prepared,
     )
 
     assert result.status == "failed"
@@ -626,7 +584,6 @@ def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_
     project_root.mkdir()
     (project_root / ".git").mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
 
     def _raise_build_create_payload(*_args: object, **_kwargs: object) -> object:
         raise TypeError("bug in launch composition")
@@ -641,8 +598,7 @@ def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_
                 harness="opencode",
                 project_root=project_root.as_posix(),
             ),
-            prepared=prepared,
-        )
+            )
 
     assert result.status == "failed"
     assert result.error == "pre_init_unexpected_error"
@@ -664,7 +620,6 @@ def test_spawn_create_validation_failure_returns_pre_init_failed_output(
     project_root.mkdir()
     (project_root / ".git").mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
@@ -675,7 +630,6 @@ def test_spawn_create_validation_failure_returns_pre_init_failed_output(
             task_dir=(tmp_path / "task").as_posix(),
             work="browser-investigation",
         ),
-        prepared=prepared,
     )
 
     assert result.status == "failed"

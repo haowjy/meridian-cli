@@ -10,8 +10,8 @@ input validation, and routing to foreground vs background execution.
 Both paths converge at `launch_prepared_spawn()`:
 
 Before either path, `api.py` composes the resolved launch policy and creates no spawn
-row. A nested launch with a delegation floor also defers runtime materialization until
-the floor passes; a top-level launch retains normal eager write bootstrap.
+row. Spawn creation always defers runtime materialization until the resolved launch
+policy passes the caller boundary; top-level and nested callers use the same path.
 
 **Foreground:** `execute_spawn_blocking()` → creates spawn row → calls
 `launch_prepared_spawn()` via `asyncio.run()` → `execute_with_streaming()`.

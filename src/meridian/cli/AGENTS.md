@@ -66,8 +66,8 @@ argv
 
 The default `spawn` route is the deliberate exception within `WRITE_RUNTIME`: its
 descriptor performs project-read bootstrap only. The ops preparation path must resolve
-and enforce an inherited caller boundary before it materializes runtime state; a
-top-level launch materializes from ops at the usual eager point. Other mutating spawn
+and enforce an inherited caller boundary before it materializes runtime state. Every
+launch uses that same deferred materialization path. Other mutating spawn
 subcommands retain normal runtime-write bootstrap.
 
 ## Entry Points

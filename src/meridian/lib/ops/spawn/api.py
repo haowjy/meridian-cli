@@ -289,7 +289,6 @@ class SpawnCreatePreparation:
     planning_runtime: OperationRuntime | None
     artifacts: SpawnCreateArtifacts | None
     dry_run_work_warning: str | None
-    prepared_context: RuntimeWriteContext | None
     depth_exceeded: SpawnActionOutput | None = None
 
 
@@ -313,7 +312,6 @@ def _prepare_spawn_create(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
-    prepared: RuntimeWriteContext | None,
     floor_check: CallerBoundaryCheck | None,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
@@ -326,36 +324,15 @@ def _prepare_spawn_create(
     else:
         # Continue/fork may add replayed native args after the import-cheap precheck.
         floor_check.enforce_passthrough_args(payload.passthrough_args)
-    prepared_context = prepared
     register_debug_trace_observer()
     resolved_context = runtime_context(ctx)
     spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
     logical_owner = spawn_env_id if spawn_env_id else "cli"
-    inspected_authority = None
-    if prepared_context is None:
-        inspected_authority = inspect_runtime_authority_for_read(payload.project_root)
-        if not payload.dry_run and floor_check.caller is None:
-            # Preserve top-level write bootstrap. Nested launches defer this until
-            # their resolved policy passes the delegation-floor check below.
-            prepared_context = prepare_for_runtime_write(inspected_authority.project_root)
-            setup_telemetry(
-                runtime_root=prepared_context.runtime_root,
-                logical_owner=logical_owner,
-            )
-    if prepared_context is not None:
-        resolved_root = _project_root_from_prepared(prepared_context)
-        config = _config_from_prepared(prepared_context)
-        authority = prepared_context.authority
-        planning_authority = authority
-        register_spawn_telemetry_observer()
-    else:
-        if inspected_authority is None:
-            raise RuntimeError("Spawn preparation did not resolve read authority.")
-        authority = inspected_authority
-        planning_authority = plan_runtime_authority_for_write(payload.project_root)
-        resolved_root = authority.project_root
-        config = load_config(resolved_root, authority=authority)
-    if payload.dry_run and prepared_context is None:
+    authority = inspect_runtime_authority_for_read(payload.project_root)
+    planning_authority = plan_runtime_authority_for_write(authority.project_root)
+    resolved_root = authority.project_root
+    config = load_config(resolved_root, authority=authority)
+    if payload.dry_run:
         setup_telemetry(runtime_root=None, logical_owner=logical_owner)
         register_spawn_telemetry_observer()
     payload = payload.model_copy(update={"project_root": resolved_root.as_posix()})
@@ -387,7 +364,6 @@ def _prepare_spawn_create(
                 planning_runtime=None,
                 artifacts=None,
                 dry_run_work_warning=dry_run_work_warning,
-                prepared_context=prepared_context,
                 depth_exceeded=depth_exceeded_output(current_depth, max_depth),
             )
 
@@ -416,7 +392,7 @@ def _prepare_spawn_create(
         preflight_warning=preflight_warning,
         ctx=resolved_context,
         bind_preview=False,
-        policy_readonly=floor_check.caller is not None,
+        models_readonly=floor_check.caller is not None,
     )
     floor_check.enforce_env_keys(artifacts.request.env)
     floor_check.enforce_passthrough_args(artifacts.request.extra_args)
@@ -440,7 +416,6 @@ def _prepare_spawn_create(
         planning_runtime=planning_runtime,
         artifacts=artifacts,
         dry_run_work_warning=dry_run_work_warning,
-        prepared_context=prepared_context,
     )
 
 
@@ -449,7 +424,6 @@ def _prepare_spawn_create_with_expected_failures(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
-    prepared: RuntimeWriteContext | None,
     floor_check: CallerBoundaryCheck | None,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
@@ -458,7 +432,6 @@ def _prepare_spawn_create_with_expected_failures(
             payload=payload,
             ctx=ctx,
             sink=sink,
-            prepared=prepared,
             floor_check=floor_check,
             failure_payload=failure_payload,
         )
@@ -471,7 +444,6 @@ def _run_spawn_create_preparation(
     *,
     ctx: RuntimeContext | None,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
     floor_check: CallerBoundaryCheck | None = None,
 ) -> SpawnCreatePreparation | SpawnActionOutput:
     failure_payload = [payload]
@@ -481,7 +453,6 @@ def _run_spawn_create_preparation(
             payload=payload,
             ctx=ctx,
             sink=sink,
-            prepared=prepared,
             floor_check=floor_check,
             failure_payload=failure_payload,
         ),
@@ -496,17 +467,15 @@ def _materialize_spawn_runtime(
     planning_runtime = preparation.planning_runtime
     if planning_runtime is None:
         raise RuntimeError("Spawn create preparation did not produce a runtime plan.")
-    prepared_context = preparation.prepared_context
-    if prepared_context is None:
-        prepared_context = prepare_for_runtime_write(preparation.authority.project_root)
-        runtime_root = prepared_context.runtime_root
-        if runtime_root is None:
-            raise RuntimeError("Prepared runtime context is missing runtime root.")
-        setup_telemetry(
-            runtime_root=runtime_root,
-            logical_owner=os.environ.get("MERIDIAN_SPAWN_ID") or "cli",
-        )
-        register_spawn_telemetry_observer()
+    prepared_context = prepare_for_runtime_write(preparation.authority.project_root)
+    runtime_root = prepared_context.runtime_root
+    if runtime_root is None:
+        raise RuntimeError("Prepared runtime context is missing runtime root.")
+    setup_telemetry(
+        runtime_root=runtime_root,
+        logical_owner=os.environ.get("MERIDIAN_SPAWN_ID") or "cli",
+    )
+    register_spawn_telemetry_observer()
     runtime = OperationRuntime(
         project_root=prepared_context.project_root,
         authority=prepared_context.authority,
@@ -617,14 +586,12 @@ def spawn_create_sync(
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
     on_spawn_id: Callable[[str], None] | None = None,
 ) -> SpawnActionOutput:
     preparation = _run_spawn_create_preparation(
         payload,
         ctx=ctx,
         sink=sink,
-        prepared=prepared,
     )
     if isinstance(preparation, SpawnActionOutput):
         return preparation
@@ -640,14 +607,12 @@ async def spawn_create(
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     return await asyncio.to_thread(
         spawn_create_sync,
         payload,
         ctx=ctx,
         sink=sink,
-        prepared=prepared,
     )
 
 
@@ -2266,7 +2231,6 @@ def spawn_fork_sync(
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     floor_check = _start_spawn_creation_boundary(
         dry_run=payload.dry_run,
@@ -2275,8 +2239,7 @@ def spawn_fork_sync(
     )
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
-        prepared=prepared,
-        migrate_legacy=floor_check.caller is None,
+        migrate_legacy=False,
     )
     normalized_source_ref = payload.source_ref.strip()
     if not normalized_source_ref:
@@ -2333,7 +2296,6 @@ def spawn_fork_sync(
         create_input,
         ctx=ctx,
         sink=sink,
-        prepared=prepared,
         floor_check=floor_check,
     )
     if isinstance(preparation, SpawnActionOutput):
@@ -2361,14 +2323,12 @@ async def spawn_fork(
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     return await asyncio.to_thread(
         spawn_fork_sync,
         payload,
         ctx=ctx,
         sink=sink,
-        prepared=prepared,
     )
 
 
@@ -2377,7 +2337,6 @@ def spawn_continue_sync(
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     floor_check = _start_spawn_creation_boundary(
         dry_run=payload.dry_run,
@@ -2388,8 +2347,7 @@ def spawn_continue_sync(
         raise ValueError("--model must not be empty")
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
-        prepared=prepared,
-        migrate_legacy=floor_check.caller is None,
+        migrate_legacy=False,
     )
     if runtime_root is None:
         normalized = payload.spawn_id.strip()
@@ -2415,7 +2373,6 @@ def spawn_continue_sync(
         create_input,
         ctx=ctx,
         sink=sink,
-        prepared=prepared,
         floor_check=floor_check,
     )
     if isinstance(preparation, SpawnActionOutput):
@@ -2435,12 +2392,10 @@ async def spawn_continue(
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     return await asyncio.to_thread(
         spawn_continue_sync,
         payload,
         ctx=ctx,
         sink=sink,
-        prepared=prepared,
     )
