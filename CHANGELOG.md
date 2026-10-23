@@ -11,6 +11,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Read-only Codex spawns once again receive the completion confirmation turn now that `meridian spawn done` can write its signal outside the sandbox.
 
+## [0.12.7] - 2026-10-23
+
+### Changed
+- Claude spawns use five-minute prompt caching to avoid one-hour cache-write pricing; primary sessions stay unchanged. Spawned agents can lose cache warmth during waits longer than five minutes.
+
 ## [0.12.6] - 2026-10-23
 
 ### Changed
