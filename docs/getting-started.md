@@ -26,7 +26,7 @@ cache, adding input cost and latency.
 | Harness | Cache behavior | What to configure |
 | --- | --- | --- |
 | Claude Code primary session | 1 hour within subscription usage; otherwise 5 minutes by default | Set `ENABLE_PROMPT_CACHING_1H=1` in `~/.claude/settings.json` |
-| Meridian-spawned Claude agent | Forced to 5 minutes | Use shorter wait yields when the spawned agent waits for children |
+| Meridian-spawned Claude agent | 5 minutes at launch | Use shorter wait yields when the spawned agent waits for children |
 | Codex CLI, signed in | Cache is retained across old-conversation resumes without a cache penalty | No Meridian wait-yield tuning is needed for cache warmth |
 | Codex/API-key usage | Follows the API model and request's prompt-cache policy | Configure caching in the API client; it is independent of Meridian's wait checkpoint |
 

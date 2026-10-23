@@ -110,9 +110,14 @@ guards, extractor wiring, then cross-adapter field accounting.
 ## Claude: prompt caching
 
 Meridian sets `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` for every non-interactive
-Claude spawn, including resumes via `meridian spawn --continue`. This is forced launch policy:
+Claude spawn, including resumes via `meridian spawn --continue`. This is a process-environment override:
 it replaces inherited values and Meridian `--env` / `[env]` values. Interactive
 primary sessions keep their existing environment and Claude cache settings.
+
+Claude reapplies its own `settings.json` `env` block after launch. An entry there
+setting `CLAUDE_CODE_PROMPT_CACHE_TTL=1h` overrides Meridian's injected value.
+Remove that entry to use Meridian's spawn policy; use Claude's `promptCacheTtl`
+setting for a primary-session preference instead.
 
 Claude treats `claude -p` as a main conversation, which can otherwise use the
 more expensive one-hour cache on a subscription. Five-minute caching avoids
