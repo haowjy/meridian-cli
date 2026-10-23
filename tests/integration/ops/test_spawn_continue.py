@@ -149,7 +149,7 @@ def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_rea
 ) -> None:
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
-        CallerBoundary.from_values(
+        CallerBoundary(
             sandbox="workspace-write",
             has_spawn_capability=True,
             pid_namespace="pid:[host]",
@@ -170,9 +170,10 @@ def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_r
 ) -> None:
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
-        CallerBoundary.from_values(
+        CallerBoundary(
             sandbox="read-only",
             has_spawn_capability=False,
+            pid_namespace=None,
         ).to_env_value(),
     )
 
@@ -214,9 +215,10 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
     )
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
-        CallerBoundary.from_values(
+        CallerBoundary(
             sandbox="workspace-write",
             has_spawn_capability=True,
+            pid_namespace=None,
         ).to_env_value(),
     )
 

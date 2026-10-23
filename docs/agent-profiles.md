@@ -493,10 +493,9 @@ them:
   roots, the project's runtime state, and the bounded temporary directory used for control
   sockets. The launcher pre-creates this project's lifetime lock, which child commands open
   read-only; the shared `.locks` directory is not writable from the sandbox. Codex's
-  `read-only` sandbox can only read the projected roots. Under `workspace-write`,
-  **Meridian runtime state is writable by sandboxed agents**; `spawn inject` and `cancel`
-  therefore do not claim a separate delegation boundary. This residual is tracked in
-  [#747](https://github.com/haowjy/meridian-cli/issues/747).
+  `read-only` sandbox can only read the projected roots. Claude `read-only` and every
+  `workspace-write` launch can write Meridian runtime state, so `spawn inject` and `cancel`
+  do not claim a separate delegation boundary.
 - **Meridian commands.** Completion and read-only commands are always granted. A profile
   that can spawn also gets the `meridian spawn ...` launch commands. Each grant is either
   exact or prefix-matched in the target harness's syntax. Run
@@ -513,30 +512,19 @@ them:
   user-wide: it applies to every Codex session using that home, including profiles without
   spawn capability and sessions not launched by Meridian. Meridian owns and rewrites only
   `meridian.rules`; it does not touch other Codex rules files.
-- **Delegation floor.** Every Meridian-launched harness receives its resolved sandbox,
-  projected workspace roots, and spawn capability in a launcher-owned boundary record.
-  Only `read-only` and `workspace-write` callers have a floor, because only those explicit
-  modes receive a sandbox escape. `spawn`, `spawn --continue`, and `spawn --fork`
-  (including `--dry-run`) refuse a floored caller whose profile cannot spawn, a child with
-  a weaker sandbox, or a child whose projected workspace roots are not a subset of the
-  caller's. Approval is not a confinement boundary and is not compared. Child `--env`
-  values also cannot replace the process or harness config loader,
-  executable search path, or native harness home. Harness-native passthrough arguments
-  after `--` are refused because they can override Meridian's resolved sandbox or
-  sandbox flags. A child emits
-  its own resolved floor to its descendants.
+- **Child-spawn CLI guardrail.** Every Meridian-launched harness receives its resolved
+  sandbox and spawn capability in a launcher-owned boundary record. Only `read-only` and
+  `workspace-write` callers have a floor, because only those explicit modes receive a
+  sandbox escape. `spawn`, `spawn --continue`, and `spawn --fork` (including `--dry-run`)
+  refuse a floored caller whose profile cannot spawn or a child whose resolved sandbox is
+  weaker than the caller's. Harness-native passthrough arguments after `--` are refused
+  because they can override Meridian's resolved sandbox or sandbox flags. A child emits its
+  own resolved floor to its descendants.
   `danger-full-access` and `default` callers, top-level commands, and shells that were not
   launched by Meridian have no floor; read commands, `spawn done`, and `spawn rearm` do
   not consult it. A non-empty `subagents:` list supplies spawn capability but does not yet
   restrict which agent name the caller selects; declared-child enforcement is tracked in
   [#742](https://github.com/haowjy/meridian-cli/issues/742).
-
-The blocked `--env` set is `PATH`, `HOME`, `BASH_ENV`, `ENV`, `XDG_CONFIG_HOME`,
-`XDG_DATA_HOME`, `NODE_OPTIONS`, `NODE_PATH`, `PYTHONHOME`, `PYTHONPATH`,
-`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`,
-`OPENCODE_CLI_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`, `OPENCODE_DB`, `OPENCODE_HOME`,
-`PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, and every `LD_*` or `DYLD_*`
-key. This restriction applies only to a `read-only` or `workspace-write` caller.
 - **Loud failure for compound shell calls.** On Linux, Meridian records the harness
   launcher's PID namespace. A child launch attempted from a different namespace stops with
   an error rather than starting a child that dies with the sandboxed shell. Run
@@ -544,14 +532,14 @@ key. This restriction applies only to a `read-only` or `workspace-write` caller.
   substitution, or a leading environment assignment. The check is skipped where procfs does
   not expose PID namespaces, including macOS.
 
-The escape still trusts writable launch inputs. Under `workspace-write`, an agent can
-edit files that the unsandboxed `meridian` process later reads, including project
-`meridian.toml` hooks. It can also select an earlier `meridian` executable through a
-writable shell startup file or another path outside the launch's `--env` validation.
-Codex's rule is user-wide, so a Codex session not launched by Meridian has no delegation
-floor even though that rule may let its standalone `meridian spawn ...` command escape
-the native sandbox. Treat writable project configuration, shell startup files, and
-executables as trusted inputs.
+The floor is a guardrail against CLI escalation, not confinement against an agent that
+writes files. A sandbox plus spawn capability does **not** confine an adversarial agent:
+the escaped process reads runtime requests, session state, project hooks, workspace/context
+configuration, shell startup files, and executables that some sandboxed callers can modify.
+Codex's rule is also user-wide, so a Codex session not launched by Meridian has no floor
+even though the rule may let its standalone `meridian spawn ...` command escape. Treat
+those inputs as trusted. Real confinement work is tracked in
+[#747](https://github.com/haowjy/meridian-cli/issues/747).
 
 The dry-run report marks platform decisions as `platform` and calls out partial or missing
 projections. Mars supplies each harness's native agent/task names in the launch bundle;

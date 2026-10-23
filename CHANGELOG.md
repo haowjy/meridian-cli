@@ -13,9 +13,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `meridian spawn show <id>` lookup; `spawn collect` no longer reads or embeds report
   bodies. Pi delivery and `spawn wait`/`spawn ack` consumption are unchanged.
 - Child creation from a Meridian-projected `read-only` or `workspace-write` sandbox now
-  requires spawn capability and cannot weaken the sandbox or add projected workspace
-  roots. These create, continue, and fork calls also reject policy-changing `--env` keys
-  and harness-native passthrough arguments; unsandboxed callers carry no delegation floor.
+  requires spawn capability and cannot weaken the sandbox. Create, continue, and fork also
+  reject harness-native passthrough arguments; this is a CLI-escalation guardrail, not
+  confinement against an agent that can rewrite launch inputs.
 
 ### Fixed
 - Every spawn launch spelling, including harness shortcuts and continue/fork forms,

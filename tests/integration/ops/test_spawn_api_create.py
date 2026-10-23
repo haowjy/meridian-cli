@@ -28,6 +28,7 @@ from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
+from meridian.lib.safety.policy import SandboxMode
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
 from meridian.lib.telemetry import init_telemetry
@@ -38,17 +39,20 @@ from tests.support.launch import FakeBundleResult, stub_bundle_request_and_resol
 def _set_delegation_floor(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    sandbox: str = "workspace-write",
+    sandbox: SandboxMode = "workspace-write",
     has_spawn_capability: bool = True,
-    write_roots: tuple[str, ...] = (),
 ) -> None:
-    monkeypatch.setenv(
-        CALLER_BOUNDARY_ENV,
-        CallerBoundary.from_values(
+    record = json.loads(
+        CallerBoundary(
             sandbox=sandbox,
             has_spawn_capability=has_spawn_capability,
-            write_roots=write_roots,
-        ).to_env_value(),
+            pid_namespace=None,
+        ).to_env_value()
+    )
+    record["network"] = "future-axis"
+    monkeypatch.setenv(
+        CALLER_BOUNDARY_ENV,
+        json.dumps(record),
     )
 
 
@@ -294,7 +298,7 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
 ) -> None:
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
-        CallerBoundary.from_values(
+        CallerBoundary(
             sandbox="workspace-write",
             has_spawn_capability=True,
             pid_namespace="pid:[host]",
@@ -319,14 +323,17 @@ def test_unsandboxed_caller_carries_no_delegation_floor(
 ) -> None:
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
-        CallerBoundary.from_values(
-            sandbox="default",
-            has_spawn_capability=False,
-        ).to_env_value(),
+        json.dumps(
+            {
+                "pid_namespace": None,
+                "sandbox": "default",
+                # A newer axis and a missing spawn axis are irrelevant when unfloored.
+                "network": "future-axis",
+            }
+        ),
     )
 
     check = CallerBoundaryCheck.from_environment(
-        ("LD_PRELOAD=x",),
         dry_run=True,
         passthrough_args=("--dangerously-skip-permissions",),
     )
@@ -361,7 +368,7 @@ def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     meridian_home = tmp_path / "meridian-home"
     monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
-    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
+    _set_delegation_floor(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -385,31 +392,16 @@ def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
     assert not meridian_home.exists()
 
 
-@pytest.mark.parametrize(
-    ("has_spawn_capability", "requested_env", "expected"),
-    [
-        (False, (), "caller profile has no spawn capability"),
-        (True, ("LD_PRELOAD=x",), "environment key 'LD_PRELOAD'"),
-        (True, ("BASH_ENV=/tmp/owned",), "environment key 'BASH_ENV'"),
-        (True, ("CODEX_HOME=/tmp/owned",), "environment key 'CODEX_HOME'"),
-        (True, ("OPENCODE_CONFIG=/tmp/owned",), "environment key 'OPENCODE_CONFIG'"),
-        (True, ("OPENCODE_DB=/tmp/owned",), "environment key 'OPENCODE_DB'"),
-        (True, ("PATH=/tmp/owned",), "environment key 'PATH'"),
-    ],
-)
-def test_spawn_create_delegation_floor_rejects_pre_resolution_escape(
+def test_spawn_create_delegation_floor_requires_spawn_capability_before_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    has_spawn_capability: bool,
-    requested_env: tuple[str, ...],
-    expected: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     _set_delegation_floor(
         monkeypatch,
-        has_spawn_capability=has_spawn_capability,
+        has_spawn_capability=False,
     )
 
     def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
@@ -423,13 +415,12 @@ def test_spawn_create_delegation_floor_rejects_pre_resolution_escape(
             harness="claude",
             project_root=project_root.as_posix(),
             dry_run=True,
-            env=requested_env,
         )
     )
 
     assert result.status == "failed"
     assert result.message is not None
-    assert expected in result.message
+    assert "caller profile has no spawn capability" in result.message
 
 
 def test_spawn_create_delegation_floor_rejects_passthrough_before_resolution(
@@ -439,7 +430,7 @@ def test_spawn_create_delegation_floor_rejects_passthrough_before_resolution(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
+    _set_delegation_floor(monkeypatch)
 
     def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("delegation precondition must refuse before Mars")
@@ -468,7 +459,7 @@ def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
+    _set_delegation_floor(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -492,7 +483,7 @@ def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
     assert result.status == "dry-run"
 
 
-def test_spawn_create_delegation_floor_rejects_workspace_root_outside_caller(
+def test_spawn_create_delegation_floor_does_not_restrict_child_workspace_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -501,7 +492,7 @@ def test_spawn_create_delegation_floor_rejects_workspace_root_outside_caller(
     outside = tmp_path / "outside"
     outside.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
+    _set_delegation_floor(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -520,12 +511,11 @@ def test_spawn_create_delegation_floor_rejects_workspace_root_outside_caller(
         )
     )
 
-    assert result.status == "failed"
-    assert result.message is not None
-    assert "outside the caller's projected workspace roots" in result.message
+    assert result.status == "dry-run"
+    assert result.task_cwd == outside.as_posix()
 
 
-def test_spawn_create_delegation_floor_rejects_replayed_harness_home_env(
+def test_spawn_create_delegation_floor_allows_harness_home_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -554,13 +544,12 @@ def test_spawn_create_delegation_floor_rejects_replayed_harness_home_env(
                 model="claude-haiku-5-5",
                 harness="claude",
                 env={"CLAUDE_CONFIG_DIR": "/tmp/owned"},
+                execution_policy=ResolvedExecutionPolicy(sandbox="read-only"),
             ),
         )
     )
 
-    assert result.status == "failed"
-    assert result.message is not None
-    assert "environment key 'CLAUDE_CONFIG_DIR'" in result.message
+    assert result.status == "dry-run"
 
 
 def test_spawn_create_without_delegation_floor_does_not_clamp_environment(

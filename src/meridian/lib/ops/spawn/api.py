@@ -17,7 +17,7 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
-from meridian.lib.core.caller_boundary import CallerBoundary, CallerBoundaryCheck
+from meridian.lib.core.caller_boundary import CallerBoundaryCheck
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
@@ -111,7 +111,6 @@ from .models import (
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import (
     SpawnCreateArtifacts,
-    bind_create_payload_context,
     bind_create_payload_preview,
     build_create_payload,
     validate_create_input,
@@ -302,7 +301,6 @@ def _start_spawn_creation_boundary(
     """Run import-cheap launch guards before any operation-specific state access."""
 
     return CallerBoundaryCheck.from_environment(
-        requested_env,
         dry_run=dry_run,
         passthrough_args=passthrough_args,
     )
@@ -395,25 +393,12 @@ def _prepare_spawn_create(
         bind_preview=False,
         models_readonly=floor_check.caller is not None,
     )
-    floor_check.enforce_env_keys(artifacts.request.env)
     floor_check.enforce_passthrough_args(artifacts.request.extra_args)
-    preview_context = None
-    if floor_check.caller is not None:
-        preview_context = bind_create_payload_context(
-            artifacts,
-            harness_registry=harness_registry,
-        )
-        floor_check.enforce(
-            CallerBoundary.from_policy(
-                preview_context.binding.spec.permission_policy,
-                pid_namespace=None,
-            )
-        )
+    floor_check.enforce(artifacts.request.execution_policy.sandbox)
     if payload.dry_run:
         artifacts = bind_create_payload_preview(
             artifacts,
             harness_registry=harness_registry,
-            preview_context=preview_context,
         )
     return SpawnCreatePreparation(
         payload=payload,
