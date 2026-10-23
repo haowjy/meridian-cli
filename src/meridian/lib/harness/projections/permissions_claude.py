@@ -58,7 +58,8 @@ _PASSTHROUGH_ALLOW_ELEMENT = "source: passthrough --allowedTools"
 class ClaudeSandboxSettings:
     """The Claude ``sandbox`` settings Meridian owns for one launch."""
 
-    enabled: bool
+    # None preserves the user's configured enabled state while adding exclusions.
+    enabled: bool | None = None
     deny_write: tuple[str, ...] = ()
     auto_allow_bash: bool = False
     excluded_commands: tuple[str, ...] = ()
@@ -400,7 +401,11 @@ def _available_tools(policy: PermissionPolicy) -> tuple[str, ...]:
 
 def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSandboxSettings | None:
     if policy.sandbox == "default":
-        return None
+        return (
+            ClaudeSandboxSettings(excluded_commands=("meridian spawn *",))
+            if policy.has_spawn_capability
+            else None
+        )
     if policy.sandbox == "danger-full-access":
         return ClaudeSandboxSettings(enabled=False)
     # Sandbox auto-approval accepts unmatched Bash before any mode can refuse it.

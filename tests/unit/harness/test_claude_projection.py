@@ -170,6 +170,35 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
     assert "runs fully outside the sandbox" in sandbox_line.note
 
 
+def test_claude_projection_excludes_spawn_without_overriding_user_sandbox_mode() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(has_spawn_capability=True),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    settings = json.loads(command[command.index("--settings") + 1])
+    assert settings["sandbox"] == {"excludedCommands": ["meridian spawn *"]}
+
+
+def test_claude_projection_does_not_exclude_spawn_when_sandbox_is_disabled() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            has_spawn_capability=True,
+            sandbox="danger-full-access",
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    settings = json.loads(command[command.index("--settings") + 1])
+    assert settings["sandbox"] == {"enabled": False}
+
+
 def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,

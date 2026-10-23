@@ -96,14 +96,16 @@ def _settings_json(settings: ClaudeSettings) -> str:
         payload["permissions"] = permissions
     if settings.sandbox is not None:
         sandbox_settings = settings.sandbox
-        sandbox: dict[str, object] = {"enabled": sandbox_settings.enabled}
-        if sandbox_settings.enabled:
+        sandbox: dict[str, object] = {}
+        if sandbox_settings.enabled is not None:
+            sandbox["enabled"] = sandbox_settings.enabled
+        if sandbox_settings.enabled is True:
             sandbox["allowUnsandboxedCommands"] = False
             sandbox["autoAllowBashIfSandboxed"] = sandbox_settings.auto_allow_bash
-            if sandbox_settings.excluded_commands:
-                sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)
             if sandbox_settings.deny_write:
                 sandbox["filesystem"] = {"denyWrite": list(sandbox_settings.deny_write)}
+        if sandbox_settings.excluded_commands:
+            sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)
         payload["sandbox"] = sandbox
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
