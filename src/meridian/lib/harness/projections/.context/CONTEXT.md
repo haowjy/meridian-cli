@@ -19,7 +19,10 @@ pi_extension_projection.py → (built extension artifacts → stable -e paths, n
 ```
 
 `project_codex_common.py` is not a projector — it holds the Codex spellings both Codex
-projectors share (tool-switch and built-in-agent flags). `native_config.py` flattens
+projectors share (sandbox, writable-root and network settings, tool switches, and
+built-in-agent flags). The shared sandbox value spells `--add-dir` for subprocesses and
+Codex config for app-server startup/thread creation so those boundaries cannot drift.
+`native_config.py` flattens
 the selected harness-native config, spells Codex TOML literals, and owns the reserved keys
 that Meridian's Codex projections write themselves. Meridian writes no Codex MCP config,
 so `mcp_servers.*` passes through. `compaction.py` owns the semantic

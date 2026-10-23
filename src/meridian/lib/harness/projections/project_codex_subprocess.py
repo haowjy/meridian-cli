@@ -16,6 +16,7 @@ from meridian.lib.harness.projections.native_config import (
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_common import (
     CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
+    project_codex_sandbox,
     project_codex_tool_switch_flags,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -97,8 +98,11 @@ def project_codex_spec_to_cli_args(
     )
 
     permissions, _ = compile_codex_permissions(spec)
-    if permissions.sandbox_mode is not None:
-        command.extend(("--sandbox", permissions.sandbox_mode))
+    sandbox = project_codex_sandbox(
+        permissions,
+        writable_roots=tuple(root.as_posix() for root in spec.projected_roots),
+    )
+    command.extend(sandbox.process_args("subprocess"))
     if permissions.approval_policy is not None:
         command.extend(
             (
@@ -113,9 +117,6 @@ def project_codex_spec_to_cli_args(
 
     if harness_session_id:
         command.extend(("resume", harness_session_id))
-
-    for root in spec.projected_roots:
-        command.extend(("--add-dir", root.as_posix()))
 
     # Ahead of passthrough args so a later `-c` override still wins.
     if permissions.builtin_agents_disabled:
