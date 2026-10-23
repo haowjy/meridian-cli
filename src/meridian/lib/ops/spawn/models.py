@@ -40,12 +40,8 @@ def build_goal_contract_preview(goal: str | None) -> str | None:
     return build_goal_instruction(normalized_goal)
 
 
-def _compact_cell(value: str) -> str:
-    return " ".join(value.split()).strip()
-
-
 def _truncate_cell(value: str, *, max_chars: int) -> str:
-    compact = _compact_cell(value)
+    compact = " ".join(value.split()).strip()
     if len(compact) <= max_chars:
         return compact
     return f"{compact[: max_chars - 3].rstrip()}..."
@@ -662,10 +658,10 @@ class SpawnListEntry(BaseModel):
 def format_spawn_identity_table(
     entries: Sequence[SpawnListEntry], *, include_duration: bool
 ) -> str:
-    """Render the shared identity-first table used by wait and child lineage."""
+    """Render the compact identity table used by wait and direct-child listings."""
     from meridian.lib.core.formatting import tabular
 
-    headers = ["spawn", "agent", "model", "status", "desc"]
+    headers = ["spawn", "agent", "model", "status"]
     if include_duration:
         headers.append("duration")
     rows = [headers]
@@ -675,7 +671,6 @@ def format_spawn_identity_table(
             entry.agent or "-",
             entry.model or "-",
             entry.display_status(),
-            _compact_cell(entry.desc) if entry.desc else "-",
         ]
         if include_duration:
             row.append(f"{entry.duration_secs:.1f}s" if entry.duration_secs is not None else "-")

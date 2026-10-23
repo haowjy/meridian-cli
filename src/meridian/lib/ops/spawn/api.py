@@ -1568,7 +1568,6 @@ def _emit_wait_set(
                 agent=row.agent if row else None,
                 model=(row.model or "") if row else "",
                 status=row.status if row else "unknown",
-                desc=_spawn_display_label(row) if row else None,
                 duration_secs=None,
                 cost_usd=None,
             )
