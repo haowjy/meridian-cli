@@ -13,7 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Sandboxed agents operate inside Meridian on any harness without profile changes: Meridian's read commands and `spawn done`/`rearm` stay allowed under shell allowlists; spawn-capable profiles also get `meridian spawn`.
 - Sandboxed Claude and Codex agents can launch `--bg` children that survive: a standalone `meridian spawn` runs outside the harness sandbox (Claude `excludedCommands`, Codex execpolicy rule).
 - `meridian spawn` run inside a sandbox that would kill its child (`cd x && meridian spawn`, pipes, `$()`, `VAR=1` prefix) fails before any state write with "run as a standalone shell command".
-- Read-only Codex spawns get the completion confirmation turn again.
+- Read-only Codex spawns whose profile can spawn get the completion confirmation turn again; others still skip it, as since 0.12.4.
 - Profile `network: allow | deny` controls shell connections separately from built-in web tools; every harness reports what it enforces.
 - Sandboxed child delegation cannot weaken an enforced `network: deny` that the caller authored; the refusal distinguishes a missing child deny from a harness or native override that cannot enforce one.
 
