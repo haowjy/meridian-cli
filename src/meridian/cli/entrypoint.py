@@ -41,6 +41,15 @@ def _is_spawn_dry_run(argv: Sequence[str]) -> bool:
     return enabled
 
 
+def _is_spawn_help_request(argv: Sequence[str]) -> bool:
+    for token in argv:
+        if token == "--":
+            return False
+        if token in {"--help", "-h"}:
+            return True
+    return False
+
+
 def main() -> None:
     """Thin CLI entrypoint: handles trivial fast paths, delegates the rest."""
 
@@ -63,7 +72,11 @@ def _main_impl() -> None:
     # regressions surface before the full CLI tree is loaded.
     descriptor = classify_invocation(args, COMMAND_CATALOG)
 
-    if descriptor is not None and descriptor.command_path == ("spawn",):
+    if (
+        descriptor is not None
+        and descriptor.command_path == ("spawn",)
+        and not _is_spawn_help_request(args)
+    ):
         try:
             refuse_sandboxed_spawn_launch(dry_run=_is_spawn_dry_run(args))
         except ValueError as error:
