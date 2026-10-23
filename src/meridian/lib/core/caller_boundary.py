@@ -6,8 +6,14 @@ import json
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from meridian.lib.safety.policy import (
+    APPROVAL_MODE_STRENGTH,
+    SANDBOX_MODE_WEAKNESS,
+    ApprovalMode,
+    SandboxMode,
+)
 from meridian.lib.utils.json_shapes import json_list, loads_json_object
 
 if TYPE_CHECKING:
@@ -21,20 +27,6 @@ SANDBOXED_SPAWN_LAUNCH_ERROR = (
 )
 
 _PID_NAMESPACE_PATH = "/proc/self/ns/pid"
-_SANDBOX_WEAKNESS = {
-    "read-only": 0,
-    "workspace-write": 1,
-    "danger-full-access": 2,
-    # A harness default is unknown, so compare it as weaker than every explicit mode.
-    "default": 3,
-}
-_APPROVAL_STRENGTH = {
-    "never": 0,
-    "yolo": 0,
-    "auto": 1,
-    "default": 2,
-    "confirm": 3,
-}
 _FORBIDDEN_ENV_KEYS = frozenset(
     {
         "PATH",
@@ -75,8 +67,8 @@ class CallerBoundary:
     """Confinement facts recorded by the process that launched a harness."""
 
     pid_namespace: str | None
-    sandbox: str
-    approval: str
+    sandbox: SandboxMode
+    approval: ApprovalMode
     write_roots: tuple[str, ...]
     has_spawn_capability: bool
 
@@ -89,8 +81,8 @@ class CallerBoundary:
     ) -> CallerBoundary:
         """Take the child-launch boundary fields from one resolved policy."""
 
-        sandbox = policy.sandbox.strip().lower()
-        approval = policy.approval.strip().lower()
+        sandbox = policy.sandbox
+        approval = policy.approval
         if approval == "yolo":
             approval = "never"
         return cls(
@@ -115,16 +107,16 @@ class CallerBoundary:
 
         normalized_sandbox = (sandbox or "default").strip().lower()
         normalized_approval = (approval or "default").strip().lower()
-        if normalized_sandbox not in _SANDBOX_WEAKNESS:
+        if normalized_sandbox not in SANDBOX_MODE_WEAKNESS:
             raise ValueError(f"Unsupported sandbox mode '{sandbox}'.")
-        if normalized_approval not in _APPROVAL_STRENGTH:
+        if normalized_approval not in APPROVAL_MODE_STRENGTH:
             raise ValueError(f"Unsupported approval mode '{approval}'.")
         if normalized_approval == "yolo":
             normalized_approval = "never"
         return cls(
             pid_namespace=pid_namespace,
             sandbox=normalized_sandbox,
-            approval=normalized_approval,
+            approval=cast("ApprovalMode", normalized_approval),
             write_roots=write_roots,
             has_spawn_capability=has_spawn_capability,
         )
@@ -176,15 +168,15 @@ class CallerBoundary:
             or not isinstance(spawn, bool)
             or write_root_values is None
             or len(write_roots) != len(write_root_values)
-            or sandbox not in _SANDBOX_WEAKNESS
-            or approval not in _APPROVAL_STRENGTH
+            or sandbox not in SANDBOX_MODE_WEAKNESS
+            or approval not in APPROVAL_MODE_STRENGTH
         ):
             raise ValueError("Child spawn refused: caller boundary is invalid.")
         normalized_approval = "never" if approval == "yolo" else approval
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
-            approval=normalized_approval,
+            approval=cast("ApprovalMode", normalized_approval),
             write_roots=write_roots,
             has_spawn_capability=spawn,
         )
@@ -276,12 +268,12 @@ class CallerBoundaryCheck:
         caller = self.caller
         if caller is None:
             return
-        if _SANDBOX_WEAKNESS[child.sandbox] > _SANDBOX_WEAKNESS[caller.sandbox]:
+        if SANDBOX_MODE_WEAKNESS[child.sandbox] > SANDBOX_MODE_WEAKNESS[caller.sandbox]:
             raise ValueError(
                 f"Child spawn refused: sandbox '{child.sandbox}' is weaker than "
                 f"caller floor '{caller.sandbox}'."
             )
-        if _APPROVAL_STRENGTH[child.approval] < _APPROVAL_STRENGTH[caller.approval]:
+        if APPROVAL_MODE_STRENGTH[child.approval] < APPROVAL_MODE_STRENGTH[caller.approval]:
             raise ValueError(
                 f"Child spawn refused: approval '{child.approval}' is weaker than "
                 f"caller floor '{caller.approval}'."
