@@ -153,13 +153,21 @@ def _codex_report(
                 f"{command.match} {command.command!r}" for command in platform.commands
             )
             rules_error = spec.codex_runtime.rules_file_error
+            rules_path = spec.codex_runtime.rules_file_path
             constrained_sandbox = policy.sandbox in CONSTRAINED_SANDBOX_MODES
-            if constrained_sandbox and rules_error is not None:
+            spawn_escape = constrained_sandbox and policy.has_spawn_capability
+            if spawn_escape and rules_error is not None:
                 note = (
                     "Meridian could not write its Codex rules file, so commands remain subject "
                     f"to the sandbox ({rules_error}); requested matches: {commands}"
                 )
-            elif constrained_sandbox:
+            elif spawn_escape and rules_path is None:
+                note = (
+                    "a real launch would write $CODEX_HOME/rules/meridian.rules so "
+                    "`meridian spawn` can run outside Codex's sandbox; other requested "
+                    f"matches remain ordinary shell calls ({commands})"
+                )
+            elif spawn_escape:
                 note = (
                     "the Meridian-owned user rules file lets `meridian spawn` run outside "
                     "Codex's sandbox for every Codex session of this user; other requested "
@@ -175,7 +183,7 @@ def _codex_report(
                     platform_element(platform),
                     (
                         "partial"
-                        if constrained_sandbox
+                        if spawn_escape
                         and permissions.shell_tool is not False
                         and rules_error is None
                         else "unsupported"
@@ -188,19 +196,28 @@ def _codex_report(
     if permissions.sandbox_mode is not None:
         sandbox_note = f"sandbox_mode={permissions.sandbox_mode}"
         sandbox_status = "native"
-        if policy.sandbox in CONSTRAINED_SANDBOX_MODES:
+        if (
+            policy.sandbox in CONSTRAINED_SANDBOX_MODES
+            and policy.has_spawn_capability
+        ):
             rules_error = spec.codex_runtime.rules_file_error
-            rules_path = spec.codex_runtime.rules_file_path or "$CODEX_HOME/rules/meridian.rules"
-            if rules_error is None:
+            rules_path = spec.codex_runtime.rules_file_path
+            if rules_error is not None:
+                sandbox_status = "partial"
+                sandbox_note += (
+                    "; Meridian could not write "
+                    f"{rules_path or '$CODEX_HOME/rules/meridian.rules'}, so `meridian spawn` "
+                    f"remains inside Codex's sandbox: {rules_error}"
+                )
+            elif rules_path is None:
+                sandbox_note += (
+                    "; a real launch would write $CODEX_HOME/rules/meridian.rules so "
+                    "`meridian spawn` can run outside Codex's sandbox"
+                )
+            else:
                 sandbox_note += (
                     "; `meridian spawn` runs outside Codex's sandbox via "
                     f"{rules_path}, for every Codex session of this user"
-                )
-            else:
-                sandbox_status = "partial"
-                sandbox_note += (
-                    f"; Meridian could not write {rules_path}, so `meridian spawn` remains "
-                    f"inside Codex's sandbox: {rules_error}"
                 )
         lines.append(
             ReportLine(

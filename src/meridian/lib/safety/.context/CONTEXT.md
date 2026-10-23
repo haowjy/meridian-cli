@@ -121,10 +121,11 @@ equal scoped profile deny/ask remains stricter for those commands. A harness tha
 the shell spells each match in its native syntax, reports `partial` when it cannot honor the
 role's precedence, and reports `unsupported` when it has no carrier.
 
-A read-only Codex child normally writes completion signals through Meridian's user-wide
-execpolicy rule. If that rules-file write failed, the connection declares no writable
-completion-signal channel: its hold skips confirmation and reads no `done` or `rearm`
-signal while retaining the same evidence, blocker, and deadline policy.
+A spawn-capable read-only Codex child normally writes completion signals through Meridian's
+user-wide execpolicy rule. Without the spawn grant, or if that rules-file write failed, the
+connection declares no writable completion-signal channel: its hold skips confirmation and
+reads no `done` or `rearm` signal while retaining the same evidence, blocker, and deadline
+policy.
 
 **Reports.** `complete_report` gives every policy element exactly one line, in policy order.
 A compile reports what it enforces or has something specific to say about; the rest is

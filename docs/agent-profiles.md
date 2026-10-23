@@ -509,7 +509,7 @@ them:
   only those explicit profile modes. If the profile leaves `sandbox` unset while Claude's
   own settings enable it, nested creation stays inside that sandbox and the PID-namespace
   guard refuses it; set `sandbox:` in the profile. Codex maintains
-  `$CODEX_HOME/rules/meridian.rules` before launches in those modes, allowing
+  `$CODEX_HOME/rules/meridian.rules` before spawn-capable launches in those modes, allowing
   the same standalone prefix outside Codex's sandbox. The whole matching command runs
   outside the sandbox, including its filesystem and network access. Codex's rule is
   user-wide: it applies to every Codex session using that home, including profiles without

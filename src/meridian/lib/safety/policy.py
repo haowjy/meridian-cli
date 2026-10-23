@@ -136,7 +136,15 @@ class PermissionPolicy(BaseModel):
     def has_spawn_capability(self) -> bool:
         """Whether this policy carries the canonical child-launch command grant."""
 
-        return bool(self.outside_sandbox_commands)
+        return any(
+            command.role == "launch"
+            and command.command == "meridian spawn"
+            and command.match == "prefix"
+            and command.runs_outside_sandbox
+            for rule in self.platform_rules
+            if rule.kind == "meridian-commands"
+            for command in rule.commands
+        )
 
     @property
     def is_allowlist(self) -> bool:

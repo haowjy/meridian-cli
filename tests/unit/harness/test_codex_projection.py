@@ -7,6 +7,7 @@ from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand, PlatformRule
 
 
@@ -71,8 +72,8 @@ def test_codex_report_names_unsupported_meridian_command_match_forms() -> None:
     _, report = compile_codex_permissions(spec)
 
     line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
-    assert line.status == "partial"
-    assert "`meridian spawn` run outside Codex's sandbox" in line.note
+    assert line.status == "unsupported"
+    assert "run outside Codex's sandbox" not in line.note
     assert "exact 'meridian task-dir'" in line.note
     assert "prefix 'meridian spawn list'" in line.note
 
@@ -81,12 +82,41 @@ def test_codex_sandbox_report_describes_user_wide_spawn_escape() -> None:
     from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 
     spec = _spec(interactive=False).model_copy(
-        update={"permission_policy": PermissionPolicy(sandbox="workspace-write")}
+        update={
+            "permission_policy": PermissionPolicy(
+                sandbox="workspace-write",
+                platform_rules=(
+                    PlatformRule(
+                        kind="meridian-commands",
+                        commands=(SPAWN_PLATFORM_COMMAND,),
+                    ),
+                ),
+            )
+        }
     )
 
     _, report = compile_codex_permissions(spec)
 
     line = next(item for item in report if item.element == "sandbox: workspace-write")
-    assert "`meridian spawn` runs outside Codex's sandbox" in line.note
+    assert "would write" in line.note
     assert "$CODEX_HOME/rules/meridian.rules" in line.note
-    assert "every Codex session of this user" in line.note
+
+
+def test_spawn_capability_requires_the_canonical_spawn_command() -> None:
+    unrelated_escape = PlatformCommand(
+        command="other-tool launch",
+        match="prefix",
+        role="launch",
+        runs_outside_sandbox=True,
+    )
+
+    assert not PermissionPolicy(
+        platform_rules=(
+            PlatformRule(kind="meridian-commands", commands=(unrelated_escape,)),
+        )
+    ).has_spawn_capability
+    assert PermissionPolicy(
+        platform_rules=(
+            PlatformRule(kind="meridian-commands", commands=(SPAWN_PLATFORM_COMMAND,)),
+        )
+    ).has_spawn_capability
