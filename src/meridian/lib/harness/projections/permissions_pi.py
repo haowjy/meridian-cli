@@ -290,7 +290,8 @@ def _report(
                 and rule.pattern is not None
                 and rule.action != "allow"
                 and any(
-                    command_grant_covers_pattern(command, rule.pattern)
+                    command.profile_restrictable
+                    and command_grant_covers_pattern(command, rule.pattern)
                     for command in platform.commands
                 )
                 for rule in extension_rules

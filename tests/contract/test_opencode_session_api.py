@@ -383,9 +383,21 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
                     PlatformRule(
                         kind="meridian-commands",
                         commands=(
-                            PlatformCommand(command="meridian spawn done", match="prefix"),
-                            PlatformCommand(command="meridian spawn rearm", match="prefix"),
-                            PlatformCommand(command="meridian task-dir", match="exact"),
+                            PlatformCommand(
+                                command="meridian spawn done",
+                                match="prefix",
+                                role="completion",
+                            ),
+                            PlatformCommand(
+                                command="meridian spawn rearm",
+                                match="prefix",
+                                role="completion",
+                            ),
+                            PlatformCommand(
+                                command="meridian task-dir",
+                                match="exact",
+                                role="read",
+                            ),
                         ),
                     ),
                 ),
@@ -445,6 +457,11 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
             },
             {
                 "action": "shell",
+                "resource": "meridian task-dir",
+                "effect": "allow",
+            },
+            {
+                "action": "shell",
                 "resource": "meridian spawn done",
                 "effect": "allow",
             },
@@ -461,11 +478,6 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
             {
                 "action": "shell",
                 "resource": "meridian spawn rearm *",
-                "effect": "allow",
-            },
-            {
-                "action": "shell",
-                "resource": "meridian task-dir",
                 "effect": "allow",
             },
             {"action": "external_directory", "resource": "/repo/**", "effect": "allow"},

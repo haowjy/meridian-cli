@@ -20,9 +20,10 @@ from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.pi_runtime_resolver import PiLaunchRole, PiRuntimeResolution
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.platform.atomic import AtomicReplaceDurabilityError
-from meridian.lib.safety.policy import PermissionPolicy
+from meridian.lib.safety.policy import PermissionPolicy, PlatformRule
 
 
 @pytest.fixture(autouse=True)
@@ -414,11 +415,27 @@ def test_codex_materialize_rewrites_owned_rules_file_and_skips_matching_content(
     rules_path = codex_home / "rules" / "meridian.rules"
     rules_path.parent.mkdir(parents=True)
     rules_path.write_text("stale user content\n", encoding="utf-8")
-    spec = ResolvedLaunchSpec(
-        permission_policy=PermissionPolicy(sandbox="workspace-write")
+    unprivileged = materialize_codex_spec(
+        ResolvedLaunchSpec(
+            permission_policy=PermissionPolicy(sandbox="workspace-write")
+        ),
+        {"CODEX_HOME": str(codex_home)},
+        tmp_path,
     )
-
     assert rules_path.read_text(encoding="utf-8") == "stale user content\n"
+    assert unprivileged.codex_runtime.rules_file_path is None
+
+    spec = ResolvedLaunchSpec(
+        permission_policy=PermissionPolicy(
+            sandbox="workspace-write",
+            platform_rules=(
+                PlatformRule(
+                    kind="meridian-commands",
+                    commands=(SPAWN_PLATFORM_COMMAND,),
+                ),
+            ),
+        )
+    )
 
     bound = materialize_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
 
@@ -461,7 +478,17 @@ def test_codex_materialize_reports_rules_write_failure_without_refusing_launch(
         raise PermissionError("rules directory is read-only")
 
     monkeypatch.setattr(codex_rules, "atomic_write_text", _fail_write)
-    spec = ResolvedLaunchSpec(permission_policy=PermissionPolicy(sandbox="read-only"))
+    spec = ResolvedLaunchSpec(
+        permission_policy=PermissionPolicy(
+            sandbox="read-only",
+            platform_rules=(
+                PlatformRule(
+                    kind="meridian-commands",
+                    commands=(SPAWN_PLATFORM_COMMAND,),
+                ),
+            ),
+        )
+    )
 
     bound = materialize_codex_spec(
         spec,

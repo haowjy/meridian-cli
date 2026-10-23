@@ -314,10 +314,12 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         """Whether this Codex launch can write Meridian's completion signals."""
 
         spec = self._launch_spec
-        return not (
-            spec is not None
-            and spec.permission_policy.sandbox == "read-only"
-            and spec.codex_runtime.rules_file_error is not None
+        if spec is None or spec.permission_policy.sandbox != "read-only":
+            return True
+        return (
+            spec.permission_policy.has_spawn_capability
+            and spec.codex_runtime.rules_file_path is not None
+            and spec.codex_runtime.rules_file_error is None
         )
 
     @property

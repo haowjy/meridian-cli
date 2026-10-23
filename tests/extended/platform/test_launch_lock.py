@@ -24,7 +24,7 @@ from meridian.lib.streaming.control_socket import socket_directory
 from tests.conftest import posix_only
 
 pytestmark = posix_only
-DRIVER = Path(__file__).parents[1] / "support" / "launch_lock_driver.py"
+DRIVER = Path(__file__).parents[2] / "support" / "launch_lock_driver.py"
 
 
 def until(check: Callable[[], Any], timeout: float = 20) -> Any:
@@ -66,7 +66,7 @@ class Runtime:
             f"{shlex.quote(str(DRIVER))} harness \"$@\"\n"
         )
         binary.chmod(0o755)
-        package = Path(__file__).parents[2]
+        package = Path(__file__).parents[3]
         self.env = {
             "HOME": str(root / "user"), "USER": os.environ.get("USER", "test"),
             "PATH": str(root) + os.pathsep + os.environ["PATH"],

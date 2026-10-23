@@ -360,8 +360,9 @@ def compile_opencode_permissions(
                 )
             )
             entries.extend(command_entries)
-            if not command.runs_outside_sandbox:
+            if not command.profile_restrictable:
                 final_platform_grants.extend(command_entries)
+                continue
             stricter_by_key = {
                 (existing.action, resource): existing
                 for (existing_action, resource), existing in profile_by_key.items()
@@ -421,8 +422,7 @@ def compile_opencode_permissions(
                     )
                 )
                 final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
-                if command.runs_outside_sandbox:
-                    kept.extend(stricter)
+                kept.extend(stricter)
                 continue
             for entry in command_entries:
                 if (entry.action, entry.resource) not in final_by_key:
@@ -447,9 +447,8 @@ def compile_opencode_permissions(
                 )
             )
 
-    # Completion and read-only commands are Meridian control-plane operations. Keep their
-    # grants after every overlapping profile rule: OpenCode resolves the last match, and a
-    # broad profile deny must not prevent a child from completing or inspecting its state.
+    # Non-restrictable completion grants follow every profile rule. OpenCode resolves the
+    # last match, so this makes the command role's precedence exact.
     final_grant_keys = {(entry.action, entry.resource) for entry in final_platform_grants}
     ordered = [
         entry for entry in ordered if (entry.action, entry.resource) not in final_grant_keys

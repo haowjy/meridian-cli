@@ -116,16 +116,17 @@ existing unscoped deny of it (`unscoped_action`), never for a `*` rule.
 **Meridian commands.** `launch_permission_rules` gives every launch one
 `meridian-commands` platform rule. Completion (`meridian spawn done` / `rearm`) and audited
 read commands are always present; a profile with spawn capability also receives the
-`meridian spawn` prefix. Each `PlatformCommand` declares `exact` or `prefix`, and a harness
-that restricts the shell spells that match in its own syntax where a broad `bash` or `*`
-deny cannot shadow it. A narrower or equal scoped profile deny/ask remains stricter. A
-compile whose shell is open has nothing to add; a harness without a carrier reports the
-grant `unsupported`.
+`meridian spawn` prefix. Each `PlatformCommand` declares its role and `exact` or `prefix`
+match. Completion is not profile-restrictable; read and launch roles are, so a narrower or
+equal scoped profile deny/ask remains stricter for those commands. A harness that restricts
+the shell spells each match in its native syntax, reports `partial` when it cannot honor the
+role's precedence, and reports `unsupported` when it has no carrier.
 
-A read-only Codex child normally writes completion signals through Meridian's user-wide
-execpolicy rule. If that rules-file write failed, the connection declares no writable
-completion-signal channel: its hold skips confirmation and reads no `done` or `rearm`
-signal while retaining the same evidence, blocker, and deadline policy.
+A spawn-capable read-only Codex child normally writes completion signals through Meridian's
+user-wide execpolicy rule. Without the spawn grant, or if that rules-file write failed, the
+connection declares no writable completion-signal channel: its hold skips confirmation and
+reads no `done` or `rearm` signal while retaining the same evidence, blocker, and deadline
+policy.
 
 **Reports.** `complete_report` gives every policy element exactly one line, in policy order.
 A compile reports what it enforces or has something specific to say about; the rest is

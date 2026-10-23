@@ -172,16 +172,19 @@ says something. The compile reports whichever branch applied as an
 not one.
 
 A compile that restricts the shell must spell every `meridian-commands` entry in its own
-scope syntax, where a broad `bash` or `*` deny does not shadow it. Completion and read-only
+scope syntax, where a broad `bash` or `*` deny does not shadow it. Completion and read
 entries are present on every launch; profiles with spawn capability also receive the
-`meridian spawn` prefix. Each entry declares exact or prefix matching. OpenCode maps exact
+`meridian spawn` prefix. Each entry declares a completion/read/launch role and exact or
+prefix matching. Completion grants are final; read and launch grants let a narrower or
+equal scoped profile deny/ask remain stricter. OpenCode maps exact
 entries to `shell(<cmd>)` and prefix entries to `shell(<cmd> *)` after its own `*` default.
 Claude maps an exact entry to `Bash(<cmd>)`, and a prefix to both `Bash(<cmd>)` and
 `Bash(<cmd> *)`; under a whole allowlist it also keeps Bash available through `--tools`.
-A plain `bash` deny or ask is gated rather than emitted so it cannot shadow the commands;
-a scoped profile deny or ask that covers one still wins and makes the platform line partial.
-Pi's permissions extension receives each command and match kind and evaluates the same exact
-or token-boundary prefix rule. Codex cannot scope its shell per launch. Under `read-only` or
+A plain `bash` deny or ask is gated rather than emitted so it cannot shadow the commands.
+Claude cannot make a completion allow override a scoped deny/ask and reports that gap as
+partial. OpenCode orders completion grants last. Pi short-circuits a matching completion
+grant and otherwise evaluates profile specificity. Codex cannot scope its shell per launch.
+Under `read-only` or
 `workspace-write`, its Meridian-owned user rules file grants the whole `meridian spawn`
 prefix outside the sandbox for every session using that Codex home; the compile reports the
 remaining exact/prefix list as unsupported. A rules-file write failure is reported without

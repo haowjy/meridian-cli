@@ -37,6 +37,9 @@ paths for actual execution. `prepare_launch_surface()` is expensive (mars calls,
 loading, prompt assembly) and safe to do once before the session is opened.
 `bind_launch_context()` is write-free and repeatable; ignoring an active direnv environment invokes
 a bounded subprocess on each bind, including previews.
+The process runner, CLI spawn runner, and streaming spawn service all send their real bound
+context through `materialize_launch_context()`; adapters therefore have one owner for launch-time
+writes, and dry-run binds never materialize them.
 
 ### PreparedLaunchSurface
 
@@ -50,11 +53,11 @@ request for `LaunchContext.request` compatibility. `request` carries the resolve
 version used by `bind_launch_context()`.
 
 Every bind replaces the inherited caller boundary with one record for the process it is
-about to start. It contains the launcher's PID namespace, resolved sandbox mode, effective
-network mode, projected workspace roots, and the prepared profile's spawn capability.
-The effective network mode comes from the harness enforcement report after environment-bound
-facts are resolved; the public report omits this internal field. Approval is not independently
-part of the confinement boundary, but can affect effective network enforcement.
+about to start. It contains the launcher's PID namespace, resolved sandbox mode, and the
+prepared profile's spawn capability. Approval and projected roots are not part of this
+CLI-escalation guardrail. The record
+deliberately has no network field yet; network confinement can join this transport without
+changing spawn policy ownership.
 
 ### RuntimeBindings
 

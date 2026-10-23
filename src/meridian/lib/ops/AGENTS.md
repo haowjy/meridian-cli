@@ -126,11 +126,12 @@ is typed unavailable; runner output and primary metadata cannot repair it.
 
 Both streaming-serve (`SpawnApplicationService.prepare_spawn()`) and the spawn
 subprocess prepare launch policy before creating a row. Only callers in a Meridian-projected
-`read-only` or `workspace-write` sandbox inherit a delegation floor. Spawn preparation binds
-a write-free preview and checks its sandbox mode, effective network mode, and projected
-workspace roots before materializing runtime authority and state. Keep resolution and policy checks on the
-preparation side of the row boundary; keep nested floor enforcement on the
-pre-materialization side.
+`read-only` or `workspace-write` sandbox inherit the child-spawn CLI guardrail. Spawn
+preparation checks the resolved request's sandbox before materializing runtime authority
+and state; binding does not change that request policy. Every creation form resolves models
+from the existing cache during this preparation, so catalog refresh cannot write before
+the policy is accepted. Keep resolution and policy checks on the preparation side of the
+row boundary; keep the nested guardrail on the pre-materialization side.
 
 ## Anti-Patterns
 

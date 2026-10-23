@@ -32,6 +32,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
+from tests.support.fixtures import write_agent
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
@@ -57,6 +58,7 @@ def _build_primary_launch_context(
     harness_id: HarnessId,
     model: str,
     prompt: str = "primary prompt",
+    agent: str | None = None,
     extra_args: tuple[str, ...] = (),
     session: SessionRequest | None = None,
     dry_run: bool = True,
@@ -70,6 +72,7 @@ def _build_primary_launch_context(
             prompt=prompt,
             model=model,
             harness=harness_id.value,
+            agent=agent,
             extra_args=extra_args,
             session=session or SessionRequest(),
         ),
@@ -347,11 +350,23 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ambient-decoy"))
+    write_agent(
+        tmp_path,
+        name="lead",
+        model="gpt-5.4",
+        harness="codex",
+        sandbox="workspace-write",
+        subagents=("reviewer",),
+    )
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.4",
         harness=HarnessId.CODEX,
         execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
+        prompt_surface_inventory_prompt=(
+            "# Meridian Agents\n\n## Subagent\n"
+            "- `meridian spawn -a reviewer`: Review.\n"
+        ),
     )
     sid = "12345678-1234-4234-8234-123456789abc"
     store = tmp_path / "recorded" / "sessions"
@@ -388,6 +403,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         project_root=tmp_path,
         harness_id=HarnessId.CODEX,
         model="gpt-5.4",
+        agent="lead",
         session=fork.session.model_copy(update={"primary_session_mode": "fork"}),
         dry_run=False,
     )

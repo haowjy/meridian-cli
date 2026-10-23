@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 from structlog.testing import capture_logs
 
-import meridian.lib.core.caller_boundary as caller_boundary
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.prepare as spawn_prepare
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
@@ -20,6 +19,7 @@ from meridian.lib.core.caller_boundary import (
     CALLER_BOUNDARY_ENV,
     CallerBoundary,
     CallerBoundaryCheck,
+    current_pid_namespace,
 )
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
@@ -28,6 +28,7 @@ from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
+from meridian.lib.safety.policy import SandboxMode
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
 from meridian.lib.telemetry import init_telemetry
@@ -35,22 +36,23 @@ from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 from tests.support.launch import FakeBundleResult, stub_bundle_request_and_resolve
 
 
-def _set_delegation_floor(
+def _set_caller_guardrail(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    sandbox: str = "workspace-write",
-    network: str = "allow",
+    sandbox: SandboxMode = "workspace-write",
     has_spawn_capability: bool = True,
-    write_roots: tuple[str, ...] = (),
 ) -> None:
+    record = json.loads(
+        CallerBoundary(
+            sandbox=sandbox,
+            has_spawn_capability=has_spawn_capability,
+            pid_namespace=None,
+        ).to_env_value()
+    )
+    record["network"] = "future-axis"
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
-        CallerBoundary.from_values(
-            sandbox=sandbox,
-            network=network,
-            has_spawn_capability=has_spawn_capability,
-            write_roots=write_roots,
-        ).to_env_value(),
+        json.dumps(record),
     )
 
 
@@ -294,15 +296,17 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
 def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    namespace = current_pid_namespace()
+    if namespace is None:
+        pytest.skip("PID namespaces are not exposed on this platform")
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
-        CallerBoundary.from_values(
+        CallerBoundary(
             sandbox="workspace-write",
             has_spawn_capability=True,
-            pid_namespace="pid:[host]",
+            pid_namespace=f"{namespace}:different",
         ).to_env_value(),
     )
-    monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
 
     result = spawn_api.spawn_create_sync(SpawnCreateInput(prompt="run"))
 
@@ -310,25 +314,24 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     assert result.spawn_id is None
     assert result.error == "pre_init_failed"
     assert result.message is not None
-    assert "standalone shell command" in result.message
-    assert "`cd ... &&`" in result.message
-    assert "`$()`" in result.message
-    assert "`VAR=1` prefix" in result.message
 
 
-def test_unsandboxed_caller_carries_no_delegation_floor(
+def test_unsandboxed_caller_has_no_guardrail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
-        CallerBoundary.from_values(
-            sandbox="default",
-            has_spawn_capability=False,
-        ).to_env_value(),
+        json.dumps(
+            {
+                "pid_namespace": None,
+                "sandbox": "default",
+                # A newer axis and a missing spawn axis are irrelevant when unfloored.
+                "network": "future-axis",
+            }
+        ),
     )
 
     check = CallerBoundaryCheck.from_environment(
-        ("LD_PRELOAD=x",),
         dry_run=True,
         passthrough_args=("--dangerously-skip-permissions",),
     )
@@ -337,33 +340,23 @@ def test_unsandboxed_caller_carries_no_delegation_floor(
 
 
 @pytest.mark.parametrize(
-    ("child_policy", "dry_run", "expected"),
+    "child_policy",
     [
-        (
-            ResolvedExecutionPolicy(sandbox="danger-full-access"),
-            False,
-            "sandbox 'danger-full-access' is weaker than caller floor 'workspace-write'",
-        ),
-        (
-            ResolvedExecutionPolicy(),
-            False,
-            "sandbox 'default' is weaker than caller floor 'workspace-write'",
-        ),
+        ResolvedExecutionPolicy(sandbox="danger-full-access"),
+        ResolvedExecutionPolicy(),
     ],
 )
-def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
+def test_spawn_create_caller_guardrail_refuses_weaker_policy_before_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     child_policy: ResolvedExecutionPolicy,
-    dry_run: bool,
-    expected: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     meridian_home = tmp_path / "meridian-home"
     monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
-    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
+    _set_caller_guardrail(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -377,41 +370,26 @@ def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
             model="claude-haiku-5-5",
             harness="claude",
             project_root=project_root.as_posix(),
-            dry_run=dry_run,
+            dry_run=False,
         )
     )
 
     assert result.status == "failed"
-    assert result.message is not None
-    assert expected in result.message
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
     assert not meridian_home.exists()
 
 
-@pytest.mark.parametrize(
-    ("has_spawn_capability", "requested_env", "expected"),
-    [
-        (False, (), "caller profile has no spawn capability"),
-        (True, ("LD_PRELOAD=x",), "environment key 'LD_PRELOAD'"),
-        (True, ("BASH_ENV=/tmp/owned",), "environment key 'BASH_ENV'"),
-        (True, ("CODEX_HOME=/tmp/owned",), "environment key 'CODEX_HOME'"),
-        (True, ("OPENCODE_CONFIG=/tmp/owned",), "environment key 'OPENCODE_CONFIG'"),
-        (True, ("OPENCODE_DB=/tmp/owned",), "environment key 'OPENCODE_DB'"),
-        (True, ("PATH=/tmp/owned",), "environment key 'PATH'"),
-    ],
-)
-def test_spawn_create_delegation_floor_rejects_pre_resolution_escape(
+def test_spawn_create_caller_guardrail_requires_spawn_capability_before_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    has_spawn_capability: bool,
-    requested_env: tuple[str, ...],
-    expected: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(
+    _set_caller_guardrail(
         monkeypatch,
-        has_spawn_capability=has_spawn_capability,
+        has_spawn_capability=False,
     )
 
     def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
@@ -425,23 +403,22 @@ def test_spawn_create_delegation_floor_rejects_pre_resolution_escape(
             harness="claude",
             project_root=project_root.as_posix(),
             dry_run=True,
-            env=requested_env,
         )
     )
 
     assert result.status == "failed"
-    assert result.message is not None
-    assert expected in result.message
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
 
 
-def test_spawn_create_delegation_floor_rejects_passthrough_before_resolution(
+def test_spawn_create_caller_guardrail_rejects_passthrough_before_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
+    _set_caller_guardrail(monkeypatch)
 
     def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("delegation precondition must refuse before Mars")
@@ -459,18 +436,18 @@ def test_spawn_create_delegation_floor_rejects_passthrough_before_resolution(
     )
 
     assert result.status == "failed"
-    assert result.message is not None
-    assert "harness passthrough arguments" in result.message
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
 
 
-def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
+def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
+    _set_caller_guardrail(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -494,58 +471,7 @@ def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
     assert result.status == "dry-run"
 
 
-@pytest.mark.parametrize(
-    ("child_network", "approval", "expected_status", "expected_message"),
-    [
-        ("allow", "default", "failed", "effective network 'allow' is weaker"),
-        ("deny", "default", "dry-run", None),
-        ("deny", "never", "failed", "effective network 'allow' is weaker"),
-    ],
-)
-def test_spawn_create_delegation_floor_compares_effective_network(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    child_network: str,
-    approval: str,
-    expected_status: str,
-    expected_message: str | None,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(
-        monkeypatch,
-        network="deny",
-        write_roots=(project_root.as_posix(),),
-    )
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="claude-haiku-5-5",
-        harness=HarnessId.CLAUDE,
-        execution_policy=ResolvedExecutionPolicy(
-            sandbox="workspace-write",
-            network=child_network,
-            approval=approval,
-        ),
-    )
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            model="claude-haiku-5-5",
-            harness="claude",
-            project_root=project_root.as_posix(),
-            dry_run=True,
-        )
-    )
-
-    assert result.status == expected_status
-    if expected_message is not None:
-        assert result.message is not None
-        assert expected_message in result.message
-
-
-def test_spawn_create_delegation_floor_rejects_workspace_root_outside_caller(
+def test_spawn_create_caller_guardrail_does_not_restrict_child_workspace_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -554,7 +480,7 @@ def test_spawn_create_delegation_floor_rejects_workspace_root_outside_caller(
     outside = tmp_path / "outside"
     outside.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
+    _set_caller_guardrail(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -573,19 +499,18 @@ def test_spawn_create_delegation_floor_rejects_workspace_root_outside_caller(
         )
     )
 
-    assert result.status == "failed"
-    assert result.message is not None
-    assert "outside the caller's projected workspace roots" in result.message
+    assert result.status == "dry-run"
+    assert result.task_cwd == outside.as_posix()
 
 
-def test_spawn_create_delegation_floor_rejects_replayed_harness_home_env(
+def test_spawn_create_caller_guardrail_allows_harness_home_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch)
+    _set_caller_guardrail(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -607,16 +532,15 @@ def test_spawn_create_delegation_floor_rejects_replayed_harness_home_env(
                 model="claude-haiku-5-5",
                 harness="claude",
                 env={"CLAUDE_CONFIG_DIR": "/tmp/owned"},
+                execution_policy=ResolvedExecutionPolicy(sandbox="read-only"),
             ),
         )
     )
 
-    assert result.status == "failed"
-    assert result.message is not None
-    assert "environment key 'CLAUDE_CONFIG_DIR'" in result.message
+    assert result.status == "dry-run"
 
 
-def test_spawn_create_without_delegation_floor_does_not_clamp_environment(
+def test_spawn_create_without_caller_guardrail_does_not_clamp_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

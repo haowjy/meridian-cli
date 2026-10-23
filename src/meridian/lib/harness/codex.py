@@ -101,7 +101,10 @@ def materialize_codex_spec(
 ) -> ResolvedLaunchSpec:
     """Project Meridian's execpolicy rule for a real constrained Codex launch."""
 
-    if spec.permission_policy.sandbox not in CONSTRAINED_SANDBOX_MODES:
+    if (
+        spec.permission_policy.sandbox not in CONSTRAINED_SANDBOX_MODES
+        or not spec.permission_policy.has_spawn_capability
+    ):
         return spec
     return spec.model_copy(
         update={

@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.caller_boundary import CALLER_BOUNDARY_ENV, CallerBoundary
+from meridian.lib.core.caller_boundary import (
+    CALLER_BOUNDARY_ENV,
+    CallerBoundary,
+    current_pid_namespace,
+)
 from meridian.lib.core.context_ref import SpawnContextRef, context_ref_values
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import (
@@ -70,12 +74,10 @@ def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("override", [None, True, False])
-@pytest.mark.parametrize("launcher_namespace", ["pid:[launcher]", None])
 def test_launch_direnv_policy_uses_snapshot_and_propagates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     override: bool | None,
-    launcher_namespace: str | None,
 ) -> None:
     import meridian.lib.launch.context as context_module
 
@@ -86,7 +88,6 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     monkeypatch.setenv("MERIDIAN_IGNORE_DIRENV", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-direnv-key")
     monkeypatch.setenv(CALLER_BOUNDARY_ENV, "inherited-boundary-must-not-survive")
-    monkeypatch.setattr(context_module, "current_pid_namespace", lambda: launcher_namespace)
     runtime = build_primary_launch_runtime(project_root=tmp_path)
     # A captured policy must not change when the ambient input disappears.
     monkeypatch.delenv("MERIDIAN_IGNORE_DIRENV")
@@ -108,8 +109,7 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     boundary = CallerBoundary.from_env_value(env[CALLER_BOUNDARY_ENV])
     assert boundary == CallerBoundary.from_policy(
         preview.binding.spec.permission_policy,
-        enforcement_report=preview.enforcement_report(),
-        pid_namespace=launcher_namespace,
+        pid_namespace=current_pid_namespace(),
     )
     assert ("ANTHROPIC_API_KEY" not in env) == expected
 

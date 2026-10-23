@@ -5,36 +5,25 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Upgrade notes
-- An unset profile `network` now enables shell network in Codex `workspace-write`; set `network: deny` to retain its former network-off behavior. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
+- Agents in a Meridian-projected `read-only`/`workspace-write` sandbox can launch children only if their profile lists `subagents:`, never with a weaker sandbox, never with native args after `--`. See [Sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
+- Spawn-capable sandboxed Codex launches write a Meridian-owned `$CODEX_HOME/rules/meridian.rules` that lets `meridian spawn` run outside Codex's sandbox, in every Codex session of that user.
 
 ### Added
-- Sandboxed agents receive Meridian's state roots and exact/prefix command grants automatically. Claude profiles that can spawn may launch children through a standalone `meridian spawn ...` command outside the Bash sandbox; compound sandboxed launches fail with corrective guidance instead of leaving dead children.
-- Before constrained Codex launches, Meridian maintains a user-wide `$CODEX_HOME/rules/meridian.rules` escape for standalone `meridian spawn ...` commands, so nested spawns and completion signals work under `read-only` and `workspace-write`.
-- Profile `network: allow | deny` now governs shell connections independently of built-in web tools. Claude and Codex project it where their sandboxes can enforce it; every harness reports its effective support in `--dry-run`.
+- Sandboxed agents operate inside Meridian on any harness without profile changes: Meridian's read commands and `spawn done`/`rearm` stay allowed under shell allowlists; spawn-capable profiles also get `meridian spawn`.
+- Sandboxed Claude and Codex agents can launch `--bg` children that survive: a standalone `meridian spawn` runs outside the harness sandbox (Claude `excludedCommands`, Codex execpolicy rule).
+- `meridian spawn` run inside a sandbox that would kill its child (`cd x && meridian spawn`, pipes, `$()`, `VAR=1` prefix) fails before any state write with "run as a standalone shell command".
+- Read-only Codex spawns get the completion confirmation turn again.
 
-### Deprecated
-- Codex `harness-overrides.codex.sandbox_workspace_write.network_access`; use the portable profile `network` field. Native passthrough wins during this warning release, then the key becomes reserved.
+### Fixed
+- Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).
+- Spawn help examples no longer use `$(...)` inside `meridian spawn`.
+
+## [0.12.8] - 2026-10-23
 
 ### Changed
 - Claude spawn-watch completion notices carry only each child's outcome header and
   `meridian spawn show <id>` lookup; `spawn collect` no longer reads or embeds report
   bodies. Pi delivery and `spawn wait`/`spawn ack` consumption are unchanged.
-- Child creation from a Meridian-projected `read-only` or `workspace-write` sandbox now
-  requires spawn capability and cannot weaken the sandbox or effective network policy or
-  add projected workspace roots. These create, continue, and fork calls also reject
-  policy-changing `--env` keys and harness-native passthrough arguments; unsandboxed
-  callers carry no delegation floor.
-
-### Fixed
-- Every spawn launch spelling, including harness shortcuts and continue/fork forms,
-  reaches the single ops-layer PID-namespace guard, so a sandboxed compound command is
-  refused before state access.
-- Repeated `plugin_api.file_lock(mode="exclusive")` acquisitions retain a writable lock
-  handle and can record the holder PID.
-- Read-only Codex spawns receive the completion confirmation turn when the Codex rules escape was written; a failed rules write keeps the no-signal hold instead of asking for a response the child cannot persist.
-- Scoped shell denies and approval rules remain authoritative inside broader Meridian command grants on OpenCode and Pi.
-- Spawn help resolves prompt paths separately, then passes the printed literal path so sandbox-boundary checks do not reject Meridian's own examples.
-- Sandboxed launches no longer receive write access to every project's lifetime-lock directory; the launcher creates the exact project lock and POSIX children open it read-only.
 
 ## [0.12.7] - 2026-10-23
 

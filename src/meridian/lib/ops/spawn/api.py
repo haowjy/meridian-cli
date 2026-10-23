@@ -17,7 +17,7 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
-from meridian.lib.core.caller_boundary import CallerBoundary, CallerBoundaryCheck
+from meridian.lib.core.caller_boundary import CallerBoundaryCheck
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
@@ -111,7 +111,6 @@ from .models import (
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import (
     SpawnCreateArtifacts,
-    bind_create_payload_context,
     bind_create_payload_preview,
     build_create_payload,
     validate_create_input,
@@ -211,7 +210,6 @@ def _resolve_spawn_read_authority(
     *,
     project_root: str | None,
     prepared: RuntimeReadContext | RuntimeWriteContext | None = None,
-    migrate_legacy: bool = True,
 ) -> tuple[Path, Path | None]:
     if prepared is not None:
         resolved_project_root = _project_root_from_prepared(prepared)
@@ -219,11 +217,7 @@ def _resolve_spawn_read_authority(
         return resolved_project_root, resolved_runtime_root
 
     resolved_project_root = _resolve_project_root_input(project_root)
-    resolved_runtime_root = (
-        resolve_runtime_root_for_read(resolved_project_root)
-        if migrate_legacy
-        else inspect_runtime_authority_for_read(resolved_project_root).runtime_root
-    )
+    resolved_runtime_root = resolve_runtime_root_for_read(resolved_project_root)
     return resolved_project_root, resolved_runtime_root
 
 
@@ -293,19 +287,47 @@ class SpawnCreatePreparation:
     depth_exceeded: SpawnActionOutput | None = None
 
 
-def _start_spawn_creation_boundary(
-    *,
-    dry_run: bool,
-    requested_env: tuple[str, ...],
-    passthrough_args: tuple[str, ...],
-) -> CallerBoundaryCheck:
-    """Run import-cheap launch guards before any operation-specific state access."""
+def _failure_create_input(
+    payload: SpawnCreateInput | SpawnContinueInput | SpawnForkInput,
+) -> SpawnCreateInput:
+    """Give the shared pre-init boundary one failure payload shape."""
 
-    return CallerBoundaryCheck.from_environment(
-        requested_env,
-        dry_run=dry_run,
-        passthrough_args=passthrough_args,
+    if isinstance(payload, SpawnCreateInput):
+        return payload
+    return SpawnCreateInput(
+        prompt=payload.prompt,
+        model=payload.model,
+        files=payload.files,
+        template_vars=payload.template_vars,
+        agent=payload.agent,
+        agent_opt_out=payload.agent_opt_out,
+        skills=payload.skills,
+        goal=payload.goal,
+        desc=payload.desc,
+        work=payload.work,
+        task_dir=payload.task_dir,
+        caller_cwd=payload.caller_cwd,
+        **payload.launch_option_updates(),
     )
+
+
+def _run_spawn_creation_boundary(
+    payload: SpawnCreateInput | SpawnContinueInput | SpawnForkInput,
+) -> CallerBoundaryCheck | SpawnActionOutput:
+    """Build the caller check first and present every refusal as pre-init failure."""
+
+    failure_payload = _failure_create_input(payload)
+
+    def _build() -> CallerBoundaryCheck:
+        try:
+            return CallerBoundaryCheck.from_environment(
+                dry_run=payload.dry_run,
+                passthrough_args=payload.passthrough_args,
+            )
+        except EXPECTED_PRE_INIT_EXCEPTIONS as exc:
+            raise PreInitFailure(str(exc)) from exc
+
+    return run_pre_init_boundary(payload=failure_payload, operation=_build)
 
 
 def _prepare_spawn_create(
@@ -313,18 +335,9 @@ def _prepare_spawn_create(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
-    floor_check: CallerBoundaryCheck | None,
+    floor_check: CallerBoundaryCheck,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
-    if floor_check is None:
-        floor_check = _start_spawn_creation_boundary(
-            dry_run=payload.dry_run,
-            requested_env=payload.env,
-            passthrough_args=payload.passthrough_args,
-        )
-    else:
-        # Continue/fork may add replayed native args after the import-cheap precheck.
-        floor_check.enforce_passthrough_args(payload.passthrough_args)
     register_debug_trace_observer()
     resolved_context = runtime_context(ctx)
     spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
@@ -392,29 +405,14 @@ def _prepare_spawn_create(
         runtime=planning_runtime,
         preflight_warning=preflight_warning,
         ctx=resolved_context,
-        bind_preview=False,
-        models_readonly=floor_check.caller is not None,
+        models_readonly=True,
     )
-    floor_check.enforce_env_keys(artifacts.request.env)
     floor_check.enforce_passthrough_args(artifacts.request.extra_args)
-    preview_context = None
-    if floor_check.caller is not None:
-        preview_context = bind_create_payload_context(
-            artifacts,
-            harness_registry=harness_registry,
-        )
-        floor_check.enforce(
-            CallerBoundary.from_policy(
-                preview_context.binding.spec.permission_policy,
-                enforcement_report=preview_context.enforcement_report(),
-                pid_namespace=None,
-            )
-        )
+    floor_check.enforce(artifacts.request.execution_policy.sandbox)
     if payload.dry_run:
         artifacts = bind_create_payload_preview(
             artifacts,
             harness_registry=harness_registry,
-            preview_context=preview_context,
         )
     return SpawnCreatePreparation(
         payload=payload,
@@ -431,7 +429,7 @@ def _prepare_spawn_create_with_expected_failures(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
-    floor_check: CallerBoundaryCheck | None,
+    floor_check: CallerBoundaryCheck,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
     try:
@@ -450,8 +448,8 @@ def _run_spawn_create_preparation(
     payload: SpawnCreateInput,
     *,
     ctx: RuntimeContext | None,
+    floor_check: CallerBoundaryCheck,
     sink: OutputSink | None = None,
-    floor_check: CallerBoundaryCheck | None = None,
 ) -> SpawnCreatePreparation | SpawnActionOutput:
     failure_payload = [payload]
     return run_pre_init_boundary(
@@ -595,9 +593,13 @@ def spawn_create_sync(
     sink: OutputSink | None = None,
     on_spawn_id: Callable[[str], None] | None = None,
 ) -> SpawnActionOutput:
+    floor_check = _run_spawn_creation_boundary(payload)
+    if isinstance(floor_check, SpawnActionOutput):
+        return floor_check
     preparation = _run_spawn_create_preparation(
         payload,
         ctx=ctx,
+        floor_check=floor_check,
         sink=sink,
     )
     if isinstance(preparation, SpawnActionOutput):
@@ -2239,14 +2241,11 @@ def spawn_fork_sync(
     *,
     sink: OutputSink | None = None,
 ) -> SpawnActionOutput:
-    floor_check = _start_spawn_creation_boundary(
-        dry_run=payload.dry_run,
-        requested_env=payload.env,
-        passthrough_args=payload.passthrough_args,
-    )
+    floor_check = _run_spawn_creation_boundary(payload)
+    if isinstance(floor_check, SpawnActionOutput):
+        return floor_check
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
-        migrate_legacy=False,
     )
     normalized_source_ref = payload.source_ref.strip()
     if not normalized_source_ref:
@@ -2345,16 +2344,13 @@ def spawn_continue_sync(
     *,
     sink: OutputSink | None = None,
 ) -> SpawnActionOutput:
-    floor_check = _start_spawn_creation_boundary(
-        dry_run=payload.dry_run,
-        requested_env=payload.env,
-        passthrough_args=payload.passthrough_args,
-    )
+    floor_check = _run_spawn_creation_boundary(payload)
+    if isinstance(floor_check, SpawnActionOutput):
+        return _with_command(floor_check, "spawn.continue")
     if payload.model is not None and not payload.model.strip():
         raise ValueError("--model must not be empty")
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
-        migrate_legacy=False,
     )
     if runtime_root is None:
         normalized = payload.spawn_id.strip()

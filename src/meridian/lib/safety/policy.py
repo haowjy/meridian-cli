@@ -68,6 +68,7 @@ ALLOWLIST_ORIGIN = "allowlist"
 
 type PlatformRuleKind = Literal["builtin-agents", "meridian-commands"]
 type CommandMatch = Literal["exact", "prefix"]
+type PlatformCommandRole = Literal["completion", "read", "launch"]
 
 
 class PlatformCommand(BaseModel):
@@ -77,7 +78,14 @@ class PlatformCommand(BaseModel):
 
     command: str
     match: CommandMatch
+    role: PlatformCommandRole = "read"
     runs_outside_sandbox: bool = False
+
+    @property
+    def profile_restrictable(self) -> bool:
+        """Whether a narrower profile rule may keep this command restricted."""
+
+        return self.role != "completion"
 
 
 class PlatformRule(BaseModel):
@@ -136,7 +144,15 @@ class PermissionPolicy(BaseModel):
     def has_spawn_capability(self) -> bool:
         """Whether this policy carries the canonical child-launch command grant."""
 
-        return bool(self.outside_sandbox_commands)
+        return any(
+            command.role == "launch"
+            and command.command == "meridian spawn"
+            and command.match == "prefix"
+            and command.runs_outside_sandbox
+            for rule in self.platform_rules
+            if rule.kind == "meridian-commands"
+            for command in rule.commands
+        )
 
     @property
     def is_allowlist(self) -> bool:
@@ -503,6 +519,7 @@ __all__ = [
     "NetworkMode",
     "PermissionPolicy",
     "PlatformCommand",
+    "PlatformCommandRole",
     "PlatformRule",
     "ReportLine",
     "ReportStatus",
