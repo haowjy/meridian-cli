@@ -37,6 +37,9 @@ paths for actual execution. `prepare_launch_surface()` is expensive (mars calls,
 loading, prompt assembly) and safe to do once before the session is opened.
 `bind_launch_context()` is write-free and repeatable; ignoring an active direnv environment invokes
 a bounded subprocess on each bind, including previews.
+The process runner, CLI spawn runner, and streaming spawn service all send their real bound
+context through `materialize_launch_context()`; adapters therefore have one owner for launch-time
+writes, and dry-run binds never materialize them.
 
 ### PreparedLaunchSurface
 

@@ -42,7 +42,11 @@ from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
 )
-from meridian.lib.launch.context import LaunchContext, RuntimeBindings
+from meridian.lib.launch.context import (
+    LaunchContext,
+    RuntimeBindings,
+    materialize_launch_context,
+)
 from meridian.lib.launch.env import apply_pi_bind_time_env, resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
@@ -444,6 +448,7 @@ class SpawnApplicationService:
             runtime=payload.runtime,
             harness_registry=payload.harness_registry,
         )
+        launch_ctx = await asyncio.to_thread(materialize_launch_context, launch_ctx)
         resolved_request = launch_ctx.resolved_request
         resolved_model = (resolved_request.model or "").strip()
         resolved_harness = (resolved_request.harness or "").strip()

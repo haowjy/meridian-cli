@@ -24,6 +24,9 @@ deliberate exception that wires policy surfaces to launch and persistence.
   Create, continue, and fork receive the same structured pre-init refusal without
   duplicating the spawn grammar in the entrypoint. `caller_boundary.py` owns the record
   and checks; `ops/spawn/api.py` owns the shared entry.
+- **Spawn preparation materializes the bound launch before persistence.** The streaming
+  service shares `launch.context.materialize_launch_context()` with the other real launch
+  drivers; adapter-owned writes complete before `SpawnApplicationService` creates the row.
 - **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `_MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
 - **`LifecycleHook.on_event()` exceptions are logged but never block transitions.** Hooks must tolerate partial data.
 - **`spawn_store` is imported at the bottom of `lifecycle.py`** to break a circular import with `state/__init__`. Do not move it to the top.
