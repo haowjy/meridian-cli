@@ -183,7 +183,7 @@ def project_codex_native_config(
                     ReportLine(
                         f"native_config: {key} = {{}}",
                         "unsupported",
-                        "empty mappings have no Codex -c leaf to override",
+                        "ignored because empty mappings have no Codex -c leaf to override",
                     )
                 )
                 continue

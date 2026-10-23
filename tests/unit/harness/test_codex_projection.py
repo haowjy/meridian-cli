@@ -268,9 +268,10 @@ def test_codex_native_network_override_matching_profile_reports_native() -> None
     [
         {"sandbox_workspace_write": {"network_access": "false"}},
         {"sandbox_workspace_write": {"network_access": None}},
+        {"sandbox_workspace_write": {"network_access": {}}},
         {"sandbox_workspace_write.network_access": False},
     ],
-    ids=["non-boolean", "unencodable", "unaddressable"],
+    ids=["non-boolean", "unencodable", "empty-mapping", "unaddressable"],
 )
 def test_codex_invalid_native_network_override_keeps_portable_deny(
     native_config: dict[str, object],
