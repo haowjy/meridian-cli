@@ -21,6 +21,7 @@ from meridian.lib.harness.pi_runtime_resolver import PiLaunchRole, PiRuntimeReso
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.platform.atomic import AtomicReplaceDurabilityError
 from meridian.lib.safety.policy import PermissionPolicy
 
 
@@ -439,6 +440,20 @@ def test_codex_bind_rewrites_owned_rules_file_and_skips_matching_content(
     monkeypatch.setattr(codex_rules, "atomic_write_text", _unexpected_write)
     rebound = bind_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
     assert rebound.codex_runtime.rules_file_error is None
+
+    rules_path.write_text("stale again\n", encoding="utf-8")
+
+    def _commit_without_directory_sync(
+        path: Path, content: str, *, durable: bool = True
+    ) -> None:
+        assert durable is True
+        path.write_text(content, encoding="utf-8")
+        raise AtomicReplaceDurabilityError(path)
+
+    monkeypatch.setattr(codex_rules, "atomic_write_text", _commit_without_directory_sync)
+    committed = bind_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
+    assert rules_path.read_text(encoding="utf-8") == MERIDIAN_RULES_FILE_CONTENT
+    assert committed.codex_runtime.rules_file_error is None
 
 
 def test_codex_bind_reports_rules_write_failure_without_refusing_launch(
