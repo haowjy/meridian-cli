@@ -4,28 +4,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-- Sandboxed agents receive Meridian's state roots and exact/prefix command grants automatically. Claude profiles that can spawn may launch children through a standalone `meridian spawn ...` command outside the Bash sandbox; compound sandboxed launches fail with corrective guidance instead of leaving dead children.
-- Before spawn-capable constrained Codex launches, Meridian maintains a user-wide `$CODEX_HOME/rules/meridian.rules` escape for standalone `meridian spawn ...` commands, so nested spawns and completion signals work under `read-only` and `workspace-write`.
+### Upgrade notes
+- Agents in a Meridian-projected `read-only`/`workspace-write` sandbox can launch children only if their profile lists `subagents:`, never with a weaker sandbox, never with native args after `--`. See [Sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
+- Spawn-capable sandboxed Codex launches write a Meridian-owned `$CODEX_HOME/rules/meridian.rules` that lets `meridian spawn` run outside Codex's sandbox, in every Codex session of that user.
 
-### Changed
-- Child creation from a Meridian-projected `read-only` or `workspace-write` sandbox now
-  requires spawn capability and cannot weaken the sandbox. Create, continue, and fork also
-  reject harness-native passthrough arguments; this is a CLI-escalation guardrail, not
-  confinement against an agent that can rewrite launch inputs.
+### Added
+- Sandboxed agents operate inside Meridian on any harness without profile changes: Meridian's read commands and `spawn done`/`rearm` stay allowed under shell allowlists; spawn-capable profiles also get `meridian spawn`.
+- Sandboxed Claude and Codex agents can launch `--bg` children that survive: a standalone `meridian spawn` runs outside the harness sandbox (Claude `excludedCommands`, Codex execpolicy rule).
+- `meridian spawn` run inside a sandbox that would kill its child (`cd x && meridian spawn`, pipes, `$()`, `VAR=1` prefix) fails before any state write with "run as a standalone shell command".
+- Read-only Codex spawns get the completion confirmation turn again.
 
 ### Fixed
-- Every spawn launch spelling, including harness shortcuts and continue/fork forms,
-  reaches the single ops-layer PID-namespace guard, so a sandboxed compound command is
-  refused before state access.
-- Repeated `plugin_api.file_lock(mode="exclusive")` acquisitions retain a writable lock
-  handle and can record the holder PID.
-- Read-only Codex spawns receive the completion confirmation turn when the Codex rules escape was written; a failed rules write keeps the no-signal hold instead of asking for a response the child cannot persist.
-- Completion commands remain runnable across Claude, OpenCode, and Pi; scoped profile
-  restrictions stay authoritative for Meridian read and child-launch grants.
-- Spawn help resolves prompt paths separately, then passes the printed literal path so sandbox-boundary checks do not reject Meridian's own examples.
-- Pre-policy read-only model resolution describes an unavailable cache without claiming the user passed `--no-refresh-models`.
-- Sandboxed launches no longer receive write access to every project's lifetime-lock directory; the launcher creates the exact project lock and POSIX children open it read-only.
+- Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).
+- Spawn help examples no longer use `$(...)` inside `meridian spawn`.
 
 ## [0.12.8] - 2026-10-23
 
