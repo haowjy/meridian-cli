@@ -194,6 +194,21 @@ def test_claude_network_deny_reports_settings_and_command_widening(
     assert "can be widened outside Meridian" in line.note
     assert "meridian spawn *" in line.note
 
+    bypassed = spec.model_copy(
+        update={
+            "permission_policy": PermissionPolicy(
+                sandbox="workspace-write",
+                network="deny",
+                network_explicit=True,
+                approval="never",
+            )
+        }
+    )
+    _, bypassed_report = compile_claude_permissions(bypassed)
+    bypassed_line = next(item for item in bypassed_report if item.element == "network: deny")
+    assert bypassed_line.status == "unsupported"
+    assert "network proxy unrestricted" in bypassed_line.note
+
 
 def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
     spec = ResolvedLaunchSpec(

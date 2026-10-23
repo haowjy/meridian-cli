@@ -845,6 +845,14 @@ def _network_line(
             )
         return ReportLine(element, "native", note)
 
+    if permissions.skip_permission_prompts:
+        return ReportLine(
+            element,
+            "unsupported",
+            "approval never uses --dangerously-skip-permissions, which leaves Claude's "
+            "sandbox network proxy unrestricted even though filesystem confinement remains",
+        )
+
     notes = ["no sandbox.network.allowedDomains projected"]
     if sys.platform.startswith("linux"):
         notes.append(
