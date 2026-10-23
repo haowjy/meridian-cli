@@ -113,20 +113,19 @@ denies `agent` on every launch without native agent copies, whatever the profile
 skips a spawn's `task` deny only for the profile's explicit unscoped `task: allow|ask` or an
 existing unscoped deny of it (`unscoped_action`), never for a `*` rule.
 
-**Completion commands.** `launch_platform_rules` gives every spawn a `completion-commands`
-platform rule: an allow, not a deny, for the shell commands a child runs to answer
-Meridian's completion confirmation (`meridian spawn done` / `rearm`). It cannot depend on
-the profile: a harness's own defaults can close the shell to a headless child (Claude asks
-before any command that changes files). A child with a writable signal channel that cannot
-run them cannot reject a premature completion; its hold falls back to normal confirmation
-and deadline handling. `PlatformRule.commands` names them bare; the compile of any harness
-that restricts the shell spells each command and
-its argument form in its own scope syntax and puts them where a deny of `bash` or `*` does
-not shadow them (OpenCode V1: `bash(<cmd>)` / `bash(<cmd> *)`; V2: the corresponding `shell`
-rules). A compile whose shell is open has nothing to add. A harness that has not projected
-it reports `unsupported`. An explicitly read-only Codex child declares that no writable
-completion-signal channel exists, so its hold skips confirmation and reads no `done` or
-`rearm` signal while still waiting on blockers.
+**Meridian commands.** `launch_permission_rules` gives every launch one
+`meridian-commands` platform rule. Completion (`meridian spawn done` / `rearm`) and audited
+read commands are always present; a profile with spawn capability also receives the
+`meridian spawn` prefix. Each `PlatformCommand` declares `exact` or `prefix`, and a harness
+that restricts the shell spells that match in its own syntax where a broad `bash` or `*`
+deny cannot shadow it. A narrower or equal scoped profile deny/ask remains stricter. A
+compile whose shell is open has nothing to add; a harness without a carrier reports the
+grant `unsupported`.
+
+A read-only Codex child normally writes completion signals through Meridian's user-wide
+execpolicy rule. If that rules-file write failed, the connection declares no writable
+completion-signal channel: its hold skips confirmation and reads no `done` or `rearm`
+signal while retaining the same evidence, blocker, and deadline policy.
 
 **Reports.** `complete_report` gives every policy element exactly one line, in policy order.
 A compile reports what it enforces or has something specific to say about; the rest is

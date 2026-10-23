@@ -500,7 +500,8 @@ them:
   `meridian spawn -a NAME --dry-run` to see the exact command list and which grants that
   harness can enforce.
 - **Child-spawn escape.** Claude excludes a spawn-capable profile's standalone
-  `meridian spawn ...` calls from `read-only` and `workspace-write` Bash sandboxes. Codex
+  `meridian spawn ...` calls from `read-only` and `workspace-write` Bash sandboxes, and
+  from a sandbox the user's Claude settings enable when the profile leaves it at default. Codex
   maintains `$CODEX_HOME/rules/meridian.rules` before launches in those modes, allowing
   the same standalone prefix outside Codex's sandbox. The whole matching command runs
   outside the sandbox, including its filesystem and network access. Codex's rule is
