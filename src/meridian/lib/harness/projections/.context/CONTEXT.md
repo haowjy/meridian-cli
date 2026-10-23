@@ -208,8 +208,9 @@ call the typed compile directly for its native value; nothing generic reads that
 `LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
 `permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
 Each harness also registers `HarnessProjectionPorts.effective_network`: a pure function of
-the resolved policy. Its `network:` report line and the child-spawn guardrail call that same
-owner directly, so the public three-field `ReportLine` has no hidden propagation state.
+`EffectiveNetworkFacts` (sandbox, network, projection availability, and native config).
+Its `network:` report line and the child-spawn guardrail call that same owner directly, so
+the public three-field `ReportLine` has no hidden propagation state.
 
 Every compile reports the effective shell `network` policy separately from built-in web
 tools. Claude projects allowed domains plus local-binding/Unix-socket settings when its

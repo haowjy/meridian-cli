@@ -25,6 +25,7 @@ from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
     CONSTRAINED_SANDBOX_MODES,
     ApprovalMode,
+    EffectiveNetworkFacts,
     EnforcementReport,
     NetworkMode,
     PermissionPolicy,
@@ -169,30 +170,28 @@ def _compile_codex_permission_values(
 
 
 def _effective_codex_network(
-    policy: PermissionPolicy, permissions: CodexPermissions
+    facts: EffectiveNetworkFacts,
+    network_override: CodexNetworkOverride | None,
 ) -> NetworkMode:
-    if policy.sandbox == "read-only":
+    if facts.sandbox == "read-only":
         return "deny"
-    if policy.sandbox == "workspace-write":
-        override = permissions.network_override
+    if facts.sandbox == "workspace-write":
+        override = network_override
         if override is not None and override.argument is not None:
             assert isinstance(override.value, bool)
             return "allow" if override.value else "deny"
-        if not policy.network_projection:
+        if not facts.network_projection:
             return "deny"
-        return policy.network_mode
+        return facts.network_mode
     return "allow"
 
 
 def effective_codex_network(
-    policy: PermissionPolicy,
-    *,
-    native_config: Mapping[str, object] | None = None,
+    facts: EffectiveNetworkFacts,
 ) -> NetworkMode:
     """Return the shell-network policy Codex actually enforces."""
 
-    permissions = _compile_codex_permission_values(policy, native_config or {})
-    return _effective_codex_network(policy, permissions)
+    return _effective_codex_network(facts, _network_override(facts.native_config))
 
 
 def _codex_report(
@@ -333,7 +332,13 @@ def _codex_report(
             )
         )
     network_element = f"network: {policy.network_mode}"
-    effective_network = _effective_codex_network(policy, permissions)
+    effective_network = _effective_codex_network(
+        EffectiveNetworkFacts.from_permission_policy(
+            policy,
+            native_config=spec.native_config,
+        ),
+        permissions.network_override,
+    )
     network_override = permissions.network_override
     if not policy.network_projection:
         pass

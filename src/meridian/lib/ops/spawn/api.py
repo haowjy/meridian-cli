@@ -414,21 +414,18 @@ def _prepare_spawn_create(
         models_readonly=True,
     )
     from meridian.lib.harness.bundle import get_harness_bundle
-    from meridian.lib.safety.policy import build_permission_policy
+    from meridian.lib.safety.policy import EffectiveNetworkFacts
 
     execution_policy = artifacts.request.execution_policy
-    guardrail_policy = build_permission_policy(
+    network_facts = EffectiveNetworkFacts.from_values(
         sandbox=execution_policy.sandbox,
         network=execution_policy.network,
         network_projection=execution_policy.network_projection,
-        approval=execution_policy.approval or "default",
+        native_config=execution_policy.native_config,
     )
     effective_network = get_harness_bundle(
         artifacts.prepared.harness.id
-    ).projections.effective_network(
-        guardrail_policy,
-        native_config=execution_policy.native_config,
-    )
+    ).projections.effective_network(network_facts)
     floor_check.enforce(
         execution_policy.sandbox,
         child_network=effective_network,

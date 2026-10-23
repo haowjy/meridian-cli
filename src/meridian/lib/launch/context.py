@@ -63,7 +63,12 @@ from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
 from meridian.lib.platform import IS_POSIX
-from meridian.lib.safety.policy import EnforcementReport, PermissionPolicy, build_permission_policy
+from meridian.lib.safety.policy import (
+    EffectiveNetworkFacts,
+    EnforcementReport,
+    PermissionPolicy,
+    build_permission_policy,
+)
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
@@ -1828,12 +1833,16 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
+    network_facts = EffectiveNetworkFacts.from_values(
+        sandbox=resolved_request.execution_policy.sandbox,
+        network=resolved_request.execution_policy.network,
+        network_projection=resolved_request.execution_policy.network_projection,
+        native_config=resolved_request.execution_policy.native_config,
+    )
     child_context_env[CALLER_BOUNDARY_ENV] = CallerBoundary.from_policy(
         permission_policy,
-        effective_network=get_harness_bundle(harness.id).projections.effective_network(
-            permission_policy,
-            native_config=resolved_request.execution_policy.native_config,
-        ),
+        effective_network=get_harness_bundle(harness.id)
+        .projections.effective_network(network_facts),
         pid_namespace=current_pid_namespace(),
     ).to_env_value()
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"

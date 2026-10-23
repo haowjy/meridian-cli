@@ -13,6 +13,8 @@ from meridian.lib.harness.projections.project_claude import project_claude_spec_
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
+    EffectiveNetworkFacts,
+    NetworkMode,
     PermissionPolicy,
     PlatformCommand,
     PlatformRule,
@@ -20,6 +22,12 @@ from meridian.lib.safety.policy import (
 )
 from meridian.lib.tools import PLATFORM_ORIGIN
 from tests.support.launch import tool_rule
+
+
+def _effective_network(spec: ResolvedLaunchSpec) -> NetworkMode:
+    return effective_claude_network(
+        EffectiveNetworkFacts.from_permission_policy(spec.permission_policy)
+    )
 
 
 def _tool_flag_entries(argv: list[str], flag: str) -> tuple[str, ...]:
@@ -228,7 +236,7 @@ def test_claude_network_deny_projects_strict_allowlist(
     _, report = compile_claude_permissions(spec)
     line = next(item for item in report if item.element == "network: deny")
     assert line.status == "partial"
-    assert effective_claude_network(spec.permission_policy) == "deny"
+    assert _effective_network(spec) == "deny"
 
     bypassed = spec.model_copy(
         update={
@@ -242,7 +250,7 @@ def test_claude_network_deny_projects_strict_allowlist(
     _, bypassed_report = compile_claude_permissions(bypassed)
     bypassed_line = next(item for item in bypassed_report if item.element == "network: deny")
     assert bypassed_line.status == "partial"
-    assert effective_claude_network(bypassed.permission_policy) == "deny"
+    assert _effective_network(bypassed) == "deny"
 
 
 def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
@@ -262,7 +270,7 @@ def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
 
     assert settings["sandbox"]["network"] == {"strictAllowlist": True}
     assert "--dangerously-skip-permissions" not in command
-    assert effective_claude_network(spec.permission_policy) == "deny"
+    assert _effective_network(spec) == "deny"
 
 
 def test_claude_old_mars_policy_keeps_native_network_default() -> None:
@@ -280,7 +288,7 @@ def test_claude_old_mars_policy_keeps_native_network_default() -> None:
     _, report = compile_claude_permissions(spec)
 
     assert "network" not in settings["sandbox"]
-    assert effective_claude_network(spec.permission_policy) == "deny"
+    assert _effective_network(spec) == "deny"
     assert any(line.element == "network: harness default" for line in report)
 
 

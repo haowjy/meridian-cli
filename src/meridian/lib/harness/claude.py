@@ -93,7 +93,10 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.safety.policy import build_permission_policy
+from meridian.lib.safety.policy import (
+    CONSTRAINED_SANDBOX_MODES,
+    EffectiveNetworkFacts,
+)
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
 _IDLE_PLUGIN = "meridian-idle"
@@ -243,16 +246,16 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         network: str | None,
         network_projection: bool,
     ) -> str | None:
-        policy = build_permission_policy(
+        facts = EffectiveNetworkFacts.from_values(
             sandbox=sandbox,
             network=network,
             network_projection=network_projection,
         )
         if (
             not sys.platform.startswith("linux")
-            or not policy.network_projection
-            or policy.sandbox not in {"read-only", "workspace-write"}
-            or effective_claude_network(policy) != "allow"
+            or not facts.network_projection
+            or facts.sandbox not in CONSTRAINED_SANDBOX_MODES
+            or effective_claude_network(facts) != "allow"
         ):
             return None
         return (

@@ -8,8 +8,9 @@ platform rules natively; nothing here knows a harness.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -59,6 +60,57 @@ _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
     {"default", "auto", "never", "yolo", "confirm"}
 )
 _NETWORK_MODES: frozenset[NetworkMode] = frozenset({"allow", "deny"})
+_EMPTY_NATIVE_CONFIG: Mapping[str, object] = MappingProxyType({})
+
+
+@dataclass(frozen=True)
+class EffectiveNetworkFacts:
+    """The complete input to one harness's effective shell-network decision."""
+
+    sandbox: SandboxMode
+    network: NetworkMode | None
+    network_projection: bool
+    native_config: Mapping[str, object]
+
+    @property
+    def network_mode(self) -> NetworkMode:
+        """Return the authored network mode or the cross-harness default."""
+
+        return self.network or "allow"
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        sandbox: str | None,
+        network: str | None,
+        network_projection: bool,
+        native_config: Mapping[str, object] | None = None,
+    ) -> EffectiveNetworkFacts:
+        """Validate resolved execution-policy values at the effective-network port."""
+
+        return cls(
+            sandbox=_parse_sandbox_value(sandbox),
+            network=_parse_network_value(network),
+            network_projection=network_projection,
+            native_config=native_config or _EMPTY_NATIVE_CONFIG,
+        )
+
+    @classmethod
+    def from_permission_policy(
+        cls,
+        policy: PermissionPolicy,
+        *,
+        native_config: Mapping[str, object] | None = None,
+    ) -> EffectiveNetworkFacts:
+        """Take only effective-network facts from a compiled permission policy."""
+
+        return cls(
+            sandbox=policy.sandbox,
+            network=policy.network,
+            network_projection=policy.network_projection,
+            native_config=native_config or _EMPTY_NATIVE_CONFIG,
+        )
 
 
 # The origin of the unscoped deny ``build_permission_policy`` writes for a per-capability
@@ -520,6 +572,7 @@ __all__ = [
     "SANDBOX_MODE_WEAKNESS",
     "ApprovalMode",
     "CommandMatch",
+    "EffectiveNetworkFacts",
     "EnforcementReport",
     "NetworkMode",
     "PermissionPolicy",

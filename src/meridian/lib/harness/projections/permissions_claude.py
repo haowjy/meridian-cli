@@ -11,7 +11,6 @@ channels, so a rule that order shadows, or that the compile left out, says so.
 from __future__ import annotations
 
 import sys
-from collections.abc import Mapping
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Literal
@@ -21,6 +20,7 @@ from meridian.lib.harness.projections.native_config import unsupported_native_co
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 from meridian.lib.safety.policy import (
+    EffectiveNetworkFacts,
     EnforcementReport,
     NetworkMode,
     PermissionPolicy,
@@ -846,17 +846,15 @@ def _sandbox_line(policy: PermissionPolicy, permissions: ClaudePermissions) -> R
 
 
 def effective_claude_network(
-    policy: PermissionPolicy,
-    *,
-    native_config: Mapping[str, object] | None = None,
+    facts: EffectiveNetworkFacts,
 ) -> NetworkMode:
     """Return the shell-network policy Claude actually enforces."""
 
-    if policy.sandbox not in {"read-only", "workspace-write"}:
+    if facts.sandbox not in {"read-only", "workspace-write"}:
         return "allow"
-    if not policy.network_projection:
+    if not facts.network_projection:
         return "deny"
-    return policy.network_mode
+    return facts.network_mode
 
 
 def _network_line(

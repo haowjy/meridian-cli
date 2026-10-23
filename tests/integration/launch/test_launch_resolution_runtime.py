@@ -28,6 +28,7 @@ from meridian.lib.launch.plan import (
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, SessionRequest, SpawnRequest
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
+from meridian.lib.safety.policy import EffectiveNetworkFacts
 from meridian.lib.state import work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from tests.support.fixtures import write_agent
@@ -112,7 +113,12 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
         preview.binding.spec.permission_policy,
         effective_network=get_harness_bundle(
             preview.harness.id
-        ).projections.effective_network(preview.binding.spec.permission_policy),
+        ).projections.effective_network(
+            EffectiveNetworkFacts.from_permission_policy(
+                preview.binding.spec.permission_policy,
+                native_config=preview.binding.spec.native_config,
+            )
+        ),
         pid_namespace=current_pid_namespace(),
     )
     assert ("ANTHROPIC_API_KEY" not in env) == expected

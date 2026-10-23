@@ -17,6 +17,7 @@ from meridian.lib.harness.projections.project_codex_subprocess import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
+    EffectiveNetworkFacts,
     NetworkMode,
     PermissionPolicy,
     PlatformCommand,
@@ -29,6 +30,15 @@ def _spec(*, interactive: bool) -> ResolvedLaunchSpec:
         harness=HarnessId.CODEX,
         prompt="test",
         interactive=interactive,
+    )
+
+
+def _effective_network(spec: ResolvedLaunchSpec) -> NetworkMode:
+    return effective_codex_network(
+        EffectiveNetworkFacts.from_permission_policy(
+            spec.permission_policy,
+            native_config=spec.native_config,
+        )
     )
 
 
@@ -162,7 +172,7 @@ def test_codex_old_mars_policy_keeps_native_network_default() -> None:
     _, report = compile_codex_permissions(spec)
 
     assert not any("sandbox_workspace_write.network_access" in item for item in command)
-    assert effective_codex_network(spec.permission_policy) == "deny"
+    assert _effective_network(spec) == "deny"
     assert any(line.element == "network: harness default" for line in report)
 
 
@@ -187,9 +197,9 @@ def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
     defaulted_line = next(line for line in defaulted_report if line.element == "network: allow")
     authored_line = next(line for line in authored_report if line.element == "network: allow")
     assert defaulted_line.status == "native"
-    assert effective_codex_network(defaulted.permission_policy) == "deny"
+    assert _effective_network(defaulted) == "deny"
     assert authored_line.status == "unsupported"
-    assert effective_codex_network(authored.permission_policy) == "deny"
+    assert _effective_network(authored) == "deny"
 
 
 def test_codex_deprecated_native_network_override_wins_for_warning_release() -> None:
@@ -226,13 +236,7 @@ def test_codex_deprecated_native_network_override_wins_for_warning_release() -> 
         if line.element == "native_config: sandbox_workspace_write.network_access = false"
     )
     assert network_line.status == "partial"
-    assert (
-        effective_codex_network(
-            spec.permission_policy,
-            native_config=spec.native_config,
-        )
-        == "deny"
-    )
+    assert _effective_network(spec) == "deny"
     assert native_line.status == "native"
     warnings = CodexAdapter().launch_spec_warnings(spec)
     assert [warning.code for warning in warnings] == [
@@ -297,13 +301,7 @@ def test_codex_invalid_native_network_override_keeps_portable_deny(
     assert subprocess.count(portable_deny) == 1
     assert appserver.count(portable_deny) == 1
     assert thread["config"] == {"sandbox_workspace_write.network_access": False}
-    assert (
-        effective_codex_network(
-            spec.permission_policy,
-            native_config=spec.native_config,
-        )
-        == "deny"
-    )
+    assert _effective_network(spec) == "deny"
     network_line = next(line for line in report if line.element == "network: deny")
     native_line = next(line for line in report if line.element.startswith("native_config:"))
     assert network_line.status == "partial"
