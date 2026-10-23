@@ -15,8 +15,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Read-only Codex spawns get the completion confirmation turn again.
 
 ### Fixed
-- Sandboxed `spawn --continue` and `spawn --fork` refuse passthrough arguments replayed
-  from the source launch before model resolution, even when no model catalog is available.
 - Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).
 - Spawn help examples no longer use `$(...)` inside `meridian spawn`.
 
