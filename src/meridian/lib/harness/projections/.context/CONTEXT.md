@@ -32,9 +32,11 @@ report both fields unsupported.
 
 One warning-release exception is tracked in [TODO](TODO): a native
 `sandbox_workspace_write.network_access` leaf is deprecated. The Codex permission compile
-resolves it once and carries it on `CodexPermissions`; while present, the portable value is
-omitted so the native value wins on subprocess, app-server and thread creation. The next
-release makes it reserved like `writable_roots` and removes that one compile-time carveout.
+resolves it once and carries it on `CodexPermissions`. Only an addressable, TOML-encodable
+boolean suppresses the portable value and wins on subprocess, app-server and thread
+creation; invalid candidates are ignored and leave the portable projection in place. The
+next release makes the key reserved like `writable_roots` and removes that one compile-time
+carveout.
 
 `PermissionPolicy.network_projection=false` marks a bundle from Mars < 0.18. Compiles emit
 no portable network setting in that state: Claude and Codex retain their constrained
