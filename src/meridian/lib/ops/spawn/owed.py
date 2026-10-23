@@ -23,6 +23,8 @@ from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_observations import consumed_ids, leased_ids, record
 from meridian.lib.state.spawn_status import read_derived
 
+from .models import task_dir_line
+
 _COLLECT_POLL_INTERVAL_SECS = 1.0
 _DELIVERY_MAX_MEMBERS = 32
 
@@ -102,10 +104,7 @@ def render_delivery(rows: Sequence[SpawnRecord]) -> str:
             and row.task_cwd is not None
             and row.task_cwd != row.control_root
         ):
-            task_line = f"Spawn is instructed to implement in this task dir: {row.task_cwd}"
-            if (work_id := (row.work_id or "").strip()):
-                task_line += f"  (work: {work_id})"
-            lines.append(task_line)
+            lines.append(task_dir_line(row.task_cwd, row.work_id))
         lines.append(f"meridian spawn show {row.id}")
         rendered.append("\n".join(lines))
     return "\n\n".join(rendered)

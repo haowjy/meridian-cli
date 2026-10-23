@@ -16,6 +16,16 @@ from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 
+def task_dir_line(task_cwd: str | None, work_id: str | None) -> str:
+    """The line telling a reader where a spawn was told to edit; shared by every spawn header."""
+
+    task_line = f"Spawn is instructed to implement in this task dir: {task_cwd}"
+    work_value = (work_id or "").strip()
+    if work_value:
+        task_line += f"  (work: {work_value})"
+    return task_line
+
+
 def _empty_template_vars() -> dict[str, str]:
     return {}
 
@@ -933,11 +943,7 @@ class SpawnDetailOutput(BaseModel):
         return self.task_cwd != self.authority_root
 
     def _task_dir_line(self) -> str:
-        task_line = f"Spawn is instructed to implement in this task dir: {self.task_cwd}"
-        work_value = (self.work_id or "").strip()
-        if work_value:
-            task_line += f"  (work: {work_value})"
-        return task_line
+        return task_dir_line(self.task_cwd, self.work_id)
 
     def to_cli_wire(self) -> dict[str, object]:
         """Project slim JSON shape for wire serialization. Omits internal fields."""
@@ -1497,4 +1503,5 @@ __all__ = [
     "SpawnWaitMultiOutput",
     "build_goal_contract_preview",
     "normalize_goal",
+    "task_dir_line",
 ]
