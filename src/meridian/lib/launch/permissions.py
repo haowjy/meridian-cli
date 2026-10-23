@@ -61,7 +61,6 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
     _prefix("meridian kg check"),
     _prefix("meridian kg graph"),
     _prefix("meridian mermaid check"),
-    _prefix("meridian models list"),
     _prefix("meridian qi check"),
     _prefix("meridian qi graph"),
     _prefix("meridian qi list"),
@@ -89,7 +88,6 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
     _prefix("meridian work sessions"),
     _prefix("meridian work show"),
     _exact("meridian work task-dir"),
-    _prefix("meridian workspace list"),
 )
 
 _SPAWN_COMMANDS: tuple[PlatformCommand, ...] = (_prefix("meridian spawn"),)
