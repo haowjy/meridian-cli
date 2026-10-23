@@ -17,13 +17,12 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
+from meridian.lib.core.caller_boundary import CallerBoundary, CallerBoundaryCheck
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
-from meridian.lib.core.delegation_floor import DelegationFloor, DelegationFloorCheck
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.sandbox_boundary import refuse_sandboxed_spawn_launch
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -299,12 +298,12 @@ def _start_spawn_creation_boundary(
     dry_run: bool,
     requested_env: tuple[str, ...],
     passthrough_args: tuple[str, ...],
-) -> DelegationFloorCheck:
+) -> CallerBoundaryCheck:
     """Run import-cheap launch guards before any operation-specific state access."""
 
-    refuse_sandboxed_spawn_launch(dry_run=dry_run)
-    return DelegationFloorCheck.from_environment(
+    return CallerBoundaryCheck.from_environment(
         requested_env,
+        dry_run=dry_run,
         passthrough_args=passthrough_args,
     )
 
@@ -315,7 +314,7 @@ def _prepare_spawn_create(
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
     prepared: RuntimeWriteContext | None,
-    floor_check: DelegationFloorCheck | None,
+    floor_check: CallerBoundaryCheck | None,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
     if floor_check is None:
@@ -423,7 +422,7 @@ def _prepare_spawn_create(
     floor_check.enforce_passthrough_args(artifacts.request.extra_args)
     resolved_policy = artifacts.request.execution_policy
     floor_check.enforce(
-        DelegationFloor.from_policy(
+        CallerBoundary.from_values(
             sandbox=resolved_policy.sandbox,
             approval=resolved_policy.approval,
             has_spawn_capability=artifacts.prepared.has_spawn_capability,
@@ -451,7 +450,7 @@ def _prepare_spawn_create_with_expected_failures(
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
     prepared: RuntimeWriteContext | None,
-    floor_check: DelegationFloorCheck | None,
+    floor_check: CallerBoundaryCheck | None,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
     try:
@@ -473,7 +472,7 @@ def _run_spawn_create_preparation(
     ctx: RuntimeContext | None,
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
-    floor_check: DelegationFloorCheck | None = None,
+    floor_check: CallerBoundaryCheck | None = None,
 ) -> SpawnCreatePreparation | SpawnActionOutput:
     failure_payload = [payload]
     return run_pre_init_boundary(

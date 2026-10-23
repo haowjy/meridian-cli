@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.caller_boundary import CALLER_BOUNDARY_ENV, CallerBoundary
 from meridian.lib.core.context_ref import SpawnContextRef, context_ref_values
-from meridian.lib.core.delegation_floor import DELEGATION_FLOOR_ENV, DelegationFloor
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import (
     HarnessRegistry,
@@ -85,8 +85,7 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     )
     monkeypatch.setenv("MERIDIAN_IGNORE_DIRENV", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-direnv-key")
-    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[ancestor]")
-    monkeypatch.setenv(DELEGATION_FLOOR_ENV, "inherited-floor-must-not-survive")
+    monkeypatch.setenv(CALLER_BOUNDARY_ENV, "inherited-boundary-must-not-survive")
     monkeypatch.setattr(context_module, "current_pid_namespace", lambda: launcher_namespace)
     runtime = build_primary_launch_runtime(project_root=tmp_path)
     # A captured policy must not change when the ambient input disappears.
@@ -106,15 +105,10 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     env = preview.binding.environment.final_env
     expected = override is not False
     assert env["MERIDIAN_IGNORE_DIRENV"] == str(expected).lower()
-    if launcher_namespace is None:
-        assert "_MERIDIAN_LAUNCHER_PID_NAMESPACE" not in env
-    else:
-        assert env["_MERIDIAN_LAUNCHER_PID_NAMESPACE"] == launcher_namespace
-    floor = DelegationFloor.from_env_value(env[DELEGATION_FLOOR_ENV])
-    assert floor == DelegationFloor.from_policy(
-        sandbox="default",
-        approval="default",
-        has_spawn_capability=False,
+    boundary = CallerBoundary.from_env_value(env[CALLER_BOUNDARY_ENV])
+    assert boundary == CallerBoundary.from_policy(
+        preview.binding.spec.permission_policy,
+        pid_namespace=launcher_namespace,
     )
     assert ("ANTHROPIC_API_KEY" not in env) == expected
 
@@ -250,8 +244,8 @@ def test_primary_launch_injects_bundle_inventory(
     assert f"`meridian spawn -a {peer_name}`" in text
     assert "SKILLS" not in text
     assert f"{skill_name}: {skill_description}" not in text
-    floor = DelegationFloor.from_env_value(
-        preview.binding.environment.final_env[DELEGATION_FLOOR_ENV]
+    floor = CallerBoundary.from_env_value(
+        preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
     )
     assert floor.has_spawn_capability is True
 

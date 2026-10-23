@@ -15,7 +15,7 @@ from meridian.cli.bootstrap import (
 from meridian.cli.mode import extract_forced_render_mode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
-from meridian.lib.core.sandbox_boundary import refuse_sandboxed_spawn_launch
+from meridian.lib.core.caller_boundary import refuse_sandboxed_spawn_launch
 from meridian.lib.platform import IS_WINDOWS
 
 

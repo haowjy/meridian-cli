@@ -12,12 +12,12 @@ from pathlib import Path
 import pytest
 from structlog.testing import capture_logs
 
-import meridian.lib.core.sandbox_boundary as sandbox_boundary
+import meridian.lib.core.caller_boundary as caller_boundary
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.prepare as spawn_prepare
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
+from meridian.lib.core.caller_boundary import CALLER_BOUNDARY_ENV, CallerBoundary
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.delegation_floor import DELEGATION_FLOOR_ENV, DelegationFloor
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch import bundle_adapter
@@ -39,8 +39,8 @@ def _set_delegation_floor(
     has_spawn_capability: bool = True,
 ) -> None:
     monkeypatch.setenv(
-        DELEGATION_FLOOR_ENV,
-        DelegationFloor.from_policy(
+        CALLER_BOUNDARY_ENV,
+        CallerBoundary.from_values(
             sandbox=sandbox,
             approval=approval,
             has_spawn_capability=has_spawn_capability,
@@ -330,8 +330,16 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
 def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-    monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+    monkeypatch.setenv(
+        CALLER_BOUNDARY_ENV,
+        CallerBoundary.from_values(
+            sandbox="workspace-write",
+            approval="default",
+            has_spawn_capability=True,
+            pid_namespace="pid:[host]",
+        ).to_env_value(),
+    )
+    monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
 
     result = spawn_api.spawn_create_sync(SpawnCreateInput(prompt="run"))
 
@@ -348,10 +356,18 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
 def test_spawn_create_skips_pid_namespace_check_without_procfs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-    monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: None)
+    monkeypatch.setenv(
+        CALLER_BOUNDARY_ENV,
+        CallerBoundary.from_values(
+            sandbox="workspace-write",
+            approval="default",
+            has_spawn_capability=True,
+            pid_namespace="pid:[host]",
+        ).to_env_value(),
+    )
+    monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: None)
 
-    sandbox_boundary.refuse_sandboxed_spawn_launch(dry_run=False)
+    caller_boundary.refuse_sandboxed_spawn_launch(dry_run=False)
 
 
 @pytest.mark.parametrize(
@@ -581,7 +597,7 @@ def test_spawn_create_without_delegation_floor_does_not_clamp_environment(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    monkeypatch.delenv(DELEGATION_FLOOR_ENV, raising=False)
+    monkeypatch.delenv(CALLER_BOUNDARY_ENV, raising=False)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",

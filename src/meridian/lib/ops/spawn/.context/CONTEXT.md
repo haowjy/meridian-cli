@@ -3,14 +3,14 @@
 ## Spawn Creation Boundary
 
 `spawn_create_sync()`, continue, and fork share one preparation path. It inspects
-authority and checks for a launcher-owned delegation floor before write bootstrap. With
-a floor, it composes the resolved launch policy read-only, enforces the floor, and only
+authority and checks the launcher-owned caller boundary before write bootstrap. With
+a boundary, it composes the resolved launch policy read-only, enforces the floor, and only
 then calls `prepare_for_runtime_write()`. Top-level launches have no floor and retain
 eager write bootstrap. Dry-run binds its preview after the same policy check. Continue
 performs its state sweep after preparation succeeds; fork reuses the prepared artifacts
 for its cross-harness guard.
 
-The import-cheap boundary rejects a no-capability caller, direct sensitive environment
+The caller boundary rejects a no-capability caller, direct sensitive environment
 keys, and all harness-native passthrough arguments before source-state reads. Passthrough
 is all-or-nothing under a floor because each harness owns native flags that can supersede
 Meridian's resolved sandbox or approval arguments.

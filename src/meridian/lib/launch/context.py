@@ -32,13 +32,16 @@ from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
+from meridian.lib.core.caller_boundary import (
+    CALLER_BOUNDARY_ENV,
+    CallerBoundary,
+    current_pid_namespace,
+)
 from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.context_ref import ContextRef, render_context_refs
-from meridian.lib.core.delegation_floor import DELEGATION_FLOOR_ENV, DelegationFloor
 from meridian.lib.core.execution_policy import NativeConfig
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.core.sandbox_boundary import LAUNCHER_PID_NAMESPACE_ENV
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import bind_launch_spec, get_harness_bundle
@@ -57,7 +60,6 @@ from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
 from meridian.lib.platform import IS_POSIX
-from meridian.lib.platform.pid_namespace import current_pid_namespace
 from meridian.lib.safety.policy import EnforcementReport, PermissionPolicy, build_permission_policy
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
@@ -1821,13 +1823,9 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
-    launcher_pid_namespace = current_pid_namespace()
-    if launcher_pid_namespace is not None:
-        child_context_env[LAUNCHER_PID_NAMESPACE_ENV] = launcher_pid_namespace
-    child_context_env[DELEGATION_FLOOR_ENV] = DelegationFloor.from_policy(
-        sandbox=permission_policy.sandbox,
-        approval=permission_policy.approval,
-        has_spawn_capability=permission_policy.has_spawn_capability,
+    child_context_env[CALLER_BOUNDARY_ENV] = CallerBoundary.from_policy(
+        permission_policy,
+        pid_namespace=current_pid_namespace(),
     ).to_env_value()
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     resolved_agent = (resolved_request.agent or "").strip()

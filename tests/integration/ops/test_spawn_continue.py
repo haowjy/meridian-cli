@@ -11,9 +11,9 @@ from typing import Any, cast
 
 import pytest
 
-import meridian.lib.core.sandbox_boundary as sandbox_boundary
+import meridian.lib.core.caller_boundary as caller_boundary
 import meridian.lib.ops.spawn.api as spawn_api
-from meridian.lib.core.delegation_floor import DELEGATION_FLOOR_ENV, DelegationFloor
+from meridian.lib.core.caller_boundary import CALLER_BOUNDARY_ENV, CallerBoundary
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
@@ -147,8 +147,16 @@ def test_spawn_continue_requires_recorded_session(tmp_path: Path) -> None:
 def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-    monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+    monkeypatch.setenv(
+        CALLER_BOUNDARY_ENV,
+        CallerBoundary.from_values(
+            sandbox="workspace-write",
+            approval="default",
+            has_spawn_capability=True,
+            pid_namespace="pid:[host]",
+        ).to_env_value(),
+    )
+    monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
 
     with pytest.raises(ValueError, match="standalone shell command"):
         spawn_api.spawn_continue_sync(
@@ -162,8 +170,8 @@ def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_r
     operation: str,
 ) -> None:
     monkeypatch.setenv(
-        DELEGATION_FLOOR_ENV,
-        DelegationFloor.from_policy(
+        CALLER_BOUNDARY_ENV,
+        CallerBoundary.from_values(
             sandbox="read-only",
             approval="default",
             has_spawn_capability=False,
@@ -207,8 +215,8 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
         launch_policy_snapshot=snapshot,
     )
     monkeypatch.setenv(
-        DELEGATION_FLOOR_ENV,
-        DelegationFloor.from_policy(
+        CALLER_BOUNDARY_ENV,
+        CallerBoundary.from_values(
             sandbox="workspace-write",
             approval="default",
             has_spawn_capability=True,

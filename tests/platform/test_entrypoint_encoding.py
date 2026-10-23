@@ -10,7 +10,7 @@ import types
 import pytest
 
 import meridian.cli.entrypoint as entrypoint_module
-import meridian.lib.core.sandbox_boundary as sandbox_boundary
+import meridian.lib.core.caller_boundary as caller_boundary
 
 
 class _FakeTextIOWrapper(io.TextIOWrapper):
@@ -169,8 +169,16 @@ def test_entrypoint_refuses_sandboxed_spawn_before_full_cli_import(
     sys.modules["meridian.cli.main"] = fake_main_module
 
     try:
-        monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-        monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+        monkeypatch.setenv(
+            "_MERIDIAN_CALLER_BOUNDARY",
+            caller_boundary.CallerBoundary.from_values(
+                sandbox="workspace-write",
+                approval="default",
+                has_spawn_capability=True,
+                pid_namespace="pid:[host]",
+            ).to_env_value(),
+        )
+        monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
         monkeypatch.setattr(sys, "argv", ["meridian", *args])
 
         with pytest.raises(SystemExit) as caught:
@@ -199,8 +207,16 @@ def test_entrypoint_allows_sandboxed_spawn_dry_run(
     sys.modules["meridian.cli.main"] = fake_main_module
 
     try:
-        monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-        monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+        monkeypatch.setenv(
+            "_MERIDIAN_CALLER_BOUNDARY",
+            caller_boundary.CallerBoundary.from_values(
+                sandbox="workspace-write",
+                approval="default",
+                has_spawn_capability=True,
+                pid_namespace="pid:[host]",
+            ).to_env_value(),
+        )
+        monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
         monkeypatch.setattr(
             sys,
             "argv",
@@ -226,8 +242,16 @@ def test_entrypoint_allows_sandboxed_spawn_help(
     sys.modules["meridian.cli.main"] = fake_main_module
 
     try:
-        monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-        monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+        monkeypatch.setenv(
+            "_MERIDIAN_CALLER_BOUNDARY",
+            caller_boundary.CallerBoundary.from_values(
+                sandbox="workspace-write",
+                approval="default",
+                has_spawn_capability=True,
+                pid_namespace="pid:[host]",
+            ).to_env_value(),
+        )
+        monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
         monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "--help"])
 
         entrypoint_module.main()
@@ -259,8 +283,16 @@ def test_entrypoint_leaves_sandboxed_spawn_subcommands_to_full_dispatch(
     sys.modules["meridian.cli.main"] = fake_main_module
 
     try:
-        monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-        monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+        monkeypatch.setenv(
+            "_MERIDIAN_CALLER_BOUNDARY",
+            caller_boundary.CallerBoundary.from_values(
+                sandbox="workspace-write",
+                approval="default",
+                has_spawn_capability=True,
+                pid_namespace="pid:[host]",
+            ).to_env_value(),
+        )
+        monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
         monkeypatch.setattr(sys, "argv", ["meridian", *args])
 
         entrypoint_module.main()
@@ -276,8 +308,16 @@ def test_entrypoint_leaves_sandboxed_spawn_subcommands_to_full_dispatch(
 def test_entrypoint_refuses_sandboxed_positional_prompt_launch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
-    monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+    monkeypatch.setenv(
+        "_MERIDIAN_CALLER_BOUNDARY",
+        caller_boundary.CallerBoundary.from_values(
+            sandbox="workspace-write",
+            approval="default",
+            has_spawn_capability=True,
+            pid_namespace="pid:[host]",
+        ).to_env_value(),
+    )
+    monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
     monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "review?"])
 
     with pytest.raises(SystemExit) as caught:
