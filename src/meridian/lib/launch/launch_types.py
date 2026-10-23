@@ -68,6 +68,8 @@ class ClaudeRuntimeResolution:
 
     plugin_dirs: tuple[str, ...] = ()
     warnings: tuple[CompositionWarning, ...] = ()
+    # Populated from the final child environment by Claude's ``bind_spec`` port;
+    # empty on a spec that did not pass through bind.
     settings_allows: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 

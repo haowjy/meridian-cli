@@ -44,13 +44,10 @@ from meridian.lib.harness.claude_boundary import (
 )
 from meridian.lib.harness.claude_idle import detect_ttl
 from meridian.lib.harness.claude_inbox import post_primary_message
-from meridian.lib.harness.claude_launch_support import (
-    ensure_claude_session_accessible,
-    read_claude_settings_allows,
-)
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
+    ensure_claude_session_accessible,
     reconcile_tui_trampoline_session_id,
     resolve_claude_config_root,
     resolve_claude_native_session_file,
@@ -58,6 +55,7 @@ from meridian.lib.harness.claude_sessions import (
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
 )
+from meridian.lib.harness.claude_settings import read_claude_settings_allows
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR

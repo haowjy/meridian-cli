@@ -4,8 +4,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.harness.claude_launch_support import ensure_claude_session_accessible
-from meridian.lib.harness.claude_sessions import project_slug
+from meridian.lib.harness.claude_sessions import ensure_claude_session_accessible, project_slug
 
 
 @pytest.mark.parametrize("same_config", [False, True])

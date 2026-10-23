@@ -87,8 +87,7 @@ from .composition import (
 )
 from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
 from .cwd import LaunchDirectoryContext
-from .env import build_env_plan, undo_direnv
-from .env import merge_env_overrides as _merge_env_overrides
+from .env import build_env_plan, merge_env_overrides, undo_direnv
 from .permissions import launch_permission_rules
 from .policies import (
     ModelSelectionContext,
@@ -371,19 +370,6 @@ def resolve_task_context_inputs(
     return TaskContextInputs(
         reference_items=loaded_references,
         prior_output=sanitize_prior_output(prior_output) if prior_output.strip() else "",
-    )
-
-
-def merge_env_overrides(
-    *,
-    plan_overrides: Mapping[str, str],
-    runtime_overrides: Mapping[str, str],
-) -> dict[str, str]:
-    """Merge launch env overrides with `MERIDIAN_*` leak checks."""
-
-    return _merge_env_overrides(
-        plan_overrides=plan_overrides,
-        runtime_overrides=runtime_overrides,
     )
 
 
@@ -1927,7 +1913,6 @@ __all__ = [
     "build_launch_policy_snapshot",
     "compile_prepared_policy_surface",
     "materialize_launch_artifacts",
-    "merge_env_overrides",
     "normalize_usage_model_family",
     "prepare_launch_surface",
     "prepare_prompt_payload",
