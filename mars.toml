@@ -4,8 +4,8 @@ url = "https://github.com/haowjy/meridian-dev-workflow"
 [dependencies.meridian-prompter]
 url = "https://github.com/haowjy/meridian-prompter"
 
-[dependencies.meridian-base]
-url = "https://github.com/haowjy/meridian-base"
+# [dependencies.meridian-base]
+# url = "https://github.com/haowjy/meridian-base"
 
 [settings]
 targets = [
