@@ -10,10 +10,13 @@ materialization path. Dry-run binds its preview without materializing. Continue
 performs its state sweep after preparation succeeds; fork reuses the prepared artifacts
 for its cross-harness guard.
 
-The caller boundary rejects a no-capability caller, direct sensitive environment
-keys, and all harness-native passthrough arguments before source-state reads. Passthrough
-is all-or-nothing under a floor because each harness owns native flags that can supersede
-Meridian's resolved sandbox or approval arguments.
+The caller boundary rejects a no-capability caller and explicit harness-native
+passthrough arguments before source-state reads. Continue and fork can discover
+additional passthrough arguments in the resolved source launch snapshot; they run
+the same `CallerBoundaryCheck` again immediately after source resolution and before
+model or policy composition. Passthrough is all-or-nothing under a floor because
+each harness owns native flags that can supersede Meridian's resolved sandbox or
+approval arguments.
 
 This ordering is security-sensitive: the standalone harness escape runs `meridian`
 outside the native sandbox, so policy refusal must precede identity creation, state

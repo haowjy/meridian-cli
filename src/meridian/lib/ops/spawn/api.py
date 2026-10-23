@@ -313,13 +313,19 @@ def _failure_create_input(
 
 def _run_spawn_creation_boundary(
     payload: SpawnCreateInput | SpawnContinueInput | SpawnForkInput,
+    *,
+    existing_check: CallerBoundaryCheck | None = None,
+    replayed_passthrough_args: tuple[str, ...] = (),
 ) -> CallerBoundaryCheck | SpawnActionOutput:
-    """Build the caller check first and present every refusal as pre-init failure."""
+    """Run a caller-boundary phase and present every refusal as pre-init failure."""
 
     failure_payload = _failure_create_input(payload)
 
     def _build() -> CallerBoundaryCheck:
         try:
+            if existing_check is not None:
+                existing_check.enforce_passthrough_args(replayed_passthrough_args)
+                return existing_check
             return CallerBoundaryCheck.from_environment(
                 dry_run=payload.dry_run,
                 passthrough_args=payload.passthrough_args,
@@ -407,7 +413,6 @@ def _prepare_spawn_create(
         ctx=resolved_context,
         models_readonly=True,
     )
-    floor_check.enforce_passthrough_args(artifacts.request.extra_args)
     floor_check.enforce(artifacts.request.execution_policy.sandbox)
     if payload.dry_run:
         artifacts = bind_create_payload_preview(
@@ -2258,6 +2263,17 @@ def spawn_fork_sync(
         normalized_source_ref,
         runtime_root=runtime_root,
     )
+    source_snapshot = resolved_reference.source_launch_policy_snapshot
+    source_check = _run_spawn_creation_boundary(
+        payload,
+        existing_check=floor_check,
+        replayed_passthrough_args=(
+            source_snapshot.extra_args if source_snapshot is not None else ()
+        ),
+    )
+    if isinstance(source_check, SpawnActionOutput):
+        return source_check
+    floor_check = source_check
     if resolved_reference.missing_harness_session_id:
         raise NativeSessionUnavailable(normalized_source_ref, "unbound")
 
@@ -2361,6 +2377,17 @@ def spawn_continue_sync(
         runtime_root=runtime_root,
         harness_hint=payload.harness,
     )
+    source_snapshot = resolved_reference.source_launch_policy_snapshot
+    source_check = _run_spawn_creation_boundary(
+        payload,
+        existing_check=floor_check,
+        replayed_passthrough_args=(
+            source_snapshot.extra_args if source_snapshot is not None else ()
+        ),
+    )
+    if isinstance(source_check, SpawnActionOutput):
+        return _with_command(source_check, "spawn.continue")
+    floor_check = source_check
     if resolved_reference.missing_harness_session_id:
         raise NativeSessionUnavailable(resolved_spawn_id, "unbound")
 
