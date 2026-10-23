@@ -15,7 +15,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.state.spawn_aggregate import published_artifact_lock
-from meridian.lib.state.spawn_signals import consume_resident_signals
+from meridian.lib.state.spawn_signals import SpawnSignalKind, consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -144,11 +144,12 @@ class _HoldProfile:
         runtime_root: Path,
         spawn_id: SpawnId,
         backend: ResidentBackendControl | None,
-        send_nudge: Callable[[str], Awaitable[None]] | None,
+        send_nudge: Callable[[str], Awaitable[None]],
         deadline_seconds: float,
         poll_seconds: float,
         rearm_budget: int | None,
         clock: Callable[[], float],
+        completion_signals_available: bool = True,
     ) -> None:
         self._runtime_root = runtime_root
         self._spawn_id = spawn_id
@@ -160,7 +161,11 @@ class _HoldProfile:
         )
         self._backend = backend
         self._send_nudge = send_nudge
-        self._handshake_available = send_nudge is not None
+        self._accepted_signals: frozenset[SpawnSignalKind] = (
+            frozenset({"done", "rearm"})
+            if completion_signals_available
+            else frozenset()
+        )
         self._clock = clock
         self._confirmation_grace_seconds = poll_seconds
         self._awaiting_done = False
@@ -187,8 +192,7 @@ class _HoldProfile:
         trigger: AssessmentTrigger,
     ) -> CompletionDirectives:
         del trigger
-        if not self._handshake_available:
-            self._done_requested = False
+        if not self._accepted_signals:
             return CompletionDirectives()
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
         if state.candidate is None:
@@ -241,18 +245,10 @@ class _HoldProfile:
         return (
             state.candidate is not None
             and state.assessment is not None
-            and (
-                (
-                    self._confirmation_failed
-                    and state.assessment.disposition == "unknown"
-                )
-                or (
-                    state.assessment.disposition == "blocked"
-                    and any(
-                        blocker.source == "persisted_descendant"
-                        for blocker in state.assessment.blockers
-                    )
-                )
+            and state.assessment.disposition == "blocked"
+            and any(
+                blocker.source == "persisted_descendant"
+                for blocker in state.assessment.blockers
             )
         )
 
@@ -261,8 +257,6 @@ class _HoldProfile:
         return self._confirmation_grace_at
 
     async def send_nudge(self) -> None:
-        if self._send_nudge is None:
-            raise RuntimeError("completion handshake is unavailable")
         self._confirmation_requested = True
         self._confirmation_failed = False
         self._confirmation_grace_at = self._clock() + self._confirmation_grace_seconds
@@ -335,7 +329,8 @@ class _HoldProfile:
                         for blocker in context.assessment.blockers
                     )
                 ):
-                    self._confirmation_failed = True
+                    if self._confirmation_requested:
+                        self._confirmation_failed = True
                     self._confirmation_grace_at = None
                     self._enter_wait()
                     return ProfileDecision(action="wait", emit_turn_boundary=True)
@@ -362,7 +357,7 @@ class _HoldProfile:
         if context.assessment.disposition == "unknown":
             self._enter_wait()
             return ProfileDecision(action="wait", emit_turn_boundary=True)
-        if self._confirmation_requested or self._confirmation_settled:
+        if not self._accepted_signals or self._confirmation_requested:
             if context.assessment.disposition == "ready":
                 return self._propose_success(context.candidate or outcome, context.now)
             self._enter_wait()
@@ -371,7 +366,7 @@ class _HoldProfile:
         return ProfileDecision(
             action="wait",
             emit_turn_boundary=True,
-            nudge=self._handshake_available,
+            nudge=True,
         )
 
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
@@ -419,7 +414,7 @@ class _HoldProfile:
         if context.assessment.disposition == "unknown":
             return ProfileDecision(action="wait")
         if (
-            self._handshake_available
+            self._accepted_signals
             and not self._confirmation_requested
             and not self._rearmed
         ):
@@ -443,10 +438,14 @@ class _HoldProfile:
     @property
     def _confirmation_settled(self) -> bool:
         return (
-            not self._handshake_available
+            not self._accepted_signals
             or self._confirmation_failed
             or self._confirmation_turn_started
         )
+
+    @property
+    def accepted_signals(self) -> frozenset[SpawnSignalKind]:
+        return self._accepted_signals
 
     def _enter_wait(self) -> None:
         self.set_awaiting_done(True)
@@ -556,7 +555,8 @@ class ResidentDrainCoordinator:
         *,
         runtime_root: Path,
         spawn_id: SpawnId,
-        send_nudge: Callable[[str], Awaitable[None]] | None,
+        send_nudge: Callable[[str], Awaitable[None]],
+        completion_signals_available: bool,
         backend: ResidentBackendControl | None,
         native: NativeTaskSource | None,
         deadline_seconds: float,
@@ -586,6 +586,7 @@ class ResidentDrainCoordinator:
             spawn_id=spawn_id,
             backend=backend,
             send_nudge=send_nudge,
+            completion_signals_available=completion_signals_available,
             deadline_seconds=deadline_seconds,
             poll_seconds=resolved_poll,
             rearm_budget=rearm_budget,
@@ -601,6 +602,10 @@ class ResidentDrainCoordinator:
             clock=clock,
         )
         return cls(coordinator=coordinator, profile=profile)
+
+    @property
+    def accepted_signals(self) -> frozenset[SpawnSignalKind]:
+        return self._profile.accepted_signals
 
     async def start(self) -> None:
         await self._coordinator.start()

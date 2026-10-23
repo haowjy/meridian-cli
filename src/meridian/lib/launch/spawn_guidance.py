@@ -79,10 +79,8 @@ def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
   itself can run in your native background execution to keep working
   while it blocks — it's the launch, not the wait, that must never be
   background-wrapped. Un-waited background spawns are lost.
-- Before a child closes, Meridian may ask it to confirm completion; its previous
-  reply is kept as the report. If final, run `meridian spawn done` and end the turn;
-  if more work remains (including waiting on background tasks or spawns), run
-  `meridian spawn rearm` first, then finish with a complete report.
+- Before a child closes, Meridian may ask it to confirm completion; follow the
+  confirmation message's instructions.
 - Playbook and full flags:  meridian spawn -h"""
 
 

@@ -96,8 +96,10 @@ descendants for every hold: `unknown` descendants dominate, otherwise either sou
 blockers hold. Native tasks and the pending follow-up result are diagnostic blockers,
 not policy flags carried through assessments.
 The connection also declares whether the launched child can write Meridian's completion
-signals. A hold without that channel still applies the same evidence and deadline policy,
-but accepts a ready candidate without a confirmation nudge. Pi RPC gets
+signals. `ResidentDrainCoordinator.build` turns that capability into the hold's accepted
+signals, which the factory copies into the drain plan. A hold without that channel still
+applies the same evidence and deadline policy, but accepts a ready candidate without a
+confirmation nudge. Pi RPC gets
 `PiDrainCoordinator` plus disk-watcher aux wakes. Plain streaming harnesses
 intentionally run with
 `DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence

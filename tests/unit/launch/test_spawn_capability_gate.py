@@ -60,8 +60,8 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     contract = next(block for block in blocks if block.name == "spawn-contract")
     assert contract.content.count(CONTRACT_MARKER) == 1
     assert "run_in_background" in contract.content
-    assert "reply is kept as the report" in contract.content
-    assert "`meridian spawn rearm` first" in contract.content
+    assert "confirmation message's instructions" in contract.content
+    assert "reply is kept as the report" not in contract.content
 
 
 def test_spawn_capability_requires_inventory_and_honors_explicit_disable() -> None:

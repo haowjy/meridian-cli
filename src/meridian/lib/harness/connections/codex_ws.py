@@ -66,7 +66,6 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
-from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.semantics import (
     EventSemantics,
     PrimaryEventScope,
@@ -537,10 +536,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def completion_signals_available(self) -> bool:
         spec = self._launch_spec
-        if spec is None:
-            return True
-        permissions, _ = compile_codex_permissions(spec)
-        return permissions.sandbox_mode != "read-only"
+        assert spec is not None, "Codex launch spec is not initialized"
+        return spec.permission_policy.sandbox != "read-only"
 
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy

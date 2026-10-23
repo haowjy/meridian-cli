@@ -1133,10 +1133,7 @@ def _signal_refusal(
         )
     if accepted is not None and kind not in accepted:
         if not accepted:
-            return (
-                f"Spawn {label} does not read completion signals, so nothing reads "
-                f"`meridian spawn {kind}`."
-            )
+            return f"Spawn {label} accepts no completion signals."
         commands = " or ".join(f"`meridian spawn {item}`" for item in sorted(accepted))
         return f"Spawn {label} does not consume {kind} signals; it accepts only {commands}."
     if kind == "rearm":
