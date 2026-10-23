@@ -6,6 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Sandboxed agents receive Meridian's state roots and exact/prefix command grants automatically. Claude profiles that can spawn may launch children through a standalone `meridian spawn ...` command outside the Bash sandbox; compound sandboxed launches fail with corrective guidance instead of leaving dead children.
+- Before constrained Codex launches, Meridian maintains a user-wide `$CODEX_HOME/rules/meridian.rules` escape for standalone `meridian spawn ...` commands, so nested spawns and completion signals work under `read-only` and `workspace-write`.
+
+### Fixed
+- Read-only Codex spawns once again receive the completion confirmation turn now that `meridian spawn done` can write its signal outside the sandbox.
 
 ## [0.12.6] - 2026-10-23
 

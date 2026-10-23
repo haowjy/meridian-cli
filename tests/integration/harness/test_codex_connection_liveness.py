@@ -94,6 +94,10 @@ async def _collect_events(connection: CodexConnection) -> list[RawHarnessEvent]:
     return [event async for event in connection.events()]
 
 
+def test_codex_completion_signals_are_unconditionally_available() -> None:
+    assert CodexConnection().completion_signals_available is True
+
+
 def _drain_raw_event_queue(
     connection: CodexConnection,
 ) -> list[RawHarnessEvent | None]:

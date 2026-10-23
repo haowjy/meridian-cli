@@ -38,6 +38,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "prompt",
         "prompt_file_path",
         "claude_runtime",
+        "codex_runtime",
         "user_turn_content",
     }
 )

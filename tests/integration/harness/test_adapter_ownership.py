@@ -13,12 +13,15 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_sessions import candidate_claude_project_dirs, project_slug
-from meridian.lib.harness.codex import CodexAdapter
+from meridian.lib.harness.codex import CodexAdapter, bind_codex_spec
+from meridian.lib.harness.codex_rules import MERIDIAN_RULES_FILE_CONTENT
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.pi_runtime_resolver import PiLaunchRole, PiRuntimeResolution
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.safety.policy import PermissionPolicy
 
 
 @pytest.fixture(autouse=True)
@@ -398,6 +401,72 @@ def test_codex_adapter_uses_codex_home_override(
         is False
     )
     assert infer_harness_from_untracked_session_ref(project_root, override_session_id) == "codex"
+
+
+def test_codex_bind_rewrites_owned_rules_file_and_skips_matching_content(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import meridian.lib.harness.codex_rules as codex_rules
+
+    codex_home = tmp_path / "codex-home"
+    rules_path = codex_home / "rules" / "meridian.rules"
+    rules_path.parent.mkdir(parents=True)
+    rules_path.write_text("stale user content\n", encoding="utf-8")
+    spec = ResolvedLaunchSpec(
+        permission_policy=PermissionPolicy(sandbox="workspace-write")
+    )
+
+    preview = bind_codex_spec(
+        spec,
+        {"CODEX_HOME": str(codex_home)},
+        tmp_path,
+        dry_run=True,
+    )
+    assert rules_path.read_text(encoding="utf-8") == "stale user content\n"
+    assert preview.codex_runtime.rules_file_path is None
+
+    bound = bind_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
+
+    assert rules_path.read_text(encoding="utf-8") == MERIDIAN_RULES_FILE_CONTENT
+    assert bound.codex_runtime.rules_file_path == rules_path.as_posix()
+    assert bound.codex_runtime.rules_file_error is None
+
+    def _unexpected_write(_path: Path, _content: str, *, durable: bool = True) -> None:
+        _ = durable
+        raise AssertionError("matching rules file should not be rewritten")
+
+    monkeypatch.setattr(codex_rules, "atomic_write_text", _unexpected_write)
+    rebound = bind_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
+    assert rebound.codex_runtime.rules_file_error is None
+
+
+def test_codex_bind_reports_rules_write_failure_without_refusing_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import meridian.lib.harness.codex_rules as codex_rules
+    from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+
+    def _fail_write(_path: Path, _content: str, *, durable: bool = True) -> None:
+        _ = durable
+        raise PermissionError("rules directory is read-only")
+
+    monkeypatch.setattr(codex_rules, "atomic_write_text", _fail_write)
+    spec = ResolvedLaunchSpec(permission_policy=PermissionPolicy(sandbox="read-only"))
+
+    bound = bind_codex_spec(
+        spec,
+        {"CODEX_HOME": str(tmp_path / "unwritable-codex-home")},
+        tmp_path,
+    )
+
+    assert bound.codex_runtime.rules_file_error == "rules directory is read-only"
+    _, report = compile_codex_permissions(bound)
+    sandbox_line = next(line for line in report if line.element == "sandbox: read-only")
+    assert sandbox_line.status == "partial"
+    assert "could not write" in sandbox_line.note
+    assert "remains inside Codex's sandbox" in sandbox_line.note
 
 
 def test_opencode_adapter_owns_untracked_session(

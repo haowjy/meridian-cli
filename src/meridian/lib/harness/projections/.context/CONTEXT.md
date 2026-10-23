@@ -170,8 +170,11 @@ Claude maps an exact entry to `Bash(<cmd>)`, and a prefix to both `Bash(<cmd>)` 
 A plain `bash` deny or ask is gated rather than emitted so it cannot shadow the commands;
 a scoped profile deny or ask that covers one still wins and makes the platform line partial.
 Pi's permissions extension receives each command and match kind and evaluates the same exact
-or token-boundary prefix rule. Codex cannot scope its shell and reports the rule
-`unsupported`, including the exact/prefix list it cannot grant.
+or token-boundary prefix rule. Codex cannot scope its shell per launch. Under `read-only` or
+`workspace-write`, its Meridian-owned user rules file grants the whole `meridian spawn`
+prefix outside the sandbox for every session using that Codex home; the compile reports the
+remaining exact/prefix list as unsupported. A rules-file write failure is reported without
+blocking the launch.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
 (`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying

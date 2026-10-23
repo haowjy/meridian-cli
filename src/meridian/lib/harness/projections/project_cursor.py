@@ -39,6 +39,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "appended_system_prompt",
         "agents_payload",
         "claude_runtime",
+        "codex_runtime",
         "prompt_file_path",
         "user_turn_content",
         "report_output_path",

@@ -73,6 +73,14 @@ class ClaudeRuntimeResolution:
     settings_allows: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
+@dataclass(frozen=True)
+class CodexRuntimeResolution:
+    """Per-launch result of projecting Meridian's Codex execpolicy rule."""
+
+    rules_file_path: str | None = None
+    rules_file_error: str | None = None
+
+
 class ResolvedLaunchSpec(BaseModel):
     """Transport-neutral resolved configuration for one harness launch."""
 
@@ -130,6 +138,7 @@ class ResolvedLaunchSpec(BaseModel):
     report_output_path: str | None = None
     base_instructions: str | None = None
     developer_instructions: str | None = None
+    codex_runtime: CodexRuntimeResolution = CodexRuntimeResolution()
 
     # OpenCode only
     skills: tuple[str, ...] = ()

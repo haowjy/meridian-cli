@@ -151,25 +151,60 @@ def _codex_report(
             commands = ", ".join(
                 f"{command.match} {command.command!r}" for command in platform.commands
             )
+            rules_error = spec.codex_runtime.rules_file_error
+            constrained_sandbox = policy.sandbox in {"read-only", "workspace-write"}
+            if constrained_sandbox and rules_error is not None:
+                note = (
+                    "Meridian could not write its Codex rules file, so commands remain subject "
+                    f"to the sandbox ({rules_error}); requested matches: {commands}"
+                )
+            elif constrained_sandbox:
+                note = (
+                    "the Meridian-owned user rules file lets `meridian spawn` run outside "
+                    "Codex's sandbox for every Codex session of this user; other requested "
+                    f"matches remain ordinary shell calls ({commands})"
+                )
+            else:
+                note = (
+                    f"Codex cannot grant shell command matches ({commands}); they run as "
+                    "ordinary shell calls, subject to its sandbox and approval policy"
+                )
             lines.append(
                 ReportLine(
                     platform_element(platform),
-                    "unsupported",
-                    f"Codex cannot grant shell command matches ({commands}); with the shell off "
-                    "they cannot run"
+                    (
+                        "partial"
+                        if constrained_sandbox
+                        and permissions.shell_tool is not False
+                        and rules_error is None
+                        else "unsupported"
+                    ),
+                    "the shell is disabled, so the commands cannot run"
                     if permissions.shell_tool is False
-                    else f"Codex cannot grant shell command matches ({commands}); they run as "
-                    "ordinary shell calls, subject to its sandbox and approval policy",
+                    else note,
                 )
             )
     if permissions.sandbox_mode is not None:
         sandbox_note = f"sandbox_mode={permissions.sandbox_mode}"
-        if policy.sandbox != "danger-full-access":
-            sandbox_note += "; child spawns cannot launch under Codex's sandbox"
+        sandbox_status = "native"
+        if policy.sandbox in {"read-only", "workspace-write"}:
+            rules_error = spec.codex_runtime.rules_file_error
+            rules_path = spec.codex_runtime.rules_file_path or "$CODEX_HOME/rules/meridian.rules"
+            if rules_error is None:
+                sandbox_note += (
+                    "; `meridian spawn` runs outside Codex's sandbox via "
+                    f"{rules_path}, for every Codex session of this user"
+                )
+            else:
+                sandbox_status = "partial"
+                sandbox_note += (
+                    f"; Meridian could not write {rules_path}, so `meridian spawn` remains "
+                    f"inside Codex's sandbox: {rules_error}"
+                )
         lines.append(
             ReportLine(
                 f"sandbox: {policy.sandbox}",
-                "native",
+                sandbox_status,
                 sandbox_note,
             )
         )

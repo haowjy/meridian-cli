@@ -90,6 +90,10 @@ Per-harness commands:
   allowed-tool tails are merged by the permission compile; profile allowlists and
   platform denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
+- **Codex constrained-launch execpolicy:** bind atomically maintains only
+  `$CODEX_HOME/rules/meridian.rules` for `read-only` and `workspace-write` launches. Its
+  `meridian spawn` allow applies to every Codex session using that home. A write failure is
+  reported but does not block launch.
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
 - Pi subprocess/connection: `pi --mode rpc` (JSON-RPC stdio; Pi has no subprocess-only path — the RPC mode is the connection)

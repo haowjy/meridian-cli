@@ -54,6 +54,7 @@ def test_codex_report_names_unsupported_meridian_command_match_forms() -> None:
     spec = _spec(interactive=False).model_copy(
         update={
             "permission_policy": PermissionPolicy(
+                sandbox="workspace-write",
                 platform_rules=(
                     PlatformRule(
                         kind="meridian-commands",
@@ -70,12 +71,13 @@ def test_codex_report_names_unsupported_meridian_command_match_forms() -> None:
     _, report = compile_codex_permissions(spec)
 
     line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
-    assert line.status == "unsupported"
+    assert line.status == "partial"
+    assert "`meridian spawn` run outside Codex's sandbox" in line.note
     assert "exact 'meridian task-dir'" in line.note
     assert "prefix 'meridian spawn list'" in line.note
 
 
-def test_codex_sandbox_report_says_child_spawns_cannot_launch() -> None:
+def test_codex_sandbox_report_describes_user_wide_spawn_escape() -> None:
     from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 
     spec = _spec(interactive=False).model_copy(
@@ -85,4 +87,6 @@ def test_codex_sandbox_report_says_child_spawns_cannot_launch() -> None:
     _, report = compile_codex_permissions(spec)
 
     line = next(item for item in report if item.element == "sandbox: workspace-write")
-    assert "child spawns cannot launch" in line.note
+    assert "`meridian spawn` runs outside Codex's sandbox" in line.note
+    assert "$CODEX_HOME/rules/meridian.rules" in line.note
+    assert "every Codex session of this user" in line.note

@@ -154,6 +154,7 @@ def bind_opencode_spec(
     spec: ResolvedLaunchSpec,
     env: Mapping[str, str],
     child_cwd: Path,
+    dry_run: bool = False,
 ) -> ResolvedLaunchSpec:
     """Resolve the backend version once, at bind, from the launch environment.
 
@@ -164,7 +165,7 @@ def bind_opencode_spec(
     result, so none of them can disagree with another.
     """
 
-    _ = child_cwd
+    _ = child_cwd, dry_run
     return spec.model_copy(
         update={
             "opencode_version": resolve_opencode_version(

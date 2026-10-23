@@ -43,6 +43,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "permission_policy",
         "agents_payload",
         "claude_runtime",
+        "codex_runtime",
         "base_instructions",
         "developer_instructions",
         "harness",

@@ -75,7 +75,7 @@ class HarnessProjectionPorts(Generic[SpecT]):
     permission_report: Callable[[SpecT], EnforcementReport]
     # Resolves the spec's facts that depend on the launch environment or child cwd once at
     # bind, so every projection and the connection read one value.
-    bind_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None
+    bind_spec: Callable[[SpecT, Mapping[str, str], Path, bool], SpecT] | None = None
     managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
 
 
@@ -321,13 +321,14 @@ def bind_launch_spec(
     *,
     env: Mapping[str, str],
     child_cwd: Path,
+    dry_run: bool = False,
 ) -> SpecT:
     """Resolve the spec's launch-context-dependent facts through ``bind_spec``."""
 
     bundle = _require_bundle_spec(harness_id, spec)
     if bundle.projections.bind_spec is None:
         return spec
-    return cast("SpecT", bundle.projections.bind_spec(spec, env, child_cwd))
+    return cast("SpecT", bundle.projections.bind_spec(spec, env, child_cwd, dry_run))
 
 
 def project_subprocess_spec(

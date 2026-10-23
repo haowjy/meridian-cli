@@ -1852,7 +1852,13 @@ def bind_launch_context(
     )
     # Facts that depend on the final launch environment or child cwd are resolved once here;
     # the env projection, argv, report and connection all read the same bound spec.
-    spec = bind_launch_spec(harness.id, spec, env=env, child_cwd=child_cwd)
+    spec = bind_launch_spec(
+        harness.id,
+        spec,
+        env=env,
+        child_cwd=child_cwd,
+        dry_run=bindings.dry_run,
+    )
     env.update(
         harness.project_launch_env(
             spec=spec,

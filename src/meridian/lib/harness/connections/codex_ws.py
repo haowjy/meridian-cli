@@ -533,12 +533,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             begin_followup_turn=self._begin_followup_turn,
         )
 
-    @property
-    def completion_signals_available(self) -> bool:
-        spec = self._launch_spec
-        assert spec is not None, "Codex launch spec is not initialized"
-        return spec.permission_policy.sandbox != "read-only"
-
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 

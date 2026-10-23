@@ -126,9 +126,11 @@ def bind_claude_spec(
     spec: ResolvedLaunchSpec,
     env: Mapping[str, str],
     child_cwd: Path,
+    dry_run: bool = False,
 ) -> ResolvedLaunchSpec:
     """Resolve settings-file allows once from the launch environment and cwd."""
 
+    _ = dry_run
     return spec.model_copy(
         update={
             "claude_runtime": replace(
