@@ -335,7 +335,9 @@ def test_spawn_collect_and_ack_json_contract(
     assert set(delivered) == {"kind", "ids", "text"}
     assert delivered["kind"] == "delivery"
     assert delivered["ids"] == ["p2"]
-    assert "Delivered from the child." in delivered["text"]
+    assert "p2 succeeded" in delivered["text"]
+    assert "Worker: claude-haiku-5-5 (claude)" in delivered["text"]
+    assert "Delivered from the child." not in delivered["text"]
     assert delivered["text"].endswith("meridian spawn show p2")
 
     acked = _run_default_json(project_root, env, "spawn", "ack", "p2")

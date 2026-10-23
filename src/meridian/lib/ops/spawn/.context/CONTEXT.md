@@ -57,10 +57,11 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   letting the collector exit early.
 - An initially ready result returns the ready terminal subset. Otherwise the fixed
   owed set settles together. A final consumption/lease check precedes return.
-- A delivery admits at most 32 results and 64 KiB of valid UTF-8 (`owed.py` applies
-  both limits). `models.render_delivery()` reserves each identity/outcome and
-  `meridian spawn show <id>` lookup before sharing the remaining bytes among report
-  bodies, following Pi's `pi_runtime/.context/delivery-contract.md`.
+- A delivery admits at most 32 results. Each member is header-only: identity and
+  outcome, worker, failure and distinct task directory when present, then a
+  `meridian spawn show <id>` lookup. The collector does not read report bodies;
+  Claude leads explicitly read one with `spawn show`. Only `spawn wait` completion
+  and `spawn ack` consume, so an earlier report read may still get one short header ping.
 - `spawn ack <ids...>` writes those IDs under the caller's current primary and
   returns exactly `{acked: [...]}`; it fails when that primary's row is gone. Reading across the chat is what makes an ack
   written after resume consume a child of an earlier primary.
