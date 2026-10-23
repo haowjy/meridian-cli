@@ -62,6 +62,7 @@ ALLOWLIST_ORIGIN = "allowlist"
 
 type PlatformRuleKind = Literal["builtin-agents", "meridian-commands"]
 type CommandMatch = Literal["exact", "prefix"]
+type PlatformCommandRole = Literal["completion", "read", "launch"]
 
 
 class PlatformCommand(BaseModel):
@@ -71,7 +72,14 @@ class PlatformCommand(BaseModel):
 
     command: str
     match: CommandMatch
+    role: PlatformCommandRole = "read"
     runs_outside_sandbox: bool = False
+
+    @property
+    def profile_restrictable(self) -> bool:
+        """Whether a narrower profile rule may keep this command restricted."""
+
+        return self.role != "completion"
 
 
 class PlatformRule(BaseModel):
@@ -455,6 +463,7 @@ __all__ = [
     "EnforcementReport",
     "PermissionPolicy",
     "PlatformCommand",
+    "PlatformCommandRole",
     "PlatformRule",
     "ReportLine",
     "ReportStatus",

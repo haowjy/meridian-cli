@@ -123,10 +123,17 @@ def test_claude_projection_spells_exact_and_prefix_meridian_commands() -> None:
     assert "prefix: meridian spawn list" in line.element
 
 
-def test_claude_meridian_report_keeps_narrower_profile_rule_stricter() -> None:
+def test_claude_meridian_report_distinguishes_command_precedence() -> None:
     platform = PlatformRule(
         kind="meridian-commands",
-        commands=(PlatformCommand(command="meridian spawn", match="prefix"),),
+        commands=(
+            PlatformCommand(command="meridian spawn", match="prefix", role="launch"),
+            PlatformCommand(
+                command="meridian spawn done",
+                match="prefix",
+                role="completion",
+            ),
+        ),
     )
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
@@ -139,6 +146,12 @@ def test_claude_meridian_report_keeps_narrower_profile_rule_stricter() -> None:
                     "Bash(meridian spawn cancel-all *)",
                     pattern="meridian spawn cancel-all *",
                 ),
+                tool_rule(
+                    "bash",
+                    "deny",
+                    "Bash(meridian spawn done private *)",
+                    pattern="meridian spawn done private *",
+                ),
             ),
             platform_rules=(platform,),
         ),
@@ -150,6 +163,7 @@ def test_claude_meridian_report_keeps_narrower_profile_rule_stricter() -> None:
     line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
     assert line.status == "partial"
     assert "Bash(meridian spawn cancel-all *)" in line.note
+    assert "cannot keep the completion grant final" in line.note
 
 
 def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> None:

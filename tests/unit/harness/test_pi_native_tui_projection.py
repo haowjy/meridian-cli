@@ -75,7 +75,9 @@ def test_meridian_command_report_keeps_narrower_profile_rule_stricter() -> None:
         platform_rules=(
             PlatformRule(
                 kind="meridian-commands",
-                commands=(PlatformCommand(command="meridian spawn", match="prefix"),),
+                commands=(
+                    PlatformCommand(command="meridian spawn", match="prefix", role="launch"),
+                ),
             ),
         ),
     )

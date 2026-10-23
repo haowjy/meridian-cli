@@ -496,9 +496,12 @@ them:
   `read-only` sandbox can only read the projected roots. Claude `read-only` and every
   `workspace-write` launch can write Meridian runtime state, so `spawn inject` and `cancel`
   do not claim a separate delegation boundary.
-- **Meridian commands.** Completion and read-only commands are always granted. A profile
-  that can spawn also gets the `meridian spawn ...` launch commands. Each grant is either
-  exact or prefix-matched in the target harness's syntax. Run
+- **Meridian commands.** Meridian adds completion and read-command grants to every launch;
+  a profile that can spawn also gets the `meridian spawn ...` launch commands. Completion
+  (`spawn done` / `rearm`) is control-plane liveness and a profile cannot restrict it.
+  Read and launch commands remain profile-restrictable: a narrower or equal scoped
+  profile `deny`/`ask` stays stricter. Each grant is exact or prefix-matched in the target
+  harness's syntax; a harness that cannot honor the precedence reports it as partial. Run
   `meridian spawn -a NAME --dry-run` to see the exact command list and which grants that
   harness can enforce.
 - **Child-spawn escape.** Claude excludes a spawn-capable profile's standalone

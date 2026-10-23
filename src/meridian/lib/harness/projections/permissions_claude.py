@@ -626,13 +626,22 @@ def _tool_rule_line(
 def _meridian_commands_line(
     policy: PermissionPolicy, platform: PlatformRule, permissions: ClaudePermissions
 ) -> ReportLine:
-    natives = _meridian_tools(policy)
+    native_commands = tuple(
+        (native, command)
+        for command in platform.commands
+        for native in (
+            (f"Bash({command.command})",)
+            if command.match == "exact"
+            else (f"Bash({command.command})", f"Bash({command.command} *)")
+        )
+    )
+    natives = tuple(native for native, _command in native_commands)
     emitted = [native for native in natives if native in permissions.settings.allow]
-    blocked: dict[str, list[str]] = {}
-    for native in natives:
+    blocked: dict[tuple[str, bool], list[str]] = {}
+    for native, command in native_commands:
         blocker = _shadow(native, permissions)
         if native not in emitted or blocker is not None:
-            blocked.setdefault(blocker or "", []).append(native)
+            blocked.setdefault((blocker or "", command.profile_restrictable), []).append(native)
     for command in platform.commands:
         for rule in policy.rules:
             if rule.origin == PLATFORM_ORIGIN or rule.action == "allow":
@@ -644,16 +653,24 @@ def _meridian_commands_line(
                     and pattern is not None
                     and command_grant_covers_pattern(command, pattern)
                 ):
-                    blocked.setdefault(native, []).append(
+                    blocked.setdefault((native, command.profile_restrictable), []).append(
                         f"Bash({command.command}{' *' if command.match == 'prefix' else ''})"
                     )
     if blocked:
-        problems = [
-            f"{','.join(names)}: Claude checks {blocker} first"
-            if blocker
-            else f"{','.join(names)} omitted"
-            for blocker, names in blocked.items()
-        ]
+        problems: list[str] = []
+        for (blocker, profile_restrictable), names in blocked.items():
+            subject = ",".join(names)
+            if profile_restrictable:
+                problems.append(
+                    f"{subject}: profile restriction {blocker or 'omission'} remains stricter"
+                )
+            elif blocker:
+                problems.append(
+                    f"{subject}: Claude checks {blocker} first, so it cannot keep the "
+                    "completion grant final"
+                )
+            else:
+                problems.append(f"{subject} omitted, so the completion grant is not final")
         return ReportLine(platform_element(platform), "partial", "; ".join(problems))
     note = "--settings permissions.allow " + ",".join(emitted)
     if permissions.restrict_tools and "Bash" not in policy.allowed_tools:

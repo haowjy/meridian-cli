@@ -162,7 +162,7 @@ describe("bash command evaluation", () => {
     expect(decideToolCall(openShell, "bash", {})).toBeUndefined();
   });
 
-  it("honors exact and prefix Meridian command grants but still checks compound commands", () => {
+  it("keeps completion grants final but still checks profile-restrictable and compound commands", () => {
     const withMeridianCommands = policy(
       [
         rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
@@ -171,9 +171,9 @@ describe("bash command evaluation", () => {
       ],
       {
         meridian_commands: [
-          { command: "meridian task-dir", match: "exact" },
-          { command: "meridian spawn done", match: "prefix" },
-          { command: "meridian spawn rearm", match: "prefix" },
+          { command: "meridian task-dir", match: "exact", role: "read" },
+          { command: "meridian spawn done", match: "prefix", role: "completion" },
+          { command: "meridian spawn rearm", match: "prefix", role: "completion" },
         ],
         bash_fail_closed: true,
       },
@@ -189,10 +189,10 @@ describe("bash command evaluation", () => {
     }
     expect(
       decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn done private p-1" })?.action,
-    ).toBe("deny");
+    ).toBe("allow");
     expect(
       decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn rearm" })?.action,
-    ).toBe("ask");
+    ).toBe("allow");
     expect(
       decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn rearm p-1" })?.action,
     ).toBe("allow");
@@ -210,8 +210,8 @@ describe("bash command evaluation", () => {
   it("does not restrict ordinary bash when Meridian commands are the only policy", () => {
     const meridianOnly = policy([], {
       meridian_commands: [
-        { command: "meridian spawn done", match: "prefix" },
-        { command: "meridian spawn rearm", match: "prefix" },
+        { command: "meridian spawn done", match: "prefix", role: "completion" },
+        { command: "meridian spawn rearm", match: "prefix", role: "completion" },
       ],
     });
 

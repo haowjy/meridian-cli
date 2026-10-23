@@ -350,8 +350,8 @@ The bind-resolved version selects the shape; connections consume the config unch
 OpenCode is last-match-wins, so the compile orders the wildcard default, unscoped rules,
 and scoped rules by increasing literal specificity, with stricter equal matches last.
 Platform denies follow profile rules, then Meridian-command grants; narrower/equal profile
-restrictions are re-appended
-after a broader grant, and workspace grants are last. The compile owns V2 aliases (`bash`→`shell`,
+restrictions are re-appended after profile-restrictable read/launch grants, non-restrictable
+completion grants follow them, and workspace grants are last. The compile owns V2 aliases (`bash`→`shell`,
 `write`/`patch`→`edit`, `task`→`subagent`) and resolves collisions after aliasing;
 the config projector only serializes its result.
 
