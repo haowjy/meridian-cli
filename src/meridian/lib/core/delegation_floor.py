@@ -38,6 +38,10 @@ _FORBIDDEN_ENV_KEYS = frozenset(
         "PYTHONPATH",
         "CODEX_HOME",
         "CLAUDE_CONFIG_DIR",
+        "OPENCODE_CONFIG",
+        "OPENCODE_CLI_CONFIG_CONTENT",
+        "OPENCODE_CONFIG_CONTENT",
+        "OPENCODE_CONFIG_DIR",
         "OPENCODE_DB",
         "OPENCODE_HOME",
         "PI_CODING_AGENT_DIR",
@@ -128,7 +132,12 @@ class DelegationFloorCheck:
     caller: DelegationFloor | None
 
     @classmethod
-    def from_environment(cls, requested_env: Iterable[str]) -> DelegationFloorCheck:
+    def from_environment(
+        cls,
+        requested_env: Iterable[str],
+        *,
+        passthrough_args: Iterable[str] = (),
+    ) -> DelegationFloorCheck:
         raw_floor = os.environ.get(DELEGATION_FLOOR_ENV)
         if raw_floor is None:
             return cls(caller=None)
@@ -139,7 +148,19 @@ class DelegationFloorCheck:
             )
         check = cls(caller=caller)
         check.enforce_env_keys(assignment.partition("=")[0] for assignment in requested_env)
+        check.enforce_passthrough_args(passthrough_args)
         return check
+
+    def enforce_passthrough_args(self, passthrough_args: Iterable[str]) -> None:
+        """Reject native argv that could override Meridian's resolved policy."""
+
+        if self.caller is None:
+            return
+        for _arg in passthrough_args:
+            raise ValueError(
+                "Child spawn refused: harness passthrough arguments can override the "
+                "unsandboxed child policy."
+            )
 
     def enforce_env_keys(self, keys: Iterable[str]) -> None:
         """Reject environment keys that can escape the resolved launch namespace."""
@@ -156,7 +177,8 @@ class DelegationFloorCheck:
             ):
                 raise ValueError(
                     f"Child spawn refused: environment key '{key}' can change the "
-                    "unsandboxed process loader, executable, or harness home."
+                    "unsandboxed process or harness config loader, executable, or "
+                    "harness home."
                 )
 
     def enforce(self, child: DelegationFloor) -> None:
@@ -175,6 +197,8 @@ class DelegationFloorCheck:
                 f"Child spawn refused: approval '{child.approval}' is weaker than "
                 f"caller floor '{caller.approval}'."
             )
+
+
 __all__ = [
     "DELEGATION_FLOOR_ENV",
     "DelegationFloor",

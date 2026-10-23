@@ -13,14 +13,21 @@ import pytest
 
 import meridian.lib.core.sandbox_boundary as sandbox_boundary
 import meridian.lib.ops.spawn.api as spawn_api
+from meridian.lib.core.delegation_floor import DELEGATION_FLOOR_ENV, DelegationFloor
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResult
 from meridian.lib.ops.spawn.execute_init import resolve_spawn_work_id
-from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
+from meridian.lib.ops.spawn.models import (
+    SpawnActionOutput,
+    SpawnContinueInput,
+    SpawnCreateInput,
+    SpawnForkInput,
+)
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -147,6 +154,83 @@ def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_rea
         spawn_api.spawn_continue_sync(
             SpawnContinueInput(spawn_id="p-does-not-exist", prompt="follow-up")
         )
+
+
+@pytest.mark.parametrize("operation", ["continue", "fork"])
+def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_reads(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    monkeypatch.setenv(
+        DELEGATION_FLOOR_ENV,
+        DelegationFloor.from_policy(
+            sandbox="read-only",
+            approval="default",
+            has_spawn_capability=False,
+        ).to_env_value(),
+    )
+
+    def _must_not_read_source(**_kwargs: object) -> tuple[Path, Path | None]:
+        raise AssertionError("delegation precondition must refuse before source state")
+
+    monkeypatch.setattr(spawn_api, "_resolve_spawn_read_authority", _must_not_read_source)
+
+    with pytest.raises(ValueError, match="caller profile has no spawn capability"):
+        if operation == "continue":
+            spawn_api.spawn_continue_sync(
+                SpawnContinueInput(spawn_id="p-does-not-exist", prompt="follow-up")
+            )
+        else:
+            spawn_api.spawn_fork_sync(
+                SpawnForkInput(source_ref="p-does-not-exist", prompt="fork")
+            )
+
+
+def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    snapshot = LaunchPolicySnapshot(
+        model="claude-sonnet-4-6",
+        harness="claude",
+        agent="explorer",
+        extra_args=("--dangerously-skip-permissions",),
+        execution_policy=ResolvedExecutionPolicy(sandbox="read-only"),
+    )
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p9250",
+        harness_session_id="session-passthrough",
+        launch_policy_snapshot=snapshot,
+    )
+    monkeypatch.setenv(
+        DELEGATION_FLOOR_ENV,
+        DelegationFloor.from_policy(
+            sandbox="workspace-write",
+            approval="default",
+            has_spawn_capability=True,
+        ).to_env_value(),
+    )
+
+    def _must_not_sweep(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("delegation refusal must precede the continue sweep")
+
+    monkeypatch.setattr(spawn_api, "sweep_before_continue", _must_not_sweep)
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(
+            spawn_id="p9250",
+            prompt="follow-up",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.message is not None
+    assert "harness passthrough arguments" in result.message
 
 
 @pytest.mark.parametrize(

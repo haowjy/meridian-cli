@@ -436,6 +436,7 @@ def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
         (True, ("LD_PRELOAD=x",), "environment key 'LD_PRELOAD'"),
         (True, ("BASH_ENV=/tmp/owned",), "environment key 'BASH_ENV'"),
         (True, ("CODEX_HOME=/tmp/owned",), "environment key 'CODEX_HOME'"),
+        (True, ("OPENCODE_CONFIG=/tmp/owned",), "environment key 'OPENCODE_CONFIG'"),
         (True, ("OPENCODE_DB=/tmp/owned",), "environment key 'OPENCODE_DB'"),
         (True, ("PATH=/tmp/owned",), "environment key 'PATH'"),
     ],
@@ -473,6 +474,35 @@ def test_spawn_create_delegation_floor_rejects_pre_resolution_escape(
     assert result.status == "failed"
     assert result.message is not None
     assert expected in result.message
+
+
+def test_spawn_create_delegation_floor_rejects_passthrough_before_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_delegation_floor(monkeypatch)
+
+    def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("delegation precondition must refuse before Mars")
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _must_not_resolve)
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+            passthrough_args=("--dangerously-skip-permissions",),
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.message is not None
+    assert "harness passthrough arguments" in result.message
 
 
 def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(

@@ -17,7 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Nested spawn creation, continuation, and fork now enforce the caller's resolved
   sandbox, approval, and spawn-capability floor before materializing runtime state;
   dry-runs enforce the same boundary and reject loader or harness-home environment
-  overrides.
+  overrides and harness-native passthrough arguments.
 - Every spawn launch spelling, including harness shortcuts and continue/fork forms,
   is recognized by the pre-bootstrap PID-namespace guard, so a sandboxed compound
   command is refused before state access.

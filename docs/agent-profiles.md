@@ -516,10 +516,20 @@ them:
   `default`; an unknown harness default is conservatively weaker than every explicit
   mode. Approval modes compare from weakest to strongest as `never`/`yolo`, `auto`,
   `default`, then `confirm`, so a child cannot reduce the caller's approval requirement.
-  Child `--env` values also cannot replace the process loader, executable search path,
-  or native harness home. A child emits its own resolved floor to its descendants.
+  Child `--env` values also cannot replace the process or harness config loader,
+  executable search path, or native harness home. Harness-native passthrough arguments
+  after `--` are refused because they can override Meridian's resolved sandbox or
+  approval flags. A child emits
+  its own resolved floor to its descendants.
   Top-level commands and shells that were not launched by Meridian have no floor; read
   commands, `spawn done`, and `spawn rearm` do not consult it.
+
+The blocked `--env` set is `PATH`, `HOME`, `BASH_ENV`, `ENV`, `XDG_CONFIG_HOME`,
+`XDG_DATA_HOME`, `NODE_OPTIONS`, `NODE_PATH`, `PYTHONHOME`, `PYTHONPATH`,
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`,
+`OPENCODE_CLI_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`, `OPENCODE_DB`, `OPENCODE_HOME`,
+`PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, and every `LD_*` or `DYLD_*`
+key. This restriction applies only when a launcher floor is present.
 - **Loud failure for compound shell calls.** On Linux, Meridian records the harness
   launcher's PID namespace. A child launch attempted from a different namespace stops with
   an error rather than starting a child that dies with the sandboxed shell. Run

@@ -211,6 +211,7 @@ def _resolve_spawn_read_authority(
     *,
     project_root: str | None,
     prepared: RuntimeReadContext | RuntimeWriteContext | None = None,
+    migrate_legacy: bool = True,
 ) -> tuple[Path, Path | None]:
     if prepared is not None:
         resolved_project_root = _project_root_from_prepared(prepared)
@@ -218,7 +219,11 @@ def _resolve_spawn_read_authority(
         return resolved_project_root, resolved_runtime_root
 
     resolved_project_root = _resolve_project_root_input(project_root)
-    resolved_runtime_root = resolve_runtime_root_for_read(resolved_project_root)
+    resolved_runtime_root = (
+        resolve_runtime_root_for_read(resolved_project_root)
+        if migrate_legacy
+        else inspect_runtime_authority_for_read(resolved_project_root).runtime_root
+    )
     return resolved_project_root, resolved_runtime_root
 
 
@@ -289,16 +294,39 @@ class SpawnCreatePreparation:
     depth_exceeded: SpawnActionOutput | None = None
 
 
+def _start_spawn_creation_boundary(
+    *,
+    dry_run: bool,
+    requested_env: tuple[str, ...],
+    passthrough_args: tuple[str, ...],
+) -> DelegationFloorCheck:
+    """Run import-cheap launch guards before any operation-specific state access."""
+
+    refuse_sandboxed_spawn_launch(dry_run=dry_run)
+    return DelegationFloorCheck.from_environment(
+        requested_env,
+        passthrough_args=passthrough_args,
+    )
+
+
 def _prepare_spawn_create(
     *,
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
     prepared: RuntimeWriteContext | None,
+    floor_check: DelegationFloorCheck | None,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
-    refuse_sandboxed_spawn_launch(dry_run=payload.dry_run)
-    floor_check = DelegationFloorCheck.from_environment(payload.env)
+    if floor_check is None:
+        floor_check = _start_spawn_creation_boundary(
+            dry_run=payload.dry_run,
+            requested_env=payload.env,
+            passthrough_args=payload.passthrough_args,
+        )
+    else:
+        # Continue/fork may add replayed native args after the import-cheap precheck.
+        floor_check.enforce_passthrough_args(payload.passthrough_args)
     prepared_context = prepared
     register_debug_trace_observer()
     resolved_context = runtime_context(ctx)
@@ -392,6 +420,7 @@ def _prepare_spawn_create(
         policy_readonly=floor_check.caller is not None,
     )
     floor_check.enforce_env_keys(artifacts.request.env)
+    floor_check.enforce_passthrough_args(artifacts.request.extra_args)
     resolved_policy = artifacts.request.execution_policy
     floor_check.enforce(
         DelegationFloor.from_policy(
@@ -422,6 +451,7 @@ def _prepare_spawn_create_with_expected_failures(
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
     prepared: RuntimeWriteContext | None,
+    floor_check: DelegationFloorCheck | None,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
     try:
@@ -430,6 +460,7 @@ def _prepare_spawn_create_with_expected_failures(
             ctx=ctx,
             sink=sink,
             prepared=prepared,
+            floor_check=floor_check,
             failure_payload=failure_payload,
         )
     except (*EXPECTED_PRE_INIT_EXCEPTIONS, RuntimeError) as exc:
@@ -442,6 +473,7 @@ def _run_spawn_create_preparation(
     ctx: RuntimeContext | None,
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
+    floor_check: DelegationFloorCheck | None = None,
 ) -> SpawnCreatePreparation | SpawnActionOutput:
     failure_payload = [payload]
     return run_pre_init_boundary(
@@ -451,6 +483,7 @@ def _run_spawn_create_preparation(
             ctx=ctx,
             sink=sink,
             prepared=prepared,
+            floor_check=floor_check,
             failure_payload=failure_payload,
         ),
     )
@@ -2236,9 +2269,15 @@ def spawn_fork_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
+    floor_check = _start_spawn_creation_boundary(
+        dry_run=payload.dry_run,
+        requested_env=payload.env,
+        passthrough_args=payload.passthrough_args,
+    )
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
+        migrate_legacy=floor_check.caller is None,
     )
     normalized_source_ref = payload.source_ref.strip()
     if not normalized_source_ref:
@@ -2296,6 +2335,7 @@ def spawn_fork_sync(
         ctx=ctx,
         sink=sink,
         prepared=prepared,
+        floor_check=floor_check,
     )
     if isinstance(preparation, SpawnActionOutput):
         return preparation
@@ -2340,12 +2380,17 @@ def spawn_continue_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
-    refuse_sandboxed_spawn_launch(dry_run=payload.dry_run)
+    floor_check = _start_spawn_creation_boundary(
+        dry_run=payload.dry_run,
+        requested_env=payload.env,
+        passthrough_args=payload.passthrough_args,
+    )
     if payload.model is not None and not payload.model.strip():
         raise ValueError("--model must not be empty")
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
+        migrate_legacy=floor_check.caller is None,
     )
     if runtime_root is None:
         normalized = payload.spawn_id.strip()
@@ -2372,6 +2417,7 @@ def spawn_continue_sync(
         ctx=ctx,
         sink=sink,
         prepared=prepared,
+        floor_check=floor_check,
     )
     if isinstance(preparation, SpawnActionOutput):
         return _with_command(preparation, "spawn.continue")
