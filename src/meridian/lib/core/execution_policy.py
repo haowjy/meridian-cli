@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Annotated, Literal, cast
+from typing import Annotated, cast
 
 from pydantic import (
     AfterValidator,
@@ -25,6 +25,7 @@ from meridian.lib.core.overrides import (
     RuntimeOverrides,
     normalize_execution_policy_fields,
 )
+from meridian.lib.safety.policy import NetworkMode
 
 type NativeConfig = Mapping[str, object]
 
@@ -101,7 +102,7 @@ class ResolvedExecutionPolicy(BaseModel):
 
     effort: str | None = None
     sandbox: str | None = None
-    network: Literal["allow", "deny"] | None = None
+    network: NetworkMode | None = None
     approval: str | None = None
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None

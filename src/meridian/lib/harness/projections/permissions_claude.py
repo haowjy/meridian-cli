@@ -427,7 +427,7 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
             and not channels.ask
         ),
         excluded_commands=_outside_sandbox_commands(policy),
-        network_open=policy.network == "allow",
+        network_open=policy.network_mode == "allow",
     )
 
 
@@ -854,7 +854,7 @@ def effective_claude_network(
 
     if policy.sandbox not in {"read-only", "workspace-write"}:
         return "allow"
-    return policy.network
+    return policy.network_mode
 
 
 def _network_line(
@@ -862,10 +862,10 @@ def _network_line(
     permissions: ClaudePermissions,
     settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> ReportLine:
-    element = f"network: {policy.network}"
+    element = f"network: {policy.network_mode}"
     sandbox = permissions.settings.sandbox
     if sandbox is None or not sandbox.enabled:
-        if policy.network == "allow":
+        if policy.network_mode == "allow":
             return ReportLine(
                 element,
                 "native",
@@ -877,7 +877,7 @@ def _network_line(
             "no Claude Bash sandbox is projected; shell network remains available",
         )
 
-    if policy.network == "allow":
+    if policy.network_mode == "allow":
         domains = ",".join(f'"{domain}"' for domain in CLAUDE_NETWORK_ALLOW_DOMAINS)
         note = (
             f"--settings sandbox.network.allowedDomains=[{domains}], "

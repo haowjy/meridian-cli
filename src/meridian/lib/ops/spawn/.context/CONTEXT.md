@@ -5,9 +5,10 @@
 `spawn_create_sync()`, continue, and fork share one preparation path. It inspects
 authority and checks the launcher-owned caller boundary before write bootstrap. With
 a boundary, it composes the resolved launch policy read-only and enforces the floor.
-The floor gets effective network directly from the harness projection port on that resolved
-policy; the report calls the same pure harness function, with no preview bind or report
-round trip.
+Only a caller-authored `network: deny` that the harness actually enforces creates a network
+floor. When that floor exists, the child check gets effective network directly from the
+harness projection port on the resolved policy; the report calls the same pure harness
+function, with no preview bind or report round trip.
 Every real launch calls `prepare_for_runtime_write()` afterward through one deferred
 materialization path. Dry-run binds its preview without materializing. Continue
 performs its state sweep after preparation succeeds; fork reuses the prepared artifacts

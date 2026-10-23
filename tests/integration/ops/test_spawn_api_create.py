@@ -28,7 +28,7 @@ from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.safety.policy import NetworkMode, SandboxMode
+from meridian.lib.safety.policy import NetworkMode, PermissionPolicy, SandboxMode
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
 from meridian.lib.telemetry import init_telemetry
@@ -40,7 +40,7 @@ def _set_caller_guardrail(
     monkeypatch: pytest.MonkeyPatch,
     *,
     sandbox: SandboxMode = "workspace-write",
-    network: NetworkMode = "allow",
+    network: NetworkMode | None = None,
     has_spawn_capability: bool = True,
 ) -> None:
     record = json.loads(
@@ -305,7 +305,7 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="workspace-write",
-            network="allow",
+            network=None,
             has_spawn_capability=True,
             pid_namespace=f"{namespace}:different",
         ).to_env_value(),
@@ -342,7 +342,7 @@ def test_unsandboxed_caller_has_no_guardrail(
     assert check.caller is None
 
 
-def test_floored_legacy_caller_defaults_missing_network_closed(
+def test_floored_legacy_caller_with_missing_network_has_no_network_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
@@ -359,7 +359,31 @@ def test_floored_legacy_caller_defaults_missing_network_closed(
     check = CallerBoundaryCheck.from_environment(dry_run=True)
 
     assert check.caller is not None
-    assert check.caller.network == "deny"
+    assert check.caller.network is None
+
+
+@pytest.mark.parametrize(
+    ("authored_network", "effective_network", "expected_floor"),
+    [
+        (None, "allow", None),
+        ("allow", "allow", None),
+        ("deny", "allow", None),
+        ("deny", "deny", "deny"),
+    ],
+)
+def test_caller_boundary_records_only_an_enforced_authored_deny(
+    authored_network: NetworkMode | None,
+    effective_network: NetworkMode,
+    expected_floor: NetworkMode | None,
+) -> None:
+    boundary = CallerBoundary.from_policy(
+        PermissionPolicy(sandbox="workspace-write", network=authored_network),
+        effective_network=effective_network,
+        pid_namespace=None,
+    )
+
+    assert boundary.network == expected_floor
+    assert ("network" in json.loads(boundary.to_env_value())) is (expected_floor is not None)
 
 
 @pytest.mark.parametrize(
@@ -497,7 +521,7 @@ def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
 @pytest.mark.parametrize(
     ("child_network", "approval", "expected_status", "expected_message"),
     [
-        ("allow", "default", "failed", "effective network 'allow' is weaker"),
+        ("allow", "default", "failed", "set `network: deny` on the child profile"),
         ("deny", "default", "dry-run", None),
         ("deny", "never", "dry-run", None),
     ],

@@ -127,7 +127,8 @@ is typed unavailable; runner output and primary metadata cannot repair it.
 Both streaming-serve (`SpawnApplicationService.prepare_spawn()`) and the spawn
 subprocess prepare launch policy before creating a row. Only callers in a Meridian-projected
 `read-only` or `workspace-write` sandbox inherit the child-spawn CLI guardrail. Spawn
-preparation checks the resolved request's sandbox and harness-owned effective network mode
+preparation checks the resolved request's sandbox and, when the caller authored an enforced
+`network: deny`, the harness-owned effective network mode
 before materializing runtime authority and state; binding does not change that request
 policy. Every creation form resolves models
 from the existing cache during this preparation, so catalog refresh cannot write before

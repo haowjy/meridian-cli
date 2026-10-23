@@ -122,12 +122,17 @@ class PermissionPolicy(BaseModel):
     rules: tuple[ToolRule, ...] = ()
     platform_rules: tuple[PlatformRule, ...] = ()
     sandbox: SandboxMode = "default"
-    network: NetworkMode = "allow"
-    network_explicit: bool = False
+    network: NetworkMode | None = None
     # Workspace roots whose writes a read-only native sandbox must block. Bind keeps
     # these separate from projected runtime/temp roots, which must remain writable.
     sandbox_write_roots: tuple[str, ...] = Field(default=(), exclude=True)
     approval: ApprovalMode = "default"
+
+    @property
+    def network_mode(self) -> NetworkMode:
+        """Return the authored network mode or the cross-harness default."""
+
+        return self.network or "allow"
 
     @property
     def outside_sandbox_commands(self) -> tuple[PlatformCommand, ...]:
@@ -307,10 +312,10 @@ def complete_report(
         )
     defaults.append(
         ReportLine(
-            f"network: {policy.network}",
-            "native" if policy.network == "allow" else "unsupported",
+            f"network: {policy.network_mode}",
+            "native" if policy.network_mode == "allow" else "unsupported",
             f"{harness} leaves shell network unrestricted"
-            if policy.network == "allow"
+            if policy.network_mode == "allow"
             else f"not enforced by {harness}; shell network remains available",
         )
     )
@@ -364,12 +369,12 @@ def _parse_sandbox_value(raw: str | None) -> SandboxMode:
     raise ValueError(f"Unsupported sandbox mode '{raw}'. Expected: {allowed}.")
 
 
-def _parse_network_value(raw: str | None) -> tuple[NetworkMode, bool]:
+def _parse_network_value(raw: str | None) -> NetworkMode | None:
     if raw is None:
-        return "allow", False
+        return None
     normalized = raw.strip().lower()
     if normalized in _NETWORK_MODES:
-        return normalized, True
+        return normalized
     allowed = ", ".join(sorted(_NETWORK_MODES))
     raise ValueError(f"Unsupported network mode '{raw}'. Expected: {allowed}.")
 
@@ -483,7 +488,6 @@ def build_permission_policy(
     """
 
     denies, resolved = _resolve_allowlist_overlap(_allowlist_denies(rules), rules)
-    network_mode, network_explicit = _parse_network_value(network)
     return PermissionPolicy(
         # First, as the broad rule its scoped allows are exceptions to: OpenCode orders equally
         # specific rules by policy order, and this keeps its config what it was before the
@@ -491,8 +495,7 @@ def build_permission_policy(
         rules=(*denies, *resolved),
         platform_rules=platform_rules,
         sandbox=_parse_sandbox_value(sandbox),
-        network=network_mode,
-        network_explicit=network_explicit,
+        network=_parse_network_value(network),
         sandbox_write_roots=tuple(dict.fromkeys(root for root in sandbox_write_roots if root)),
         approval=_parse_approval_value(approval),
     )

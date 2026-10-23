@@ -63,5 +63,5 @@ def test_network_defaults_to_allow_without_losing_authored_allow() -> None:
     defaulted = build_permission_policy(sandbox=None)
     authored = build_permission_policy(sandbox=None, network="allow")
 
-    assert (defaulted.network, defaulted.network_explicit) == ("allow", False)
-    assert (authored.network, authored.network_explicit) == ("allow", True)
+    assert (defaulted.network, defaulted.network_mode) == (None, "allow")
+    assert (authored.network, authored.network_mode) == ("allow", "allow")

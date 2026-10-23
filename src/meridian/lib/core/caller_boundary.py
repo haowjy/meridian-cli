@@ -45,7 +45,7 @@ class CallerBoundary:
 
     pid_namespace: str | None
     sandbox: SandboxMode
-    network: NetworkMode
+    network: NetworkMode | None
     has_spawn_capability: bool
 
     @classmethod
@@ -62,7 +62,11 @@ class CallerBoundary:
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
-            network=effective_network,
+            network=(
+                "deny"
+                if policy.network == "deny" and effective_network == "deny"
+                else None
+            ),
             has_spawn_capability=policy.has_spawn_capability,
         )
 
@@ -75,13 +79,15 @@ class CallerBoundary:
     def to_env_value(self) -> str:
         """Serialize the complete launcher-owned record deterministically."""
 
+        payload: dict[str, object] = {
+            "pid_namespace": self.pid_namespace,
+            "sandbox": self.sandbox,
+            "spawn": self.has_spawn_capability,
+        }
+        if self.network == "deny":
+            payload["network"] = self.network
         return json.dumps(
-            {
-                "pid_namespace": self.pid_namespace,
-                "sandbox": self.sandbox,
-                "network": self.network,
-                "spawn": self.has_spawn_capability,
-            },
+            payload,
             separators=(",", ":"),
             sort_keys=True,
         )
@@ -97,23 +103,22 @@ class CallerBoundary:
             raise ValueError("Child spawn refused: caller boundary is invalid.")
         pid_namespace = payload.get("pid_namespace")
         sandbox = payload.get("sandbox")
-        # Capability axes added after this record's producer default closed for a floored
-        # caller. They are irrelevant for an unfloored caller, which is discarded below.
-        network = payload.get("network", "deny")
+        network = payload.get("network")
         spawn = payload.get("spawn", False)
         if (
             (pid_namespace is not None and not isinstance(pid_namespace, str))
             or not isinstance(sandbox, str)
-            or not isinstance(network, str)
+            or (network is not None and not isinstance(network, str))
             or not isinstance(spawn, bool)
             or sandbox not in SANDBOX_MODE_WEAKNESS
-            or network not in NETWORK_MODE_STRENGTH
+            or (network is not None and network not in NETWORK_MODE_STRENGTH)
         ):
             raise ValueError("Child spawn refused: caller boundary is invalid.")
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
-            network=network,
+            # Older builds wrote "allow" explicitly. It carried no restrictive floor.
+            network="deny" if network == "deny" else None,
             has_spawn_capability=spawn,
         )
 
@@ -179,10 +184,10 @@ class CallerBoundaryCheck:
                 f"Child spawn refused: sandbox '{normalized}' is weaker than "
                 f"caller floor '{caller.sandbox}'."
             )
-        if NETWORK_MODE_STRENGTH[child_network] < NETWORK_MODE_STRENGTH[caller.network]:
+        if caller.network == "deny" and child_network != "deny":
             raise ValueError(
                 f"Child spawn refused: effective network '{child_network}' is weaker than "
-                f"caller floor '{caller.network}'."
+                "caller floor 'deny'; set `network: deny` on the child profile."
             )
 
 

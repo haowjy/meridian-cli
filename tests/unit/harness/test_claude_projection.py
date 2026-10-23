@@ -209,7 +209,6 @@ def test_claude_network_deny_projects_strict_allowlist(
         permission_policy=PermissionPolicy(
             sandbox="workspace-write",
             network="deny",
-            network_explicit=True,
             platform_rules=(
                 PlatformRule(
                     kind="meridian-commands",
@@ -236,7 +235,6 @@ def test_claude_network_deny_projects_strict_allowlist(
             "permission_policy": PermissionPolicy(
                 sandbox="workspace-write",
                 network="deny",
-                network_explicit=True,
                 approval="never",
             )
         }

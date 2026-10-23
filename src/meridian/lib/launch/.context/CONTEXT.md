@@ -54,11 +54,11 @@ version used by `bind_launch_context()`.
 
 Every bind replaces the inherited caller boundary with one record for the process it is
 about to start. It contains the launcher's PID namespace, resolved sandbox mode,
-harness-effective network mode, and the prepared profile's spawn capability. The harness
+the prepared profile's spawn capability, and `network: deny` only when the profile authored
+deny and the harness enforces it. A missing network key means no network floor. The harness
 projection port derives effective network from the already-resolved policy before bind;
-the permission report calls the same harness function. Approval is not compared itself but
-can affect that effective mode. Projected roots are not part of this CLI-escalation
-guardrail.
+the permission report calls the same harness function. Projected roots are not part of this
+CLI-escalation guardrail.
 
 ### RuntimeBindings
 

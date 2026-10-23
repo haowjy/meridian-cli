@@ -124,7 +124,6 @@ def test_codex_workspace_network_reaches_every_launch_boundary(
             "permission_policy": PermissionPolicy(
                 sandbox="workspace-write",
                 network=network,
-                network_explicit=True,
             ),
             "projected_roots": (Path("/workspace/extra"),),
         }
@@ -158,7 +157,6 @@ def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
             "permission_policy": PermissionPolicy(
                 sandbox="read-only",
                 network="allow",
-                network_explicit=True,
             )
         }
     )
@@ -183,7 +181,6 @@ def test_codex_deprecated_native_network_override_wins_for_warning_release() -> 
             "permission_policy": PermissionPolicy(
                 sandbox="workspace-write",
                 network="allow",
-                network_explicit=True,
             ),
             "native_config": {"sandbox_workspace_write": {"network_access": False}},
         }
@@ -231,7 +228,6 @@ def test_codex_native_network_override_matching_profile_reports_native() -> None
             "permission_policy": PermissionPolicy(
                 sandbox="workspace-write",
                 network="deny",
-                network_explicit=True,
             ),
             "native_config": {"sandbox_workspace_write": {"network_access": False}},
         }
@@ -255,7 +251,6 @@ def test_codex_non_bool_native_network_override_warns_without_becoming_allow() -
             "permission_policy": PermissionPolicy(
                 sandbox="workspace-write",
                 network="deny",
-                network_explicit=True,
             ),
             "native_config": {"sandbox_workspace_write": {"network_access": "false"}},
         }

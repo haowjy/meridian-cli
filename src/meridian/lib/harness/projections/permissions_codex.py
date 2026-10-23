@@ -138,7 +138,7 @@ def _compile_codex_permission_values(
 
     network_override = _network_override(native_config)
     network_access = (
-        policy.network == "allow" if policy.sandbox == "workspace-write" else None
+        policy.network_mode == "allow" if policy.sandbox == "workspace-write" else None
     )
     if network_override is not None:
         network_access = None
@@ -166,7 +166,7 @@ def _effective_codex_network(
         override = permissions.network_override
         if override is not None and isinstance(override.value, bool):
             return "allow" if override.value else "deny"
-        return policy.network
+        return policy.network_mode
     return "allow"
 
 
@@ -318,14 +318,14 @@ def _codex_report(
                 sandbox_note,
             )
         )
-    network_element = f"network: {policy.network}"
+    network_element = f"network: {policy.network_mode}"
     effective_network = _effective_codex_network(policy, permissions)
     network_override = permissions.network_override
     if policy.sandbox == "workspace-write" and network_override is not None:
         override_value = network_override.value
         if isinstance(override_value, bool):
             status: ReportStatus = (
-                "native" if effective_network == policy.network else "partial"
+                "native" if effective_network == policy.network_mode else "partial"
             )
             note = (
                 "deprecated native_config sandbox_workspace_write.network_access "
@@ -374,7 +374,7 @@ def _codex_report(
                 )
             )
     elif policy.sandbox == "read-only":
-        if policy.network == "allow" and policy.network_explicit:
+        if policy.network_mode == "allow" and policy.network is not None:
             lines.append(
                 ReportLine(
                     network_element,
@@ -382,7 +382,7 @@ def _codex_report(
                     "Codex read-only has no network-enabled mode",
                 )
             )
-        elif policy.network == "allow":
+        elif policy.network_mode == "allow":
             lines.append(
                 ReportLine(
                     network_element,
@@ -403,9 +403,9 @@ def _codex_report(
         lines.append(
             ReportLine(
                 network_element,
-                "native" if policy.network == "allow" else "unsupported",
+                "native" if policy.network_mode == "allow" else "unsupported",
                 "danger-full-access leaves shell network unrestricted"
-                if policy.network == "allow"
+                if policy.network_mode == "allow"
                 else "not enforced under danger-full-access; shell network remains available",
             )
         )
@@ -413,7 +413,7 @@ def _codex_report(
         lines.append(
             ReportLine(
                 network_element,
-                "partial" if policy.network == "allow" else "unsupported",
+                "partial" if policy.network_mode == "allow" else "unsupported",
                 "sandbox is left to Codex, so Meridian does not project network_access",
             )
         )
