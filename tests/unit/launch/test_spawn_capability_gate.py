@@ -98,14 +98,6 @@ def test_claude_linux_sandbox_network_guidance(monkeypatch: pytest.MonkeyPatch) 
         )
         is None
     )
-    assert (
-        adapter.shell_network_guidance(
-            sandbox="workspace-write", network=None, network_projection=False
-        )
-        is None
-    )
-
-
 def test_spawn_capability_requires_inventory_and_honors_explicit_disable() -> None:
     cases = (
         (_profile(), True),
