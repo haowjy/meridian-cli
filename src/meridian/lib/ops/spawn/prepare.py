@@ -93,7 +93,6 @@ def build_create_payload(
     runtime: OperationRuntime | None = None,
     preflight_warning: str | None = None,
     ctx: RuntimeContext | None = None,
-    bind_preview: bool = True,
     models_readonly: bool = False,
 ) -> SpawnCreateArtifacts:
     """Build a spawn request and prepared launch surface for create/execute handoff."""
@@ -268,18 +267,12 @@ def build_create_payload(
         )
         plan_overrides = dict(config.env)
         plan_overrides.update(raw_request.env)
-        artifacts = SpawnCreateArtifacts(
+        return SpawnCreateArtifacts(
             request=prepared_surface.request,
             prepared=prepared_surface,
             preview_runtime=preview_runtime,
             plan_overrides=plan_overrides,
         )
-        if composition_dry_run and bind_preview:
-            return bind_create_payload_preview(
-                artifacts,
-                harness_registry=harness_registry,
-            )
-        return artifacts
 
 
 def bind_create_payload_preview(

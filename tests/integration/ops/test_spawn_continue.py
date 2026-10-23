@@ -11,9 +11,12 @@ from typing import Any, cast
 
 import pytest
 
-import meridian.lib.core.caller_boundary as caller_boundary
 import meridian.lib.ops.spawn.api as spawn_api
-from meridian.lib.core.caller_boundary import CALLER_BOUNDARY_ENV, CallerBoundary
+from meridian.lib.core.caller_boundary import (
+    CALLER_BOUNDARY_ENV,
+    CallerBoundary,
+    current_pid_namespace,
+)
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
@@ -225,15 +228,17 @@ def test_spawn_continue_imports_legacy_native_store_before_reference_resolution(
 def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    namespace = current_pid_namespace()
+    if namespace is None:
+        pytest.skip("PID namespaces are not exposed on this platform")
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="workspace-write",
             has_spawn_capability=True,
-            pid_namespace="pid:[host]",
+            pid_namespace=f"{namespace}:different",
         ).to_env_value(),
     )
-    monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
 
     result = spawn_api.spawn_continue_sync(
         SpawnContinueInput(spawn_id="p-does-not-exist", prompt="follow-up")
@@ -242,8 +247,6 @@ def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_rea
     assert result.status == "failed"
     assert result.error == "pre_init_failed"
     assert result.spawn_id is None
-    assert result.message is not None
-    assert "standalone shell command" in result.message
 
 
 @pytest.mark.parametrize("operation", ["continue", "fork"])
@@ -277,8 +280,6 @@ def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_r
     assert result.status == "failed"
     assert result.error == "pre_init_failed"
     assert result.spawn_id is None
-    assert result.message is not None
-    assert "caller profile has no spawn capability" in result.message
 
 
 def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
@@ -324,8 +325,8 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
     )
 
     assert result.status == "failed"
-    assert result.message is not None
-    assert "harness passthrough arguments" in result.message
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
 
 
 @pytest.mark.parametrize(

@@ -27,6 +27,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Completion commands remain runnable across Claude, OpenCode, and Pi; scoped profile
   restrictions stay authoritative for Meridian read and child-launch grants.
 - Spawn help resolves prompt paths separately, then passes the printed literal path so sandbox-boundary checks do not reject Meridian's own examples.
+- Pre-policy read-only model resolution describes an unavailable cache without claiming the user passed `--no-refresh-models`.
 - Sandboxed launches no longer receive write access to every project's lifetime-lock directory; the launcher creates the exact project lock and POSIX children open it read-only.
 
 ## [0.12.7] - 2026-10-23

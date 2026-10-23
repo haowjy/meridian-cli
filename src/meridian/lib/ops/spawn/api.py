@@ -405,7 +405,6 @@ def _prepare_spawn_create(
         runtime=planning_runtime,
         preflight_warning=preflight_warning,
         ctx=resolved_context,
-        bind_preview=False,
         models_readonly=True,
     )
     floor_check.enforce_passthrough_args(artifacts.request.extra_args)

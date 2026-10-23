@@ -13,7 +13,11 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn import prepare
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.ops.spawn.prepare import SpawnCreateArtifacts, build_create_payload
+from meridian.lib.ops.spawn.prepare import (
+    SpawnCreateArtifacts,
+    bind_create_payload_preview,
+    build_create_payload,
+)
 from meridian.lib.state import work_repository
 from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
 from tests.support.launch import FakeBundleResult
@@ -298,7 +302,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
         ),
         runtime=runtime,
     ).request
-    dry_run_prepared = build_create_payload(
+    dry_run_artifacts = build_create_payload(
         SpawnCreateInput(
             prompt="fork prompt",
             model="gpt-5.4-mini",
@@ -311,6 +315,10 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
             dry_run=True,
         ),
         runtime=runtime,
+    )
+    dry_run_prepared = bind_create_payload_preview(
+        dry_run_artifacts,
+        harness_registry=runtime.harness_registry,
     ).request
 
     # I-10: fork_session must NOT be called in prepare — fork happens after the row exists.

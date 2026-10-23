@@ -32,9 +32,15 @@ def ensure_codex_meridian_rules(
     codex_home = resolve_codex_home(launch_env)
     if not codex_home.is_absolute():
         codex_home = child_cwd / codex_home
-    rules_path = codex_home / "rules" / "meridian.rules"
     try:
-        rules_path = codex_home.resolve() / "rules" / "meridian.rules"
+        resolved_home = codex_home.resolve()
+    except OSError as error:
+        return CodexRuntimeResolution(
+            rules_file_path=(codex_home / "rules" / "meridian.rules").as_posix(),
+            rules_file_error=str(error),
+        )
+    rules_path = resolved_home / "rules" / "meridian.rules"
+    try:
         try:
             if rules_path.read_bytes() == MERIDIAN_RULES_FILE_CONTENT.encode():
                 return CodexRuntimeResolution(rules_file_path=rules_path.as_posix())

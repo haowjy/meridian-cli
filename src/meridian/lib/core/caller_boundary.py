@@ -26,6 +26,8 @@ SANDBOXED_SPAWN_LAUNCH_ERROR = (
 )
 
 _PID_NAMESPACE_PATH = "/proc/self/ns/pid"
+
+
 def current_pid_namespace() -> str | None:
     """Return this process's PID-namespace identity when procfs exposes it."""
 
@@ -142,9 +144,7 @@ class CallerBoundaryCheck:
     def enforce_passthrough_args(self, passthrough_args: Iterable[str]) -> None:
         """Reject native argv that could override Meridian's resolved policy."""
 
-        if self.caller is None:
-            return
-        for _arg in passthrough_args:
+        if self.caller is not None and any(True for _ in passthrough_args):
             raise ValueError(
                 "Child spawn refused: harness passthrough arguments can override the "
                 "unsandboxed child policy."

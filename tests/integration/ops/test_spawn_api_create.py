@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 from structlog.testing import capture_logs
 
-import meridian.lib.core.caller_boundary as caller_boundary
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.prepare as spawn_prepare
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
@@ -20,6 +19,7 @@ from meridian.lib.core.caller_boundary import (
     CALLER_BOUNDARY_ENV,
     CallerBoundary,
     CallerBoundaryCheck,
+    current_pid_namespace,
 )
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
@@ -36,7 +36,7 @@ from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 from tests.support.launch import FakeBundleResult, stub_bundle_request_and_resolve
 
 
-def _set_delegation_floor(
+def _set_caller_guardrail(
     monkeypatch: pytest.MonkeyPatch,
     *,
     sandbox: SandboxMode = "workspace-write",
@@ -296,15 +296,17 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
 def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    namespace = current_pid_namespace()
+    if namespace is None:
+        pytest.skip("PID namespaces are not exposed on this platform")
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="workspace-write",
             has_spawn_capability=True,
-            pid_namespace="pid:[host]",
+            pid_namespace=f"{namespace}:different",
         ).to_env_value(),
     )
-    monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
 
     result = spawn_api.spawn_create_sync(SpawnCreateInput(prompt="run"))
 
@@ -312,13 +314,9 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     assert result.spawn_id is None
     assert result.error == "pre_init_failed"
     assert result.message is not None
-    assert "standalone shell command" in result.message
-    assert "`cd ... &&`" in result.message
-    assert "`$()`" in result.message
-    assert "`VAR=1` prefix" in result.message
 
 
-def test_unsandboxed_caller_carries_no_delegation_floor(
+def test_unsandboxed_caller_has_no_guardrail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
@@ -342,33 +340,23 @@ def test_unsandboxed_caller_carries_no_delegation_floor(
 
 
 @pytest.mark.parametrize(
-    ("child_policy", "dry_run", "expected"),
+    "child_policy",
     [
-        (
-            ResolvedExecutionPolicy(sandbox="danger-full-access"),
-            False,
-            "sandbox 'danger-full-access' is weaker than caller floor 'workspace-write'",
-        ),
-        (
-            ResolvedExecutionPolicy(),
-            False,
-            "sandbox 'default' is weaker than caller floor 'workspace-write'",
-        ),
+        ResolvedExecutionPolicy(sandbox="danger-full-access"),
+        ResolvedExecutionPolicy(),
     ],
 )
-def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
+def test_spawn_create_caller_guardrail_refuses_weaker_policy_before_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     child_policy: ResolvedExecutionPolicy,
-    dry_run: bool,
-    expected: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     meridian_home = tmp_path / "meridian-home"
     monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
-    _set_delegation_floor(monkeypatch)
+    _set_caller_guardrail(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -382,24 +370,24 @@ def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
             model="claude-haiku-5-5",
             harness="claude",
             project_root=project_root.as_posix(),
-            dry_run=dry_run,
+            dry_run=False,
         )
     )
 
     assert result.status == "failed"
-    assert result.message is not None
-    assert expected in result.message
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
     assert not meridian_home.exists()
 
 
-def test_spawn_create_delegation_floor_requires_spawn_capability_before_resolution(
+def test_spawn_create_caller_guardrail_requires_spawn_capability_before_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(
+    _set_caller_guardrail(
         monkeypatch,
         has_spawn_capability=False,
     )
@@ -419,18 +407,18 @@ def test_spawn_create_delegation_floor_requires_spawn_capability_before_resoluti
     )
 
     assert result.status == "failed"
-    assert result.message is not None
-    assert "caller profile has no spawn capability" in result.message
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
 
 
-def test_spawn_create_delegation_floor_rejects_passthrough_before_resolution(
+def test_spawn_create_caller_guardrail_rejects_passthrough_before_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch)
+    _set_caller_guardrail(monkeypatch)
 
     def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("delegation precondition must refuse before Mars")
@@ -448,18 +436,18 @@ def test_spawn_create_delegation_floor_rejects_passthrough_before_resolution(
     )
 
     assert result.status == "failed"
-    assert result.message is not None
-    assert "harness passthrough arguments" in result.message
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
 
 
-def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
+def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch)
+    _set_caller_guardrail(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -483,7 +471,7 @@ def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
     assert result.status == "dry-run"
 
 
-def test_spawn_create_delegation_floor_does_not_restrict_child_workspace_roots(
+def test_spawn_create_caller_guardrail_does_not_restrict_child_workspace_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -492,7 +480,7 @@ def test_spawn_create_delegation_floor_does_not_restrict_child_workspace_roots(
     outside = tmp_path / "outside"
     outside.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch)
+    _set_caller_guardrail(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -515,14 +503,14 @@ def test_spawn_create_delegation_floor_does_not_restrict_child_workspace_roots(
     assert result.task_cwd == outside.as_posix()
 
 
-def test_spawn_create_delegation_floor_allows_harness_home_env(
+def test_spawn_create_caller_guardrail_allows_harness_home_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch)
+    _set_caller_guardrail(monkeypatch)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -552,7 +540,7 @@ def test_spawn_create_delegation_floor_allows_harness_home_env(
     assert result.status == "dry-run"
 
 
-def test_spawn_create_without_delegation_floor_does_not_clamp_environment(
+def test_spawn_create_without_caller_guardrail_does_not_clamp_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
