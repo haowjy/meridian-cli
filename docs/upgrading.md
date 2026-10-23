@@ -1,5 +1,30 @@
 # Upgrade notes
 
+## Shell network policy defaults
+
+Agent profiles can set `network: allow` or `network: deny` to control connections made by
+shell commands, including public internet access, host services, and local sockets. An
+omitted field resolves to `allow`; built-in web tools remain controlled separately by
+`tools: web`.
+
+This changes Codex `workspace-write`: its native default kept network off, but Meridian now
+enables it when `network` is omitted so the cross-harness default is `allow`. To keep an
+existing Codex profile offline, set:
+
+```yaml
+sandbox: workspace-write
+network: deny
+```
+
+Codex `read-only` cannot enable network. Its dry-run report calls out an explicit
+`network: allow`; leaving the field unset preserves read-only's network-off behavior without
+reporting an authored allow request as unsupported. No harness can enforce `network: deny`
+under `danger-full-access`, and OpenCode, Pi, and Cursor cannot enforce it in any mode.
+
+Replace Codex `harness-overrides.codex.sandbox_workspace_write.network_access` with the
+portable profile field. The native key is deprecated in this release and still wins over
+the projected value; it becomes reserved and skipped in the following release.
+
 ## Agent-profile permissions
 
 Agent permission profiles are now binding on more harnesses and use typed rules from Mars.
