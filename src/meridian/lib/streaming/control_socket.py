@@ -8,7 +8,6 @@ import json
 import os
 import stat
 import sys
-import tempfile
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -25,6 +24,9 @@ if TYPE_CHECKING:
 # sockaddr_un.sun_path includes the trailing NUL. Use the pathname capacity so
 # callers can validate before asyncio reaches the less actionable bind error.
 UNIX_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
+# Runner and client processes may have different TMPDIR values; the shared
+# discovery path must not depend on either process's environment.
+_POSIX_SOCKET_ROOT = Path("/tmp")
 
 
 def bounded_socket_path(
@@ -39,7 +41,7 @@ def bounded_socket_path(
     if key is not None:
         identity += b"\0" + key.encode("utf-8")
     digest = hashlib.sha256(identity).hexdigest()[:32]
-    path = Path(tempfile.gettempdir()) / f"meridian-{uid}" / f"{kind}-{digest}.sock"
+    path = _POSIX_SOCKET_ROOT / f"meridian-{uid}" / f"{kind}-{digest}.sock"
     path_length = len(os.fsencode(path))
     if path_length > UNIX_SOCKET_PATH_MAX_BYTES:
         msg = (
@@ -60,7 +62,7 @@ def control_socket_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
 
 
 def prepare_socket_directory(path: Path) -> None:
-    """Create a private per-user socket directory under the shared temp root."""
+    """Create a private per-user socket directory under the fixed POSIX root."""
 
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory_stat = path.lstat()

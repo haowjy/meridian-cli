@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- macOS spawns: control socket path no longer exceeds Unix limit.
+
 ## [0.12.1] - 2026-10-22
 
 ### Changed
