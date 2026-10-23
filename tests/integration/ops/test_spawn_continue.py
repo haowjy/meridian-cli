@@ -157,10 +157,15 @@ def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_rea
     )
     monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
 
-    with pytest.raises(ValueError, match="standalone shell command"):
-        spawn_api.spawn_continue_sync(
-            SpawnContinueInput(spawn_id="p-does-not-exist", prompt="follow-up")
-        )
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(spawn_id="p-does-not-exist", prompt="follow-up")
+    )
+
+    assert result.status == "failed"
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
+    assert result.message is not None
+    assert "standalone shell command" in result.message
 
 
 @pytest.mark.parametrize("operation", ["continue", "fork"])
@@ -182,15 +187,20 @@ def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_r
 
     monkeypatch.setattr(spawn_api, "_resolve_spawn_read_authority", _must_not_read_source)
 
-    with pytest.raises(ValueError, match="caller profile has no spawn capability"):
-        if operation == "continue":
-            spawn_api.spawn_continue_sync(
-                SpawnContinueInput(spawn_id="p-does-not-exist", prompt="follow-up")
-            )
-        else:
-            spawn_api.spawn_fork_sync(
-                SpawnForkInput(source_ref="p-does-not-exist", prompt="fork")
-            )
+    if operation == "continue":
+        result = spawn_api.spawn_continue_sync(
+            SpawnContinueInput(spawn_id="p-does-not-exist", prompt="follow-up")
+        )
+    else:
+        result = spawn_api.spawn_fork_sync(
+            SpawnForkInput(source_ref="p-does-not-exist", prompt="fork")
+        )
+
+    assert result.status == "failed"
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
+    assert result.message is not None
+    assert "caller profile has no spawn capability" in result.message
 
 
 def test_spawn_continue_refuses_replayed_passthrough_before_sweep(

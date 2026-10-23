@@ -20,9 +20,10 @@ deliberate exception that wires policy surfaces to launch and persistence.
 - **Use `SpawnId`, `ModelId`, `ChatId`, and `HarnessSessionId` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; pyright catches wrong-ID bugs statically. Persisted chat and harness-session fields use Pydantic-aware `Annotated` aliases that normalize blank identities to `None` and enforce non-empty values at every parse boundary.
 - **`RuntimeOverrides`: use `None` to mean "not set", never `""` or `0`.** `resolve(*layers)` returns first-non-None per field. An empty string at a high-precedence layer wins over a meaningful value at a lower one.
 - **The environment registry is the sole declaration of child-process Meridian keys.** `ResolvedContext.child_env_overrides()` produces shared context handles, and the launch bind seam adds registered launch-specific handles such as `_MERIDIAN_HARNESS`; `validate_child_env_keys()` rejects unknown public or internal names.
-- **Caller-boundary refusal runs once in spawn policy, before operation-specific state.**
-  The shared ops path protects CLI and non-CLI surfaces without duplicating the spawn
-  grammar in the entrypoint. `caller_boundary.py` owns the record and checks.
+- **Every creation form enters one caller-boundary path before operation-specific state.**
+  Create, continue, and fork receive the same structured pre-init refusal without
+  duplicating the spawn grammar in the entrypoint. `caller_boundary.py` owns the record
+  and checks; `ops/spawn/api.py` owns the shared entry.
 - **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `_MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
 - **`LifecycleHook.on_event()` exceptions are logged but never block transitions.** Hooks must tolerate partial data.
 - **`spawn_store` is imported at the bottom of `lifecycle.py`** to break a circular import with `state/__init__`. Do not move it to the top.
@@ -44,7 +45,7 @@ can converge dead children instead of skipping their derived terminal views.
 - `spawn_service.py` — `SpawnApplicationService` (create/list/cancel/finalize dead spawns)
 - `sink.py` — `OutputSink` protocol, `NullSink` (output routing abstraction)
 - `depth.py` — `is_root_side_effect_process()`, `child_meridian_depth()`
-- `caller_boundary.py` — launcher-recorded PID namespace and child-confinement policy
+- `caller_boundary.py` — launcher-recorded PID namespace and child-spawn CLI guardrail
 - `clock.py` — `Clock` protocol, `RealClock` (injectable time for tests)
 - `domain.py` — `Spawn` domain model
 - `event_hooks.py` — `run_event_hooks()` (shared fold-hook dispatch over one raw event)
