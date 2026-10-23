@@ -48,7 +48,7 @@ can converge dead children instead of skipping their derived terminal views.
 - `spawn_service.py` — `SpawnApplicationService` (create/list/cancel/finalize dead spawns)
 - `sink.py` — `OutputSink` protocol, `NullSink` (output routing abstraction)
 - `depth.py` — `is_root_side_effect_process()`, `child_meridian_depth()`
-- `caller_boundary.py` — launcher-recorded PID namespace and child-spawn CLI guardrail
+- `caller_boundary.py` — launcher-recorded PID namespace and sandbox/network spawn guardrail
 - `clock.py` — `Clock` protocol, `RealClock` (injectable time for tests)
 - `domain.py` — `Spawn` domain model
 - `event_hooks.py` — `run_event_hooks()` (shared fold-hook dispatch over one raw event)

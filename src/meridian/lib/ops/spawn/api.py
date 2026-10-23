@@ -408,7 +408,25 @@ def _prepare_spawn_create(
         models_readonly=True,
     )
     floor_check.enforce_passthrough_args(artifacts.request.extra_args)
-    floor_check.enforce(artifacts.request.execution_policy.sandbox)
+    from meridian.lib.harness.bundle import get_harness_bundle
+    from meridian.lib.safety.policy import build_permission_policy
+
+    execution_policy = artifacts.request.execution_policy
+    guardrail_policy = build_permission_policy(
+        sandbox=execution_policy.sandbox,
+        network=execution_policy.network,
+        approval=execution_policy.approval or "default",
+    )
+    effective_network = get_harness_bundle(
+        artifacts.prepared.harness.id
+    ).projections.effective_network(
+        guardrail_policy,
+        native_config=execution_policy.native_config,
+    )
+    floor_check.enforce(
+        execution_policy.sandbox,
+        child_network=effective_network,
+    )
     if payload.dry_run:
         artifacts = bind_create_payload_preview(
             artifacts,

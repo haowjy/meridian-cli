@@ -62,6 +62,7 @@ from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.projections.permissions_claude import (
     compile_claude_permissions,
+    effective_claude_network,
 )
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import (
@@ -581,6 +582,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_claude_spec_to_cli_args,
             permission_report=lambda spec: compile_claude_permissions(spec)[1],
+            effective_network=effective_claude_network,
             bind_spec=bind_claude_spec,
         ),
         semantics=CLAUDE_SEMANTICS,

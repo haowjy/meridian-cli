@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.projections.permissions_codex import effective_codex_network
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
@@ -158,10 +159,10 @@ def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
     defaulted_line = next(line for line in defaulted_report if line.element == "network: allow")
     authored_line = next(line for line in authored_report if line.element == "network: allow")
     assert defaulted_line.status == "native"
-    assert defaulted_line.effective_network == "deny"
+    assert effective_codex_network(defaulted.permission_policy) == "deny"
     assert "no authored allow request to report as a gap" in defaulted_line.note
     assert authored_line.status == "unsupported"
-    assert authored_line.effective_network == "deny"
+    assert effective_codex_network(authored.permission_policy) == "deny"
 
 
 def test_codex_deprecated_native_network_override_wins_for_warning_release() -> None:
@@ -199,7 +200,13 @@ def test_codex_deprecated_native_network_override_wins_for_warning_release() -> 
         if line.element == "native_config: sandbox_workspace_write.network_access = false"
     )
     assert network_line.status == "partial"
-    assert network_line.effective_network == "deny"
+    assert (
+        effective_codex_network(
+            spec.permission_policy,
+            native_config=spec.native_config,
+        )
+        == "deny"
+    )
     assert "takes precedence" in network_line.note
     assert "deprecated" in native_line.note
     warnings = CodexAdapter().launch_spec_warnings(spec)

@@ -5,15 +5,16 @@
 `spawn_create_sync()`, continue, and fork share one preparation path. It inspects
 authority and checks the launcher-owned caller boundary before write bootstrap. With
 a boundary, it composes the resolved launch policy read-only and enforces the floor.
-The floor compares effective network from the harness enforcement report, not just the
-authored value; an unsupported deny is `allow` for delegation.
+The floor gets effective network directly from the harness projection port on that resolved
+policy; the report calls the same pure harness function, with no preview bind or report
+round trip.
 Every real launch calls `prepare_for_runtime_write()` afterward through one deferred
 materialization path. Dry-run binds its preview without materializing. Continue
 performs its state sweep after preparation succeeds; fork reuses the prepared artifacts
 for its cross-harness guard.
 
-The caller boundary rejects a no-capability caller, direct sensitive environment
-keys, and all harness-native passthrough arguments before source-state reads. Passthrough
+The caller boundary rejects a no-capability caller and all harness-native passthrough
+arguments before source-state reads. Passthrough
 is all-or-nothing under a floor because each harness owns native flags that can supersede
 Meridian's resolved sandbox or approval arguments.
 

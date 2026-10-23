@@ -54,7 +54,10 @@ from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_NETWORK_ACCESS_KEY,
     codex_native_config_has_key,
 )
-from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+from meridian.lib.harness.projections.permissions_codex import (
+    compile_codex_permissions,
+    effective_codex_network,
+)
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
@@ -630,6 +633,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
             permission_report=lambda spec: compile_codex_permissions(spec)[1],
+            effective_network=effective_codex_network,
             materialize_spec=materialize_codex_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,

@@ -5,7 +5,10 @@ import json
 import pytest
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
+from meridian.lib.harness.projections.permissions_claude import (
+    compile_claude_permissions,
+    effective_claude_network,
+)
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
@@ -227,7 +230,7 @@ def test_claude_network_deny_reports_settings_and_command_widening(
     _, report = compile_claude_permissions(spec)
     line = next(item for item in report if item.element == "network: deny")
     assert line.status == "partial"
-    assert line.effective_network == "deny"
+    assert effective_claude_network(spec.permission_policy) == "deny"
     assert "private TCP loopback" in line.note
     assert "can be widened outside Meridian" in line.note
     assert "meridian spawn *" in line.note
@@ -245,7 +248,7 @@ def test_claude_network_deny_reports_settings_and_command_widening(
     _, bypassed_report = compile_claude_permissions(bypassed)
     bypassed_line = next(item for item in bypassed_report if item.element == "network: deny")
     assert bypassed_line.status == "unsupported"
-    assert bypassed_line.effective_network == "allow"
+    assert effective_claude_network(bypassed.permission_policy) == "allow"
     assert "network proxy unrestricted" in bypassed_line.note
 
 

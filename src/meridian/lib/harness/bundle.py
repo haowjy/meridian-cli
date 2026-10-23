@@ -21,7 +21,7 @@ from meridian.lib.harness.idle_types import (
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
-from meridian.lib.safety.policy import EnforcementReport
+from meridian.lib.safety.policy import EnforcementReport, NetworkMode, PermissionPolicy
 from meridian.lib.state.spawn.model import SpawnRecord
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
@@ -32,6 +32,17 @@ class SubprocessProjector(Protocol[ProjectorSpecT]):
     """Project a resolved launch spec onto one subprocess argv."""
 
     def __call__(self, spec: ProjectorSpecT, *, base_command: tuple[str, ...]) -> list[str]: ...
+
+
+class EffectiveNetwork(Protocol):
+    """Resolve one harness's effective shell-network mode from resolved policy facts."""
+
+    def __call__(
+        self,
+        policy: PermissionPolicy,
+        *,
+        native_config: Mapping[str, object] | None = None,
+    ) -> NetworkMode: ...
 
 
 class ManagedPrimaryBackendProjector(Protocol[ProjectorSpecT]):
@@ -73,6 +84,8 @@ class HarnessProjectionPorts(Generic[SpecT]):
     # ``--dry-run`` and the projection manifest read it; the live projectors call the typed
     # compile (``permissions_<harness>.py``) directly for its native projection.
     permission_report: Callable[[SpecT], EnforcementReport]
+    # Reports and child-spawn guardrails share this pure, harness-owned policy fact.
+    effective_network: EffectiveNetwork
     # Resolves the spec's facts that depend on the launch environment or child cwd once at
     # bind, so every projection and the connection read one value.
     bind_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None

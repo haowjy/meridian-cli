@@ -16,6 +16,7 @@ the V2 ``permissions`` rule list; nothing else decides OpenCode permissions.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
@@ -24,6 +25,8 @@ from meridian.lib.harness.projections.native_config import unsupported_native_co
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     EnforcementReport,
+    NetworkMode,
+    PermissionPolicy,
     ReportLine,
     command_grant_covers_pattern,
     complete_report,
@@ -58,6 +61,16 @@ class OpenCodePermissionRule:
 
 
 type OpenCodePermissions = tuple[OpenCodePermissionRule, ...]
+
+
+def effective_opencode_network(
+    policy: PermissionPolicy,
+    *,
+    native_config: Mapping[str, object] | None = None,
+) -> NetworkMode:
+    """Return OpenCode's unrestricted shell-network policy."""
+
+    return "allow"
 
 
 def _effective_action(action: ToolAction, *, interactive: bool) -> ToolAction:
@@ -286,6 +299,7 @@ def compile_opencode_permissions(
     """
 
     policy = spec.permission_policy
+    effective_network = effective_opencode_network(policy)
     resolved_version = bound_opencode_version(spec.opencode_version)
     entries_by_rule = [
         (
@@ -478,11 +492,10 @@ def compile_opencode_permissions(
     lines.append(
         ReportLine(
             f"network: {policy.network}",
-            "native" if policy.network == "allow" else "unsupported",
+            "native" if effective_network == policy.network else "unsupported",
             "OpenCode leaves shell network unrestricted"
             if policy.network == "allow"
             else "not enforced by OpenCode; shell network remains available",
-            effective_network="allow",
         )
     )
 
@@ -508,4 +521,5 @@ __all__ = [
     "OpenCodePermissionRule",
     "OpenCodePermissions",
     "compile_opencode_permissions",
+    "effective_opencode_network",
 ]

@@ -1828,6 +1828,10 @@ def bind_launch_context(
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
     child_context_env[CALLER_BOUNDARY_ENV] = CallerBoundary.from_policy(
         permission_policy,
+        effective_network=get_harness_bundle(harness.id).projections.effective_network(
+            permission_policy,
+            native_config=resolved_request.execution_policy.native_config,
+        ),
         pid_namespace=current_pid_namespace(),
     ).to_env_value()
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"

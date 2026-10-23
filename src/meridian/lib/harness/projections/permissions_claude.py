@@ -11,6 +11,7 @@ channels, so a rule that order shadows, or that the compile left out, says so.
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Literal
@@ -21,6 +22,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 from meridian.lib.safety.policy import (
     EnforcementReport,
+    NetworkMode,
     PermissionPolicy,
     PlatformRule,
     PlatformRuleKind,
@@ -848,27 +850,46 @@ def _sandbox_line(policy: PermissionPolicy, permissions: ClaudePermissions) -> R
     return ReportLine(f"sandbox: {policy.sandbox}", status, settings)
 
 
+def effective_claude_network(
+    policy: PermissionPolicy,
+    *,
+    native_config: Mapping[str, object] | None = None,
+) -> NetworkMode:
+    """Return the shell-network policy Claude actually enforces."""
+
+    if policy.sandbox not in {"read-only", "workspace-write"}:
+        return "allow"
+    if policy.approval in {"never", "yolo"}:
+        return "allow"
+    return policy.network
+
+
 def _network_line(
     policy: PermissionPolicy,
     permissions: ClaudePermissions,
     settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> ReportLine:
     element = f"network: {policy.network}"
+    effective_network = effective_claude_network(policy)
     sandbox = permissions.settings.sandbox
+    if effective_network == "allow" and policy.network == "deny":
+        if permissions.skip_permission_prompts:
+            note = (
+                "approval never uses --dangerously-skip-permissions, which leaves Claude's "
+                "sandbox network proxy unrestricted even though filesystem confinement remains"
+            )
+        else:
+            note = "not enforced because the Claude Bash sandbox is off"
+        return ReportLine(element, "unsupported", note)
+
     if sandbox is None or not sandbox.enabled:
         if policy.network == "allow":
             return ReportLine(
                 element,
                 "native",
                 "sandbox is off, so shell network is available",
-                effective_network="allow",
             )
-        return ReportLine(
-            element,
-            "unsupported",
-            "not enforced because the Claude Bash sandbox is off",
-            effective_network="allow",
-        )
+        raise RuntimeError("Claude network projection disagrees with its effective policy.")
 
     if policy.network == "allow":
         note = (
@@ -882,18 +903,8 @@ def _network_line(
                 note
                 + "; on Linux, host localhost is reachable only through Claude's proxy, and "
                 "clients honoring NO_PROXY bypass it (for curl, use --noproxy '')",
-                effective_network="allow",
             )
-        return ReportLine(element, "native", note, effective_network="allow")
-
-    if permissions.skip_permission_prompts:
-        return ReportLine(
-            element,
-            "unsupported",
-            "approval never uses --dangerously-skip-permissions, which leaves Claude's "
-            "sandbox network proxy unrestricted even though filesystem confinement remains",
-            effective_network="allow",
-        )
+        return ReportLine(element, "native", note)
 
     notes = ["no sandbox.network.allowedDomains projected"]
     if sys.platform.startswith("linux"):
@@ -920,7 +931,6 @@ def _network_line(
         if sys.platform.startswith("linux") or widening or sandbox.excluded_commands
         else "native",
         "; ".join(notes),
-        effective_network="deny",
     )
 
 
@@ -993,4 +1003,5 @@ __all__ = [
     "ClaudeSandboxSettings",
     "ClaudeSettings",
     "compile_claude_permissions",
+    "effective_claude_network",
 ]

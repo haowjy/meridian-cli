@@ -58,6 +58,7 @@ from meridian.lib.harness.pi_runtime_resolver import (
 from meridian.lib.harness.projections.permissions_pi import (
     PI_PERMISSION_POLICY_ENV,
     compile_pi_permissions,
+    effective_pi_network,
 )
 from meridian.lib.harness.projections.pi_extension_projection import (
     PiExtensionLaunchProfile,
@@ -616,6 +617,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=_project_pi_subprocess_cli_args,
             permission_report=lambda spec: compile_pi_permissions(spec)[1],
+            effective_network=effective_pi_network,
         ),
         semantics=PI_SEMANTICS,
         event_sinks=_event_sinks,

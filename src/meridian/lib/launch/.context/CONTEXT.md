@@ -53,11 +53,12 @@ request for `LaunchContext.request` compatibility. `request` carries the resolve
 version used by `bind_launch_context()`.
 
 Every bind replaces the inherited caller boundary with one record for the process it is
-about to start. It contains the launcher's PID namespace, resolved sandbox mode, and the
-prepared profile's spawn capability. Approval and projected roots are not part of this
-CLI-escalation guardrail. The record
-deliberately has no network field yet; network confinement can join this transport without
-changing spawn policy ownership.
+about to start. It contains the launcher's PID namespace, resolved sandbox mode,
+harness-effective network mode, and the prepared profile's spawn capability. The harness
+projection port derives effective network from the already-resolved policy before bind;
+the permission report calls the same harness function. Approval is not compared itself but
+can affect that effective mode. Projected roots are not part of this CLI-escalation
+guardrail.
 
 ### RuntimeBindings
 

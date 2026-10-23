@@ -525,11 +525,15 @@ them:
   spawn capability and sessions not launched by Meridian. Meridian owns and rewrites only
   `meridian.rules`; it does not touch other Codex rules files.
 - **Child-spawn CLI guardrail.** Every Meridian-launched harness receives its resolved
-  sandbox and spawn capability in a launcher-owned boundary record. Only `read-only` and
+  sandbox, harness-effective network mode, and spawn capability in a launcher-owned
+  boundary record. Only `read-only` and
   `workspace-write` callers have a floor, because only those explicit modes receive a
   sandbox escape. `spawn`, `spawn --continue`, and `spawn --fork` (including `--dry-run`)
-  refuse a floored caller whose profile cannot spawn or a child whose resolved sandbox is
-  weaker than the caller's. Harness-native passthrough arguments after `--` are refused
+  refuse a floored caller whose profile cannot spawn or a child whose resolved sandbox or
+  effective network mode is weaker than the caller's. Each harness owns that network fact,
+  which also drives its `network:` report line. For example, Claude `approval: never`
+  makes an authored `network: deny` effectively `allow`. Harness-native passthrough
+  arguments after `--` are refused
   because they can override Meridian's resolved sandbox or sandbox flags. A child emits its
   own resolved floor to its descendants.
   `danger-full-access` and `default` callers, top-level commands, and shells that were not

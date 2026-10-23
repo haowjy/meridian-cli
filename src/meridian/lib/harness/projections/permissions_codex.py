@@ -9,6 +9,7 @@ capabilities, never harness-native names. The projectors spell this typed result
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from meridian.lib.harness.projections.compaction import compaction_report
@@ -24,6 +25,7 @@ from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
     ApprovalMode,
     EnforcementReport,
+    NetworkMode,
     PermissionPolicy,
     ReportLine,
     SandboxMode,
@@ -49,6 +51,27 @@ _SANDBOX_MODE_BY_MODE: dict[SandboxMode, str | None] = {
     "workspace-write": "workspace-write",
     "danger-full-access": "danger-full-access",
 }
+
+
+def effective_codex_network(
+    policy: PermissionPolicy,
+    *,
+    native_config: Mapping[str, object] | None = None,
+) -> NetworkMode:
+    """Return the shell-network policy Codex actually enforces."""
+
+    if policy.sandbox == "read-only":
+        return "deny"
+    if policy.sandbox == "workspace-write":
+        if native_config is not None and codex_native_config_has_key(
+            native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
+        ):
+            native_value = codex_native_config_value(
+                native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
+            )
+            return "deny" if native_value is False else "allow"
+        return policy.network
+    return "allow"
 
 
 @dataclass(frozen=True)
@@ -233,30 +256,26 @@ def _codex_report(
             )
         )
     network_element = f"network: {policy.network}"
+    effective_network = effective_codex_network(policy, native_config=spec.native_config)
     native_network_override = codex_native_config_has_key(
         spec.native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
     )
     if policy.sandbox == "workspace-write" and native_network_override:
-        native_network_value = codex_native_config_value(
-            spec.native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
-        )
         lines.append(
             ReportLine(
                 network_element,
                 "partial",
                 "deprecated native_config sandbox_workspace_write.network_access takes "
                 "precedence over the profile network field for this release",
-                effective_network="deny" if native_network_value is False else "allow",
             )
         )
     elif policy.sandbox == "workspace-write":
-        if policy.network == "allow":
+        if effective_network == "allow":
             lines.append(
                 ReportLine(
                     network_element,
                     "native",
                     "-c sandbox_workspace_write.network_access=true",
-                    effective_network="allow",
                 )
             )
         else:
@@ -273,7 +292,6 @@ def _codex_report(
                         if escaped
                         else ""
                     ),
-                    effective_network="deny",
                 )
             )
     elif policy.sandbox == "read-only":
@@ -283,7 +301,6 @@ def _codex_report(
                     network_element,
                     "unsupported",
                     "Codex read-only has no network-enabled mode",
-                    effective_network="deny",
                 )
             )
         elif policy.network == "allow":
@@ -293,7 +310,6 @@ def _codex_report(
                     "native",
                     "network was left unset; Codex read-only keeps its native shell "
                     "network-off behavior, with no authored allow request to report as a gap",
-                    effective_network="deny",
                 )
             )
         else:
@@ -302,7 +318,6 @@ def _codex_report(
                     network_element,
                     "native",
                     "Codex read-only keeps shell network and sockets off",
-                    effective_network="deny",
                 )
             )
     elif policy.sandbox == "danger-full-access":
@@ -313,7 +328,6 @@ def _codex_report(
                 "danger-full-access leaves shell network unrestricted"
                 if policy.network == "allow"
                 else "not enforced under danger-full-access; shell network remains available",
-                effective_network="allow",
             )
         )
     else:
@@ -322,7 +336,6 @@ def _codex_report(
                 network_element,
                 "partial" if policy.network == "allow" else "unsupported",
                 "sandbox is left to Codex, so Meridian does not project network_access",
-                effective_network="allow",
             )
         )
     if permissions.approval_policy is not None:
@@ -378,4 +391,8 @@ def compile_codex_permissions(
     return permissions, _codex_report(spec, policy, permissions, native_config_report)
 
 
-__all__ = ["CodexPermissions", "compile_codex_permissions"]
+__all__ = [
+    "CodexPermissions",
+    "compile_codex_permissions",
+    "effective_codex_network",
+]

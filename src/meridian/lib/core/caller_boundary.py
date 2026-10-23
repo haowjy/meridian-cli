@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
+    NETWORK_MODE_STRENGTH,
     SANDBOX_MODE_WEAKNESS,
+    NetworkMode,
     SandboxMode,
 )
 from meridian.lib.utils.json_shapes import loads_json_object
@@ -43,6 +45,7 @@ class CallerBoundary:
 
     pid_namespace: str | None
     sandbox: SandboxMode
+    network: NetworkMode
     has_spawn_capability: bool
 
     @classmethod
@@ -50,6 +53,7 @@ class CallerBoundary:
         cls,
         policy: PermissionPolicy,
         *,
+        effective_network: NetworkMode,
         pid_namespace: str | None,
     ) -> CallerBoundary:
         """Take the child-launch boundary fields from one resolved policy."""
@@ -58,6 +62,7 @@ class CallerBoundary:
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
+            network=effective_network,
             has_spawn_capability=policy.has_spawn_capability,
         )
 
@@ -74,6 +79,7 @@ class CallerBoundary:
             {
                 "pid_namespace": self.pid_namespace,
                 "sandbox": self.sandbox,
+                "network": self.network,
                 "spawn": self.has_spawn_capability,
             },
             separators=(",", ":"),
@@ -93,17 +99,21 @@ class CallerBoundary:
         sandbox = payload.get("sandbox")
         # Capability axes added after this record's producer default closed for a floored
         # caller. They are irrelevant for an unfloored caller, which is discarded below.
+        network = payload.get("network", "deny")
         spawn = payload.get("spawn", False)
         if (
             (pid_namespace is not None and not isinstance(pid_namespace, str))
             or not isinstance(sandbox, str)
+            or not isinstance(network, str)
             or not isinstance(spawn, bool)
             or sandbox not in SANDBOX_MODE_WEAKNESS
+            or network not in NETWORK_MODE_STRENGTH
         ):
             raise ValueError("Child spawn refused: caller boundary is invalid.")
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
+            network=network,
             has_spawn_capability=spawn,
         )
 
@@ -150,8 +160,13 @@ class CallerBoundaryCheck:
                 "unsandboxed child policy."
             )
 
-    def enforce(self, child_sandbox: str | None) -> None:
-        """Refuse a resolved child sandbox weaker than the caller's guardrail."""
+    def enforce(
+        self,
+        child_sandbox: str | None,
+        *,
+        child_network: NetworkMode,
+    ) -> None:
+        """Refuse a resolved child policy weaker than the caller's guardrail."""
 
         caller = self.caller
         if caller is None:
@@ -163,6 +178,11 @@ class CallerBoundaryCheck:
             raise ValueError(
                 f"Child spawn refused: sandbox '{normalized}' is weaker than "
                 f"caller floor '{caller.sandbox}'."
+            )
+        if NETWORK_MODE_STRENGTH[child_network] < NETWORK_MODE_STRENGTH[caller.network]:
+            raise ValueError(
+                f"Child spawn refused: effective network '{child_network}' is weaker than "
+                f"caller floor '{caller.network}'."
             )
 
 

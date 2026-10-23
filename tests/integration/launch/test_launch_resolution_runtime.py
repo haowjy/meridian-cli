@@ -14,6 +14,7 @@ from meridian.lib.core.caller_boundary import (
 )
 from meridian.lib.core.context_ref import SpawnContextRef, context_ref_values
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.registry import (
     HarnessRegistry,
     get_default_harness_registry,
@@ -109,6 +110,9 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     boundary = CallerBoundary.from_env_value(env[CALLER_BOUNDARY_ENV])
     assert boundary == CallerBoundary.from_policy(
         preview.binding.spec.permission_policy,
+        effective_network=get_harness_bundle(
+            preview.harness.id
+        ).projections.effective_network(preview.binding.spec.permission_policy),
         pid_namespace=current_pid_namespace(),
     )
     assert ("ANTHROPIC_API_KEY" not in env) == expected

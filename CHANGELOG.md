@@ -7,16 +7,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Upgrade notes
 - Agents in a Meridian-projected `read-only`/`workspace-write` sandbox can launch children only if their profile lists `subagents:`, never with a weaker sandbox, never with native args after `--`. See [Sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
 - Spawn-capable sandboxed Codex launches write a Meridian-owned `$CODEX_HOME/rules/meridian.rules` that lets `meridian spawn` run outside Codex's sandbox, in every Codex session of that user.
+- An unset profile `network` now enables shell network in Codex `workspace-write`; set `network: deny` to retain its former network-off behavior. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
 
 ### Added
 - Sandboxed agents operate inside Meridian on any harness without profile changes: Meridian's read commands and `spawn done`/`rearm` stay allowed under shell allowlists; spawn-capable profiles also get `meridian spawn`.
 - Sandboxed Claude and Codex agents can launch `--bg` children that survive: a standalone `meridian spawn` runs outside the harness sandbox (Claude `excludedCommands`, Codex execpolicy rule).
 - `meridian spawn` run inside a sandbox that would kill its child (`cd x && meridian spawn`, pipes, `$()`, `VAR=1` prefix) fails before any state write with "run as a standalone shell command".
 - Read-only Codex spawns get the completion confirmation turn again.
+- Profile `network: allow | deny` controls shell connections separately from built-in web tools; every harness reports what it enforces.
+- Sandboxed child delegation cannot weaken the caller's harness-effective network policy.
 
 ### Fixed
 - Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).
 - Spawn help examples no longer use `$(...)` inside `meridian spawn`.
+
+### Deprecated
+- Codex `harness-overrides.codex.sandbox_workspace_write.network_access`; use profile `network`. Native passthrough wins during this warning release, then the key becomes reserved.
 
 ## [0.12.8] - 2026-10-23
 

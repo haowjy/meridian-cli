@@ -32,7 +32,8 @@ without updating the corresponding projector → startup failure.
   allow/deny lists, OpenCode's version-canonical ordered agent rules). The harness's projectors call it and
   spell the result as argv, env or payload; nothing outside the harness module reads the
   policy's rules. The compile returns `(native value, EnforcementReport)`; its report is
-  registered as `HarnessProjectionPorts.permission_report`. The projectors, `--dry-run` and
+  registered as `HarnessProjectionPorts.permission_report`; its pure effective shell-network
+  function is registered beside it. The projectors, `--dry-run` and
   `projection-manifest.json` all go through that one function, so the report cannot drift
   from what launched.
 

@@ -6,6 +6,7 @@ unsupported.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -15,6 +16,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     ApprovalMode,
     EnforcementReport,
+    NetworkMode,
     PermissionPolicy,
     ReportLine,
     SandboxMode,
@@ -51,9 +53,20 @@ class CursorPermissions:
     sandbox: CursorSandbox | None
 
 
+def effective_cursor_network(
+    policy: PermissionPolicy,
+    *,
+    native_config: Mapping[str, object] | None = None,
+) -> NetworkMode:
+    """Return Cursor's unrestricted shell-network policy."""
+
+    return "allow"
+
+
 def _cursor_report(
     spec: ResolvedLaunchSpec, policy: PermissionPolicy, permissions: CursorPermissions
 ) -> EnforcementReport:
+    effective_network = effective_cursor_network(policy)
     unsupported_note = "Cursor does not enforce tool rules or restrictive tool profiles"
     lines = [
         ReportLine(rule_element(rule), "unsupported", unsupported_note) for rule in policy.rules
@@ -86,11 +99,10 @@ def _cursor_report(
     lines.append(
         ReportLine(
             f"network: {policy.network}",
-            "native" if policy.network == "allow" else "unsupported",
+            "native" if effective_network == policy.network else "unsupported",
             "Cursor leaves shell network unrestricted"
             if policy.network == "allow"
             else "not enforced by Cursor; shell network remains available",
-            effective_network="allow",
         )
     )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Cursor"))
@@ -110,4 +122,8 @@ def compile_cursor_permissions(
     return permissions, _cursor_report(spec, policy, permissions)
 
 
-__all__ = ["CursorPermissions", "compile_cursor_permissions"]
+__all__ = [
+    "CursorPermissions",
+    "compile_cursor_permissions",
+    "effective_cursor_network",
+]

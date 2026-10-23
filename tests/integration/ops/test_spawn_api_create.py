@@ -28,7 +28,7 @@ from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.safety.policy import SandboxMode
+from meridian.lib.safety.policy import NetworkMode, SandboxMode
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
 from meridian.lib.telemetry import init_telemetry
@@ -40,16 +40,18 @@ def _set_caller_guardrail(
     monkeypatch: pytest.MonkeyPatch,
     *,
     sandbox: SandboxMode = "workspace-write",
+    network: NetworkMode = "allow",
     has_spawn_capability: bool = True,
 ) -> None:
     record = json.loads(
         CallerBoundary(
             sandbox=sandbox,
+            network=network,
             has_spawn_capability=has_spawn_capability,
             pid_namespace=None,
         ).to_env_value()
     )
-    record["network"] = "future-axis"
+    record["future_axis"] = "ignored"
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
         json.dumps(record),
@@ -303,6 +305,7 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="workspace-write",
+            network="allow",
             has_spawn_capability=True,
             pid_namespace=f"{namespace}:different",
         ).to_env_value(),
@@ -326,7 +329,7 @@ def test_unsandboxed_caller_has_no_guardrail(
                 "pid_namespace": None,
                 "sandbox": "default",
                 # A newer axis and a missing spawn axis are irrelevant when unfloored.
-                "network": "future-axis",
+                "future_axis": "ignored",
             }
         ),
     )
@@ -337,6 +340,26 @@ def test_unsandboxed_caller_has_no_guardrail(
     )
 
     assert check.caller is None
+
+
+def test_floored_legacy_caller_defaults_missing_network_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        CALLER_BOUNDARY_ENV,
+        json.dumps(
+            {
+                "pid_namespace": None,
+                "sandbox": "workspace-write",
+                "spawn": True,
+            }
+        ),
+    )
+
+    check = CallerBoundaryCheck.from_environment(dry_run=True)
+
+    assert check.caller is not None
+    assert check.caller.network == "deny"
 
 
 @pytest.mark.parametrize(
@@ -469,6 +492,53 @@ def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
     )
 
     assert result.status == "dry-run"
+
+
+@pytest.mark.parametrize(
+    ("child_network", "approval", "expected_status", "expected_message"),
+    [
+        ("allow", "default", "failed", "effective network 'allow' is weaker"),
+        ("deny", "default", "dry-run", None),
+        ("deny", "never", "failed", "effective network 'allow' is weaker"),
+    ],
+)
+def test_spawn_create_caller_guardrail_compares_effective_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    child_network: NetworkMode,
+    approval: str,
+    expected_status: str,
+    expected_message: str | None,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_caller_guardrail(monkeypatch, network="deny")
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="workspace-write",
+            network=child_network,
+            approval=approval,
+        ),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == expected_status
+    if expected_message is not None:
+        assert result.message is not None
+        assert expected_message in result.message
 
 
 def test_spawn_create_caller_guardrail_does_not_restrict_child_workspace_roots(

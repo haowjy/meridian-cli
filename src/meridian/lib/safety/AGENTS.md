@@ -49,8 +49,8 @@ each harness compiles it in `harness/projections/permissions_<harness>.py`. Noth
 answers the allowlist questions (`is_allowlist`, `allowed_tools`) and writes each
 per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them.
 `EnforcementReport` (a tuple of `ReportLine`) is the shape each compile reports what it
-enforced in; network lines also retain an internal effective mode for caller-boundary
-propagation, omitted from public report JSON. The formatting helpers live here too.
+enforced in. Harness projection ports separately expose the pure effective-network function
+shared by that line and the caller guardrail. The formatting helpers live here too.
 
 ## Entry Points
 
