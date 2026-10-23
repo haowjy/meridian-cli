@@ -34,10 +34,19 @@ def _is_spawn_dry_run(argv: Sequence[str]) -> bool:
     for token in argv:
         if token == "--":
             break
-        if token == "--dry-run":
-            enabled = True
-        elif token == "--no-dry-run":
-            enabled = False
+        for name, implicit in (("--dry-run", True), ("--no-dry-run", False)):
+            if token == name:
+                enabled = implicit
+                break
+            prefix = f"{name}="
+            if not token.startswith(prefix):
+                continue
+            value = token.removeprefix(prefix).lower()
+            if value in {"yes", "y", "1", "true", "t"}:
+                enabled = implicit
+            elif value in {"no", "n", "0", "false", "f"}:
+                enabled = not implicit
+            break
     return enabled
 
 

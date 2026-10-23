@@ -175,8 +175,10 @@ def test_entrypoint_refuses_sandboxed_spawn_before_full_cli_import(
     assert "standalone shell command" in stderr
 
 
+@pytest.mark.parametrize("flag", ["--dry-run", "--dry-run=true", "--no-dry-run=false"])
 def test_entrypoint_allows_sandboxed_spawn_dry_run(
     monkeypatch: pytest.MonkeyPatch,
+    flag: str,
 ) -> None:
     captured: dict[str, object] = {}
     fake_main_module = _make_fake_main_module(captured)
@@ -189,7 +191,7 @@ def test_entrypoint_allows_sandboxed_spawn_dry_run(
         monkeypatch.setattr(
             sys,
             "argv",
-            ["meridian", "spawn", "--dry-run", "-p", "preview"],
+            ["meridian", "spawn", flag, "-p", "preview"],
         )
 
         entrypoint_module.main()
@@ -199,7 +201,7 @@ def test_entrypoint_allows_sandboxed_spawn_dry_run(
         else:
             sys.modules.pop("meridian.cli.main", None)
 
-    assert captured["argv"] == ["spawn", "--dry-run", "-p", "preview"]
+    assert captured["argv"] == ["spawn", flag, "-p", "preview"]
 
 
 def test_entrypoint_allows_sandboxed_spawn_help(
