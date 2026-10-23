@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -1544,8 +1545,10 @@ def bind_launch_context(
         project_paths.project_root, context_config
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
-    project_locks_root = project_lifetime_lock_path(runtime_root).parent
-    project_locks_root.mkdir(parents=True, exist_ok=True)
+    project_lock_path = project_lifetime_lock_path(runtime_root)
+    project_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with suppress(FileExistsError):
+        project_lock_path.touch(exist_ok=False)
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     socket_roots = (socket_directory(),) if IS_POSIX else ()
     resolved_request = prepared.request
@@ -1611,7 +1614,6 @@ def bind_launch_context(
         (
             *workspace_authority_roots,
             runtime_root,
-            project_locks_root,
             system_temp_root,
             *socket_roots,
         )

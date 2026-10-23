@@ -174,10 +174,23 @@ def acquire_file_lock(
     if timeout is not None and timeout < 0:
         raise ValueError("timeout must be non-negative or None")
 
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = None if timeout is None else time.monotonic() + timeout
     while True:
-        handle = lock_path.open("a+b")
+        if IS_WINDOWS:
+            # The legacy Windows locking API writes a one-byte lock region.
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            handle = lock_path.open("a+b")
+        else:
+            try:
+                # POSIX flock needs no write access. Existing project-lifetime locks
+                # therefore remain usable without exposing their shared directory.
+                handle = lock_path.open("rb")
+            except FileNotFoundError:
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    handle = lock_path.open("x+b")
+                except FileExistsError:
+                    continue
         windows_advisory = IS_WINDOWS and mode == "shared"
         if not windows_advisory:
             _track_process_lock_handle(handle)

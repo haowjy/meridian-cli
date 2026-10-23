@@ -64,7 +64,7 @@ def test_workspace_roots_append_after_claude_passthrough_args(
     )
 
     runtime_root = tmp_path / ".meridian"
-    locks_root = project_lifetime_lock_path(runtime_root).parent
+    project_lock = project_lifetime_lock_path(runtime_root)
     assert preview.binding.child_cwd == tmp_path
     args = preview.binding.run_params.extra_args
     assert args[:2] == ("--user-tail", "1")
@@ -72,13 +72,13 @@ def test_workspace_roots_append_after_claude_passthrough_args(
     projected_roots = {path.as_posix() for path in preview.binding.spec.projected_roots}
     assert shared_root.as_posix() in projected_roots
     assert runtime_root.as_posix() in projected_roots
-    assert locks_root.as_posix() in projected_roots
-    assert locks_root.is_dir()
+    assert project_lock.parent.as_posix() not in projected_roots
+    assert project_lock.is_file()
     if IS_POSIX:
         assert socket_directory().as_posix() in projected_roots
     assert shared_root.as_posix() in preview.binding.argv
     assert runtime_root.as_posix() in preview.binding.argv
-    assert locks_root.as_posix() in preview.binding.argv
+    assert project_lock.parent.as_posix() not in preview.binding.argv
     if IS_POSIX:
         assert socket_directory().as_posix() in preview.binding.argv
 

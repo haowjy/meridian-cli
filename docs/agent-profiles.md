@@ -490,9 +490,10 @@ Meridian also adds the permissions its control plane needs; profile authors do n
 them:
 
 - **State roots.** A sandboxed launch can reach its task checkout, the active work and KB
-  roots, the project's runtime state and sibling `.locks` directory, and the bounded
-  temporary directory used for control sockets. Codex's `read-only` sandbox can only read
-  those roots.
+  roots, the project's runtime state, and the bounded temporary directory used for control
+  sockets. The launcher pre-creates this project's lifetime lock, which child commands open
+  read-only; the shared `.locks` directory is not writable from the sandbox. Codex's
+  `read-only` sandbox can only read the projected roots.
 - **Meridian commands.** Completion and read-only commands are always granted. A profile
   that can spawn also gets the `meridian spawn ...` launch commands. Each grant is either
   exact or prefix-matched in the target harness's syntax. Run

@@ -14,7 +14,8 @@ bare path
   sha256(canonical path)            — ad-hoc identity; no file written there
 
 ~/.meridian/projects/.locks/<id>.lock
-                                    — project-lifetime gate outside deletable root
+                                    — launcher-created project-lifetime gate outside deletable
+                                      root; POSIX acquisition opens it read-only
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   origin.json                       — ad-hoc attribution/activity only
   sessions.jsonl                    — all session events, append-only
