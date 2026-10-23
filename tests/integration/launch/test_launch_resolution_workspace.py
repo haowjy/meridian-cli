@@ -73,7 +73,7 @@ def test_workspace_roots_append_after_claude_passthrough_args(
     assert shared_root.as_posix() in projected_roots
     assert runtime_root.as_posix() in projected_roots
     assert project_lock.parent.as_posix() not in projected_roots
-    assert project_lock.is_file()
+    assert not project_lock.exists()
     if IS_POSIX:
         assert socket_directory().as_posix() in projected_roots
     assert shared_root.as_posix() in preview.binding.argv

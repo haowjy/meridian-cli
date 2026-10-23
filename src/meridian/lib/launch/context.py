@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Mapping
-from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -44,7 +43,11 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
-from meridian.lib.harness.bundle import bind_launch_spec, get_harness_bundle
+from meridian.lib.harness.bundle import (
+    bind_launch_spec,
+    get_harness_bundle,
+    materialize_launch_spec,
+)
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     PreparedLaunchContent,
@@ -70,7 +73,7 @@ from meridian.lib.state.paths import (
     resolve_spawn_log_dir,
 )
 from meridian.lib.state.spawn.model import LaunchMode
-from meridian.lib.state.user_paths import project_lifetime_lock_path
+from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
@@ -1548,10 +1551,6 @@ def bind_launch_context(
         project_paths.project_root, context_config
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
-    project_lock_path = project_lifetime_lock_path(runtime_root)
-    project_lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with suppress(FileExistsError):
-        project_lock_path.touch(exist_ok=False)
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     socket_roots = (socket_directory(),) if IS_POSIX else ()
     resolved_request = prepared.request
@@ -1877,7 +1876,6 @@ def bind_launch_context(
         spec,
         env=env,
         child_cwd=child_cwd,
-        dry_run=bindings.dry_run,
     )
     env.update(
         harness.project_launch_env(
@@ -1929,6 +1927,22 @@ def bind_launch_context(
     )
 
 
+def materialize_launch_context(context: LaunchContext) -> LaunchContext:
+    """Perform real-launch-only adapter writes after pure context binding."""
+
+    ensure_project_lifetime_lock(context.runtime_root)
+    binding = context.binding
+    spec = materialize_launch_spec(
+        context.harness.id,
+        binding.spec,
+        env=binding.environment.final_env,
+        child_cwd=binding.child_cwd,
+    )
+    if spec is binding.spec:
+        return context
+    return replace(context, binding=replace(binding, spec=spec))
+
+
 __all__ = [
     "ChildEnvContext",
     "LaunchContext",
@@ -1944,6 +1958,7 @@ __all__ = [
     "build_launch_policy_snapshot",
     "compile_prepared_policy_surface",
     "materialize_launch_artifacts",
+    "materialize_launch_context",
     "normalize_usage_model_family",
     "prepare_launch_surface",
     "prepare_prompt_payload",

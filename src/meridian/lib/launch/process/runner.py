@@ -88,6 +88,7 @@ from ..context import (
     PreparedLaunchSurface,
     RuntimeBindings,
     bind_launch_context,
+    materialize_launch_context,
 )
 from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
@@ -897,6 +898,7 @@ def run_harness_process(
                     project_root=config_root,
                     harness_registry=harness_registry,
                 )
+                runtime_context = materialize_launch_context(runtime_context)
                 write_projection_artifacts(
                     log_dir=log_dir,
                     launch_context=runtime_context,

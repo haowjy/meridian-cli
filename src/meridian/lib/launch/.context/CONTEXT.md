@@ -25,14 +25,17 @@ prepare_launch_surface()           ← skill injection, prompt, content composit
 bind_launch_context()              ← env, cwd, spec, argv, permissions
         │
         ▼
-LaunchContext                      ← complete at construction; ready to run
+LaunchContext                      ← pure bound plan
+        │
+        ▼
+materialize_launch_context()       ← real-launch-only adapter writes
 ```
 
 **Why the split?** The primary CLI path needs to call `bind_launch_context()` twice:
 once with `dry_run=True` for `--dry-run` display, then again with real spawn-ID and
 paths for actual execution. `prepare_launch_surface()` is expensive (mars calls, profile
 loading, prompt assembly) and safe to do once before the session is opened.
-`bind_launch_context()` is repeatable; ignoring an active direnv environment invokes
+`bind_launch_context()` is write-free and repeatable; ignoring an active direnv environment invokes
 a bounded subprocess on each bind, including previews.
 
 ### PreparedLaunchSurface

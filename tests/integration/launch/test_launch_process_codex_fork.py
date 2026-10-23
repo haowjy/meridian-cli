@@ -392,9 +392,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         dry_run=False,
     )
     rules_path = store.parent / "rules" / "meridian.rules"
-    assert rules_path.read_text(encoding="utf-8") == MERIDIAN_RULES_FILE_CONTENT
-    assert not (tmp_path / "ambient-decoy" / "rules" / "meridian.rules").exists()
-    assert context.binding.spec.codex_runtime.rules_file_path == rules_path.as_posix()
+    assert not rules_path.exists()
     shim = tmp_path / "codex-shim"
     shim.write_text('#!/bin/sh\nprintf "%s\\n%s\\n" "$CODEX_HOME" "$1"\n')
     observed: list[str] = []
@@ -411,6 +409,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         on_running,
         session_id_observer,
     ):
+        assert spec.codex_runtime.rules_file_path == rules_path.as_posix()
         assert spec.native_identity is not None
         target_id = spec.native_identity.session_id
         assert target_id and target_id != sid
@@ -437,6 +436,8 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         context, registry, prepared=context.prepared, run_primary_attach_fn=attach
     )
     assert outcome.exit_code == 0
+    assert rules_path.read_text(encoding="utf-8") == MERIDIAN_RULES_FILE_CONTENT
+    assert not (tmp_path / "ambient-decoy" / "rules" / "meridian.rules").exists()
     assert len(observed) == 1
     chat = session_store.chat_record(context.runtime_root, outcome.chat_id)
     assert chat is not None and chat.harness_session_id == observed[0]

@@ -28,6 +28,7 @@ from meridian.lib.launch.context import (
     LaunchContext,
     PreparedLaunchSurface,
     RuntimeBindings,
+    materialize_launch_context,
 )
 from meridian.lib.launch.fork import materialize_fork
 from meridian.lib.launch.request import (
@@ -243,6 +244,7 @@ async def _prepare_execution_handoff(
             harness_registry=runtime.harness_registry,
             plan_overrides=run_env_overrides,
         )
+        launch_context = materialize_launch_context(launch_context)
         try:
             _write_params_json(
                 project_paths,
