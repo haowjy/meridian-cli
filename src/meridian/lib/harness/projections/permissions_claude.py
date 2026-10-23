@@ -408,11 +408,7 @@ def _outside_sandbox_commands(policy: PermissionPolicy) -> tuple[str, ...]:
 
 def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSandboxSettings | None:
     if policy.sandbox == "default":
-        return (
-            ClaudeSandboxSettings(excluded_commands=_outside_sandbox_commands(policy))
-            if policy.has_spawn_capability
-            else None
-        )
+        return None
     if policy.sandbox == "danger-full-access":
         return ClaudeSandboxSettings(enabled=False)
     # Sandbox auto-approval accepts unmatched Bash before any mode can refuse it.

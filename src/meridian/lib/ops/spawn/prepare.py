@@ -14,7 +14,7 @@ from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
 )
-from meridian.lib.launch.context import PreparedLaunchSurface, RuntimeBindings
+from meridian.lib.launch.context import LaunchContext, PreparedLaunchSurface, RuntimeBindings
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.reference import parse_template_assignments
 from meridian.lib.launch.request import (
@@ -286,18 +286,13 @@ def bind_create_payload_preview(
     artifacts: SpawnCreateArtifacts,
     *,
     harness_registry: HarnessRegistry,
+    preview_context: LaunchContext | None = None,
 ) -> SpawnCreateArtifacts:
     """Bind a prepared dry-run only after policy checks have accepted it."""
 
     with capture_library_diagnostics():
-        preview_context = bind_spawn_launch_context(
-            prepared=artifacts.prepared,
-            bindings=RuntimeBindings(
-                spawn_id="dry-run",
-                dry_run=True,
-                plan_overrides=artifacts.plan_overrides,
-            ),
-            runtime=artifacts.preview_runtime,
+        preview_context = preview_context or bind_create_payload_context(
+            artifacts,
             harness_registry=harness_registry,
         )
         resolved_request = preview_context.resolved_request.model_copy(
@@ -314,8 +309,26 @@ def bind_create_payload_preview(
         )
 
 
+def bind_create_payload_context(
+    artifacts: SpawnCreateArtifacts,
+    *,
+    harness_registry: HarnessRegistry,
+) -> LaunchContext:
+    """Bind the pure preview used to validate a resolved child boundary."""
+
+    return bind_spawn_launch_context(
+        prepared=artifacts.prepared,
+        bindings=RuntimeBindings(
+            spawn_id="dry-run",
+            dry_run=True,
+            plan_overrides=artifacts.plan_overrides,
+        ),
+        runtime=artifacts.preview_runtime,
+        harness_registry=harness_registry,
+    )
 __all__ = [
     "SpawnCreateArtifacts",
+    "bind_create_payload_context",
     "bind_create_payload_preview",
     "build_create_payload",
     "validate_create_input",

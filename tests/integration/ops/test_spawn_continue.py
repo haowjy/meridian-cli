@@ -151,7 +151,6 @@ def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_rea
         CALLER_BOUNDARY_ENV,
         CallerBoundary.from_values(
             sandbox="workspace-write",
-            approval="default",
             has_spawn_capability=True,
             pid_namespace="pid:[host]",
         ).to_env_value(),
@@ -173,7 +172,6 @@ def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_r
         CALLER_BOUNDARY_ENV,
         CallerBoundary.from_values(
             sandbox="read-only",
-            approval="default",
             has_spawn_capability=False,
         ).to_env_value(),
     )
@@ -218,7 +216,6 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
         CALLER_BOUNDARY_ENV,
         CallerBoundary.from_values(
             sandbox="workspace-write",
-            approval="default",
             has_spawn_capability=True,
         ).to_env_value(),
     )

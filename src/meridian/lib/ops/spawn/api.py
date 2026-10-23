@@ -111,6 +111,7 @@ from .models import (
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import (
     SpawnCreateArtifacts,
+    bind_create_payload_context,
     bind_create_payload_preview,
     build_create_payload,
     validate_create_input,
@@ -396,18 +397,23 @@ def _prepare_spawn_create(
     )
     floor_check.enforce_env_keys(artifacts.request.env)
     floor_check.enforce_passthrough_args(artifacts.request.extra_args)
-    resolved_policy = artifacts.request.execution_policy
-    floor_check.enforce(
-        CallerBoundary.from_values(
-            sandbox=resolved_policy.sandbox,
-            approval=resolved_policy.approval,
-            has_spawn_capability=artifacts.prepared.has_spawn_capability,
+    preview_context = None
+    if floor_check.caller is not None:
+        preview_context = bind_create_payload_context(
+            artifacts,
+            harness_registry=harness_registry,
         )
-    )
+        floor_check.enforce(
+            CallerBoundary.from_policy(
+                preview_context.binding.spec.permission_policy,
+                pid_namespace=None,
+            )
+        )
     if payload.dry_run:
         artifacts = bind_create_payload_preview(
             artifacts,
             harness_registry=harness_registry,
+            preview_context=preview_context,
         )
     return SpawnCreatePreparation(
         payload=payload,

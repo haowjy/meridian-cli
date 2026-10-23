@@ -6,12 +6,12 @@ import json
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meridian.lib.safety.policy import (
-    APPROVAL_MODE_STRENGTH,
+    CONSTRAINED_SANDBOX_MODES,
     SANDBOX_MODE_WEAKNESS,
-    ApprovalMode,
     SandboxMode,
 )
 from meridian.lib.utils.json_shapes import json_list, loads_json_object
@@ -68,7 +68,6 @@ class CallerBoundary:
 
     pid_namespace: str | None
     sandbox: SandboxMode
-    approval: ApprovalMode
     write_roots: tuple[str, ...]
     has_spawn_capability: bool
 
@@ -82,13 +81,9 @@ class CallerBoundary:
         """Take the child-launch boundary fields from one resolved policy."""
 
         sandbox = policy.sandbox
-        approval = policy.approval
-        if approval == "yolo":
-            approval = "never"
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
-            approval=approval,
             write_roots=policy.sandbox_write_roots,
             has_spawn_capability=policy.has_spawn_capability,
         )
@@ -98,7 +93,6 @@ class CallerBoundary:
         cls,
         *,
         sandbox: str | None,
-        approval: str | None,
         has_spawn_capability: bool,
         pid_namespace: str | None = None,
         write_roots: tuple[str, ...] = (),
@@ -106,27 +100,26 @@ class CallerBoundary:
         """Build a boundary before the complete permission policy is bound."""
 
         normalized_sandbox = (sandbox or "default").strip().lower()
-        normalized_approval = (approval or "default").strip().lower()
         if normalized_sandbox not in SANDBOX_MODE_WEAKNESS:
             raise ValueError(f"Unsupported sandbox mode '{sandbox}'.")
-        if normalized_approval not in APPROVAL_MODE_STRENGTH:
-            raise ValueError(f"Unsupported approval mode '{approval}'.")
-        if normalized_approval == "yolo":
-            normalized_approval = "never"
         return cls(
             pid_namespace=pid_namespace,
             sandbox=normalized_sandbox,
-            approval=cast("ApprovalMode", normalized_approval),
             write_roots=write_roots,
             has_spawn_capability=has_spawn_capability,
         )
+
+    @property
+    def is_floored(self) -> bool:
+        """Whether Meridian projected the sandbox this command escapes."""
+
+        return self.sandbox in CONSTRAINED_SANDBOX_MODES
 
     def to_env_value(self) -> str:
         """Serialize the complete launcher-owned record deterministically."""
 
         return json.dumps(
             {
-                "approval": self.approval,
                 "pid_namespace": self.pid_namespace,
                 "sandbox": self.sandbox,
                 "spawn": self.has_spawn_capability,
@@ -144,7 +137,6 @@ class CallerBoundary:
         if payload is None:
             raise ValueError("Child spawn refused: caller boundary is invalid.")
         if set(payload) != {
-            "approval",
             "pid_namespace",
             "sandbox",
             "spawn",
@@ -153,7 +145,6 @@ class CallerBoundary:
             raise ValueError("Child spawn refused: caller boundary is invalid.")
         pid_namespace = payload.get("pid_namespace")
         sandbox = payload.get("sandbox")
-        approval = payload.get("approval")
         spawn = payload.get("spawn")
         write_root_values = json_list(payload.get("write_roots"))
         write_roots = (
@@ -164,39 +155,18 @@ class CallerBoundary:
         if (
             (pid_namespace is not None and not isinstance(pid_namespace, str))
             or not isinstance(sandbox, str)
-            or not isinstance(approval, str)
             or not isinstance(spawn, bool)
             or write_root_values is None
             or len(write_roots) != len(write_root_values)
             or sandbox not in SANDBOX_MODE_WEAKNESS
-            or approval not in APPROVAL_MODE_STRENGTH
         ):
             raise ValueError("Child spawn refused: caller boundary is invalid.")
-        normalized_approval = "never" if approval == "yolo" else approval
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
-            approval=cast("ApprovalMode", normalized_approval),
             write_roots=write_roots,
             has_spawn_capability=spawn,
         )
-
-
-def refuse_sandboxed_spawn_launch(*, dry_run: bool) -> None:
-    """Refuse a launch that crossed from its harness launcher into a PID sandbox."""
-
-    if dry_run:
-        return
-    raw_boundary = os.environ.get(CALLER_BOUNDARY_ENV)
-    if raw_boundary is None:
-        return
-    launcher_pid_namespace = CallerBoundary.from_env_value(raw_boundary).pid_namespace
-    if not launcher_pid_namespace:
-        return
-    namespace = current_pid_namespace()
-    if namespace is None or launcher_pid_namespace == namespace:
-        return
-    raise ValueError(SANDBOXED_SPAWN_LAUNCH_ERROR)
 
 
 @dataclass(frozen=True)
@@ -223,6 +193,8 @@ class CallerBoundaryCheck:
             namespace = current_pid_namespace()
             if namespace is not None and namespace != caller.pid_namespace:
                 raise ValueError(SANDBOXED_SPAWN_LAUNCH_ERROR)
+        if not caller.is_floored:
+            return cls(caller=None)
         if not caller.has_spawn_capability:
             raise ValueError(
                 "Child spawn refused: caller profile has no spawn capability."
@@ -273,11 +245,16 @@ class CallerBoundaryCheck:
                 f"Child spawn refused: sandbox '{child.sandbox}' is weaker than "
                 f"caller floor '{caller.sandbox}'."
             )
-        if APPROVAL_MODE_STRENGTH[child.approval] < APPROVAL_MODE_STRENGTH[caller.approval]:
-            raise ValueError(
-                f"Child spawn refused: approval '{child.approval}' is weaker than "
-                f"caller floor '{caller.approval}'."
-            )
+        caller_roots = tuple(Path(root).resolve() for root in caller.write_roots)
+        for child_root_value in child.write_roots:
+            child_root = Path(child_root_value).resolve()
+            if not any(
+                child_root == root or child_root.is_relative_to(root) for root in caller_roots
+            ):
+                raise ValueError(
+                    f"Child spawn refused: workspace root '{child_root}' is outside "
+                    "the caller's projected workspace roots."
+                )
 
 
 __all__ = [
@@ -286,5 +263,4 @@ __all__ = [
     "CallerBoundary",
     "CallerBoundaryCheck",
     "current_pid_namespace",
-    "refuse_sandboxed_spawn_launch",
 ]

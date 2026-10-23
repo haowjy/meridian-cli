@@ -125,10 +125,12 @@ is typed unavailable; runner output and primary metadata cannot repair it.
 ## Resolve Before Persist
 
 Both streaming-serve (`SpawnApplicationService.prepare_spawn()`) and the spawn
-subprocess prepare launch policy before creating a row. When a subprocess inherits a
-delegation floor, it resolves and enforces that floor before materializing runtime
-authority and state. Keep resolution and policy checks on the preparation side of the
-row boundary; keep nested floor enforcement on the pre-materialization side.
+subprocess prepare launch policy before creating a row. Only callers in a Meridian-projected
+`read-only` or `workspace-write` sandbox inherit a delegation floor. Spawn preparation binds
+a write-free preview and checks its sandbox mode and projected workspace roots before
+materializing runtime authority and state. Keep resolution and policy checks on the
+preparation side of the row boundary; keep nested floor enforcement on the
+pre-materialization side.
 
 ## Anti-Patterns
 

@@ -16,7 +16,11 @@ import meridian.lib.core.caller_boundary as caller_boundary
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.prepare as spawn_prepare
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
-from meridian.lib.core.caller_boundary import CALLER_BOUNDARY_ENV, CallerBoundary
+from meridian.lib.core.caller_boundary import (
+    CALLER_BOUNDARY_ENV,
+    CallerBoundary,
+    CallerBoundaryCheck,
+)
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
@@ -35,15 +39,15 @@ def _set_delegation_floor(
     monkeypatch: pytest.MonkeyPatch,
     *,
     sandbox: str = "workspace-write",
-    approval: str = "default",
     has_spawn_capability: bool = True,
+    write_roots: tuple[str, ...] = (),
 ) -> None:
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
         CallerBoundary.from_values(
             sandbox=sandbox,
-            approval=approval,
             has_spawn_capability=has_spawn_capability,
+            write_roots=write_roots,
         ).to_env_value(),
     )
 
@@ -292,7 +296,6 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
         CALLER_BOUNDARY_ENV,
         CallerBoundary.from_values(
             sandbox="workspace-write",
-            approval="default",
             has_spawn_capability=True,
             pid_namespace="pid:[host]",
         ).to_env_value(),
@@ -311,61 +314,44 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     assert "`VAR=1` prefix" in result.message
 
 
-def test_spawn_create_skips_pid_namespace_check_without_procfs(
+def test_unsandboxed_caller_carries_no_delegation_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
         CallerBoundary.from_values(
-            sandbox="workspace-write",
-            approval="default",
-            has_spawn_capability=True,
-            pid_namespace="pid:[host]",
+            sandbox="default",
+            has_spawn_capability=False,
         ).to_env_value(),
     )
-    monkeypatch.setattr(caller_boundary, "current_pid_namespace", lambda: None)
 
-    caller_boundary.refuse_sandboxed_spawn_launch(dry_run=False)
+    check = CallerBoundaryCheck.from_environment(
+        ("LD_PRELOAD=x",),
+        dry_run=True,
+        passthrough_args=("--dangerously-skip-permissions",),
+    )
+
+    assert check.caller is None
 
 
 @pytest.mark.parametrize(
-    ("caller_sandbox", "caller_approval", "child_policy", "dry_run", "expected"),
+    ("child_policy", "dry_run", "expected"),
     [
         (
-            "workspace-write",
-            "default",
             ResolvedExecutionPolicy(sandbox="danger-full-access"),
             False,
             "sandbox 'danger-full-access' is weaker than caller floor 'workspace-write'",
         ),
         (
-            "workspace-write",
-            "default",
             ResolvedExecutionPolicy(),
             False,
             "sandbox 'default' is weaker than caller floor 'workspace-write'",
-        ),
-        (
-            "workspace-write",
-            "default",
-            ResolvedExecutionPolicy(sandbox="read-only", approval="never"),
-            True,
-            "approval 'never' is weaker than caller floor 'default'",
-        ),
-        (
-            "workspace-write",
-            "confirm",
-            ResolvedExecutionPolicy(sandbox="read-only", approval="default"),
-            True,
-            "approval 'default' is weaker than caller floor 'confirm'",
         ),
     ],
 )
 def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caller_sandbox: str,
-    caller_approval: str,
     child_policy: ResolvedExecutionPolicy,
     dry_run: bool,
     expected: str,
@@ -375,11 +361,7 @@ def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     meridian_home = tmp_path / "meridian-home"
     monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
-    _set_delegation_floor(
-        monkeypatch,
-        sandbox=caller_sandbox,
-        approval=caller_approval,
-    )
+    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -457,7 +439,7 @@ def test_spawn_create_delegation_floor_rejects_passthrough_before_resolution(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch)
+    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
 
     def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("delegation precondition must refuse before Mars")
@@ -486,14 +468,14 @@ def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_delegation_floor(monkeypatch)
+    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
         harness=HarnessId.CLAUDE,
         execution_policy=ResolvedExecutionPolicy(
             sandbox="read-only",
-            approval="default",
+            approval="never",
         ),
     )
 
@@ -508,6 +490,39 @@ def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
     )
 
     assert result.status == "dry-run"
+
+
+def test_spawn_create_delegation_floor_rejects_workspace_root_outside_caller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_delegation_floor(monkeypatch, write_roots=(project_root.as_posix(),))
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            task_dir=outside.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.message is not None
+    assert "outside the caller's projected workspace roots" in result.message
 
 
 def test_spawn_create_delegation_floor_rejects_replayed_harness_home_env(

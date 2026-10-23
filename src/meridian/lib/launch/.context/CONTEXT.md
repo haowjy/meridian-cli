@@ -50,8 +50,9 @@ request for `LaunchContext.request` compatibility. `request` carries the resolve
 version used by `bind_launch_context()`.
 
 Every bind replaces the inherited caller boundary with one record for the process it is
-about to start. It contains the launcher's PID namespace, resolved sandbox and approval
-modes, projected workspace roots, and the prepared profile's spawn capability. The record
+about to start. It contains the launcher's PID namespace, resolved sandbox mode,
+projected workspace roots, and the prepared profile's spawn capability. Approval is
+not part of the confinement boundary. The record
 deliberately has no network field yet; network confinement can join this transport without
 changing spawn policy ownership.
 

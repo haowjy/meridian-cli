@@ -44,14 +44,6 @@ SANDBOX_MODE_WEAKNESS: dict[SandboxMode, int] = {
     # A harness default is unknown, so compare it as weaker than every explicit mode.
     "default": 3,
 }
-APPROVAL_MODE_STRENGTH: dict[ApprovalMode, int] = {
-    "never": 0,
-    "yolo": 0,
-    "auto": 1,
-    "default": 2,
-    "confirm": 3,
-}
-
 _SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
     {"default", "read-only", "workspace-write", "danger-full-access"}
 )
@@ -456,7 +448,6 @@ def build_permission_policy(
 
 __all__ = [
     "ALLOWLIST_ORIGIN",
-    "APPROVAL_MODE_STRENGTH",
     "CONSTRAINED_SANDBOX_MODES",
     "SANDBOX_MODE_WEAKNESS",
     "ApprovalMode",
