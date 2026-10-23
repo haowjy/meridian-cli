@@ -99,8 +99,8 @@ The connection also declares whether the launched child can write Meridian's com
 signals. `ResidentDrainCoordinator.build` turns that capability into the hold's accepted
 signals, which the factory copies into the drain plan. A hold without that channel still
 applies the same evidence and deadline policy, but accepts a ready candidate without a
-confirmation nudge. Read-only Codex uses this live fallback when the Meridian execpolicy
-rules file could not be written. Pi RPC gets
+confirmation nudge. Read-only Codex uses this live fallback when the launch lacks spawn
+capability, or when the Meridian execpolicy rules file could not be written. Pi RPC gets
 `PiDrainCoordinator` plus disk-watcher aux wakes. Plain streaming harnesses
 intentionally run with
 `DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence
