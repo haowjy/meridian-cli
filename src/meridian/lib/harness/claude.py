@@ -237,11 +237,20 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def shell_network_guidance(
-        self, *, sandbox: str | None, network: str | None
+        self,
+        *,
+        sandbox: str | None,
+        network: str | None,
+        network_projection: bool,
     ) -> str | None:
-        policy = build_permission_policy(sandbox=sandbox, network=network)
+        policy = build_permission_policy(
+            sandbox=sandbox,
+            network=network,
+            network_projection=network_projection,
+        )
         if (
             not sys.platform.startswith("linux")
+            or not policy.network_projection
             or policy.sandbox not in {"read-only", "workspace-write"}
             or effective_claude_network(policy) != "allow"
         ):

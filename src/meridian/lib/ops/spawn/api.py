@@ -420,6 +420,7 @@ def _prepare_spawn_create(
     guardrail_policy = build_permission_policy(
         sandbox=execution_policy.sandbox,
         network=execution_policy.network,
+        network_projection=execution_policy.network_projection,
         approval=execution_policy.approval or "default",
     )
     effective_network = get_harness_bundle(

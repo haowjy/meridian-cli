@@ -213,6 +213,10 @@ ordering. `selection_report` preserves Mars's `routing.route_trace` in snapshots
 previews, and failure outputs as diagnostic history, never an executable retry queue.
 The adapter checks report pointers and selected identity against executable routing.
 Structured Mars errors retain their code and available report across pre-init failure.
+A schema-4 bundle without `provenance.network_source` came from Mars < 0.18: composition
+warns, `network_projection` is false, and each harness keeps its native network default.
+Current Mars includes the source even when it is `unset`, so the portable `allow` default
+still projects.
 
 ### _MERIDIAN_HARNESS Child Env
 

@@ -123,6 +123,7 @@ class PermissionPolicy(BaseModel):
     platform_rules: tuple[PlatformRule, ...] = ()
     sandbox: SandboxMode = "default"
     network: NetworkMode | None = None
+    network_projection: bool = True
     # Workspace roots whose writes a read-only native sandbox must block. Bind keeps
     # these separate from projected runtime/temp roots, which must remain writable.
     sandbox_write_roots: tuple[str, ...] = Field(default=(), exclude=True)
@@ -310,15 +311,24 @@ def complete_report(
         defaults.append(
             ReportLine(f"sandbox: {policy.sandbox}", "unsupported", f"not projected for {harness}")
         )
-    defaults.append(
-        ReportLine(
-            f"network: {policy.network_mode}",
-            "native" if policy.network_mode == "allow" else "unsupported",
-            f"{harness} leaves shell network unrestricted"
-            if policy.network_mode == "allow"
-            else f"not enforced by {harness}; shell network remains available",
+    if policy.network_projection:
+        defaults.append(
+            ReportLine(
+                f"network: {policy.network_mode}",
+                "native" if policy.network_mode == "allow" else "unsupported",
+                f"{harness} leaves shell network unrestricted"
+                if policy.network_mode == "allow"
+                else f"not enforced by {harness}; shell network remains available",
+            )
         )
-    )
+    else:
+        defaults.append(
+            ReportLine(
+                "network: harness default",
+                "native",
+                f"no portable network setting projected; {harness} decides",
+            )
+        )
     if policy.approval != "default":
         defaults.append(
             ReportLine(
@@ -475,6 +485,7 @@ def build_permission_policy(
     rules: tuple[ToolRule, ...] = (),
     sandbox: str | None,
     network: str | None = None,
+    network_projection: bool = True,
     approval: str = "default",
     platform_rules: tuple[PlatformRule, ...] = (),
     sandbox_write_roots: tuple[str, ...] = (),
@@ -496,6 +507,7 @@ def build_permission_policy(
         platform_rules=platform_rules,
         sandbox=_parse_sandbox_value(sandbox),
         network=_parse_network_value(network),
+        network_projection=network_projection,
         sandbox_write_roots=tuple(dict.fromkeys(root for root in sandbox_write_roots if root)),
         approval=_parse_approval_value(approval),
     )

@@ -500,6 +500,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         # producers omit it, which deliberately remains distinguishable from
         # an authored ``network: allow``.
         network=bundle_result.execution_policy.network,
+        network_projection=bundle_result.execution_policy.network_projection,
         approval=resolved_execution_policy_overrides.approval,
         autocompact=resolved_execution_policy_overrides.autocompact,
         autocompact_pct=resolved_execution_policy_overrides.autocompact_pct,

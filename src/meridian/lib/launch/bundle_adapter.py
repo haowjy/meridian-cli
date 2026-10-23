@@ -48,8 +48,8 @@ if TYPE_CHECKING:
 
 
 # First Mars release whose launch bundle carries ``execution_policy.network`` and
-# ``provenance.network_source``. The parser deliberately accepts an absent field as unset
-# so a manually selected older Mars remains compatible.
+# ``provenance.network_source``. An older producer gets a warning and leaves every harness
+# at its native network default.
 _MARS_BUNDLE_MIN_VERSION = "0.18.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
@@ -538,6 +538,8 @@ def _parse_bundle_payload(
     if model and not harness_model:
         raise _bundle_schema_error("named model is missing routing.harness_model")
 
+    provenance = _as_str_dict(payload.get("provenance"))
+    network_projection = "network_source" in provenance
     execution_policy_payload = _required_object_field(payload, "execution_policy")
     native_config = _optional_object_field(execution_policy_payload, "native_config")
     execution_policy = ResolvedExecutionPolicy.model_validate(
@@ -545,7 +547,10 @@ def _parse_bundle_payload(
             "effort": execution_policy_payload.get("effort"),
             "approval": execution_policy_payload.get("approval"),
             "sandbox": execution_policy_payload.get("sandbox"),
-            "network": execution_policy_payload.get("network"),
+            "network": (
+                execution_policy_payload.get("network") if network_projection else None
+            ),
+            "network_projection": network_projection,
             "autocompact": execution_policy_payload.get("autocompact"),
             "autocompact_pct": execution_policy_payload.get("autocompact_pct"),
             "timeout": execution_policy_payload.get("timeout"),
@@ -569,8 +574,15 @@ def _parse_bundle_payload(
         harness=harness,
         harness_model=harness_model,
         execution_policy=execution_policy,
-        provenance=_as_str_dict(payload.get("provenance")),
-        warnings=_as_str_tuple(payload.get("warnings")),
+        provenance=provenance,
+        warnings=(
+            *_as_str_tuple(payload.get("warnings")),
+            *(
+                ()
+                if network_projection
+                else ("Mars < 0.18 does not carry `network`; using harness defaults.",)
+            ),
+        ),
         prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
         tool_rules=_parse_tool_rules(tools),
         platform_tool_rules=_parse_platform_tool_rules(tools),

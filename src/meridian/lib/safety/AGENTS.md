@@ -42,7 +42,7 @@ level creates a circular import at load time.
 
 `policy.py` builds one `PermissionPolicy` per launch: the tool and platform rules, the
 sandbox mode, the optional authored network mode (`network_mode` supplies its `allow`
-default), the
+default), whether the bundle producer supports projecting that mode, the
 explicit workspace roots a native read-only sandbox must protect, and the approval mode,
 already resolved. `ResolvedLaunchSpec.permission_policy` carries it, and
 each harness compiles it in `harness/projections/permissions_<harness>.py`. Nothing in

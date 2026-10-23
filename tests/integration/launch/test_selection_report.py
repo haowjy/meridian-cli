@@ -100,6 +100,34 @@ def test_report_v3_survives_bundle_and_snapshot(
     assert "fallback_chain" not in snapshot.model_dump()
 
 
+def test_old_mars_bundle_warns_and_keeps_harness_network_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = bundle()
+    payload["execution_policy"] = {"network": "deny"}
+
+    result = invoke(tmp_path, monkeypatch, payload)
+
+    assert result.execution_policy.network is None
+    assert result.execution_policy.network_projection is False
+    assert result.warnings == (
+        "Mars < 0.18 does not carry `network`; using harness defaults.",
+    )
+
+
+def test_current_mars_unset_network_still_projects_portable_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = bundle()
+    payload["provenance"] = {"network_source": "unset"}
+
+    result = invoke(tmp_path, monkeypatch, payload)
+
+    assert result.execution_policy.network is None
+    assert result.execution_policy.network_projection is True
+    assert result.warnings == ()
+
+
 def test_bundle_v3_is_not_accepted_as_report_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

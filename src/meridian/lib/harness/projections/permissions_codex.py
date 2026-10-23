@@ -138,7 +138,9 @@ def _compile_codex_permission_values(
 
     network_override = _network_override(native_config)
     network_access = (
-        policy.network_mode == "allow" if policy.sandbox == "workspace-write" else None
+        policy.network_mode == "allow"
+        if policy.network_projection and policy.sandbox == "workspace-write"
+        else None
     )
     if network_override is not None:
         network_access = None
@@ -166,6 +168,8 @@ def _effective_codex_network(
         override = permissions.network_override
         if override is not None and isinstance(override.value, bool):
             return "allow" if override.value else "deny"
+        if not policy.network_projection:
+            return "deny"
         return policy.network_mode
     return "allow"
 
@@ -321,7 +325,9 @@ def _codex_report(
     network_element = f"network: {policy.network_mode}"
     effective_network = _effective_codex_network(policy, permissions)
     network_override = permissions.network_override
-    if policy.sandbox == "workspace-write" and network_override is not None:
+    if not policy.network_projection:
+        pass
+    elif policy.sandbox == "workspace-write" and network_override is not None:
         override_value = network_override.value
         if isinstance(override_value, bool):
             status: ReportStatus = (

@@ -75,13 +75,35 @@ def test_claude_linux_sandbox_network_guidance(monkeypatch: pytest.MonkeyPatch) 
     adapter = ClaudeAdapter()
 
     assert "--noproxy ''" in (
-        adapter.shell_network_guidance(sandbox="workspace-write", network=None) or ""
+        adapter.shell_network_guidance(
+            sandbox="workspace-write", network=None, network_projection=True
+        )
+        or ""
     )
     assert "--noproxy ''" in (
-        adapter.shell_network_guidance(sandbox="read-only", network="allow") or ""
+        adapter.shell_network_guidance(
+            sandbox="read-only", network="allow", network_projection=True
+        )
+        or ""
     )
-    assert adapter.shell_network_guidance(sandbox="workspace-write", network="deny") is None
-    assert adapter.shell_network_guidance(sandbox="danger-full-access", network="allow") is None
+    assert (
+        adapter.shell_network_guidance(
+            sandbox="workspace-write", network="deny", network_projection=True
+        )
+        is None
+    )
+    assert (
+        adapter.shell_network_guidance(
+            sandbox="danger-full-access", network="allow", network_projection=True
+        )
+        is None
+    )
+    assert (
+        adapter.shell_network_guidance(
+            sandbox="workspace-write", network=None, network_projection=False
+        )
+        is None
+    )
 
 
 def test_spawn_capability_requires_inventory_and_honors_explicit_disable() -> None:

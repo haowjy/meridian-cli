@@ -105,13 +105,13 @@ def _settings_json(settings: ClaudeSettings) -> str:
             sandbox["autoAllowBashIfSandboxed"] = sandbox_settings.auto_allow_bash
             if sandbox_settings.deny_write:
                 sandbox["filesystem"] = {"denyWrite": list(sandbox_settings.deny_write)}
-            if sandbox_settings.network_open:
+            if sandbox_settings.network_open is True:
                 sandbox["network"] = {
                     "allowedDomains": list(CLAUDE_NETWORK_ALLOW_DOMAINS),
                     "allowLocalBinding": True,
                     "allowAllUnixSockets": True,
                 }
-            else:
+            elif sandbox_settings.network_open is False:
                 sandbox["network"] = {"strictAllowlist": True}
         if sandbox_settings.excluded_commands:
             sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)

@@ -349,7 +349,11 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def run_prompt_policy(self) -> RunPromptPolicy: ...
 
     def shell_network_guidance(
-        self, *, sandbox: str | None, network: str | None
+        self,
+        *,
+        sandbox: str | None,
+        network: str | None,
+        network_projection: bool,
     ) -> str | None: ...
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str: ...
@@ -649,9 +653,13 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return RunPromptPolicy()
 
     def shell_network_guidance(
-        self, *, sandbox: str | None, network: str | None
+        self,
+        *,
+        sandbox: str | None,
+        network: str | None,
+        network_projection: bool,
     ) -> str | None:
-        _ = sandbox, network
+        _ = sandbox, network, network_projection
         return None
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:

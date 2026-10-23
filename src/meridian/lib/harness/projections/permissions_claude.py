@@ -67,7 +67,7 @@ class ClaudeSandboxSettings:
     deny_write: tuple[str, ...] = ()
     auto_allow_bash: bool = False
     excluded_commands: tuple[str, ...] = ()
-    network_open: bool = True
+    network_open: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -427,7 +427,7 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
             and not channels.ask
         ),
         excluded_commands=_outside_sandbox_commands(policy),
-        network_open=policy.network_mode == "allow",
+        network_open=(policy.network_mode == "allow") if policy.network_projection else None,
     )
 
 
@@ -854,6 +854,8 @@ def effective_claude_network(
 
     if policy.sandbox not in {"read-only", "workspace-write"}:
         return "allow"
+    if not policy.network_projection:
+        return "deny"
     return policy.network_mode
 
 
@@ -960,13 +962,14 @@ def compile_claude_permissions(
     lines.extend(_platform_lines(policy, permissions))
     if policy.sandbox != "default":
         lines.append(_sandbox_line(policy, permissions))
-    lines.append(
-        _network_line(
-            policy,
-            permissions,
-            spec.claude_runtime.settings_network_allowed_domains,
+    if policy.network_projection:
+        lines.append(
+            _network_line(
+                policy,
+                permissions,
+                spec.claude_runtime.settings_network_allowed_domains,
+            )
         )
-    )
     if policy.approval != "default":
         lines.append(_approval_line(policy, passthrough, policy_mode=policy_mode))
     lines.extend(

@@ -1043,6 +1043,7 @@ def _build_shared_composition(
         harness_guidance=policy.adapter.shell_network_guidance(
             sandbox=policy.execution_policy.sandbox,
             network=policy.execution_policy.network,
+            network_projection=policy.execution_policy.network_projection,
         ),
     )
     resolved_work_id = (request.work_id_hint or "").strip()
@@ -1702,6 +1703,7 @@ def bind_launch_context(
         rules=(*resolved_request.tool_rules, *platform_tool_rules),
         sandbox=resolved_request.execution_policy.sandbox,
         network=resolved_request.execution_policy.network,
+        network_projection=resolved_request.execution_policy.network_projection,
         sandbox_write_roots=tuple(
             root.as_posix()
             for root in _dedupe_roots_in_order((resolved_control_root, *workspace_authority_roots))

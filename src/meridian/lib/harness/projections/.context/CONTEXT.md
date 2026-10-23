@@ -36,6 +36,11 @@ resolves it once and carries it on `CodexPermissions`; while present, the portab
 omitted so the native value wins on subprocess, app-server and thread creation. The next
 release makes it reserved like `writable_roots` and removes that one compile-time carveout.
 
+`PermissionPolicy.network_projection=false` marks a bundle from Mars < 0.18. Compiles emit
+no portable network setting in that state: Claude and Codex retain their constrained
+sandbox defaults, while OpenCode, Pi, and Cursor remain unrestricted. The report's single
+network line is `network: harness default`.
+
 `pi_extension_projection.py` is not a spec projector — it resolves stable
 Meridian-owned Pi extension entrypoints without copying or materializing them.
 It does not consume a `LaunchSpec`. See the Pi Extension Projection section below.

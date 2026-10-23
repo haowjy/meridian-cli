@@ -265,6 +265,25 @@ def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
     assert effective_claude_network(spec.permission_policy) == "deny"
 
 
+def test_claude_old_mars_policy_keeps_native_network_default() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            sandbox="workspace-write",
+            network_projection=False,
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+    _, report = compile_claude_permissions(spec)
+
+    assert "network" not in settings["sandbox"]
+    assert effective_claude_network(spec.permission_policy) == "deny"
+    assert any(line.element == "network: harness default" for line in report)
+
+
 def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,

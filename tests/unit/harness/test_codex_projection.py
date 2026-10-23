@@ -146,6 +146,26 @@ def test_codex_workspace_network_reaches_every_launch_boundary(
     }
 
 
+def test_codex_old_mars_policy_keeps_native_network_default() -> None:
+    from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+
+    spec = _spec(interactive=False).model_copy(
+        update={
+            "permission_policy": PermissionPolicy(
+                sandbox="workspace-write",
+                network_projection=False,
+            )
+        }
+    )
+
+    command = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
+    _, report = compile_codex_permissions(spec)
+
+    assert not any("sandbox_workspace_write.network_access" in item for item in command)
+    assert effective_codex_network(spec.permission_policy) == "deny"
+    assert any(line.element == "network: harness default" for line in report)
+
+
 def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
     from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 

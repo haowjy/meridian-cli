@@ -103,6 +103,9 @@ class ResolvedExecutionPolicy(BaseModel):
     effort: str | None = None
     sandbox: str | None = None
     network: NetworkMode | None = None
+    # False means the bundle producer predates the portable network field. Keep the
+    # harness's native default instead of applying Meridian's cross-harness default.
+    network_projection: bool = True
     approval: str | None = None
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None
