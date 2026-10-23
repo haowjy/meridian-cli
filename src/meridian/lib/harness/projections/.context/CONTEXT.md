@@ -127,7 +127,8 @@ allowlist or gate owns the tool. Passthrough `--dangerously-skip-permissions`,
 `--allow-dangerously-skip-permissions` and `--permission-mode` stay (the compile omits its
 own mode when passthrough sets one) and the report says they override the profile; the
 user, project and local settings files' allows, which Claude merges itself, are read by
-preflight (`CLAUDE_SETTINGS_ALLOWS_FLAG`) and reported when an allowlist or gate is present.
+the Claude bind into `ClaudeRuntimeResolution.settings_allows` and reported when an
+allowlist or gate is present.
 Every Claude report line is read back from the emitted channels, so a rule the deny/ask
 order shadows or the compile left out is `partial`.
 

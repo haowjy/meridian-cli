@@ -10,12 +10,10 @@ channels, so a rule that order shadows, or that the compile left out, says so.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from typing import Literal, cast
+from typing import Literal
 
-from meridian.lib.harness.claude_preflight import CLAUDE_SETTINGS_ALLOWS_FLAG
 from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -108,7 +106,6 @@ class _Passthrough:
     args: tuple[str, ...]
     allowed: tuple[str, ...]
     disallowed: tuple[str, ...]
-    settings_allows: tuple[tuple[str, tuple[str, ...]], ...]
 
     def has(self, flag: str) -> bool:
         return any(token == flag or token.startswith(f"{flag}=") for token in self.args)
@@ -224,40 +221,13 @@ def _take_variadic_tool_values(args: tuple[str, ...], start: int) -> tuple[list[
     return values, index
 
 
-def _parse_settings_allows(raw: str) -> list[tuple[str, tuple[str, ...]]]:
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(payload, list):
-        return []
-    parsed: list[tuple[str, tuple[str, ...]]] = []
-    for item in cast("list[object]", payload):
-        if not isinstance(item, list) or len(cast("list[object]", item)) != 2:
-            continue
-        path, allows = cast("list[object]", item)
-        if isinstance(path, str) and isinstance(allows, list):
-            entries = tuple(
-                entry for entry in cast("list[object]", allows) if isinstance(entry, str)
-            )
-            parsed.append((path, entries))
-    return parsed
-
-
 def _read_passthrough(extra_args: tuple[str, ...]) -> _Passthrough:
     remaining: list[str] = []
     allowed: list[str] = []
     disallowed: list[str] = []
-    settings_allows: list[tuple[str, tuple[str, ...]]] = []
     index = 0
     while index < len(extra_args):
         token = extra_args[index]
-        if token == CLAUDE_SETTINGS_ALLOWS_FLAG:
-            if index + 1 < len(extra_args):
-                settings_allows.extend(_parse_settings_allows(extra_args[index + 1]))
-            index += 2
-            continue
-
         matched = False
         for flags, target in (
             (_ALLOWED_TOOL_FLAGS, allowed),
@@ -286,7 +256,6 @@ def _read_passthrough(extra_args: tuple[str, ...]) -> _Passthrough:
         args=tuple(remaining),
         allowed=tuple(dedupe_nonempty(allowed)),
         disallowed=tuple(dedupe_nonempty(disallowed)),
-        settings_allows=tuple(settings_allows),
     )
 
 
@@ -730,6 +699,7 @@ def _source_lines(
     passthrough: _Passthrough,
     *,
     policy_mode: tuple[bool, PermissionMode | None],
+    settings_allows: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> list[ReportLine]:
     lines: list[ReportLine] = []
     if passthrough.allowed:
@@ -748,7 +718,7 @@ def _source_lines(
             )
         )
     if policy.is_allowlist or channels.gates:
-        for path, allows in passthrough.settings_allows:
+        for path, allows in settings_allows:
             widening = tuple(
                 entry
                 for entry in allows
@@ -868,7 +838,14 @@ def compile_claude_permissions(
             _approval_line(policy, passthrough, policy_mode=policy_mode)
         )
     lines.extend(
-        _source_lines(policy, permissions, channels, passthrough, policy_mode=policy_mode)
+        _source_lines(
+            policy,
+            permissions,
+            channels,
+            passthrough,
+            policy_mode=policy_mode,
+            settings_allows=spec.claude_runtime.settings_allows,
+        )
     )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Claude"))
     lines.extend(compaction_report(spec, harness="Claude"))

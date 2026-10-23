@@ -150,7 +150,11 @@ def project_opencode_spec_to_session_payload_for_project(
     return project_opencode_spec_to_session_payload(spec)
 
 
-def bind_opencode_spec(spec: ResolvedLaunchSpec, env: Mapping[str, str]) -> ResolvedLaunchSpec:
+def bind_opencode_spec(
+    spec: ResolvedLaunchSpec,
+    env: Mapping[str, str],
+    child_cwd: Path,
+) -> ResolvedLaunchSpec:
     """Resolve the backend version once, at bind, from the launch environment.
 
     The preference is the ``[harness.opencode] version`` bind put in the env; ``auto``
@@ -160,6 +164,7 @@ def bind_opencode_spec(spec: ResolvedLaunchSpec, env: Mapping[str, str]) -> Reso
     result, so none of them can disagree with another.
     """
 
+    _ = child_cwd
     return spec.model_copy(
         update={
             "opencode_version": resolve_opencode_version(

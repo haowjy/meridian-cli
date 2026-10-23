@@ -23,6 +23,10 @@ binary or the env var. V2's session model populates `IdleEvent.provider` for the
 harness `detect_ttl` port. **OpenCode 1.x is legacy and frozen** — registered as
 fallback, no investment; new work targets V2.
 
+Claude uses the same bind port to read the settings files selected by the final child
+cwd and environment. Their allows live on `ClaudeRuntimeResolution.settings_allows`,
+where the permission report reads them without sending internal data through argv.
+
 ## Translation Pipeline
 
 Every spawn goes through four steps:

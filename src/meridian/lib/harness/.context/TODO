@@ -13,6 +13,3 @@
   `rearm` fail because Meridian's state lock lives outside the sandbox. The child still finishes when its
   completion window accepts on silence, but cannot reject a premature completion. Fix by giving the
   completion signal a path Codex can write, or a non-filesystem channel.
-- `projections/permissions_claude.py`: settings-file allows reach the compile through the internal
-  `--meridian-claude-settings-allows` argument that preflight appends and the compile parses back. Make them
-  a typed field on the Claude runtime resolution.

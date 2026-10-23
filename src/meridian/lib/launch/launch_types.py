@@ -64,10 +64,11 @@ class CompositionWarning(BaseModel):
 
 @dataclass(frozen=True)
 class ClaudeRuntimeResolution:
-    """One resolution result drives both plugin projection and composition warnings."""
+    """Per-launch Claude facts shared by projection and permission reporting."""
 
     plugin_dirs: tuple[str, ...] = ()
     warnings: tuple[CompositionWarning, ...] = ()
+    settings_allows: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 class ResolvedLaunchSpec(BaseModel):

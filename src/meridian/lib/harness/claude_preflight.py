@@ -17,17 +17,11 @@ from meridian.lib.harness.claude_sessions import (
     resolve_claude_config_root,
     validate_claude_session_file,
 )
-from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
 
 logger = structlog.get_logger(__name__)
-
-# Internal sentinel carrying ``read_claude_settings_allows`` to the permission compile,
-# which consumes it; never forwarded to the CLI.
-CLAUDE_SETTINGS_ALLOWS_FLAG = "--meridian-claude-settings-allows"
-
 
 def ensure_claude_session_accessible(
     source_session_id: str,
@@ -100,33 +94,7 @@ def read_claude_settings_allows(
     return tuple(found)
 
 
-def build_claude_preflight_result(
-    *,
-    execution_cwd: Path,
-    child_cwd: Path,
-    passthrough_args: tuple[str, ...],
-    extra_env: Mapping[str, str] | None = None,
-) -> PreflightResult:
-    """Build Claude preflight output: passthrough plus the settings-file allows sentinel."""
-
-    _ = execution_cwd
-    expanded = passthrough_args
-    settings_allows = read_claude_settings_allows(child_cwd, os.environ)
-    if settings_allows:
-        expanded = (
-            *passthrough_args,
-            CLAUDE_SETTINGS_ALLOWS_FLAG,
-            json.dumps([[path, list(allows)] for path, allows in settings_allows]),
-        )
-    return PreflightResult.build(
-        expanded_passthrough_args=expanded,
-        extra_env=dict(extra_env or {}),
-    )
-
-
 __all__ = [
-    "CLAUDE_SETTINGS_ALLOWS_FLAG",
-    "build_claude_preflight_result",
     "ensure_claude_session_accessible",
     "project_slug",
     "read_claude_settings_allows",

@@ -1866,9 +1866,9 @@ def bind_launch_context(
         run_inputs=run_params,
         runtime_env_overrides=bind_env_overrides,
     )
-    # Facts that depend on the launch environment (OpenCode's backend version) are resolved
-    # once, here; the env projection, the argv, the report and the connection read the spec.
-    spec = bind_launch_spec(harness.id, spec, env=env)
+    # Facts that depend on the final launch environment or child cwd are resolved once here;
+    # the env projection, argv, report and connection all read the same bound spec.
+    spec = bind_launch_spec(harness.id, spec, env=env, child_cwd=child_cwd)
     env.update(
         harness.project_launch_env(
             spec=spec,

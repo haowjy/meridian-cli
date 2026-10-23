@@ -73,9 +73,9 @@ class HarnessProjectionPorts(Generic[SpecT]):
     # ``--dry-run`` and the projection manifest read it; the live projectors call the typed
     # compile (``permissions_<harness>.py``) directly for its native projection.
     permission_report: Callable[[SpecT], EnforcementReport]
-    # Resolves the spec's facts that depend on the launch environment, once, at bind (the
-    # OpenCode backend version), so every projection and the connection read one value.
-    bind_spec: Callable[[SpecT, Mapping[str, str]], SpecT] | None = None
+    # Resolves the spec's facts that depend on the launch environment or child cwd once at
+    # bind, so every projection and the connection read one value.
+    bind_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None
     managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
 
 
@@ -315,13 +315,19 @@ def _require_bundle_spec(
     return bundle
 
 
-def bind_launch_spec(harness_id: HarnessId, spec: SpecT, *, env: Mapping[str, str]) -> SpecT:
-    """Resolve the spec's environment-dependent facts through the harness's ``bind_spec``."""
+def bind_launch_spec(
+    harness_id: HarnessId,
+    spec: SpecT,
+    *,
+    env: Mapping[str, str],
+    child_cwd: Path,
+) -> SpecT:
+    """Resolve the spec's launch-context-dependent facts through ``bind_spec``."""
 
     bundle = _require_bundle_spec(harness_id, spec)
     if bundle.projections.bind_spec is None:
         return spec
-    return cast("SpecT", bundle.projections.bind_spec(spec, env))
+    return cast("SpecT", bundle.projections.bind_spec(spec, env, child_cwd))
 
 
 def project_subprocess_spec(
