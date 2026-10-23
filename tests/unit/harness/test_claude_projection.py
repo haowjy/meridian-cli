@@ -160,7 +160,10 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
     assert "--noproxy ''" in network_line.note
 
 
-def test_claude_network_deny_reports_settings_and_command_widening() -> None:
+def test_claude_network_deny_reports_settings_and_command_widening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("meridian.lib.harness.projections.permissions_claude.sys.platform", "linux")
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
@@ -187,6 +190,7 @@ def test_claude_network_deny_reports_settings_and_command_widening() -> None:
     _, report = compile_claude_permissions(spec)
     line = next(item for item in report if item.element == "network: deny")
     assert line.status == "partial"
+    assert "private TCP loopback" in line.note
     assert "can be widened outside Meridian" in line.note
     assert "meridian spawn *" in line.note
 

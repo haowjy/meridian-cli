@@ -845,10 +845,15 @@ def _network_line(
             )
         return ReportLine(element, "native", note)
 
+    notes = ["no sandbox.network.allowedDomains projected"]
+    if sys.platform.startswith("linux"):
+        notes.append(
+            "processes in the same sandbox can still connect over its private TCP "
+            "loopback, so deny is partial on Linux"
+        )
     widening: list[str] = []
     for path, domains in settings_network_allowed_domains:
         widening.append(f"{path}: {','.join(domains)}")
-    notes = ["no sandbox.network.allowedDomains projected"]
     if widening:
         notes.append(
             "Claude merges allowedDomains from its own settings files, so network deny can "
@@ -861,7 +866,9 @@ def _network_line(
         )
     return ReportLine(
         element,
-        "partial" if widening or sandbox.excluded_commands else "native",
+        "partial"
+        if sys.platform.startswith("linux") or widening or sandbox.excluded_commands
+        else "native",
         "; ".join(notes),
     )
 
