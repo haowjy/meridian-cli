@@ -46,10 +46,6 @@ SANDBOX_MODE_WEAKNESS: dict[SandboxMode, int] = {
     # A harness default is unknown, so compare it as weaker than every explicit mode.
     "default": 3,
 }
-NETWORK_MODE_STRENGTH: dict[NetworkMode, int] = {
-    "allow": 0,
-    "deny": 1,
-}
 _SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
     {"default", "read-only", "workspace-write", "danger-full-access"}
 )
@@ -91,7 +87,7 @@ class EffectiveNetworkFacts:
 
         return cls(
             sandbox=_parse_sandbox_value(sandbox),
-            network=_parse_network_value(network),
+            network=parse_network_mode(network),
             network_projection=network_projection,
             native_config=native_config or _EMPTY_NATIVE_CONFIG,
         )
@@ -441,7 +437,9 @@ def _parse_sandbox_value(raw: str | None) -> SandboxMode:
     raise ValueError(f"Unsupported sandbox mode '{raw}'. Expected: {allowed}.")
 
 
-def _parse_network_value(raw: str | None) -> NetworkMode | None:
+def parse_network_mode(raw: str | None) -> NetworkMode | None:
+    """Parse an optional network mode at a trust boundary."""
+
     if raw is None:
         return None
     normalized = raw.strip().lower()
@@ -568,7 +566,7 @@ def build_permission_policy(
         rules=(*denies, *resolved),
         platform_rules=platform_rules,
         sandbox=_parse_sandbox_value(sandbox),
-        network=_parse_network_value(network),
+        network=parse_network_mode(network),
         network_projection=network_projection,
         sandbox_write_roots=tuple(dict.fromkeys(root for root in sandbox_write_roots if root)),
         approval=_parse_approval_value(approval),
@@ -578,7 +576,6 @@ def build_permission_policy(
 __all__ = [
     "ALLOWLIST_ORIGIN",
     "CONSTRAINED_SANDBOX_MODES",
-    "NETWORK_MODE_STRENGTH",
     "SANDBOX_MODE_WEAKNESS",
     "ApprovalMode",
     "CommandMatch",
@@ -595,6 +592,7 @@ __all__ = [
     "build_permission_policy",
     "complete_report",
     "format_report_lines",
+    "parse_network_mode",
     "platform_element",
     "rule_element",
     "unenforced_network",

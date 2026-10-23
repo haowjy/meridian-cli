@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
-    NETWORK_MODE_STRENGTH,
     SANDBOX_MODE_WEAKNESS,
     NetworkMode,
     SandboxMode,
+    parse_network_mode,
 )
 from meridian.lib.utils.json_shapes import loads_json_object
 
@@ -45,7 +45,7 @@ class CallerBoundary:
 
     pid_namespace: str | None
     sandbox: SandboxMode
-    network: NetworkMode | None
+    network_deny_floor: bool
     has_spawn_capability: bool
 
     @classmethod
@@ -62,10 +62,8 @@ class CallerBoundary:
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
-            network=(
-                "deny"
-                if policy.network == "deny" and effective_network == "deny"
-                else None
+            network_deny_floor=(
+                policy.network == "deny" and effective_network == "deny"
             ),
             has_spawn_capability=policy.has_spawn_capability,
         )
@@ -84,8 +82,8 @@ class CallerBoundary:
             "sandbox": self.sandbox,
             "spawn": self.has_spawn_capability,
         }
-        if self.network == "deny":
-            payload["network"] = self.network
+        if self.network_deny_floor:
+            payload["network"] = "deny"
         return json.dumps(
             payload,
             separators=(",", ":"),
@@ -111,14 +109,21 @@ class CallerBoundary:
             or (network is not None and not isinstance(network, str))
             or not isinstance(spawn, bool)
             or sandbox not in SANDBOX_MODE_WEAKNESS
-            or (network is not None and network not in NETWORK_MODE_STRENGTH)
         ):
             raise ValueError("Child spawn refused: caller boundary is invalid.")
+        try:
+            parsed_network = parse_network_mode(
+                network if isinstance(network, str) else None
+            )
+        except ValueError as error:
+            raise ValueError(
+                "Child spawn refused: caller boundary is invalid."
+            ) from error
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
             # Older builds wrote "allow" explicitly. It carried no restrictive floor.
-            network="deny" if network == "deny" else None,
+            network_deny_floor=parsed_network == "deny",
             has_spawn_capability=spawn,
         )
 
@@ -185,7 +190,7 @@ class CallerBoundaryCheck:
                 f"Child spawn refused: sandbox '{normalized}' is weaker than "
                 f"caller floor '{caller.sandbox}'."
             )
-        if caller.network == "deny" and child_network != "deny":
+        if caller.network_deny_floor and child_network != "deny":
             remedy = (
                 "the child declares `network: deny`, but its harness or native override "
                 "does not enforce it"

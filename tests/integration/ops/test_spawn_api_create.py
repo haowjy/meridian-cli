@@ -46,7 +46,7 @@ def _set_caller_guardrail(
     record = json.loads(
         CallerBoundary(
             sandbox=sandbox,
-            network=network,
+            network_deny_floor=network == "deny",
             has_spawn_capability=has_spawn_capability,
             pid_namespace=None,
         ).to_env_value()
@@ -305,7 +305,7 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="workspace-write",
-            network=None,
+            network_deny_floor=False,
             has_spawn_capability=True,
             pid_namespace=f"{namespace}:different",
         ).to_env_value(),
@@ -342,39 +342,42 @@ def test_unsandboxed_caller_has_no_guardrail(
     assert check.caller is None
 
 
-def test_floored_legacy_caller_with_missing_network_has_no_network_floor(
+@pytest.mark.parametrize("legacy_network", [None, "allow"], ids=["missing", "allow"])
+def test_floored_legacy_caller_without_deny_has_no_network_floor(
     monkeypatch: pytest.MonkeyPatch,
+    legacy_network: str | None,
 ) -> None:
+    payload: dict[str, object] = {
+        "pid_namespace": None,
+        "sandbox": "workspace-write",
+        "spawn": True,
+    }
+    if legacy_network is not None:
+        payload["network"] = legacy_network
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
-        json.dumps(
-            {
-                "pid_namespace": None,
-                "sandbox": "workspace-write",
-                "spawn": True,
-            }
-        ),
+        json.dumps(payload),
     )
 
     check = CallerBoundaryCheck.from_environment(dry_run=True)
 
     assert check.caller is not None
-    assert check.caller.network is None
+    assert not check.caller.network_deny_floor
 
 
 @pytest.mark.parametrize(
     ("authored_network", "effective_network", "expected_floor"),
     [
-        (None, "allow", None),
-        ("allow", "allow", None),
-        ("deny", "allow", None),
-        ("deny", "deny", "deny"),
+        (None, "allow", False),
+        ("allow", "allow", False),
+        ("deny", "allow", False),
+        ("deny", "deny", True),
     ],
 )
 def test_caller_boundary_records_only_an_enforced_authored_deny(
     authored_network: NetworkMode | None,
     effective_network: NetworkMode,
-    expected_floor: NetworkMode | None,
+    expected_floor: bool,
 ) -> None:
     boundary = CallerBoundary.from_policy(
         PermissionPolicy(sandbox="workspace-write", network=authored_network),
@@ -382,8 +385,8 @@ def test_caller_boundary_records_only_an_enforced_authored_deny(
         pid_namespace=None,
     )
 
-    assert boundary.network == expected_floor
-    assert ("network" in json.loads(boundary.to_env_value())) is (expected_floor is not None)
+    assert boundary.network_deny_floor is expected_floor
+    assert ("network" in json.loads(boundary.to_env_value())) is expected_floor
 
 
 @pytest.mark.parametrize(
