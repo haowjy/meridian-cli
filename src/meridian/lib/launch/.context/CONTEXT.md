@@ -241,7 +241,9 @@ env var.
 The same step lets the harness project config into the child env: after
 `build_env_plan()`, bind calls `harness.project_launch_env()` with the spec, the
 `system-prompt.md` path and the bound env, and merges the returned overrides into
-the final env. Only OpenCode uses it (prompt, model and workspace grants; see the
+the final env. Adapters use this for forced launch policy: Claude's autocompact
+and spawned-cache overrides, Pi's runtime policy, and OpenCode's prompt, model
+and workspace grants (see the
 harness [OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)).
 
 ### Agent Inventory Prompt
