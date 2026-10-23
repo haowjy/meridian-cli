@@ -17,8 +17,9 @@ from tests.conftest import posix_only
 @posix_only
 def test_control_socket_path_is_bounded_and_unique_for_long_runtime_root(
     monkeypatch: pytest.MonkeyPatch,
+    _isolate_control_sockets: Path,
 ) -> None:
-    monkeypatch.setattr(control_socket_module, "_POSIX_SOCKET_ROOT", Path("/tmp"))
+    monkeypatch.setattr(control_socket_module, "_POSIX_SOCKET_ROOT", _isolate_control_sockets)
     runtime_root = Path.cwd() / ("pathologically-long-runtime-root-" * 10)
 
     first = control_socket_path(runtime_root, "spawn-one")
