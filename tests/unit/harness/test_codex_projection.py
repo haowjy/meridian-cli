@@ -150,3 +150,46 @@ def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
     assert defaulted_line.status == "partial"
     assert "no authored allow request" in defaulted_line.note
     assert authored_line.status == "unsupported"
+
+
+def test_codex_deprecated_native_network_override_wins_for_warning_release() -> None:
+    from meridian.lib.harness.codex import CodexAdapter
+    from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+
+    spec = _spec(interactive=False).model_copy(
+        update={
+            "permission_policy": PermissionPolicy(
+                sandbox="workspace-write",
+                network="allow",
+                network_explicit=True,
+            ),
+            "native_config": {"sandbox_workspace_write": {"network_access": False}},
+        }
+    )
+
+    subprocess = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
+    appserver = project_codex_spec_to_appserver_command(
+        spec,
+        host="127.0.0.1",
+        port=1234,
+    )
+    _, thread = project_codex_spec_to_thread_request(spec, cwd="/workspace")
+
+    override = "sandbox_workspace_write.network_access=false"
+    assert subprocess.count(override) == 1
+    assert appserver.count(override) == 1
+    assert "config" not in thread
+    _, report = compile_codex_permissions(spec)
+    network_line = next(line for line in report if line.element == "network: allow")
+    native_line = next(
+        line
+        for line in report
+        if line.element == "native_config: sandbox_workspace_write.network_access = false"
+    )
+    assert network_line.status == "partial"
+    assert "takes precedence" in network_line.note
+    assert "deprecated" in native_line.note
+    warnings = CodexAdapter().launch_spec_warnings(spec)
+    assert [warning.code for warning in warnings] == [
+        "deprecated_codex_network_access_native_config"
+    ]

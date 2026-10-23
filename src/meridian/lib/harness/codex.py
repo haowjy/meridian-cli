@@ -50,6 +50,10 @@ from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.projections.native_config import (
+    CODEX_CONFIG_NETWORK_ACCESS_KEY,
+    codex_native_config_has_key,
+)
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
@@ -79,7 +83,11 @@ from meridian.lib.launch.constants import (
     BASE_COMMAND_CODEX_SUBPROCESS,
     PRIMARY_BASE_COMMAND_CODEX,
 )
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.launch.launch_types import (
+    CompositionWarning,
+    ResolvedLaunchSpec,
+    TerminalSurfaceMode,
+)
 from meridian.lib.platform import get_home_path
 
 logger = logging.getLogger(__name__)
@@ -389,6 +397,24 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             base_instructions=run.adhoc_agent_payload.strip() or None,
             developer_instructions=run.appended_system_prompt,
             user_turn_content=run.user_turn_content,
+        )
+
+    def launch_spec_warnings(
+        self, spec: ResolvedLaunchSpec
+    ) -> tuple[CompositionWarning, ...]:
+        if not codex_native_config_has_key(
+            spec.native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
+        ):
+            return ()
+        return (
+            CompositionWarning(
+                code="deprecated_codex_network_access_native_config",
+                message=(
+                    "Codex native_config sandbox_workspace_write.network_access is "
+                    "deprecated; use the profile network field instead. The native value "
+                    "wins for this release and becomes reserved in the next release."
+                ),
+            ),
         )
 
     def build_primary_runtime_request_handler(

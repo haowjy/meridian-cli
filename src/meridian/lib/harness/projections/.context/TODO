@@ -1,0 +1,7 @@
+# Required follow-ups
+
+- In the next meridian-cli release, add
+  `sandbox_workspace_write.network_access` to
+  `CODEX_RESERVED_NATIVE_CONFIG_KEYS`, and delete its deprecation warning and
+  native-wins carveout. From that release onward, `network` is its sole owner,
+  like `sandbox_workspace_write.writable_roots` today.

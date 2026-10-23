@@ -30,6 +30,11 @@ so `mcp_servers.*` passes through. `compaction.py` owns the semantic
 percentage environment variable, Codex gets config overrides, and the other harnesses
 report both fields unsupported.
 
+One warning-release exception is tracked in [TODO](TODO): a native
+`sandbox_workspace_write.network_access` leaf is deprecated but still emitted after the
+portable projection, so it wins on subprocess, app-server and thread creation. The next
+release makes it reserved like `writable_roots` and removes that carveout.
+
 `pi_extension_projection.py` is not a spec projector — it resolves stable
 Meridian-owned Pi extension entrypoints without copying or materializing them.
 It does not consume a `LaunchSpec`. See the Pi Extension Projection section below.

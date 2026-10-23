@@ -12,7 +12,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from meridian.lib.harness.projections.compaction import compaction_report
-from meridian.lib.harness.projections.native_config import project_codex_native_config
+from meridian.lib.harness.projections.native_config import (
+    CODEX_CONFIG_NETWORK_ACCESS_KEY,
+    codex_native_config_has_key,
+    project_codex_native_config,
+)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
@@ -210,7 +214,19 @@ def _codex_report(
             )
         )
     network_element = f"network: {policy.network}"
-    if policy.sandbox == "workspace-write":
+    native_network_override = codex_native_config_has_key(
+        spec.native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
+    )
+    if policy.sandbox == "workspace-write" and native_network_override:
+        lines.append(
+            ReportLine(
+                network_element,
+                "partial",
+                "deprecated native_config sandbox_workspace_write.network_access takes "
+                "precedence over the profile network field for this release",
+            )
+        )
+    elif policy.sandbox == "workspace-write":
         if policy.network == "allow":
             lines.append(
                 ReportLine(

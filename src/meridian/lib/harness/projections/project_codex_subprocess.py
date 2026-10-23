@@ -101,6 +101,7 @@ def project_codex_spec_to_cli_args(
     sandbox = project_codex_sandbox(
         permissions,
         writable_roots=tuple(root.as_posix() for root in spec.projected_roots),
+        native_config=spec.native_config,
         network_access=permissions.network_access,
     )
     command.extend(sandbox.process_args("subprocess"))

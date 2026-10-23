@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Literal
 
+from meridian.lib.core.execution_policy import NativeConfig
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_AGENTS_PREFIX,
     CODEX_CONFIG_FEATURES_PREFIX,
@@ -14,6 +15,7 @@ from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY,
     CODEX_CONFIG_WEB_SEARCH_KEY,
     CODEX_CONFIG_WRITABLE_ROOTS_KEY,
+    codex_native_config_has_key,
 )
 from meridian.lib.harness.projections.permissions_codex import CodexPermissions
 
@@ -95,6 +97,7 @@ def project_codex_sandbox(
     permissions: CodexPermissions,
     *,
     writable_roots: tuple[str, ...],
+    native_config: NativeConfig,
     network_access: bool | None = None,
 ) -> CodexSandboxProjection:
     """Build the shared sandbox projection consumed by both Codex transports."""
@@ -102,7 +105,11 @@ def project_codex_sandbox(
     return CodexSandboxProjection(
         sandbox_mode=permissions.sandbox_mode,
         writable_roots=writable_roots,
-        network_access=network_access,
+        network_access=(
+            None
+            if codex_native_config_has_key(native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY)
+            else network_access
+        ),
     )
 
 
