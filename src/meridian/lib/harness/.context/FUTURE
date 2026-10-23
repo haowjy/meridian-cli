@@ -33,7 +33,3 @@
   package `mcp/<name>/mcp.toml` definitions during sync. OpenCode config can carry local
   definitions under `mcp.servers`, but Meridian must not reconstruct commands from tool
   permission names.
-- `connections/codex_ws.py` `completion_signals_available`: only an explicit `sandbox: read-only` skips the
-  completion confirmation turn. A profile with no sandbox leaves Codex's own default in force (read-only with
-  codex-cli 0.163.0), so that child still gets a confirmation it can't answer. Fix if a shipped profile omits
-  `sandbox`: resolve Codex's effective default (its config) at bind, or project an explicit sandbox.
