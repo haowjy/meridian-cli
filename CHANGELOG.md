@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Read-only Codex spawns once again receive the completion confirmation turn now that `meridian spawn done` can write its signal outside the sandbox.
 - Scoped shell denies and approval rules remain authoritative inside broader Meridian command grants on OpenCode and Pi.
+- Spawn help resolves prompt paths separately, then passes the printed literal path so sandbox-boundary checks do not reject Meridian's own examples.
 
 ## [0.12.7] - 2026-10-23
 
