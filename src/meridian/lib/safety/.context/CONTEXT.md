@@ -115,13 +115,16 @@ existing unscoped deny of it (`unscoped_action`), never for a `*` rule.
 platform rule: an allow, not a deny, for the shell commands a child runs to answer
 Meridian's completion confirmation (`meridian spawn done` / `rearm`). It cannot depend on
 the profile: a harness's own defaults can close the shell to a headless child (Claude asks
-before any command that changes files). A child that cannot run them still closes when its
-completion window runs out, but cannot reject a premature completion. `PlatformRule.commands`
-names them bare; the compile of any harness that restricts the shell spells each command and
+before any command that changes files). A child with a writable signal channel that cannot
+run them cannot reject a premature completion; its hold falls back to normal confirmation
+and deadline handling. `PlatformRule.commands` names them bare; the compile of any harness
+that restricts the shell spells each command and
 its argument form in its own scope syntax and puts them where a deny of `bash` or `*` does
 not shadow them (OpenCode V1: `bash(<cmd>)` / `bash(<cmd> *)`; V2: the corresponding `shell`
 rules). A compile whose shell is open has nothing to add. A harness that has not projected
-it reports `unsupported`.
+it reports `unsupported`. An explicitly read-only Codex child declares that no writable
+completion-signal channel exists, so its hold skips confirmation and reads no `done` or
+`rearm` signal while still waiting on blockers.
 
 **Reports.** `complete_report` gives every policy element exactly one line, in policy order.
 A compile reports what it enforces or has something specific to say about; the rest is

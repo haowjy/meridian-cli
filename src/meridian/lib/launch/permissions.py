@@ -11,8 +11,9 @@ from meridian.lib.tools import (
 )
 
 # What a child runs inside itself to answer Meridian's completion confirmation (the inherited
-# spawn id targets it). Without them a child cannot reject a premature completion; it closes
-# only when its completion window runs out.
+# spawn id targets it). A child with a writable signal channel but without these commands cannot
+# reject a premature completion; explicitly read-only Codex declares no channel and skips the
+# confirmation turn while its hold still waits on blockers.
 _COMPLETION_COMMANDS: tuple[str, ...] = ("meridian spawn done", "meridian spawn rearm")
 
 

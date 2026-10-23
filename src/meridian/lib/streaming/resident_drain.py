@@ -160,12 +160,13 @@ class _HoldProfile:
         )
         self._backend = backend
         self._send_nudge = send_nudge
+        self._handshake_available = send_nudge is not None
         self._clock = clock
         self._confirmation_grace_seconds = poll_seconds
         self._awaiting_done = False
-        self._confirmation_requested = send_nudge is None
+        self._confirmation_requested = False
         self._confirmation_turn_started = False
-        self._confirmation_failed = send_nudge is None
+        self._confirmation_failed = False
         self._done_requested = False
         self._rearmed = False
         self._confirmation_grace_at: float | None = None
@@ -186,7 +187,7 @@ class _HoldProfile:
         trigger: AssessmentTrigger,
     ) -> CompletionDirectives:
         del trigger
-        if self._send_nudge is None:
+        if not self._handshake_available:
             self._done_requested = False
             return CompletionDirectives()
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
@@ -293,9 +294,9 @@ class _HoldProfile:
     def clear(self) -> None:
         self.set_awaiting_done(False)
         self._done_requested = False
-        self._confirmation_requested = self._send_nudge is None
+        self._confirmation_requested = False
         self._confirmation_turn_started = False
-        self._confirmation_failed = self._send_nudge is None
+        self._confirmation_failed = False
         self._rearmed = False
         self._confirmation_grace_at = None
         self._blockers = ()
@@ -361,7 +362,7 @@ class _HoldProfile:
         if context.assessment.disposition == "unknown":
             self._enter_wait()
             return ProfileDecision(action="wait", emit_turn_boundary=True)
-        if self._confirmation_requested:
+        if self._confirmation_requested or self._confirmation_settled:
             if context.assessment.disposition == "ready":
                 return self._propose_success(context.candidate or outcome, context.now)
             self._enter_wait()
@@ -370,7 +371,7 @@ class _HoldProfile:
         return ProfileDecision(
             action="wait",
             emit_turn_boundary=True,
-            nudge=True,
+            nudge=self._handshake_available,
         )
 
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
@@ -417,12 +418,14 @@ class _HoldProfile:
             return ProfileDecision(action="wait")
         if context.assessment.disposition == "unknown":
             return ProfileDecision(action="wait")
-        if not self._confirmation_requested and not self._rearmed:
+        if (
+            self._handshake_available
+            and not self._confirmation_requested
+            and not self._rearmed
+        ):
             self._enter_wait()
             return ProfileDecision(action="wait", nudge=True)
-        if context.assessment.disposition == "ready" and (
-            self._confirmation_failed or self._confirmation_turn_started
-        ):
+        if context.assessment.disposition == "ready" and self._confirmation_settled:
             return self._propose_success(candidate, context.now)
         if confirmation_grace_expired:
             self._enter_wait()
@@ -436,6 +439,14 @@ class _HoldProfile:
         self._confirmation_failed = False
         self._rearmed = True
         self._confirmation_grace_at = None
+
+    @property
+    def _confirmation_settled(self) -> bool:
+        return (
+            not self._handshake_available
+            or self._confirmation_failed
+            or self._confirmation_turn_started
+        )
 
     def _enter_wait(self) -> None:
         self.set_awaiting_done(True)

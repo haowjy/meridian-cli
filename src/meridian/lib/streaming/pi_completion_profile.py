@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
 COMPLETION_NUDGE_INTERVAL_SECONDS = 270.0
 PI_COMPLETION_NUDGE_MESSAGE = (
-    "Your previous reply is kept as this spawn's report. If it is the final report, "
-    "run `meridian spawn done` and end the turn."
+    "If you are finished, run `meridian spawn done`; your reply to this message is the "
+    "report, so make it complete."
 )
 PI_EVIDENCE_UNREADABLE_TIMEOUT_SECONDS: float = 300.0
 PI_DONE_NUDGE_IDLE_DELAY_SECONDS: float = 5.0

@@ -42,10 +42,12 @@ activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
 Native-task activity never renews the deadline. Explicit done authorizes completion
-with leftover native tasks; managed-scope teardown stops them. A successful completion
-candidate gets one best-effort confirmation turn: `done` accepts, `rearm` opens another
-fixed window and waits for a genuinely new successful/idle candidate, and silence
-accepts only after evidence is ready. The default completion window
+with leftover native tasks; managed-scope teardown stops them. With a writable
+completion-signal channel, a successful candidate gets one best-effort confirmation
+turn: `done` accepts, `rearm` opens another fixed window and waits for a genuinely new
+successful/idle candidate, and silence accepts only after evidence is ready. A hold
+without that channel skips confirmation and reads no signals, but keeps the same
+evidence, blocker, and deadline policy. The default completion window
 is the calling harness's configured wait-yield interval unless
 `timeouts.resident_deadline_seconds` overrides it.
 

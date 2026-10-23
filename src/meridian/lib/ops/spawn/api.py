@@ -1134,8 +1134,8 @@ def _signal_refusal(
     if accepted is not None and kind not in accepted:
         if not accepted:
             return (
-                f"Spawn {label} has no completion hold, so nothing reads "
-                f"`meridian spawn {kind}`; it finishes when its turn ends."
+                f"Spawn {label} does not read completion signals, so nothing reads "
+                f"`meridian spawn {kind}`."
             )
         commands = " or ".join(f"`meridian spawn {item}`" for item in sorted(accepted))
         return f"Spawn {label} does not consume {kind} signals; it accepts only {commands}."
