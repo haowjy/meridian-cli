@@ -55,6 +55,7 @@ class CodexPermissions:
     """
 
     sandbox_mode: str | None
+    network_access: bool | None
     approval_policy: str | None
     shell_tool: bool | None
     web_search: bool | None
@@ -208,6 +209,76 @@ def _codex_report(
                 sandbox_note,
             )
         )
+    network_element = f"network: {policy.network}"
+    if policy.sandbox == "workspace-write":
+        if policy.network == "allow":
+            lines.append(
+                ReportLine(
+                    network_element,
+                    "native",
+                    "-c sandbox_workspace_write.network_access=true",
+                )
+            )
+        else:
+            rules_error = spec.codex_runtime.rules_file_error
+            escaped = rules_error is None
+            lines.append(
+                ReportLine(
+                    network_element,
+                    "partial" if escaped else "native",
+                    "Codex's workspace-write default keeps shell network and sockets off"
+                    + (
+                        "; the Meridian-owned user rule still lets `meridian spawn` run "
+                        "outside the sandbox with network access"
+                        if escaped
+                        else ""
+                    ),
+                )
+            )
+    elif policy.sandbox == "read-only":
+        if policy.network == "allow" and policy.network_explicit:
+            lines.append(
+                ReportLine(
+                    network_element,
+                    "unsupported",
+                    "Codex read-only has no network-enabled mode",
+                )
+            )
+        elif policy.network == "allow":
+            lines.append(
+                ReportLine(
+                    network_element,
+                    "partial",
+                    "network was left unset; Codex read-only keeps shell network off, so no "
+                    "authored allow request is reported as unsupported",
+                )
+            )
+        else:
+            lines.append(
+                ReportLine(
+                    network_element,
+                    "native",
+                    "Codex read-only keeps shell network and sockets off",
+                )
+            )
+    elif policy.sandbox == "danger-full-access":
+        lines.append(
+            ReportLine(
+                network_element,
+                "native" if policy.network == "allow" else "unsupported",
+                "danger-full-access leaves shell network unrestricted"
+                if policy.network == "allow"
+                else "not enforced under danger-full-access; shell network remains available",
+            )
+        )
+    else:
+        lines.append(
+            ReportLine(
+                network_element,
+                "partial" if policy.network == "allow" else "unsupported",
+                "sandbox is left to Codex, so Meridian does not project network_access",
+            )
+        )
     if permissions.approval_policy is not None:
         note = f"approval_policy={permissions.approval_policy}"
         if policy.approval == "confirm":
@@ -246,6 +317,9 @@ def compile_codex_permissions(
             switches[switch[0]] = switch[1]
     permissions = CodexPermissions(
         sandbox_mode=_SANDBOX_MODE_BY_MODE[policy.sandbox],
+        network_access=(
+            True if policy.sandbox == "workspace-write" and policy.network == "allow" else None
+        ),
         approval_policy=_APPROVAL_POLICY_BY_MODE[policy.approval],
         shell_tool=switches["shell_tool"],
         web_search=switches["web_search"],

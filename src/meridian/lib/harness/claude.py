@@ -55,7 +55,7 @@ from meridian.lib.harness.claude_sessions import (
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
 )
-from meridian.lib.harness.claude_settings import read_claude_settings_allows
+from meridian.lib.harness.claude_settings import read_claude_settings_permissions
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
@@ -131,11 +131,15 @@ def bind_claude_spec(
     """Resolve settings-file allows once from the launch environment and cwd."""
 
     _ = dry_run
+    settings_allows, network_allowed_domains = read_claude_settings_permissions(
+        child_cwd, env
+    )
     return spec.model_copy(
         update={
             "claude_runtime": replace(
                 spec.claude_runtime,
-                settings_allows=read_claude_settings_allows(child_cwd, env),
+                settings_allows=settings_allows,
+                settings_network_allowed_domains=network_allowed_domains,
             )
         }
     )

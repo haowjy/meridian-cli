@@ -83,6 +83,15 @@ def _cursor_report(
                 "Cursor has no confirm switch; no flag passed",
             )
         )
+    lines.append(
+        ReportLine(
+            f"network: {policy.network}",
+            "native" if policy.network == "allow" else "unsupported",
+            "Cursor leaves shell network unrestricted"
+            if policy.network == "allow"
+            else "not enforced by Cursor; shell network remains available",
+        )
+    )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Cursor"))
     lines.extend(compaction_report(spec, harness="Cursor"))
     return complete_report(policy, lines, harness="Cursor")

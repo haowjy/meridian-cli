@@ -145,9 +145,50 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
 
     settings = json.loads(command[command.index("--settings") + 1])
     assert settings["sandbox"]["excludedCommands"] == ["meridian spawn *"]
+    assert settings["sandbox"]["network"]["allowedDomains"] == [
+        "*",
+        "localhost",
+        "127.0.0.1",
+    ]
+    assert settings["sandbox"]["allowLocalBinding"] is True
+    assert settings["sandbox"]["allowAllUnixSockets"] is True
     _, report = compile_claude_permissions(spec)
     sandbox_line = next(item for item in report if item.element == "sandbox: workspace-write")
     assert "runs fully outside the sandbox" in sandbox_line.note
+    network_line = next(item for item in report if item.element == "network: allow")
+    assert network_line.status == "partial"
+    assert "--noproxy ''" in network_line.note
+
+
+def test_claude_network_deny_reports_settings_and_command_widening() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            sandbox="workspace-write",
+            network="deny",
+            network_explicit=True,
+            platform_rules=(
+                PlatformRule(
+                    kind="meridian-commands",
+                    commands=(PlatformCommand(command="meridian spawn", match="prefix"),),
+                ),
+            ),
+        ),
+        claude_runtime=ClaudeRuntimeResolution(
+            settings_network_allowed_domains=(("/home/test/.claude/settings.json", ("*",)),)
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+
+    assert "network" not in settings["sandbox"]
+    _, report = compile_claude_permissions(spec)
+    line = next(item for item in report if item.element == "network: deny")
+    assert line.status == "partial"
+    assert "can be widened outside Meridian" in line.note
+    assert "meridian spawn *" in line.note
 
 
 def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:

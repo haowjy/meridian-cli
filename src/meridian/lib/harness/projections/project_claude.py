@@ -104,6 +104,14 @@ def _settings_json(settings: ClaudeSettings) -> str:
                 sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)
             if sandbox_settings.deny_write:
                 sandbox["filesystem"] = {"denyWrite": list(sandbox_settings.deny_write)}
+            if sandbox_settings.allowed_domains:
+                sandbox["network"] = {
+                    "allowedDomains": list(sandbox_settings.allowed_domains)
+                }
+            if sandbox_settings.allow_local_binding:
+                sandbox["allowLocalBinding"] = True
+            if sandbox_settings.allow_all_unix_sockets:
+                sandbox["allowAllUnixSockets"] = True
         payload["sandbox"] = sandbox
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 

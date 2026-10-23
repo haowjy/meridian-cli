@@ -301,6 +301,15 @@ def _report(
                     "Pi has no built-in agents",
                 )
             )
+    lines.append(
+        ReportLine(
+            f"network: {policy.network}",
+            "native" if policy.network == "allow" else "unsupported",
+            "Pi leaves shell network unrestricted"
+            if policy.network == "allow"
+            else "not enforced by Pi; shell network remains available",
+        )
+    )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Pi"))
     lines.extend(compaction_report(spec, harness="Pi"))
     return complete_report(policy, lines, harness="Pi")

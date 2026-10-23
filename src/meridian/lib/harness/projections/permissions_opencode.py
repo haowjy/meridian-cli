@@ -421,6 +421,16 @@ def compile_opencode_permissions(
     elif not spec.interactive and unscoped_action(policy.rules, "*") is None:
         lines.append(_headless_default_line(default))
 
+    lines.append(
+        ReportLine(
+            f"network: {policy.network}",
+            "native" if policy.network == "allow" else "unsupported",
+            "OpenCode leaves shell network unrestricted"
+            if policy.network == "allow"
+            else "not enforced by OpenCode; shell network remains available",
+        )
+    )
+
     lines.extend(unsupported_native_config_report(spec.native_config, harness="OpenCode"))
     normalized_effort = (spec.effort or "").strip()
     if normalized_effort:

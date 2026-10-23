@@ -71,6 +71,7 @@ class ClaudeRuntimeResolution:
     # Populated from the final child environment by Claude's ``bind_spec`` port;
     # empty on a spec that did not pass through bind.
     settings_allows: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,7 @@ channels, so a rule that order shadows, or that the compile left out, says so.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Literal
@@ -61,6 +62,9 @@ class ClaudeSandboxSettings:
     deny_write: tuple[str, ...] = ()
     auto_allow_bash: bool = False
     excluded_commands: tuple[str, ...] = ()
+    allowed_domains: tuple[str, ...] = ()
+    allow_local_binding: bool = False
+    allow_all_unix_sockets: bool = False
 
 
 @dataclass(frozen=True)
@@ -419,6 +423,11 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
             and not channels.ask
         ),
         excluded_commands=("meridian spawn *",) if can_spawn else (),
+        allowed_domains=("*", "localhost", "127.0.0.1")
+        if policy.network == "allow"
+        else (),
+        allow_local_binding=policy.network == "allow",
+        allow_all_unix_sockets=policy.network == "allow",
     )
 
 
@@ -805,6 +814,58 @@ def _sandbox_line(policy: PermissionPolicy, permissions: ClaudePermissions) -> R
     return ReportLine(f"sandbox: {policy.sandbox}", status, settings)
 
 
+def _network_line(
+    policy: PermissionPolicy,
+    permissions: ClaudePermissions,
+    settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...],
+) -> ReportLine:
+    element = f"network: {policy.network}"
+    sandbox = permissions.settings.sandbox
+    if sandbox is None or not sandbox.enabled:
+        if policy.network == "allow":
+            return ReportLine(element, "native", "sandbox is off, so shell network is available")
+        return ReportLine(
+            element,
+            "unsupported",
+            "not enforced because the Claude Bash sandbox is off",
+        )
+
+    if policy.network == "allow":
+        note = (
+            '--settings sandbox.network.allowedDomains=["*","localhost","127.0.0.1"], '
+            "allowLocalBinding=true, allowAllUnixSockets=true"
+        )
+        if sys.platform.startswith("linux"):
+            return ReportLine(
+                element,
+                "partial",
+                note
+                + "; on Linux, host localhost is reachable only through Claude's proxy, and "
+                "clients honoring NO_PROXY bypass it (for curl, use --noproxy '')",
+            )
+        return ReportLine(element, "native", note)
+
+    widening: list[str] = []
+    for path, domains in settings_network_allowed_domains:
+        widening.append(f"{path}: {','.join(domains)}")
+    notes = ["no sandbox.network.allowedDomains projected"]
+    if widening:
+        notes.append(
+            "Claude merges allowedDomains from its own settings files, so network deny can "
+            "be widened outside Meridian (" + "; ".join(widening) + ")"
+        )
+    if sandbox.excluded_commands:
+        notes.append(
+            "excludedCommands run outside the sandbox and can still use the network: "
+            + ",".join(sandbox.excluded_commands)
+        )
+    return ReportLine(
+        element,
+        "partial" if widening or sandbox.excluded_commands else "native",
+        "; ".join(notes),
+    )
+
+
 def compile_claude_permissions(
     spec: ResolvedLaunchSpec,
 ) -> tuple[ClaudePermissions, EnforcementReport]:
@@ -845,6 +906,13 @@ def compile_claude_permissions(
     lines.extend(_platform_lines(policy, permissions))
     if policy.sandbox != "default":
         lines.append(_sandbox_line(policy, permissions))
+    lines.append(
+        _network_line(
+            policy,
+            permissions,
+            spec.claude_runtime.settings_network_allowed_domains,
+        )
+    )
     if policy.approval != "default":
         lines.append(_approval_line(policy, passthrough, policy_mode=policy_mode))
     lines.extend(

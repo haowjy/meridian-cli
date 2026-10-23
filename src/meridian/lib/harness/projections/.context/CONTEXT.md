@@ -180,7 +180,8 @@ remaining exact/prefix list as unsupported. A rules-file write failure is report
 blocking the launch.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
-(`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying
+(`element`, `status`, `note`) per tool rule, platform rule, sandbox, network and approval
+value, saying
 what that harness did with it. Status `native` means enforced as stated, `partial` means part
 of the meaning reaches the harness (the note says which), `unsupported` means nothing does,
 `platform` means a Meridian platform rule decided it. The report states today's
@@ -189,6 +190,16 @@ compile's report is registered as `HarnessProjectionPorts.permission_report` (th
 call the typed compile directly for its native value; nothing generic reads that value);
 `LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
 `permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
+
+Every compile reports the effective shell `network` policy separately from built-in web
+tools. Claude projects allowed domains plus local-binding/Unix-socket settings when its
+Bash sandbox is enabled; on Linux host localhost remains partial because clients must use
+the sandbox proxy. Claude's own settings files can merge allowed domains back into a deny,
+and the report names those sources. Codex enables network only for `workspace-write`;
+`read-only` reports an explicit authored allow as unsupported while an unset/defaulted
+allow is informational. OpenCode, Pi, and Cursor satisfy allow through their unrestricted
+shells and report deny as unenforced. A `meridian spawn` sandbox escape remains visible on
+the network line because that command runs with host network access.
 
 ### Adding a New Harness
 

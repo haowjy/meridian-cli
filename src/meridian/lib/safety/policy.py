@@ -244,6 +244,13 @@ def complete_report(
         defaults.append(
             ReportLine(f"sandbox: {policy.sandbox}", "unsupported", f"not projected for {harness}")
         )
+    defaults.append(
+        ReportLine(
+            f"network: {policy.network}",
+            "unsupported",
+            f"not projected for {harness}",
+        )
+    )
     if policy.approval != "default":
         defaults.append(
             ReportLine(

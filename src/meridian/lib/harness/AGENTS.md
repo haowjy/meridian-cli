@@ -24,8 +24,9 @@ harness `detect_ttl` port. **OpenCode 1.x is legacy and frozen** — registered 
 fallback, no investment; new work targets V2.
 
 Claude uses the same bind port to read the settings files selected by the final child
-cwd and environment. Their allows live on `ClaudeRuntimeResolution.settings_allows`,
-where the permission report reads them without sending internal data through argv.
+cwd and environment. Their tool and network allows live on
+`ClaudeRuntimeResolution.settings_allows` / `settings_network_allowed_domains`, where the
+permission report reads them without sending internal data through argv.
 
 ## Translation Pipeline
 
