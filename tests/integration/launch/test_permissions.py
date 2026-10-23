@@ -160,18 +160,14 @@ def test_inherit_child_env_runtime_overrides_win() -> None:
     assert inherited["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "42"
 
 
-def test_merge_env_overrides_rejects_meridian_keys_from_plan_and_preflight() -> None:
-    for source in ("plan_overrides", "preflight_overrides"):
-        for key in _MERIDIAN_RUNTIME_KEYS:
-            plan_overrides = {key: "blocked"} if source == "plan_overrides" else {}
-            preflight_overrides = {key: "blocked"} if source == "preflight_overrides" else {}
-            with pytest.raises(RuntimeError) as exc_info:
-                merge_env_overrides(
-                    plan_overrides=plan_overrides,
-                    runtime_overrides={"_MERIDIAN_DEPTH": "2"},
-                    preflight_overrides=preflight_overrides,
-                )
-            assert f"{key} via {source}" in str(exc_info.value)
+def test_merge_env_overrides_rejects_meridian_keys_from_plan() -> None:
+    for key in _MERIDIAN_RUNTIME_KEYS:
+        with pytest.raises(RuntimeError) as exc_info:
+            merge_env_overrides(
+                plan_overrides={key: "blocked"},
+                runtime_overrides={"_MERIDIAN_DEPTH": "2"},
+            )
+        assert f"{key} via plan_overrides" in str(exc_info.value)
 
 
 def test_merge_env_overrides_accepts_runtime_meridian_keys() -> None:
@@ -189,7 +185,6 @@ def test_merge_env_overrides_accepts_runtime_meridian_keys() -> None:
     merged = merge_env_overrides(
         plan_overrides={},
         runtime_overrides=runtime_overrides,
-        preflight_overrides={},
     )
 
     assert merged == runtime_overrides
@@ -203,10 +198,6 @@ def test_merge_env_overrides_non_meridian_precedence() -> None:
             "EMPTY_VALUE": "",
             "MULTILINE_VALUE": "line-1\nline-2",
         },
-        preflight_overrides={
-            "FOO": "preflight",
-            "PREFLIGHT_ONLY": "preflight",
-        },
         runtime_overrides={
             "FOO": "runtime",
             "_MERIDIAN_DEPTH": "2",
@@ -217,7 +208,6 @@ def test_merge_env_overrides_non_meridian_precedence() -> None:
     assert merged == {
         "FOO": "runtime",
         "PLAN_ONLY": "plan",
-        "PREFLIGHT_ONLY": "preflight",
         "RUNTIME_ONLY": "runtime",
         "_MERIDIAN_DEPTH": "2",
         "EMPTY_VALUE": "",

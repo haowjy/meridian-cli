@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Claude settings sources in the permission report follow the launch environment (`--env CLAUDE_CONFIG_DIR`, direnv undo).
+
 ## [0.12.2] - 2026-10-23
 
 ### Fixed

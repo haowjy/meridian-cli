@@ -136,22 +136,18 @@ def merge_env_overrides(
     *,
     plan_overrides: Mapping[str, str],
     runtime_overrides: Mapping[str, str],
-    preflight_overrides: Mapping[str, str],
 ) -> dict[str, str]:
-    """Merge env overrides and reject ``MERIDIAN_*`` leaks from plan/preflight.
+    """Merge env overrides and reject ``MERIDIAN_*`` leaks from the plan.
 
     Keys in :data:`~meridian.lib.core.child_env.ALLOWED_CHILD_ENV_KEYS` must
     only enter the child environment via ``ChildEnvContext.child_context()``,
     which is in ``runtime_overrides``.  Any ``MERIDIAN_*`` key appearing in
-    ``plan_overrides`` or ``preflight_overrides`` is a contract violation.
+    ``plan_overrides`` is a contract violation.
     """
     forbidden: list[tuple[str, str]] = []
     for key in plan_overrides:
         if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")):
             forbidden.append((key, "plan_overrides"))
-    for key in preflight_overrides:
-        if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")):
-            forbidden.append((key, "preflight_overrides"))
 
     if forbidden:
         rendered = ", ".join(f"{key} via {source}" for key, source in sorted(forbidden))
@@ -162,7 +158,6 @@ def merge_env_overrides(
         )
 
     merged = dict(plan_overrides)
-    merged.update(preflight_overrides)
     merged.update(runtime_overrides)
     return merged
 

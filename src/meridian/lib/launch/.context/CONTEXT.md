@@ -563,7 +563,7 @@ exception paths. Do not replicate this logic inline.
 ## Lateral Links
 
 - `../../ops/.context/CONTEXT.md` — how `ops/spawn/` drives this layer
-- `../../harness/` — adapters this layer calls into for `project_content()`, `preflight()`, `build_launch_argv()`
+- `../../harness/` — adapters this layer calls into for `project_content()`, `bind_spec()`, `build_launch_argv()`
 
 ### Dry-run model resolution
 

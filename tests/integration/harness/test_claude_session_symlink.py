@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.harness.claude_preflight import ensure_claude_session_accessible
+from meridian.lib.harness.claude_launch_support import ensure_claude_session_accessible
 from meridian.lib.harness.claude_sessions import project_slug
 
 

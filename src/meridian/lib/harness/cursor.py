@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar
 
@@ -36,10 +37,24 @@ from meridian.lib.harness.semantics import (
 )
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import (
-    PreflightResult,
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
+
+
+def bind_cursor_spec(
+    spec: ResolvedLaunchSpec,
+    env: Mapping[str, str],
+    child_cwd: Path,
+) -> ResolvedLaunchSpec:
+    """Validate the Cursor binary against the environment used for launch."""
+
+    _ = child_cwd
+    if shutil.which(BASE_COMMAND_CURSOR_SUBPROCESS[0], path=env.get("PATH")) is None:
+        raise FileNotFoundError(
+            "Cursor CLI not found on PATH. Install Cursor CLI or set PATH to include 'cursor'."
+        )
+    return spec
 
 
 class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
@@ -125,19 +140,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             task_cwd=run.task_cwd,
         )
 
-    def preflight(
-        self,
-        *,
-        execution_cwd: Path,
-        child_cwd: Path,
-        passthrough_args: tuple[str, ...],
-    ) -> PreflightResult:
-        _ = execution_cwd, child_cwd
-        if shutil.which(self.BASE_COMMAND[0]) is None:
-            raise FileNotFoundError(
-                "Cursor CLI not found on PATH. Install Cursor CLI or set PATH to include 'cursor'."
-            )
-        return PreflightResult.build(expanded_passthrough_args=passthrough_args)
 
 def _resolve_cursor_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
@@ -181,6 +183,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_cursor_spec_to_cli_args,
             permission_report=lambda spec: compile_cursor_permissions(spec)[1],
+            bind_spec=bind_cursor_spec,
         ),
         semantics=CURSOR_SEMANTICS,
     )

@@ -195,7 +195,6 @@ class ResolvedLaunchEnvironment:
 
     child_context_env: MappingProxyType[str, str]
     plan_env: MappingProxyType[str, str]
-    preflight_env: MappingProxyType[str, str]
     runtime_override_env: MappingProxyType[str, str]
     bind_env_overrides: MappingProxyType[str, str]
     runner_overlay_env: MappingProxyType[str, str]
@@ -207,7 +206,6 @@ class ResolvedLaunchEnvironment:
         *,
         child_context_env: dict[str, str],
         plan_env: dict[str, str],
-        preflight_env: dict[str, str],
         runtime_override_env: dict[str, str],
         bind_env_overrides: dict[str, str],
         runner_overlay_env: dict[str, str],
@@ -216,7 +214,6 @@ class ResolvedLaunchEnvironment:
         return cls(
             child_context_env=MappingProxyType(dict(child_context_env)),
             plan_env=MappingProxyType(dict(plan_env)),
-            preflight_env=MappingProxyType(dict(preflight_env)),
             runtime_override_env=MappingProxyType(dict(runtime_override_env)),
             bind_env_overrides=MappingProxyType(dict(bind_env_overrides)),
             runner_overlay_env=MappingProxyType(dict(runner_overlay_env)),
@@ -248,23 +245,3 @@ def summarize_composition_warnings(
     if not parts:
         return None
     return "; ".join(parts)
-
-
-@dataclass(frozen=True)
-class PreflightResult:
-    """Result of adapter-owned preflight."""
-
-    expanded_passthrough_args: tuple[str, ...]
-    extra_env: MappingProxyType[str, str]
-
-    @classmethod
-    def build(
-        cls,
-        *,
-        expanded_passthrough_args: tuple[str, ...],
-        extra_env: dict[str, str] | None = None,
-    ) -> PreflightResult:
-        return cls(
-            expanded_passthrough_args=expanded_passthrough_args,
-            extra_env=MappingProxyType(dict(extra_env or {})),
-        )

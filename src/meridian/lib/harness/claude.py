@@ -44,7 +44,7 @@ from meridian.lib.harness.claude_boundary import (
 )
 from meridian.lib.harness.claude_idle import detect_ttl
 from meridian.lib.harness.claude_inbox import post_primary_message
-from meridian.lib.harness.claude_preflight import (
+from meridian.lib.harness.claude_launch_support import (
     ensure_claude_session_accessible,
     read_claude_settings_allows,
 )

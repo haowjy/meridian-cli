@@ -1,4 +1,4 @@
-"""Claude-only preflight helpers owned by the Claude adapter."""
+"""Claude launch-time settings reporting and exact session-file seeding."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
 
 logger = structlog.get_logger(__name__)
+
 
 def ensure_claude_session_accessible(
     source_session_id: str,
