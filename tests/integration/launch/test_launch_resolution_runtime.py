@@ -69,8 +69,12 @@ def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("override", [None, True, False])
+@pytest.mark.parametrize("launcher_namespace", ["pid:[launcher]", None])
 def test_launch_direnv_policy_uses_snapshot_and_propagates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: bool | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    override: bool | None,
+    launcher_namespace: str | None,
 ) -> None:
     import meridian.lib.launch.context as context_module
 
@@ -81,7 +85,7 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     monkeypatch.setenv("MERIDIAN_IGNORE_DIRENV", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-direnv-key")
     monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[ancestor]")
-    monkeypatch.setattr(context_module, "current_pid_namespace", lambda: "pid:[launcher]")
+    monkeypatch.setattr(context_module, "current_pid_namespace", lambda: launcher_namespace)
     runtime = build_primary_launch_runtime(project_root=tmp_path)
     # A captured policy must not change when the ambient input disappears.
     monkeypatch.delenv("MERIDIAN_IGNORE_DIRENV")
@@ -100,7 +104,10 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     env = preview.binding.environment.final_env
     expected = override is not False
     assert env["MERIDIAN_IGNORE_DIRENV"] == str(expected).lower()
-    assert env["_MERIDIAN_LAUNCHER_PID_NAMESPACE"] == "pid:[launcher]"
+    if launcher_namespace is None:
+        assert "_MERIDIAN_LAUNCHER_PID_NAMESPACE" not in env
+    else:
+        assert env["_MERIDIAN_LAUNCHER_PID_NAMESPACE"] == launcher_namespace
     assert ("ANTHROPIC_API_KEY" not in env) == expected
 
 

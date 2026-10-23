@@ -1818,11 +1818,7 @@ def bind_launch_context(
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
     launcher_pid_namespace = current_pid_namespace()
-    if launcher_pid_namespace is None:
-        # Never propagate a namespace recorded by an ancestor when this launcher
-        # cannot observe its own (for example, on macOS without procfs).
-        child_context_env.pop(LAUNCHER_PID_NAMESPACE_ENV, None)
-    else:
+    if launcher_pid_namespace is not None:
         child_context_env[LAUNCHER_PID_NAMESPACE_ENV] = launcher_pid_namespace
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     resolved_agent = (resolved_request.agent or "").strip()
