@@ -54,6 +54,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
     class Receiver:
         harness_id = HarnessId.CLAUDE
         resident_backend = None
+        completion_signals_available = True
         native_task_source = ClaudeConnection.native_task_source
         primary_event_scope = None
 

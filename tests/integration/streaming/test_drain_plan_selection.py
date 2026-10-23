@@ -34,6 +34,7 @@ def _select_plan(
     *,
     harness_id: HarnessId,
     resident_backend: object | None = None,
+    completion_signals_available: bool = True,
 ) -> DrainPlan:
     receiver = cast(
         "Any",
@@ -41,6 +42,7 @@ def _select_plan(
             harness_id=harness_id,
             resident_backend=resident_backend,
             native_task_source=lambda: None,
+            completion_signals_available=completion_signals_available,
         ),
     )
     return manager._select_drain_plan(
@@ -82,6 +84,16 @@ def test_spawn_manager_selects_complete_drain_plan_by_connection_capability(
     assert resident.handle_aux_wake == resident.coordinator.handle_aux_wake
     assert resident.finalizer is None
     assert isinstance(resident.teardown, DefaultDrainSessionTeardown)
+    assert resident.accepted_signals == frozenset({"done", "rearm"})
+
+    resident_without_signals = _select_plan(
+        manager,
+        harness_id=HarnessId.CODEX,
+        resident_backend=FakeResidentBackendControl(),
+        completion_signals_available=False,
+    )
+    assert isinstance(resident_without_signals.coordinator, ResidentDrainCoordinator)
+    assert resident_without_signals.accepted_signals == frozenset()
 
     pi = _select_plan(manager, harness_id=HarnessId.PI)
     assert isinstance(pi.coordinator, PiDrainCoordinator)

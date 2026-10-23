@@ -53,6 +53,7 @@ def _coordinator(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         send_nudge=connection.resident_backend.begin_followup_turn,
+        completion_signals_available=True,
         backend=connection.resident_backend,
         native=None,
         deadline_seconds=deadline_seconds,

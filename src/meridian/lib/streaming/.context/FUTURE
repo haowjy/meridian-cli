@@ -18,3 +18,7 @@
   Windows transport branches (TCP port-file control endpoints and app-server HTTP
   cancellation) in a dedicated cleanup; the client-side Windows injection path is
   already gone and native Windows is unsupported.
+- `resident_drain.py` hold confirmation: once `resident_rearm_budget` is spent, a child that keeps working after
+  a confirmation can't `rearm`, so its later text never replaces the retained candidate report (`attempt_facts.py`
+  `completion_text`, `launch/report.py`). The refusal tells it to run `done`. Fix if exhausted budgets show up in
+  practice: recapture the report when the budget-exhausted child's next successful turn ends.

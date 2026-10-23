@@ -42,10 +42,12 @@ activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
 Native-task activity never renews the deadline. Explicit done authorizes completion
-with leftover native tasks; managed-scope teardown stops them. A successful completion
-candidate gets one best-effort confirmation turn: `done` accepts, `rearm` opens another
-fixed window and waits for a genuinely new successful/idle candidate, and silence
-accepts only after evidence is ready. The default completion window
+with leftover native tasks; managed-scope teardown stops them. With a writable
+completion-signal channel, a successful candidate gets one best-effort confirmation
+turn: `done` accepts, `rearm` opens another fixed window and waits for a genuinely new
+successful/idle candidate, and silence accepts only after evidence is ready. A hold
+without that channel skips confirmation and reads no signals, but keeps the same
+evidence, blocker, and deadline policy. The default completion window
 is the calling harness's configured wait-yield interval unless
 `timeouts.resident_deadline_seconds` overrides it.
 
@@ -120,8 +122,10 @@ needed to guarantee it gets through — without it, the subscriber hangs forever
 `DrainPlan` carries the selected coordinator, policy, aux wake, finalizer, and async
 session teardown for one active spawn. Its `coordinator=None` value is the plain path.
 `accepted_signals` names the `spawn done`/`rearm` signals the coordinator consumes:
-hold plans `{done, rearm}`, Pi `{done}`, plain none. `build_drain_plan` is the only
-place that sets it; `SpawnManager.start_spawn` writes it once to
+hold plans with a writable completion-signal channel `{done, rearm}`, holds without one
+none, Pi `{done}`, plain none. The hold coordinator derives and exposes its set from the
+connection capability; the factory copies it into the plan and sets the Pi/plain sets
+directly. `SpawnManager.start_spawn` writes the plan's set once to
 `spawns/<id>/accepted-signals.json` before the drain starts, and the CLI refuses a
 signal the file doesn't list. Don't move it onto the spawn row (see `.context/CONTEXT.md`).
 `DrainPolicy` governs terminal event behavior:

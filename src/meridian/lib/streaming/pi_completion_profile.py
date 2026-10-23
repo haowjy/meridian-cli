@@ -35,7 +35,10 @@ if TYPE_CHECKING:
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
 COMPLETION_NUDGE_INTERVAL_SECONDS = 270.0
-PI_COMPLETION_NUDGE_MESSAGE = "Are you done? Run `meridian spawn done` to finish."
+PI_COMPLETION_NUDGE_MESSAGE = (
+    "If you are finished, run `meridian spawn done`; your reply to this message is the "
+    "report, so make it complete."
+)
 PI_EVIDENCE_UNREADABLE_TIMEOUT_SECONDS: float = 300.0
 PI_DONE_NUDGE_IDLE_DELAY_SECONDS: float = 5.0
 

@@ -94,16 +94,18 @@ def build_drain_plan(
     resident_backend = receiver.resident_backend
     native = receiver.native_task_source()
     if native is not None or resident_backend is not None:
+        send_nudge = (
+            resident_backend.begin_followup_turn
+            if resident_backend is not None
+            else _send_completion_nudge
+        )
         coordinator = ResidentDrainCoordinator.build(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
             # A resident backend starts its own follow-up turn; other harnesses
             # take the nudge through the manager's serialized inject.
-            send_nudge=(
-                resident_backend.begin_followup_turn
-                if resident_backend is not None
-                else _send_completion_nudge
-            ),
+            send_nudge=send_nudge,
+            completion_signals_available=receiver.completion_signals_available,
             backend=resident_backend,
             native=native,
             deadline_seconds=config.resident_deadline_seconds,
@@ -117,7 +119,7 @@ def build_drain_plan(
             raw_terminal_frames_authoritative=False,
             aux_wake=coordinator,
             handle_aux_wake=coordinator.handle_aux_wake,
-            accepted_signals=frozenset({"done", "rearm"}),
+            accepted_signals=coordinator.accepted_signals,
         )
 
     if receiver.harness_id is HarnessId.PI:

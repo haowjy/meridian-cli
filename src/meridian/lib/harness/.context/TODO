@@ -9,7 +9,3 @@
   not Meridian's `HEADLESS_REJECT_REASON`, and an unavailable tool produces no attempted-call
   event to journal. Closing either gap requires an upstream custom-denial-reason/event seam
   or a Meridian hook that mediates calls instead of native policy; do not fabricate events.
-- Codex spawns: under Codex's default (or an explicit `read-only`) sandbox, `meridian spawn done` /
-  `rearm` fail because Meridian's state lock lives outside the sandbox. The child still finishes when its
-  completion window accepts on silence, but cannot reject a premature completion. Fix by giving the
-  completion signal a path Codex can write, or a non-filesystem channel.

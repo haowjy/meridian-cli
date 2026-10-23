@@ -367,6 +367,11 @@ class HarnessConnection(Generic[SpecT], ABC):
         return None
 
     @property
+    def completion_signals_available(self) -> bool:
+        """Whether this launch can write Meridian's completion signals."""
+        return True
+
+    @property
     def scope_snapshot(self) -> ProcessScopeSnapshot | None:
         """Process scope facts for the managed backend subprocess, if any."""
         return None

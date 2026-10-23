@@ -15,7 +15,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.state.spawn_aggregate import published_artifact_lock
-from meridian.lib.state.spawn_signals import consume_resident_signals
+from meridian.lib.state.spawn_signals import SpawnSignalKind, consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -149,6 +149,7 @@ class _HoldProfile:
         poll_seconds: float,
         rearm_budget: int | None,
         clock: Callable[[], float],
+        completion_signals_available: bool,
     ) -> None:
         self._runtime_root = runtime_root
         self._spawn_id = spawn_id
@@ -160,6 +161,11 @@ class _HoldProfile:
         )
         self._backend = backend
         self._send_nudge = send_nudge
+        self._accepted_signals: frozenset[SpawnSignalKind] = (
+            frozenset({"done", "rearm"})
+            if completion_signals_available
+            else frozenset()
+        )
         self._clock = clock
         self._confirmation_grace_seconds = poll_seconds
         self._awaiting_done = False
@@ -186,6 +192,8 @@ class _HoldProfile:
         trigger: AssessmentTrigger,
     ) -> CompletionDirectives:
         del trigger
+        if not self._accepted_signals:
+            return CompletionDirectives()
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
         if state.candidate is None:
             self._done_requested = False
@@ -237,18 +245,10 @@ class _HoldProfile:
         return (
             state.candidate is not None
             and state.assessment is not None
-            and (
-                (
-                    self._confirmation_failed
-                    and state.assessment.disposition == "unknown"
-                )
-                or (
-                    state.assessment.disposition == "blocked"
-                    and any(
-                        blocker.source == "persisted_descendant"
-                        for blocker in state.assessment.blockers
-                    )
-                )
+            and state.assessment.disposition == "blocked"
+            and any(
+                blocker.source == "persisted_descendant"
+                for blocker in state.assessment.blockers
             )
         )
 
@@ -329,7 +329,8 @@ class _HoldProfile:
                         for blocker in context.assessment.blockers
                     )
                 ):
-                    self._confirmation_failed = True
+                    if self._confirmation_requested:
+                        self._confirmation_failed = True
                     self._confirmation_grace_at = None
                     self._enter_wait()
                     return ProfileDecision(action="wait", emit_turn_boundary=True)
@@ -356,7 +357,7 @@ class _HoldProfile:
         if context.assessment.disposition == "unknown":
             self._enter_wait()
             return ProfileDecision(action="wait", emit_turn_boundary=True)
-        if self._confirmation_requested:
+        if not self._accepted_signals or self._confirmation_requested:
             if context.assessment.disposition == "ready":
                 return self._propose_success(context.candidate or outcome, context.now)
             self._enter_wait()
@@ -412,12 +413,14 @@ class _HoldProfile:
             return ProfileDecision(action="wait")
         if context.assessment.disposition == "unknown":
             return ProfileDecision(action="wait")
-        if not self._confirmation_requested and not self._rearmed:
+        if (
+            self._accepted_signals
+            and not self._confirmation_requested
+            and not self._rearmed
+        ):
             self._enter_wait()
             return ProfileDecision(action="wait", nudge=True)
-        if context.assessment.disposition == "ready" and (
-            self._confirmation_failed or self._confirmation_turn_started
-        ):
+        if context.assessment.disposition == "ready" and self._confirmation_settled:
             return self._propose_success(candidate, context.now)
         if confirmation_grace_expired:
             self._enter_wait()
@@ -431,6 +434,18 @@ class _HoldProfile:
         self._confirmation_failed = False
         self._rearmed = True
         self._confirmation_grace_at = None
+
+    @property
+    def _confirmation_settled(self) -> bool:
+        return (
+            not self._accepted_signals
+            or self._confirmation_failed
+            or self._confirmation_turn_started
+        )
+
+    @property
+    def accepted_signals(self) -> frozenset[SpawnSignalKind]:
+        return self._accepted_signals
 
     def _enter_wait(self) -> None:
         self.set_awaiting_done(True)
@@ -468,8 +483,10 @@ class _HoldProfile:
         else:
             message = "Before this spawn closes, confirm whether you are actually finished. "
         message += (
-            "When finished, run `meridian spawn done` and then provide your complete final "
-            "report. If more work remains, run `meridian spawn rearm` and continue."
+            "Your previous reply is kept as this spawn's report. If it is the final report, "
+            "run `meridian spawn done` and end the turn. If more work remains, including "
+            "waiting on background tasks or spawns, run `meridian spawn rearm` first, then "
+            "finish with a complete report."
         )
         return message
 
@@ -539,6 +556,7 @@ class ResidentDrainCoordinator:
         runtime_root: Path,
         spawn_id: SpawnId,
         send_nudge: Callable[[str], Awaitable[None]],
+        completion_signals_available: bool,
         backend: ResidentBackendControl | None,
         native: NativeTaskSource | None,
         deadline_seconds: float,
@@ -568,6 +586,7 @@ class ResidentDrainCoordinator:
             spawn_id=spawn_id,
             backend=backend,
             send_nudge=send_nudge,
+            completion_signals_available=completion_signals_available,
             deadline_seconds=deadline_seconds,
             poll_seconds=resolved_poll,
             rearm_budget=rearm_budget,
@@ -583,6 +602,10 @@ class ResidentDrainCoordinator:
             clock=clock,
         )
         return cls(coordinator=coordinator, profile=profile)
+
+    @property
+    def accepted_signals(self) -> frozenset[SpawnSignalKind]:
+        return self._profile.accepted_signals
 
     async def start(self) -> None:
         await self._coordinator.start()

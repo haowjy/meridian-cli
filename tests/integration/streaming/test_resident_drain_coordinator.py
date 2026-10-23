@@ -61,6 +61,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         send_nudge=connection.resident_backend.begin_followup_turn,
+        completion_signals_available=True,
         backend=connection.resident_backend,
         native=None,
         deadline_seconds=30.0,
@@ -114,6 +115,7 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         send_nudge=connection.resident_backend.begin_followup_turn,
+        completion_signals_available=True,
         backend=connection.resident_backend,
         native=None,
         deadline_seconds=30.0,
@@ -168,6 +170,7 @@ async def test_rejected_success_validation_preserves_resident_wait_protection(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         send_nudge=connection.resident_backend.begin_followup_turn,
+        completion_signals_available=True,
         backend=connection.resident_backend,
         native=None,
         deadline_seconds=30.0,
@@ -229,6 +232,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         send_nudge=connection.resident_backend.begin_followup_turn,
+        completion_signals_available=True,
         backend=connection.resident_backend,
         native=None,
         deadline_seconds=3300.0,
@@ -265,6 +269,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     assert next_candidate.emit_turn_boundary is True
     assert len(connection.fake_resident_backend.injected_messages) == 1
     injected = connection.fake_resident_backend.injected_messages[0]
+    assert "previous reply is kept as this spawn's report" in injected
     assert "meridian spawn done" in injected
     assert "meridian spawn rearm" in injected
 
