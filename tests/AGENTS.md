@@ -70,7 +70,7 @@ tests/unit/         Pure functional cores. <2s total.
 tests/integration/  Real seams: filesystem, subprocesses, cross-module wiring.
 tests/contract/     API payload/retry shapes and type contracts that must not drift.
 tests/platform/     OS behavior: signals, process scope, encoding, locking.
-tests/extended/     Expensive state lifecycle contracts; explicit paths only.
+tests/extended/     Expensive state and launch-lock lifecycle contracts; explicit paths only.
 tests/smoke/        Opt-in scripts and guides for CLI-visible behavior.
 ```
 
