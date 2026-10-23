@@ -40,11 +40,12 @@ selected `state.json` files with derived status before answering liveness. Recur
 archived ancestors as edges so active descendants beneath them remain visible.
 `owed.py` separately owns the shared wait/collect definition of finished unconsumed,
 unleased background children, including Pi delivery receipts and explicit dismissals as
-consumption. No-arg wait takes at most the oldest 32 already-finished members, carries
-that classification from resolution through output, and uses collect's shared header-only
-renderer; active targets remain uncapped and keep report output. Owed rows are separate
-from `spawns` in structured output and do not affect fail-fast, waited-run aggregates, or
-the command's exit status.
+consumption. No-arg wait resolves at most the oldest 32 already-finished members once,
+minus the active target IDs, leases them without putting them through the poll loop, and
+renders their details with `models.py`'s shared header-only renderer. Active targets remain
+uncapped and keep report output. Owed rows are separate from `spawns` in structured output
+and do not affect fail-fast, waited-run aggregates, or the command's exit status. The
+existing `finally` consumes the owed IDs beside terminal active details.
 `--no-observe` includes owed children with the same rendering but neither leases nor
 consumes them, so they remain eligible for a later normal wait or delivery.
 

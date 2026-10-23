@@ -9,16 +9,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+import structlog
+from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import RuntimeReadContext
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.logging import warn_once
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.harness.pi_private_state import (
-    ClearedSpawns,
-    DeliveryReceipts,
-    pi_coordination_dir,
-    read_pi_private_doc,
+    read_pi_consumption_state,
 )
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read, runtime_context
 from meridian.lib.state import history_index
@@ -26,13 +25,15 @@ from meridian.lib.state.history_index import HistoryIndexBusy
 from meridian.lib.state.session_identity import spawn_owner_chat_id
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
-from meridian.lib.state.spawn_observations import consumed_ids, leased_ids, record
+from meridian.lib.state.spawn_observations import leased_ids, record
 from meridian.lib.state.spawn_status import read_derived
 
-from .models import SpawnDetailOutput, task_dir_line
+from .models import render_delivery
+from .query import detail_from_row
 
 _COLLECT_POLL_INTERVAL_SECS = 1.0
 _DELIVERY_MAX_MEMBERS = 32
+logger = structlog.get_logger(__name__)
 
 
 class SpawnCollectInput(BaseModel):
@@ -89,55 +90,6 @@ class OwedSnapshot:
     unavailable_ids: tuple[str, ...]
 
 
-def render_delivery(rows: Sequence[SpawnRecord | SpawnDetailOutput]) -> str:
-    """Render Claude's header-only notification for terminal child rows."""
-
-    rendered: list[str] = []
-    for row in rows:
-        if isinstance(row, SpawnRecord):
-            spawn_id = row.id
-            terminal_present = row.terminal is not None
-            duration_secs = row.terminal.duration_secs if row.terminal is not None else None
-            exit_code = row.terminal.exit_code if row.terminal is not None else None
-            failure = row.terminal.error if row.terminal is not None else None
-            model = row.model or ""
-            harness = row.harness or ""
-            authority_root = row.control_root
-            task_cwd = row.task_cwd
-            work_id = row.work_id
-        else:
-            spawn_id = row.spawn_id
-            terminal_present = is_terminal_spawn_status(row.status)
-            duration_secs = row.duration_secs
-            exit_code = row.exit_code
-            failure = row.failure_reason
-            model = row.model
-            harness = row.harness
-            authority_root = row.authority_root
-            task_cwd = row.task_cwd
-            work_id = row.work_id
-        outcome: list[str] = []
-        if duration_secs is not None:
-            outcome.append(f"{duration_secs:.1f}s")
-        if terminal_present:
-            outcome.append(f"exit {exit_code}")
-        if failure is not None:
-            outcome.append("result error")
-        outcome_suffix = f" ({', '.join(outcome)})" if outcome else ""
-
-        lines = [
-            f"{spawn_id} {row.status}{outcome_suffix}",
-            f"Worker: {model} ({harness})",
-        ]
-        if failure is not None:
-            lines.append(f"Failure: {failure}")
-        if authority_root is not None and task_cwd is not None and task_cwd != authority_root:
-            lines.append(task_dir_line(task_cwd, work_id))
-        lines.append(f"meridian spawn show {spawn_id}")
-        rendered.append("\n".join(lines))
-    return "\n\n".join(rendered)
-
-
 def select_delivery_rows(rows: Sequence[SpawnRecord]) -> tuple[SpawnRecord, ...]:
     """Take one oldest-first delivery batch under the shared member bound."""
 
@@ -157,23 +109,24 @@ def _roots(
 def owed_consumed_ids(runtime_root: Path, parent_ids: Sequence[str]) -> frozenset[str]:
     """Return every result-consumption source honored by CLI and Pi delivery."""
 
-    consumed = set(consumed_ids(runtime_root, parent_ids))
+    consumed: set[str] = set()
+
+    def diagnose(file: Path, error: str | None) -> None:
+        if error is not None:
+            warn_once(
+                ("pi_consumption_source_skipped", file, error),
+                lambda: logger.warning(
+                    "pi_consumption_source_skipped", path=str(file), error=error
+                ),
+            )
+
     for parent_id in set(parent_ids):
-        coordination_dir = pi_coordination_dir(runtime_root, parent_id)
-        receipts = read_pi_private_doc(
-            coordination_dir / "delivery-receipts.json",
-            DeliveryReceipts,
-            spawn_id=parent_id,
+        consumption = read_pi_consumption_state(
+            runtime_root,
+            parent_id,
+            on_read=diagnose,
         )
-        if receipts is not None:
-            consumed.update(work_id for ids in receipts.messages.values() for work_id in ids)
-        cleared = read_pi_private_doc(
-            coordination_dir / "cleared-spawns.json",
-            ClearedSpawns,
-            spawn_id=parent_id,
-        )
-        if cleared is not None:
-            consumed.update(cleared.cleared_spawn_ids)
+        consumed.update(consumption.consumed_ids)
     return frozenset(consumed)
 
 
@@ -280,6 +233,33 @@ def read_owed_snapshot(
     )
 
 
+def resolve_owed_finished_rows(
+    *,
+    runtime_root: Path,
+    chat_id: str,
+    caller_spawn_id: str,
+    blocked_on_ids: Sequence[str],
+    deadline: float | None = None,
+) -> tuple[SpawnRecord, ...]:
+    """Resolve one bounded batch of finished owed rows for no-argument wait."""
+
+    scope = discover_owed_scope(
+        runtime_root=runtime_root,
+        chat_id=chat_id,
+        caller_spawn_id=caller_spawn_id,
+        deadline=deadline,
+    )
+    snapshot = read_owed_snapshot(runtime_root=runtime_root, scope=scope)
+    blocked = frozenset(blocked_on_ids)
+    return select_delivery_rows(
+        tuple(
+            row
+            for row in snapshot.rows
+            if row.id not in blocked and is_terminal_spawn_status(row.status)
+        )
+    )
+
+
 def collect_owed_sync(
     payload: SpawnCollectInput,
     ctx: RuntimeContext | None = None,
@@ -295,7 +275,7 @@ def collect_owed_sync(
     current_spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id else None
     if current_spawn_id is None:
         raise ValueError("Spawn collection requires MERIDIAN_SPAWN_ID")
-    _, runtime_root = _roots(payload.project_root, prepared)
+    project_root, runtime_root = _roots(payload.project_root, prepared)
     if runtime_root is None:
         return _EMPTY
 
@@ -313,7 +293,7 @@ def collect_owed_sync(
                 deadline=time.monotonic() + _COLLECT_POLL_INTERVAL_SECS,
             )
             break
-        except (HistoryIndexBusy, OSError, SpawnStateQuarantined, ValidationError):
+        except (HistoryIndexBusy, OSError, SpawnStateQuarantined):
             time.sleep(_COLLECT_POLL_INTERVAL_SECS)
     if scope is None:
         return _EMPTY
@@ -333,7 +313,16 @@ def collect_owed_sync(
             wait_for_batch = not terminal
         if terminal and not (wait_for_batch and snapshot.pending_ids):
             delivered_rows = select_delivery_rows(terminal)
-            text = render_delivery(delivered_rows)
+            delivered_details = tuple(
+                detail_from_row(
+                    project_root=project_root,
+                    row=row,
+                    include_report_body=False,
+                    runtime_root=runtime_root,
+                )
+                for row in delivered_rows
+            )
+            text = render_delivery(delivered_details)
             # An explicit wait or ack may have taken a result meanwhile.
             taken = owed_consumed_ids(runtime_root, scope.parent_ids) | leased_ids(
                 runtime_root, scope.parent_ids
@@ -385,6 +374,6 @@ __all__ = [
     "discover_owed_scope",
     "owed_consumed_ids",
     "read_owed_snapshot",
-    "render_delivery",
+    "resolve_owed_finished_rows",
     "select_delivery_rows",
 ]

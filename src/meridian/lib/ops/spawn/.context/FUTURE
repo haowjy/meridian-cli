@@ -4,5 +4,4 @@
   rewritten (lock, atomic write, psutil birth lookup) on every 0.25 s poll for
   a lease that lasts at least 30 s, and `spawn collect` reads that file every
   second. Renew only when the pending set changes or about a third of
-  `lease_seconds` has passed. The lease write just before the loop's `try:` is
-  also redundant: the first pass writes the same `waiting_add`.
+  `lease_seconds` has passed.

@@ -40,10 +40,6 @@ class SpawnObservations(VersionedPrivateDoc):
     wait_reservations: dict[str, WaitReservation] = Field(default_factory=dict)
 
 
-def _reservation_token() -> str:
-    return f"{os.getpid()}:{threading.get_ident()}"
-
-
 def _read(path: Path, parent_spawn_id: str) -> SpawnObservations | None:
     observations = read_model(path, SpawnObservations)
     if observations is None or observations.spawn_id != parent_spawn_id:
@@ -114,7 +110,7 @@ def record(
             for token, lease in existing.wait_reservations.items()
             if lease.expires_at_epoch > now
         }
-        token = _reservation_token()
+        token = f"{os.getpid()}:{threading.get_ident()}"
         own_lease = reservations.get(token)
         own_ids = set(own_lease.spawn_ids if own_lease else ())
         own_ids.update(waiting_add_ids)
@@ -181,22 +177,14 @@ def consumed_ids(runtime_root: Path, parent_ids: Iterable[str]) -> frozenset[str
     return frozenset(consumed)
 
 
-def leased_ids(
-    runtime_root: Path,
-    parent_ids: Iterable[str],
-    *,
-    exclude_current: bool = False,
-) -> frozenset[str]:
+def leased_ids(runtime_root: Path, parent_ids: Iterable[str]) -> frozenset[str]:
     """Return results held by an unexpired, birth-verified explicit wait."""
 
     now = time.time()
-    excluded_token = _reservation_token() if exclude_current else None
     leased: set[str] = set()
     for parent_id in set(parent_ids):
         for observations in _documents(runtime_root, parent_id):
-            for token, reservation in observations.wait_reservations.items():
-                if token == excluded_token:
-                    continue
+            for reservation in observations.wait_reservations.values():
                 if reservation.expires_at_epoch <= now:
                     continue
                 if not is_process_alive_with_birth(

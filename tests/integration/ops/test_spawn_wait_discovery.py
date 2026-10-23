@@ -156,9 +156,9 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
 
     assert not targets.discovery_pending
     assert targets.blocked_on_ids == (continued_child, legacy_child)
-    assert tuple(row.id for row in targets.owed_finished_rows) == owed_ids[2:34]
-    assert set(owed_ids[:2]).isdisjoint(row.id for row in targets.owed_finished_rows)
-    assert set(owed_ids[34:]).isdisjoint(row.id for row in targets.owed_finished_rows)
+    assert tuple(row.id for row in targets.owed_rows) == owed_ids[2:34]
+    assert set(owed_ids[:2]).isdisjoint(row.id for row in targets.owed_rows)
+    assert set(owed_ids[34:]).isdisjoint(row.id for row in targets.owed_rows)
     assert foreground not in targets.blocked_on_ids
 
 
@@ -208,7 +208,7 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
     )
 
     assert targets.blocked_on_ids == ("p3",)
-    assert tuple(row.id for row in targets.owed_finished_rows) == (owed,)
+    assert tuple(row.id for row in targets.owed_rows) == (owed,)
     assert "p-sibling" not in targets.blocked_on_ids
     assert foreground not in targets.blocked_on_ids
 
