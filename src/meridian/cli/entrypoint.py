@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from meridian.cli.argv_normalization import canonicalize_argv
-from meridian.cli.bootstrap import first_positional_token, meridian_managed_env_default
+from meridian.cli.bootstrap import (
+    HARNESS_SHORTCUT_NAMES,
+    first_positional_token,
+    iter_positional_tokens,
+    meridian_managed_env_default,
+)
 from meridian.cli.mode import extract_forced_render_mode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
@@ -59,6 +65,21 @@ def _is_spawn_help_request(argv: Sequence[str]) -> bool:
     return False
 
 
+def _is_spawn_launch_form(argv: Sequence[str]) -> bool:
+    """Return true for create/continue syntax, not subcommands or subcommand typos."""
+
+    positional = [token for _, token in iter_positional_tokens(argv)]
+    if positional and positional[0] in HARNESS_SHORTCUT_NAMES:
+        positional = positional[1:]
+    if not positional or positional[0] != "spawn":
+        return False
+    if len(positional) == 1:
+        return True
+    # The full spawn parser reserves command-shaped words for registered or unknown
+    # subcommands. Other values remain the legacy positional-prompt launch form.
+    return re.fullmatch(r"[a-z][a-z-]*", positional[1]) is None
+
+
 def main() -> None:
     """Thin CLI entrypoint: handles trivial fast paths, delegates the rest."""
 
@@ -84,6 +105,7 @@ def _main_impl() -> None:
     if (
         descriptor is not None
         and descriptor.command_path == ("spawn",)
+        and _is_spawn_launch_form(args)
         and not _is_spawn_help_request(args)
     ):
         try:

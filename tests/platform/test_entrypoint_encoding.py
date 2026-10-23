@@ -227,6 +227,52 @@ def test_entrypoint_allows_sandboxed_spawn_help(
     assert captured["argv"] == ["spawn", "--help"]
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["spawn", "report", "show", "p1"],
+        ["spawn", "files"],
+        ["spawn", "log", "p1"],
+        ["spawn", "unknown-command"],
+    ],
+)
+def test_entrypoint_leaves_sandboxed_spawn_subcommands_to_full_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    args: list[str],
+) -> None:
+    captured: dict[str, object] = {}
+    fake_main_module = _make_fake_main_module(captured)
+    original = sys.modules.get("meridian.cli.main")
+    sys.modules["meridian.cli.main"] = fake_main_module
+
+    try:
+        monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
+        monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+        monkeypatch.setattr(sys, "argv", ["meridian", *args])
+
+        entrypoint_module.main()
+    finally:
+        if original is not None:
+            sys.modules["meridian.cli.main"] = original
+        else:
+            sys.modules.pop("meridian.cli.main", None)
+
+    assert captured["argv"] == args
+
+
+def test_entrypoint_refuses_sandboxed_positional_prompt_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
+    monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
+    monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "review?"])
+
+    with pytest.raises(SystemExit) as caught:
+        entrypoint_module.main()
+
+    assert caught.value.code == 1
+
+
 def test_reconfigure_skipped_when_stream_lacks_reconfigure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
