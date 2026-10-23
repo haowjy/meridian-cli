@@ -145,9 +145,12 @@ When Claude's sandbox is enabled, the settings JSON always spells
 `autoAllowBashIfSandboxed`: true only for an unrestricted `approval: auto`, false for
 allowlists, gates and `ask`. Omitting false lets Claude's sandbox auto-approval accept
 unmatched Bash calls before the mode can refuse them, which defeats the allowlist. A launch
-with spawn capability also spells `excludedCommands = ["meridian spawn *"]`; Claude runs a
+with spawn capability also spells `excludedCommands = ["meridian spawn *"]`, including when
+the profile leaves the sandbox at `default` and the user's own settings enable it; the
+default projection omits `enabled` so the user's choice remains authoritative. Claude runs a
 matching standalone command wholly outside the Bash sandbox. Compound commands stay inside
-and the spawn operation refuses them when it sees Claude's `SANDBOX_RUNTIME=1` marker.
+and the spawn operation refuses them when its current `/proc/self/ns/pid` differs from the
+namespace the Meridian launcher recorded. On systems without readable procfs the check skips.
 
 Codex compiles exact unscoped `bash`, `web`/`web_search` (the narrower wins), and `image` allow/deny rules to process-level
 switches. Its scoped rules, `ask`, and per-capability allowlists have no native carrier and

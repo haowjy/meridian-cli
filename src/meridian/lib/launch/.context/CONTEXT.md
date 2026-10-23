@@ -25,14 +25,17 @@ prepare_launch_surface()           ← skill injection, prompt, content composit
 bind_launch_context()              ← env, cwd, spec, argv, permissions
         │
         ▼
-LaunchContext                      ← complete at construction; ready to run
+LaunchContext                      ← pure bound plan
+        │
+        ▼
+materialize_launch_context()       ← real-launch-only adapter writes
 ```
 
 **Why the split?** The primary CLI path needs to call `bind_launch_context()` twice:
 once with `dry_run=True` for `--dry-run` display, then again with real spawn-ID and
 paths for actual execution. `prepare_launch_surface()` is expensive (mars calls, profile
 loading, prompt assembly) and safe to do once before the session is opened.
-`bind_launch_context()` is repeatable; ignoring an active direnv environment invokes
+`bind_launch_context()` is write-free and repeatable; ignoring an active direnv environment invokes
 a bounded subprocess on each bind, including previews.
 
 ### PreparedLaunchSurface
@@ -45,6 +48,13 @@ report paths, env, argv, and permission outputs — everything that varies per b
 `launch_request` on `PreparedLaunchSurface` preserves the original pre-resolution
 request for `LaunchContext.request` compatibility. `request` carries the resolved
 version used by `bind_launch_context()`.
+
+Every bind replaces the inherited caller boundary with one record for the process it is
+about to start. It contains the launcher's PID namespace, resolved sandbox mode,
+projected workspace roots, and the prepared profile's spawn capability. Approval is
+not part of the confinement boundary. The record
+deliberately has no network field yet; network confinement can join this transport without
+changing spawn policy ownership.
 
 ### RuntimeBindings
 
@@ -241,7 +251,9 @@ env var.
 The same step lets the harness project config into the child env: after
 `build_env_plan()`, bind calls `harness.project_launch_env()` with the spec, the
 `system-prompt.md` path and the bound env, and merges the returned overrides into
-the final env. Only OpenCode uses it (prompt, model and workspace grants; see the
+the final env. Adapters use this for forced launch policy: Claude's autocompact
+and spawned-cache overrides, Pi's runtime policy, and OpenCode's prompt, model
+and workspace grants (see the
 harness [OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)).
 
 ### Agent Inventory Prompt
@@ -372,8 +384,9 @@ Two steps inside `bind_launch_context()`:
 
 Roots include workspace roots, git context clone roots, context projection roots
 (work, kb, extras), task cwd when task cwd is external, runtime root, and system
-temp dir. Bind creates and projects the runtime root's sibling `.locks` directory so
-sandboxed Meridian commands can acquire the project lifetime lock. POSIX launches also
+temp dir. Bind pre-creates the exact project lifetime lock; POSIX lock acquisition opens
+an existing lock file read-only, so the shared sibling `.locks` directory is not projected.
+POSIX launches also
 project the private socket directory `/tmp/meridian-<uid>` so a sandboxed runner can bind
 its control endpoint. Roots are deduplicated in order. Extra args remain user-owned
 passthrough; they are not a workspace projection channel.

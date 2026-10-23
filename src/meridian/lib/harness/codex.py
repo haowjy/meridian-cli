@@ -89,19 +89,19 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.platform import get_home_path
+from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES
 
 logger = logging.getLogger(__name__)
 
 
-def bind_codex_spec(
+def materialize_codex_spec(
     spec: ResolvedLaunchSpec,
     env: Mapping[str, str],
     child_cwd: Path,
-    dry_run: bool = False,
 ) -> ResolvedLaunchSpec:
-    """Project Meridian's execpolicy rule for constrained Codex launches."""
+    """Project Meridian's execpolicy rule for a real constrained Codex launch."""
 
-    if dry_run or spec.permission_policy.sandbox not in {"read-only", "workspace-write"}:
+    if spec.permission_policy.sandbox not in CONSTRAINED_SANDBOX_MODES:
         return spec
     return spec.model_copy(
         update={
@@ -627,7 +627,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
             permission_report=lambda spec: compile_codex_permissions(spec)[1],
-            bind_spec=bind_codex_spec,
+            materialize_spec=materialize_codex_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,
                 bootstrap_payload=project_codex_spec_to_thread_request_for_project,

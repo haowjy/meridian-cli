@@ -9,16 +9,17 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.diagnostics import capture_library_diagnostics
-from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
 )
-from meridian.lib.launch.context import PreparedLaunchSurface, RuntimeBindings
+from meridian.lib.launch.context import LaunchContext, PreparedLaunchSurface, RuntimeBindings
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.reference import parse_template_assignments
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
+    LaunchRuntime,
     SpawnRequest,
     is_exact_continue_session,
 )
@@ -73,6 +74,8 @@ class SpawnCreateArtifacts:
 
     request: SpawnRequest
     prepared: PreparedLaunchSurface
+    preview_runtime: LaunchRuntime
+    plan_overrides: dict[str, str]
 
 
 def validate_create_input(payload: SpawnCreateInput) -> tuple[SpawnCreateInput, str | None]:
@@ -90,6 +93,8 @@ def build_create_payload(
     runtime: OperationRuntime | None = None,
     preflight_warning: str | None = None,
     ctx: RuntimeContext | None = None,
+    bind_preview: bool = True,
+    models_readonly: bool = False,
 ) -> SpawnCreateArtifacts:
     """Build a spawn request and prepared launch surface for create/execute handoff."""
 
@@ -253,7 +258,7 @@ def build_create_payload(
             request=raw_request,
             runtime=preview_runtime,
             harness_registry=harness_registry,
-            dry_run=composition_dry_run,
+            dry_run=composition_dry_run or models_readonly,
             launch_mode=(BACKGROUND_LAUNCH_MODE if payload.background else FOREGROUND_LAUNCH_MODE),
         )
         logger.debug(
@@ -261,33 +266,70 @@ def build_create_payload(
             phase="composition_complete",
             launcher_pid=os.getpid(),
         )
-        if composition_dry_run:
-            plan_overrides = dict(config.env)
-            plan_overrides.update(raw_request.env)
-            preview_context = bind_spawn_launch_context(
-                prepared=prepared_surface,
-                bindings=RuntimeBindings(
-                    spawn_id="dry-run",
-                    dry_run=True,
-                    plan_overrides=plan_overrides,
-                ),
-                runtime=preview_runtime,
+        plan_overrides = dict(config.env)
+        plan_overrides.update(raw_request.env)
+        artifacts = SpawnCreateArtifacts(
+            request=prepared_surface.request,
+            prepared=prepared_surface,
+            preview_runtime=preview_runtime,
+            plan_overrides=plan_overrides,
+        )
+        if composition_dry_run and bind_preview:
+            return bind_create_payload_preview(
+                artifacts,
                 harness_registry=harness_registry,
             )
-            resolved_request = preview_context.resolved_request.model_copy(
-                update={
-                    "cli_command": preview_context.binding.argv,
-                    "permission_report": preview_context.enforcement_report(),
-                }
-            )
-        else:
-            resolved_request = prepared_surface.request
-
-        return SpawnCreateArtifacts(request=resolved_request, prepared=prepared_surface)
+        return artifacts
 
 
+def bind_create_payload_preview(
+    artifacts: SpawnCreateArtifacts,
+    *,
+    harness_registry: HarnessRegistry,
+    preview_context: LaunchContext | None = None,
+) -> SpawnCreateArtifacts:
+    """Bind a prepared dry-run only after policy checks have accepted it."""
+
+    with capture_library_diagnostics():
+        preview_context = preview_context or bind_create_payload_context(
+            artifacts,
+            harness_registry=harness_registry,
+        )
+        resolved_request = preview_context.resolved_request.model_copy(
+            update={
+                "cli_command": preview_context.binding.argv,
+                "permission_report": preview_context.enforcement_report(),
+            }
+        )
+        return SpawnCreateArtifacts(
+            request=resolved_request,
+            prepared=artifacts.prepared,
+            preview_runtime=artifacts.preview_runtime,
+            plan_overrides=artifacts.plan_overrides,
+        )
+
+
+def bind_create_payload_context(
+    artifacts: SpawnCreateArtifacts,
+    *,
+    harness_registry: HarnessRegistry,
+) -> LaunchContext:
+    """Bind the pure preview used to validate a resolved child boundary."""
+
+    return bind_spawn_launch_context(
+        prepared=artifacts.prepared,
+        bindings=RuntimeBindings(
+            spawn_id="dry-run",
+            dry_run=True,
+            plan_overrides=artifacts.plan_overrides,
+        ),
+        runtime=artifacts.preview_runtime,
+        harness_registry=harness_registry,
+    )
 __all__ = [
     "SpawnCreateArtifacts",
+    "bind_create_payload_context",
+    "bind_create_payload_preview",
     "build_create_payload",
     "validate_create_input",
 ]

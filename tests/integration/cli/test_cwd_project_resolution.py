@@ -365,20 +365,12 @@ def test_dry_run_does_not_mint_committed_identity(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "args",
-    [
-        ["--mode", "human", "work", "start", "first work"],
-        ["--mode", "human", "--harness", "definitely-missing", "spawn", "-p", "hi"],
-    ],
-)
 def test_runtime_writes_materialize_adhoc_state_without_litter(
-    args: list[str],
     cwd_without_project_id: Path,
     meridian_home: Path,
 ) -> None:
     result = _run_meridian(
-        args,
+        ["--mode", "human", "work", "start", "first work"],
         cwd=cwd_without_project_id,
         meridian_home=meridian_home,
     )

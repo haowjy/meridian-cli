@@ -76,6 +76,15 @@ def test_bare_continue_classifies_as_runtime_read() -> None:
     assert descriptor.bootstrap_plan.state_requirement is StateRequirement.RUNTIME_READ
 
 
+def test_spawn_create_defers_runtime_write_until_policy_preparation() -> None:
+    descriptor = classify_invocation(["spawn", "--bg", "-p", "child"], COMMAND_CATALOG)
+
+    assert descriptor is not None
+    assert descriptor.command_path == ("spawn",)
+    assert descriptor.startup_class is StartupClass.WRITE_RUNTIME
+    assert descriptor.bootstrap_plan.state_requirement is StateRequirement.PROJECT_READ
+
+
 def test_positional_scanner_stops_at_passthrough_separator() -> None:
     assert list(iter_positional_tokens(["spawn", "--", "--format", "json"])) == [
         (0, "spawn")

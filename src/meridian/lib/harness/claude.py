@@ -126,11 +126,9 @@ def bind_claude_spec(
     spec: ResolvedLaunchSpec,
     env: Mapping[str, str],
     child_cwd: Path,
-    dry_run: bool = False,
 ) -> ResolvedLaunchSpec:
     """Resolve settings-file allows once from the launch environment and cwd."""
 
-    _ = dry_run
     settings_allows, network_allowed_domains = read_claude_settings_permissions(
         child_cwd, env
     )
@@ -334,9 +332,13 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         env: Mapping[str, str],
     ) -> dict[str, str]:
         _ = system_prompt_path, env
-        if spec.autocompact_pct is None:
-            return {}
-        return {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": str(spec.autocompact_pct)}
+        overrides: dict[str, str] = {}
+        if not spec.interactive:
+            # Do not let a primary's inherited one-hour TTL become the spawn default.
+            overrides["CLAUDE_CODE_PROMPT_CACHE_TTL"] = "5m"
+        if spec.autocompact_pct is not None:
+            overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(spec.autocompact_pct)
+        return overrides
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         # Meridian manages nesting limits itself; suppress Claude's parent-session

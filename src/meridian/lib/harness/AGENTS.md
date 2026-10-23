@@ -93,7 +93,7 @@ Per-harness commands:
   allowed-tool tails are merged by the permission compile; profile allowlists and
   platform denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
-- **Codex constrained-launch execpolicy:** bind atomically maintains only
+- **Codex constrained-launch execpolicy:** real-launch materialization atomically maintains only
   `$CODEX_HOME/rules/meridian.rules` for `read-only` and `workspace-write` launches. Its
   `meridian spawn` allow applies to every Codex session using that home. A write failure is
   reported but does not block launch.

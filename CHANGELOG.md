@@ -15,8 +15,30 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Deprecated
 - Codex `harness-overrides.codex.sandbox_workspace_write.network_access`; use the portable profile `network` field. Native passthrough wins during this warning release, then the key becomes reserved.
 
+### Changed
+- Claude spawn-watch completion notices carry only each child's outcome header and
+  `meridian spawn show <id>` lookup; `spawn collect` no longer reads or embeds report
+  bodies. Pi delivery and `spawn wait`/`spawn ack` consumption are unchanged.
+- Child creation from a Meridian-projected `read-only` or `workspace-write` sandbox now
+  requires spawn capability and cannot weaken the sandbox or add projected workspace
+  roots. These create, continue, and fork calls also reject policy-changing `--env` keys
+  and harness-native passthrough arguments; unsandboxed callers carry no delegation floor.
+
 ### Fixed
-- Read-only Codex spawns once again receive the completion confirmation turn now that `meridian spawn done` can write its signal outside the sandbox.
+- Every spawn launch spelling, including harness shortcuts and continue/fork forms,
+  reaches the single ops-layer PID-namespace guard, so a sandboxed compound command is
+  refused before state access.
+- Repeated `plugin_api.file_lock(mode="exclusive")` acquisitions retain a writable lock
+  handle and can record the holder PID.
+- Read-only Codex spawns receive the completion confirmation turn when the Codex rules escape was written; a failed rules write keeps the no-signal hold instead of asking for a response the child cannot persist.
+- Scoped shell denies and approval rules remain authoritative inside broader Meridian command grants on OpenCode and Pi.
+- Spawn help resolves prompt paths separately, then passes the printed literal path so sandbox-boundary checks do not reject Meridian's own examples.
+- Sandboxed launches no longer receive write access to every project's lifetime-lock directory; the launcher creates the exact project lock and POSIX children open it read-only.
+
+## [0.12.7] - 2026-10-23
+
+### Changed
+- Claude spawns use five-minute prompt caching to avoid one-hour cache-write pricing; primary sessions stay unchanged. Spawned agents can lose cache warmth during waits longer than five minutes.
 
 ## [0.12.6] - 2026-10-23
 

@@ -31,15 +31,23 @@ from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
+from meridian.lib.core.caller_boundary import (
+    CALLER_BOUNDARY_ENV,
+    CallerBoundary,
+    current_pid_namespace,
+)
 from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.context_ref import ContextRef, render_context_refs
 from meridian.lib.core.execution_policy import NativeConfig
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.core.sandbox_boundary import LAUNCHER_PID_NAMESPACE_ENV
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
-from meridian.lib.harness.bundle import bind_launch_spec, get_harness_bundle
+from meridian.lib.harness.bundle import (
+    bind_launch_spec,
+    get_harness_bundle,
+    materialize_launch_spec,
+)
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     PreparedLaunchContent,
@@ -55,7 +63,6 @@ from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
 from meridian.lib.platform import IS_POSIX
-from meridian.lib.platform.pid_namespace import current_pid_namespace
 from meridian.lib.safety.policy import EnforcementReport, PermissionPolicy, build_permission_policy
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
@@ -66,7 +73,7 @@ from meridian.lib.state.paths import (
     resolve_spawn_log_dir,
 )
 from meridian.lib.state.spawn.model import LaunchMode
-from meridian.lib.state.user_paths import project_lifetime_lock_path
+from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
@@ -1548,8 +1555,6 @@ def bind_launch_context(
         project_paths.project_root, context_config
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
-    project_locks_root = project_lifetime_lock_path(runtime_root).parent
-    project_locks_root.mkdir(parents=True, exist_ok=True)
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     socket_roots = (socket_directory(),) if IS_POSIX else ()
     resolved_request = prepared.request
@@ -1615,7 +1620,6 @@ def bind_launch_context(
         (
             *workspace_authority_roots,
             runtime_root,
-            project_locks_root,
             system_temp_root,
             *socket_roots,
         )
@@ -1822,13 +1826,10 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
-    launcher_pid_namespace = current_pid_namespace()
-    if launcher_pid_namespace is None:
-        # Never propagate a namespace recorded by an ancestor when this launcher
-        # cannot observe its own (for example, on macOS without procfs).
-        child_context_env.pop(LAUNCHER_PID_NAMESPACE_ENV, None)
-    else:
-        child_context_env[LAUNCHER_PID_NAMESPACE_ENV] = launcher_pid_namespace
+    child_context_env[CALLER_BOUNDARY_ENV] = CallerBoundary.from_policy(
+        permission_policy,
+        pid_namespace=current_pid_namespace(),
+    ).to_env_value()
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     resolved_agent = (resolved_request.agent or "").strip()
     if resolved_agent:
@@ -1879,7 +1880,6 @@ def bind_launch_context(
         spec,
         env=env,
         child_cwd=child_cwd,
-        dry_run=bindings.dry_run,
     )
     env.update(
         harness.project_launch_env(
@@ -1931,6 +1931,22 @@ def bind_launch_context(
     )
 
 
+def materialize_launch_context(context: LaunchContext) -> LaunchContext:
+    """Perform real-launch-only adapter writes after pure context binding."""
+
+    ensure_project_lifetime_lock(context.runtime_root)
+    binding = context.binding
+    spec = materialize_launch_spec(
+        context.harness.id,
+        binding.spec,
+        env=binding.environment.final_env,
+        child_cwd=binding.child_cwd,
+    )
+    if spec is binding.spec:
+        return context
+    return replace(context, binding=replace(binding, spec=spec))
+
+
 __all__ = [
     "ChildEnvContext",
     "LaunchContext",
@@ -1946,6 +1962,7 @@ __all__ = [
     "build_launch_policy_snapshot",
     "compile_prepared_policy_surface",
     "materialize_launch_artifacts",
+    "materialize_launch_context",
     "normalize_usage_model_family",
     "prepare_launch_surface",
     "prepare_prompt_payload",

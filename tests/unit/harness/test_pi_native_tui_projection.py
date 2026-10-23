@@ -5,10 +5,13 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeIdentity
+from meridian.lib.harness.projections.permissions_pi import compile_pi_permissions
 from meridian.lib.harness.projections.project_pi_native_tui import (
     project_pi_native_tui_spec_to_cli_args,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand, PlatformRule
+from meridian.lib.tools import ToolRule
 
 
 def _spec(**overrides: object) -> ResolvedLaunchSpec:
@@ -57,3 +60,28 @@ def test_long_interactive_prompt_fails_clearly() -> None:
         project_pi_native_tui_spec_to_cli_args(
             _spec(prompt="x" * (128 * 1024)), base_command=("pi",)
         )
+
+
+def test_meridian_command_report_keeps_narrower_profile_rule_stricter() -> None:
+    policy = PermissionPolicy(
+        rules=(
+            ToolRule(
+                capability="bash",
+                pattern="meridian spawn cancel-all *",
+                action="deny",
+                native=("bash(meridian spawn cancel-all *)",),
+            ),
+        ),
+        platform_rules=(
+            PlatformRule(
+                kind="meridian-commands",
+                commands=(PlatformCommand(command="meridian spawn", match="prefix"),),
+            ),
+        ),
+    )
+
+    _, report = compile_pi_permissions(_spec(permission_policy=policy))
+
+    line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
+    assert line.status == "partial"
+    assert "narrower profile rules remain stricter" in line.note

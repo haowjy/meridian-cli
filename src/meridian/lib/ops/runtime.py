@@ -187,13 +187,13 @@ def resolve_project_authority(
     )
 
 
-def resolve_runtime_authority_for_read(
+def inspect_runtime_authority_for_read(
     project_root: str | Path | None = None,
     *,
     execution_cwd: Path | None = None,
     ignore_runtime_env: bool | None = None,
 ) -> RuntimeAuthoritySnapshot:
-    """Resolve read authority, including the once-only legacy native-key import."""
+    """Resolve read authority without running migrations or writing state."""
 
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
     override_root = (
@@ -217,10 +217,59 @@ def resolve_runtime_authority_for_read(
         runtime_source = "env"
     else:
         runtime_source = "user-home-project"
-    if runtime_root is not None:
+    return authority.model_copy(
+        update={
+            "runtime_root": runtime_root,
+            "runtime_root_source": runtime_source,
+        }
+    )
+
+
+def resolve_runtime_authority_for_read(
+    project_root: str | Path | None = None,
+    *,
+    execution_cwd: Path | None = None,
+    ignore_runtime_env: bool | None = None,
+) -> RuntimeAuthoritySnapshot:
+    """Resolve read authority, including the once-only legacy native-key import."""
+
+    authority = inspect_runtime_authority_for_read(
+        project_root,
+        execution_cwd=execution_cwd,
+        ignore_runtime_env=ignore_runtime_env,
+    )
+    if authority.runtime_root is not None:
         from meridian.lib.ops.legacy_native_import import maybe_import_legacy_native_sessions
 
-        maybe_import_legacy_native_sessions(runtime_root)
+        maybe_import_legacy_native_sessions(authority.runtime_root)
+    return authority
+
+
+def plan_runtime_authority_for_write(
+    project_root: str | Path | None = None,
+    *,
+    execution_cwd: Path | None = None,
+    ignore_runtime_env: bool | None = None,
+) -> RuntimeAuthoritySnapshot:
+    """Resolve the runtime path a write would use without materializing identity or state."""
+
+    authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
+    override = (
+        _runtime_override_env_root(authority.project_root)
+        if _runtime_dir_env_override_applies(
+            ignore_runtime_env=bool(ignore_runtime_env),
+        )
+        else None
+    )
+    if override is not None:
+        runtime_root = override
+        runtime_source: RuntimeRootSource = "env"
+    elif authority.project_id is not None:
+        runtime_root = get_project_home(authority.project_id)
+        runtime_source = "user-home-project"
+    else:
+        runtime_root = None
+        runtime_source = "unresolved"
     return authority.model_copy(
         update={
             "runtime_root": runtime_root,
@@ -237,18 +286,17 @@ def resolve_runtime_authority_for_write(
 ) -> RuntimeAuthoritySnapshot:
     """Resolve project/runtime authority for mutating callers."""
 
-    authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
-    override = (
-        _runtime_override_env_root(authority.project_root)
-        if _runtime_dir_env_override_applies(
-            ignore_runtime_env=bool(ignore_runtime_env),
-        )
-        else None
+    authority = plan_runtime_authority_for_write(
+        project_root,
+        execution_cwd=execution_cwd,
+        ignore_runtime_env=ignore_runtime_env,
     )
     identity_created = False
     ensured_project_id = authority.project_id
-    if override is not None:
-        runtime_root = override
+    if authority.runtime_root_source == "env":
+        runtime_root = authority.runtime_root
+        if runtime_root is None:
+            raise RuntimeError("Planned runtime environment override has no root.")
     else:
         prior = resolve_project_identity(authority.project_root)
         identity = ensure_project_identity(authority.project_root)
@@ -257,16 +305,15 @@ def resolve_runtime_authority_for_write(
             raise ValueError("Runtime write identity did not resolve a project ID.")
         ensured_project_id = identity.id
         runtime_root = get_project_home(identity.id)
-    runtime_source: RuntimeRootSource = "user-home-project"
-    if override is not None and override == runtime_root:
-        runtime_source = "env"
     from meridian.lib.ops.legacy_native_import import maybe_import_legacy_native_sessions
 
     maybe_import_legacy_native_sessions(runtime_root)
     return authority.model_copy(
         update={
             "runtime_root": runtime_root,
-            "runtime_root_source": runtime_source,
+            "runtime_root_source": (
+                "env" if authority.runtime_root_source == "env" else "user-home-project"
+            ),
             "project_id": ensured_project_id,
             "identity_created": identity_created,
         }

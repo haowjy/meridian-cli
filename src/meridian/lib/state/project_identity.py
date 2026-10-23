@@ -205,7 +205,7 @@ def _materialize_adhoc_identity(project_root: Path, identity: AdHoc) -> AdHoc:
     runtime_root = get_project_home(identity.id)
     lifetime_lock = project_lifetime_lock_path(runtime_root)
     origin_path = runtime_root / "origin.json"
-    with lock_file(lifetime_lock, mode="shared"):
+    with lock_file(lifetime_lock, mode="shared", read_only_existing=True):
         if not origin_path.is_file():
             runtime_root.mkdir(parents=True, exist_ok=True)
             write_model_once(

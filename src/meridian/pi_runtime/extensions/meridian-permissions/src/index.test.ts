@@ -164,7 +164,11 @@ describe("bash command evaluation", () => {
 
   it("honors exact and prefix Meridian command grants but still checks compound commands", () => {
     const withMeridianCommands = policy(
-      [rule({ capability: "*", tool: "*", action: "deny", label: "*" })],
+      [
+        rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
+        rule({ pattern: "meridian spawn done private *", action: "deny", label: "private" }),
+        rule({ pattern: "meridian spawn rearm", action: "ask", label: "rearm" }),
+      ],
       {
         meridian_commands: [
           { command: "meridian task-dir", match: "exact" },
@@ -180,10 +184,18 @@ describe("bash command evaluation", () => {
       "meridian spawn done p-1",
       "meridian spawn done --flag=value",
       "meridian spawn done 'p-1'",
-      "meridian spawn rearm --candidate_1.v2",
     ]) {
       expect(decideToolCall(withMeridianCommands, "bash", { command })?.action).toBe("allow");
     }
+    expect(
+      decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn done private p-1" })?.action,
+    ).toBe("deny");
+    expect(
+      decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn rearm" })?.action,
+    ).toBe("ask");
+    expect(
+      decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn rearm p-1" })?.action,
+    ).toBe("allow");
     for (const command of [
       "meridian task-dir set /tmp",
       "meridian spawn donex",

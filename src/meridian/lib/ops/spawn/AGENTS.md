@@ -9,6 +9,10 @@ input validation, and routing to foreground vs background execution.
 
 Both paths converge at `launch_prepared_spawn()`:
 
+Before either path, `api.py` composes the resolved launch policy and creates no spawn
+row. Spawn creation always defers runtime materialization until the resolved launch
+policy passes the caller boundary; top-level and nested callers use the same path.
+
 **Foreground:** `execute_spawn_blocking()` → creates spawn row → calls
 `launch_prepared_spawn()` via `asyncio.run()` → `execute_with_streaming()`.
 
@@ -119,9 +123,9 @@ replay the model turn.
 
 ## Anti-Patterns
 
-**Don't create spawn rows before launch preparation on new code paths.**
-The existing subprocess path does this (known gap); don't replicate the pattern. New
-paths should use the resolve-before-persist streaming-serve model.
+**Don't bypass launch preparation before creating a row.** Creation, continuation, and
+fork share the preparation sequence. An inherited delegation floor must pass before any
+runtime materialization.
 
 **Don't set `LaunchArgvIntent.REQUIRED` on execution paths.** Only `prepare.py` gets
 a real argv — execution paths use `SPEC_ONLY`.

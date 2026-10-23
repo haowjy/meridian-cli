@@ -310,6 +310,17 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return process.pid
 
     @property
+    def completion_signals_available(self) -> bool:
+        """Whether this Codex launch can write Meridian's completion signals."""
+
+        spec = self._launch_spec
+        return not (
+            spec is not None
+            and spec.permission_policy.sandbox == "read-only"
+            and spec.codex_runtime.rules_file_error is not None
+        )
+
+    @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
         if not self._primary_observer_mode:
             return None

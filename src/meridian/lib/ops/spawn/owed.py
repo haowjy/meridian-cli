@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -22,14 +23,10 @@ from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_observations import consumed_ids, leased_ids, record
 from meridian.lib.state.spawn_status import read_derived
 
-from .models import render_delivery
-from .query import detail_from_row
+from .models import task_dir_line
 
 _COLLECT_POLL_INTERVAL_SECS = 1.0
-_REPORT_READ_MAX_BYTES = 64 * 1024
-# One delivery's limits, matching Pi's (pi_runtime/.context/delivery-contract.md).
 _DELIVERY_MAX_MEMBERS = 32
-_DELIVERY_MAX_BYTES = 64 * 1024
 
 
 class SpawnCollectInput(BaseModel):
@@ -79,6 +76,38 @@ class _OwedSnapshot:
 
     rows: tuple[SpawnRecord, ...]
     pending_ids: tuple[str, ...]
+
+
+def render_delivery(rows: Sequence[SpawnRecord]) -> str:
+    """Render Claude's header-only notification for terminal child rows."""
+
+    rendered: list[str] = []
+    for row in rows:
+        terminal = row.terminal
+        outcome: list[str] = []
+        if terminal is not None and terminal.duration_secs is not None:
+            outcome.append(f"{terminal.duration_secs:.1f}s")
+        if terminal is not None:
+            outcome.append(f"exit {terminal.exit_code}")
+        if terminal is not None and terminal.error is not None:
+            outcome.append("result error")
+        outcome_suffix = f" ({', '.join(outcome)})" if outcome else ""
+
+        lines = [
+            f"{row.id} {row.status}{outcome_suffix}",
+            f"Worker: {row.model or ''} ({row.harness or ''})",
+        ]
+        if terminal is not None and terminal.error is not None:
+            lines.append(f"Failure: {terminal.error}")
+        if (
+            row.control_root is not None
+            and row.task_cwd is not None
+            and row.task_cwd != row.control_root
+        ):
+            lines.append(task_dir_line(row.task_cwd, row.work_id))
+        lines.append(f"meridian spawn show {row.id}")
+        rendered.append("\n".join(lines))
+    return "\n\n".join(rendered)
 
 
 def _roots(
@@ -193,7 +222,7 @@ def collect_owed_sync(
     current_spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id else None
     if current_spawn_id is None:
         raise ValueError("Spawn collection requires MERIDIAN_SPAWN_ID")
-    project_root, runtime_root = _roots(payload.project_root, prepared)
+    _, runtime_root = _roots(payload.project_root, prepared)
     if runtime_root is None:
         return _EMPTY
 
@@ -223,23 +252,14 @@ def collect_owed_sync(
             if wait_for_batch is None:
                 wait_for_batch = not terminal
             if terminal and not (wait_for_batch and snapshot.pending_ids):
-                details = tuple(
-                    detail_from_row(
-                        project_root=project_root,
-                        row=row,
-                        include_report_body=True,
-                        runtime_root=runtime_root,
-                        report_body_max_bytes=_REPORT_READ_MAX_BYTES,
-                    )
-                    for row in terminal[:_DELIVERY_MAX_MEMBERS]
-                )
-                text = render_delivery(details, max_bytes=_DELIVERY_MAX_BYTES)
-                # An explicit wait or ack may have taken a result while it was read.
+                delivered_rows = tuple(terminal[:_DELIVERY_MAX_MEMBERS])
+                text = render_delivery(delivered_rows)
+                # An explicit wait or ack may have taken a result meanwhile.
                 taken = consumed_ids(runtime_root, primary_ids) | leased_ids(
                     runtime_root, primary_ids
                 )
-                if not any(detail.spawn_id in taken for detail in details):
-                    ids = tuple(detail.spawn_id for detail in details)
+                if not any(row.id in taken for row in delivered_rows):
+                    ids = tuple(row.id for row in delivered_rows)
                     return SpawnCollectOutput(kind="delivery", ids=ids, text=text)
                 continue
             time.sleep(_COLLECT_POLL_INTERVAL_SECS)
@@ -284,4 +304,5 @@ __all__ = [
     "SpawnCollectOutput",
     "ack_owed_sync",
     "collect_owed_sync",
+    "render_delivery",
 ]

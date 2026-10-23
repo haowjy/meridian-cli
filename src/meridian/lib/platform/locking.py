@@ -108,6 +108,7 @@ def lock_file(
     timeout: float | None = None,
     mode: LockMode = "exclusive",
     reentrant: bool = True,
+    read_only_existing: bool = False,
 ) -> Generator[IO[bytes], None, None]:
     """Acquire a file lock whose path must keep a stable inode.
 
@@ -133,7 +134,12 @@ def lock_file(
                 held[key] = (current_handle, current_depth - 1, current_mode)
         return
 
-    handle = acquire_file_lock(lock_path, timeout=timeout, mode=mode)
+    handle = acquire_file_lock(
+        lock_path,
+        timeout=timeout,
+        mode=mode,
+        read_only_existing=read_only_existing,
+    )
     if reentrant:
         held[key] = (handle, 1, mode)
     try:
@@ -150,12 +156,19 @@ def try_lock_file(
     *,
     mode: LockMode = "exclusive",
     reentrant: bool = True,
+    read_only_existing: bool = False,
 ) -> Generator[IO[bytes] | None, None, None]:
     """Attempt a file lock without blocking; yield ``None`` on contention."""
     stack = ExitStack()
     try:
         handle = stack.enter_context(
-            lock_file(lock_path, timeout=0, mode=mode, reentrant=reentrant)
+            lock_file(
+                lock_path,
+                timeout=0,
+                mode=mode,
+                reentrant=reentrant,
+                read_only_existing=read_only_existing,
+            )
         )
     except (OSError, TimeoutError):
         yield None
@@ -169,15 +182,29 @@ def acquire_file_lock(
     *,
     timeout: float | None = None,
     mode: LockMode = "exclusive",
+    read_only_existing: bool = False,
 ) -> IO[bytes]:
     """Acquire and return a lock handle, retrying if the path inode changed."""
     if timeout is not None and timeout < 0:
         raise ValueError("timeout must be non-negative or None")
 
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = None if timeout is None else time.monotonic() + timeout
     while True:
-        handle = lock_path.open("a+b")
+        if IS_WINDOWS:
+            # The legacy Windows locking API writes a one-byte lock region.
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            handle = lock_path.open("a+b")
+        else:
+            try:
+                # Project-lifetime locks are projected into sandboxes without granting
+                # write access. Other lock clients retain a writable handle contract.
+                handle = lock_path.open("rb" if read_only_existing else "r+b")
+            except FileNotFoundError:
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    handle = lock_path.open("x+b")
+                except FileExistsError:
+                    continue
         windows_advisory = IS_WINDOWS and mode == "shared"
         if not windows_advisory:
             _track_process_lock_handle(handle)

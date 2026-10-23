@@ -1,5 +1,24 @@
 # ops/spawn — Contracts and Architecture
 
+## Spawn Creation Boundary
+
+`spawn_create_sync()`, continue, and fork share one preparation path. It inspects
+authority and checks the launcher-owned caller boundary before write bootstrap. With
+a boundary, it composes the resolved launch policy read-only and enforces the floor.
+Every real launch calls `prepare_for_runtime_write()` afterward through one deferred
+materialization path. Dry-run binds its preview without materializing. Continue
+performs its state sweep after preparation succeeds; fork reuses the prepared artifacts
+for its cross-harness guard.
+
+The caller boundary rejects a no-capability caller, direct sensitive environment
+keys, and all harness-native passthrough arguments before source-state reads. Passthrough
+is all-or-nothing under a floor because each harness owns native flags that can supersede
+Meridian's resolved sandbox or approval arguments.
+
+This ordering is security-sensitive: the standalone harness escape runs `meridian`
+outside the native sandbox, so policy refusal must precede identity creation, state
+locks, telemetry files, and spawn rows.
+
 ## Depth Guard
 
 `spawn_create_sync()` checks `max_depth_reached()` **before** executing any spawn. When depth
@@ -57,10 +76,11 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   letting the collector exit early.
 - An initially ready result returns the ready terminal subset. Otherwise the fixed
   owed set settles together. A final consumption/lease check precedes return.
-- A delivery admits at most 32 results and 64 KiB of valid UTF-8 (`owed.py` applies
-  both limits). `models.render_delivery()` reserves each identity/outcome and
-  `meridian spawn show <id>` lookup before sharing the remaining bytes among report
-  bodies, following Pi's `pi_runtime/.context/delivery-contract.md`.
+- A delivery admits at most 32 results. Each member is header-only: identity and
+  outcome, worker, failure and distinct task directory when present, then a
+  `meridian spawn show <id>` lookup. The collector does not read report bodies;
+  Claude leads explicitly read one with `spawn show`. Only `spawn wait` completion
+  and `spawn ack` consume, so an earlier report read may still get one short header ping.
 - `spawn ack <ids...>` writes those IDs under the caller's current primary and
   returns exactly `{acked: [...]}`; it fails when that primary's row is gone. Reading across the chat is what makes an ack
   written after resume consume a child of an earlier primary.

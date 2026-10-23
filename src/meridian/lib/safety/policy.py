@@ -38,8 +38,18 @@ type ApprovalMode = Literal[
     "confirm",
 ]
 
+SANDBOX_MODE_WEAKNESS: dict[SandboxMode, int] = {
+    "read-only": 0,
+    "workspace-write": 1,
+    "danger-full-access": 2,
+    # A harness default is unknown, so compare it as weaker than every explicit mode.
+    "default": 3,
+}
 _SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
     {"default", "read-only", "workspace-write", "danger-full-access"}
+)
+CONSTRAINED_SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
+    {"read-only", "workspace-write"}
 )
 _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
     {"default", "auto", "never", "yolo", "confirm"}
@@ -63,6 +73,7 @@ class PlatformCommand(BaseModel):
 
     command: str
     match: CommandMatch
+    runs_outside_sandbox: bool = False
 
 
 class PlatformRule(BaseModel):
@@ -105,6 +116,23 @@ class PermissionPolicy(BaseModel):
     # these separate from projected runtime/temp roots, which must remain writable.
     sandbox_write_roots: tuple[str, ...] = Field(default=(), exclude=True)
     approval: ApprovalMode = "default"
+
+    @property
+    def outside_sandbox_commands(self) -> tuple[PlatformCommand, ...]:
+        """Platform commands whose harness projection escapes native confinement."""
+
+        return tuple(
+            command
+            for rule in self.platform_rules
+            for command in rule.commands
+            if command.runs_outside_sandbox
+        )
+
+    @property
+    def has_spawn_capability(self) -> bool:
+        """Whether this policy carries the canonical child-launch command grant."""
+
+        return bool(self.outside_sandbox_commands)
 
     @property
     def is_allowlist(self) -> bool:
@@ -167,6 +195,14 @@ def platform_element(rule: PlatformRule) -> str:
         commands = ", ".join(f"{command.match}: {command.command}" for command in rule.commands)
         return f"platform: allow Meridian commands ({commands})"
     return "platform: deny built-in agents"
+
+
+def command_grant_covers_pattern(command: PlatformCommand, pattern: str) -> bool:
+    """Whether a scoped shell pattern is wholly inside a platform command grant."""
+
+    if command.match == "exact":
+        return pattern == command.command
+    return pattern == command.command or pattern.startswith(f"{command.command} ")
 
 
 def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
@@ -437,6 +473,8 @@ def build_permission_policy(
 
 __all__ = [
     "ALLOWLIST_ORIGIN",
+    "CONSTRAINED_SANDBOX_MODES",
+    "SANDBOX_MODE_WEAKNESS",
     "ApprovalMode",
     "CommandMatch",
     "EnforcementReport",

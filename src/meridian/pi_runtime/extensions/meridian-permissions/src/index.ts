@@ -124,7 +124,9 @@ function globMatches(pattern: string, value: string): boolean {
 }
 
 function literalLength(pattern: string | null | undefined): number {
-  return pattern?.replaceAll("*", "").length ?? 0;
+  // ``cmd *`` also matches bare ``cmd``. Rank those two spellings equally for the bare
+  // call so a stricter profile rule wins instead of the synthetic platform allow.
+  return pattern?.replaceAll("*", "").trimEnd().length ?? 0;
 }
 
 function actionRank(action: ToolAction): number {
@@ -362,6 +364,22 @@ function isMeridianCommand(policy: PermissionPolicy, command: string): boolean {
     : command === candidate.command || command.startsWith(`${candidate.command} `));
 }
 
+function withMeridianCommandAllows(policy: PermissionPolicy): PermissionPolicy {
+  return {
+    ...policy,
+    rules: [
+      ...policy.rules,
+      ...policy.meridian_commands.map((candidate) => ({
+        capability: "bash",
+        tool: "bash",
+        pattern: candidate.match === "exact" ? candidate.command : `${candidate.command} *`,
+        action: "allow" as const,
+        label: "Meridian platform command",
+      })),
+    ],
+  };
+}
+
 export function decideToolCall(
   policy: PermissionPolicy,
   tool: string,
@@ -386,7 +404,7 @@ export function decideToolCall(
   }
 
   if (split.commands.length === 1 && isMeridianCommand(policy, split.commands[0])) {
-    return { action: "allow", detail, reason: "Meridian platform command" };
+    return policyDecision(withMeridianCommandAllows(policy), "bash", scope, detail, workingDirectory);
   }
   const decisions = split.commands.map(
     (command) => policyDecision(policy, tool, command, detail, workingDirectory),

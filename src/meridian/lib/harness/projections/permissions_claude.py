@@ -26,6 +26,7 @@ from meridian.lib.safety.policy import (
     PlatformRuleKind,
     ReportLine,
     ReportStatus,
+    command_grant_covers_pattern,
     complete_report,
     platform_element,
     rule_element,
@@ -58,7 +59,8 @@ _PASSTHROUGH_ALLOW_ELEMENT = "source: passthrough --allowedTools"
 class ClaudeSandboxSettings:
     """The Claude ``sandbox`` settings Meridian owns for one launch."""
 
-    enabled: bool
+    # None preserves the user's configured enabled state while adding exclusions.
+    enabled: bool | None = None
     deny_write: tuple[str, ...] = ()
     auto_allow_bash: bool = False
     excluded_commands: tuple[str, ...] = ()
@@ -401,18 +403,19 @@ def _available_tools(policy: PermissionPolicy) -> tuple[str, ...]:
     return tuple(dedupe_nonempty((*policy.allowed_tools, *meridian_tools)))
 
 
+def _outside_sandbox_commands(policy: PermissionPolicy) -> tuple[str, ...]:
+    return tuple(
+        f"{command.command} *" if command.match == "prefix" else command.command
+        for command in policy.outside_sandbox_commands
+    )
+
+
 def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSandboxSettings | None:
     if policy.sandbox == "default":
         return None
     if policy.sandbox == "danger-full-access":
         return ClaudeSandboxSettings(enabled=False)
     # Sandbox auto-approval accepts unmatched Bash before any mode can refuse it.
-    can_spawn = any(
-        command.command == "meridian spawn" and command.match == "prefix"
-        for platform in policy.platform_rules
-        if platform.kind == "meridian-commands"
-        for command in platform.commands
-    )
     return ClaudeSandboxSettings(
         enabled=True,
         deny_write=policy.sandbox_write_roots if policy.sandbox == "read-only" else (),
@@ -422,7 +425,7 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
             and not channels.gates
             and not channels.ask
         ),
-        excluded_commands=("meridian spawn *",) if can_spawn else (),
+        excluded_commands=_outside_sandbox_commands(policy),
         allowed_domains=("*", "localhost", "127.0.0.1")
         if policy.network == "allow"
         else (),
@@ -639,6 +642,20 @@ def _meridian_commands_line(
         blocker = _shadow(native, permissions)
         if native not in emitted or blocker is not None:
             blocked.setdefault(blocker or "", []).append(native)
+    for command in platform.commands:
+        for rule in policy.rules:
+            if rule.origin == PLATFORM_ORIGIN or rule.action == "allow":
+                continue
+            for native in rule.native:
+                base, pattern = split_native(native)
+                if (
+                    base == "Bash"
+                    and pattern is not None
+                    and command_grant_covers_pattern(command, pattern)
+                ):
+                    blocked.setdefault(native, []).append(
+                        f"Bash({command.command}{' *' if command.match == 'prefix' else ''})"
+                    )
     if blocked:
         problems = [
             f"{','.join(names)}: Claude checks {blocker} first"

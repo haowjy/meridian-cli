@@ -63,6 +63,8 @@ state is materialized only on writes, under `~/.meridian/projects/<id>/`, and
 nothing is written into the source directory. Committed projects can move without
 losing runtime history; moving an ad-hoc directory changes its identity. Project
 lifetime gates sit outside the deletable project root and are never unlinked.
+Real-launch materialization pre-creates the exact lock inode;
+launch bind only projects that path and remains write-free.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /

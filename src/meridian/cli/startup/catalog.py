@@ -266,10 +266,13 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "text",
         "Install shell completion.",
     ),
-    _write_runtime(
+    _descriptor(
         ("spawn",),
+        StartupClass.WRITE_RUNTIME,
+        StateRequirement.PROJECT_READ,
+        TelemetryMode.NONE,
+        "text",
         "Create a spawn via spawn default route.",
-        default_output_mode="text",
     ),
     _read_runtime(
         ("spawn", "list"),

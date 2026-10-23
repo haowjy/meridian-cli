@@ -13,7 +13,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_sessions import candidate_claude_project_dirs, project_slug
-from meridian.lib.harness.codex import CodexAdapter, bind_codex_spec
+from meridian.lib.harness.codex import CodexAdapter, materialize_codex_spec
 from meridian.lib.harness.codex_rules import MERIDIAN_RULES_FILE_CONTENT
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.pi import PiAdapter
@@ -21,6 +21,7 @@ from meridian.lib.harness.pi_runtime_resolver import PiLaunchRole, PiRuntimeReso
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.platform.atomic import AtomicReplaceDurabilityError
 from meridian.lib.safety.policy import PermissionPolicy
 
 
@@ -403,7 +404,7 @@ def test_codex_adapter_uses_codex_home_override(
     assert infer_harness_from_untracked_session_ref(project_root, override_session_id) == "codex"
 
 
-def test_codex_bind_rewrites_owned_rules_file_and_skips_matching_content(
+def test_codex_materialize_rewrites_owned_rules_file_and_skips_matching_content(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -417,16 +418,9 @@ def test_codex_bind_rewrites_owned_rules_file_and_skips_matching_content(
         permission_policy=PermissionPolicy(sandbox="workspace-write")
     )
 
-    preview = bind_codex_spec(
-        spec,
-        {"CODEX_HOME": str(codex_home)},
-        tmp_path,
-        dry_run=True,
-    )
     assert rules_path.read_text(encoding="utf-8") == "stale user content\n"
-    assert preview.codex_runtime.rules_file_path is None
 
-    bound = bind_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
+    bound = materialize_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
 
     assert rules_path.read_text(encoding="utf-8") == MERIDIAN_RULES_FILE_CONTENT
     assert bound.codex_runtime.rules_file_path == rules_path.as_posix()
@@ -437,11 +431,25 @@ def test_codex_bind_rewrites_owned_rules_file_and_skips_matching_content(
         raise AssertionError("matching rules file should not be rewritten")
 
     monkeypatch.setattr(codex_rules, "atomic_write_text", _unexpected_write)
-    rebound = bind_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
+    rebound = materialize_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
     assert rebound.codex_runtime.rules_file_error is None
 
+    rules_path.write_text("stale again\n", encoding="utf-8")
 
-def test_codex_bind_reports_rules_write_failure_without_refusing_launch(
+    def _commit_without_directory_sync(
+        path: Path, content: str, *, durable: bool = True
+    ) -> None:
+        assert durable is True
+        path.write_text(content, encoding="utf-8")
+        raise AtomicReplaceDurabilityError(path)
+
+    monkeypatch.setattr(codex_rules, "atomic_write_text", _commit_without_directory_sync)
+    committed = materialize_codex_spec(spec, {"CODEX_HOME": str(codex_home)}, tmp_path)
+    assert rules_path.read_text(encoding="utf-8") == MERIDIAN_RULES_FILE_CONTENT
+    assert committed.codex_runtime.rules_file_error is None
+
+
+def test_codex_materialize_reports_rules_write_failure_without_refusing_launch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -455,7 +463,7 @@ def test_codex_bind_reports_rules_write_failure_without_refusing_launch(
     monkeypatch.setattr(codex_rules, "atomic_write_text", _fail_write)
     spec = ResolvedLaunchSpec(permission_policy=PermissionPolicy(sandbox="read-only"))
 
-    bound = bind_codex_spec(
+    bound = materialize_codex_spec(
         spec,
         {"CODEX_HOME": str(tmp_path / "unwritable-codex-home")},
         tmp_path,

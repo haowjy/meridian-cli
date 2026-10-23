@@ -349,8 +349,9 @@ scoped rules) or V2 `agents.<id>.permissions` (`{action, resource, effect}` rows
 The bind-resolved version selects the shape; connections consume the config unchanged.
 OpenCode is last-match-wins, so the compile orders the wildcard default, unscoped rules,
 and scoped rules by increasing literal specificity, with stricter equal matches last.
-Platform denies follow profile rules, completion-command exceptions follow those, and
-workspace grants are last. The compile owns V2 aliases (`bash`→`shell`,
+Platform denies follow profile rules, then Meridian-command grants; narrower/equal profile
+restrictions are re-appended
+after a broader grant, and workspace grants are last. The compile owns V2 aliases (`bash`→`shell`,
 `write`/`patch`→`edit`, `task`→`subagent`) and resolves collisions after aliasing;
 the config projector only serializes its result.
 

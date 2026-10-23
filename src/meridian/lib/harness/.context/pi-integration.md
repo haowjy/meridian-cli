@@ -25,8 +25,9 @@ the variable is omitted when no extension policy exists. A present invalid polic
 throws, and Pi aborts explicit extension load failures, so this path fails closed.
 The handler canonicalizes file paths and rule roots against cwd before matching. Its
 restricted-Bash matcher accepts only a small simple-command subset and refuses all
-other shell syntax before applying scoped rules or the exact completion-command
-grant.
+other shell syntax before applying scoped rules or the exact/prefix Meridian-command
+grants. Those grants participate in scoped precedence: a narrower or equal profile deny
+or ask remains authoritative.
 
 Shared helpers under `src/meridian/pi_runtime/extensions/shared/` provide schemas,
 validated receipt/reservation readers, atomic JSON, paths and UI. Python's matching

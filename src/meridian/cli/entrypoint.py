@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from meridian.cli.argv_normalization import canonicalize_argv
-from meridian.cli.bootstrap import first_positional_token, meridian_managed_env_default
+from meridian.cli.bootstrap import (
+    first_positional_token,
+    meridian_managed_env_default,
+)
 from meridian.cli.mode import extract_forced_render_mode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
-from meridian.lib.core.sandbox_boundary import refuse_sandboxed_spawn_launch
 from meridian.lib.platform import IS_WINDOWS
 
 
@@ -27,36 +29,6 @@ def _is_version_request(argv: Sequence[str]) -> bool:
     if not any(token in {"--version", "-v"} for token in argv):
         return False
     return first_positional_token(argv) is None
-
-
-def _is_spawn_dry_run(argv: Sequence[str]) -> bool:
-    enabled = False
-    for token in argv:
-        if token == "--":
-            break
-        for name, implicit in (("--dry-run", True), ("--no-dry-run", False)):
-            if token == name:
-                enabled = implicit
-                break
-            prefix = f"{name}="
-            if not token.startswith(prefix):
-                continue
-            value = token.removeprefix(prefix).lower()
-            if value in {"yes", "y", "1", "true", "t"}:
-                enabled = implicit
-            elif value in {"no", "n", "0", "false", "f"}:
-                enabled = not implicit
-            break
-    return enabled
-
-
-def _is_spawn_help_request(argv: Sequence[str]) -> bool:
-    for token in argv:
-        if token == "--":
-            return False
-        if token in {"--help", "-h"}:
-            return True
-    return False
 
 
 def main() -> None:
@@ -79,18 +51,7 @@ def _main_impl() -> None:
 
     # Keep classifier import/use on this startup-cheap path so command catalog
     # regressions surface before the full CLI tree is loaded.
-    descriptor = classify_invocation(args, COMMAND_CATALOG)
-
-    if (
-        descriptor is not None
-        and descriptor.command_path == ("spawn",)
-        and not _is_spawn_help_request(args)
-    ):
-        try:
-            refuse_sandboxed_spawn_launch(dry_run=_is_spawn_dry_run(args))
-        except ValueError as error:
-            print(f"Spawn setup failed before initialization: {error}", file=sys.stderr)
-            raise SystemExit(1) from error
+    classify_invocation(args, COMMAND_CATALOG)
 
     if _is_root_help_request(args):
         from meridian.cli.startup.help import render_root_help

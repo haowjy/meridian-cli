@@ -135,28 +135,17 @@ def read_report(
     spawn_id: str,
     *,
     runtime_root: Path | None = None,
-    max_bytes: int | None = None,
-) -> tuple[str | None, str | None, bool]:
-    """Return a report's path, stripped body, and whether ``max_bytes`` cut it short.
-
-    A bounded read decodes a byte window, so it cuts at a UTF-8 code-point boundary.
-    """
+) -> tuple[str | None, str | None]:
+    """Return a report's path and stripped body."""
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
-        return None, None, False
+        return None, None
     report_path = resolved_runtime_root / "spawns" / spawn_id / "report.md"
     if not report_path.is_file():
-        return None, None, False
-    truncated = False
-    if max_bytes is None:
-        text = report_path.read_text(encoding="utf-8", errors="ignore")
-    else:
-        with report_path.open("rb") as report_file:
-            window = report_file.read(max_bytes + 1)
-        truncated = len(window) > max_bytes
-        text = window[:max_bytes].decode("utf-8", errors="ignore")
-    return report_path.as_posix(), text.strip() or None, truncated
+        return None, None
+    text = report_path.read_text(encoding="utf-8", errors="ignore")
+    return report_path.as_posix(), text.strip() or None
 
 
 def read_report_summary(
@@ -352,14 +341,12 @@ def detail_from_row(
     row: SpawnRecord,
     include_report_body: bool,
     runtime_root: Path | None = None,
-    report_body_max_bytes: int | None = None,
 ) -> SpawnDetailOutput:
     if include_report_body:
-        report_path, report_body, report_body_truncated = read_report(
+        report_path, report_body = read_report(
             project_root,
             row.id,
             runtime_root=runtime_root,
-            max_bytes=report_body_max_bytes,
         )
         report_summary = report_body[:500] if report_body else None
     else:
@@ -369,7 +356,6 @@ def detail_from_row(
             runtime_root=runtime_root,
         )
         report_body = None
-        report_body_truncated = False
 
     last_message: str | None = None
     log_path: str | None = None
@@ -420,7 +406,6 @@ def detail_from_row(
         report_path=report_path,
         report_summary=report_summary,
         report_body=report_body,
-        report_body_truncated=report_body_truncated,
         harness_session_id=row.harness_session_id,
         pi_lifecycle_phase=_latest_pi_lifecycle_phase(
             project_root,

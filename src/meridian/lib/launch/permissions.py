@@ -15,8 +15,12 @@ def _exact(command: str) -> PlatformCommand:
     return PlatformCommand(command=command, match="exact")
 
 
-def _prefix(command: str) -> PlatformCommand:
-    return PlatformCommand(command=command, match="prefix")
+def _prefix(command: str, *, runs_outside_sandbox: bool = False) -> PlatformCommand:
+    return PlatformCommand(
+        command=command,
+        match="prefix",
+        runs_outside_sandbox=runs_outside_sandbox,
+    )
 
 
 # What a child runs inside itself to answer Meridian's completion confirmation (the inherited
@@ -61,7 +65,6 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
     _prefix("meridian kg check"),
     _prefix("meridian kg graph"),
     _prefix("meridian mermaid check"),
-    _prefix("meridian models list"),
     _prefix("meridian qi check"),
     _prefix("meridian qi graph"),
     _prefix("meridian qi list"),
@@ -89,10 +92,9 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
     _prefix("meridian work sessions"),
     _prefix("meridian work show"),
     _exact("meridian work task-dir"),
-    _prefix("meridian workspace list"),
 )
 
-_SPAWN_COMMANDS: tuple[PlatformCommand, ...] = (_prefix("meridian spawn"),)
+SPAWN_PLATFORM_COMMAND = _prefix("meridian spawn", runs_outside_sandbox=True)
 
 
 def _native_subagent_capabilities(
@@ -161,9 +163,9 @@ def launch_permission_rules(
         rules.append(PlatformRule(kind="builtin-agents"))
     commands = (*_COMPLETION_COMMANDS, *_READ_ONLY_COMMANDS)
     if has_spawn_capability:
-        commands = (*commands, *_SPAWN_COMMANDS)
+        commands = (*commands, SPAWN_PLATFORM_COMMAND)
     rules.append(PlatformRule(kind="meridian-commands", commands=commands))
     return denies, tuple(rules)
 
 
-__all__ = ["launch_permission_rules"]
+__all__ = ["SPAWN_PLATFORM_COMMAND", "launch_permission_rules"]
