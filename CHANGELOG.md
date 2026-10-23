@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-10-23
+
 ### Changed
 - Claude, Codex, and OpenCode completion holds say the previous reply is the report: finish with `spawn done`, or `spawn rearm` before doing more work (#725).
 
