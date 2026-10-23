@@ -20,9 +20,9 @@ deliberate exception that wires policy surfaces to launch and persistence.
 - **Use `SpawnId`, `ModelId`, `ChatId`, and `HarnessSessionId` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; pyright catches wrong-ID bugs statically. Persisted chat and harness-session fields use Pydantic-aware `Annotated` aliases that normalize blank identities to `None` and enforce non-empty values at every parse boundary.
 - **`RuntimeOverrides`: use `None` to mean "not set", never `""` or `0`.** `resolve(*layers)` returns first-non-None per field. An empty string at a high-precedence layer wins over a meaningful value at a lower one.
 - **The environment registry is the sole declaration of child-process Meridian keys.** `ResolvedContext.child_env_overrides()` produces shared context handles, and the launch bind seam adds registered launch-specific handles such as `_MERIDIAN_HARNESS`; `validate_child_env_keys()` rejects unknown public or internal names.
-- **Caller-boundary refusal runs before CLI bootstrap and again in spawn policy.** The
-  startup-cheap check prevents a sandboxed Codex call from reaching Mars subprocess work;
-  the policy check protects non-CLI surfaces. Both use `caller_boundary.py`.
+- **Caller-boundary refusal runs once in spawn policy, before operation-specific state.**
+  The shared ops path protects CLI and non-CLI surfaces without duplicating the spawn
+  grammar in the entrypoint. `caller_boundary.py` owns the record and checks.
 - **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `_MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
 - **`LifecycleHook.on_event()` exceptions are logged but never block transitions.** Hooks must tolerate partial data.
 - **`spawn_store` is imported at the bottom of `lifecycle.py`** to break a circular import with `state/__init__`. Do not move it to the top.
