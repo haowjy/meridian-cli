@@ -572,7 +572,11 @@ def start_session(
     """Append a session start event and acquire a lifetime session lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    project_lifetime_handle = acquire_file_lock(paths.project_lifetime_flock, mode="shared")
+    project_lifetime_handle = acquire_file_lock(
+        paths.project_lifetime_flock,
+        mode="shared",
+        read_only_existing=True,
+    )
     resolved_chat_id = chat_id.strip() if chat_id is not None else ""
     handle: IO[bytes] | None = None
     session_instance_id = uuid.uuid4().hex
@@ -1067,7 +1071,7 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
         recorded = True
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared"):
+    with lock_file(paths.project_lifetime_flock, mode="shared", read_only_existing=True):
         if not runtime_root.is_dir():
             raise FileNotFoundError(runtime_root)
         append_chat_rows(runtime_root, {event.chat_id: rows()})
@@ -1107,7 +1111,12 @@ def record_model_observation(
             recorded = True
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared", timeout=lock_timeout):
+    with lock_file(
+        paths.project_lifetime_flock,
+        mode="shared",
+        timeout=lock_timeout,
+        read_only_existing=True,
+    ):
         if not runtime_root.is_dir():
             raise FileNotFoundError(runtime_root)
         append_native_rows(
@@ -1391,7 +1400,7 @@ def get_or_create_observed_chat(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     with (
-        lock_file(paths.project_lifetime_flock, mode="shared"),
+        lock_file(paths.project_lifetime_flock, mode="shared", read_only_existing=True),
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):

@@ -23,8 +23,15 @@ from tests.conftest import posix_only
 
 
 @posix_only
-def test_acquire_file_lock_opens_existing_file_read_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("read_only_existing", "expected_mode"),
+    [(False, "r+b"), (True, "rb")],
+)
+def test_acquire_file_lock_existing_file_mode_is_explicit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    read_only_existing: bool,
+    expected_mode: str,
 ) -> None:
     lock_path = tmp_path / "shared" / "project.lock"
     lock_path.parent.mkdir()
@@ -39,10 +46,10 @@ def test_acquire_file_lock_opens_existing_file_read_only(
 
     monkeypatch.setattr(Path, "open", _record_open)
 
-    handle = acquire_file_lock(lock_path)
+    handle = acquire_file_lock(lock_path, read_only_existing=read_only_existing)
     release_file_lock(handle)
 
-    assert modes == ["rb"]
+    assert modes == [expected_mode]
 
 
 def _fork_while_release_is_paused(
