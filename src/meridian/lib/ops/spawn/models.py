@@ -40,8 +40,12 @@ def build_goal_contract_preview(goal: str | None) -> str | None:
     return build_goal_instruction(normalized_goal)
 
 
+def _compact_cell(value: str) -> str:
+    return " ".join(value.split()).strip()
+
+
 def _truncate_cell(value: str, *, max_chars: int) -> str:
-    compact = " ".join(value.split()).strip()
+    compact = _compact_cell(value)
     if len(compact) <= max_chars:
         return compact
     return f"{compact[: max_chars - 3].rstrip()}..."
@@ -655,6 +659,30 @@ class SpawnListEntry(BaseModel):
         ]
 
 
+def format_spawn_identity_table(
+    entries: Sequence[SpawnListEntry], *, include_duration: bool
+) -> str:
+    """Render the shared identity-first table used by wait and child lineage."""
+    from meridian.lib.core.formatting import tabular
+
+    headers = ["spawn", "agent", "model", "status", "desc"]
+    if include_duration:
+        headers.append("duration")
+    rows = [headers]
+    for entry in entries:
+        row = [
+            entry.spawn_id,
+            entry.agent or "-",
+            entry.model or "-",
+            entry.display_status(),
+            _compact_cell(entry.desc) if entry.desc else "-",
+        ]
+        if include_duration:
+            row.append(f"{entry.duration_secs:.1f}s" if entry.duration_secs is not None else "-")
+        rows.append(row)
+    return tabular(rows)
+
+
 class SpawnListOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -698,25 +726,14 @@ class SpawnListOutput(BaseModel):
             if self.text_view == "children":
                 return "(no children)"
             return "(no spawns)"
-        from meridian.lib.core.formatting import tabular
-
         if self.text_view == "children":
-            rows = [["spawn", "agent", "model", "status", "desc", "duration"]]
-            for entry in self.spawns:
-                rows.append(
-                    [
-                        entry.spawn_id,
-                        entry.agent or "-",
-                        entry.model or "-",
-                        entry.display_status(),
-                        entry.desc or "-",
-                        f"{entry.duration_secs:.1f}s" if entry.duration_secs is not None else "-",
-                    ]
-                )
+            result = format_spawn_identity_table(self.spawns, include_duration=True)
         else:
+            from meridian.lib.core.formatting import tabular
+
             rows = [["spawn", "status", "model", "duration"]]
             rows.extend(entry.as_row() for entry in self.spawns)
-        result = tabular(rows)
+            result = tabular(rows)
         if self.truncated and self.total_count is not None:
             result += (
                 f"\n({len(self.spawns)} of {self.total_count} shown — use --limit to see more)"

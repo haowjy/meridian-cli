@@ -20,7 +20,6 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.formatting import tabular
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
@@ -106,6 +105,7 @@ from .models import (
     SpawnSubagentsOutput,
     SpawnWaitInput,
     SpawnWaitMultiOutput,
+    format_spawn_identity_table,
 )
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
@@ -1559,17 +1559,19 @@ def _emit_wait_set(
     sink: OutputSink,
 ) -> None:
     """Print the wait set table before blocking."""
-    rows = [["spawn", "agent", "model", "status", "desc"]]
+    entries: list[SpawnListEntry] = []
     for spawn_id in spawn_ids:
         row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-        rows.append(
-            [
-                spawn_id,
-                (row.agent or "-") if row else "-",
-                (row.model or "-") if row else "-",
-                row.status if row else "unknown",
-                (row.desc or "-") if row else "-",
-            ]
+        entries.append(
+            SpawnListEntry(
+                spawn_id=spawn_id,
+                agent=row.agent if row else None,
+                model=(row.model or "") if row else "",
+                status=row.status if row else "unknown",
+                desc=_spawn_display_label(row) if row else None,
+                duration_secs=None,
+                cost_usd=None,
+            )
         )
 
     header = f"Waiting for {len(spawn_ids)} pending spawn(s)"
@@ -1577,7 +1579,10 @@ def _emit_wait_set(
         header += f" for chat {chat_id}"
     header += ":"
 
-    table = "\n".join(f"  {line}" for line in tabular(rows).splitlines())
+    table = "\n".join(
+        f"  {line}"
+        for line in format_spawn_identity_table(entries, include_duration=False).splitlines()
+    )
     sink.status(f"{header}\n{table}")
 
 
