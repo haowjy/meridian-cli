@@ -32,8 +32,9 @@ warns that Mars < 0.18 does not carry `network`, projects no network setting, an
 each harness at its native default. Upgrade Mars before relying on a profile `network` value.
 
 Replace Codex `harness-overrides.codex.sandbox_workspace_write.network_access` with the
-portable profile field. The native key is deprecated in this release and still wins over
-the projected value; it becomes reserved and skipped in the following release.
+portable profile field. A well-formed boolean native value is deprecated in this release
+and still wins over the projected value; invalid values are ignored. The key becomes
+reserved and skipped in the following release.
 
 ## Sandboxed child delegation
 

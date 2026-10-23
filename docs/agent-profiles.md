@@ -222,13 +222,14 @@ harness-overrides:
 Meridian-owned Codex settings win: native entries that collide with its model, effort,
 sandbox, approval, writable-root, tool-switch, agent, feature, or notification config are
 skipped. For this compatibility release only,
-`sandbox_workspace_write.network_access` is an exception: Meridian warns, applies it after
-the profile projection, and the native value wins. It becomes reserved and skipped like
-`writable_roots` in the following release. A non-boolean value gets a separate warning and
-Codex may reject it; Meridian does not reinterpret it as `allow`. Meridian does not synthesize Codex MCP config,
+`sandbox_workspace_write.network_access` is an exception: Meridian warns, applies a
+well-formed boolean after the profile projection, and that native value wins. It becomes
+reserved and skipped like `writable_roots` in the following release. A non-boolean,
+unencodable, or unaddressable value is warned, reported as ignored, and does not suppress
+the portable profile projection. Meridian does not synthesize Codex MCP config,
 so `mcp_servers.*` entries pass through like other native config. A key segment containing
 `.`, `=`, whitespace, or quotes cannot be addressed by Codex's `-c` syntax and is reported
-as unsupported. `--dry-run` shows each applied or skipped key, for example
+as unsupported and ignored. `--dry-run` shows each applied or skipped key, for example
 `[native] native_config: sandbox_workspace_write.network_access = true -> -c sandbox_workspace_write.network_access=true`.
 Claude, OpenCode, Pi, and Cursor do not apply native config; their report lists the key
 names as `[unsupported] native_config: ... -> not applied for <Harness>`.
