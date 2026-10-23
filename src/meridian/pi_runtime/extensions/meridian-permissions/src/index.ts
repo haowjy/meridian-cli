@@ -8,10 +8,6 @@ import { basename, dirname, isAbsolute, parse, resolve, sep } from "node:path";
 const POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY";
 const DENIAL_PREFIX = "Blocked by Meridian policy: ";
 const SIMPLE_COMMAND_REASON = `${DENIAL_PREFIX}restricted bash accepts only simple commands; run simple commands without expansion, redirection, or backgrounding.`;
-const COMPLETION_COMMANDS = new Set([
-  "meridian spawn done",
-  "meridian spawn rearm",
-]);
 const PATH_TOOLS = new Set(["read", "edit", "write", "grep", "find", "ls"]);
 const SHELL_RESERVED_WORDS = new Set([
   "!",
@@ -49,7 +45,7 @@ export type PermissionRule = {
 export type PermissionPolicy = {
   version: 1;
   rules: PermissionRule[];
-  completion_commands: string[];
+  meridian_commands: { command: string; match: "exact" | "prefix" }[];
   headless_reject_reason: string;
   // Refuse a bash command that does not split into simple commands. Meridian sets it when
   // such a command could be refused without matching a scoped rule (an allowlist, or an
@@ -71,8 +67,14 @@ type RankedDecision = PermissionDecision & {
 type SplitResult = { commands: string[]; complete: boolean };
 type ShellWord = { value: string; quoted: boolean };
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+function isMeridianCommandGrant(
+  value: unknown,
+): value is { command: string; match: "exact" | "prefix" } {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { command?: unknown; match?: unknown };
+  return typeof candidate.command === "string"
+    && candidate.command.startsWith("meridian ")
+    && ["exact", "prefix"].includes(String(candidate.match));
 }
 
 function parsePolicy(raw: string | undefined): PermissionPolicy | undefined {
@@ -84,11 +86,11 @@ function parsePolicy(raw: string | undefined): PermissionPolicy | undefined {
   if (
     policy.version !== 1
     || !Array.isArray(policy.rules)
-    || !isStringArray(policy.completion_commands)
+    || !Array.isArray(policy.meridian_commands)
     || typeof policy.headless_reject_reason !== "string"
     || !policy.headless_reject_reason.trim()
     || typeof policy.bash_fail_closed !== "boolean"
-    || policy.completion_commands.some((command) => !COMPLETION_COMMANDS.has(command))
+    || policy.meridian_commands.some((command) => !isMeridianCommandGrant(command))
   ) {
     throw new Error("Pi permission policy has an unsupported shape");
   }
@@ -354,11 +356,10 @@ function callDetail(tool: string, input: Record<string, unknown>): string {
   return rawScopeValue(tool, input) ?? tool;
 }
 
-function isCompletionCommand(policy: PermissionPolicy, command: string): boolean {
-  return policy.completion_commands.some((candidate) => {
-    const escaped = candidate.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
-    return new RegExp(`^${escaped}(?:[ \\t]+[A-Za-z0-9_.-]+)*$`, "u").test(command);
-  });
+function isMeridianCommand(policy: PermissionPolicy, command: string): boolean {
+  return policy.meridian_commands.some((candidate) => candidate.match === "exact"
+    ? command === candidate.command
+    : command === candidate.command || command.startsWith(`${candidate.command} `));
 }
 
 export function decideToolCall(
@@ -384,8 +385,8 @@ export function decideToolCall(
       : undefined;
   }
 
-  if (split.commands.length === 1 && isCompletionCommand(policy, split.commands[0])) {
-    return { action: "allow", detail, reason: "Meridian completion command" };
+  if (split.commands.length === 1 && isMeridianCommand(policy, split.commands[0])) {
+    return { action: "allow", detail, reason: "Meridian platform command" };
   }
   const decisions = split.commands.map(
     (command) => policyDecision(policy, tool, command, detail, workingDirectory),

@@ -126,7 +126,11 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
-from .spawn_guidance import build_guidance_blocks, build_spawn_usage_contract
+from .spawn_guidance import (
+    build_guidance_blocks,
+    build_spawn_usage_contract,
+    has_spawn_capability,
+)
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
 
@@ -254,9 +258,7 @@ class LaunchContext:
     def enforcement_report(self) -> EnforcementReport:
         """What this launch's harness enforces from the permission policy."""
 
-        return get_harness_bundle(self.harness.id).projections.permission_report(
-            self.binding.spec
-        )
+        return get_harness_bundle(self.harness.id).projections.permission_report(self.binding.spec)
 
 
 @dataclass(frozen=True)
@@ -274,6 +276,7 @@ class PreparedLaunchSurface:
     content: PreparedLaunchContent
     runtime_seeds: PreparedLaunchRuntimeSeeds
     profile_tool_rules: tuple[ToolRule, ...]
+    has_spawn_capability: bool
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
     # Original launch request preserved for LaunchContext.request compatibility.
@@ -908,9 +911,7 @@ def _resolve_session_continuation(
             or request.session.continue_source_ref
             or "the source chat"
         )
-        raise ValueError(
-            cross_harness_continue_error(chat_ref, requested_harness, str(harness.id))
-        )
+        raise ValueError(cross_harness_continue_error(chat_ref, requested_harness, str(harness.id)))
     if not harness.capabilities.supports_session_resume:
         raise ValueError(f"{harness.id} cannot resume sessions")
     if requested_continue_fork and not harness.capabilities.supports_session_fork:
@@ -1502,6 +1503,7 @@ def prepare_launch_surface(
             seed_session_args=seed_session_args,
         ),
         profile_tool_rules=profile_tool_rules,
+        has_spawn_capability=has_spawn_capability(profile),
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1678,6 +1680,7 @@ def bind_launch_context(
         profile_tool_rules=profile_tool_rules,
         platform_tool_rules=resolved_request.platform_tool_rules,
         spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
+        has_spawn_capability=prepared.has_spawn_capability,
         native_agent_copy=native_agent_copy,
         allow_builtin_agents=allow_builtin_agents,
     )
@@ -1686,9 +1689,7 @@ def bind_launch_context(
         sandbox=resolved_request.execution_policy.sandbox,
         sandbox_write_roots=tuple(
             root.as_posix()
-            for root in _dedupe_roots_in_order(
-                (resolved_control_root, *workspace_authority_roots)
-            )
+            for root in _dedupe_roots_in_order((resolved_control_root, *workspace_authority_roots))
         ),
         approval=resolved_request.execution_policy.approval or "default",
         platform_rules=platform_rules,
@@ -1848,13 +1849,21 @@ def bind_launch_context(
         )
     )
     intent = harness.plan_native_identity(
-        run_params, preforked_session_id=bindings.forked_harness_session_id)
+        run_params, preforked_session_id=bindings.forked_harness_session_id
+    )
     if intent is not None:
-        spec = spec.model_copy(update={"native_identity": harness.finalize_native_identity(
-            intent, child_env=env, child_cwd=child_cwd,
-            session=resolved_request.session, spawn_id=SpawnId(bindings.spawn_id),
-            interactive=run_params.interactive,
-        )})
+        spec = spec.model_copy(
+            update={
+                "native_identity": harness.finalize_native_identity(
+                    intent,
+                    child_env=env,
+                    child_cwd=child_cwd,
+                    session=resolved_request.session,
+                    spawn_id=SpawnId(bindings.spawn_id),
+                    interactive=run_params.interactive,
+                )
+            }
+        )
     environment = ResolvedLaunchEnvironment.build(
         child_context_env=child_context_env,
         plan_env=dict(bindings.plan_overrides),

@@ -340,32 +340,30 @@ def compile_opencode_permissions(
     final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
 
     for platform in policy.platform_rules:
-        if platform.kind != "completion-commands":
+        if platform.kind != "meridian-commands":
             continue
         action = _native_action("bash", version=resolved_version)
         entries: list[OpenCodePermissionRule] = []
         kept: list[OpenCodePermissionRule] = []
         for command in platform.commands:
-            pair = tuple(
+            command_entries = tuple(
                 OpenCodePermissionRule(action=action, resource=resource, effect="allow")
-                for resource in (command, f"{command} *")
+                for resource in (
+                    (command.command,) if command.match == "exact" else (f"{command.command} *",)
+                )
             )
-            entries.extend(pair)
+            entries.extend(command_entries)
             stricter = [
                 existing
-                for entry in pair
+                for entry in command_entries
                 if (existing := final_by_key.get((entry.action, entry.resource))) is not None
                 and existing.effect != "allow"
             ]
             if stricter:
-                # OpenCode's ``cmd *`` pattern also matches bare ``cmd``. Treat the two
-                # spellings as one exception so either profile restriction covers both.
                 strictest = max(stricter, key=lambda entry: _STRICTNESS[entry.effect])
-                pair_keys = {(entry.action, entry.resource) for entry in pair}
+                command_keys = {(entry.action, entry.resource) for entry in command_entries}
                 ordered = [
-                    entry
-                    for entry in ordered
-                    if (entry.action, entry.resource) not in pair_keys
+                    entry for entry in ordered if (entry.action, entry.resource) not in command_keys
                 ]
                 replacements = [
                     OpenCodePermissionRule(
@@ -373,31 +371,26 @@ def compile_opencode_permissions(
                         resource=entry.resource,
                         effect=strictest.effect,
                     )
-                    for entry in pair
+                    for entry in command_entries
                 ]
                 ordered.extend(replacements)
                 final_by_key.update(
-                    {
-                        (entry.action, entry.resource): entry
-                        for entry in replacements
-                    }
+                    {(entry.action, entry.resource): entry for entry in replacements}
                 )
                 kept.extend(replacements)
                 continue
-            for entry in pair:
+            for entry in command_entries:
                 if (entry.action, entry.resource) not in final_by_key:
                     ordered.append(entry)
                     final_by_key[(entry.action, entry.resource)] = entry
-        rendered = ", ".join(
-            f"{entry.action}({entry.resource})" for entry in entries
-        )
+        rendered = ", ".join(f"{entry.action}({entry.resource})" for entry in entries)
         if kept:
             lines.append(
                 ReportLine(
                     platform_element(platform),
                     "partial",
                     f"permission {rendered}: allow; an overlapping profile rule keeps its "
-                    "command pair stricter",
+                    "command match stricter",
                 )
             )
         else:

@@ -50,7 +50,17 @@ _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
 ALLOWLIST_ORIGIN = "allowlist"
 
 
-type PlatformRuleKind = Literal["builtin-agents", "completion-commands"]
+type PlatformRuleKind = Literal["builtin-agents", "meridian-commands"]
+type CommandMatch = Literal["exact", "prefix"]
+
+
+class PlatformCommand(BaseModel):
+    """One Meridian-owned shell command grant."""
+
+    model_config = ConfigDict(frozen=True)
+
+    command: str
+    match: CommandMatch
 
 
 class PlatformRule(BaseModel):
@@ -58,16 +68,15 @@ class PlatformRule(BaseModel):
 
     Ordinary agent/task denies are ``ToolRule`` values named by Mars. ``builtin-agents``
     controls harness mechanisms that cannot be expressed as such a rule. The
-    ``completion-commands`` allow carries the shell commands a child runs to confirm or
-    reject its own completion (``meridian spawn done`` / ``rearm``), which must stay runnable
-    under any allowlist or deny of the shell. A harness spells each command and its argument
-    form in its own scope syntax.
+    ``meridian-commands`` carries the shell commands Meridian itself makes available under
+    any profile allowlist: completion signals, read operations, and child launch commands
+    when the profile can spawn. A harness spells exact and prefix matches in its own syntax.
     """
 
     model_config = ConfigDict(frozen=True)
 
     kind: PlatformRuleKind
-    commands: tuple[str, ...] = ()
+    commands: tuple[PlatformCommand, ...] = ()
 
 
 class PermissionPolicy(BaseModel):
@@ -150,8 +159,9 @@ def rule_element(rule: ToolRule) -> str:
 
 
 def platform_element(rule: PlatformRule) -> str:
-    if rule.kind == "completion-commands":
-        return f"platform: allow completion commands ({', '.join(rule.commands)})"
+    if rule.kind == "meridian-commands":
+        commands = ", ".join(f"{command.match}: {command.command}" for command in rule.commands)
+        return f"platform: allow Meridian commands ({commands})"
     return "platform: deny built-in agents"
 
 
@@ -159,9 +169,7 @@ def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
     """What the report says about a rule the compile left unreported."""
 
     element = rule_element(rule)
-    satisfied_status: ReportStatus = (
-        "platform" if rule.origin == PLATFORM_ORIGIN else "native"
-    )
+    satisfied_status: ReportStatus = "platform" if rule.origin == PLATFORM_ORIGIN else "native"
     if rule.native_status == "unknown":
         return ReportLine(
             element,
@@ -405,8 +413,10 @@ def build_permission_policy(
 __all__ = [
     "ALLOWLIST_ORIGIN",
     "ApprovalMode",
+    "CommandMatch",
     "EnforcementReport",
     "PermissionPolicy",
+    "PlatformCommand",
     "PlatformRule",
     "ReportLine",
     "ReportStatus",

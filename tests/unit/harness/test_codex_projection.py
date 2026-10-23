@@ -7,6 +7,7 @@ from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand, PlatformRule
 
 
 def _spec(*, interactive: bool) -> ResolvedLaunchSpec:
@@ -45,3 +46,30 @@ def test_noninteractive_codex_app_server_does_not_inject_idle_notify() -> None:
     )
 
     assert not any(argument.startswith("notify=") for argument in command)
+
+
+def test_codex_report_names_unsupported_meridian_command_match_forms() -> None:
+    from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+
+    spec = _spec(interactive=False).model_copy(
+        update={
+            "permission_policy": PermissionPolicy(
+                platform_rules=(
+                    PlatformRule(
+                        kind="meridian-commands",
+                        commands=(
+                            PlatformCommand(command="meridian task-dir", match="exact"),
+                            PlatformCommand(command="meridian spawn list", match="prefix"),
+                        ),
+                    ),
+                )
+            )
+        }
+    )
+
+    _, report = compile_codex_permissions(spec)
+
+    line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
+    assert line.status == "unsupported"
+    assert "exact 'meridian task-dir'" in line.note
+    assert "prefix 'meridian spawn list'" in line.note

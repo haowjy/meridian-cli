@@ -110,9 +110,7 @@ def _codex_report(
                 )
             )
         elif switch is not None and getattr(permissions, switch[0]) != switch[1]:
-            lines.append(
-                ReportLine(rule_element(rule), "partial", "overridden by a narrower rule")
-            )
+            lines.append(ReportLine(rule_element(rule), "partial", "overridden by a narrower rule"))
         elif switch is not None:
             lines.append(ReportLine(rule_element(rule), "native", switch[2]))
         elif rule.pattern is not None and rule.capability in {"bash", "web", "web_search", "image"}:
@@ -149,15 +147,19 @@ def _codex_report(
                     "-c features.multi_agent_v2=false -c agents.max_depth=0",
                 )
             )
-        elif platform.kind == "completion-commands":
+        elif platform.kind == "meridian-commands":
+            commands = ", ".join(
+                f"{command.match} {command.command!r}" for command in platform.commands
+            )
             lines.append(
                 ReportLine(
                     platform_element(platform),
                     "unsupported",
-                    "Codex cannot grant single shell commands; with the shell off they cannot run"
+                    f"Codex cannot grant shell command matches ({commands}); with the shell off "
+                    "they cannot run"
                     if permissions.shell_tool is False
-                    else "Codex cannot grant single shell commands; they run as ordinary "
-                    "shell calls, subject to its sandbox and approval policy",
+                    else f"Codex cannot grant shell command matches ({commands}); they run as "
+                    "ordinary shell calls, subject to its sandbox and approval policy",
                 )
             )
     if permissions.sandbox_mode is not None:

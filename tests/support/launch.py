@@ -141,6 +141,7 @@ def _direct_prepared_surface(
             )
         ),
         profile_tool_rules=(),
+        has_spawn_capability=False,
         model_selection=None,
         launch_request=resolved_request,
     )

@@ -8,7 +8,12 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
-from meridian.lib.safety.policy import PermissionPolicy, PlatformRule, build_permission_policy
+from meridian.lib.safety.policy import (
+    PermissionPolicy,
+    PlatformCommand,
+    PlatformRule,
+    build_permission_policy,
+)
 from meridian.lib.tools import PLATFORM_ORIGIN
 from tests.support.launch import tool_rule
 
@@ -89,6 +94,34 @@ def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent()
         "Bash(meridian spawn *)",
     )
     assert "Agent" in _tool_flag_entries(command, "--disallowedTools")
+
+
+def test_claude_projection_spells_exact_and_prefix_meridian_commands() -> None:
+    platform = PlatformRule(
+        kind="meridian-commands",
+        commands=(
+            PlatformCommand(command="meridian task-dir", match="exact"),
+            PlatformCommand(command="meridian spawn list", match="prefix"),
+        ),
+    )
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(platform_rules=(platform,)),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    assert _settings_permission_entries(command, "allow") == (
+        "Bash(meridian task-dir)",
+        "Bash(meridian spawn list)",
+        "Bash(meridian spawn list *)",
+    )
+    assert "Bash(meridian task-dir *)" not in _settings_permission_entries(command, "allow")
+    _, report = compile_claude_permissions(spec)
+    line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
+    assert "exact: meridian task-dir" in line.element
+    assert "prefix: meridian spawn list" in line.element
 
 
 def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:

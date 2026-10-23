@@ -94,8 +94,9 @@ the ordinary rule sequence with `origin="platform"`; compiles must not keep a se
 native-name table. A platform deny overrides the profile's rules for its capability rather
 than taking part in specificity: Claude turns those rules into denies (else its plain deny
 beside a scoped allow would compile as a gated allowlist), and OpenCode emits the deny after
-every profile rule in place of the profile's entries for that action. `builtin-agents` and `completion-commands` remain separate platform mechanisms because
-they are not ordinary tool denies.
+every profile rule in place of the profile's entries for that action. `builtin-agents` and
+`meridian-commands` remain separate platform mechanisms because they are not ordinary tool
+denies.
 
 | Harness | Compile result | Spelled by |
 |---|---|---|
@@ -114,8 +115,8 @@ plain `Write` (the write allowlist's deny) and a plain `Edit` (`edit: deny`) bot
 The compile therefore emits no such plain rule (a per-capability allowlist arrives as one,
 written by the policy) and gates the capability through the permission mode instead: a
 mode in which unmatched calls need approval, which a headless spawn refuses. `--tools`
-under a whole allowlist is `PermissionPolicy.allowed_tools` plus Bash for the completion
-commands: the tools, not the permission spellings, so `write(src/*)` keeps `Write` callable.
+under a whole allowlist is `PermissionPolicy.allowed_tools` plus Bash for the Meridian command
+grants: the tools, not the permission spellings, so `write(src/*)` keeps `Write` callable.
 `approval: auto|never|yolo` gates with `acceptEdits` (edits keep running; it also runs file
 commands such as `touch`, `rm` and redirects inside the working directories), unless an
 edit capability is gated, which needs `manual`; `default` and `confirm` gate with `manual`.
@@ -135,7 +136,10 @@ order shadows or the compile left out is `partial`.
 When Claude's sandbox is enabled, the settings JSON always spells
 `autoAllowBashIfSandboxed`: true only for an unrestricted `approval: auto`, false for
 allowlists, gates and `ask`. Omitting false lets Claude's sandbox auto-approval accept
-unmatched Bash calls before the mode can refuse them, which defeats the allowlist.
+unmatched Bash calls before the mode can refuse them, which defeats the allowlist. A launch
+with spawn capability also spells `excludedCommands = ["meridian spawn *"]`; Claude runs a
+matching standalone command wholly outside the Bash sandbox. Compound commands stay inside
+and the spawn operation refuses them when it sees Claude's `SANDBOX_RUNTIME=1` marker.
 
 Codex compiles exact unscoped `bash`, `web`/`web_search` (the narrower wins), and `image` allow/deny rules to process-level
 switches. Its scoped rules, `ask`, and per-capability allowlists have no native carrier and
@@ -156,18 +160,19 @@ says something. The compile reports whichever branch applied as an
 `approval: default` line, which follows the policy elements since `default` approval is
 not one.
 
-A compile that restricts the shell must name the `completion-commands` platform rule's
-`commands` (`meridian spawn done` / `rearm`) in its own scope syntax, where a broad `bash` or
-`*` deny does not shadow them; otherwise the child cannot answer the completion confirmation.
-Every spawn carries the rule. OpenCode adds `bash(<cmd>)` and `bash(<cmd> *)` after its
-own `*` default, so the rule never makes a map on its own. Claude adds `Bash(<cmd>)` and
-`Bash(<cmd> *)` to `settings.permissions.allow` on every spawn (Claude's default mode asks
-before commands that change files, and a spawn has no one to answer) and, for a whole
-allowlist, keeps Bash available through `--tools`; a plain `bash` deny or ask is gated
-rather than emitted so it cannot shadow them, and a scoped profile deny or ask that covers
-them still wins and makes the platform line partial. Pi's permissions extension grants
-only the whole command with optional `[A-Za-z0-9_.-]+` arguments, and loads for them only when some rule could restrict the shell; Codex cannot scope
-its shell and reports the rule `unsupported`.
+A compile that restricts the shell must spell every `meridian-commands` entry in its own
+scope syntax, where a broad `bash` or `*` deny does not shadow it. Completion entries are
+present on every spawn. Each entry declares exact or prefix matching. OpenCode maps exact
+entries to `shell(<cmd>)` and prefix entries to `shell(<cmd> *)` after its own `*` default.
+Claude maps an exact entry to `Bash(<cmd>)`, and a prefix to both `Bash(<cmd>)` and
+`Bash(<cmd> *)`; under a whole allowlist it also keeps Bash available through `--tools`.
+A plain `bash` deny or ask is gated rather than emitted so it cannot shadow the commands;
+a scoped profile deny or ask that covers one still wins and makes the platform line partial.
+Pi's permissions extension receives each command and match kind and evaluates the same exact
+or token-boundary prefix rule. Codex cannot scope its shell and reports the rule
+`unsupported`, including the exact/prefix list it cannot grant. Bind also carries the
+profile's spawn capability on the prepared launch so later command selection does not need to
+reconstruct a profile from a continue or fork snapshot.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
 (`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying
