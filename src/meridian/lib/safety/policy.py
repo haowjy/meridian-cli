@@ -40,6 +40,9 @@ type ApprovalMode = Literal[
 _SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
     {"default", "read-only", "workspace-write", "danger-full-access"}
 )
+CONSTRAINED_SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
+    {"read-only", "workspace-write"}
+)
 _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
     {"default", "auto", "never", "yolo", "confirm"}
 )
@@ -61,6 +64,7 @@ class PlatformCommand(BaseModel):
 
     command: str
     match: CommandMatch
+    runs_outside_sandbox: bool = False
 
 
 class PlatformRule(BaseModel):
@@ -96,12 +100,28 @@ class PermissionPolicy(BaseModel):
 
     rules: tuple[ToolRule, ...] = ()
     platform_rules: tuple[PlatformRule, ...] = ()
-    has_spawn_capability: bool = False
     sandbox: SandboxMode = "default"
     # Workspace roots whose writes a read-only native sandbox must block. Bind keeps
     # these separate from projected runtime/temp roots, which must remain writable.
     sandbox_write_roots: tuple[str, ...] = Field(default=(), exclude=True)
     approval: ApprovalMode = "default"
+
+    @property
+    def outside_sandbox_commands(self) -> tuple[PlatformCommand, ...]:
+        """Platform commands whose harness projection escapes native confinement."""
+
+        return tuple(
+            command
+            for rule in self.platform_rules
+            for command in rule.commands
+            if command.runs_outside_sandbox
+        )
+
+    @property
+    def has_spawn_capability(self) -> bool:
+        """Whether this policy carries the canonical child-launch command grant."""
+
+        return bool(self.outside_sandbox_commands)
 
     @property
     def is_allowlist(self) -> bool:
@@ -397,7 +417,6 @@ def build_permission_policy(
     approval: str = "default",
     platform_rules: tuple[PlatformRule, ...] = (),
     sandbox_write_roots: tuple[str, ...] = (),
-    has_spawn_capability: bool = False,
 ) -> PermissionPolicy:
     """Build the policy from Mars's resolved tool rules and the execution policy.
 
@@ -414,7 +433,6 @@ def build_permission_policy(
         # allowlist became a rule.
         rules=(*denies, *resolved),
         platform_rules=platform_rules,
-        has_spawn_capability=has_spawn_capability,
         sandbox=_parse_sandbox_value(sandbox),
         sandbox_write_roots=tuple(dict.fromkeys(root for root in sandbox_write_roots if root)),
         approval=_parse_approval_value(approval),
@@ -423,6 +441,7 @@ def build_permission_policy(
 
 __all__ = [
     "ALLOWLIST_ORIGIN",
+    "CONSTRAINED_SANDBOX_MODES",
     "ApprovalMode",
     "CommandMatch",
     "EnforcementReport",

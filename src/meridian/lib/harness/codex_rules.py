@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import shlex
 from collections.abc import Mapping
 from pathlib import Path
 
 from meridian.lib.harness.codex_rollout import resolve_codex_home
 from meridian.lib.launch.launch_types import CodexRuntimeResolution
+from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.platform.atomic import AtomicReplaceDurabilityError, atomic_write_text
 
-MERIDIAN_RULES_FILE_CONTENT = (
-    "# This file is owned and rewritten by Meridian.\n"
-    'prefix_rule(pattern=["meridian", "spawn"], decision="allow")\n'
+MERIDIAN_RULES_FILE_CONTENT = "".join(
+    (
+        "# This file is owned and rewritten by Meridian.\n",
+        "prefix_rule("
+        f"pattern={json.dumps(shlex.split(SPAWN_PLATFORM_COMMAND.command))}, "
+        'decision="allow")\n',
+    )
 )
 
 

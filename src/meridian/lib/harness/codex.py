@@ -81,6 +81,7 @@ from meridian.lib.launch.constants import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
+from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def materialize_codex_spec(
 ) -> ResolvedLaunchSpec:
     """Project Meridian's execpolicy rule for a real constrained Codex launch."""
 
-    if spec.permission_policy.sandbox not in {"read-only", "workspace-write"}:
+    if spec.permission_policy.sandbox not in CONSTRAINED_SANDBOX_MODES:
         return spec
     return spec.model_copy(
         update={

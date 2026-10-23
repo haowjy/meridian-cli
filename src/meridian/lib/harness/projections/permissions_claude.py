@@ -399,10 +399,17 @@ def _available_tools(policy: PermissionPolicy) -> tuple[str, ...]:
     return tuple(dedupe_nonempty((*policy.allowed_tools, *meridian_tools)))
 
 
+def _outside_sandbox_commands(policy: PermissionPolicy) -> tuple[str, ...]:
+    return tuple(
+        f"{command.command} *" if command.match == "prefix" else command.command
+        for command in policy.outside_sandbox_commands
+    )
+
+
 def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSandboxSettings | None:
     if policy.sandbox == "default":
         return (
-            ClaudeSandboxSettings(excluded_commands=("meridian spawn *",))
+            ClaudeSandboxSettings(excluded_commands=_outside_sandbox_commands(policy))
             if policy.has_spawn_capability
             else None
         )
@@ -418,7 +425,7 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
             and not channels.gates
             and not channels.ask
         ),
-        excluded_commands=("meridian spawn *",) if policy.has_spawn_capability else (),
+        excluded_commands=_outside_sandbox_commands(policy),
     )
 
 

@@ -8,6 +8,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
+from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
     PermissionPolicy,
     PlatformCommand,
@@ -156,7 +157,9 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
-            has_spawn_capability=True,
+            platform_rules=(
+                PlatformRule(kind="meridian-commands", commands=(SPAWN_PLATFORM_COMMAND,)),
+            ),
             sandbox="workspace-write",
         ),
     )
@@ -174,7 +177,11 @@ def test_claude_projection_excludes_spawn_without_overriding_user_sandbox_mode()
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
-        permission_policy=PermissionPolicy(has_spawn_capability=True),
+        permission_policy=PermissionPolicy(
+            platform_rules=(
+                PlatformRule(kind="meridian-commands", commands=(SPAWN_PLATFORM_COMMAND,)),
+            )
+        ),
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
@@ -188,7 +195,9 @@ def test_claude_projection_does_not_exclude_spawn_when_sandbox_is_disabled() -> 
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
-            has_spawn_capability=True,
+            platform_rules=(
+                PlatformRule(kind="meridian-commands", commands=(SPAWN_PLATFORM_COMMAND,)),
+            ),
             sandbox="danger-full-access",
         ),
     )

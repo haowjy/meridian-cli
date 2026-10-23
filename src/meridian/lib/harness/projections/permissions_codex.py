@@ -16,6 +16,7 @@ from meridian.lib.harness.projections.native_config import project_codex_native_
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
+    CONSTRAINED_SANDBOX_MODES,
     ApprovalMode,
     EnforcementReport,
     PermissionPolicy,
@@ -152,7 +153,7 @@ def _codex_report(
                 f"{command.match} {command.command!r}" for command in platform.commands
             )
             rules_error = spec.codex_runtime.rules_file_error
-            constrained_sandbox = policy.sandbox in {"read-only", "workspace-write"}
+            constrained_sandbox = policy.sandbox in CONSTRAINED_SANDBOX_MODES
             if constrained_sandbox and rules_error is not None:
                 note = (
                     "Meridian could not write its Codex rules file, so commands remain subject "
@@ -187,7 +188,7 @@ def _codex_report(
     if permissions.sandbox_mode is not None:
         sandbox_note = f"sandbox_mode={permissions.sandbox_mode}"
         sandbox_status = "native"
-        if policy.sandbox in {"read-only", "workspace-write"}:
+        if policy.sandbox in CONSTRAINED_SANDBOX_MODES:
             rules_error = spec.codex_runtime.rules_file_error
             rules_path = spec.codex_runtime.rules_file_path or "$CODEX_HOME/rules/meridian.rules"
             if rules_error is None:
