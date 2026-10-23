@@ -10,7 +10,8 @@ omitted field resolves to `allow`; built-in web tools remain controlled separate
 This changes both Claude and Codex. Claude `read-only` and `workspace-write` previously
 left its sandbox network allowlist empty; Codex `workspace-write` used its native network-off
 default. Meridian now projects the cross-harness `allow` default for both when `network` is
-omitted. To keep an existing profile offline, set:
+omitted. Continued sessions whose launch-policy snapshot predates this change also follow
+the new default. To keep an existing profile offline, set:
 
 ```yaml
 sandbox: workspace-write
