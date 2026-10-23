@@ -164,6 +164,21 @@ only request reevaluation; they are not completion authority. After event EOF, t
 waiter stops event reads but continues refresh, poll, stabilization, validation, nudge,
 and deadline arbitration until the candidate is accepted or rejected.
 
+The retained candidate carries its report text. When a successful terminal turn becomes
+the first candidate, the drain loop captures that turn's text
+(`AttemptFacts.completion_text`); a granted `rearm` clears it, and the next candidate
+captures again. Finalization (`launch/report.py`) uses a `report.md` the child wrote
+first, then that captured text, then later assistant text, so a hold child's reply to
+the confirmation nudge, written after `done`, is not the report. The hold nudge
+(`_HoldProfile._nudge_message`) says so: the previous reply is kept; run
+`meridian spawn done` if it is final, otherwise `meridian spawn rearm` before doing more
+work. Pi differs: its reply to its own nudge is the report, and
+`PI_COMPLETION_NUDGE_MESSAGE` says that instead. Keep each nudge's wording matched to
+what its plan retains, and keep report rules out of `launch/spawn_guidance.py`, whose
+system-prompt text cannot know the plan. Do not switch to "latest text wins": a child that answers the nudge with
+"Done." would replace its real report, and a confirmation turn cannot be told apart from
+continued work without harness-specific tool tracking.
+
 ### DrainOutcome Classification
 
 The drain loop classifies its outcome, but does not own publication.
