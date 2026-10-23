@@ -89,6 +89,11 @@ cross-process contention, and adapter-specific support in `opencode.py`,
 For spawn state, prefer state helpers (`create_lifecycle_service`,
 `spawn_store.get_spawn`) or direct `state.json` assertions.
 
+Control-socket isolation must cross interpreter boundaries: the root fixture's
+patch does not reach subprocesses. Apply the private socket root in every
+test-launched Meridian interpreter. See [the crash-test driver](support/launch_lock_driver.py)
+and [the foreground CLI helper](integration/cli/test_spawn_report.py) for the two entrypoint patterns.
+
 ### Fake Fidelity
 
 When exit classification depends on event ordering, fakes must reproduce the real
