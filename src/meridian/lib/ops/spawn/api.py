@@ -54,6 +54,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
+from meridian.lib.platform.pid_namespace import current_pid_namespace
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_project_paths
@@ -119,7 +120,7 @@ from .query import (
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
 _WAIT_POLL_INTERVAL_SECS = 0.25
-_SANDBOX_ENV_MARKERS: tuple[tuple[str, str], ...] = (("SANDBOX_RUNTIME", "1"),)
+_LAUNCHER_PID_NAMESPACE_ENV = "_MERIDIAN_LAUNCHER_PID_NAMESPACE"
 
 
 @dataclass(frozen=True)
@@ -136,7 +137,15 @@ def _looks_like_spawn_ref(ref: str) -> bool:
 def _refuse_sandboxed_spawn_launch(*, dry_run: bool) -> None:
     """Fail before launch state is touched when a compound command kept Meridian sandboxed."""
 
-    if dry_run or not any(os.environ.get(name) == value for name, value in _SANDBOX_ENV_MARKERS):
+    if dry_run:
+        return
+    launcher_pid_namespace = os.environ.get(_LAUNCHER_PID_NAMESPACE_ENV, "").strip()
+    if not launcher_pid_namespace:
+        return
+    current_namespace = current_pid_namespace()
+    if current_namespace is None:
+        return
+    if launcher_pid_namespace == current_namespace:
         return
     raise ValueError(
         "Cannot launch a child spawn from inside the parent shell sandbox. "

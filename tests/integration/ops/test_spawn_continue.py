@@ -136,10 +136,11 @@ def test_spawn_continue_requires_recorded_session(tmp_path: Path) -> None:
     assert (exc.value.ref, exc.value.reason) == ("p11", "unbound")
 
 
-def test_spawn_continue_refuses_parent_shell_sandbox_before_source_reads(
+def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SANDBOX_RUNTIME", "1")
+    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
+    monkeypatch.setattr(spawn_api, "current_pid_namespace", lambda: "pid:[sandbox]")
 
     with pytest.raises(ValueError, match="standalone shell command"):
         spawn_api.spawn_continue_sync(

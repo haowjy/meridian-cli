@@ -43,6 +43,15 @@ centralized here; when maintaining an existing branch, prefer these over inline
 use it instead of `Path.home()` directly so path resolution remains explicit and
 testable.
 
+### PID Namespace
+
+`pid_namespace.current_pid_namespace()` reads `/proc/self/ns/pid` and returns
+`None` when procfs does not expose it. Launch bind records the current launcher
+identity for the harness child, replacing any inherited value; spawn create and
+continue compare it to their own identity to detect a shell command that remained
+inside a Linux sandbox PID namespace. An absent observation skips the check, which
+keeps macOS supported without a second sandbox heuristic.
+
 ## File Locking (`locking.py`)
 
 `lock_file(path)` is a context manager yielding an exclusive advisory lock.

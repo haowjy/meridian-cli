@@ -503,10 +503,12 @@ them:
   whole matching command runs outside the sandbox, including its filesystem and network
   access. Codex has no corresponding escape yet, so children cannot launch under its
   sandbox.
-- **Loud failure for compound shell calls.** A launch attempted while a known harness
-  sandbox marker is set stops with an error rather than starting a child that dies with the
-  shell. Run `meridian spawn` as a standalone shell call, without `cd ... &&`, pipes,
-  command substitution, or a leading environment assignment.
+- **Loud failure for compound shell calls.** On Linux, Meridian records the harness
+  launcher's PID namespace. A child launch attempted from a different namespace stops with
+  an error rather than starting a child that dies with the sandboxed shell. Run
+  `meridian spawn` as a standalone shell call, without `cd ... &&`, pipes, command
+  substitution, or a leading environment assignment. The check is skipped where procfs does
+  not expose PID namespaces, including macOS.
 
 The dry-run report marks platform decisions as `platform` and calls out partial or missing
 projections. Mars supplies each harness's native agent/task names in the launch bundle;

@@ -54,6 +54,7 @@ from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
 from meridian.lib.platform import IS_POSIX
+from meridian.lib.platform.pid_namespace import current_pid_namespace
 from meridian.lib.safety.policy import EnforcementReport, PermissionPolicy, build_permission_policy
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
@@ -1815,6 +1816,13 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
+    launcher_pid_namespace = current_pid_namespace()
+    if launcher_pid_namespace is None:
+        # Never propagate a namespace recorded by an ancestor when this launcher
+        # cannot observe its own (for example, on macOS without procfs).
+        child_context_env.pop("_MERIDIAN_LAUNCHER_PID_NAMESPACE", None)
+    else:
+        child_context_env["_MERIDIAN_LAUNCHER_PID_NAMESPACE"] = launcher_pid_namespace
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     resolved_agent = (resolved_request.agent or "").strip()
     if resolved_agent:

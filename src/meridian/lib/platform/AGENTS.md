@@ -12,8 +12,9 @@ best-effort legacy code; do not add or expand them.
 
 Two layers:
 
-1. **Detection and primitives** (`__init__.py`, `locking.py`, `terminate.py`) —
-   `IS_WINDOWS`, `IS_POSIX`, `get_home_path()`, file locking, process-tree teardown shim.
+1. **Detection and primitives** (`__init__.py`, `locking.py`, `pid_namespace.py`,
+   `terminate.py`) — `IS_WINDOWS`, `IS_POSIX`, `get_home_path()`, Linux PID-namespace
+   observation, file locking, process-tree teardown shim.
 
 2. **Process containment** (`process_scope/`) — ensures the full subprocess tree
    Meridian starts is killed on spawn completion, cancel, or crash. Three backends:
@@ -80,6 +81,7 @@ Existing callers work unchanged; new code should use `ScopedProcessHandle`.
 - `__init__.py` — `IS_WINDOWS`, `IS_POSIX`, `get_home_path()`, deferred POSIX proxies
 - `launch_gate.py` — pre-exec identity gate and EOF-driven guardian; close means runner death/kill
 - `locking.py` — advisory file locking plus validated lock-GC unlink primitive
+- `pid_namespace.py` — best-effort `/proc` PID-namespace identity observation
 - `process_scope/` — `ScopedProcessHandle`, `ProcessScopeSnapshot`, platform backends
 
 ## Depth

@@ -241,6 +241,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_PARENT_SPAWN_ID", "Parent spawn identifier."),
     _internal_handle("_MERIDIAN_RUNTIME_DIR", "Resolved per-project runtime directory."),
     _internal_handle("_MERIDIAN_HARNESS", "Harness identity propagated one level."),
+    _internal_handle(
+        "_MERIDIAN_LAUNCHER_PID_NAMESPACE",
+        "PID namespace of the Meridian process that launched the harness.",
+    ),
     _internal_handle("_MERIDIAN_GUARDRAIL_RUN_ID", "Guardrail run identifier."),
     _internal_handle("_MERIDIAN_GUARDRAIL_CHAT_ID", "Chat id for `meridian session log`."),
     _internal_handle("_MERIDIAN_GUARDRAIL_REPORT", "Guardrail report path."),

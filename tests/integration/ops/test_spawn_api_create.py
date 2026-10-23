@@ -307,10 +307,11 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
     assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
 
 
-def test_spawn_create_refuses_parent_shell_sandbox_before_preparation(
+def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SANDBOX_RUNTIME", "1")
+    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
+    monkeypatch.setattr(spawn_api, "current_pid_namespace", lambda: "pid:[sandbox]")
 
     result = spawn_api.spawn_create_sync(SpawnCreateInput(prompt="run"))
 
@@ -322,6 +323,15 @@ def test_spawn_create_refuses_parent_shell_sandbox_before_preparation(
     assert "`cd ... &&`" in result.message
     assert "`$()`" in result.message
     assert "`VAR=1` prefix" in result.message
+
+
+def test_spawn_create_skips_pid_namespace_check_without_procfs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
+    monkeypatch.setattr(spawn_api, "current_pid_namespace", lambda: None)
+
+    spawn_api._refuse_sandboxed_spawn_launch(dry_run=False)
 
 
 def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_error(

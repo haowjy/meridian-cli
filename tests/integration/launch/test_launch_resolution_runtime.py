@@ -80,6 +80,8 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     )
     monkeypatch.setenv("MERIDIAN_IGNORE_DIRENV", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-direnv-key")
+    monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[ancestor]")
+    monkeypatch.setattr(context_module, "current_pid_namespace", lambda: "pid:[launcher]")
     runtime = build_primary_launch_runtime(project_root=tmp_path)
     # A captured policy must not change when the ambient input disappears.
     monkeypatch.delenv("MERIDIAN_IGNORE_DIRENV")
@@ -98,6 +100,7 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     env = preview.binding.environment.final_env
     expected = override is not False
     assert env["MERIDIAN_IGNORE_DIRENV"] == str(expected).lower()
+    assert env["_MERIDIAN_LAUNCHER_PID_NAMESPACE"] == "pid:[launcher]"
     assert ("ANTHROPIC_API_KEY" not in env) == expected
 
 
