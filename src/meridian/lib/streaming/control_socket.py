@@ -29,6 +29,12 @@ UNIX_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
 _POSIX_SOCKET_ROOT = Path("/tmp")
 
 
+def socket_directory() -> Path:
+    """Return the shared per-user directory for POSIX control sockets."""
+
+    return _POSIX_SOCKET_ROOT / f"meridian-{os.getuid()}"
+
+
 def bounded_socket_path(
     runtime_root: Path,
     kind: Literal["app", "control"],
@@ -36,12 +42,11 @@ def bounded_socket_path(
 ) -> Path:
     """Return a deterministic Unix socket path below the platform limit."""
 
-    uid = os.getuid()
     identity = os.fsencode(runtime_root.resolve())
     if key is not None:
         identity += b"\0" + key.encode("utf-8")
     digest = hashlib.sha256(identity).hexdigest()[:32]
-    path = _POSIX_SOCKET_ROOT / f"meridian-{uid}" / f"{kind}-{digest}.sock"
+    path = socket_directory() / f"{kind}-{digest}.sock"
     path_length = len(os.fsencode(path))
     if path_length > UNIX_SOCKET_PATH_MAX_BYTES:
         msg = (
@@ -274,4 +279,5 @@ __all__ = [
     "bounded_socket_path",
     "control_socket_path",
     "prepare_socket_directory",
+    "socket_directory",
 ]
