@@ -284,9 +284,11 @@ def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_r
     assert result.spawn_id is None
 
 
+@pytest.mark.parametrize("operation", ["continue", "fork"])
 def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    operation: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -319,13 +321,22 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
 
     monkeypatch.setattr(spawn_api, "sweep_before_continue", _must_not_sweep)
 
-    result = spawn_api.spawn_continue_sync(
-        SpawnContinueInput(
-            spawn_id="p9250",
-            prompt="follow-up",
-            project_root=project_root.as_posix(),
+    if operation == "continue":
+        result = spawn_api.spawn_continue_sync(
+            SpawnContinueInput(
+                spawn_id="p9250",
+                prompt="follow-up",
+                project_root=project_root.as_posix(),
+            )
         )
-    )
+    else:
+        result = spawn_api.spawn_fork_sync(
+            SpawnForkInput(
+                source_ref="p9250",
+                prompt="fork",
+                project_root=project_root.as_posix(),
+            )
+        )
 
     assert result.status == "failed"
     assert result.error == "pre_init_failed"
