@@ -9,7 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before constrained Codex launches, Meridian maintains a user-wide `$CODEX_HOME/rules/meridian.rules` escape for standalone `meridian spawn ...` commands, so nested spawns and completion signals work under `read-only` and `workspace-write`.
 
 ### Fixed
-- Read-only Codex spawns once again receive the completion confirmation turn now that `meridian spawn done` can write its signal outside the sandbox.
+- Read-only Codex spawns receive the completion confirmation turn when the Codex rules escape was written; a failed rules write keeps the no-signal hold instead of asking for a response the child cannot persist.
 - Scoped shell denies and approval rules remain authoritative inside broader Meridian command grants on OpenCode and Pi.
 - Spawn help resolves prompt paths separately, then passes the printed literal path so sandbox-boundary checks do not reject Meridian's own examples.
 

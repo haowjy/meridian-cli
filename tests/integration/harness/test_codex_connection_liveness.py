@@ -12,6 +12,8 @@ import pytest
 from meridian.lib.harness.connections import codex_ws
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.codex_ws import CodexConnection
+from meridian.lib.launch.launch_types import CodexRuntimeResolution, ResolvedLaunchSpec
+from meridian.lib.safety.policy import PermissionPolicy, SandboxMode
 from tests.support.async_determinism import AsyncDeterminism
 
 
@@ -94,8 +96,27 @@ async def _collect_events(connection: CodexConnection) -> list[RawHarnessEvent]:
     return [event async for event in connection.events()]
 
 
-def test_codex_completion_signals_are_unconditionally_available() -> None:
-    assert CodexConnection().completion_signals_available is True
+@pytest.mark.parametrize(
+    ("sandbox", "rules_error", "expected"),
+    [
+        ("read-only", "rules directory is read-only", False),
+        ("read-only", None, True),
+        ("workspace-write", "rules directory is read-only", True),
+        ("default", "rules directory is read-only", True),
+    ],
+)
+def test_codex_completion_signals_require_read_only_rules_escape(
+    sandbox: SandboxMode,
+    rules_error: str | None,
+    expected: bool,
+) -> None:
+    connection = CodexConnection()
+    connection._launch_spec = ResolvedLaunchSpec(
+        permission_policy=PermissionPolicy(sandbox=sandbox),
+        codex_runtime=CodexRuntimeResolution(rules_file_error=rules_error),
+    )
+
+    assert connection.completion_signals_available is expected
 
 
 def _drain_raw_event_queue(
