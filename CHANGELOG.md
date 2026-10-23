@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Claude, Codex, and OpenCode completion holds say the previous reply is the report: finish with `spawn done`, or `spawn rearm` before doing more work (#725).
+- `spawn wait` pending-set output and `spawn children` lineage output put the spawn ID, agent profile, and full model ID first, so staffing records do not require separate spawn lookups.
 
 ### Fixed
 - Read-only Codex spawns skip the completion confirmation turn they cannot answer.
@@ -29,7 +30,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keeping runners and `spawn inject` on the same bounded path. There is no fallback
   to the former `$TMPDIR` location, so a new client cannot inject into a spawn that
   an older build started with a non-`/tmp` `TMPDIR`.
-
 ## [0.12.1] - 2026-10-22
 
 ### Changed

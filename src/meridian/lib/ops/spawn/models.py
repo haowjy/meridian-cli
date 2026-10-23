@@ -701,15 +701,15 @@ class SpawnListOutput(BaseModel):
         from meridian.lib.core.formatting import tabular
 
         if self.text_view == "children":
-            rows = [["spawn", "status", "agent", "desc", "model", "duration"]]
+            rows = [["spawn", "agent", "model", "status", "desc", "duration"]]
             for entry in self.spawns:
                 rows.append(
                     [
                         entry.spawn_id,
-                        entry.display_status(),
                         entry.agent or "-",
+                        entry.model or "-",
+                        entry.display_status(),
                         entry.desc or "-",
-                        _truncate_cell(entry.model, max_chars=18) if entry.model else "-",
                         f"{entry.duration_secs:.1f}s" if entry.duration_secs is not None else "-",
                     ]
                 )

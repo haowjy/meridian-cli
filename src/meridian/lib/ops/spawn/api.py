@@ -20,6 +20,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.formatting import tabular
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
@@ -1558,26 +1559,26 @@ def _emit_wait_set(
     sink: OutputSink,
 ) -> None:
     """Print the wait set table before blocking."""
-    rows: list[tuple[str, str, str]] = []
+    rows = [["spawn", "agent", "model", "status", "desc"]]
     for spawn_id in spawn_ids:
         row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-        desc = (row.desc or "").strip() if row else ""
-        status = row.status if row else "unknown"
-        rows.append((spawn_id, status, desc))
+        rows.append(
+            [
+                spawn_id,
+                (row.agent or "-") if row else "-",
+                (row.model or "-") if row else "-",
+                row.status if row else "unknown",
+                (row.desc or "-") if row else "-",
+            ]
+        )
 
-    header = f"Waiting for {len(rows)} pending spawn(s)"
+    header = f"Waiting for {len(spawn_ids)} pending spawn(s)"
     if chat_id:
         header += f" for chat {chat_id}"
     header += ":"
 
-    lines = [header]
-    for spawn_id, status, desc in rows:
-        line = f"  {spawn_id}  {status}"
-        if desc:
-            line += f"  {desc}"
-        lines.append(line)
-
-    sink.status("\n".join(lines))
+    table = "\n".join(f"  {line}" for line in tabular(rows).splitlines())
+    sink.status(f"{header}\n{table}")
 
 
 def _build_wait_multi_output(
