@@ -210,7 +210,6 @@ def _resolve_spawn_read_authority(
     *,
     project_root: str | None,
     prepared: RuntimeReadContext | RuntimeWriteContext | None = None,
-    migrate_legacy: bool = True,
 ) -> tuple[Path, Path | None]:
     if prepared is not None:
         resolved_project_root = _project_root_from_prepared(prepared)
@@ -218,11 +217,7 @@ def _resolve_spawn_read_authority(
         return resolved_project_root, resolved_runtime_root
 
     resolved_project_root = _resolve_project_root_input(project_root)
-    resolved_runtime_root = (
-        resolve_runtime_root_for_read(resolved_project_root)
-        if migrate_legacy
-        else inspect_runtime_authority_for_read(resolved_project_root).runtime_root
-    )
+    resolved_runtime_root = resolve_runtime_root_for_read(resolved_project_root)
     return resolved_project_root, resolved_runtime_root
 
 
@@ -2252,7 +2247,6 @@ def spawn_fork_sync(
         return floor_check
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
-        migrate_legacy=False,
     )
     normalized_source_ref = payload.source_ref.strip()
     if not normalized_source_ref:
@@ -2358,7 +2352,6 @@ def spawn_continue_sync(
         raise ValueError("--model must not be empty")
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
-        migrate_legacy=False,
     )
     if runtime_root is None:
         normalized = payload.spawn_id.strip()

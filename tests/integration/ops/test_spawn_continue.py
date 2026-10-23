@@ -17,6 +17,7 @@ from meridian.lib.core.caller_boundary import CALLER_BOUNDARY_ENV, CallerBoundar
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.reference import ResolvedSessionReference
@@ -142,6 +143,83 @@ def test_spawn_continue_requires_recorded_session(tmp_path: Path) -> None:
             )
         )
     assert (exc.value.ref, exc.value.reason) == ("p11", "unbound")
+
+
+def test_spawn_continue_imports_legacy_native_store_before_reference_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", home.as_posix())
+    monkeypatch.setenv("MERIDIAN_HOME", (home / ".meridian").as_posix())
+    runtime_root = _state_root(project_root)
+    session_id = "legacy-claude-session"
+    snapshot = LaunchPolicySnapshot(
+        model="claude-sonnet-4-6",
+        harness="claude",
+        execution_policy=ResolvedExecutionPolicy(sandbox="read-only"),
+    )
+    session_store.start_session(
+        runtime_root,
+        chat_id="c-legacy",
+        spawn_id="p9251",
+        harness="claude",
+        harness_session_id=session_id,
+        native_store=None,
+        model=snapshot.model,
+        execution_cwd=project_root.as_posix(),
+        control_root=project_root.as_posix(),
+    )
+    session_store.stop_session(runtime_root, "c-legacy")
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p9251",
+        chat_id="c-legacy",
+        model=snapshot.model,
+        agent="",
+        harness="claude",
+        prompt="legacy prompt",
+        harness_session_id=session_id,
+        execution_cwd=project_root.as_posix(),
+        control_root=project_root.as_posix(),
+        launch_policy_snapshot=snapshot,
+    )
+    spawn_store.finalize_spawn(
+        runtime_root,
+        "p9251",
+        status="succeeded",
+        exit_code=0,
+        origin="runner",
+    )
+    native_store = home / ".claude" / "projects" / project_slug(project_root)
+    native_store.mkdir(parents=True)
+    (native_store / f"{session_id}.jsonl").write_text(
+        json.dumps({"sessionId": session_id}) + "\n",
+        encoding="utf-8",
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=snapshot.model,
+        harness=HarnessId.CLAUDE,
+        execution_policy=snapshot.execution_policy,
+    )
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(
+            spawn_id="p9251",
+            prompt="follow-up",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    imported = session_store.chat_record(runtime_root, "c-legacy")
+    assert imported is not None
+    assert imported.native_store == native_store.as_posix()
 
 
 def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_reads(
