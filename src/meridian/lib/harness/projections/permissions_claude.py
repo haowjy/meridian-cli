@@ -25,6 +25,7 @@ from meridian.lib.safety.policy import (
     PlatformRuleKind,
     ReportLine,
     ReportStatus,
+    command_grant_covers_pattern,
     complete_report,
     platform_element,
     rule_element,
@@ -630,6 +631,20 @@ def _meridian_commands_line(
         blocker = _shadow(native, permissions)
         if native not in emitted or blocker is not None:
             blocked.setdefault(blocker or "", []).append(native)
+    for command in platform.commands:
+        for rule in policy.rules:
+            if rule.origin == PLATFORM_ORIGIN or rule.action == "allow":
+                continue
+            for native in rule.native:
+                base, pattern = split_native(native)
+                if (
+                    base == "Bash"
+                    and pattern is not None
+                    and command_grant_covers_pattern(command, pattern)
+                ):
+                    blocked.setdefault(native, []).append(
+                        f"Bash({command.command}{' *' if command.match == 'prefix' else ''})"
+                    )
     if blocked:
         problems = [
             f"{','.join(names)}: Claude checks {blocker} first"

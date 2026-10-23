@@ -165,6 +165,14 @@ def platform_element(rule: PlatformRule) -> str:
     return "platform: deny built-in agents"
 
 
+def command_grant_covers_pattern(command: PlatformCommand, pattern: str) -> bool:
+    """Whether a scoped shell pattern is wholly inside a platform command grant."""
+
+    if command.match == "exact":
+        return pattern == command.command
+    return pattern == command.command or pattern.startswith(f"{command.command} ")
+
+
 def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
     """What the report says about a rule the compile left unreported."""
 

@@ -361,9 +361,15 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
                     ),
                     ToolRule(
                         capability="bash",
-                        pattern="meridian spawn done *",
+                        pattern="meridian spawn done child *",
                         action="deny",
-                        native=("bash(meridian spawn done *)",),
+                        native=("bash(meridian spawn done child *)",),
+                    ),
+                    ToolRule(
+                        capability="bash",
+                        pattern="meridian spawn rearm",
+                        action="ask",
+                        native=("bash(meridian spawn rearm)",),
                     ),
                     ToolRule(
                         capability="write",
@@ -383,7 +389,7 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
                         ),
                     ),
                 ),
-            )
+            ),
         ),
     )
     projected = json.loads(
@@ -415,8 +421,11 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
             "bash": {
                 "git *": "allow",
                 "git push *": "deny",
-                "meridian spawn done *": "deny",
-                "meridian spawn rearm *": "allow",
+                "meridian spawn done": "allow",
+                "meridian spawn done *": "allow",
+                "meridian spawn done child *": "deny",
+                "meridian spawn rearm": "deny",
+                "meridian spawn rearm *": "deny",
                 "meridian task-dir": "allow",
             },
             "external_directory": {"/repo/**": "allow"},
@@ -431,13 +440,28 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
             {"action": "shell", "resource": "git push *", "effect": "deny"},
             {
                 "action": "shell",
+                "resource": "meridian spawn done",
+                "effect": "allow",
+            },
+            {
+                "action": "shell",
                 "resource": "meridian spawn done *",
+                "effect": "allow",
+            },
+            {
+                "action": "shell",
+                "resource": "meridian spawn done child *",
+                "effect": "deny",
+            },
+            {
+                "action": "shell",
+                "resource": "meridian spawn rearm",
                 "effect": "deny",
             },
             {
                 "action": "shell",
                 "resource": "meridian spawn rearm *",
-                "effect": "allow",
+                "effect": "deny",
             },
             {
                 "action": "shell",
@@ -451,8 +475,7 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
         )
         assert write_line.status == "partial"
         assert (
-            "conflicting semantics conservatively use permission edit(*): deny"
-            in write_line.note
+            "conflicting semantics conservatively use permission edit(*): deny" in write_line.note
         )
     completion_line = next(
         line for line in report if line.element.startswith("platform: allow Meridian commands")
