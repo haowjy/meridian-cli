@@ -1851,22 +1851,6 @@ def bind_launch_context(
         run_inputs=run_params,
         runtime_env_overrides=bind_env_overrides,
     )
-    # Facts that depend on the final launch environment or child cwd are resolved once here;
-    # the env projection, argv, report and connection all read the same bound spec.
-    spec = bind_launch_spec(
-        harness.id,
-        spec,
-        env=env,
-        child_cwd=child_cwd,
-        dry_run=bindings.dry_run,
-    )
-    env.update(
-        harness.project_launch_env(
-            spec=spec,
-            system_prompt_path=system_prompt_path,
-            env=env,
-        )
-    )
     intent = harness.plan_native_identity(
         run_params, preforked_session_id=bindings.forked_harness_session_id
     )
@@ -1883,6 +1867,22 @@ def bind_launch_context(
                 )
             }
         )
+    # Native resume/fork may pin a recorded harness home in ``env``. Resolve
+    # environment-dependent adapter facts only after that final namespace is known.
+    spec = bind_launch_spec(
+        harness.id,
+        spec,
+        env=env,
+        child_cwd=child_cwd,
+        dry_run=bindings.dry_run,
+    )
+    env.update(
+        harness.project_launch_env(
+            spec=spec,
+            system_prompt_path=system_prompt_path,
+            env=env,
+        )
+    )
     environment = ResolvedLaunchEnvironment.build(
         child_context_env=child_context_env,
         plan_env=dict(bindings.plan_overrides),

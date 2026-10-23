@@ -16,9 +16,10 @@ import pytest
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import ForkMaterializationMode
+from meridian.lib.harness.codex_rules import MERIDIAN_RULES_FILE_CONTENT
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import command as launch_command
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, ResolvedLaunchSpec
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
@@ -58,6 +59,7 @@ def _build_primary_launch_context(
     prompt: str = "primary prompt",
     extra_args: tuple[str, ...] = (),
     session: SessionRequest | None = None,
+    dry_run: bool = True,
 ) -> tuple[Any, Any]:
     _write_minimal_mars_config(project_root)
     harness_registry = get_default_harness_registry()
@@ -80,7 +82,7 @@ def _build_primary_launch_context(
             project_paths_execution_cwd=project_root.as_posix(),
         ),
         harness_registry=harness_registry,
-        dry_run=True,
+        dry_run=dry_run,
     )
     return launch_context, harness_registry
 
@@ -345,6 +347,12 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ambient-decoy"))
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
+    )
     sid = "12345678-1234-4234-8234-123456789abc"
     store = tmp_path / "recorded" / "sessions"
     store.mkdir(parents=True)
@@ -381,7 +389,12 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         harness_id=HarnessId.CODEX,
         model="gpt-5.4",
         session=fork.session.model_copy(update={"primary_session_mode": "fork"}),
+        dry_run=False,
     )
+    rules_path = store.parent / "rules" / "meridian.rules"
+    assert rules_path.read_text(encoding="utf-8") == MERIDIAN_RULES_FILE_CONTENT
+    assert not (tmp_path / "ambient-decoy" / "rules" / "meridian.rules").exists()
+    assert context.binding.spec.codex_runtime.rules_file_path == rules_path.as_posix()
     shim = tmp_path / "codex-shim"
     shim.write_text('#!/bin/sh\nprintf "%s\\n%s\\n" "$CODEX_HOME" "$1"\n')
     observed: list[str] = []
