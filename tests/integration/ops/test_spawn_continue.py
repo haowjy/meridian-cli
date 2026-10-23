@@ -136,6 +136,17 @@ def test_spawn_continue_requires_recorded_session(tmp_path: Path) -> None:
     assert (exc.value.ref, exc.value.reason) == ("p11", "unbound")
 
 
+def test_spawn_continue_refuses_parent_shell_sandbox_before_source_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SANDBOX_RUNTIME", "1")
+
+    with pytest.raises(ValueError, match="standalone shell command"):
+        spawn_api.spawn_continue_sync(
+            SpawnContinueInput(spawn_id="p-does-not-exist", prompt="follow-up")
+        )
+
+
 @pytest.mark.parametrize(
     ("updates", "flag", "guidance"),
     [

@@ -119,6 +119,7 @@ from .query import (
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
 _WAIT_POLL_INTERVAL_SECS = 0.25
+_SANDBOX_ENV_MARKERS: tuple[tuple[str, str], ...] = (("SANDBOX_RUNTIME", "1"),)
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,18 @@ class _WaitTargetDiscovery:
 def _looks_like_spawn_ref(ref: str) -> bool:
     normalized = ref.strip()
     return len(normalized) > 1 and normalized[0] == "p" and normalized[1:].isdigit()
+
+
+def _refuse_sandboxed_spawn_launch(*, dry_run: bool) -> None:
+    """Fail before launch state is touched when a compound command kept Meridian sandboxed."""
+
+    if dry_run or not any(os.environ.get(name) == value for name, value in _SANDBOX_ENV_MARKERS):
+        return
+    raise ValueError(
+        "Cannot launch a child spawn from inside the parent shell sandbox. "
+        "Run `meridian spawn` as a standalone shell command: no `cd ... &&`, pipes, `$()`, "
+        "or `VAR=1` prefix."
+    )
 
 
 def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = None) -> None:
@@ -289,6 +302,7 @@ def _prepare_spawn_create(
     prepared: RuntimeWriteContext | None,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
+    _refuse_sandboxed_spawn_launch(dry_run=payload.dry_run)
     prepared_context = prepared
     register_debug_trace_observer()
     resolved_context = runtime_context(ctx)
@@ -2259,6 +2273,7 @@ def spawn_continue_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
+    _refuse_sandboxed_spawn_launch(dry_run=payload.dry_run)
     if payload.model is not None and not payload.model.strip():
         raise ValueError("--model must not be empty")
     project_root, runtime_root = _resolve_spawn_read_authority(

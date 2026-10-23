@@ -307,6 +307,23 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
     assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
 
 
+def test_spawn_create_refuses_parent_shell_sandbox_before_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SANDBOX_RUNTIME", "1")
+
+    result = spawn_api.spawn_create_sync(SpawnCreateInput(prompt="run"))
+
+    assert result.status == "failed"
+    assert result.spawn_id is None
+    assert result.error == "pre_init_failed"
+    assert result.message is not None
+    assert "standalone shell command" in result.message
+    assert "`cd ... &&`" in result.message
+    assert "`$()`" in result.message
+    assert "`VAR=1` prefix" in result.message
+
+
 def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
