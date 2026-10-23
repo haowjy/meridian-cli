@@ -99,6 +99,7 @@ def build_guidance_blocks(
     spawn_usage_contract: str,
     bundle_inventory_prompt: str | None,
     context_prompt: str,
+    harness_guidance: str | None = None,
 ) -> tuple[CompositionBlock, ...]:
     """Build all system-prompt guidance blocks.
 
@@ -130,6 +131,11 @@ def build_guidance_blocks(
     blocks.append(
         CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 22, _SESSION_DISCOVERY)
     )
+    harness_hint = (harness_guidance or "").strip()
+    if harness_hint:
+        blocks.append(
+            CompositionBlock("harness-guidance", GuidancePhase.GUIDANCE, 23, harness_hint)
+        )
     context_env = (context_prompt or "").strip()
     if context_env:
         blocks.append(

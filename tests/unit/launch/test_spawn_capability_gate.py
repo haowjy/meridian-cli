@@ -10,6 +10,7 @@ from meridian.lib.catalog.agent import AgentProfile, MeridianCapabilities
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.harness.adapter import CLAUDE_SPAWN_USAGE_VARIANTS
+from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_policy_snapshot
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
@@ -49,6 +50,7 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         spawn_usage_contract=build_spawn_usage_contract(CLAUDE_SPAWN_USAGE_VARIANTS),
         bundle_inventory_prompt=INVENTORY,
         context_prompt="",
+        harness_guidance="Host network hint",
     )
 
     assert [block.name for block in blocks[:3]] == [
@@ -64,6 +66,22 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "reply is kept as the report" not in contract.content
     work = next(block for block in blocks if block.name == "work-discovery")
     assert "standalone shell calls" in work.content
+    hint = next(block for block in blocks if block.name == "harness-guidance")
+    assert hint.content == "Host network hint"
+
+
+def test_claude_linux_sandbox_network_guidance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("meridian.lib.harness.claude.sys.platform", "linux")
+    adapter = ClaudeAdapter()
+
+    assert "--noproxy ''" in (
+        adapter.shell_network_guidance(sandbox="workspace-write", network=None) or ""
+    )
+    assert "--noproxy ''" in (
+        adapter.shell_network_guidance(sandbox="read-only", network="allow") or ""
+    )
+    assert adapter.shell_network_guidance(sandbox="workspace-write", network="deny") is None
+    assert adapter.shell_network_guidance(sandbox="danger-full-access", network="allow") is None
 
 
 def test_spawn_capability_requires_inventory_and_honors_explicit_disable() -> None:

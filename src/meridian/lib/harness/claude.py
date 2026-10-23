@@ -236,6 +236,20 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             spawn_usage_contract_variants=CLAUDE_SPAWN_USAGE_VARIANTS,
         )
 
+    def shell_network_guidance(
+        self, *, sandbox: str | None, network: str | None
+    ) -> str | None:
+        if (
+            not sys.platform.startswith("linux")
+            or sandbox not in {"read-only", "workspace-write"}
+            or network == "deny"
+        ):
+            return None
+        return (
+            "To reach a service on the host through Claude's sandbox proxy, bypass "
+            "NO_PROXY (for curl: `curl --noproxy '' ...`)."
+        )
+
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         return build_claude_adhoc_agent_json(name=name, description=description, prompt=prompt)
 

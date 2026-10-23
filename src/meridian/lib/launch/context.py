@@ -1033,6 +1033,10 @@ def _build_shared_composition(
         spawn_usage_contract=spawn_usage_contract,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
         context_prompt=context_prompt,
+        harness_guidance=policy.adapter.shell_network_guidance(
+            sandbox=policy.execution_policy.sandbox,
+            network=policy.execution_policy.network,
+        ),
     )
     resolved_work_id = (request.work_id_hint or "").strip()
     work_goal: str | None = None

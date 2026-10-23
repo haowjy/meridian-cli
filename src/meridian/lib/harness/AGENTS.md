@@ -27,6 +27,8 @@ Claude uses the same bind port to read the settings files selected by the final 
 cwd and environment. Their tool and network allows live on
 `ClaudeRuntimeResolution.settings_allows` / `settings_network_allowed_domains`, where the
 permission report reads them without sending internal data through argv.
+The adapter's `shell_network_guidance()` is also the sole owner of Claude's Linux-only
+host-service proxy hint; shared prompt composition only places the returned text.
 
 ## Translation Pipeline
 
