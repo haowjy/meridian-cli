@@ -163,11 +163,14 @@ def _codex_report(
                 )
             )
     if permissions.sandbox_mode is not None:
+        sandbox_note = f"sandbox_mode={permissions.sandbox_mode}"
+        if policy.sandbox != "danger-full-access":
+            sandbox_note += "; child spawns cannot launch under Codex's sandbox"
         lines.append(
             ReportLine(
                 f"sandbox: {policy.sandbox}",
                 "native",
-                f"sandbox_mode={permissions.sandbox_mode}",
+                sandbox_note,
             )
         )
     if permissions.approval_policy is not None:

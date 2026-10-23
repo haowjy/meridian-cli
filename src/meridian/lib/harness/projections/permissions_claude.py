@@ -60,6 +60,7 @@ class ClaudeSandboxSettings:
     enabled: bool
     deny_write: tuple[str, ...] = ()
     auto_allow_bash: bool = False
+    excluded_commands: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -402,6 +403,12 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
     if policy.sandbox == "danger-full-access":
         return ClaudeSandboxSettings(enabled=False)
     # Sandbox auto-approval accepts unmatched Bash before any mode can refuse it.
+    can_spawn = any(
+        command.command == "meridian spawn" and command.match == "prefix"
+        for platform in policy.platform_rules
+        if platform.kind == "meridian-commands"
+        for command in platform.commands
+    )
     return ClaudeSandboxSettings(
         enabled=True,
         deny_write=policy.sandbox_write_roots if policy.sandbox == "read-only" else (),
@@ -411,6 +418,7 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
             and not channels.gates
             and not channels.ask
         ),
+        excluded_commands=("meridian spawn *",) if can_spawn else (),
     )
 
 
@@ -788,6 +796,12 @@ def _sandbox_line(policy: PermissionPolicy, permissions: ClaudePermissions) -> R
     if policy.sandbox != "danger-full-access":
         status = "partial"
         settings += "; confines Bash subprocesses only, not Edit/Write"
+    if sandbox.excluded_commands:
+        settings += (
+            "; excludedCommands="
+            + ",".join(sandbox.excluded_commands)
+            + "; a matching command runs fully outside the sandbox"
+        )
     return ReportLine(f"sandbox: {policy.sandbox}", status, settings)
 
 

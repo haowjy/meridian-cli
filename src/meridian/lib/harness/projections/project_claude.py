@@ -99,6 +99,8 @@ def _settings_json(settings: ClaudeSettings) -> str:
         if sandbox_settings.enabled:
             sandbox["allowUnsandboxedCommands"] = False
             sandbox["autoAllowBashIfSandboxed"] = sandbox_settings.auto_allow_bash
+            if sandbox_settings.excluded_commands:
+                sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)
             if sandbox_settings.deny_write:
                 sandbox["filesystem"] = {"denyWrite": list(sandbox_settings.deny_write)}
         payload["sandbox"] = sandbox

@@ -73,3 +73,16 @@ def test_codex_report_names_unsupported_meridian_command_match_forms() -> None:
     assert line.status == "unsupported"
     assert "exact 'meridian task-dir'" in line.note
     assert "prefix 'meridian spawn list'" in line.note
+
+
+def test_codex_sandbox_report_says_child_spawns_cannot_launch() -> None:
+    from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+
+    spec = _spec(interactive=False).model_copy(
+        update={"permission_policy": PermissionPolicy(sandbox="workspace-write")}
+    )
+
+    _, report = compile_codex_permissions(spec)
+
+    line = next(item for item in report if item.element == "sandbox: workspace-write")
+    assert "child spawns cannot launch" in line.note
