@@ -840,11 +840,17 @@ def _network_line(
     sandbox = permissions.settings.sandbox
     if sandbox is None or not sandbox.enabled:
         if policy.network == "allow":
-            return ReportLine(element, "native", "sandbox is off, so shell network is available")
+            return ReportLine(
+                element,
+                "native",
+                "sandbox is off, so shell network is available",
+                effective_network="allow",
+            )
         return ReportLine(
             element,
             "unsupported",
             "not enforced because the Claude Bash sandbox is off",
+            effective_network="allow",
         )
 
     if policy.network == "allow":
@@ -859,8 +865,9 @@ def _network_line(
                 note
                 + "; on Linux, host localhost is reachable only through Claude's proxy, and "
                 "clients honoring NO_PROXY bypass it (for curl, use --noproxy '')",
+                effective_network="allow",
             )
-        return ReportLine(element, "native", note)
+        return ReportLine(element, "native", note, effective_network="allow")
 
     if permissions.skip_permission_prompts:
         return ReportLine(
@@ -868,6 +875,7 @@ def _network_line(
             "unsupported",
             "approval never uses --dangerously-skip-permissions, which leaves Claude's "
             "sandbox network proxy unrestricted even though filesystem confinement remains",
+            effective_network="allow",
         )
 
     notes = ["no sandbox.network.allowedDomains projected"]
@@ -895,6 +903,7 @@ def _network_line(
         if sys.platform.startswith("linux") or widening or sandbox.excluded_commands
         else "native",
         "; ".join(notes),
+        effective_network="deny",
     )
 
 

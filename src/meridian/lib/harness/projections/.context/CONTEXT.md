@@ -198,6 +198,9 @@ compile's report is registered as `HarnessProjectionPorts.permission_report` (th
 call the typed compile directly for its native value; nothing generic reads that value);
 `LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
 `permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
+Network lines additionally carry the harness's effective `allow`/`deny` mode internally;
+caller-boundary propagation reads that same fact, while `ReportLine.to_wire()` keeps the
+public three-field report stable.
 
 Every compile reports the effective shell `network` policy separately from built-in web
 tools. Claude projects allowed domains plus local-binding/Unix-socket settings when its

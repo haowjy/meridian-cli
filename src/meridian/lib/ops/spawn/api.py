@@ -406,6 +406,7 @@ def _prepare_spawn_create(
         floor_check.enforce(
             CallerBoundary.from_policy(
                 preview_context.binding.spec.permission_policy,
+                enforcement_report=preview_context.enforcement_report(),
                 pid_namespace=None,
             )
         )

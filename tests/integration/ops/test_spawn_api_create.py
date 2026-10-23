@@ -39,6 +39,7 @@ def _set_delegation_floor(
     monkeypatch: pytest.MonkeyPatch,
     *,
     sandbox: str = "workspace-write",
+    network: str = "allow",
     has_spawn_capability: bool = True,
     write_roots: tuple[str, ...] = (),
 ) -> None:
@@ -46,6 +47,7 @@ def _set_delegation_floor(
         CALLER_BOUNDARY_ENV,
         CallerBoundary.from_values(
             sandbox=sandbox,
+            network=network,
             has_spawn_capability=has_spawn_capability,
             write_roots=write_roots,
         ).to_env_value(),
@@ -490,6 +492,57 @@ def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
     )
 
     assert result.status == "dry-run"
+
+
+@pytest.mark.parametrize(
+    ("child_network", "approval", "expected_status", "expected_message"),
+    [
+        ("allow", "default", "failed", "effective network 'allow' is weaker"),
+        ("deny", "default", "dry-run", None),
+        ("deny", "never", "failed", "effective network 'allow' is weaker"),
+    ],
+)
+def test_spawn_create_delegation_floor_compares_effective_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    child_network: str,
+    approval: str,
+    expected_status: str,
+    expected_message: str | None,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_delegation_floor(
+        monkeypatch,
+        network="deny",
+        write_roots=(project_root.as_posix(),),
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="workspace-write",
+            network=child_network,
+            approval=approval,
+        ),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == expected_status
+    if expected_message is not None:
+        assert result.message is not None
+        assert expected_message in result.message
 
 
 def test_spawn_create_delegation_floor_rejects_workspace_root_outside_caller(

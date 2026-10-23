@@ -483,6 +483,7 @@ def compile_opencode_permissions(
             "OpenCode leaves shell network unrestricted"
             if policy.network == "allow"
             else "not enforced by OpenCode; shell network remains available",
+            effective_network="allow",
         )
     )
 

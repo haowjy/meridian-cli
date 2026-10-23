@@ -523,12 +523,16 @@ them:
   spawn capability and sessions not launched by Meridian. Meridian owns and rewrites only
   `meridian.rules`; it does not touch other Codex rules files.
 - **Delegation floor.** Every Meridian-launched harness receives its resolved sandbox,
-  projected workspace roots, and spawn capability in a launcher-owned boundary record.
+  effective network mode, projected workspace roots, and spawn capability in a
+  launcher-owned boundary record.
   Only `read-only` and `workspace-write` callers have a floor, because only those explicit
   modes receive a sandbox escape. `spawn`, `spawn --continue`, and `spawn --fork`
   (including `--dry-run`) refuse a floored caller whose profile cannot spawn, a child with
-  a weaker sandbox, or a child whose projected workspace roots are not a subset of the
-  caller's. Approval is not a confinement boundary and is not compared. Child `--env`
+  a weaker sandbox or effective network mode, or a child whose projected workspace roots
+  are not a subset of the caller's. The effective mode comes from the same harness report
+  as `--dry-run`: for example, Claude `approval: never` makes an authored `network: deny`
+  effectively `allow`, so a denied caller cannot delegate to that child. Approval is not
+  otherwise a confinement boundary and is not compared. Child `--env`
   values also cannot replace the process or harness config loader,
   executable search path, or native harness home. Harness-native passthrough arguments
   after `--` are refused because they can override Meridian's resolved sandbox or

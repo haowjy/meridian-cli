@@ -15,6 +15,7 @@ from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_NETWORK_ACCESS_KEY,
     codex_native_config_has_key,
+    codex_native_config_value,
     project_codex_native_config,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -219,12 +220,16 @@ def _codex_report(
         spec.native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
     )
     if policy.sandbox == "workspace-write" and native_network_override:
+        native_network_value = codex_native_config_value(
+            spec.native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
+        )
         lines.append(
             ReportLine(
                 network_element,
                 "partial",
                 "deprecated native_config sandbox_workspace_write.network_access takes "
                 "precedence over the profile network field for this release",
+                effective_network="deny" if native_network_value is False else "allow",
             )
         )
     elif policy.sandbox == "workspace-write":
@@ -234,6 +239,7 @@ def _codex_report(
                     network_element,
                     "native",
                     "-c sandbox_workspace_write.network_access=true",
+                    effective_network="allow",
                 )
             )
         else:
@@ -250,6 +256,7 @@ def _codex_report(
                         if escaped
                         else ""
                     ),
+                    effective_network="deny",
                 )
             )
     elif policy.sandbox == "read-only":
@@ -259,6 +266,7 @@ def _codex_report(
                     network_element,
                     "unsupported",
                     "Codex read-only has no network-enabled mode",
+                    effective_network="deny",
                 )
             )
         elif policy.network == "allow":
@@ -268,6 +276,7 @@ def _codex_report(
                     "native",
                     "network was left unset; Codex read-only keeps its native shell "
                     "network-off behavior, with no authored allow request to report as a gap",
+                    effective_network="deny",
                 )
             )
         else:
@@ -276,6 +285,7 @@ def _codex_report(
                     network_element,
                     "native",
                     "Codex read-only keeps shell network and sockets off",
+                    effective_network="deny",
                 )
             )
     elif policy.sandbox == "danger-full-access":
@@ -286,6 +296,7 @@ def _codex_report(
                 "danger-full-access leaves shell network unrestricted"
                 if policy.network == "allow"
                 else "not enforced under danger-full-access; shell network remains available",
+                effective_network="allow",
             )
         )
     else:
@@ -294,6 +305,7 @@ def _codex_report(
                 network_element,
                 "partial" if policy.network == "allow" else "unsupported",
                 "sandbox is left to Codex, so Meridian does not project network_access",
+                effective_network="allow",
             )
         )
     if permissions.approval_policy is not None:

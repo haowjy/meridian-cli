@@ -1826,10 +1826,6 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
-    child_context_env[CALLER_BOUNDARY_ENV] = CallerBoundary.from_policy(
-        permission_policy,
-        pid_namespace=current_pid_namespace(),
-    ).to_env_value()
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     resolved_agent = (resolved_request.agent or "").strip()
     if resolved_agent:
@@ -1841,7 +1837,6 @@ def bind_launch_context(
     child_context_env["MERIDIAN_TASK_DIR"] = directory_context.logical_task_cwd.as_posix()
     if harness.id == HarnessId.PI:
         child_context_env["_MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
-    validate_child_env_keys(child_context_env)
     runtime_override_env = (
         runtime.resolved_runtime_overrides.to_env()
         if runtime.has_runtime_override_snapshot
@@ -1881,6 +1876,15 @@ def bind_launch_context(
         env=env,
         child_cwd=child_cwd,
     )
+    caller_boundary = CallerBoundary.from_policy(
+        permission_policy,
+        enforcement_report=get_harness_bundle(harness.id).projections.permission_report(spec),
+        pid_namespace=current_pid_namespace(),
+    ).to_env_value()
+    child_context_env[CALLER_BOUNDARY_ENV] = caller_boundary
+    bind_env_overrides[CALLER_BOUNDARY_ENV] = caller_boundary
+    env[CALLER_BOUNDARY_ENV] = caller_boundary
+    validate_child_env_keys(child_context_env)
     env.update(
         harness.project_launch_env(
             spec=spec,

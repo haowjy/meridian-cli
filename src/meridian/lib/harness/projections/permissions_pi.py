@@ -324,6 +324,7 @@ def _report(
             "Pi leaves shell network unrestricted"
             if policy.network == "allow"
             else "not enforced by Pi; shell network remains available",
+            effective_network="allow",
         )
     )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Pi"))

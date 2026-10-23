@@ -108,6 +108,7 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     boundary = CallerBoundary.from_env_value(env[CALLER_BOUNDARY_ENV])
     assert boundary == CallerBoundary.from_policy(
         preview.binding.spec.permission_policy,
+        enforcement_report=preview.enforcement_report(),
         pid_namespace=launcher_namespace,
     )
     assert ("ANTHROPIC_API_KEY" not in env) == expected

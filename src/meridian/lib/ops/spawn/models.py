@@ -2,7 +2,6 @@
 
 import shlex
 from collections.abc import Sequence
-from dataclasses import asdict
 from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
@@ -340,7 +339,7 @@ class SpawnActionOutput(BaseModel):
             if self.cli_command:
                 wire["cli_command"] = list(self.cli_command)
             if self.permission_report:
-                wire["permission_report"] = [asdict(line) for line in self.permission_report]
+                wire["permission_report"] = [line.to_wire() for line in self.permission_report]
         return wire
 
     def to_cli_wire(self) -> dict[str, object]:

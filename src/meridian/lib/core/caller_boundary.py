@@ -11,8 +11,12 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
+    NETWORK_MODE_STRENGTH,
     SANDBOX_MODE_WEAKNESS,
+    EnforcementReport,
+    NetworkMode,
     SandboxMode,
+    effective_network_from_report,
 )
 from meridian.lib.utils.json_shapes import json_list, loads_json_object
 
@@ -68,6 +72,7 @@ class CallerBoundary:
 
     pid_namespace: str | None
     sandbox: SandboxMode
+    network: NetworkMode
     write_roots: tuple[str, ...]
     has_spawn_capability: bool
 
@@ -76,6 +81,7 @@ class CallerBoundary:
         cls,
         policy: PermissionPolicy,
         *,
+        enforcement_report: EnforcementReport,
         pid_namespace: str | None,
     ) -> CallerBoundary:
         """Take the child-launch boundary fields from one resolved policy."""
@@ -84,6 +90,7 @@ class CallerBoundary:
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
+            network=effective_network_from_report(enforcement_report),
             write_roots=policy.sandbox_write_roots,
             has_spawn_capability=policy.has_spawn_capability,
         )
@@ -93,6 +100,7 @@ class CallerBoundary:
         cls,
         *,
         sandbox: str | None,
+        network: str = "allow",
         has_spawn_capability: bool,
         pid_namespace: str | None = None,
         write_roots: tuple[str, ...] = (),
@@ -102,9 +110,13 @@ class CallerBoundary:
         normalized_sandbox = (sandbox or "default").strip().lower()
         if normalized_sandbox not in SANDBOX_MODE_WEAKNESS:
             raise ValueError(f"Unsupported sandbox mode '{sandbox}'.")
+        normalized_network = network.strip().lower()
+        if normalized_network not in NETWORK_MODE_STRENGTH:
+            raise ValueError(f"Unsupported network mode '{network}'.")
         return cls(
             pid_namespace=pid_namespace,
             sandbox=normalized_sandbox,
+            network=normalized_network,
             write_roots=write_roots,
             has_spawn_capability=has_spawn_capability,
         )
@@ -122,6 +134,7 @@ class CallerBoundary:
             {
                 "pid_namespace": self.pid_namespace,
                 "sandbox": self.sandbox,
+                "network": self.network,
                 "spawn": self.has_spawn_capability,
                 "write_roots": self.write_roots,
             },
@@ -139,12 +152,14 @@ class CallerBoundary:
         if set(payload) != {
             "pid_namespace",
             "sandbox",
+            "network",
             "spawn",
             "write_roots",
         }:
             raise ValueError("Child spawn refused: caller boundary is invalid.")
         pid_namespace = payload.get("pid_namespace")
         sandbox = payload.get("sandbox")
+        network = payload.get("network")
         spawn = payload.get("spawn")
         write_root_values = json_list(payload.get("write_roots"))
         write_roots = (
@@ -155,15 +170,18 @@ class CallerBoundary:
         if (
             (pid_namespace is not None and not isinstance(pid_namespace, str))
             or not isinstance(sandbox, str)
+            or not isinstance(network, str)
             or not isinstance(spawn, bool)
             or write_root_values is None
             or len(write_roots) != len(write_root_values)
             or sandbox not in SANDBOX_MODE_WEAKNESS
+            or network not in NETWORK_MODE_STRENGTH
         ):
             raise ValueError("Child spawn refused: caller boundary is invalid.")
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
+            network=network,
             write_roots=write_roots,
             has_spawn_capability=spawn,
         )
@@ -244,6 +262,11 @@ class CallerBoundaryCheck:
             raise ValueError(
                 f"Child spawn refused: sandbox '{child.sandbox}' is weaker than "
                 f"caller floor '{caller.sandbox}'."
+            )
+        if NETWORK_MODE_STRENGTH[child.network] < NETWORK_MODE_STRENGTH[caller.network]:
+            raise ValueError(
+                f"Child spawn refused: effective network '{child.network}' is weaker than "
+                f"caller floor '{caller.network}'."
             )
         caller_roots = tuple(Path(root).resolve() for root in caller.write_roots)
         for child_root_value in child.write_roots:

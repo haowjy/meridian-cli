@@ -47,8 +47,10 @@ already resolved. `ResolvedLaunchSpec.permission_policy` carries it, and
 each harness compiles it in `harness/projections/permissions_<harness>.py`. Nothing in
 `safety/` knows a harness. The tool rules are Mars's typed rules (`lib/tools.py`). The policy
 answers the allowlist questions (`is_allowlist`, `allowed_tools`) and writes each
-per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them. `EnforcementReport` (a tuple of `ReportLine`) is the shape each compile
-reports what it enforced in; the formatting helpers for it live here too.
+per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them.
+`EnforcementReport` (a tuple of `ReportLine`) is the shape each compile reports what it
+enforced in; network lines also retain an internal effective mode for caller-boundary
+propagation, omitted from public report JSON. The formatting helpers live here too.
 
 ## Entry Points
 

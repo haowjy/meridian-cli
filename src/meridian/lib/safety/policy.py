@@ -9,7 +9,7 @@ platform rules natively; nothing here knows a harness.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,6 +44,10 @@ SANDBOX_MODE_WEAKNESS: dict[SandboxMode, int] = {
     "danger-full-access": 2,
     # A harness default is unknown, so compare it as weaker than every explicit mode.
     "default": 3,
+}
+NETWORK_MODE_STRENGTH: dict[NetworkMode, int] = {
+    "allow": 0,
+    "deny": 1,
 }
 _SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
     {"default", "read-only", "workspace-write", "danger-full-access"}
@@ -171,9 +175,26 @@ class ReportLine:
     element: str
     status: ReportStatus
     note: str
+    # Internal fact used by caller-boundary propagation. Keep it out of equality and the
+    # public permission-report JSON; the human-facing line above remains the wire contract.
+    effective_network: NetworkMode | None = field(default=None, compare=False, repr=False)
+
+    def to_wire(self) -> dict[str, str]:
+        """Return the stable public permission-report shape."""
+
+        return {"element": self.element, "status": self.status, "note": self.note}
 
 
 type EnforcementReport = tuple[ReportLine, ...]
+
+
+def effective_network_from_report(report: EnforcementReport) -> NetworkMode:
+    """Read the harness's effective shell-network mode from its report fact."""
+
+    line = next(line for line in report if line.element.startswith("network: "))
+    if line.effective_network is None:
+        raise RuntimeError("Harness permission report omitted effective network policy.")
+    return line.effective_network
 
 
 def rule_element(rule: ToolRule) -> str:
@@ -474,6 +495,7 @@ def build_permission_policy(
 __all__ = [
     "ALLOWLIST_ORIGIN",
     "CONSTRAINED_SANDBOX_MODES",
+    "NETWORK_MODE_STRENGTH",
     "SANDBOX_MODE_WEAKNESS",
     "ApprovalMode",
     "CommandMatch",
@@ -487,6 +509,7 @@ __all__ = [
     "SandboxMode",
     "build_permission_policy",
     "complete_report",
+    "effective_network_from_report",
     "format_report_lines",
     "platform_element",
     "rule_element",

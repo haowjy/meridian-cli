@@ -90,6 +90,7 @@ def _cursor_report(
             "Cursor leaves shell network unrestricted"
             if policy.network == "allow"
             else "not enforced by Cursor; shell network remains available",
+            effective_network="allow",
         )
     )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Cursor"))

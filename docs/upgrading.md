@@ -35,6 +35,9 @@ fork operations now refuse when:
 - the caller profile has no non-empty `subagents:` list (or explicitly disables Meridian
   spawn capability);
 - the child's resolved sandbox is weaker than the caller's;
+- the child's effective shell network is weaker than the caller's (`allow` is weaker than
+  `deny`). The comparison uses the harness's reported enforcement, so Claude
+  `approval: never` makes `network: deny` effectively `allow`;
 - any child workspace root, including `--task-dir`, `--fork --task-dir`, or an inherited
   continue task directory, is outside the caller's projected workspace roots;
 - `--env` changes an executable/config loader or harness home (`PATH`, `HOME`, `LD_*`,
