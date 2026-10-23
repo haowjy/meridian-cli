@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.streaming.control_socket import socket_directory
 from tests.conftest import posix_only
 
 _CLI_TIMEOUT_SECONDS = 20
@@ -65,12 +66,16 @@ def _run_fake_claude_spawn(tmp_path: Path, *, explicit_report: str | None) -> di
         "USER": os.environ.get("USER", "test"),
         "MERIDIAN_HOME": str(tmp_path / "meridian-home"),
         "_MERIDIAN_RUNTIME_DIR": str(runtime_root),
+        "FAKE_SOCKET_ROOT": str(socket_directory().parent),
     }
     result = subprocess.run(
         [
             sys.executable,
-            "-m",
-            "meridian",
+            "-c",
+            "import os, runpy; from pathlib import Path; "
+            "from meridian.lib.streaming import control_socket; "
+            "control_socket._POSIX_SOCKET_ROOT = Path(os.environ['FAKE_SOCKET_ROOT']); "
+            "runpy.run_module('meridian', run_name='__main__')",
             "--json",
             "--harness",
             "claude",

@@ -273,6 +273,26 @@ runtime/project path depth cannot exceed `sockaddr_un.sun_path` and concurrent s
 remain isolated. Control injection is POSIX-only; the server's legacy native-Windows
 branch has no supported client.
 
+Startup sweeps only current-user `control-<32 hex>.sock` files older than 120 seconds.
+The age gate covers the short window inside `bind()` between creating the socket
+file and attaching the kernel socket.
+A nonblocking **datagram** connect must return `ECONNREFUSED`, and the file identity
+must still match before unlink, preserving external replacements during the scan. A dead socket file has no bound kernel socket; a
+bound stream socket instead rejects a datagram connect with `EPROTOTYPE` on Linux
+and macOS, before testing listen/backlog state. This preserves paused runners and endpoints between bind and listen without filling their queues.
+A stream probe is unsafe here: macOS can refuse a live listener with a full backlog.
+Uncertain errors, symlinks, other owners and other names are left alone.
+
+Each runner holds `spawns/<id>/launch.lock` for its lifetime (see
+[launch lock ownership](../../state/launch_lock.py)). `spawn --continue` allocates a
+new spawn ID, hence a new socket name; another runner cannot rebind a swept name.
+The identity recheck does not replace that invariant. The sweep skips its own endpoint, whose
+startup/stop unlink remains owned by that runner. No extra socket registry or lock
+files are needed. Recovery runs on the next spawn start, not a timer.
+
+Test isolation crosses interpreter boundaries; see the
+[test guidance](../../../../../tests/AGENTS.md).
+
 All control actions (inject, interrupt, permission reply, user input reply) are
 serialized through `ControlActionCoordinator`. Concurrent actions queue behind it —
 do not call `connection.send_user_message()` directly.

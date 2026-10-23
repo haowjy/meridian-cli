@@ -20,6 +20,7 @@ import psutil
 import pytest
 
 from meridian.lib.state.session_store import chat_record
+from meridian.lib.streaming.control_socket import socket_directory
 from tests.conftest import posix_only
 
 pytestmark = posix_only
@@ -70,6 +71,7 @@ class Runtime:
             "HOME": str(root / "user"), "USER": os.environ.get("USER", "test"),
             "PATH": str(root) + os.pathsep + os.environ["PATH"],
             "PYTHONPATH": f"{package}:{package / 'src'}",
+            "FAKE_SOCKET_ROOT": str(socket_directory().parent),
             "FAKE_ROOT": str(root), "CLAUDE_CONFIG_DIR": str(root / "native"),
             "MERIDIAN_HOME": str(root / "home"), "_MERIDIAN_RUNTIME_DIR": str(root / "runtime"),
         }

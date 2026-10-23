@@ -26,6 +26,7 @@ from meridian.lib.ops.spawn.models import (
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.repository import Applied
+from meridian.lib.streaming.control_socket import socket_directory
 from tests.conftest import posix_only
 
 if TYPE_CHECKING:
@@ -176,6 +177,7 @@ def test_sigkilled_runner_shows_failed_immediately(
         "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
         "PYTHONPATH": f"{package_root}:{package_root / 'src'}",
         "FAKE_ROOT": str(tmp_path),
+        "FAKE_SOCKET_ROOT": str(socket_directory().parent),
         "CLAUDE_CONFIG_DIR": str(tmp_path / "native"),
         "MERIDIAN_HOME": str(tmp_path / "home"),
         "_MERIDIAN_RUNTIME_DIR": str(runtime_root),
