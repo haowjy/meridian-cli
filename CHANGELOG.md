@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `spawn wait` pending-set output and `spawn children` lineage output show compact spawn ID, agent profile, full model ID, and status columns, so staffing identity does not require separate lookups or spend tokens on descriptions.
+
 ## [0.12.5] - 2026-10-23
 
 ### Fixed

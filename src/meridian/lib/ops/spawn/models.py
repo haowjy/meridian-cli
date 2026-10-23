@@ -655,6 +655,29 @@ class SpawnListEntry(BaseModel):
         ]
 
 
+def format_spawn_identity_table(
+    entries: Sequence[SpawnListEntry], *, include_duration: bool
+) -> str:
+    """Render the compact identity table used by wait and direct-child listings."""
+    from meridian.lib.core.formatting import tabular
+
+    headers = ["spawn", "agent", "model", "status"]
+    if include_duration:
+        headers.append("duration")
+    rows = [headers]
+    for entry in entries:
+        row = [
+            entry.spawn_id,
+            entry.agent or "-",
+            entry.model or "-",
+            entry.display_status(),
+        ]
+        if include_duration:
+            row.append(f"{entry.duration_secs:.1f}s" if entry.duration_secs is not None else "-")
+        rows.append(row)
+    return tabular(rows)
+
+
 class SpawnListOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -698,25 +721,14 @@ class SpawnListOutput(BaseModel):
             if self.text_view == "children":
                 return "(no children)"
             return "(no spawns)"
-        from meridian.lib.core.formatting import tabular
-
         if self.text_view == "children":
-            rows = [["spawn", "status", "agent", "desc", "model", "duration"]]
-            for entry in self.spawns:
-                rows.append(
-                    [
-                        entry.spawn_id,
-                        entry.display_status(),
-                        entry.agent or "-",
-                        entry.desc or "-",
-                        _truncate_cell(entry.model, max_chars=18) if entry.model else "-",
-                        f"{entry.duration_secs:.1f}s" if entry.duration_secs is not None else "-",
-                    ]
-                )
+            result = format_spawn_identity_table(self.spawns, include_duration=True)
         else:
+            from meridian.lib.core.formatting import tabular
+
             rows = [["spawn", "status", "model", "duration"]]
             rows.extend(entry.as_row() for entry in self.spawns)
-        result = tabular(rows)
+            result = tabular(rows)
         if self.truncated and self.total_count is not None:
             result += (
                 f"\n({len(self.spawns)} of {self.total_count} shown — use --limit to see more)"

@@ -105,6 +105,7 @@ from .models import (
     SpawnSubagentsOutput,
     SpawnWaitInput,
     SpawnWaitMultiOutput,
+    format_spawn_identity_table,
 )
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
@@ -1558,26 +1559,30 @@ def _emit_wait_set(
     sink: OutputSink,
 ) -> None:
     """Print the wait set table before blocking."""
-    rows: list[tuple[str, str, str]] = []
+    entries: list[SpawnListEntry] = []
     for spawn_id in spawn_ids:
         row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-        desc = (row.desc or "").strip() if row else ""
-        status = row.status if row else "unknown"
-        rows.append((spawn_id, status, desc))
+        entries.append(
+            SpawnListEntry(
+                spawn_id=spawn_id,
+                agent=row.agent if row else None,
+                model=(row.model or "") if row else "",
+                status=row.status if row else "unknown",
+                duration_secs=None,
+                cost_usd=None,
+            )
+        )
 
-    header = f"Waiting for {len(rows)} pending spawn(s)"
+    header = f"Waiting for {len(spawn_ids)} pending spawn(s)"
     if chat_id:
         header += f" for chat {chat_id}"
     header += ":"
 
-    lines = [header]
-    for spawn_id, status, desc in rows:
-        line = f"  {spawn_id}  {status}"
-        if desc:
-            line += f"  {desc}"
-        lines.append(line)
-
-    sink.status("\n".join(lines))
+    table = "\n".join(
+        f"  {line}"
+        for line in format_spawn_identity_table(entries, include_duration=False).splitlines()
+    )
+    sink.status(f"{header}\n{table}")
 
 
 def _build_wait_multi_output(
