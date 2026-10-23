@@ -1,5 +1,33 @@
 # Upgrade notes
 
+## Sandboxed child delegation
+
+A standalone `meridian spawn ...` can run outside a sandbox that Meridian projected for
+the caller. Callers launched with an explicit `sandbox: read-only` or
+`sandbox: workspace-write` therefore have a delegation floor. Child create, continue, and
+fork operations now refuse when:
+
+- the caller profile has no non-empty `subagents:` list (or explicitly disables Meridian
+  spawn capability);
+- the child's resolved sandbox is weaker than the caller's;
+- any child workspace root, including `--task-dir`, `--fork --task-dir`, or an inherited
+  continue task directory, is outside the caller's projected workspace roots;
+- `--env` changes an executable/config loader or harness home (`PATH`, `HOME`, `LD_*`,
+  `DYLD_*`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and the other keys listed in the
+  [platform-rules reference](agent-profiles.md#platform-rules)); or
+- native harness arguments follow `--`, because they could override the resolved policy.
+
+These calls worked without this boundary before. Put the intended children in the caller
+profile's `subagents:` list, keep child task directories under roots already projected into
+the caller, and move required harness-native configuration into the profile. Approval mode
+is not part of the floor. Profiles using `sandbox: default` or `danger-full-access`, and
+top-level shells not launched by Meridian, carry no floor.
+
+If Claude's own settings enable its sandbox while a profile leaves `sandbox` unset,
+Meridian does not run child creation outside that user-configured sandbox. The PID-namespace
+guard refuses the nested launch instead. Set `sandbox:` explicitly in the profile when it
+must launch children.
+
 ## Agent-profile permissions
 
 Agent permission profiles are now binding on more harnesses and use typed rules from Mars.

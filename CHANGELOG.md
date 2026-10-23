@@ -12,15 +12,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Claude spawn-watch completion notices carry only each child's outcome header and
   `meridian spawn show <id>` lookup; `spawn collect` no longer reads or embeds report
   bodies. Pi delivery and `spawn wait`/`spawn ack` consumption are unchanged.
+- Child creation from a Meridian-projected `read-only` or `workspace-write` sandbox now
+  requires spawn capability and cannot weaken the sandbox or add projected workspace
+  roots. These create, continue, and fork calls also reject policy-changing `--env` keys
+  and harness-native passthrough arguments; unsandboxed callers carry no delegation floor.
 
 ### Fixed
-- Nested spawn creation, continuation, and fork now enforce the caller's resolved
-  sandbox, approval, and spawn-capability floor before materializing runtime state;
-  dry-runs enforce the same boundary and reject loader or harness-home environment
-  overrides and harness-native passthrough arguments.
 - Every spawn launch spelling, including harness shortcuts and continue/fork forms,
-  is recognized by the pre-bootstrap PID-namespace guard, so a sandboxed compound
-  command is refused before state access.
+  reaches the single ops-layer PID-namespace guard, so a sandboxed compound command is
+  refused before state access.
+- Repeated `plugin_api.file_lock(mode="exclusive")` acquisitions retain a writable lock
+  handle and can record the holder PID.
 - Read-only Codex spawns receive the completion confirmation turn when the Codex rules escape was written; a failed rules write keeps the no-signal hold instead of asking for a response the child cannot persist.
 - Scoped shell denies and approval rules remain authoritative inside broader Meridian command grants on OpenCode and Pi.
 - Spawn help resolves prompt paths separately, then passes the printed literal path so sandbox-boundary checks do not reject Meridian's own examples.

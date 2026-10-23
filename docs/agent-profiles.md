@@ -376,7 +376,7 @@ form exposes the same lines as `permission_report`.
 |---|---|---|---|---|
 | **Claude** | **Native**, with caveats. Plain and scoped `allow`/`deny`/`ask` use native permissions; a whole-policy allowlist also limits `--tools`. Claude checks file paths only through `Edit(path)` and `Read(path)`, so scoped `write`/`edit`/`notebook` rules become `Edit(path)` and scoped `read`/`glob`/`grep` rules become `Read(path)`: a scoped deny also refuses Claude's other file edits (or reads) at that path, and `--tools` still lists the tool itself (`Write`, `Grep`). **Partial** for scoped-only allowlists because Claude's `manual` mode still auto-approves Read/Grep/Glob and Bash calls it classifies as read-only, and for a spawn's plain `bash: deny` under `approval: default` or `confirm`, which that mode carries so the platform grants can run. Only a whole-policy `*: deny` allowlist uses `dontAsk`. | **Partial** for `read-only` and `workspace-write`: the native sandbox confines Bash subprocesses, not Edit/Write. **Native** for `danger-full-access`, which disables it. A spawn-capable profile's standalone `meridian spawn ...` command is excluded from the sandbox and runs fully outside it. | **Native** without an allowlist or `ask`: `auto` uses `acceptEdits`, `confirm` uses `manual`, and `never`/`yolo` bypass prompts. **Partial** with an allowlist or `ask`, which stays authoritative instead of being bypassed. | **Native** sub-agent and built-in-agent denies. **Partial** when built-in agents are enabled, because Claude cannot deny generic `Agent` while retaining them. Exact and prefix Meridian-command grants are native unless a stricter profile rule blocks them; adding Bash to a whole allowlist also exposes Claude's auto-approved read-only Bash class. |
 | **Codex** | **Partial**. Exact unscoped `bash`, `web`, `web_search`, and `image` allow/deny rules use native switches. A whole-policy allowlist turns off web search and image viewing but leaves the shell on because Codex reads files through it. Scoped rules, `ask`, per-capability allowlists, and every other capability are **not enforced**. | **Native** for every explicit non-default mode. An unset value is omitted; Codex chooses its default. Before a `read-only` or `workspace-write` launch, Meridian rewrites `$CODEX_HOME/rules/meridian.rules`; its `meridian spawn` rule runs those commands outside the sandbox for every Codex session using that home. | **Native** for `auto` (`on-request`) and `never`/`yolo` (`never`). **Partial** for `confirm`, which is also `on-request` because Codex has no stricter mode. | **Partial**. By default Meridian disables Codex's built-in multi-agent feature; `[harness.codex] allow_builtin_agents = true` removes that rule. The user-wide rules file grants the `meridian spawn` prefix under a constrained sandbox; other exact or prefix Meridian commands and the task-list deny are not projected. |
-| **OpenCode** | **Native** on the selected `meridian-<profile>` config agent in V1 and V2, for spawns and primaries. Scoped rules and allowlists work. **Partial** in V2 where distinct `write` and `patch` meanings collapse onto `edit`; the stricter conflicting effect wins. | **Not enforced**. | **Native** unless a `*` tool rule already decides unmatched calls: `confirm` asks in a primary and denies in a headless spawn; `auto` and `never`/`yolo` allow unmatched calls without prompting. `default` leaves OpenCode's behavior, except an otherwise unrestricted spawn keeps Meridian's historical allow-all fallback. | **Native** sub-agent denies and exact/prefix Meridian-command grants. A profile rule that is stricter on an overlapping command remains authoritative, so that grant is partial. |
+| **OpenCode** | **Native** on the selected `meridian-<profile>` config agent in V1 and V2, for spawns and primaries. Scoped rules and allowlists work. **Partial** in V2 where distinct `write` and `patch` meanings collapse onto `edit`; the stricter conflicting effect wins. | **Not enforced**. | **Native** unless a `*` tool rule already decides unmatched calls: `confirm` asks in a primary and denies in a headless spawn; `auto` and `never`/`yolo` allow unmatched calls without prompting. `default` leaves OpenCode's behavior, except an otherwise unrestricted spawn keeps Meridian's historical allow-all fallback. | **Native** sub-agent denies and exact/prefix Meridian-command grants. Completion and read-only command grants remain authoritative over overlapping profile rules; a stricter rule may still restrict the spawn-launch grant. |
 | **Pi** | **Native** for mapped tools. Plain rules use `--tools`/`--exclude-tools`; scoped rules, allowlists, and `ask` use Meridian's `meridian-permissions` Pi extension, which checks each simple command of a Bash call. A Bash allowlist, a Bash `deny`/`ask` for unmatched commands, or a scoped Bash `ask` also refuses shell syntax the extension cannot split (expansion, redirection, loops, here-docs). **Partial** for scoped Bash denies when Bash allows unmatched commands (`bash: allow` or `*: allow`): a command the extension cannot split runs unchecked. | **Not enforced**. | **Not enforced**. This does not affect tool-level `ask`, which the extension enforces separately. | **Native**. Pi has no native sub-agent or built-in-agent tools, so those denies already hold; when a policy could restrict the shell, the extension grants exact and prefix Meridian commands. |
 | **Cursor** | **Not enforced**, including restrictive profiles and `ask`. | **Native**: `read-only` enables Cursor's binary sandbox and `danger-full-access` disables it. **Partial**: `workspace-write` also disables it because Cursor has no middle setting. Unset uses Cursor's default. | **Native** for `auto` (`--force`) and `never`/`yolo` (`--yolo`). `confirm` is **not enforced**. | **Not enforced**. |
 
@@ -493,7 +493,10 @@ them:
   roots, the project's runtime state, and the bounded temporary directory used for control
   sockets. The launcher pre-creates this project's lifetime lock, which child commands open
   read-only; the shared `.locks` directory is not writable from the sandbox. Codex's
-  `read-only` sandbox can only read the projected roots.
+  `read-only` sandbox can only read the projected roots. Under `workspace-write`,
+  **Meridian runtime state is writable by sandboxed agents**; `spawn inject` and `cancel`
+  therefore do not claim a separate delegation boundary. This residual is tracked in
+  [#747](https://github.com/haowjy/meridian-cli/issues/747).
 - **Meridian commands.** Completion and read-only commands are always granted. A profile
   that can spawn also gets the `meridian spawn ...` launch commands. Each grant is either
   exact or prefix-matched in the target harness's syntax. Run
@@ -501,35 +504,39 @@ them:
   harness can enforce.
 - **Child-spawn escape.** Claude excludes a spawn-capable profile's standalone
   `meridian spawn ...` calls from `read-only` and `workspace-write` Bash sandboxes, and
-  from a sandbox the user's Claude settings enable when the profile leaves it at default. Codex
-  maintains `$CODEX_HOME/rules/meridian.rules` before launches in those modes, allowing
+  only those explicit profile modes. If the profile leaves `sandbox` unset while Claude's
+  own settings enable it, nested creation stays inside that sandbox and the PID-namespace
+  guard refuses it; set `sandbox:` in the profile. Codex maintains
+  `$CODEX_HOME/rules/meridian.rules` before launches in those modes, allowing
   the same standalone prefix outside Codex's sandbox. The whole matching command runs
   outside the sandbox, including its filesystem and network access. Codex's rule is
   user-wide: it applies to every Codex session using that home, including profiles without
   spawn capability and sessions not launched by Meridian. Meridian owns and rewrites only
   `meridian.rules`; it does not touch other Codex rules files.
 - **Delegation floor.** Every Meridian-launched harness receives its resolved sandbox,
-  approval mode, and spawn capability as a launcher-owned floor. `spawn`, `spawn
-  --continue`, and `spawn --fork` (including `--dry-run`) refuse a caller whose profile
-  cannot spawn, or a child that would be less confined. Sandbox modes compare from most
-  to least confined as `read-only`, `workspace-write`, `danger-full-access`, then
-  `default`; an unknown harness default is conservatively weaker than every explicit
-  mode. Approval modes compare from weakest to strongest as `never`/`yolo`, `auto`,
-  `default`, then `confirm`, so a child cannot reduce the caller's approval requirement.
-  Child `--env` values also cannot replace the process or harness config loader,
+  projected workspace roots, and spawn capability in a launcher-owned boundary record.
+  Only `read-only` and `workspace-write` callers have a floor, because only those explicit
+  modes receive a sandbox escape. `spawn`, `spawn --continue`, and `spawn --fork`
+  (including `--dry-run`) refuse a floored caller whose profile cannot spawn, a child with
+  a weaker sandbox, or a child whose projected workspace roots are not a subset of the
+  caller's. Approval is not a confinement boundary and is not compared. Child `--env`
+  values also cannot replace the process or harness config loader,
   executable search path, or native harness home. Harness-native passthrough arguments
   after `--` are refused because they can override Meridian's resolved sandbox or
-  approval flags. A child emits
+  sandbox flags. A child emits
   its own resolved floor to its descendants.
-  Top-level commands and shells that were not launched by Meridian have no floor; read
-  commands, `spawn done`, and `spawn rearm` do not consult it.
+  `danger-full-access` and `default` callers, top-level commands, and shells that were not
+  launched by Meridian have no floor; read commands, `spawn done`, and `spawn rearm` do
+  not consult it. A non-empty `subagents:` list supplies spawn capability but does not yet
+  restrict which agent name the caller selects; declared-child enforcement is tracked in
+  [#742](https://github.com/haowjy/meridian-cli/issues/742).
 
 The blocked `--env` set is `PATH`, `HOME`, `BASH_ENV`, `ENV`, `XDG_CONFIG_HOME`,
 `XDG_DATA_HOME`, `NODE_OPTIONS`, `NODE_PATH`, `PYTHONHOME`, `PYTHONPATH`,
 `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`,
 `OPENCODE_CLI_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`, `OPENCODE_DB`, `OPENCODE_HOME`,
 `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, and every `LD_*` or `DYLD_*`
-key. This restriction applies only when a launcher floor is present.
+key. This restriction applies only to a `read-only` or `workspace-write` caller.
 - **Loud failure for compound shell calls.** On Linux, Meridian records the harness
   launcher's PID namespace. A child launch attempted from a different namespace stops with
   an error rather than starting a child that dies with the sandboxed shell. Run
