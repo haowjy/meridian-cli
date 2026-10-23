@@ -149,7 +149,7 @@ class _HoldProfile:
         poll_seconds: float,
         rearm_budget: int | None,
         clock: Callable[[], float],
-        completion_signals_available: bool = True,
+        completion_signals_available: bool,
     ) -> None:
         self._runtime_root = runtime_root
         self._spawn_id = spawn_id

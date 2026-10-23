@@ -8,7 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Claude, Codex, and OpenCode completion holds say the previous reply is the report: finish with `spawn done`, or `spawn rearm` before doing more work (#725).
 
 ### Fixed
-- Completion holds preserve required nudges across replaceable transport closes, while read-only Codex spawns skip the confirmation turn they cannot answer.
+- Read-only Codex spawns skip the completion confirmation turn they cannot answer.
 
 ## [0.12.3] - 2026-10-23
 
