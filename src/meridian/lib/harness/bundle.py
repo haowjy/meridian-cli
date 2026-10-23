@@ -21,7 +21,12 @@ from meridian.lib.harness.idle_types import (
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
-from meridian.lib.safety.policy import EffectiveNetworkFacts, EnforcementReport, NetworkMode
+from meridian.lib.safety.policy import (
+    EffectiveNetworkFacts,
+    EnforcementReport,
+    NetworkMode,
+    unenforced_network,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
@@ -41,14 +46,6 @@ class EffectiveNetwork(Protocol):
         self,
         facts: EffectiveNetworkFacts,
     ) -> NetworkMode: ...
-
-
-def unenforced_network(
-    facts: EffectiveNetworkFacts,
-) -> NetworkMode:
-    """Return the effective mode for harnesses that leave shell network unrestricted."""
-
-    return "allow"
 
 
 class ManagedPrimaryBackendProjector(Protocol[ProjectorSpecT]):

@@ -113,6 +113,12 @@ class EffectiveNetworkFacts:
         )
 
 
+def unenforced_network(facts: EffectiveNetworkFacts) -> NetworkMode:
+    """Return the effective mode when a harness leaves shell network unrestricted."""
+
+    return "allow"
+
+
 # The origin of the unscoped deny ``build_permission_policy`` writes for a per-capability
 # allowlist; Mars never writes it.
 ALLOWLIST_ORIGIN = "allowlist"
@@ -344,7 +350,8 @@ def complete_report(
 ) -> EnforcementReport:
     """Give every policy element exactly one line, in policy order.
 
-    Elements are the rules, the platform rules, the sandbox and the approval mode.
+    Elements are the rules, the platform rules, the sandbox, the network mode, and the
+    approval mode.
 
     A compile reports only what it enforces or has something specific to say about; any
     element it left out gets the default line: a rule Mars could not name for ``harness`` is
@@ -364,12 +371,15 @@ def complete_report(
             ReportLine(f"sandbox: {policy.sandbox}", "unsupported", f"not projected for {harness}")
         )
     if policy.network_projection:
+        effective_network = unenforced_network(
+            EffectiveNetworkFacts.from_permission_policy(policy)
+        )
         defaults.append(
             ReportLine(
                 f"network: {policy.network_mode}",
-                "native" if policy.network_mode == "allow" else "unsupported",
+                "native" if effective_network == policy.network_mode else "unsupported",
                 f"{harness} leaves shell network unrestricted"
-                if policy.network_mode == "allow"
+                if effective_network == "allow"
                 else f"not enforced by {harness}; shell network remains available",
             )
         )
@@ -587,4 +597,5 @@ __all__ = [
     "format_report_lines",
     "platform_element",
     "rule_element",
+    "unenforced_network",
 ]

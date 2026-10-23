@@ -864,20 +864,22 @@ def _network_line(
 ) -> ReportLine:
     element = f"network: {policy.network_mode}"
     sandbox = permissions.settings.sandbox
-    if sandbox is None or not sandbox.enabled:
-        if policy.network_mode == "allow":
+    effective_network = effective_claude_network(
+        EffectiveNetworkFacts.from_permission_policy(policy)
+    )
+    if effective_network == "allow":
+        if policy.network_mode == "deny":
+            return ReportLine(
+                element,
+                "unsupported",
+                "no Claude Bash sandbox is projected; shell network remains available",
+            )
+        if sandbox is None or not sandbox.enabled:
             return ReportLine(
                 element,
                 "native",
                 "shell network is available without a projected Claude Bash sandbox",
             )
-        return ReportLine(
-            element,
-            "unsupported",
-            "no Claude Bash sandbox is projected; shell network remains available",
-        )
-
-    if policy.network_mode == "allow":
         domains = ",".join(f'"{domain}"' for domain in CLAUDE_NETWORK_ALLOW_DOMAINS)
         note = (
             f"--settings sandbox.network.allowedDomains=[{domains}], "
@@ -892,6 +894,7 @@ def _network_line(
             )
         return ReportLine(element, "native", note)
 
+    assert sandbox is not None and sandbox.enabled
     notes = ["--settings sandbox.network.strictAllowlist=true"]
     if sys.platform.startswith("linux"):
         notes.append(

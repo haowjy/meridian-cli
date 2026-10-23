@@ -34,7 +34,7 @@ without updating the corresponding projector → startup failure.
   policy's rules. The compile returns `(native value, EnforcementReport)`; its report is
   registered as `HarnessProjectionPorts.permission_report`; the harness's pure effective
   shell-network function is registered beside it. OpenCode, Pi, and Cursor share
-  `bundle.unenforced_network`, and `complete_report()` supplies their default network line
+  `unenforced_network`, which `complete_report()` uses for their default network line
   instead of repeating it in each compile. The projectors, `--dry-run` and
   `projection-manifest.json` all read these same policy facts.
 
