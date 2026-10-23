@@ -55,6 +55,7 @@ _ALLOW_BYPASS_FLAG = "--allow-dangerously-skip-permissions"
 _MODE_FLAG = "--permission-mode"
 _SETTINGS_FLAG = "--settings"
 _PASSTHROUGH_ALLOW_ELEMENT = "source: passthrough --allowedTools"
+CLAUDE_NETWORK_ALLOW_DOMAINS = ("*", "localhost", "127.0.0.1")
 
 
 @dataclass(frozen=True)
@@ -66,9 +67,7 @@ class ClaudeSandboxSettings:
     deny_write: tuple[str, ...] = ()
     auto_allow_bash: bool = False
     excluded_commands: tuple[str, ...] = ()
-    allowed_domains: tuple[str, ...] = ()
-    allow_local_binding: bool = False
-    allow_all_unix_sockets: bool = False
+    network_open: bool = True
 
 
 @dataclass(frozen=True)
@@ -428,11 +427,7 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
             and not channels.ask
         ),
         excluded_commands=_outside_sandbox_commands(policy),
-        allowed_domains=("*", "localhost", "127.0.0.1")
-        if policy.network == "allow"
-        else (),
-        allow_local_binding=policy.network == "allow",
-        allow_all_unix_sockets=policy.network == "allow",
+        network_open=policy.network == "allow",
     )
 
 
@@ -906,7 +901,7 @@ def _network_line(
             )
         return ReportLine(element, "native", note)
 
-    notes = ["no sandbox.network.allowedDomains projected"]
+    notes = ["--settings sandbox.network.strictAllowlist=true"]
     if sys.platform.startswith("linux"):
         notes.append(
             "processes in the same sandbox can still connect over its private TCP "
@@ -999,6 +994,7 @@ def compile_claude_permissions(
 
 
 __all__ = [
+    "CLAUDE_NETWORK_ALLOW_DOMAINS",
     "ClaudePermissions",
     "ClaudeSandboxSettings",
     "ClaudeSettings",

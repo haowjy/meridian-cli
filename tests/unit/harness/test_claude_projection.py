@@ -190,8 +190,8 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
         "localhost",
         "127.0.0.1",
     ]
-    assert settings["sandbox"]["allowLocalBinding"] is True
-    assert settings["sandbox"]["allowAllUnixSockets"] is True
+    assert settings["sandbox"]["network"]["allowLocalBinding"] is True
+    assert settings["sandbox"]["network"]["allowAllUnixSockets"] is True
     _, report = compile_claude_permissions(spec)
     sandbox_line = next(item for item in report if item.element == "sandbox: workspace-write")
     assert "runs fully outside the sandbox" in sandbox_line.note
@@ -226,7 +226,7 @@ def test_claude_network_deny_reports_settings_and_command_widening(
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
     settings = json.loads(command[command.index("--settings") + 1])
 
-    assert "network" not in settings["sandbox"]
+    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
     _, report = compile_claude_permissions(spec)
     line = next(item for item in report if item.element == "network: deny")
     assert line.status == "partial"
@@ -250,6 +250,25 @@ def test_claude_network_deny_reports_settings_and_command_widening(
     assert bypassed_line.status == "unsupported"
     assert effective_claude_network(bypassed.permission_policy) == "allow"
     assert "network proxy unrestricted" in bypassed_line.note
+
+
+def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=build_permission_policy(
+            rules=(tool_rule("*", "deny"), tool_rule("bash", "allow", "Bash")),
+            sandbox="workspace-write",
+            network="deny",
+            approval="never",
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+
+    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
+    assert "--dangerously-skip-permissions" not in command
 
 
 def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> None:

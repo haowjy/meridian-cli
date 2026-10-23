@@ -12,6 +12,7 @@ from meridian.lib.harness.projections._guards import (
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.harness.projections.compaction import project_claude_autocompact_args
 from meridian.lib.harness.projections.permissions_claude import (
+    CLAUDE_NETWORK_ALLOW_DOMAINS,
     ClaudeSettings,
     compile_claude_permissions,
 )
@@ -104,14 +105,14 @@ def _settings_json(settings: ClaudeSettings) -> str:
             sandbox["autoAllowBashIfSandboxed"] = sandbox_settings.auto_allow_bash
             if sandbox_settings.deny_write:
                 sandbox["filesystem"] = {"denyWrite": list(sandbox_settings.deny_write)}
-            if sandbox_settings.allowed_domains:
+            if sandbox_settings.network_open:
                 sandbox["network"] = {
-                    "allowedDomains": list(sandbox_settings.allowed_domains)
+                    "allowedDomains": list(CLAUDE_NETWORK_ALLOW_DOMAINS),
+                    "allowLocalBinding": True,
+                    "allowAllUnixSockets": True,
                 }
-            if sandbox_settings.allow_local_binding:
-                sandbox["allowLocalBinding"] = True
-            if sandbox_settings.allow_all_unix_sockets:
-                sandbox["allowAllUnixSockets"] = True
+            else:
+                sandbox["network"] = {"strictAllowlist": True}
         if sandbox_settings.excluded_commands:
             sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)
         payload["sandbox"] = sandbox
