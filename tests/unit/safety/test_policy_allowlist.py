@@ -57,3 +57,11 @@ def test_allowlist_queries(
     assert policy.is_allowlist is whole_policy
     assert tuple((rule.capability, rule.native) for rule in written) == denied
     assert policy.allowed_tools == allowed
+
+
+def test_network_defaults_to_allow_without_losing_authored_allow() -> None:
+    defaulted = build_permission_policy(sandbox=None)
+    authored = build_permission_policy(sandbox=None, network="allow")
+
+    assert (defaulted.network, defaulted.network_explicit) == ("allow", False)
+    assert (authored.network, authored.network_explicit) == ("allow", True)

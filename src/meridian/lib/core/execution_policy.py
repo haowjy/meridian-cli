@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 from pydantic import (
     AfterValidator,
@@ -101,6 +101,7 @@ class ResolvedExecutionPolicy(BaseModel):
 
     effort: str | None = None
     sandbox: str | None = None
+    network: Literal["allow", "deny"] | None = None
     approval: str | None = None
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None

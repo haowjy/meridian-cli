@@ -1693,6 +1693,7 @@ def bind_launch_context(
     permission_policy = build_permission_policy(
         rules=(*resolved_request.tool_rules, *platform_tool_rules),
         sandbox=resolved_request.execution_policy.sandbox,
+        network=resolved_request.execution_policy.network,
         sandbox_write_roots=tuple(
             root.as_posix()
             for root in _dedupe_roots_in_order((resolved_control_root, *workspace_authority_roots))

@@ -535,6 +535,7 @@ def _parse_bundle_payload(
             "effort": execution_policy_payload.get("effort"),
             "approval": execution_policy_payload.get("approval"),
             "sandbox": execution_policy_payload.get("sandbox"),
+            "network": execution_policy_payload.get("network"),
             "autocompact": execution_policy_payload.get("autocompact"),
             "autocompact_pct": execution_policy_payload.get("autocompact_pct"),
             "timeout": execution_policy_payload.get("timeout"),
@@ -709,6 +710,9 @@ def bundle_to_resolved_policy(
             ),
             sandbox_source=_map_provenance_level(
                 _provenance_value(effective_provenance, "sandbox")
+            ),
+            network_source=_map_provenance_level(
+                _provenance_value(effective_provenance, "network")
             ),
             autocompact_source=_map_provenance_level(
                 _provenance_value(effective_provenance, "autocompact")

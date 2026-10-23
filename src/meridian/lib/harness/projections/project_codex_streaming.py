@@ -230,8 +230,9 @@ def project_codex_spec_to_thread_request(
         payload["model"] = spec.model
 
     normalized_effort = (spec.effort or "").strip()
+    thread_config: dict[str, object] = {}
     if normalized_effort:
-        payload["config"] = {CODEX_CONFIG_REASONING_EFFORT_KEY: normalized_effort}
+        thread_config[CODEX_CONFIG_REASONING_EFFORT_KEY] = normalized_effort
 
     permissions, _ = compile_codex_permissions(spec)
     sandbox = project_codex_sandbox(
@@ -243,10 +244,9 @@ def project_codex_spec_to_thread_request(
 
     sandbox_fields, sandbox_config = sandbox.thread_fields()
     payload.update(sandbox_fields)
-    if sandbox_config:
-        config = payload.setdefault("config", {})
-        assert isinstance(config, dict)
-        config.update(sandbox_config)
+    thread_config.update(sandbox_config)
+    if thread_config:
+        payload["config"] = thread_config
 
     method = _select_thread_method(spec)
     resume_thread_id = (spec.continue_session_id or "").strip()
