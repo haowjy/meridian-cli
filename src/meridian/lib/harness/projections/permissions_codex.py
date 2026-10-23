@@ -15,8 +15,7 @@ from dataclasses import dataclass
 from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_NETWORK_ACCESS_KEY,
-    codex_native_config_has_key,
-    codex_native_config_value,
+    flatten_native_config,
     project_codex_native_config,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -28,6 +27,7 @@ from meridian.lib.safety.policy import (
     NetworkMode,
     PermissionPolicy,
     ReportLine,
+    ReportStatus,
     SandboxMode,
     complete_report,
     platform_element,
@@ -53,25 +53,11 @@ _SANDBOX_MODE_BY_MODE: dict[SandboxMode, str | None] = {
 }
 
 
-def effective_codex_network(
-    policy: PermissionPolicy,
-    *,
-    native_config: Mapping[str, object] | None = None,
-) -> NetworkMode:
-    """Return the shell-network policy Codex actually enforces."""
+@dataclass(frozen=True)
+class CodexNetworkOverride:
+    """Deprecated native network override retained for its warning release."""
 
-    if policy.sandbox == "read-only":
-        return "deny"
-    if policy.sandbox == "workspace-write":
-        if native_config is not None and codex_native_config_has_key(
-            native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
-        ):
-            native_value = codex_native_config_value(
-                native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
-            )
-            return "deny" if native_value is False else "allow"
-        return policy.network
-    return "allow"
+    value: object
 
 
 @dataclass(frozen=True)
@@ -85,6 +71,7 @@ class CodexPermissions:
 
     sandbox_mode: str | None
     network_access: bool | None
+    network_override: CodexNetworkOverride | None
     approval_policy: str | None
     shell_tool: bool | None
     web_search: bool | None
@@ -116,6 +103,82 @@ def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
         verb = "--enable" if enabled else "--disable"
         return "view_image", enabled, f"{verb} view_image"
     return None
+
+
+def _network_override(native_config: Mapping[str, object]) -> CodexNetworkOverride | None:
+    return next(
+        (
+            CodexNetworkOverride(value)
+            for segments, value in flatten_native_config(native_config)
+            if ".".join(segments) == CODEX_CONFIG_NETWORK_ACCESS_KEY
+        ),
+        None,
+    )
+
+
+def _compile_codex_permission_values(
+    policy: PermissionPolicy,
+    native_config: Mapping[str, object],
+) -> CodexPermissions:
+    """Resolve every native permission value, including the deprecated override, once."""
+
+    # Under an allowlist, search and image viewing are off unless a rule allows them. The
+    # shell stays on because Codex reads files through it.
+    off = False if policy.is_allowlist else None
+    switches: dict[str, bool | None] = {
+        "shell_tool": None,
+        "web_search": off,
+        "view_image": off,
+    }
+    # `web_search` is narrower than `web`, so it decides the search switch whatever the order.
+    for rule in sorted(policy.rules, key=lambda rule: rule.capability == "web_search"):
+        switch = _tool_switch(rule)
+        if switch is not None:
+            switches[switch[0]] = switch[1]
+
+    network_override = _network_override(native_config)
+    network_access = (
+        policy.network == "allow" if policy.sandbox == "workspace-write" else None
+    )
+    if network_override is not None:
+        network_access = None
+
+    return CodexPermissions(
+        sandbox_mode=_SANDBOX_MODE_BY_MODE[policy.sandbox],
+        network_access=network_access,
+        network_override=network_override,
+        approval_policy=_APPROVAL_POLICY_BY_MODE[policy.approval],
+        shell_tool=switches["shell_tool"],
+        web_search=switches["web_search"],
+        view_image=switches["view_image"],
+        builtin_agents_disabled=any(
+            rule.kind == "builtin-agents" for rule in policy.platform_rules
+        ),
+    )
+
+
+def _effective_codex_network(
+    policy: PermissionPolicy, permissions: CodexPermissions
+) -> NetworkMode:
+    if policy.sandbox == "read-only":
+        return "deny"
+    if policy.sandbox == "workspace-write":
+        override = permissions.network_override
+        if override is not None and isinstance(override.value, bool):
+            return "allow" if override.value else "deny"
+        return policy.network
+    return "allow"
+
+
+def effective_codex_network(
+    policy: PermissionPolicy,
+    *,
+    native_config: Mapping[str, object] | None = None,
+) -> NetworkMode:
+    """Return the shell-network policy Codex actually enforces."""
+
+    permissions = _compile_codex_permission_values(policy, native_config or {})
+    return _effective_codex_network(policy, permissions)
 
 
 def _codex_report(
@@ -256,17 +319,33 @@ def _codex_report(
             )
         )
     network_element = f"network: {policy.network}"
-    effective_network = effective_codex_network(policy, native_config=spec.native_config)
-    native_network_override = codex_native_config_has_key(
-        spec.native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
-    )
-    if policy.sandbox == "workspace-write" and native_network_override:
+    effective_network = _effective_codex_network(policy, permissions)
+    network_override = permissions.network_override
+    if policy.sandbox == "workspace-write" and network_override is not None:
+        override_value = network_override.value
+        if isinstance(override_value, bool):
+            status: ReportStatus = (
+                "native" if effective_network == policy.network else "partial"
+            )
+            note = (
+                "deprecated native_config sandbox_workspace_write.network_access "
+                + (
+                    "matches the profile network field"
+                    if status == "native"
+                    else "takes precedence over the profile network field for this release"
+                )
+            )
+        else:
+            status = "partial"
+            note = (
+                "deprecated native_config sandbox_workspace_write.network_access is not "
+                "a boolean; Codex may reject it instead of applying the profile network field"
+            )
         lines.append(
             ReportLine(
                 network_element,
-                "partial",
-                "deprecated native_config sandbox_workspace_write.network_access takes "
-                "precedence over the profile network field for this release",
+                status,
+                note,
             )
         )
     elif policy.sandbox == "workspace-write":
@@ -285,7 +364,7 @@ def _codex_report(
                 ReportLine(
                     network_element,
                     "partial" if escaped else "native",
-                    "Codex's workspace-write default keeps shell network and sockets off"
+                    "-c sandbox_workspace_write.network_access=false"
                     + (
                         "; the Meridian-owned user rule still lets `meridian spawn` run "
                         "outside the sandbox with network access"
@@ -361,32 +440,7 @@ def compile_codex_permissions(
     """Compile ``spec.permission_policy`` for Codex, with the report of what it did."""
 
     policy = spec.permission_policy
-    # Under an allowlist, search and image viewing are off unless a rule allows them. The shell
-    # stays on: Codex reads files through it, so turning it off would leave nothing to read with.
-    off = False if policy.is_allowlist else None
-    switches: dict[str, bool | None] = {
-        "shell_tool": None,
-        "web_search": off,
-        "view_image": off,
-    }
-    # `web_search` is narrower than `web`, so it decides the search switch whatever the order.
-    for rule in sorted(policy.rules, key=lambda rule: rule.capability == "web_search"):
-        switch = _tool_switch(rule)
-        if switch is not None:
-            switches[switch[0]] = switch[1]
-    permissions = CodexPermissions(
-        sandbox_mode=_SANDBOX_MODE_BY_MODE[policy.sandbox],
-        network_access=(
-            True if policy.sandbox == "workspace-write" and policy.network == "allow" else None
-        ),
-        approval_policy=_APPROVAL_POLICY_BY_MODE[policy.approval],
-        shell_tool=switches["shell_tool"],
-        web_search=switches["web_search"],
-        view_image=switches["view_image"],
-        builtin_agents_disabled=any(
-            rule.kind == "builtin-agents" for rule in policy.platform_rules
-        ),
-    )
+    permissions = _compile_codex_permission_values(policy, spec.native_config)
     _, native_config_report = project_codex_native_config(spec.native_config)
     return permissions, _codex_report(spec, policy, permissions, native_config_report)
 

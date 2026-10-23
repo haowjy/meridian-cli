@@ -156,22 +156,6 @@ def _reserved_codex_key(key: str) -> bool:
     )
 
 
-def codex_native_config_has_key(config: NativeConfig, key: str) -> bool:
-    """Whether a flattened native-config leaf exactly owns ``key``."""
-
-    return any(".".join(segments) == key for segments, _value in flatten_native_config(config))
-
-
-def codex_native_config_value(config: NativeConfig, key: str) -> object:
-    """Return one exact flattened native-config value."""
-
-    return next(
-        value
-        for segments, value in flatten_native_config(config)
-        if ".".join(segments) == key
-    )
-
-
 def project_codex_native_config(
     config: NativeConfig,
 ) -> tuple[tuple[str, ...], EnforcementReport]:
@@ -266,8 +250,6 @@ __all__ = [
     "CODEX_CONFIG_WRITABLE_ROOTS_KEY",
     "CODEX_RESERVED_NATIVE_CONFIG_KEYS",
     "CODEX_RESERVED_NATIVE_CONFIG_PREFIXES",
-    "codex_native_config_has_key",
-    "codex_native_config_value",
     "codex_toml_literal",
     "flatten_native_config",
     "project_codex_native_config",

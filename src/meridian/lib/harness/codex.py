@@ -50,10 +50,6 @@ from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
-from meridian.lib.harness.projections.native_config import (
-    CODEX_CONFIG_NETWORK_ACCESS_KEY,
-    codex_native_config_has_key,
-)
 from meridian.lib.harness.projections.permissions_codex import (
     compile_codex_permissions,
     effective_codex_network,
@@ -408,10 +404,20 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def launch_spec_warnings(
         self, spec: ResolvedLaunchSpec
     ) -> tuple[CompositionWarning, ...]:
-        if not codex_native_config_has_key(
-            spec.native_config, CODEX_CONFIG_NETWORK_ACCESS_KEY
-        ):
+        permissions, _ = compile_codex_permissions(spec)
+        override = permissions.network_override
+        if override is None:
             return ()
+        if not isinstance(override.value, bool):
+            return (
+                CompositionWarning(
+                    code="invalid_codex_network_access_native_config",
+                    message=(
+                        "Codex native_config sandbox_workspace_write.network_access must "
+                        "be a boolean. It is also deprecated; use the profile network field."
+                    ),
+                ),
+            )
         return (
             CompositionWarning(
                 code="deprecated_codex_network_access_native_config",

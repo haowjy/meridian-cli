@@ -98,12 +98,7 @@ def project_codex_spec_to_cli_args(
     )
 
     permissions, _ = compile_codex_permissions(spec)
-    sandbox = project_codex_sandbox(
-        permissions,
-        writable_roots=tuple(root.as_posix() for root in spec.projected_roots),
-        native_config=spec.native_config,
-        network_access=permissions.network_access,
-    )
+    sandbox = project_codex_sandbox(spec, permissions)
     command.extend(sandbox.process_args("subprocess"))
     if permissions.approval_policy is not None:
         command.extend(

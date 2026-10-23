@@ -164,12 +164,7 @@ def project_codex_spec_to_appserver_command(
         command.extend(("-c", f"{CODEX_CONFIG_NOTIFY_KEY}={json.dumps(IDLE_NOTIFY_COMMAND)}"))
 
     permissions, _ = compile_codex_permissions(spec)
-    sandbox = project_codex_sandbox(
-        permissions,
-        writable_roots=tuple(root.as_posix() for root in spec.projected_roots),
-        native_config=spec.native_config,
-        network_access=permissions.network_access,
-    )
+    sandbox = project_codex_sandbox(spec, permissions)
     command.extend(sandbox.process_args("streaming"))
 
     if permissions.approval_policy is not None:
@@ -237,12 +232,7 @@ def project_codex_spec_to_thread_request(
         thread_config[CODEX_CONFIG_REASONING_EFFORT_KEY] = normalized_effort
 
     permissions, _ = compile_codex_permissions(spec)
-    sandbox = project_codex_sandbox(
-        permissions,
-        writable_roots=tuple(root.as_posix() for root in spec.projected_roots),
-        native_config=spec.native_config,
-        network_access=permissions.network_access,
-    )
+    sandbox = project_codex_sandbox(spec, permissions)
     if permissions.approval_policy is not None:
         payload["approvalPolicy"] = permissions.approval_policy
 
