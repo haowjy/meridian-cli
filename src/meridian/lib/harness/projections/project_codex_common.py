@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal
 
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_AGENTS_PREFIX,
@@ -17,8 +16,6 @@ from meridian.lib.harness.projections.native_config import (
 )
 from meridian.lib.harness.projections.permissions_codex import CodexPermissions
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-
-type CodexLaunchTransport = Literal["subprocess", "streaming"]
 
 # Codex 0.162: disabling v2 falls back to v1, whose tools survive `--disable multi_agent`;
 # only a zero spawn depth removes them. Config overrides, not `--disable`: Codex rejects
@@ -38,27 +35,34 @@ class CodexSandboxProjection:
 
     sandbox_mode: str | None
     writable_roots: tuple[str, ...]
-    network_access: bool | None = None
+    network_access: bool | None
 
-    def process_args(self, transport: CodexLaunchTransport) -> tuple[str, ...]:
-        """Return sandbox arguments for ``codex exec`` or ``codex app-server``."""
+    def subprocess_args(self) -> tuple[str, ...]:
+        """Return sandbox arguments for ``codex exec``."""
 
         arguments: list[str] = []
         if self.sandbox_mode is not None:
-            if transport == "subprocess":
-                arguments.extend(("--sandbox", self.sandbox_mode))
-            else:
-                arguments.extend(
-                    (
-                        "-c",
-                        f"{CODEX_CONFIG_SANDBOX_MODE_KEY}={json.dumps(self.sandbox_mode)}",
-                    )
-                )
+            arguments.extend(("--sandbox", self.sandbox_mode))
 
-        if transport == "subprocess":
-            for root in self.writable_roots:
-                arguments.extend(("--add-dir", root))
-        elif self.writable_roots:
+        for root in self.writable_roots:
+            arguments.extend(("--add-dir", root))
+
+        self._append_network_args(arguments)
+        return tuple(arguments)
+
+    def appserver_args(self) -> tuple[str, ...]:
+        """Return sandbox arguments for ``codex app-server``."""
+
+        arguments: list[str] = []
+        if self.sandbox_mode is not None:
+            arguments.extend(
+                (
+                    "-c",
+                    f"{CODEX_CONFIG_SANDBOX_MODE_KEY}={json.dumps(self.sandbox_mode)}",
+                )
+            )
+
+        if self.writable_roots:
             arguments.extend(
                 (
                     "-c",
@@ -67,6 +71,10 @@ class CodexSandboxProjection:
                 )
             )
 
+        self._append_network_args(arguments)
+        return tuple(arguments)
+
+    def _append_network_args(self, arguments: list[str]) -> None:
         if self.network_access is not None:
             arguments.extend(
                 (
@@ -75,7 +83,6 @@ class CodexSandboxProjection:
                     f"{str(self.network_access).lower()}",
                 )
             )
-        return tuple(arguments)
 
     def thread_fields(self) -> tuple[dict[str, object], dict[str, object]]:
         """Return thread request fields and config overrides for app-server."""
@@ -128,7 +135,6 @@ def project_codex_tool_switch_flags(permissions: CodexPermissions) -> tuple[str,
 
 __all__ = [
     "CODEX_DISABLE_BUILTIN_AGENT_FLAGS",
-    "CodexLaunchTransport",
     "CodexSandboxProjection",
     "project_codex_sandbox",
     "project_codex_tool_switch_flags",

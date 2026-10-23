@@ -165,7 +165,7 @@ def project_codex_spec_to_appserver_command(
 
     permissions, _ = compile_codex_permissions(spec)
     sandbox = project_codex_sandbox(spec, permissions)
-    command.extend(sandbox.process_args("streaming"))
+    command.extend(sandbox.appserver_args())
 
     if permissions.approval_policy is not None:
         command.extend(

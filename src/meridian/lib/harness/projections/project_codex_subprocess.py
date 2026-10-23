@@ -99,7 +99,7 @@ def project_codex_spec_to_cli_args(
 
     permissions, _ = compile_codex_permissions(spec)
     sandbox = project_codex_sandbox(spec, permissions)
-    command.extend(sandbox.process_args("subprocess"))
+    command.extend(sandbox.subprocess_args())
     if permissions.approval_policy is not None:
         command.extend(
             (
