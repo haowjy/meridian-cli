@@ -156,13 +156,8 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
+            has_spawn_capability=True,
             sandbox="workspace-write",
-            platform_rules=(
-                PlatformRule(
-                    kind="meridian-commands",
-                    commands=(PlatformCommand(command="meridian spawn", match="prefix"),),
-                ),
-            ),
         ),
     )
 

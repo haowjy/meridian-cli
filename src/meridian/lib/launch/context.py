@@ -1699,6 +1699,7 @@ def bind_launch_context(
         ),
         approval=resolved_request.execution_policy.approval or "default",
         platform_rules=platform_rules,
+        has_spawn_capability=prepared.has_spawn_capability,
     )
 
     # Defense in depth for persisted worker requests that bypassed preparation.

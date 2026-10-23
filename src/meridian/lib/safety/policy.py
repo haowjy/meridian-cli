@@ -96,6 +96,7 @@ class PermissionPolicy(BaseModel):
 
     rules: tuple[ToolRule, ...] = ()
     platform_rules: tuple[PlatformRule, ...] = ()
+    has_spawn_capability: bool = False
     sandbox: SandboxMode = "default"
     # Workspace roots whose writes a read-only native sandbox must block. Bind keeps
     # these separate from projected runtime/temp roots, which must remain writable.
@@ -396,6 +397,7 @@ def build_permission_policy(
     approval: str = "default",
     platform_rules: tuple[PlatformRule, ...] = (),
     sandbox_write_roots: tuple[str, ...] = (),
+    has_spawn_capability: bool = False,
 ) -> PermissionPolicy:
     """Build the policy from Mars's resolved tool rules and the execution policy.
 
@@ -412,6 +414,7 @@ def build_permission_policy(
         # allowlist became a rule.
         rules=(*denies, *resolved),
         platform_rules=platform_rules,
+        has_spawn_capability=has_spawn_capability,
         sandbox=_parse_sandbox_value(sandbox),
         sandbox_write_roots=tuple(dict.fromkeys(root for root in sandbox_write_roots if root)),
         approval=_parse_approval_value(approval),
