@@ -58,6 +58,8 @@ Derived fields inherit the precedence level of their source.
 
 Read `docs/releasing.md` before releasing or opening a PR.
 
+The pre-push hook runs the fast gate, so push after the last review fix, not before.
+
 Docs never state release status ("unreleased", "next release"): `CHANGELOG.md`
 `[Unreleased]` owns that, and a release stamps the version. Title upgrade notes
 in `docs/upgrading.md` by topic; the changelog entry that links to them dates them.
