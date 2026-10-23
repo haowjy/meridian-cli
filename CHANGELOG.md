@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-10-23
+
 ### Fixed
 - POSIX control sockets now live in `/tmp/meridian-<uid>` regardless of `TMPDIR`,
   keeping runners and `spawn inject` on the same bounded path. There is no fallback
