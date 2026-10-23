@@ -48,7 +48,8 @@ turn: `done` accepts, `rearm` opens another fixed window and waits for a genuine
 successful/idle candidate, and silence accepts only after evidence is ready. A hold
 without that channel skips confirmation and reads no signals, but keeps the same
 evidence, blocker, and deadline policy. This no-signal path is live for read-only Codex
-when Meridian could not write its execpolicy rules file. The default completion window
+without spawn capability (no `subagents`, e.g. explorer), and for spawn-capable read-only
+Codex when Meridian could not write its execpolicy rules file. The default completion window
 is the calling harness's configured wait-yield interval unless
 `timeouts.resident_deadline_seconds` overrides it.
 
