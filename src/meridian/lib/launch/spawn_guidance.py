@@ -75,7 +75,7 @@ def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
 - {variants.timeout_bullet}
 - Drain every --bg spawn with no-arg `meridian spawn wait` before you
   respond to the user, start dependent work, or end your turn. It finds
-  your pending spawns by session; re-invoke to keep waiting. The wait
+    running and owed spawns by session; re-invoke to keep waiting. The wait
   itself can run in your native background execution to keep working
   while it blocks — it's the launch, not the wait, that must never be
   background-wrapped. Un-waited background spawns are lost.

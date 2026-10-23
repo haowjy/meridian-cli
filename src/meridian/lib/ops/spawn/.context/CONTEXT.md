@@ -50,11 +50,14 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   or collection. Active targets are not capped.
 - Carries the target-resolution classification through polling and output. Owed-finished rows use
   `owed.py:render_delivery` (status/outcome, worker, failure, distinct task directory, and show
-  lookup) and never carry `report_body`, including JSON `--full`. Rows active at resolution keep
-  normal wait rendering and their requested report body after the wait blocks for them.
+  lookup) and never carry `report_body`, including JSON `--full`. JSON places them in
+  `owed_spawns`; `spawns`, run counts, fail-fast, single-result compatibility fields, and the exit
+  code describe only rows active at resolution. Those blocked-on rows keep normal wait rendering
+  and their requested report body after the wait blocks for them.
 - An observing wait leases the combined set before polling. A normal return consumes every
   terminal target, including one already finished when the wait began, so `spawn collect` cannot
-  deliver it later.
+  deliver it later. After taking its first lease, wait rechecks durable consumption and leases held
+  by other wait processes before retaining an owed row.
 - `--no-observe` still includes owed terminal results because it means fetch without consuming; it
   creates no lease or observation, so the same header can appear again until a normal wait or ack.
 - If `MERIDIAN_CHAT_ID` is absent, raises `ValueError` (not in a session)
@@ -70,8 +73,9 @@ protocol:
   authority rows with derived status.
 - Owed membership is background direct children of all primary generations for
   `MERIDIAN_CHAT_ID`, minus consumption read across those same generations and
-  minus `--exclude`. Birth-verified explicit-wait leases skip a child without
-  letting the collector exit early.
+  minus `--exclude`. Consumption includes CLI wait/ack observations plus Pi's
+  delivery receipts and cleared IDs. Birth-verified explicit-wait leases skip a
+  child without letting the collector exit early.
 - An initially ready result returns the ready terminal subset. Otherwise the fixed
   owed set settles together. A final consumption/lease check precedes return.
 - A delivery admits at most 32 results. Each member is header-only: identity and

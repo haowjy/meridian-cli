@@ -14,6 +14,12 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from meridian.lib.bootstrap.services import RuntimeReadContext
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
+from meridian.lib.harness.pi_private_state import (
+    ClearedSpawns,
+    DeliveryReceipts,
+    pi_coordination_dir,
+    read_pi_private_doc,
+)
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read, runtime_context
 from meridian.lib.state import history_index
 from meridian.lib.state.history_index import HistoryIndexBusy
@@ -23,7 +29,7 @@ from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_observations import consumed_ids, leased_ids, record
 from meridian.lib.state.spawn_status import read_derived
 
-from .models import task_dir_line
+from .models import SpawnDetailOutput, task_dir_line
 
 _COLLECT_POLL_INTERVAL_SECS = 1.0
 _DELIVERY_MAX_MEMBERS = 32
@@ -83,34 +89,51 @@ class OwedSnapshot:
     unavailable_ids: tuple[str, ...]
 
 
-def render_delivery(rows: Sequence[SpawnRecord]) -> str:
+def render_delivery(rows: Sequence[SpawnRecord | SpawnDetailOutput]) -> str:
     """Render Claude's header-only notification for terminal child rows."""
 
     rendered: list[str] = []
     for row in rows:
-        terminal = row.terminal
+        if isinstance(row, SpawnRecord):
+            spawn_id = row.id
+            terminal_present = row.terminal is not None
+            duration_secs = row.terminal.duration_secs if row.terminal is not None else None
+            exit_code = row.terminal.exit_code if row.terminal is not None else None
+            failure = row.terminal.error if row.terminal is not None else None
+            model = row.model or ""
+            harness = row.harness or ""
+            authority_root = row.control_root
+            task_cwd = row.task_cwd
+            work_id = row.work_id
+        else:
+            spawn_id = row.spawn_id
+            terminal_present = is_terminal_spawn_status(row.status)
+            duration_secs = row.duration_secs
+            exit_code = row.exit_code
+            failure = row.failure_reason
+            model = row.model
+            harness = row.harness
+            authority_root = row.authority_root
+            task_cwd = row.task_cwd
+            work_id = row.work_id
         outcome: list[str] = []
-        if terminal is not None and terminal.duration_secs is not None:
-            outcome.append(f"{terminal.duration_secs:.1f}s")
-        if terminal is not None:
-            outcome.append(f"exit {terminal.exit_code}")
-        if terminal is not None and terminal.error is not None:
+        if duration_secs is not None:
+            outcome.append(f"{duration_secs:.1f}s")
+        if terminal_present:
+            outcome.append(f"exit {exit_code}")
+        if failure is not None:
             outcome.append("result error")
         outcome_suffix = f" ({', '.join(outcome)})" if outcome else ""
 
         lines = [
-            f"{row.id} {row.status}{outcome_suffix}",
-            f"Worker: {row.model or ''} ({row.harness or ''})",
+            f"{spawn_id} {row.status}{outcome_suffix}",
+            f"Worker: {model} ({harness})",
         ]
-        if terminal is not None and terminal.error is not None:
-            lines.append(f"Failure: {terminal.error}")
-        if (
-            row.control_root is not None
-            and row.task_cwd is not None
-            and row.task_cwd != row.control_root
-        ):
-            lines.append(task_dir_line(row.task_cwd, row.work_id))
-        lines.append(f"meridian spawn show {row.id}")
+        if failure is not None:
+            lines.append(f"Failure: {failure}")
+        if authority_root is not None and task_cwd is not None and task_cwd != authority_root:
+            lines.append(task_dir_line(task_cwd, work_id))
+        lines.append(f"meridian spawn show {spawn_id}")
         rendered.append("\n".join(lines))
     return "\n\n".join(rendered)
 
@@ -129,6 +152,29 @@ def _roots(
         return prepared.project_root, prepared.runtime_root
     authority = resolve_runtime_authority_for_read(project_root)
     return authority.project_root, authority.runtime_root
+
+
+def owed_consumed_ids(runtime_root: Path, parent_ids: Sequence[str]) -> frozenset[str]:
+    """Return every result-consumption source honored by CLI and Pi delivery."""
+
+    consumed = set(consumed_ids(runtime_root, parent_ids))
+    for parent_id in set(parent_ids):
+        coordination_dir = pi_coordination_dir(runtime_root, parent_id)
+        receipts = read_pi_private_doc(
+            coordination_dir / "delivery-receipts.json",
+            DeliveryReceipts,
+            spawn_id=parent_id,
+        )
+        if receipts is not None:
+            consumed.update(work_id for ids in receipts.messages.values() for work_id in ids)
+        cleared = read_pi_private_doc(
+            coordination_dir / "cleared-spawns.json",
+            ClearedSpawns,
+            spawn_id=parent_id,
+        )
+        if cleared is not None:
+            consumed.update(cleared.cleared_spawn_ids)
+    return frozenset(consumed)
 
 
 def discover_owed_scope(
@@ -180,7 +226,7 @@ def discover_owed_scope(
         oldest_first=True,
         deadline=deadline,
     )
-    consumed = consumed_ids(runtime_root, parent_ids)
+    consumed = owed_consumed_ids(runtime_root, parent_ids)
     candidate_ids = tuple(
         dict.fromkeys(
             row.id
@@ -200,7 +246,7 @@ def read_owed_snapshot(
 ) -> OwedSnapshot:
     """Re-read one fixed candidate set and subtract consumption and live leases."""
 
-    consumed = consumed_ids(runtime_root, scope.parent_ids)
+    consumed = owed_consumed_ids(runtime_root, scope.parent_ids)
     owed_ids = tuple(
         spawn_id for spawn_id in scope.candidate_ids if spawn_id not in consumed
     )
@@ -289,7 +335,7 @@ def collect_owed_sync(
             delivered_rows = select_delivery_rows(terminal)
             text = render_delivery(delivered_rows)
             # An explicit wait or ack may have taken a result meanwhile.
-            taken = consumed_ids(runtime_root, scope.parent_ids) | leased_ids(
+            taken = owed_consumed_ids(runtime_root, scope.parent_ids) | leased_ids(
                 runtime_root, scope.parent_ids
             )
             if not any(row.id in taken for row in delivered_rows):
@@ -330,8 +376,6 @@ def ack_owed_sync(
 
 
 __all__ = [
-    "OwedSnapshot",
-    "OwedSpawnScope",
     "SpawnAckInput",
     "SpawnAckOutput",
     "SpawnCollectInput",
@@ -339,6 +383,7 @@ __all__ = [
     "ack_owed_sync",
     "collect_owed_sync",
     "discover_owed_scope",
+    "owed_consumed_ids",
     "read_owed_snapshot",
     "render_delivery",
     "select_delivery_rows",

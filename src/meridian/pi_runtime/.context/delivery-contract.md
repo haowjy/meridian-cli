@@ -127,3 +127,9 @@ across a process crash.
 or admission; upgrading an old unconsumed terminal result can repeat a notice
 whose former admission cannot be proved. Start fresh sessions when changing
 bundles; never mix old and new writers for one parent.
+
+CLI owed-result discovery uses the same consumption set as this watcher: admitted
+work IDs from `delivery-receipts.json`, CLI observations from the current and legacy
+`observed-spawns.json`, and explicit dismissals from `cleared-spawns.json`. Therefore
+no-argument `spawn wait` and `spawn collect` do not replay a Pi result that this watcher
+already delivered or the user cleared.

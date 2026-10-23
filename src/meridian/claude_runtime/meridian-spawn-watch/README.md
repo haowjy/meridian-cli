@@ -47,7 +47,10 @@ collector skips those children during the wait and does not deliver them afterwa
 Wait takes at most the oldest 32 children that were already finished when target
 resolution ran and renders them through the same header-only delivery formatter.
 Running targets are uncapped and keep their full report output after wait blocks for
-them. The remaining finished children stay owed for the next wait or collection.
+them. Already-finished rows do not affect waited-run counts, fail-fast, or exit status;
+JSON returns them separately in `owed_spawns`. The remaining finished children stay
+owed for the next wait or collection. Pi delivery receipts and cleared IDs count as
+consumed for both wait and collection, so those results are not replayed here.
 `spawn wait --no-observe` deliberately does neither and may return the same finished
 child again until a normal wait or `spawn ack` consumes it; its rendering is unchanged.
 

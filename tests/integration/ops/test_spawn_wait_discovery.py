@@ -102,7 +102,7 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
     unrelated = _spawn(root, "p-unrelated", chat="c-other", owner=None)
     owed_ids = tuple(
         _spawn(root, f"p-owed-{index:02d}", parent=primary, launch_mode="background")
-        for index in range(34)
+        for index in range(36)
     )
     foreground = _spawn(root, "p-foreground", parent=primary, launch_mode="foreground")
     for index, spawn_id in enumerate(owed_ids):
@@ -115,6 +115,29 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
             finished_at=f"2026-01-01T00:00:{index:02d}Z",
         )
     spawn_store.finalize_spawn(root, foreground, "succeeded", 0, origin="runner")
+    coordination_dir = root / "pi-bash" / primary
+    coordination_dir.mkdir(parents=True)
+    (coordination_dir / "delivery-receipts.json").write_text(
+        json.dumps(
+            {
+                "v": 1,
+                "spawn_id": primary,
+                "messages": {"delivery-1": [owed_ids[0]]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (coordination_dir / "cleared-spawns.json").write_text(
+        json.dumps(
+            {
+                "v": 1,
+                "spawn_id": primary,
+                "updated_at_ms": 1.0,
+                "cleared_spawn_ids": [owed_ids[1]],
+            }
+        ),
+        encoding="utf-8",
+    )
     history_index.HistoryIndex(root).rebuild()
     original = SpawnRecord.model_validate_json
 
@@ -132,11 +155,11 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
     )
 
     assert not targets.discovery_pending
-    assert targets.spawn_ids[:2] == (continued_child, legacy_child)
-    assert targets.spawn_ids[2:] == owed_ids[:32]
-    assert tuple(row.id for row in targets.owed_finished_rows) == owed_ids[:32]
-    assert set(owed_ids[32:]).isdisjoint(targets.spawn_ids)
-    assert foreground not in targets.spawn_ids
+    assert targets.blocked_on_ids == (continued_child, legacy_child)
+    assert tuple(row.id for row in targets.owed_finished_rows) == owed_ids[2:34]
+    assert set(owed_ids[:2]).isdisjoint(row.id for row in targets.owed_finished_rows)
+    assert set(owed_ids[34:]).isdisjoint(row.id for row in targets.owed_finished_rows)
+    assert foreground not in targets.blocked_on_ids
 
 
 def test_nested_discovery_reaches_live_child_through_archived_ancestor(
@@ -184,10 +207,10 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
         deadline=time.monotonic() + 5,
     )
 
-    assert set(targets.spawn_ids) == {"p3", owed}
+    assert targets.blocked_on_ids == ("p3",)
     assert tuple(row.id for row in targets.owed_finished_rows) == (owed,)
-    assert "p-sibling" not in targets.spawn_ids
-    assert foreground not in targets.spawn_ids
+    assert "p-sibling" not in targets.blocked_on_ids
+    assert foreground not in targets.blocked_on_ids
 
 
 def test_discovery_rereads_terminal_authority_for_active_index_row(

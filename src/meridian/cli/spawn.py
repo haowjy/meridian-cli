@@ -80,7 +80,7 @@ _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
 _SPAWN_USAGE_EPILOGUE = (
     "Launch detached, then track:\n\n"
     "  meridian spawn --prompt-file PATH --bg    Detach; returns a spawn id\n"
-    "  meridian spawn wait                       Track this session's pending spawns\n\n"
+    "  meridian spawn wait                       Track running and owed spawns\n\n"
     "Do not block-foreground a long spawn — the harness command timeout will kill\n"
     "your shell while the spawn keeps running and you lose the thread.\n\n"
     "Harness command lifecycle ≠ meridian spawn lifecycle. The launch command\n"

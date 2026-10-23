@@ -52,7 +52,8 @@ authoritative spawn state. Already-finished owed children are selected oldest fi
 at most 32 per invocation, and render with the same status/worker/failure/task-dir
 header and `meridian spawn show <id>` lookup as `spawn collect`. Running targets are
 not capped; after the wait blocks for them, their normal report output is preserved.
-In structured output, owed-finished entries omit `report_body` even with `--full`.
+In structured output, blocked-on results are in `spawns` and already-finished owed
+results are in `owed_spawns`; the latter omit `report_body` even with `--full`.
 `--no-observe` uses the same rendering and cap without consuming any result.
 
 | Flag | Description |

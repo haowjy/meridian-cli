@@ -21,6 +21,8 @@ from meridian.lib.harness.pi_private_state import (
     DeliveryFault,
     DeliveryObservations,
     DeliveryReceipts,
+    pi_coordination_dir,
+    read_pi_private_doc,
 )
 from meridian.lib.state.paths import observed_spawns_path
 from meridian.lib.state.spawn_observations import (
@@ -59,7 +61,7 @@ class PiDiskWatcher:
     ) -> None:
         self._spawn_id = str(current_spawn_id)
         self._runtime_root = runtime_root
-        self._bash_dir = runtime_root / "pi-bash" / self._spawn_id
+        self._bash_dir = pi_coordination_dir(runtime_root, self._spawn_id)
         self._observations_path = observed_spawns_path(runtime_root, self._spawn_id)
         self._ledger = ledger or PiPrivateWorkLedger()
         self._tasks: list[asyncio.Task[None]] = []
@@ -172,14 +174,15 @@ class PiDiskWatcher:
 
     def _read(self, file: Path, model: type[_Model]) -> _Model | None:
         try:
-            value = model.model_validate_json(file.read_text(encoding="utf-8"))
-            if getattr(value, "spawn_id", None) != self._spawn_id:
-                raise ValueError("private-file parent identity mismatch")
+            value = read_pi_private_doc(file, model, spawn_id=self._spawn_id)
         except FileNotFoundError:
             self._ledger.clear_read_failure(file)
             return None
         except (OSError, UnicodeError, ValueError) as exc:
             self._ledger.record_read_failure(file, str(exc))
+            return None
+        if value is None:
+            self._ledger.clear_read_failure(file)
             return None
         self._ledger.clear_read_failure(file)
         return value

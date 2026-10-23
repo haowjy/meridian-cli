@@ -4,21 +4,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A no-argument `spawn wait` now returns up to 32 finished background children
+  whose results are still owed, alongside uncapped running descendants. Owed results
+  render as lookup headers, do not affect waited-run counts, fail-fast, or the exit
+  code, and exclude results Pi already delivered or dismissed.
+
 ## [0.12.8] - 2026-10-23
 
 ### Changed
 - Claude spawn-watch completion notices carry only each child's outcome header and
   `meridian spawn show <id>` lookup; `spawn collect` no longer reads or embeds report
-  bodies. Pi delivery is unchanged; `spawn wait` and `spawn ack` remain the only
-  consumption paths.
-
-### Fixed
-- A no-argument `spawn wait` now returns finished background children that are still
-  owed as well as running descendants, then consumes them on normal return. It returns
-  at most the oldest 32 already-finished children as the same header-only lookup used
-  by Claude collection; running targets remain uncapped and retain their full reports.
-  Wait and collection share one owed-child definition, so a child cannot fall between
-  their discovery rules and excess finished results remain owed for the next delivery.
+  bodies. Pi delivery and `spawn wait`/`spawn ack` consumption are unchanged.
 
 ## [0.12.7] - 2026-10-23
 

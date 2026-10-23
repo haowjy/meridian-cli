@@ -307,6 +307,7 @@ def test_spawn_wait_json_contract(
         "timed_out_runs",
         "any_failed",
         "spawns",
+        "owed_spawns",
     } <= payload.keys()
     assert {"spawn_id", "status", "model", "harness"} <= payload["spawns"][0].keys()
     _assert_noisy_keys_absent(payload)
@@ -359,7 +360,7 @@ def test_spawn_collect_and_ack_json_contract(
         prompt="Report another result.",
         launch_mode="background",
     )
-    spawn_store.finalize_spawn(runtime_root, "p3", "succeeded", 0, origin="runner")
+    spawn_store.finalize_spawn(runtime_root, "p3", "failed", 1, origin="runner")
     (runtime_root / "spawns" / "p3" / "report.md").write_text(
         "Another delivered child report.\n",
         encoding="utf-8",
@@ -381,7 +382,7 @@ def test_spawn_collect_and_ack_json_contract(
 
     fetched_text = _run_text(project_root, env, "spawn", "wait", "--no-observe")
     assert fetched_text == (
-        "p3 succeeded (exit 0)\n"
+        "p3 failed (exit 1)\n"
         "Worker: claude-haiku-5-5 (claude)\n"
         "meridian spawn show p3"
     )
@@ -394,15 +395,22 @@ def test_spawn_collect_and_ack_json_contract(
         "--no-observe",
         "--full",
     )
-    assert fetched_json["spawns"][0]["report_summary"] == "Another delivered child report."
+    assert fetched_json["spawns"] == []
+    assert fetched_json["owed_spawns"][0]["report_summary"] == (
+        "Another delivered child report."
+    )
     assert "report_body" not in fetched_json
-    assert "report_body" not in fetched_json["spawns"][0]
+    assert "report_body" not in fetched_json["owed_spawns"][0]
+    assert fetched_json["total_runs"] == 0
+    assert not fetched_json["any_failed"]
 
     waited = _run_json(project_root, env, "spawn", "wait", "--full")
-    assert [spawn["spawn_id"] for spawn in waited["spawns"]] == ["p3"]
+    assert waited["spawns"] == []
+    assert [spawn["spawn_id"] for spawn in waited["owed_spawns"]] == ["p3"]
     assert "report_body" not in waited
-    assert "report_body" not in waited["spawns"][0]
-    assert waited["total_runs"] == 1
+    assert "report_body" not in waited["owed_spawns"][0]
+    assert waited["total_runs"] == 0
+    assert not waited["any_failed"]
     assert _run_json(project_root, env, "spawn", "wait")["total_runs"] == 0
     assert _run_default_json(project_root, env, "spawn", "collect") == {
         "kind": "empty",

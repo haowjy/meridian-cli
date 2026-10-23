@@ -9,7 +9,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    PrivateAttr,
     computed_field,
     field_validator,
     model_serializer,
@@ -21,7 +20,7 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_termina
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
-from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord
+from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 
 def task_dir_line(task_cwd: str | None, work_id: str | None) -> str:
@@ -72,7 +71,7 @@ def _background_wait_note(spawn_id: str) -> str:
         f"\n"
         f"  meridian spawn wait\n"
         f"\n"
-        f"This waits for all pending spawns for this chat.\n"
+        f"This waits for running spawns and returns owed finished results for this chat.\n"
         f"Or wait for this spawn only: meridian spawn wait {spawn_id}"
     )
 
@@ -1323,8 +1322,7 @@ class SpawnWaitMultiOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spawns: tuple[SpawnDetailOutput, ...]
-    # Rendering-only classification; JSON carries the distinction through report_body.
-    _owed_finished_rows: tuple[SpawnRecord, ...] = PrivateAttr(default=())
+    owed_spawns: tuple[SpawnDetailOutput, ...] = ()
     total_runs: int
     succeeded_runs: int
     failed_runs: int
@@ -1344,24 +1342,16 @@ class SpawnWaitMultiOutput(BaseModel):
     status: str | None = None
     exit_code: int | None = None
 
-    def with_owed_finished_rows(
-        self,
-        rows: tuple[SpawnRecord, ...],
-    ) -> "SpawnWaitMultiOutput":
-        carried = self.model_copy()
-        carried._owed_finished_rows = rows
-        return carried
-
     def format_text(self, ctx: FormatContext | None = None) -> str:
         """Render waited spawns, expanding report content when available."""
         effective_ctx = ctx or FormatContext()
         if self.checkpoint:
             checkpoint = self._format_checkpoint_text()
-            if not self._owed_finished_rows:
+            if not self.owed_spawns:
                 return checkpoint
             from .owed import render_delivery
 
-            return f"{checkpoint}\n\n{render_delivery(self._owed_finished_rows)}"
+            return f"{checkpoint}\n\n{render_delivery(self.owed_spawns)}"
         if self.fail_fast:
             failed_ids = ", ".join(
                 spawn.spawn_id for spawn in self.spawns if spawn.status in {"failed", "timed_out"}
@@ -1375,19 +1365,15 @@ class SpawnWaitMultiOutput(BaseModel):
         return self._format_results_text(effective_ctx)
 
     def _format_results_text(self, ctx: FormatContext) -> str:
-        owed_finished_ids = {row.id for row in self._owed_finished_rows}
-        blocked_on = tuple(
-            spawn for spawn in self.spawns if spawn.spawn_id not in owed_finished_ids
-        )
         sections: list[str] = []
-        if len(blocked_on) == 1:
-            sections.append(blocked_on[0].format_wait_text(ctx))
-        elif blocked_on:
-            sections.append(self._format_multiple_results_text(blocked_on))
-        if self._owed_finished_rows:
+        if len(self.spawns) == 1:
+            sections.append(self.spawns[0].format_wait_text(ctx))
+        elif self.spawns:
+            sections.append(self._format_multiple_results_text(self.spawns))
+        if self.owed_spawns:
             from .owed import render_delivery
 
-            sections.append(render_delivery(self._owed_finished_rows))
+            sections.append(render_delivery(self.owed_spawns))
         return "\n\n".join(section for section in sections if section)
 
     @staticmethod
@@ -1504,6 +1490,14 @@ class SpawnWaitMultiOutput(BaseModel):
                 spawn_wire["transcript_command"] = transcript_command
             spawn_wires.append(spawn_wire)
         wire["spawns"] = spawn_wires
+        owed_spawn_wires: list[dict[str, object]] = []
+        for spawn in self.owed_spawns:
+            spawn_wire = spawn.to_cli_wire()
+            transcript_command = spawn.transcript_command()
+            if transcript_command is not None:
+                spawn_wire["transcript_command"] = transcript_command
+            owed_spawn_wires.append(spawn_wire)
+        wire["owed_spawns"] = owed_spawn_wires
         return wire
 
     def to_cli_output(
