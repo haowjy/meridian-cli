@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-10-23
+
 ### Changed
 - Claude spawns use five-minute prompt caching to avoid one-hour cache-write pricing; primary sessions stay unchanged. Spawned agents can lose cache warmth during waits longer than five minutes.
 
