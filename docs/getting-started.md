@@ -23,7 +23,8 @@ Long-running spawns can lose prompt-cache warmth while Meridian waits for them t
 
 | Harness | Cache behavior | What to configure |
 | --- | --- | --- |
-| Claude Code | 5 minutes (default) or 1 hour (subscription) | Set `ENABLE_PROMPT_CACHING_1H=1` in `~/.claude/settings.json` |
+| Claude Code primary session | 1 hour within subscription usage; otherwise 5 minutes by default | Set `ENABLE_PROMPT_CACHING_1H=1` in `~/.claude/settings.json` |
+| Meridian-spawned Claude agent | Forced to 5 minutes | Use shorter wait yields when the spawned agent waits for children |
 | Codex CLI, signed in | Cache is retained across old-conversation resumes without a cache penalty | No Meridian wait-yield tuning is needed for cache warmth |
 | Codex/API-key usage | Follows the API model and request's prompt-cache policy | Configure caching in the API client; it is independent of Meridian's wait checkpoint |
 
@@ -37,7 +38,12 @@ Long-running spawns can lose prompt-cache warmth while Meridian waits for them t
 }
 ```
 
-This opts into the 1-hour prompt-cache TTL so Meridian's default 50-minute `spawn wait` yield interval stays comfortably inside the warm window.
+This opts the primary session into the 1-hour prompt-cache TTL so Meridian's
+default 50-minute `spawn wait` yield interval stays inside the warm window.
+Meridian overrides the main-conversation TTL to five minutes for Claude spawns,
+including continued spawns, to avoid the higher one-hour cache-write rate.
+See [Claude prompt caching](harness-integration.md#claude-prompt-caching) for
+scope and precedence.
 
 For a harness whose cache TTL remains shorter than the wait interval, lower
 Meridian's yield interval instead:

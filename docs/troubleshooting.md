@@ -14,7 +14,8 @@ are operational bounds, not promises about provider cache retention.
 
 | Harness   | Cache TTL | Fix |
 |-----------|-----------|-----|
-| Claude Code | 5 minutes (default) or 1 hour (subscription / `ENABLE_PROMPT_CACHING_1H=1`) | Extend to 1 hour via `~/.claude/settings.json` (see [Getting Started](getting-started.md)) |
+| Claude Code primary session | 1 hour within subscription usage; otherwise 5 minutes by default | Extend to 1 hour via `~/.claude/settings.json` (see [Getting Started](getting-started.md)) |
+| Meridian-spawned Claude agent | Forced to 5 minutes, including continued spawns | Lower the wait yield below five minutes; inherited `1h` and Meridian `--env` values are overridden (see [scope](harness-integration.md#claude-prompt-caching)) |
 | Codex CLI, signed in | Retained across old-conversation resumes without a cache penalty | No cache-specific wait-yield change needed |
 | Codex/API-key usage | Depends on the API model and request | Use the API's prompt-cache settings; Meridian does not select them |
 | OpenCode | Harness-dependent | Check OpenCode docs for cache behavior |

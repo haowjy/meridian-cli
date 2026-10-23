@@ -107,6 +107,22 @@ its recorded store. Stderr is diagnostic, not identity or completion authority.
 Bootstrap order is load-bearing: adapter bundle registration, projection drift
 guards, extractor wiring, then cross-adapter field accounting.
 
+## Claude: prompt caching
+
+Meridian sets `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` for every non-interactive
+Claude spawn, including continued spawns. This is forced launch policy:
+it replaces inherited values and Meridian `--env` / `[env]` values. Interactive
+primary sessions keep their existing environment and Claude cache settings.
+
+Claude treats `claude -p` as a main conversation, which can otherwise use the
+more expensive one-hour cache on a subscription. Five-minute caching avoids
+that write premium for short-lived agents, but a spawned agent that waits
+longer than five minutes may need to rebuild its cache. This does not change
+Claude's built-in subagent TTL (`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`) or enable
+caching when it is disabled. The main-conversation TTL variable requires
+Claude Code 2.1.242 or later. See
+[Claude Code's cache controls](https://code.claude.com/docs/en/prompt-caching#choose-the-ttl-yourself).
+
 ## Claude: bundled mods
 
 Interactive Claude primaries load Meridian's Claude Code mods from
