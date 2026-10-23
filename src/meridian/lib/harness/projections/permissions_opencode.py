@@ -342,6 +342,7 @@ def compile_opencode_permissions(
         (entry.action, entry.resource): entry for entry in _collapse_exact_rules(profile_entries)
     }
     final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
+    final_platform_grants: list[OpenCodePermissionRule] = []
 
     for platform in policy.platform_rules:
         if platform.kind != "meridian-commands":
@@ -359,6 +360,8 @@ def compile_opencode_permissions(
                 )
             )
             entries.extend(command_entries)
+            if not command.runs_outside_sandbox:
+                final_platform_grants.extend(command_entries)
             stricter_by_key = {
                 (existing.action, resource): existing
                 for (existing_action, resource), existing in profile_by_key.items()
@@ -418,7 +421,8 @@ def compile_opencode_permissions(
                     )
                 )
                 final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
-                kept.extend(stricter)
+                if command.runs_outside_sandbox:
+                    kept.extend(stricter)
                 continue
             for entry in command_entries:
                 if (entry.action, entry.resource) not in final_by_key:
@@ -442,6 +446,16 @@ def compile_opencode_permissions(
                     f"permission {rendered}: allow",
                 )
             )
+
+    # Completion and read-only commands are Meridian control-plane operations. Keep their
+    # grants after every overlapping profile rule: OpenCode resolves the last match, and a
+    # broad profile deny must not prevent a child from completing or inspecting its state.
+    final_grant_keys = {(entry.action, entry.resource) for entry in final_platform_grants}
+    ordered = [
+        entry for entry in ordered if (entry.action, entry.resource) not in final_grant_keys
+    ]
+    ordered.extend(dict.fromkeys(final_platform_grants))
+    final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
 
     lines.extend(
         _tool_rule_lines(
