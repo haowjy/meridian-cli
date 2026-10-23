@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -48,14 +47,10 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import ResolvedSkills
 
 
-def _resolve_mars_min_version() -> str:
-    try:
-        return version("mars-agents")
-    except PackageNotFoundError:
-        return "unknown"
-
-
-_MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
+# First Mars release whose launch bundle carries ``execution_policy.network`` and
+# ``provenance.network_source``. The parser deliberately accepts an absent field as unset
+# so a manually selected older Mars remains compatible.
+_MARS_BUNDLE_MIN_VERSION = "0.18.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
