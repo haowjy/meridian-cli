@@ -238,7 +238,7 @@ Inject flows through the control socket:
 
 ```
 meridian spawn inject <id> --message "..."
-  → per-user temp directory / hashed control socket
+  → fixed per-user POSIX directory / hashed control socket
   → ControlSocketServer._handle_client()
   → SpawnManager.inject()
     → ControlActionCoordinator.run_action()  — journals and serializes the action
@@ -246,10 +246,11 @@ meridian spawn inject <id> --message "..."
 ```
 
 Both the server and inject client derive the same bounded POSIX socket path from
-the resolved runtime root and spawn ID. The socket lives in a mode-0700, UID-scoped
-directory under the system temp root, so runtime/project path depth cannot exceed
-`sockaddr_un.sun_path` and concurrent spawns remain isolated. Control injection is
-POSIX-only; the server's legacy native-Windows branch has no supported client.
+the resolved runtime root and spawn ID. The socket lives in the mode-0700, UID-scoped
+directory `/tmp/meridian-<uid>`, independent of either process's `TMPDIR`, so
+runtime/project path depth cannot exceed `sockaddr_un.sun_path` and concurrent spawns
+remain isolated. Control injection is POSIX-only; the server's legacy native-Windows
+branch has no supported client.
 
 All control actions (inject, interrupt, permission reply, user input reply) are
 serialized through `ControlActionCoordinator`. Concurrent actions queue behind it —

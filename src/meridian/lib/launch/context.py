@@ -54,6 +54,7 @@ from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
+from meridian.lib.platform import IS_POSIX
 from meridian.lib.safety.policy import EnforcementReport, PermissionPolicy, build_permission_policy
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
@@ -65,6 +66,7 @@ from meridian.lib.state.paths import (
 )
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.work_scope import resolve_bound_work_scope
+from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.tools import ToolRule
 from meridian.plugin_api.git import resolve_clone_path
@@ -1555,6 +1557,7 @@ def bind_launch_context(
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     system_temp_root = Path(tempfile.gettempdir()).resolve()
+    socket_roots = (socket_directory(),) if IS_POSIX else ()
     resolved_request = prepared.request
     ignore_direnv = resolved_request.ignore_direnv
     if ignore_direnv is None:
@@ -1629,6 +1632,7 @@ def bind_launch_context(
             *workspace_authority_roots,
             runtime_root,
             system_temp_root,
+            *socket_roots,
         )
     )
     workspace_projection = project_workspace_roots(

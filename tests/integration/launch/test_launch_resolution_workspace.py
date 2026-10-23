@@ -15,6 +15,8 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from meridian.lib.platform import IS_POSIX
+from meridian.lib.streaming.control_socket import socket_directory
 from meridian.plugin_api.git import resolve_clone_path
 from tests.support.launch import build_launch_context
 
@@ -68,8 +70,12 @@ def test_workspace_roots_append_after_claude_preflight_projection(
     projected_roots = {path.as_posix() for path in preview.binding.spec.projected_roots}
     assert shared_root.as_posix() in projected_roots
     assert runtime_root.as_posix() in projected_roots
+    if IS_POSIX:
+        assert socket_directory().as_posix() in projected_roots
     assert shared_root.as_posix() in preview.binding.argv
     assert runtime_root.as_posix() in preview.binding.argv
+    if IS_POSIX:
+        assert socket_directory().as_posix() in preview.binding.argv
 
 
 def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Path) -> None:
@@ -119,6 +125,8 @@ def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Pa
     assert local_override_root.as_posix() in projected_roots
     assert local_only_root.as_posix() in projected_roots
     assert runtime_root.as_posix() in projected_roots
+    if IS_POSIX:
+        assert socket_directory().as_posix() in projected_roots
     codex_add_dir_pairs = {
         (preview.binding.argv[index], preview.binding.argv[index + 1])
         for index, token in enumerate(preview.binding.argv[:-1])
@@ -127,6 +135,8 @@ def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Pa
     assert ("--add-dir", local_override_root.as_posix()) in codex_add_dir_pairs
     assert ("--add-dir", local_only_root.as_posix()) in codex_add_dir_pairs
     assert ("--add-dir", runtime_root.as_posix()) in codex_add_dir_pairs
+    if IS_POSIX:
+        assert ("--add-dir", socket_directory().as_posix()) in codex_add_dir_pairs
 
 
 def test_git_backed_context_remote_projects_clone_root_once(

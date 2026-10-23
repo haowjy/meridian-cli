@@ -23,6 +23,7 @@ def test_control_socket_path_is_bounded_and_unique_for_long_runtime_root() -> No
     second = control_socket_path(runtime_root, "spawn-two")
 
     assert len(os.fsencode(first)) <= UNIX_SOCKET_PATH_MAX_BYTES
+    assert first.parent == Path("/tmp") / f"meridian-{os.getuid()}"
     assert first == repeated
     assert first != second
 
@@ -40,13 +41,13 @@ def test_bounded_app_socket_path_is_deterministic_for_long_runtime_root() -> Non
 
 
 @posix_only
-def test_control_socket_path_rejects_overlong_temp_root(
+def test_control_socket_path_rejects_overlong_fixed_root(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        control_socket_module.tempfile,
-        "gettempdir",
-        lambda: "/" + ("overlong-temp-root" * 10),
+        control_socket_module,
+        "_POSIX_SOCKET_ROOT",
+        Path("/") / ("overlong-socket-root" * 10),
     )
 
     with pytest.raises(ValueError, match="exceeding the platform limit"):
