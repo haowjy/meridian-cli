@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.8] - 2026-10-23
+
 ### Changed
 - Claude spawn-watch completion notices carry only each child's outcome header and
   `meridian spawn show <id>` lookup; `spawn collect` no longer reads or embeds report
