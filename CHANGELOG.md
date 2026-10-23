@@ -9,9 +9,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before spawn-capable constrained Codex launches, Meridian maintains a user-wide `$CODEX_HOME/rules/meridian.rules` escape for standalone `meridian spawn ...` commands, so nested spawns and completion signals work under `read-only` and `workspace-write`.
 
 ### Changed
-- Claude spawn-watch completion notices carry only each child's outcome header and
-  `meridian spawn show <id>` lookup; `spawn collect` no longer reads or embeds report
-  bodies. Pi delivery and `spawn wait`/`spawn ack` consumption are unchanged.
 - Child creation from a Meridian-projected `read-only` or `workspace-write` sandbox now
   requires spawn capability and cannot weaken the sandbox. Create, continue, and fork also
   reject harness-native passthrough arguments; this is a CLI-escalation guardrail, not
@@ -29,6 +26,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn help resolves prompt paths separately, then passes the printed literal path so sandbox-boundary checks do not reject Meridian's own examples.
 - Pre-policy read-only model resolution describes an unavailable cache without claiming the user passed `--no-refresh-models`.
 - Sandboxed launches no longer receive write access to every project's lifetime-lock directory; the launcher creates the exact project lock and POSIX children open it read-only.
+
+## [0.12.8] - 2026-10-23
+
+### Changed
+- Claude spawn-watch completion notices carry only each child's outcome header and
+  `meridian spawn show <id>` lookup; `spawn collect` no longer reads or embeds report
+  bodies. Pi delivery and `spawn wait`/`spawn ack` consumption are unchanged.
 
 ## [0.12.7] - 2026-10-23
 
