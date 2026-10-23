@@ -45,7 +45,8 @@ continue, and fork operations now refuse when:
   spawn capability);
 - the child's resolved sandbox is weaker than the caller's;
 - the caller authored `network: deny` and its harness enforces it, but the child's
-  harness-effective network is `allow`. Set `network: deny` on the child profile;
+  harness-effective network is `allow`. Set `network: deny` on the child profile; if it
+  already declares deny, its harness or native override does not enforce it;
 - native harness arguments follow `--`, because they could override the resolved policy.
 
 These calls worked without this boundary before. Put the intended children in the caller

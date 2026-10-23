@@ -253,7 +253,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         if (
             not sys.platform.startswith("linux")
-            or not facts.network_projection
             or facts.sandbox not in CONSTRAINED_SANDBOX_MODES
             or effective_claude_network(facts) != "allow"
         ):

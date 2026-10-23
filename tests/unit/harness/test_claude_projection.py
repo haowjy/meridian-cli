@@ -288,7 +288,7 @@ def test_claude_old_mars_policy_keeps_native_network_default() -> None:
     _, report = compile_claude_permissions(spec)
 
     assert "network" not in settings["sandbox"]
-    assert _effective_network(spec) == "deny"
+    assert _effective_network(spec) == "allow"
     assert any(line.element == "network: harness default" for line in report)
 
 

@@ -15,7 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian spawn` run inside a sandbox that would kill its child (`cd x && meridian spawn`, pipes, `$()`, `VAR=1` prefix) fails before any state write with "run as a standalone shell command".
 - Read-only Codex spawns get the completion confirmation turn again.
 - Profile `network: allow | deny` controls shell connections separately from built-in web tools; every harness reports what it enforces.
-- Sandboxed child delegation cannot weaken an enforced `network: deny` that the caller authored; the refusal tells the user to set `network: deny` on the child profile.
+- Sandboxed child delegation cannot weaken an enforced `network: deny` that the caller authored; the refusal distinguishes a missing child deny from a harness or native override that cannot enforce one.
 
 ### Fixed
 - Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).

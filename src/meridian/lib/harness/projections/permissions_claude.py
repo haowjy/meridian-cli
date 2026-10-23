@@ -850,10 +850,10 @@ def effective_claude_network(
 ) -> NetworkMode:
     """Return the shell-network policy Claude actually enforces."""
 
+    if not facts.network_projection:
+        return "allow"
     if facts.sandbox not in {"read-only", "workspace-write"}:
         return "allow"
-    if not facts.network_projection:
-        return "deny"
     return facts.network_mode
 
 

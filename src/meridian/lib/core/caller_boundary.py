@@ -170,6 +170,7 @@ class CallerBoundaryCheck:
         child_sandbox: str | None,
         *,
         child_network: NetworkMode,
+        child_declared_network: NetworkMode | None,
     ) -> None:
         """Refuse a resolved child policy weaker than the caller's guardrail."""
 
@@ -185,9 +186,15 @@ class CallerBoundaryCheck:
                 f"caller floor '{caller.sandbox}'."
             )
         if caller.network == "deny" and child_network != "deny":
+            remedy = (
+                "the child declares `network: deny`, but its harness or native override "
+                "does not enforce it"
+                if child_declared_network == "deny"
+                else "set `network: deny` on the child profile"
+            )
             raise ValueError(
                 f"Child spawn refused: effective network '{child_network}' is weaker than "
-                "caller floor 'deny'; set `network: deny` on the child profile."
+                f"caller floor 'deny'; {remedy}."
             )
 
 

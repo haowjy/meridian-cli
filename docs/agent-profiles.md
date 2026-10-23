@@ -542,8 +542,9 @@ them:
   arguments after `--` are refused
   because they can override Meridian's resolved sandbox or sandbox flags. A child emits its
   own resolved floor to its descendants.
-  A missing network key creates no floor; a network refusal says to set `network: deny` on
-  the child profile.
+  A missing network key creates no floor. A network refusal says to set `network: deny` on
+  the child profile, or, when the child already declares deny, says that its harness or
+  native override does not enforce it.
   `danger-full-access` and `default` callers, top-level commands, and shells that were not
   launched by Meridian have no floor; read commands, `spawn done`, and `spawn rearm` do
   not consult it. A non-empty `subagents:` list supplies spawn capability but does not yet

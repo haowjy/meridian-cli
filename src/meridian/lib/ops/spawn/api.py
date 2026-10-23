@@ -429,6 +429,7 @@ def _prepare_spawn_create(
     floor_check.enforce(
         execution_policy.sandbox,
         child_network=effective_network,
+        child_declared_network=execution_policy.network,
     )
     if payload.dry_run:
         artifacts = bind_create_payload_preview(

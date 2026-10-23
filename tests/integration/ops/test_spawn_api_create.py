@@ -519,16 +519,30 @@ def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
 
 
 @pytest.mark.parametrize(
-    ("child_network", "approval", "expected_status", "expected_message"),
+    ("harness", "child_network", "approval", "expected_status", "expected_message"),
     [
-        ("allow", "default", "failed", "set `network: deny` on the child profile"),
-        ("deny", "default", "dry-run", None),
-        ("deny", "never", "dry-run", None),
+        (
+            HarnessId.CLAUDE,
+            "allow",
+            "default",
+            "failed",
+            "set `network: deny` on the child profile",
+        ),
+        (HarnessId.CLAUDE, "deny", "default", "dry-run", None),
+        (HarnessId.CLAUDE, "deny", "never", "dry-run", None),
+        (
+            HarnessId.OPENCODE,
+            "deny",
+            "default",
+            "failed",
+            "declares `network: deny`, but its harness or native override does not enforce it",
+        ),
     ],
 )
 def test_spawn_create_caller_guardrail_compares_effective_network(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    harness: HarnessId,
     child_network: NetworkMode,
     approval: str,
     expected_status: str,
@@ -541,7 +555,7 @@ def test_spawn_create_caller_guardrail_compares_effective_network(
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
-        harness=HarnessId.CLAUDE,
+        harness=harness,
         execution_policy=ResolvedExecutionPolicy(
             sandbox="workspace-write",
             network=child_network,
@@ -553,7 +567,7 @@ def test_spawn_create_caller_guardrail_compares_effective_network(
         SpawnCreateInput(
             prompt="run",
             model="claude-haiku-5-5",
-            harness="claude",
+            harness=harness.value,
             project_root=project_root.as_posix(),
             dry_run=True,
         )

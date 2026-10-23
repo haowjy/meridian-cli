@@ -172,7 +172,7 @@ def test_codex_old_mars_policy_keeps_native_network_default() -> None:
     _, report = compile_codex_permissions(spec)
 
     assert not any("sandbox_workspace_write.network_access" in item for item in command)
-    assert _effective_network(spec) == "deny"
+    assert _effective_network(spec) == "allow"
     assert any(line.element == "network: harness default" for line in report)
 
 

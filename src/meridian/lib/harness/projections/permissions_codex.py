@@ -173,6 +173,8 @@ def _effective_codex_network(
     facts: EffectiveNetworkFacts,
     network_override: CodexNetworkOverride | None,
 ) -> NetworkMode:
+    if not facts.network_projection:
+        return "allow"
     if facts.sandbox == "read-only":
         return "deny"
     if facts.sandbox == "workspace-write":
@@ -180,8 +182,6 @@ def _effective_codex_network(
         if override is not None and override.argument is not None:
             assert isinstance(override.value, bool)
             return "allow" if override.value else "deny"
-        if not facts.network_projection:
-            return "deny"
         return facts.network_mode
     return "allow"
 
