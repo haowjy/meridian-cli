@@ -122,12 +122,13 @@ references use their recorded harness; native-file discovery cannot replace it.
 A chat transcript reads only its bound native key. Missing identity or transcript
 is typed unavailable; runner output and primary metadata cannot repair it.
 
-## Resolve-Before-Persist vs Row-First
+## Resolve Before Persist
 
-- **Streaming-serve** (via `SpawnApplicationService.prepare_spawn()`): resolution
-  first, row created only on success. This is the clean path.
-- **Spawn subprocess** (`execute.py`): row created before composing the prepared surface.
-  This is a known gap; do not copy it into new paths.
+Both streaming-serve (`SpawnApplicationService.prepare_spawn()`) and the spawn
+subprocess prepare launch policy before creating a row. When a subprocess inherits a
+delegation floor, it resolves and enforces that floor before materializing runtime
+authority and state. Keep resolution and policy checks on the preparation side of the
+row boundary; keep nested floor enforcement on the pre-materialization side.
 
 ## Anti-Patterns
 

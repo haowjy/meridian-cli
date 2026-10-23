@@ -508,12 +508,33 @@ them:
   user-wide: it applies to every Codex session using that home, including profiles without
   spawn capability and sessions not launched by Meridian. Meridian owns and rewrites only
   `meridian.rules`; it does not touch other Codex rules files.
+- **Delegation floor.** Every Meridian-launched harness receives its resolved sandbox,
+  approval mode, and spawn capability as a launcher-owned floor. `spawn`, `spawn
+  --continue`, and `spawn --fork` (including `--dry-run`) refuse a caller whose profile
+  cannot spawn, or a child that would be less confined. Sandbox modes compare from most
+  to least confined as `read-only`, `workspace-write`, `danger-full-access`, then
+  `default`; an unknown harness default is conservatively weaker than every explicit
+  mode. Approval modes compare from weakest to strongest as `never`/`yolo`, `auto`,
+  `default`, then `confirm`, so a child cannot reduce the caller's approval requirement.
+  Child `--env` values also cannot replace the process loader, executable search path,
+  or native harness home. A child emits its own resolved floor to its descendants.
+  Top-level commands and shells that were not launched by Meridian have no floor; read
+  commands, `spawn done`, and `spawn rearm` do not consult it.
 - **Loud failure for compound shell calls.** On Linux, Meridian records the harness
   launcher's PID namespace. A child launch attempted from a different namespace stops with
   an error rather than starting a child that dies with the sandboxed shell. Run
   `meridian spawn` as a standalone shell call, without `cd ... &&`, pipes, command
   substitution, or a leading environment assignment. The check is skipped where procfs does
   not expose PID namespaces, including macOS.
+
+The escape still trusts writable launch inputs. Under `workspace-write`, an agent can
+edit files that the unsandboxed `meridian` process later reads, including project
+`meridian.toml` hooks. It can also select an earlier `meridian` executable through a
+writable shell startup file or another path outside the launch's `--env` validation.
+Codex's rule is user-wide, so a Codex session not launched by Meridian has no delegation
+floor even though that rule may let its standalone `meridian spawn ...` command escape
+the native sandbox. Treat writable project configuration, shell startup files, and
+executables as trusted inputs.
 
 The dry-run report marks platform decisions as `platform` and calls out partial or missing
 projections. Mars supplies each harness's native agent/task names in the launch bundle;

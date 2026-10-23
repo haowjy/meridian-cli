@@ -43,6 +43,8 @@ BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         "_MERIDIAN_RUNTIME_DIR",
         # PID namespace is observed and set by this launcher, never inherited.
         "_MERIDIAN_LAUNCHER_PID_NAMESPACE",
+        # Delegation policy is resolved and set by this launcher, never inherited.
+        "_MERIDIAN_DELEGATION_FLOOR",
         # Pi permission policy is compiled afresh for each launch.
         "_MERIDIAN_PI_PERMISSION_POLICY",
     }

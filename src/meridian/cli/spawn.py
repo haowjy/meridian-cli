@@ -680,7 +680,9 @@ def _spawn_create(
         phase="prompt_resolution_complete",
         launcher_pid=os.getpid(),
     )
-    prepared = None if dry_run else _prepare_spawn_runtime_write()
+    # Spawn creation resolves and checks the delegation floor before it materializes
+    # runtime state. Other mutating spawn subcommands still prepare writes here.
+    prepared = None
     normalized_task_dir = (task_dir or "").strip() or None
     if resolved_continue_from is not None and normalized_task_dir is not None:
         raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")

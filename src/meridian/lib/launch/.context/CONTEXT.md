@@ -46,6 +46,12 @@ report paths, env, argv, and permission outputs — everything that varies per b
 request for `LaunchContext.request` compatibility. `request` carries the resolved
 version used by `bind_launch_context()`.
 
+Every bind replaces inherited launcher markers with values for the process it is about
+to start. Beside the launcher's PID namespace, it writes a delegation floor containing
+the resolved sandbox, approval mode, and the prepared profile's spawn capability. The
+floor deliberately has no network field yet; network confinement can join this transport
+without changing spawn policy ownership.
+
 ### RuntimeBindings
 
 Frozen dataclass for runtime-only values: `spawn_id`,

@@ -1,5 +1,19 @@
 # ops/spawn — Contracts and Architecture
 
+## Spawn Creation Boundary
+
+`spawn_create_sync()`, continue, and fork share one preparation path. It inspects
+authority and checks for a launcher-owned delegation floor before write bootstrap. With
+a floor, it composes the resolved launch policy read-only, enforces the floor, and only
+then calls `prepare_for_runtime_write()`. Top-level launches have no floor and retain
+eager write bootstrap. Dry-run binds its preview after the same policy check. Continue
+performs its state sweep after preparation succeeds; fork reuses the prepared artifacts
+for its cross-harness guard.
+
+This ordering is security-sensitive: the standalone harness escape runs `meridian`
+outside the native sandbox, so policy refusal must precede identity creation, state
+locks, telemetry files, and spawn rows.
+
 ## Depth Guard
 
 `spawn_create_sync()` checks `max_depth_reached()` **before** executing any spawn. When depth

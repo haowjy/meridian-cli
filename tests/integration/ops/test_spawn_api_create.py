@@ -17,6 +17,8 @@ import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.prepare as spawn_prepare
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.delegation_floor import DELEGATION_FLOOR_ENV, DelegationFloor
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
@@ -27,6 +29,23 @@ from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_di
 from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 from tests.support.launch import FakeBundleResult, stub_bundle_request_and_resolve
+
+
+def _set_delegation_floor(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sandbox: str = "workspace-write",
+    approval: str = "default",
+    has_spawn_capability: bool = True,
+) -> None:
+    monkeypatch.setenv(
+        DELEGATION_FLOOR_ENV,
+        DelegationFloor.from_policy(
+            sandbox=sandbox,
+            approval=approval,
+            has_spawn_capability=has_spawn_capability,
+        ).to_env_value(),
+    )
 
 
 def _noop_setup_telemetry(**_kwargs: object) -> None:
@@ -335,6 +354,224 @@ def test_spawn_create_skips_pid_namespace_check_without_procfs(
     sandbox_boundary.refuse_sandboxed_spawn_launch(dry_run=False)
 
 
+@pytest.mark.parametrize(
+    ("caller_sandbox", "caller_approval", "child_policy", "dry_run", "expected"),
+    [
+        (
+            "workspace-write",
+            "default",
+            ResolvedExecutionPolicy(sandbox="danger-full-access"),
+            False,
+            "sandbox 'danger-full-access' is weaker than caller floor 'workspace-write'",
+        ),
+        (
+            "workspace-write",
+            "default",
+            ResolvedExecutionPolicy(),
+            False,
+            "sandbox 'default' is weaker than caller floor 'workspace-write'",
+        ),
+        (
+            "workspace-write",
+            "default",
+            ResolvedExecutionPolicy(sandbox="read-only", approval="never"),
+            True,
+            "approval 'never' is weaker than caller floor 'default'",
+        ),
+        (
+            "workspace-write",
+            "confirm",
+            ResolvedExecutionPolicy(sandbox="read-only", approval="default"),
+            True,
+            "approval 'default' is weaker than caller floor 'confirm'",
+        ),
+    ],
+)
+def test_spawn_create_delegation_floor_refuses_weaker_policy_before_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caller_sandbox: str,
+    caller_approval: str,
+    child_policy: ResolvedExecutionPolicy,
+    dry_run: bool,
+    expected: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    meridian_home = tmp_path / "meridian-home"
+    monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
+    _set_delegation_floor(
+        monkeypatch,
+        sandbox=caller_sandbox,
+        approval=caller_approval,
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=child_policy,
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=dry_run,
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.message is not None
+    assert expected in result.message
+    assert not meridian_home.exists()
+
+
+@pytest.mark.parametrize(
+    ("has_spawn_capability", "requested_env", "expected"),
+    [
+        (False, (), "caller profile has no spawn capability"),
+        (True, ("LD_PRELOAD=x",), "environment key 'LD_PRELOAD'"),
+        (True, ("BASH_ENV=/tmp/owned",), "environment key 'BASH_ENV'"),
+        (True, ("CODEX_HOME=/tmp/owned",), "environment key 'CODEX_HOME'"),
+        (True, ("OPENCODE_DB=/tmp/owned",), "environment key 'OPENCODE_DB'"),
+        (True, ("PATH=/tmp/owned",), "environment key 'PATH'"),
+    ],
+)
+def test_spawn_create_delegation_floor_rejects_pre_resolution_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    has_spawn_capability: bool,
+    requested_env: tuple[str, ...],
+    expected: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_delegation_floor(
+        monkeypatch,
+        has_spawn_capability=has_spawn_capability,
+    )
+
+    def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("delegation precondition must refuse before Mars")
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _must_not_resolve)
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+            env=requested_env,
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.message is not None
+    assert expected in result.message
+
+
+def test_spawn_create_delegation_floor_allows_stronger_child_dry_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_delegation_floor(monkeypatch)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="read-only",
+            approval="default",
+        ),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+
+
+def test_spawn_create_delegation_floor_rejects_replayed_harness_home_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_delegation_floor(monkeypatch)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="read-only",
+            approval="default",
+        ),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+            launch_policy_snapshot=LaunchPolicySnapshot(
+                model="claude-haiku-5-5",
+                harness="claude",
+                env={"CLAUDE_CONFIG_DIR": "/tmp/owned"},
+            ),
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.message is not None
+    assert "environment key 'CLAUDE_CONFIG_DIR'" in result.message
+
+
+def test_spawn_create_without_delegation_floor_does_not_clamp_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    monkeypatch.delenv(DELEGATION_FLOOR_ENV, raising=False)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+            env=("LD_PRELOAD=/tmp/user-choice.so",),
+        )
+    )
+
+    assert result.status == "dry-run"
+
+
 def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -623,12 +860,12 @@ def test_spawn_create_unresolvable_work_task_dir_has_distinct_error(
     missing_authority = runtime.authority.model_copy(update={"project_root": missing_root})
     monkeypatch.setattr(
         spawn_api,
-        "resolve_runtime_authority_for_read",
+        "inspect_runtime_authority_for_read",
         lambda _project_root: missing_authority,
     )
     monkeypatch.setattr(
-        spawn_prepare,
-        "resolve_runtime_authority_for_read",
+        spawn_api,
+        "plan_runtime_authority_for_write",
         lambda _project_root: missing_authority,
     )
     monkeypatch.setattr(spawn_api, "resolve_project_paths", lambda _root: project_paths)

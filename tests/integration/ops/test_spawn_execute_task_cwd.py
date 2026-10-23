@@ -55,7 +55,10 @@ def test_spawn_create_background_handoff_preserves_external_task_cwd(
     monkeypatch.setattr(
         spawn_api,
         "build_create_payload",
-        lambda *args, **kwargs: SimpleNamespace(request=prepared_request, prepared=None),
+        lambda *args, **kwargs: SimpleNamespace(
+            request=prepared_request,
+            prepared=SimpleNamespace(has_spawn_capability=False),
+        ),
     )
     monkeypatch.setattr(
         spawn_execute,
@@ -133,7 +136,10 @@ def test_spawn_create_persists_and_executes_prepared_task_cwd_contract(
     monkeypatch.setattr(
         spawn_api,
         "build_create_payload",
-        lambda *args, **kwargs: SimpleNamespace(request=prepared_request, prepared=None),
+        lambda *args, **kwargs: SimpleNamespace(
+            request=prepared_request,
+            prepared=SimpleNamespace(has_spawn_capability=False),
+        ),
     )
 
     captured: dict[str, Any] = {}

@@ -146,9 +146,22 @@ def test_entrypoint_preserves_outer_meridian_managed(
     assert os.environ["MERIDIAN_MANAGED"] == "0"
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["spawn", "--bg", "-m", "haiku", "-p", "child"],
+        ["--format", "text", "spawn", "-p", "child", "--bg", "-m", "haiku"],
+        ["spawn", "--bg", "-a", "explorer", "-p", "child"],
+        ["spawn", "--bg", "--prompt-file", "/tmp/child.md"],
+        ["spawn", "--bg", "--continue", "p123"],
+        ["spawn", "--bg", "--fork", "p123", "-p", "child"],
+        ["codex", "spawn", "--bg", "-m", "gpt-6-luna", "-p", "child"],
+    ],
+)
 def test_entrypoint_refuses_sandboxed_spawn_before_full_cli_import(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    args: list[str],
 ) -> None:
     captured: dict[str, object] = {}
     fake_main_module = _make_fake_main_module(captured)
@@ -158,7 +171,7 @@ def test_entrypoint_refuses_sandboxed_spawn_before_full_cli_import(
     try:
         monkeypatch.setenv("_MERIDIAN_LAUNCHER_PID_NAMESPACE", "pid:[host]")
         monkeypatch.setattr(sandbox_boundary, "current_pid_namespace", lambda: "pid:[sandbox]")
-        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "--bg", "-p", "child"])
+        monkeypatch.setattr(sys, "argv", ["meridian", *args])
 
         with pytest.raises(SystemExit) as caught:
             entrypoint_module.main()
