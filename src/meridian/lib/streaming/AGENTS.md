@@ -120,7 +120,8 @@ needed to guarantee it gets through — without it, the subscriber hangs forever
 `DrainPlan` carries the selected coordinator, policy, aux wake, finalizer, and async
 session teardown for one active spawn. Its `coordinator=None` value is the plain path.
 `accepted_signals` names the `spawn done`/`rearm` signals the coordinator consumes:
-hold plans `{done, rearm}`, Pi `{done}`, plain none. `build_drain_plan` is the only
+hold plans with a writable completion-signal channel `{done, rearm}`, holds without one
+none, Pi `{done}`, plain none. `build_drain_plan` is the only
 place that sets it; `SpawnManager.start_spawn` writes it once to
 `spawns/<id>/accepted-signals.json` before the drain starts, and the CLI refuses a
 signal the file doesn't list. Don't move it onto the spawn row (see `.context/CONTEXT.md`).

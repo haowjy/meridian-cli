@@ -95,14 +95,18 @@ blockers and a generation. `HoldEvidence` merges that source with persisted
 descendants for every hold: `unknown` descendants dominate, otherwise either source's
 blockers hold. Native tasks and the pending follow-up result are diagnostic blockers,
 not policy flags carried through assessments.
-Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux wakes. Plain streaming harnesses
+The connection also declares whether the launched child can write Meridian's completion
+signals. A hold without that channel still applies the same evidence and deadline policy,
+but accepts a ready candidate without a confirmation nudge. Pi RPC gets
+`PiDrainCoordinator` plus disk-watcher aux wakes. Plain streaming harnesses
 intentionally run with
 `DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence
 of a coordinator is the plain path.
 
-Each plan declares `accepted_signals`: hold plans consume `done` and `rearm`, Pi only
-`done` (it has no rearm window and leaves `rearm.signal` alone), and the plain plan
-neither. Which plan a spawn gets depends on the live connection, so no table keyed on
+Each plan declares `accepted_signals`: hold plans with a completion-signal channel consume
+`done` and `rearm`; holds without one consume neither; Pi consumes only `done` (it has no
+rearm window and leaves `rearm.signal` alone); and the plain plan consumes neither. Which
+plan a spawn gets depends on the live connection, so no table keyed on
 the harness id can
 know it. `SpawnManager.start_spawn` therefore writes the set to
 `spawns/<id>/accepted-signals.json` right after selecting the plan, before the drain

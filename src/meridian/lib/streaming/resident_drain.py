@@ -144,7 +144,7 @@ class _HoldProfile:
         runtime_root: Path,
         spawn_id: SpawnId,
         backend: ResidentBackendControl | None,
-        send_nudge: Callable[[str], Awaitable[None]],
+        send_nudge: Callable[[str], Awaitable[None]] | None,
         deadline_seconds: float,
         poll_seconds: float,
         rearm_budget: int | None,
@@ -163,9 +163,9 @@ class _HoldProfile:
         self._clock = clock
         self._confirmation_grace_seconds = poll_seconds
         self._awaiting_done = False
-        self._confirmation_requested = False
+        self._confirmation_requested = send_nudge is None
         self._confirmation_turn_started = False
-        self._confirmation_failed = False
+        self._confirmation_failed = send_nudge is None
         self._done_requested = False
         self._rearmed = False
         self._confirmation_grace_at: float | None = None
@@ -186,6 +186,9 @@ class _HoldProfile:
         trigger: AssessmentTrigger,
     ) -> CompletionDirectives:
         del trigger
+        if self._send_nudge is None:
+            self._done_requested = False
+            return CompletionDirectives()
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
         if state.candidate is None:
             self._done_requested = False
@@ -257,6 +260,8 @@ class _HoldProfile:
         return self._confirmation_grace_at
 
     async def send_nudge(self) -> None:
+        if self._send_nudge is None:
+            raise RuntimeError("completion handshake is unavailable")
         self._confirmation_requested = True
         self._confirmation_failed = False
         self._confirmation_grace_at = self._clock() + self._confirmation_grace_seconds
@@ -288,9 +293,9 @@ class _HoldProfile:
     def clear(self) -> None:
         self.set_awaiting_done(False)
         self._done_requested = False
-        self._confirmation_requested = False
+        self._confirmation_requested = self._send_nudge is None
         self._confirmation_turn_started = False
-        self._confirmation_failed = False
+        self._confirmation_failed = self._send_nudge is None
         self._rearmed = False
         self._confirmation_grace_at = None
         self._blockers = ()
@@ -468,8 +473,10 @@ class _HoldProfile:
         else:
             message = "Before this spawn closes, confirm whether you are actually finished. "
         message += (
-            "When finished, run `meridian spawn done` and then provide your complete final "
-            "report. If more work remains, run `meridian spawn rearm` and continue."
+            "Your previous reply is kept as this spawn's report. If it is the final report, "
+            "run `meridian spawn done` and end the turn. If more work remains, including "
+            "waiting on background tasks or spawns, run `meridian spawn rearm` first, then "
+            "finish with a complete report."
         )
         return message
 
@@ -538,7 +545,7 @@ class ResidentDrainCoordinator:
         *,
         runtime_root: Path,
         spawn_id: SpawnId,
-        send_nudge: Callable[[str], Awaitable[None]],
+        send_nudge: Callable[[str], Awaitable[None]] | None,
         backend: ResidentBackendControl | None,
         native: NativeTaskSource | None,
         deadline_seconds: float,

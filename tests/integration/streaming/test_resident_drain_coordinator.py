@@ -265,6 +265,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     assert next_candidate.emit_turn_boundary is True
     assert len(connection.fake_resident_backend.injected_messages) == 1
     injected = connection.fake_resident_backend.injected_messages[0]
+    assert "previous reply is kept as this spawn's report" in injected
     assert "meridian spawn done" in injected
     assert "meridian spawn rearm" in injected
 

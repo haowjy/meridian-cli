@@ -74,6 +74,8 @@ class _IdleResidentBackend:
 
 
 class _ReportThenHangConnection:
+    completion_signals_available = True
+
     def __init__(self) -> None:
         self.state = "created"
         self._spawn_id = SpawnId("")
@@ -175,6 +177,7 @@ class _OpenCodeTerminalWithScopeConnection:
     harness = HarnessId.OPENCODE
     terminal_event_type = "session.idle"
     terminal_payload_session_key = "sessionID"
+    completion_signals_available = True
 
     def __init__(self) -> None:
         self.state = "created"
@@ -320,6 +323,7 @@ class _CodexTerminalWithScopeConnection(_OpenCodeTerminalWithScopeConnection):
 class _ResidentDeadlineConnection:
     starts = 0
     resident_deadlines: ClassVar[list[float]] = []
+    completion_signals_available = True
 
     def __init__(self) -> None:
         self.state = "created"

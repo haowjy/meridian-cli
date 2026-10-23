@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         ConnectionConfig,
         HarnessConnection,
     )
+    from meridian.lib.state.spawn_signals import SpawnSignalKind
 
 
 class SerializedInject(Protocol):
@@ -94,16 +95,24 @@ def build_drain_plan(
     resident_backend = receiver.resident_backend
     native = receiver.native_task_source()
     if native is not None or resident_backend is not None:
+        accepted_signals: frozenset[SpawnSignalKind] = (
+            frozenset({"done", "rearm"})
+            if receiver.completion_signals_available
+            else frozenset()
+        )
+        send_nudge: Callable[[str], Awaitable[None]] | None = None
+        if accepted_signals:
+            send_nudge = (
+                resident_backend.begin_followup_turn
+                if resident_backend is not None
+                else _send_completion_nudge
+            )
         coordinator = ResidentDrainCoordinator.build(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
             # A resident backend starts its own follow-up turn; other harnesses
             # take the nudge through the manager's serialized inject.
-            send_nudge=(
-                resident_backend.begin_followup_turn
-                if resident_backend is not None
-                else _send_completion_nudge
-            ),
+            send_nudge=send_nudge,
             backend=resident_backend,
             native=native,
             deadline_seconds=config.resident_deadline_seconds,
@@ -117,7 +126,7 @@ def build_drain_plan(
             raw_terminal_frames_authoritative=False,
             aux_wake=coordinator,
             handle_aux_wake=coordinator.handle_aux_wake,
-            accepted_signals=frozenset({"done", "rearm"}),
+            accepted_signals=accepted_signals,
         )
 
     if receiver.harness_id is HarnessId.PI:
