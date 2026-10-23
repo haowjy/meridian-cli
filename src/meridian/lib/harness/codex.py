@@ -408,13 +408,13 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         override = permissions.network_override
         if override is None:
             return ()
-        if not isinstance(override.value, bool):
+        if override.argument is None:
             return (
                 CompositionWarning(
                     code="invalid_codex_network_access_native_config",
                     message=(
-                        "Codex native_config sandbox_workspace_write.network_access must "
-                        "be a boolean. It is also deprecated; use the profile network field."
+                        "Codex native_config sandbox_workspace_write.network_access must be "
+                        "an addressable boolean. It was ignored; use the profile network field."
                     ),
                 ),
             )

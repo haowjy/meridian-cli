@@ -20,6 +20,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).
 - Spawn help examples no longer use `$(...)` inside `meridian spawn`.
+- Invalid or unaddressable deprecated Codex native network overrides no longer suppress the portable profile network policy.
 
 ### Deprecated
 - Codex `harness-overrides.codex.sandbox_workspace_write.network_access`; use profile `network`. Native passthrough wins during this warning release, then the key becomes reserved.

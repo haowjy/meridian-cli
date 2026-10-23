@@ -253,16 +253,24 @@ def test_codex_native_network_override_matching_profile_reports_native() -> None
         }
     )
 
-    permissions, report = compile_codex_permissions(spec)
+    _, report = compile_codex_permissions(spec)
 
-    assert permissions.network_access is None
-    assert permissions.network_override is not None
-    assert permissions.network_override.value is False
     network_line = next(line for line in report if line.element == "network: deny")
     assert network_line.status == "native"
 
 
-def test_codex_non_bool_native_network_override_warns_without_becoming_allow() -> None:
+@pytest.mark.parametrize(
+    "native_config",
+    [
+        {"sandbox_workspace_write": {"network_access": "false"}},
+        {"sandbox_workspace_write": {"network_access": None}},
+        {"sandbox_workspace_write.network_access": False},
+    ],
+    ids=["non-boolean", "unencodable", "unaddressable"],
+)
+def test_codex_invalid_native_network_override_keeps_portable_deny(
+    native_config: dict[str, object],
+) -> None:
     from meridian.lib.harness.codex import CodexAdapter
     from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 
@@ -272,16 +280,23 @@ def test_codex_non_bool_native_network_override_warns_without_becoming_allow() -
                 sandbox="workspace-write",
                 network="deny",
             ),
-            "native_config": {"sandbox_workspace_write": {"network_access": "false"}},
+            "native_config": native_config,
         }
     )
 
-    permissions, report = compile_codex_permissions(spec)
-    command = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
+    _, report = compile_codex_permissions(spec)
+    subprocess = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
+    appserver = project_codex_spec_to_appserver_command(
+        spec,
+        host="127.0.0.1",
+        port=1234,
+    )
+    _, thread = project_codex_spec_to_thread_request(spec, cwd="/workspace")
 
-    assert permissions.network_access is None
-    assert "sandbox_workspace_write.network_access=false" not in command
-    assert 'sandbox_workspace_write.network_access="false"' in command
+    portable_deny = "sandbox_workspace_write.network_access=false"
+    assert subprocess.count(portable_deny) == 1
+    assert appserver.count(portable_deny) == 1
+    assert thread["config"] == {"sandbox_workspace_write.network_access": False}
     assert (
         effective_codex_network(
             spec.permission_policy,
@@ -290,7 +305,10 @@ def test_codex_non_bool_native_network_override_warns_without_becoming_allow() -
         == "deny"
     )
     network_line = next(line for line in report if line.element == "network: deny")
+    native_line = next(line for line in report if line.element.startswith("native_config:"))
     assert network_line.status == "partial"
+    assert native_line.status == "unsupported"
+    assert "ignored" in native_line.note
     assert [warning.code for warning in CodexAdapter().launch_spec_warnings(spec)] == [
         "invalid_codex_network_access_native_config"
     ]

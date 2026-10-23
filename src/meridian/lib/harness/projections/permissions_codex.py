@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_NETWORK_ACCESS_KEY,
+    codex_key_addressable,
+    codex_toml_literal,
     flatten_native_config,
     project_codex_native_config,
 )
@@ -58,6 +60,7 @@ class CodexNetworkOverride:
     """Deprecated native network override retained for its warning release."""
 
     value: object
+    argument: str | None
 
 
 @dataclass(frozen=True)
@@ -106,14 +109,20 @@ def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
 
 
 def _network_override(native_config: Mapping[str, object]) -> CodexNetworkOverride | None:
-    return next(
-        (
-            CodexNetworkOverride(value)
-            for segments, value in flatten_native_config(native_config)
-            if ".".join(segments) == CODEX_CONFIG_NETWORK_ACCESS_KEY
-        ),
-        None,
-    )
+    for segments, value in flatten_native_config(native_config):
+        key = ".".join(segments)
+        if key != CODEX_CONFIG_NETWORK_ACCESS_KEY:
+            continue
+        literal = codex_toml_literal(value)
+        argument = (
+            f"{key}={literal}"
+            if isinstance(value, bool)
+            and literal is not None
+            and codex_key_addressable(segments)
+            else None
+        )
+        return CodexNetworkOverride(value=value, argument=argument)
+    return None
 
 
 def _compile_codex_permission_values(
@@ -142,7 +151,7 @@ def _compile_codex_permission_values(
         if policy.network_projection and policy.sandbox == "workspace-write"
         else None
     )
-    if network_override is not None:
+    if network_override is not None and network_override.argument is not None:
         network_access = None
 
     return CodexPermissions(
@@ -166,7 +175,8 @@ def _effective_codex_network(
         return "deny"
     if policy.sandbox == "workspace-write":
         override = permissions.network_override
-        if override is not None and isinstance(override.value, bool):
+        if override is not None and override.argument is not None:
+            assert isinstance(override.value, bool)
             return "allow" if override.value else "deny"
         if not policy.network_projection:
             return "deny"
@@ -327,26 +337,24 @@ def _codex_report(
     network_override = permissions.network_override
     if not policy.network_projection:
         pass
-    elif policy.sandbox == "workspace-write" and network_override is not None:
+    elif (
+        policy.sandbox == "workspace-write"
+        and network_override is not None
+        and network_override.argument is not None
+    ):
         override_value = network_override.value
-        if isinstance(override_value, bool):
-            status: ReportStatus = (
-                "native" if effective_network == policy.network_mode else "partial"
+        assert isinstance(override_value, bool)
+        status: ReportStatus = (
+            "native" if effective_network == policy.network_mode else "partial"
+        )
+        note = (
+            "deprecated native_config sandbox_workspace_write.network_access "
+            + (
+                "matches the profile network field"
+                if status == "native"
+                else "takes precedence over the profile network field for this release"
             )
-            note = (
-                "deprecated native_config sandbox_workspace_write.network_access "
-                + (
-                    "matches the profile network field"
-                    if status == "native"
-                    else "takes precedence over the profile network field for this release"
-                )
-            )
-        else:
-            status = "partial"
-            note = (
-                "deprecated native_config sandbox_workspace_write.network_access is not "
-                "a boolean; Codex may reject it instead of applying the profile network field"
-            )
+        )
         lines.append(
             ReportLine(
                 network_element,
