@@ -138,10 +138,10 @@ def launch_permission_rules(
 ) -> tuple[tuple[ToolRule, ...], tuple[PlatformRule, ...]]:
     """Select ordinary platform denies and the remaining mechanism rules for a launch.
 
-    A harness's own defaults can close the shell to a headless child even without tool rules,
-    so the completion grants cannot depend on the profile's shell rules. A compile whose shell
-    is already open has nothing to add for them. ``has_spawn_capability`` is carried on the
-    prepared launch for the capability-gated Meridian command set.
+    Every launch gets Meridian's completion and read commands. A launch whose profile can
+    spawn also gets the spawn command prefix. A harness's own defaults can close the shell to
+    a headless child even without tool rules, so these grants cannot depend on the profile's
+    shell rules. A compile whose shell is already open has nothing to add for them.
     """
 
     capabilities = _native_subagent_capabilities(
@@ -160,8 +160,10 @@ def launch_permission_rules(
     rules: list[PlatformRule] = []
     if not allow_builtin_agents:
         rules.append(PlatformRule(kind="builtin-agents"))
-    if spawn:
-        rules.append(PlatformRule(kind="meridian-commands", commands=_COMPLETION_COMMANDS))
+    commands = (*_COMPLETION_COMMANDS, *_READ_ONLY_COMMANDS)
+    if has_spawn_capability:
+        commands = (*commands, *_SPAWN_COMMANDS)
+    rules.append(PlatformRule(kind="meridian-commands", commands=commands))
     return denies, tuple(rules)
 
 

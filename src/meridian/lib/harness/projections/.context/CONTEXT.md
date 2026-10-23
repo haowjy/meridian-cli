@@ -161,8 +161,9 @@ says something. The compile reports whichever branch applied as an
 not one.
 
 A compile that restricts the shell must spell every `meridian-commands` entry in its own
-scope syntax, where a broad `bash` or `*` deny does not shadow it. Completion entries are
-present on every spawn. Each entry declares exact or prefix matching. OpenCode maps exact
+scope syntax, where a broad `bash` or `*` deny does not shadow it. Completion and read-only
+entries are present on every launch; profiles with spawn capability also receive the
+`meridian spawn` prefix. Each entry declares exact or prefix matching. OpenCode maps exact
 entries to `shell(<cmd>)` and prefix entries to `shell(<cmd> *)` after its own `*` default.
 Claude maps an exact entry to `Bash(<cmd>)`, and a prefix to both `Bash(<cmd>)` and
 `Bash(<cmd> *)`; under a whole allowlist it also keeps Bash available through `--tools`.
@@ -170,9 +171,7 @@ A plain `bash` deny or ask is gated rather than emitted so it cannot shadow the 
 a scoped profile deny or ask that covers one still wins and makes the platform line partial.
 Pi's permissions extension receives each command and match kind and evaluates the same exact
 or token-boundary prefix rule. Codex cannot scope its shell and reports the rule
-`unsupported`, including the exact/prefix list it cannot grant. Bind also carries the
-profile's spawn capability on the prepared launch so later command selection does not need to
-reconstruct a profile from a continue or fork snapshot.
+`unsupported`, including the exact/prefix list it cannot grant.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
 (`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying
