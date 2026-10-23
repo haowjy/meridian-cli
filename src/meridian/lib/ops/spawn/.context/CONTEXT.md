@@ -38,14 +38,24 @@ awareness) unless `yield_after_secs` is explicitly passed.
 ## No-Arg Wait Scoping
 
 When `spawn wait` is called with no explicit IDs (from inside a spawn):
-- Discovers active spawns for the current `MERIDIAN_CHAT_ID`
-- **When called from a nested spawn**, scopes to descendants only — not siblings, ancestors, or the
-  primary session. This prevents a nested spawn's `wait` from blocking on the entire chat tree.
+- Discovers the same active set as before: the primary's chat-owned descendants, or a nested
+  caller's transitive subtree. A nested wait still excludes siblings, ancestors, and the primary.
+- Adds terminal results still owed to the caller. A primary uses `owed.py`'s collection scope:
+  background direct children of every primary generation for `MERIDIAN_CHAT_ID`, minus
+  consumption and live leases read across those generations. A nested caller owns only its own
+  background direct children, with consumption and leases read from its own observation file.
+  Foreground, archived, retired, historical, and quarantined rows are not owed wait targets.
+- An observing wait leases the combined set before polling. A normal return consumes every
+  terminal target, including one already finished when the wait began, so `spawn collect` cannot
+  deliver it later.
+- `--no-observe` still includes owed terminal results because it means fetch without consuming; it
+  creates no lease or observation, so the same result can appear again until a normal wait or ack.
 - If `MERIDIAN_CHAT_ID` is absent, raises `ValueError` (not in a session)
 
 ## Idle Spawn Delivery Contract
 
-`owed.py` owns the hidden Claude runtime protocol:
+`owed.py` owns the owed-child definition shared by no-arg wait and the hidden Claude runtime
+protocol:
 
 - `spawn collect --exclude p1,p2` returns exactly one JSON object with
   `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. It never

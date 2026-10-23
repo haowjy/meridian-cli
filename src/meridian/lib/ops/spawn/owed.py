@@ -66,16 +66,21 @@ class SpawnAckOutput(BaseModel):
 _EMPTY = SpawnCollectOutput(kind="empty", ids=(), text="")
 
 
-class _CollectorParentChanged(Exception):
-    pass
+@dataclass(frozen=True)
+class OwedSpawnScope:
+    """Fixed child candidates and the parents whose observations consume them."""
+
+    parent_ids: tuple[str, ...]
+    candidate_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
-class _OwedSnapshot:
-    """Unleased owed rows (any status) and the ids still running or leased."""
+class OwedSnapshot:
+    """Readable, unleased owed rows plus candidates that cannot settle yet."""
 
     rows: tuple[SpawnRecord, ...]
     pending_ids: tuple[str, ...]
+    unavailable_ids: tuple[str, ...]
 
 
 def render_delivery(rows: Sequence[SpawnRecord]) -> str:
@@ -120,91 +125,107 @@ def _roots(
     return authority.project_root, authority.runtime_root
 
 
-def _discover_owed_candidates(
+def discover_owed_scope(
     *,
     runtime_root: Path,
     chat_id: str,
-    current_spawn_id: str,
-    excluded: frozenset[str],
-    parent_pid: int,
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return all chat primaries and their projected, unconsumed background children."""
+    caller_spawn_id: str,
+    excluded: frozenset[str] = frozenset(),
+    require_primary: bool = False,
+    deadline: float | None = None,
+) -> OwedSpawnScope:
+    """Discover one caller's fixed set of potentially owed background children.
+
+    A primary owns direct children across every primary generation of its chat. A
+    nested caller owns only its own direct children. Authority revalidation and
+    live lease subtraction happen in :func:`read_owed_snapshot`.
+    """
 
     index = history_index.HistoryIndex(runtime_root)
-    while os.getppid() == parent_pid:
-        try:
-            deadline = time.monotonic() + _COLLECT_POLL_INTERVAL_SECS
-            primary_rows = index.spawns(
-                owner_chat_id=chat_id,
-                kind="primary",
-                oldest_first=True,
-                deadline=deadline,
-            )
-            current = read_derived(runtime_root, current_spawn_id)
-            if (
-                current is None
-                or current.kind != "primary"
-                or spawn_owner_chat_id(current) != chat_id
-            ):
-                raise ValueError("Spawn collection caller is not this chat's primary")
-            primary_ids = tuple(
-                dict.fromkeys((*[row.id for row in primary_rows], current_spawn_id))
-            )
-            children = index.spawns(
-                parent_id=set(primary_ids),
-                oldest_first=True,
-                deadline=time.monotonic() + _COLLECT_POLL_INTERVAL_SECS,
-            )
-            consumed = consumed_ids(runtime_root, primary_ids)
-            candidate_ids = tuple(
-                dict.fromkeys(
-                    row.id
-                    for row in children
-                    if row.launch_mode == "background"
-                    and row.id not in consumed
-                    and row.id not in excluded
-                )
-            )
-            return primary_ids, candidate_ids
-        except (HistoryIndexBusy, ValidationError):
-            time.sleep(_COLLECT_POLL_INTERVAL_SECS)
-    raise _CollectorParentChanged
+    current = read_derived(runtime_root, caller_spawn_id)
+    current_is_primary = (
+        current is not None
+        and current.record_mode == "live"
+        and current.kind == "primary"
+        and spawn_owner_chat_id(current) == chat_id
+    )
+    if require_primary and not current_is_primary:
+        raise ValueError("Spawn collection caller is not this chat's primary")
+    if current is None or current.record_mode != "live":
+        return OwedSpawnScope(parent_ids=(), candidate_ids=())
+
+    if current.kind == "primary":
+        if not current_is_primary:
+            return OwedSpawnScope(parent_ids=(), candidate_ids=())
+        primary_rows = index.spawns(
+            owner_chat_id=chat_id,
+            kind="primary",
+            oldest_first=True,
+            deadline=deadline,
+        )
+        parent_ids = tuple(
+            dict.fromkeys((*[row.id for row in primary_rows], caller_spawn_id))
+        )
+    else:
+        parent_ids = (caller_spawn_id,)
+
+    children = index.spawns(
+        parent_id=set(parent_ids),
+        oldest_first=True,
+        deadline=deadline,
+    )
+    consumed = consumed_ids(runtime_root, parent_ids)
+    candidate_ids = tuple(
+        dict.fromkeys(
+            row.id
+            for row in children
+            if row.launch_mode == "background"
+            and row.id not in consumed
+            and row.id not in excluded
+        )
+    )
+    return OwedSpawnScope(parent_ids=parent_ids, candidate_ids=candidate_ids)
 
 
-def _authoritative_snapshot(
+def read_owed_snapshot(
     *,
     runtime_root: Path,
-    primary_ids: tuple[str, ...],
-    candidate_ids: tuple[str, ...],
-    parent_pid: int,
-) -> _OwedSnapshot:
-    """Read only still-owed candidates; malformed owned rows keep the batch pending."""
+    scope: OwedSpawnScope,
+) -> OwedSnapshot:
+    """Re-read one fixed candidate set and subtract consumption and live leases."""
 
-    while os.getppid() == parent_pid:
-        consumed = consumed_ids(runtime_root, primary_ids)
-        owed_ids = tuple(spawn_id for spawn_id in candidate_ids if spawn_id not in consumed)
-        if not owed_ids:
-            return _OwedSnapshot(rows=(), pending_ids=())
-        leased = leased_ids(runtime_root, primary_ids)
-        rows: list[SpawnRecord] = []
-        pending: list[str] = []
+    consumed = consumed_ids(runtime_root, scope.parent_ids)
+    owed_ids = tuple(
+        spawn_id for spawn_id in scope.candidate_ids if spawn_id not in consumed
+    )
+    if not owed_ids:
+        return OwedSnapshot(rows=(), pending_ids=(), unavailable_ids=())
+    leased = leased_ids(runtime_root, scope.parent_ids)
+    rows: list[SpawnRecord] = []
+    pending: list[str] = []
+    unavailable: list[str] = []
+    for spawn_id in owed_ids:
+        if spawn_id in leased:
+            pending.append(spawn_id)
+            continue
         try:
-            for spawn_id in owed_ids:
-                if spawn_id in leased:
-                    pending.append(spawn_id)
-                    continue
-                row = read_derived(runtime_root, spawn_id)
-                if row is None:
-                    continue
-                if row.parent_id not in primary_ids or row.launch_mode != "background":
-                    continue
-                rows.append(row)
-                if not is_terminal_spawn_status(row.status):
-                    pending.append(spawn_id)
-            return _OwedSnapshot(rows=tuple(rows), pending_ids=tuple(pending))
+            row = read_derived(runtime_root, spawn_id)
         except (OSError, SpawnStateQuarantined):
-            time.sleep(_COLLECT_POLL_INTERVAL_SECS)
-    raise _CollectorParentChanged
+            pending.append(spawn_id)
+            unavailable.append(spawn_id)
+            continue
+        if row is None or row.record_mode != "live":
+            continue
+        if row.parent_id not in scope.parent_ids or row.launch_mode != "background":
+            continue
+        rows.append(row)
+        if not is_terminal_spawn_status(row.status):
+            pending.append(spawn_id)
+    return OwedSnapshot(
+        rows=tuple(rows),
+        pending_ids=tuple(pending),
+        unavailable_ids=tuple(unavailable),
+    )
 
 
 def collect_owed_sync(
@@ -228,43 +249,48 @@ def collect_owed_sync(
 
     excluded = frozenset(spawn_id.strip() for spawn_id in payload.exclude if spawn_id.strip())
     parent_pid = os.getppid()
-    try:
-        primary_ids, candidate_ids = _discover_owed_candidates(
-            runtime_root=runtime_root,
-            chat_id=chat_id,
-            current_spawn_id=current_spawn_id,
-            excluded=excluded,
-            parent_pid=parent_pid,
-        )
-        # Set from the first snapshot: when nothing was finished yet, wait for the
-        # whole owed batch instead of delivering the first child to finish.
-        wait_for_batch: bool | None = None
-        while os.getppid() == parent_pid:
-            snapshot = _authoritative_snapshot(
+    scope: OwedSpawnScope | None = None
+    while os.getppid() == parent_pid:
+        try:
+            scope = discover_owed_scope(
                 runtime_root=runtime_root,
-                primary_ids=primary_ids,
-                candidate_ids=candidate_ids,
-                parent_pid=parent_pid,
+                chat_id=chat_id,
+                caller_spawn_id=current_spawn_id,
+                excluded=excluded,
+                require_primary=True,
+                deadline=time.monotonic() + _COLLECT_POLL_INTERVAL_SECS,
             )
-            if not snapshot.rows and not snapshot.pending_ids:
-                return _EMPTY
-            terminal = [row for row in snapshot.rows if is_terminal_spawn_status(row.status)]
-            if wait_for_batch is None:
-                wait_for_batch = not terminal
-            if terminal and not (wait_for_batch and snapshot.pending_ids):
-                delivered_rows = tuple(terminal[:_DELIVERY_MAX_MEMBERS])
-                text = render_delivery(delivered_rows)
-                # An explicit wait or ack may have taken a result meanwhile.
-                taken = consumed_ids(runtime_root, primary_ids) | leased_ids(
-                    runtime_root, primary_ids
-                )
-                if not any(row.id in taken for row in delivered_rows):
-                    ids = tuple(row.id for row in delivered_rows)
-                    return SpawnCollectOutput(kind="delivery", ids=ids, text=text)
-                continue
+            break
+        except (HistoryIndexBusy, OSError, SpawnStateQuarantined, ValidationError):
             time.sleep(_COLLECT_POLL_INTERVAL_SECS)
-    except _CollectorParentChanged:
-        pass
+    if scope is None:
+        return _EMPTY
+
+    # Set from the first snapshot: when nothing was finished yet, wait for the
+    # whole owed batch instead of delivering the first child to finish.
+    wait_for_batch: bool | None = None
+    while os.getppid() == parent_pid:
+        snapshot = read_owed_snapshot(runtime_root=runtime_root, scope=scope)
+        if snapshot.unavailable_ids:
+            time.sleep(_COLLECT_POLL_INTERVAL_SECS)
+            continue
+        if not snapshot.rows and not snapshot.pending_ids:
+            return _EMPTY
+        terminal = [row for row in snapshot.rows if is_terminal_spawn_status(row.status)]
+        if wait_for_batch is None:
+            wait_for_batch = not terminal
+        if terminal and not (wait_for_batch and snapshot.pending_ids):
+            delivered_rows = tuple(terminal[:_DELIVERY_MAX_MEMBERS])
+            text = render_delivery(delivered_rows)
+            # An explicit wait or ack may have taken a result meanwhile.
+            taken = consumed_ids(runtime_root, scope.parent_ids) | leased_ids(
+                runtime_root, scope.parent_ids
+            )
+            if not any(row.id in taken for row in delivered_rows):
+                ids = tuple(row.id for row in delivered_rows)
+                return SpawnCollectOutput(kind="delivery", ids=ids, text=text)
+            continue
+        time.sleep(_COLLECT_POLL_INTERVAL_SECS)
     return _EMPTY
 
 
@@ -298,11 +324,15 @@ def ack_owed_sync(
 
 
 __all__ = [
+    "OwedSnapshot",
+    "OwedSpawnScope",
     "SpawnAckInput",
     "SpawnAckOutput",
     "SpawnCollectInput",
     "SpawnCollectOutput",
     "ack_owed_sync",
     "collect_owed_sync",
+    "discover_owed_scope",
+    "read_owed_snapshot",
     "render_delivery",
 ]

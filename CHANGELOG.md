@@ -9,7 +9,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Claude spawn-watch completion notices carry only each child's outcome header and
   `meridian spawn show <id>` lookup; `spawn collect` no longer reads or embeds report
-  bodies. Pi delivery and `spawn wait`/`spawn ack` consumption are unchanged.
+  bodies. Pi delivery is unchanged; `spawn wait` and `spawn ack` remain the only
+  consumption paths.
+
+### Fixed
+- A no-argument `spawn wait` now returns finished background children that are still
+  owed as well as running descendants, then consumes them on normal return. Wait and
+  Claude collection share one owed-child definition, so a child cannot fall between
+  their discovery rules.
 
 ## [0.12.7] - 2026-10-23
 

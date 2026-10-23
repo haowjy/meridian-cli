@@ -89,7 +89,8 @@ _SPAWN_USAGE_EPILOGUE = (
     "`meridian status`.\n"
 )
 _SPAWN_WAIT_HELP_EPILOGUE = (
-    "Without spawn ids, discovers your session's pending spawns.\n"
+    "Without spawn ids, discovers running descendants and finished background\n"
+    "children whose results you have not consumed.\n"
     "Exits cleanly at a safe checkpoint;\n"
     "re-invoke to keep waiting.\n\n"
     "Examples:\n\n"
@@ -1038,8 +1039,8 @@ def _spawn_wait(
         Parameter(
             name="spawn_id",
             help=(
-                "Spawn IDs to wait for. Omit to discover your session's pending "
-                "spawns and wait on them."
+                "Spawn IDs to wait for. Omit to discover running descendants and "
+                "unconsumed finished background children."
             ),
         ),
     ] = (),

@@ -329,19 +329,38 @@ def test_spawn_collect_and_ack_json_contract(
         "Delivered from the child.\n",
         encoding="utf-8",
     )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p3",
+        chat_id="c-child-2",
+        owner_chat_id="c-owed",
+        parent_id="p1",
+        model="claude-haiku-5-5",
+        agent="coder",
+        harness="claude",
+        prompt="Report another result.",
+        launch_mode="background",
+    )
+    spawn_store.finalize_spawn(runtime_root, "p3", "succeeded", 0, origin="runner")
     env.update({"MERIDIAN_CHAT_ID": "c-owed", "MERIDIAN_SPAWN_ID": "p1"})
 
     delivered = _run_default_json(project_root, env, "spawn", "collect")
     assert set(delivered) == {"kind", "ids", "text"}
     assert delivered["kind"] == "delivery"
-    assert delivered["ids"] == ["p2"]
+    assert set(delivered["ids"]) == {"p2", "p3"}
     assert "p2 succeeded" in delivered["text"]
     assert "Worker: claude-haiku-5-5 (claude)" in delivered["text"]
     assert "Delivered from the child." not in delivered["text"]
-    assert delivered["text"].endswith("meridian spawn show p2")
+    assert "meridian spawn show p2" in delivered["text"]
+    assert "meridian spawn show p3" in delivered["text"]
 
     acked = _run_default_json(project_root, env, "spawn", "ack", "p2")
     assert acked == {"acked": ["p2"]}
+
+    waited = _run_json(project_root, env, "spawn", "wait")
+    assert [spawn["spawn_id"] for spawn in waited["spawns"]] == ["p3"]
+    assert waited["total_runs"] == 1
+    assert _run_json(project_root, env, "spawn", "wait")["total_runs"] == 0
     assert _run_default_json(project_root, env, "spawn", "collect") == {
         "kind": "empty",
         "ids": [],

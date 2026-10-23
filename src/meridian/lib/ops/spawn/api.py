@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
     RuntimeWriteContext,
@@ -61,6 +63,7 @@ from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
 from meridian.lib.state.spawn_signals import (
     SpawnSignalKind,
@@ -107,6 +110,7 @@ from .models import (
     SpawnWaitMultiOutput,
     format_spawn_identity_table,
 )
+from .owed import discover_owed_scope, read_owed_snapshot
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
@@ -1491,7 +1495,34 @@ def _resolve_wait_targets(
         )
     except history_index.HistoryIndexBusy:
         return _WaitTargetDiscovery(discovery_pending=True)
-    return _WaitTargetDiscovery(tuple(row.id for row in pending))
+
+    owed_terminal: tuple[SpawnRecord, ...] = ()
+    if self_spawn_id is not None:
+        try:
+            owed_scope = discover_owed_scope(
+                runtime_root=runtime_root,
+                chat_id=chat_id,
+                caller_spawn_id=self_spawn_id,
+                deadline=deadline,
+            )
+            owed_snapshot = read_owed_snapshot(
+                runtime_root=runtime_root,
+                scope=owed_scope,
+            )
+            owed_terminal = tuple(
+                row for row in owed_snapshot.rows if is_terminal_spawn_status(row.status)
+            )
+        except history_index.HistoryIndexBusy:
+            return _WaitTargetDiscovery(discovery_pending=True)
+        except (OSError, SpawnStateQuarantined, ValidationError):
+            # Owed discovery is supplemental. A damaged or concurrently retired row
+            # must not prevent the unchanged active wait set from making progress.
+            owed_terminal = ()
+
+    target_ids = tuple(
+        dict.fromkeys((*[row.id for row in pending], *[row.id for row in owed_terminal]))
+    )
+    return _WaitTargetDiscovery(target_ids)
 
 
 def _discover_pending_spawns(
@@ -1533,7 +1564,12 @@ def _discover_pending_spawns(
     for spawn_id in selected_ids:
         if spawn_id == exclude_spawn_id:
             continue
-        row = spawn_store.get_spawn(runtime_root, spawn_id)
+        try:
+            row = spawn_store.get_spawn(runtime_root, spawn_id)
+        except SpawnStateQuarantined:
+            # The index can race a row becoming quarantined. No-arg discovery skips
+            # it rather than failing the caller's unrelated waits.
+            continue
         if row is None:
             # Retirement can race the projection query just as it can race wait polling.
             continue
@@ -1543,9 +1579,14 @@ def _discover_pending_spawns(
         candidates.append(row)
 
     pending: list[SpawnRecord] = []
-    for row in overlay_derived(runtime_root, candidates):
-        if row.status in ACTIVE_SPAWN_STATUSES:
-            pending.append(row)
+    for candidate in candidates:
+        try:
+            row = read_derived(runtime_root, candidate.id)
+        except SpawnStateQuarantined:
+            continue
+        authoritative = candidate if row is None else row
+        if authoritative.status in ACTIVE_SPAWN_STATUSES:
+            pending.append(authoritative)
     pending.sort(key=lambda row: row.id)
     return pending
 
