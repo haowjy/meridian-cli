@@ -388,9 +388,10 @@ form exposes the same lines as `permission_report`.
 | **Pi** | **Native** for mapped tools. Plain rules use `--tools`/`--exclude-tools`; scoped rules, allowlists, and `ask` use Meridian's `meridian-permissions` Pi extension, which checks each simple command of a Bash call. A Bash allowlist, a Bash `deny`/`ask` for unmatched commands, or a scoped Bash `ask` also refuses shell syntax the extension cannot split (expansion, redirection, loops, here-docs). **Partial** for scoped Bash denies when Bash allows unmatched commands (`bash: allow` or `*: allow`): a command the extension cannot split runs unchecked. | **Not enforced**. | `allow` is already satisfied because shell network is unrestricted; `deny` is **Not enforced**. | **Not enforced**. This does not affect tool-level `ask`, which the extension enforces separately. | **Native**. Pi has no native sub-agent or built-in-agent tools, so those denies already hold; when a policy could restrict the shell, the extension grants exact and prefix Meridian commands. |
 | **Cursor** | **Not enforced**, including restrictive profiles and `ask`. | **Native**: `read-only` enables Cursor's binary sandbox and `danger-full-access` disables it. **Partial**: `workspace-write` also disables it because Cursor has no middle setting. Unset uses Cursor's default. | `allow` is already satisfied because shell network is unrestricted; `deny` is **Not enforced**. | **Native** for `auto` (`--force`) and `never`/`yolo` (`--yolo`). `confirm` is **Not enforced**. | **Not enforced**. |
 
-The same harness limits apply when `approval`, `sandbox`, or `network` comes from a CLI flag,
+The same harness limits apply when `approval` or `sandbox` comes from a CLI flag,
 environment variable, [Mars agent overlay](configuration/mars.md#agent-runtime-overlays),
-or [Meridian config](configuration.md). `tools` comes from the profile.
+or [Meridian config](configuration.md). `network` can also come from a Mars agent overlay
+or model policy. `tools` comes from the profile.
 
 ### Capability names
 
