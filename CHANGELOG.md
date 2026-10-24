@@ -6,15 +6,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Upgrade notes
 - Requires Mars >= 0.18.0 for portable network policy bundles with `provenance.network_source` and `{mode, allow, deny}`. Older Mars stops launches with `Install mars >= 0.18.0` instead of keeping harness network defaults. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
-- Agents in a Meridian-projected `read-only`/`workspace-write` sandbox can launch children only if their profile lists `subagents:`, never with a weaker sandbox, never with native args after `--`. See [Sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
-- Spawn-capable sandboxed Codex launches write a Meridian-owned `$CODEX_HOME/rules/meridian.rules` that lets `meridian spawn` run outside Codex's sandbox, in every Codex session of that user.
 - An unset profile `network` now follows its sandbox: `read-only`/`workspace-write` project deny, while `danger-full-access` stays online and an unset/default sandbox stays harness-native. Set `network: allow` to opt a constrained profile into shell network. Sandboxed child delegation compares the caller's and child's effective network, including the inferred deny. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults) and [sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
 
 ### Added
-- Sandboxed agents operate inside Meridian on any harness without profile changes: Meridian's read commands and `spawn done`/`rearm` stay allowed under shell allowlists; spawn-capable profiles also get `meridian spawn`.
-- Sandboxed Claude and Codex agents can launch `--bg` children that survive: a standalone `meridian spawn` runs outside the harness sandbox (Claude `excludedCommands`, Codex execpolicy rule).
-- `meridian spawn` run inside a sandbox that would kill its child (`cd x && meridian spawn`, pipes, `$()`, `VAR=1` prefix) fails before any state write with "run as a standalone shell command".
-- Read-only Codex spawns whose profile can spawn get the completion confirmation turn again; others still skip it, as since 0.12.4.
 - Profile `network: allow | deny` controls shell connections separately from built-in web tools; every harness reports what it enforces.
 - Sandboxed child delegation cannot weaken the caller's effective network; a legacy boundary record without a network key remains unrestricted for mid-session compatibility.
 
@@ -22,12 +16,26 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Network policy is one typed allow-or-host-set value from bundle parsing through harness projection and the caller guardrail. Claude effective policy includes user-level domain widening, and child containment preserves both allow subsets and deny supersets.
 
 ### Fixed
-- Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).
-- Spawn help examples no longer use `$(...)` inside `meridian spawn`.
 - Invalid or unaddressable deprecated Codex native network overrides no longer suppress the portable profile network policy.
 
 ### Deprecated
 - Codex `harness-overrides.codex.sandbox_workspace_write.network_access`; use profile `network`. Native passthrough wins during this warning release, then the key becomes reserved.
+
+## [0.13.0] - 2026-10-24
+
+### Upgrade notes
+- Agents in a Meridian-projected `read-only`/`workspace-write` sandbox can launch children only if their profile lists `subagents:`, never with a weaker sandbox, never with native args after `--`. See [Sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
+- Spawn-capable sandboxed Codex launches write a Meridian-owned `$CODEX_HOME/rules/meridian.rules` that lets `meridian spawn` run outside Codex's sandbox, in every Codex session of that user.
+
+### Added
+- Sandboxed agents operate inside Meridian on any harness without profile changes: Meridian's read commands and `spawn done`/`rearm` stay allowed under shell allowlists; spawn-capable profiles also get `meridian spawn`.
+- Sandboxed Claude and Codex agents can launch `--bg` children that survive: a standalone `meridian spawn` runs outside the harness sandbox (Claude `excludedCommands`, Codex execpolicy rule).
+- `meridian spawn` run inside a sandbox that would kill its child (`cd x && meridian spawn`, pipes, `$()`, `VAR=1` prefix) fails before any state write with "run as a standalone shell command".
+- Read-only Codex spawns whose profile can spawn get the completion confirmation turn again; others still skip it, as since 0.12.4.
+
+### Fixed
+- Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).
+- Spawn help examples no longer use `$(...)` inside `meridian spawn`.
 
 ## [0.12.10] - 2026-10-24
 
