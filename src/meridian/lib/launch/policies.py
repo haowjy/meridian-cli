@@ -42,7 +42,12 @@ from .policy_snapshot import (
     ReplayedModelSelection,
     replay_launch_policy_snapshot,
 )
-from .request import LaunchCompositionSurface, LaunchPolicySnapshot, SessionRequest
+from .request import (
+    LaunchCompositionSurface,
+    LaunchPolicySnapshot,
+    NetworkOverrides,
+    SessionRequest,
+)
 from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
@@ -117,6 +122,7 @@ class SurfacePolicyInput:
     harness_registry: HarnessRegistry
     models_readonly: bool = False
     requested_skills: tuple[str, ...] = ()
+    network_overrides: NetworkOverrides = field(default_factory=NetworkOverrides)
     policy_snapshot: LaunchPolicySnapshot | None = None
     continuation: SessionRequest | None = None
     agent_opt_out: bool = False
@@ -452,6 +458,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         effort_override=explicit_user_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
+        network_overrides=surface.network_overrides,
         extra_skills=requested_skill_names,
         no_refresh_models=surface.models_readonly,
     )

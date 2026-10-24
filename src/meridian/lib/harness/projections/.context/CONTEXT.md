@@ -38,12 +38,6 @@ creation; invalid candidates are ignored and leave the portable projection in pl
 next release makes the key reserved like `writable_roots` and removes that one compile-time
 carveout.
 
-`PermissionPolicy.network_projection=false` marks a bundle from Mars < 0.18. Compiles emit
-no portable network setting in that state: Claude and Codex retain their constrained
-sandbox defaults, while OpenCode, Pi, and Cursor remain unrestricted. The report's single
-network line is `network: harness default`. The child guardrail classifies that unknown
-default as `allow`, the conservative choice when checking whether a child weakens a caller.
-
 `pi_extension_projection.py` is not a spec projector — it resolves stable
 Meridian-owned Pi extension entrypoints without copying or materializing them.
 It does not consume a `LaunchSpec`. See the Pi Extension Projection section below.
@@ -218,15 +212,21 @@ child-spawn guardrail calls the same registered port, so the public three-field 
 has no hidden propagation state.
 
 Every compile reports the effective shell `network` policy separately from built-in web
-tools. Claude projects allowed domains plus local-binding/Unix-socket settings when its
-Bash sandbox is enabled; on Linux host localhost remains partial because clients must use
-the sandbox proxy. Claude's own settings files can merge allowed domains back into a deny,
-and the report names those sources. Codex enables network only for `workspace-write`;
-`read-only` reports an explicit authored allow as unsupported and treats unset as deny.
-Unset also projects deny for Claude and Codex `workspace-write`; an authored allow opts in.
-OpenCode, Pi, and Cursor satisfy allow through their unrestricted
-shells and report deny as unenforced. A `meridian spawn` sandbox escape remains visible on
-the network line because that command runs with host network access.
+tools. The report element is the compact typed value: its mode plus each non-empty host
+set's count and first three entries. Claude projects finite allows and denies through
+`allowedDomains` / `deniedDomains`, translating `**.x` to `x` plus `*.x`. It leaves local
+binding and Unix sockets off unless `localhost` or `127.0.0.1` is effectively allowed; the
+launch emits explicit `false` values so wider user settings cannot survive. The native
+switches are coarse, so enabling either is partial. On Linux host localhost is also
+partial because clients must use the sandbox proxy. Claude's user settings can widen the
+effective allow set or add denies, and the report names widening sources. Codex enables
+network only for `workspace-write`: finite allows, and allow-all with denies, use its proxy
+with one inline TOML domain map and remain partial because local services stay reachable.
+`read-only` reports an authored allow or non-empty allowlist as unsupported and stays
+offline. Unset projects deny for constrained Claude and Codex sandboxes. OpenCode, Pi, and
+Cursor satisfy unrestricted allow but report restrictions unenforced. A `meridian spawn`
+sandbox escape remains visible on the network line because that command runs with host
+network access.
 
 ### Adding a New Harness
 

@@ -215,9 +215,12 @@ previews, and failure outputs as diagnostic history, never an executable retry q
 The adapter checks report pointers and selected identity against executable routing.
 Structured Mars errors retain their code and available report across pre-init failure.
 A schema-4 bundle without `provenance.network_source` came from Mars < 0.18 and is a hard
-composition error naming `Install mars >= 0.18.0`. Current Mars includes the source even
-when it is `unset`, so constrained sandboxes project deny while `danger-full-access` remains
-online.
+composition error naming `Install mars >= 0.18.0`. At this boundary, current
+`execution_policy.network` must be the Mars object `{mode, allow, deny}`; it is parsed once
+into `Allow(deny)` or `Hosts(allow, deny)`. A null mode applies the sandbox-derived default
+while retaining its deny set. The separate durable-policy parser continues to accept old
+scalar snapshots. Raw launch `NetworkOverrides` ride `BundleRequest` to Mars so its normal
+profile/overlay/CLI merge remains the only precedence implementation.
 
 ### _MERIDIAN_HARNESS Child Env
 

@@ -2113,6 +2113,12 @@ def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
         rejected.append("--approval")
     if payload.sandbox is not None:
         rejected.append("--sandbox")
+    if payload.network.mode is not None:
+        rejected.append("--network")
+    if payload.network.allow:
+        rejected.append("--network-allow")
+    if payload.network.deny:
+        rejected.append("--network-deny")
     if payload.effort is not None:
         rejected.append("--effort")
     if payload.autocompact is not None:

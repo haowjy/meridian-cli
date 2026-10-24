@@ -9,7 +9,12 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.context import compile_prepared_policy_surface
-from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
+from meridian.lib.launch.request import (
+    LaunchCompositionSurface,
+    LaunchRuntime,
+    NetworkOverrides,
+    SpawnRequest,
+)
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -84,6 +89,36 @@ def test_exclusions_are_transported_as_repeated_harness_flags(
         "claude",
         "--exclude-harness",
         "pi",
+    ]
+
+
+def test_network_overrides_are_transported_as_repeated_mars_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "mars.toml").write_text("", encoding="utf-8")
+    monkeypatch.setattr(bundle_adapter, "_resolve_mars_binary", lambda: "/fake/mars")
+
+    command = bundle_adapter._build_bundle_command(
+        bundle_adapter.BundleRequest(
+            agent=None,
+            project_root=tmp_path,
+            network_overrides=NetworkOverrides(
+                mode="allowlist",
+                allow=("github.com", "pypi.org"),
+                deny=("example.com",),
+            ),
+        )
+    )
+
+    assert command[-8:] == [
+        "--network",
+        "allowlist",
+        "--network-allow",
+        "github.com",
+        "--network-allow",
+        "pypi.org",
+        "--network-deny",
+        "example.com",
     ]
 
 

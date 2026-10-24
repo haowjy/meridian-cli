@@ -161,6 +161,44 @@ def test_codex_workspace_network_reaches_every_launch_boundary(
     }
 
 
+def test_codex_allowlist_reaches_every_launch_boundary_as_one_domain_map() -> None:
+    spec = _spec(interactive=False).model_copy(
+        update={
+            "permission_policy": PermissionPolicy(
+                sandbox="workspace-write",
+                network={
+                    "allow": ["github.com"],
+                    "deny": ["example.com"],
+                },
+            )
+        }
+    )
+
+    subprocess = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
+    appserver = project_codex_spec_to_appserver_command(
+        spec,
+        host="127.0.0.1",
+        port=1234,
+    )
+    _, thread = project_codex_spec_to_thread_request(spec, cwd="/workspace")
+    domain_override = (
+        'features.network_proxy.domains={ "github.com" = "allow", "example.com" = "deny" }'
+    )
+
+    for command in (subprocess, appserver):
+        assert "sandbox_workspace_write.network_access=true" in command
+        assert "features.network_proxy.enabled=true" in command
+        assert command.count(domain_override) == 1
+    assert thread["config"] == {
+        "sandbox_workspace_write.network_access": True,
+        "features.network_proxy.enabled": True,
+        "features.network_proxy.domains": {
+            "github.com": "allow",
+            "example.com": "deny",
+        },
+    }
+
+
 def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
     from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 
@@ -175,15 +213,28 @@ def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
             )
         }
     )
+    allowlisted = defaulted.model_copy(
+        update={
+            "permission_policy": PermissionPolicy(
+                sandbox="read-only",
+                network={"allow": ["github.com"], "deny": []},
+            )
+        }
+    )
 
     _, defaulted_report = compile_codex_permissions(defaulted)
     _, authored_report = compile_codex_permissions(authored)
+    _, allowlisted_report = compile_codex_permissions(allowlisted)
 
     defaulted_line = next(line for line in defaulted_report if line.element == "network: deny")
     authored_line = next(line for line in authored_report if line.element == "network: allow")
+    allowlisted_line = next(
+        line for line in allowlisted_report if line.element.startswith("network: allowlist")
+    )
     assert defaulted_line.status == "native"
     assert _effective_network(defaulted) == "deny"
     assert authored_line.status == "unsupported"
+    assert allowlisted_line.status == "unsupported"
     assert _effective_network(authored) == "deny"
 
 

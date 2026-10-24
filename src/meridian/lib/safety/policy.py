@@ -89,6 +89,7 @@ _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
     {"default", "auto", "never", "yolo", "confirm"}
 )
 _EMPTY_NATIVE_CONFIG: Mapping[str, object] = MappingProxyType({})
+_LOCAL_SERVICE_HOSTS = frozenset((Host("localhost"), Host("127.0.0.1")))
 
 
 @dataclass(frozen=True)
@@ -242,7 +243,7 @@ class PermissionPolicy(BaseModel):
         return network_policy_to_wire(value)
 
     @property
-    def network_mode(self) -> Literal["allow", "deny", "hosts"]:
+    def network_mode(self) -> Literal["allow", "deny", "allowlist"]:
         """Return a compact human-facing name for the typed policy."""
 
         return network_policy_name(self.network)
@@ -400,11 +401,15 @@ def _spilled_permissions(rules: Iterable[ToolRule]) -> dict[str, str]:
 
 
 def complete_report(
-    policy: PermissionPolicy, reported: Iterable[ReportLine], *, harness: str
+    policy: PermissionPolicy,
+    reported: Iterable[ReportLine],
+    *,
+    harness: str,
+    reported_network: NetworkPolicy | None = None,
 ) -> EnforcementReport:
     """Give every policy element exactly one line, in policy order.
 
-    Elements are the rules, the platform rules, the sandbox, the network mode, and the
+    Elements are the rules, the platform rules, the sandbox, the network policy, and the
     approval mode.
 
     A compile reports only what it enforces or has something specific to say about; any
@@ -429,7 +434,9 @@ def complete_report(
     ).effective
     defaults.append(
         ReportLine(
-            f"network: {policy.network_mode}",
+            network_policy_element(
+                reported_network if reported_network is not None else policy.network
+            ),
             "native" if effective_network == policy.network else "unsupported",
             f"{harness} leaves shell network unrestricted",
         )
@@ -545,25 +552,40 @@ def network_policy_to_wire(policy: NetworkPolicy) -> dict[str, object]:
     return {"allow": allowed, "deny": sorted(policy.deny)}
 
 
-def network_policy_name(policy: NetworkPolicy) -> Literal["allow", "deny", "hosts"]:
+def network_policy_name(policy: NetworkPolicy) -> Literal["allow", "deny", "allowlist"]:
     """Name a policy without expanding or interpreting host wildcards."""
 
-    if isinstance(policy, Allow) and not policy.deny:
+    if isinstance(policy, Allow):
         return "allow"
-    if isinstance(policy, Hosts) and not policy.allow and not policy.deny:
+    if not policy.allow:
         return "deny"
-    return "hosts"
+    return "allowlist"
 
 
 def format_network_policy(policy: NetworkPolicy) -> str:
-    """Return a stable compact rendering for reports and refusal messages."""
+    """Return a stable count-plus-preview rendering for reports and refusals."""
 
     name = network_policy_name(policy)
-    if name != "hosts":
-        return name
-    allowed = "*" if isinstance(policy, Allow) else ",".join(sorted(policy.allow))
-    denied = ",".join(sorted(policy.deny))
-    return f"hosts(allow=[{allowed}], deny=[{denied}])"
+    sets: list[str] = []
+    if isinstance(policy, Hosts) and policy.allow:
+        sets.append(_format_host_set("allow", policy.allow))
+    if policy.deny:
+        sets.append(_format_host_set("deny", policy.deny))
+    return name if not sets else f"{name} ({'; '.join(sets)})"
+
+
+def _format_host_set(label: str, hosts: frozenset[Host]) -> str:
+    ordered = sorted(hosts)
+    preview: list[str] = list(ordered[:3])
+    if len(ordered) > len(preview):
+        preview.append("…")
+    return f"{label}={len(ordered)} [{', '.join(preview)}]"
+
+
+def network_policy_element(policy: NetworkPolicy) -> str:
+    """Return the canonical report element used to join projector results."""
+
+    return f"network: {format_network_policy(policy)}"
 
 
 def network_policy_contains(caller: NetworkPolicy, child: NetworkPolicy) -> bool:
@@ -574,6 +596,14 @@ def network_policy_contains(caller: NetworkPolicy, child: NetworkPolicy) -> bool
     if isinstance(caller, Allow):
         return True
     return isinstance(child, Hosts) and child.allow.issubset(caller.allow)
+
+
+def network_allows_local_services(policy: NetworkPolicy) -> bool:
+    """Return whether the policy opts into Claude's coarse local-service switches."""
+
+    if isinstance(policy, Allow):
+        return bool(_LOCAL_SERVICE_HOSTS - policy.deny)
+    return bool((policy.allow - policy.deny) & _LOCAL_SERVICE_HOSTS)
 
 
 def _allowlist_denies(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
@@ -724,7 +754,9 @@ __all__ = [
     "format_network_policy",
     "format_report_lines",
     "host_set",
+    "network_allows_local_services",
     "network_policy_contains",
+    "network_policy_element",
     "network_policy_name",
     "network_policy_to_wire",
     "parse_network_policy",

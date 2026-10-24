@@ -89,6 +89,31 @@ def test_claude_linux_sandbox_network_guidance(monkeypatch: pytest.MonkeyPatch) 
         )
         or ""
     )
+    assert "--noproxy ''" in (
+        adapter.shell_network_guidance(
+            EffectiveNetworkFacts.from_values(
+                sandbox="workspace-write",
+                network=parse_network_policy(
+                    {"allow": ["localhost"], "deny": []}
+                ),
+            )
+        )
+        or ""
+    )
+    assert (
+        adapter.shell_network_guidance(
+            EffectiveNetworkFacts.from_values(
+                sandbox="workspace-write",
+                network=parse_network_policy(
+                    {
+                        "allow": "*",
+                        "deny": ["localhost", "127.0.0.1"],
+                    }
+                ),
+            )
+        )
+        is None
+    )
     assert (
         adapter.shell_network_guidance(
             EffectiveNetworkFacts.from_values(

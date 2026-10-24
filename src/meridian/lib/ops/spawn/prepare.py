@@ -181,6 +181,7 @@ def build_create_payload(
             agent_opt_out=payload.agent_opt_out,
             skills=payload.skills,
             extra_args=payload.passthrough_args,
+            network_overrides=payload.network,
             execution_policy=ResolvedExecutionPolicy(
                 sandbox=payload.sandbox,
                 approval=payload.approval,

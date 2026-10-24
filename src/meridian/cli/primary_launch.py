@@ -6,6 +6,7 @@ import json
 import shlex
 import sys
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -28,7 +29,7 @@ from meridian.lib.launch.continue_sweep import sweep_before_continue
 from meridian.lib.launch.process.terminal_ownership import (
     format_launcher_diagnostics_pointer,
 )
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import NetworkOverrides, SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.run_boundary import run_boundary_summary
@@ -135,6 +136,9 @@ def run_primary_launch(
     autocompact_pct: int | None = None,
     effort: str | None,
     sandbox: str | None,
+    network: Literal["allow", "deny", "allowlist"] | None = None,
+    network_allow: tuple[str, ...] = (),
+    network_deny: tuple[str, ...] = (),
     timeout: float | None,
     dry_run: bool,
     ignore_direnv: bool | None = None,
@@ -381,6 +385,11 @@ def run_primary_launch(
             skills=requested_skills,
             goal=resolved_goal,
             dry_run=dry_run,
+            network_overrides=NetworkOverrides(
+                mode=network,
+                allow=network_allow,
+                deny=network_deny,
+            ),
             execution_policy=ResolvedExecutionPolicy(
                 approval=resolved_approval if resolved_approval != "default" else None,
                 effort=effort,

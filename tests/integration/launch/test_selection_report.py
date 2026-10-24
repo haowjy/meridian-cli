@@ -12,6 +12,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.policy_snapshot import build_launch_policy_snapshot
 from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.safety.policy import Allow, Host, Hosts
 
 
 def report() -> dict[str, object]:
@@ -57,7 +58,9 @@ def bundle() -> dict[str, object]:
             "harness_model": "gpt-5",
             "route_trace": report(),
         },
-        "execution_policy": {},
+        "execution_policy": {
+            "network": {"mode": None, "allow": [], "deny": []},
+        },
         "provenance": {"network_source": "unset"},
         "tools": {
             "rules": [],
@@ -121,8 +124,36 @@ def test_current_mars_unset_network_still_projects_portable_default(
 
     result = invoke(tmp_path, monkeypatch, payload)
 
-    assert result.execution_policy.network is None
+    assert result.execution_policy.network == Allow()
     assert result.warnings == ()
+
+
+def test_bundle_network_object_applies_constrained_default_and_keeps_denies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = bundle()
+    payload["execution_policy"] = {
+        "sandbox": "workspace-write",
+        "network": {
+            "mode": None,
+            "allow": ["inert.example"],
+            "deny": ["Blocked.Example."],
+        },
+    }
+
+    result = invoke(tmp_path, monkeypatch, payload)
+
+    assert result.execution_policy.network == Hosts(deny=frozenset((Host("blocked.example"),)))
+
+
+def test_current_bundle_rejects_legacy_scalar_network_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = bundle()
+    payload["execution_policy"] = {"network": "deny"}
+
+    with pytest.raises(RuntimeError, match=r"invalid 'execution_policy\.network' object"):
+        invoke(tmp_path, monkeypatch, payload)
 
 
 def test_bundle_v3_is_not_accepted_as_report_contract(

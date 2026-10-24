@@ -23,6 +23,12 @@ from meridian.lib.safety.policy import (
 from meridian.lib.tools import PLATFORM_ORIGIN
 from tests.support.launch import tool_rule
 
+_STRICT_OFFLINE_NETWORK = {
+    "strictAllowlist": True,
+    "allowLocalBinding": False,
+    "allowAllUnixSockets": False,
+}
+
 
 def _effective_network(spec: ResolvedLaunchSpec) -> str:
     projection = project_claude_network(
@@ -206,7 +212,7 @@ def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:
 
     settings = json.loads(command[command.index("--settings") + 1])
     assert settings["sandbox"]["excludedCommands"] == ["meridian spawn *"]
-    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
+    assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     _, report = compile_claude_permissions(spec)
     sandbox_line = next(item for item in report if item.element == "sandbox: workspace-write")
     assert "runs fully outside the sandbox" in sandbox_line.note
@@ -233,18 +239,29 @@ def test_claude_network_deny_projects_strict_allowlist(
             ),
         ),
         claude_runtime=ClaudeRuntimeResolution(
-            settings_network_allowed_domains=(("/home/test/.claude/settings.json", ("*",)),)
+            settings_network_allowed_domains=(
+                (
+                    "/home/test/.claude/settings.json",
+                    ("a.example", "b.example", "c.example", "z.example"),
+                ),
+            ),
+            settings_network_denied_domains=(
+                ("/home/test/.claude/settings.json", ("blocked.example",)),
+            ),
         ),
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
     settings = json.loads(command[command.index("--settings") + 1])
 
-    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
+    assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     _, report = compile_claude_permissions(spec)
-    line = next(item for item in report if item.element == "network: deny")
+    line = next(item for item in report if item.element.startswith("network: allowlist"))
+    assert "allow=4 [a.example, b.example, c.example, …]" in line.element
+    assert "deny=1 [blocked.example]" in line.element
+    assert "z.example" not in line.note
     assert line.status == "partial"
-    assert _effective_network(spec) == "hosts"
+    assert _effective_network(spec) == "allowlist"
 
     bypassed = spec.model_copy(
         update={
@@ -256,9 +273,11 @@ def test_claude_network_deny_projects_strict_allowlist(
         }
     )
     _, bypassed_report = compile_claude_permissions(bypassed)
-    bypassed_line = next(item for item in bypassed_report if item.element == "network: deny")
+    bypassed_line = next(
+        item for item in bypassed_report if item.element.startswith("network: allowlist")
+    )
     assert bypassed_line.status == "partial"
-    assert _effective_network(bypassed) == "hosts"
+    assert _effective_network(bypassed) == "allowlist"
 
 
 def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
@@ -277,7 +296,7 @@ def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
     settings = json.loads(command[command.index("--settings") + 1])
 
-    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
+    assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     assert "--dangerously-skip-permissions" not in command
     assert _effective_network(spec) == "deny"
 
@@ -296,9 +315,40 @@ def test_claude_typed_deny_policy_projects_network_settings() -> None:
     settings = json.loads(command[command.index("--settings") + 1])
     _, report = compile_claude_permissions(spec)
 
-    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
+    assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     assert _effective_network(spec) == "deny"
     assert any(line.element == "network: deny" for line in report)
+
+
+def test_claude_allowlist_translates_double_wildcards_and_gates_local_switches() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            sandbox="workspace-write",
+            network={
+                "allow": ["**.github.com", "localhost"],
+                "deny": ["**.blocked.example"],
+            },
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+    network = settings["sandbox"]["network"]
+    _, report = compile_claude_permissions(spec)
+    line = next(item for item in report if item.element.startswith("network: allowlist"))
+
+    assert network == {
+        "strictAllowlist": True,
+        "allowedDomains": ["github.com", "*.github.com", "localhost"],
+        "deniedDomains": ["blocked.example", "*.blocked.example"],
+        "allowLocalBinding": True,
+        "allowAllUnixSockets": True,
+    }
+    assert "allow=2 [**.github.com, localhost]" in line.element
+    assert "deny=1 [**.blocked.example]" in line.element
+    assert line.status == "partial"
 
 
 def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> None:

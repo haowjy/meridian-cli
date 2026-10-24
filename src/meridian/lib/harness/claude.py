@@ -95,8 +95,8 @@ from meridian.lib.launch.launch_types import (
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
-    Allow,
     EffectiveNetworkFacts,
+    network_allows_local_services,
 )
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
@@ -250,7 +250,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if (
             not sys.platform.startswith("linux")
             or facts.sandbox not in CONSTRAINED_SANDBOX_MODES
-            or not isinstance(project_claude_network(facts).effective, Allow)
+            or not network_allows_local_services(project_claude_network(facts).effective)
         ):
             return None
         return (

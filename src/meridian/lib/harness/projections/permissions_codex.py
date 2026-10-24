@@ -36,6 +36,7 @@ from meridian.lib.safety.policy import (
     ReportStatus,
     SandboxMode,
     complete_report,
+    network_policy_element,
     platform_element,
     rule_element,
 )
@@ -360,7 +361,7 @@ def _codex_report(
                 sandbox_note,
             )
         )
-    network_element = f"network: {policy.network_mode}"
+    network_element = network_policy_element(policy.network)
     network_override = network.native.override
     if (
         policy.sandbox == "workspace-write"
@@ -384,14 +385,13 @@ def _codex_report(
         )
     elif policy.sandbox == "workspace-write":
         if network.native.proxy_enabled:
-            domains = codex_toml_literal(dict(network.native.domains))
             lines.append(
                 ReportLine(
                     network_element,
                     "partial",
                     "-c sandbox_workspace_write.network_access=true; "
                     "-c features.network_proxy.enabled=true; "
-                    f"-c features.network_proxy.domains={domains}; "
+                    "-c features.network_proxy.domains=<inline map from the host sets above>; "
                     "Codex still permits local services",
                 )
             )
@@ -420,7 +420,7 @@ def _codex_report(
                 )
             )
     elif policy.sandbox == "read-only":
-        if isinstance(policy.network, Allow):
+        if isinstance(policy.network, Allow) or policy.network.allow:
             lines.append(
                 ReportLine(
                     network_element,

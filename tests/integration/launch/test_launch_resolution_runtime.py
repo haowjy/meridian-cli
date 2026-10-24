@@ -182,7 +182,13 @@ def test_launch_boundary_includes_only_claude_user_network_settings(
         }
     )
     network_line = next(
-        line for line in preview.enforcement_report() if line.element == "network: deny"
+        line
+        for line in preview.enforcement_report()
+        if line.element
+        == (
+            "network: allowlist (allow=1 [api.example.com]; "
+            "deny=1 [blocked.example.com])"
+        )
     )
     assert user_config.as_posix() in network_line.note
     assert "project.example.com" not in network_line.note

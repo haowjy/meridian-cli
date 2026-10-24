@@ -2,9 +2,16 @@
 
 ## Shell network policy defaults
 
-Agent profiles can set `network: allow` or `network: deny` to control connections made by
-shell commands, including public internet access, host services, and local sockets. Built-in
-web tools remain controlled separately by `tools: web`.
+Agent profiles can set `network: allow`, `network: deny`, or `network: allowlist` to control
+connections made by shell commands, including public internet access, host services, and
+local sockets. Built-in web tools remain controlled separately by `tools: web`.
+
+`allowlist` permits the `network-allow` host set, less the `network-deny` set. `allow` may
+also carry denies. Exact hosts, IP addresses, `*.x` (subdomains only), and `**.x` (apex plus
+subdomains) are accepted. Plain host lists add across config/profile/overlay/CLI layers,
+while an allowed `{replace: [...]}` clears lower entries; denies win. An empty allowlist
+fails closed to `deny`. See Mars's [network profile reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/agent-profiles.md#network)
+for full merge and replacement rules.
 
 When `network` is omitted, it follows the profile sandbox:
 
@@ -18,8 +25,15 @@ set:
 
 ```yaml
 sandbox: workspace-write
-network: allow
+network: allowlist
+network-allow: [github.com, "*.github.com"]
+network-deny: [uploads.github.com]
 ```
+
+For one launch, `meridian`, `meridian spawn`, and `meridian bootstrap` accept
+`--network allow|deny|allowlist` plus repeatable `--network-allow HOST` and
+`--network-deny HOST`. The host flags add to the lower-layer sets. Exact continue rejects
+them, as it does `--sandbox`; a fork recomposes policy with them.
 
 Claude now projects `sandbox.network.strictAllowlist: true` for an omitted network under a
 constrained sandbox. In particular, sandboxed launches using `approval: never` (or the old
@@ -29,10 +43,19 @@ user `config.toml` value of `true` unless the profile explicitly sets `network: 
 Continued sessions with an older launch-policy snapshot and no network value follow the same
 sandbox-derived default.
 
-Codex `read-only` cannot enable network. Its dry-run report calls out an explicit
-`network: allow`; leaving the field unset reports and keeps native deny. No harness can
+Codex `workspace-write` uses its network proxy for finite allowlists and `allow` with
+denies. Local services remain reachable, so the dry-run report marks those policies
+partial. Codex `read-only` cannot enable network. Its dry-run report calls out an explicit
+`network: allow` or non-empty allowlist; leaving the field unset reports and keeps native
+deny. No harness can
 enforce `network: deny`
 under `danger-full-access`, and OpenCode, Pi, and Cursor cannot enforce it in any mode.
+
+Claude translates `**.x` to `x` plus `*.x`. A finite allowlist keeps local binding and Unix
+sockets disabled, overriding wider user settings, unless it contains `localhost` or
+`127.0.0.1`; either name enables Claude's coarse local-binding and all-Unix-sockets
+switches. User-level Claude
+`allowedDomains` still widen the effective allowlist, and user denies win.
 
 A Mars bundle without `provenance.network_source` predates the portable field. Meridian
 refuses the launch with `Install mars >= 0.18.0` rather than silently leaving the harness at

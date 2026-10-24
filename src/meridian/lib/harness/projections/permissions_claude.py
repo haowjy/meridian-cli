@@ -32,6 +32,10 @@ from meridian.lib.safety.policy import (
     ReportStatus,
     command_grant_covers_pattern,
     complete_report,
+    format_network_policy,
+    host_set,
+    network_allows_local_services,
+    network_policy_element,
     platform_element,
     rule_element,
 )
@@ -424,6 +428,19 @@ def _outside_sandbox_commands(policy: PermissionPolicy) -> tuple[str, ...]:
     )
 
 
+def _claude_domains(hosts: frozenset[str]) -> tuple[str, ...]:
+    """Translate Mars/Codex apex-plus-subdomain wildcards to Claude's two entries."""
+
+    domains: list[str] = []
+    for host in sorted(hosts):
+        if host.startswith("**."):
+            apex = host.removeprefix("**.")
+            domains.extend((apex, f"*.{apex}"))
+        else:
+            domains.append(host)
+    return tuple(dict.fromkeys(domains))
+
+
 def project_claude_network(
     facts: EffectiveNetworkFacts,
 ) -> NetworkProjection[ClaudeNetworkSettings | None]:
@@ -437,24 +454,25 @@ def project_claude_network(
     if isinstance(policy, Allow):
         native = ClaudeNetworkSettings(
             allowed_domains=CLAUDE_NETWORK_ALLOW_DOMAINS,
-            denied_domains=tuple(sorted(policy.deny)),
+            denied_domains=_claude_domains(policy.deny),
             allow_local_binding=True,
             allow_all_unix_sockets=True,
         )
         return NetworkProjection(native=native, effective=Allow(deny=denied))
 
+    effective = Hosts(
+        allow=policy.allow | facts.settings_allow,
+        deny=denied,
+    )
+    allow_local_services = network_allows_local_services(effective)
     native = ClaudeNetworkSettings(
         strict_allowlist=True,
-        allowed_domains=tuple(sorted(policy.allow)),
-        denied_domains=tuple(sorted(policy.deny)),
+        allowed_domains=_claude_domains(policy.allow),
+        denied_domains=_claude_domains(policy.deny),
+        allow_local_binding=allow_local_services,
+        allow_all_unix_sockets=allow_local_services,
     )
-    return NetworkProjection(
-        native=native,
-        effective=Hosts(
-            allow=policy.allow | facts.settings_allow,
-            deny=denied,
-        ),
-    )
+    return NetworkProjection(native=native, effective=effective)
 
 
 def _compile_sandbox(
@@ -901,7 +919,8 @@ def _network_line(
     projection: NetworkProjection[ClaudeNetworkSettings | None],
     settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> ReportLine:
-    element = f"network: {policy.network_mode}"
+    reported_network = projection.effective if projection.native is not None else policy.network
+    element = network_policy_element(reported_network)
     sandbox = permissions.settings.sandbox
     if isinstance(policy.network, Allow):
         if projection.native is None:
@@ -917,14 +936,13 @@ def _network_line(
                 "shell network is available without a projected Claude Bash sandbox",
             )
         assert sandbox is not None and sandbox.enabled
-        domains = ",".join(f'"{domain}"' for domain in projection.native.allowed_domains)
         note = (
-            f"--settings sandbox.network.allowedDomains=[{domains}], "
+            "--settings sandbox.network.allowedDomains allows all destinations, "
             "sandbox.network.allowLocalBinding=true, "
             "sandbox.network.allowAllUnixSockets=true"
         )
         if projection.native.denied_domains:
-            note += "; deniedDomains=" + ",".join(projection.native.denied_domains)
+            note += "; deniedDomains projects the deny set above"
         if sys.platform.startswith("linux"):
             return ReportLine(
                 element,
@@ -942,9 +960,19 @@ def _network_line(
     assert sandbox is not None and sandbox.enabled and projection.native is not None
     notes = ["--settings sandbox.network.strictAllowlist=true"]
     if projection.native.allowed_domains:
-        notes.append("allowedDomains=" + ",".join(projection.native.allowed_domains))
+        notes.append("allowedDomains projects the allow set above")
     if projection.native.denied_domains:
-        notes.append("deniedDomains=" + ",".join(projection.native.denied_domains))
+        notes.append("deniedDomains projects the deny set above")
+    if any(host.startswith("**.") for host in (*policy.network.allow, *policy.network.deny)):
+        notes.append("each **.x entry is emitted as x plus *.x for Claude")
+    local_services = projection.native.allow_local_binding
+    if local_services:
+        notes.append(
+            "localhost or 127.0.0.1 opts into Claude's coarse "
+            "allowLocalBinding=true and allowAllUnixSockets=true switches"
+        )
+    else:
+        notes.append("allowLocalBinding=false and allowAllUnixSockets=false")
     if sys.platform.startswith("linux"):
         notes.append(
             "processes in the same sandbox can still connect over its private TCP "
@@ -952,10 +980,12 @@ def _network_line(
         )
     widening: list[str] = []
     for path, domains in settings_network_allowed_domains:
-        widening.append(f"{path}: {','.join(domains)}")
+        widening.append(
+            f"{path}: {format_network_policy(Hosts(allow=host_set(domains)))}"
+        )
     if widening:
         notes.append(
-            "Claude merges allowedDomains from its user settings, so network deny can "
+            "Claude merges allowedDomains from its user settings, so the allowlist can "
             "be widened outside Meridian (" + "; ".join(widening) + ")"
         )
     if sandbox.excluded_commands:
@@ -966,7 +996,10 @@ def _network_line(
     return ReportLine(
         element,
         "partial"
-        if sys.platform.startswith("linux") or widening or sandbox.excluded_commands
+        if sys.platform.startswith("linux")
+        or local_services
+        or widening
+        or sandbox.excluded_commands
         else "native",
         "; ".join(notes),
     )
@@ -1035,7 +1068,12 @@ def compile_claude_permissions(
     )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Claude"))
     lines.extend(compaction_report(spec, harness="Claude"))
-    return permissions, complete_report(policy, lines, harness="Claude")
+    return permissions, complete_report(
+        policy,
+        lines,
+        harness="Claude",
+        reported_network=network.effective if network.native is not None else policy.network,
+    )
 
 
 __all__ = [
