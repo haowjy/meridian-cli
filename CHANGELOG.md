@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- A no-argument `spawn wait` now ends with a `Since this wait started:` list of
+  children that were launched or finished while it ran (`since_started_spawns` in
+  JSON). It doesn't wait on or consume them, and they don't affect the exit code.
+
 ## [0.12.9] - 2026-10-24
 
 ### Fixed

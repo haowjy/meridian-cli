@@ -62,6 +62,25 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   avoids a second snapshot/recheck mechanism.
 - `--no-observe` still includes owed terminal results because it means fetch without consuming; it
   creates no lease or observation, so the same header can appear again until a normal wait or ack.
+- On every complete, fail-fast, or checkpoint return after successful initial discovery, runs the
+  same target discovery once more and appends children that appeared after target resolution under
+  `Since this wait started:`. An initial discovery-pending checkpoint has no baseline and skips the
+  trailer. Active children outside the original blocked-on set render as `running`. Newly owed
+  terminal children outside the original blocked-on and owed sets render as `finished` for success
+  or retain the failure terminal word (`failed`, `timed_out`, or `cancelled`). "Appeared" is set
+  membership, not time: the initial discovery keeps every finished owed id it saw, including rows the
+  32-member cap held back, and the return discovery excludes those before applying the cap. Crashed
+  children with no recorded finish time are therefore still listed. Structured output uses
+  `since_started_spawns`.
+- The two halves keep the start-of-wait scopes: `running` comes from the descendant subtree (so a
+  grandchild can appear), `finished` from the owed scope (background direct children only). A
+  grandchild listed as running at one return is not listed once it finishes; that is the owed
+  scope, not a gap to fix here.
+- The return-time discovery is advisory and read-only: its rows are not waited on, leased, consumed,
+  counted, or included in fail-fast and exit decisions. It runs once at return, never per poll. Any
+  state or index failure (busy or incomplete index, OS error, quarantined row) omits the section:
+  the wait's `finally` consumes its results regardless, so failing the wait here would lose them. Explicit-ID waits do not
+  run it. `--no-observe` keeps the same trailer.
 - If `MERIDIAN_CHAT_ID` is absent, raises `ValueError` (not in a session)
 
 ## Idle Spawn Delivery Contract

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -238,10 +238,10 @@ def resolve_owed_finished_rows(
     runtime_root: Path,
     chat_id: str,
     caller_spawn_id: str,
-    blocked_on_ids: Sequence[str],
+    excluded_ids: Collection[str],
     deadline: float | None = None,
 ) -> tuple[SpawnRecord, ...]:
-    """Resolve one bounded batch of finished owed rows for no-argument wait."""
+    """Resolve every finished owed row for no-argument wait, oldest first, uncapped."""
 
     scope = discover_owed_scope(
         runtime_root=runtime_root,
@@ -250,13 +250,10 @@ def resolve_owed_finished_rows(
         deadline=deadline,
     )
     snapshot = read_owed_snapshot(runtime_root=runtime_root, scope=scope)
-    blocked = frozenset(blocked_on_ids)
-    return select_delivery_rows(
-        tuple(
-            row
-            for row in snapshot.rows
-            if row.id not in blocked and is_terminal_spawn_status(row.status)
-        )
+    return tuple(
+        row
+        for row in snapshot.rows
+        if row.id not in excluded_ids and is_terminal_spawn_status(row.status)
     )
 
 

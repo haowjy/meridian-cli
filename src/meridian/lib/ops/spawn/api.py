@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -107,7 +108,7 @@ from .models import (
     SpawnWaitMultiOutput,
     format_spawn_identity_table,
 )
-from .owed import resolve_owed_finished_rows
+from .owed import resolve_owed_finished_rows, select_delivery_rows
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
@@ -125,7 +126,10 @@ _WAIT_POLL_INTERVAL_SECS = 0.25
 @dataclass(frozen=True)
 class _WaitTargetDiscovery:
     blocked_on_ids: tuple[str, ...] = ()
+    active_rows: tuple[SpawnRecord, ...] = ()
     owed_rows: tuple[SpawnRecord, ...] = ()
+    # Every finished owed id seen, including rows the delivery cap held back.
+    owed_candidate_ids: frozenset[str] = frozenset()
     discovery_pending: bool = False
 
 
@@ -1462,6 +1466,7 @@ def _resolve_wait_targets(
     ctx: RuntimeContext,
     *,
     deadline: float,
+    excluded_owed_ids: frozenset[str] = frozenset(),
 ) -> _WaitTargetDiscovery:
     """Resolve explicit IDs or report that bounded no-arg discovery is unfinished."""
     candidates: list[str] = []
@@ -1495,14 +1500,14 @@ def _resolve_wait_targets(
         return _WaitTargetDiscovery(discovery_pending=True)
 
     blocked_on_ids = tuple(row.id for row in pending)
-    owed_rows: tuple[SpawnRecord, ...] = ()
+    owed_candidates: tuple[SpawnRecord, ...] = ()
     if self_spawn_id is not None:
         try:
-            owed_rows = resolve_owed_finished_rows(
+            owed_candidates = resolve_owed_finished_rows(
                 runtime_root=runtime_root,
                 chat_id=chat_id,
                 caller_spawn_id=self_spawn_id,
-                blocked_on_ids=blocked_on_ids,
+                excluded_ids=excluded_owed_ids.union(blocked_on_ids),
                 deadline=deadline,
             )
         except history_index.HistoryIndexBusy:
@@ -1510,7 +1515,9 @@ def _resolve_wait_targets(
 
     return _WaitTargetDiscovery(
         blocked_on_ids=blocked_on_ids,
-        owed_rows=owed_rows,
+        active_rows=tuple(pending),
+        owed_rows=select_delivery_rows(owed_candidates),
+        owed_candidate_ids=frozenset(row.id for row in owed_candidates),
     )
 
 
@@ -1568,6 +1575,52 @@ def _discover_pending_spawns(
             pending.append(row)
     pending.sort(key=lambda row: row.id)
     return pending
+
+
+def _since_started_spawns(
+    *,
+    payload: SpawnWaitInput,
+    runtime_root: Path,
+    project_root: Path,
+    ctx: RuntimeContext,
+    initial_targets: _WaitTargetDiscovery,
+) -> tuple[SpawnDetailOutput, ...]:
+    """Discover advisory rows that entered this no-argument wait's scope later.
+
+    "Later" is set membership, not time: anything the wait saw at start (blocked
+    on, or finished and owed, even if the delivery cap held it back) is excluded.
+    """
+
+    try:
+        current_targets = _resolve_wait_targets(
+            payload,
+            runtime_root,
+            ctx,
+            deadline=time.monotonic() + history_index.QUERY_TIMEOUT,
+            excluded_owed_ids=initial_targets.owed_candidate_ids.union(
+                initial_targets.blocked_on_ids
+            ),
+        )
+        if current_targets.discovery_pending:
+            return ()
+        initial_blocked = frozenset(initial_targets.blocked_on_ids)
+        rows = (
+            *current_targets.owed_rows,
+            *(row for row in current_targets.active_rows if row.id not in initial_blocked),
+        )
+        return tuple(
+            detail_from_row(
+                project_root=project_root,
+                row=row,
+                include_report_body=False,
+                runtime_root=runtime_root,
+            )
+            for row in rows
+        )
+    # Advisory only, and this wait's `finally` consumes its results either way:
+    # any state or index failure here must omit the section, never fail the wait.
+    except (OSError, ValueError, RuntimeError, sqlite3.Error):
+        return ()
 
 
 def _emit_wait_set(
@@ -1907,7 +1960,20 @@ def spawn_wait_sync(
                         elapsed_secs=now - started,
                     )
                 break
-        return output.model_copy(update={"owed_spawns": owed_spawns})
+        output = output.model_copy(update={"owed_spawns": owed_spawns})
+        if not has_explicit_ids:
+            output = output.model_copy(
+                update={
+                    "since_started_spawns": _since_started_spawns(
+                        payload=payload,
+                        runtime_root=runtime_root,
+                        project_root=project_root,
+                        ctx=resolved_context,
+                        initial_targets=targets,
+                    )
+                }
+            )
+        return output
     finally:
         record_spawn_observation(
             runtime_root=runtime_root,
