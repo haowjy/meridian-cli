@@ -56,16 +56,18 @@ from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
 )
 from meridian.lib.harness.claude_settings import (
+    claude_network_config_warnings,
     read_claude_settings_permissions,
-    read_claude_user_network_config,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.projections.network_claude import (
+    effective_claude_network,
+)
 from meridian.lib.harness.projections.permissions_claude import (
     compile_claude_permissions,
-    project_claude_network,
 )
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import (
@@ -98,7 +100,7 @@ from meridian.lib.launch.launch_types import (
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
-    EffectiveNetworkFacts,
+    NetworkPolicy,
     network_allows_local_services,
 )
 
@@ -147,16 +149,6 @@ def bind_claude_spec(
             )
         }
     )
-
-
-def bind_claude_network_facts(
-    facts: EffectiveNetworkFacts,
-    env: Mapping[str, str],
-) -> EffectiveNetworkFacts:
-    """Detect child-selected Claude config that can widen shared policy facts."""
-
-    config = read_claude_user_network_config(env)
-    return replace(facts, harness_configs=(config,) if config is not None else ())
 
 
 def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
@@ -252,12 +244,16 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def shell_network_guidance(
         self,
-        facts: EffectiveNetworkFacts,
+        *,
+        sandbox: str | None,
+        network: NetworkPolicy,
+        native_config: Mapping[str, object],
     ) -> str | None:
+        _ = native_config
         if (
             not sys.platform.startswith("linux")
-            or facts.sandbox not in CONSTRAINED_SANDBOX_MODES
-            or not network_allows_local_services(project_claude_network(facts).effective)
+            or sandbox not in CONSTRAINED_SANDBOX_MODES
+            or not network_allows_local_services(network)
         ):
             return None
         return (
@@ -338,6 +334,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]:
         return spec.claude_runtime.warnings
+
+    def launch_environment_warnings(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+    ) -> tuple[CompositionWarning, ...]:
+        return claude_network_config_warnings(child_cwd, child_env)
 
     def project_launch_env(
         self,
@@ -598,8 +602,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_claude_spec_to_cli_args,
             permission_report=lambda spec: compile_claude_permissions(spec)[1],
-            effective_network=lambda facts: project_claude_network(facts).effective,
-            bind_network_facts=bind_claude_network_facts,
+            effective_network=effective_claude_network,
             bind_spec=bind_claude_spec,
         ),
         semantics=CLAUDE_SEMANTICS,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,11 @@ from meridian.lib.launch.launch_types import (
 from meridian.lib.launch.policy_snapshot import build_launch_policy_snapshot
 from meridian.lib.launch.reference import load_reference_items
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
+from meridian.lib.safety.policy import (
+    NetworkPolicy,
+    SandboxDerivedNetwork,
+    resolve_network_policy,
+)
 from meridian.lib.state.paths import resolve_kb_dir
 from meridian.lib.tools import NativeStatus, ToolAction, ToolRule, split_native
 
@@ -74,6 +79,9 @@ class FakeBundleResult:
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
+    network: NetworkPolicy | SandboxDerivedNetwork = field(
+        default_factory=SandboxDerivedNetwork
+    )
     agent_source_path: str | None = None
     provider_constraint: str | None = None
     selection_report: dict[str, object] | None = None
@@ -102,6 +110,20 @@ def _direct_prepared_surface(
         harness_id = HarnessId(harness_name)
     except ValueError as exc:
         raise ValueError(f"Unknown harness '{harness_name}'.") from exc
+
+    execution_policy = request.execution_policy
+    request = request.model_copy(
+        update={
+            "execution_policy": execution_policy.model_copy(
+                update={
+                    "network": resolve_network_policy(
+                        execution_policy.network,
+                        execution_policy.sandbox,
+                    )
+                }
+            )
+        }
+    )
 
     resolved_project_root = project_root.expanduser().resolve()
     loaded_references = load_reference_items(
@@ -234,6 +256,7 @@ def stub_bundle_request_and_resolve(
     model_token: str | None = None,
     harness_model: str | None = None,
     execution_policy: ResolvedExecutionPolicy | None = None,
+    bundle_network: NetworkPolicy | SandboxDerivedNetwork | None = None,
     provenance: dict[str, str] | None = None,
     warnings: tuple[str, ...] = (),
     prompt_surface_inventory_prompt: str = "",
@@ -263,6 +286,11 @@ def stub_bundle_request_and_resolve(
             harness_model=resolved_harness_model,
             execution_policy=resolved_policy,
             provenance=resolved_provenance,
+            network=(
+                bundle_network
+                if bundle_network is not None
+                else resolved_policy.network or SandboxDerivedNetwork()
+            ),
             warnings=warnings,
             prompt_surface_inventory_prompt=prompt_surface_inventory_prompt,
             tool_rules=tool_rules,

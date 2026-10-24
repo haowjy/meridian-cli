@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
+from typing import Any, Generic, Protocol, TypeVar, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
@@ -22,20 +22,15 @@ from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
 from meridian.lib.safety.policy import (
-    EffectiveNetworkFacts,
+    Allow,
     EnforcementReport,
     NetworkPolicy,
-    project_unenforced_network,
-    resolve_network_policy,
+    PermissionPolicy,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
 BootstrapPayloadT = TypeVar("BootstrapPayloadT", covariant=True)
-
-if TYPE_CHECKING:
-    from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
-
 
 class SubprocessProjector(Protocol[ProjectorSpecT]):
     """Project a resolved launch spec onto one subprocess argv."""
@@ -44,18 +39,17 @@ class SubprocessProjector(Protocol[ProjectorSpecT]):
 
 
 class EffectiveNetwork(Protocol):
-    """Resolve one harness's effective shell-network mode from resolved policy facts."""
+    """Project Meridian-owned policy inputs onto one harness's effective network."""
 
     def __call__(
         self,
-        facts: EffectiveNetworkFacts,
+        policy: PermissionPolicy,
+        *,
+        native_config: Mapping[str, object],
     ) -> NetworkPolicy: ...
 
 
-def unenforced_network(facts: EffectiveNetworkFacts) -> NetworkPolicy:
-    """Return the shared effective policy for harnesses without enforcement."""
-
-    return project_unenforced_network(facts).effective
+UNENFORCED_NETWORK = Allow()
 
 
 class ManagedPrimaryBackendProjector(Protocol[ProjectorSpecT]):
@@ -98,12 +92,9 @@ class HarnessProjectionPorts(Generic[SpecT]):
     # compile (``permissions_<harness>.py``) directly for its native projection.
     permission_report: Callable[[SpecT], EnforcementReport]
     # Reports and child-spawn guardrails share this pure, harness-owned policy fact.
-    effective_network: EffectiveNetwork
-    # Adds environment-selected user settings to the shared network facts. Harnesses that
-    # do not merge such settings leave this unset.
-    bind_network_facts: (
-        Callable[[EffectiveNetworkFacts, Mapping[str, str]], EffectiveNetworkFacts] | None
-    ) = None
+    # None means the harness has no shell-network enforcement and therefore leaves the
+    # shared ``UNENFORCED_NETWORK`` policy in effect.
+    effective_network: EffectiveNetwork | None = None
     # Resolves the spec's facts that depend on the launch environment or child cwd once at
     # bind, so every projection and the connection read one value.
     bind_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None
@@ -363,20 +354,18 @@ def bind_launch_spec(
     return cast("SpecT", bundle.projections.bind_spec(spec, env, child_cwd))
 
 
-def build_effective_network_facts(
-    policy: ResolvedExecutionPolicy,
+def project_effective_network(
     harness_id: HarnessId,
-    child_env: Mapping[str, str],
-) -> EffectiveNetworkFacts:
-    """Build every input to a harness's network projector from the selected child env."""
+    policy: PermissionPolicy,
+    *,
+    native_config: Mapping[str, object],
+) -> NetworkPolicy:
+    """Project the network policy from only inputs Meridian owns."""
 
-    facts = EffectiveNetworkFacts.from_values(
-        sandbox=policy.sandbox,
-        network=resolve_network_policy(policy.network, policy.sandbox),
-        native_config=policy.native_config,
-    )
-    binder = get_harness_bundle(harness_id).projections.bind_network_facts
-    return binder(facts, child_env) if binder is not None else facts
+    projector = get_harness_bundle(harness_id).projections.effective_network
+    if projector is None:
+        return UNENFORCED_NETWORK
+    return projector(policy, native_config=native_config)
 
 
 def materialize_launch_spec(
@@ -457,21 +446,21 @@ def project_managed_primary_preview(
 
 
 __all__ = [
+    "UNENFORCED_NETWORK",
     "HarnessBundle",
     "HarnessProjectionPorts",
     "ManagedPrimaryProjectionPorts",
     "PrimaryInbox",
     "PrimaryInboxError",
     "bind_launch_spec",
-    "build_effective_network_facts",
     "get_bundle_registry",
     "get_connection_cls",
     "get_harness_bundle",
     "materialize_launch_spec",
     "post_to_primary",
+    "project_effective_network",
     "project_managed_primary_backend_command",
     "project_managed_primary_bootstrap",
     "project_subprocess_spec",
     "register_harness_bundle",
-    "unenforced_network",
 ]

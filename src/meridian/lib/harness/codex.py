@@ -7,7 +7,6 @@ import sqlite3
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
-from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, cast
 from uuid import uuid4
@@ -40,7 +39,7 @@ from meridian.lib.harness.codex_rollout import (
     resolve_codex_home,
 )
 from meridian.lib.harness.codex_rules import ensure_codex_meridian_rules
-from meridian.lib.harness.codex_settings import read_codex_network_configs
+from meridian.lib.harness.codex_settings import codex_network_config_warnings
 from meridian.lib.harness.common import extract_codex_thread_id
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -55,7 +54,7 @@ from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.permissions_codex import (
     compile_codex_permissions,
-    project_codex_network,
+    effective_codex_network,
 )
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
@@ -90,18 +89,9 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
-from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES, EffectiveNetworkFacts
+from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES
 
 logger = logging.getLogger(__name__)
-
-
-def bind_codex_network_facts(
-    facts: EffectiveNetworkFacts,
-    env: Mapping[str, str],
-) -> EffectiveNetworkFacts:
-    """Detect child-selected Codex config that can widen shared policy facts."""
-
-    return replace(facts, harness_configs=read_codex_network_configs(env))
 
 
 def materialize_codex_spec(
@@ -429,6 +419,14 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
+    def launch_environment_warnings(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+    ) -> tuple[CompositionWarning, ...]:
+        return codex_network_config_warnings(child_cwd, child_env)
+
     def build_primary_runtime_request_handler(
         self,
         *,
@@ -641,8 +639,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
             permission_report=lambda spec: compile_codex_permissions(spec)[1],
-            effective_network=lambda facts: project_codex_network(facts).effective,
-            bind_network_facts=bind_codex_network_facts,
+            effective_network=effective_codex_network,
             materialize_spec=materialize_codex_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,

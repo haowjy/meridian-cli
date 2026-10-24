@@ -45,9 +45,9 @@ from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import (
     bind_launch_spec,
-    build_effective_network_facts,
     get_harness_bundle,
     materialize_launch_spec,
+    project_effective_network,
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
@@ -65,11 +65,9 @@ from meridian.lib.launch.workspace_projection import (
 )
 from meridian.lib.platform import IS_POSIX
 from meridian.lib.safety.policy import (
-    EffectiveNetworkFacts,
     EnforcementReport,
     PermissionPolicy,
     build_permission_policy,
-    resolve_network_policy,
 )
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
@@ -576,14 +574,6 @@ def materialize_launch_artifacts(
         permission_policy=permission_policy,
         native_config=native_config,
     )
-    # Launch-spec warnings run before the final child environment exists. Bind only the
-    # already-resolved policy here; final bind replaces this with harness config detections.
-    spec = spec.with_effective_network_facts(
-        EffectiveNetworkFacts.from_permission_policy(
-            permission_policy,
-            native_config=native_config,
-        )
-    )
     return MaterializedLaunchArtifacts(
         run_params=run_params,
         spec=spec,
@@ -1051,20 +1041,18 @@ def _build_shared_composition(
     spawn_usage_contract = build_spawn_usage_contract(
         policy.adapter.run_prompt_policy().spawn_usage_contract_variants
     )
-    network_facts = EffectiveNetworkFacts.from_values(
-        sandbox=policy.execution_policy.sandbox,
-        network=resolve_network_policy(
-            policy.execution_policy.network,
-            policy.execution_policy.sandbox,
-        ),
-        native_config=policy.execution_policy.native_config,
-    )
+    network = policy.execution_policy.network
+    assert network is not None
     guidance_blocks = build_guidance_blocks(
         profile=policy.profile,
         spawn_usage_contract=spawn_usage_contract,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
         context_prompt=context_prompt,
-        harness_guidance=policy.adapter.shell_network_guidance(network_facts),
+        harness_guidance=policy.adapter.shell_network_guidance(
+            sandbox=policy.execution_policy.sandbox,
+            network=network,
+            native_config=policy.execution_policy.native_config,
+        ),
     )
     resolved_work_id = (request.work_id_hint or "").strip()
     work_goal: str | None = None
@@ -1727,17 +1715,12 @@ def bind_launch_context(
         native_agent_copy=native_agent_copy,
         allow_builtin_agents=allow_builtin_agents,
     )
-    network_facts = EffectiveNetworkFacts.from_values(
-        sandbox=resolved_request.execution_policy.sandbox,
-        network=resolve_network_policy(
-            resolved_request.execution_policy.network,
-            resolved_request.execution_policy.sandbox,
-        ),
-        native_config=resolved_request.execution_policy.native_config,
-    )
+    network = resolved_request.execution_policy.network
+    assert network is not None
     permission_policy = build_permission_policy(
         rules=(*resolved_request.tool_rules, *platform_tool_rules),
-        network_facts=network_facts,
+        sandbox=resolved_request.execution_policy.sandbox,
+        network=network,
         sandbox_write_roots=tuple(
             root.as_posix()
             for root in _dedupe_roots_in_order((resolved_control_root, *workspace_authority_roots))
@@ -1912,17 +1895,22 @@ def bind_launch_context(
         env=env,
         child_cwd=child_cwd,
     )
-    spec = spec.with_effective_network_facts(
-        build_effective_network_facts(
-            resolved_request.execution_policy,
-            harness.id,
-            env,
-        )
+    environment_warnings = harness.launch_environment_warnings(
+        child_env=env,
+        child_cwd=child_cwd,
     )
+    if environment_warnings:
+        composition_warnings = (*composition_warnings, *environment_warnings)
+        resolved_request = resolved_request.model_copy(
+            update={"warning": summarize_composition_warnings(composition_warnings)}
+        )
     caller_boundary = CallerBoundary.from_policy(
         permission_policy,
-        effective_network=get_harness_bundle(harness.id)
-        .projections.effective_network(spec.effective_network_facts()),
+        effective_network=project_effective_network(
+            harness.id,
+            permission_policy,
+            native_config=resolved_request.execution_policy.native_config,
+        ),
         pid_namespace=current_pid_namespace(),
     ).to_env_value()
     child_context_env[CALLER_BOUNDARY_ENV] = caller_boundary

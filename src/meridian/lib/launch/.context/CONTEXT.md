@@ -54,13 +54,12 @@ version used by `bind_launch_context()`.
 
 Every bind replaces the inherited caller boundary with one record for the process it is
 about to start. It contains the launcher's PID namespace, resolved sandbox mode,
-the prepared profile's spawn capability, and the harness-effective typed network policy for every
+the prepared profile's spawn capability, and the Meridian-projected typed network policy for every
 constrained sandbox. A missing network key means no network floor, preserving boundaries
-written by older builds. `build_effective_network_facts()` derives the projector input from
-the resolved policy, harness, and one final child environment; caller-boundary recording
-runs after harness bind so Claude and Codex widening detections are included. Policy
-construction and prepare-time shell guidance do not read harness config files. The child
-guardrail and permission report use the final bound projection.
+written by older builds. The projection is a pure function of Meridian's resolved sandbox,
+network, and native override. Harness-owned user-config detection runs after the final child
+environment and cwd are bound, but contributes only attributed warnings. The child
+guardrail and permission report ignore those settings and use the same pure projection.
 Projected roots are not part of this CLI-escalation guardrail.
 
 ### RuntimeBindings

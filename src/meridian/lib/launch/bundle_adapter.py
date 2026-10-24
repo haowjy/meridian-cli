@@ -40,7 +40,7 @@ from meridian.lib.launch.request import NetworkOverrides
 from meridian.lib.safety.policy import (
     Allow,
     Hosts,
-    NetworkPolicyInput,
+    NetworkPolicy,
     SandboxDerivedNetwork,
     canonical_host,
 )
@@ -102,6 +102,7 @@ class BundleResult:
     harness: HarnessId
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
+    network: NetworkPolicy | SandboxDerivedNetwork
     provenance: dict[str, str]
     warnings: tuple[str, ...]
     prompt_surface_inventory_prompt: str
@@ -226,7 +227,9 @@ class _BundleNetwork(BaseModel):
     deny: tuple[str, ...]
 
 
-def _parse_bundle_network(raw: object, *, sandbox: object) -> NetworkPolicyInput:
+def _parse_bundle_network(
+    raw: object, *, sandbox: object
+) -> NetworkPolicy | SandboxDerivedNetwork:
     """Parse the current Mars object once; durable legacy shapes use their own parser."""
 
     try:
@@ -609,15 +612,15 @@ def _parse_bundle_payload(
     execution_policy_payload = _required_object_field(payload, "execution_policy")
     native_config = _optional_object_field(execution_policy_payload, "native_config")
     sandbox = execution_policy_payload.get("sandbox")
+    network = _parse_bundle_network(
+        execution_policy_payload.get("network"),
+        sandbox=sandbox,
+    )
     execution_policy = ResolvedExecutionPolicy.model_validate(
         {
             "effort": execution_policy_payload.get("effort"),
             "approval": execution_policy_payload.get("approval"),
             "sandbox": sandbox,
-            "network": _parse_bundle_network(
-                execution_policy_payload.get("network"),
-                sandbox=sandbox,
-            ),
             "autocompact": execution_policy_payload.get("autocompact"),
             "autocompact_pct": execution_policy_payload.get("autocompact_pct"),
             "timeout": execution_policy_payload.get("timeout"),
@@ -641,6 +644,7 @@ def _parse_bundle_payload(
         harness=harness,
         harness_model=harness_model,
         execution_policy=execution_policy,
+        network=network,
         provenance=provenance,
         warnings=_as_str_tuple(payload.get("warnings")),
         prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),

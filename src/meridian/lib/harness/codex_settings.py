@@ -10,17 +10,23 @@ from typing import cast
 import structlog
 
 from meridian.lib.harness.codex_rollout import resolve_codex_home
-from meridian.lib.safety.policy import HarnessNetworkConfig
+from meridian.lib.launch.launch_types import CompositionWarning
 
 logger = structlog.get_logger(__name__)
 
 
-def _unreadable(path: Path, reason: str) -> HarnessNetworkConfig:
+def _unreadable(path: Path, reason: str) -> CompositionWarning:
     logger.warning("Failed to parse Codex config", path=str(path), reason=reason)
-    return HarnessNetworkConfig(path=path.as_posix(), unreadable_reason=reason)
+    return CompositionWarning(
+        code="codex_network_config_unreadable",
+        message=(
+            f"Could not inspect Codex network config {path.as_posix()} ({reason}); it may "
+            "widen network access beyond Meridian's projected policy."
+        ),
+    )
 
 
-def _read_network_config(config_path: Path) -> HarnessNetworkConfig | None:
+def _network_config_warning(config_path: Path) -> CompositionWarning | None:
     try:
         with config_path.open("rb") as config_file:
             payload = cast("dict[str, object]", tomllib.load(config_file))
@@ -38,6 +44,9 @@ def _read_network_config(config_path: Path) -> HarnessNetworkConfig | None:
         return _unreadable(config_path, "features is not a table")
     raw_proxy = cast("dict[str, object]", raw_features).get("network_proxy")
     if raw_proxy is None:
+        return None
+    if isinstance(raw_proxy, bool):
+        # The bool form enables or disables the proxy feature but declares no domains.
         return None
     if not isinstance(raw_proxy, dict):
         return _unreadable(config_path, "features.network_proxy is not a table")
@@ -64,28 +73,36 @@ def _read_network_config(config_path: Path) -> HarnessNetworkConfig | None:
 
     if not widens:
         return None
-    return HarnessNetworkConfig(path=config_path.as_posix(), bypasses_enforcement=True)
+    return CompositionWarning(
+        code="codex_network_config_may_widen",
+        message=(
+            f"Codex network config {config_path.as_posix()} contains an allow entry under "
+            "features.network_proxy.domains and can widen network access beyond Meridian's "
+            "projected policy; the child-spawn guardrail compares only Meridian's projected "
+            "policy."
+        ),
+    )
 
 
-def read_codex_network_configs(
+def codex_network_config_warnings(
+    child_cwd: Path,
     env: Mapping[str, str],
-) -> tuple[HarnessNetworkConfig, ...]:
-    """Detect widening in the child-selected user and project Codex configs."""
+) -> tuple[CompositionWarning, ...]:
+    """Warn about widening in child-selected user and ancestor Codex configs."""
 
-    project_root = Path(env.get("MERIDIAN_PROJECT_DIR", "") or Path.cwd())
     codex_home = resolve_codex_home(env)
     if not codex_home.is_absolute():
-        codex_home = project_root / codex_home
-    paths = (
+        codex_home = child_cwd / codex_home
+    paths = [
         codex_home / "config.toml",
-        project_root / ".codex" / "config.toml",
-    )
-    configs: list[HarnessNetworkConfig] = []
+        *(directory / ".codex" / "config.toml" for directory in (child_cwd, *child_cwd.parents)),
+    ]
+    warnings: list[CompositionWarning] = []
     for path in dict.fromkeys(paths):
-        config = _read_network_config(path)
-        if config is not None:
-            configs.append(config)
-    return tuple(configs)
+        warning = _network_config_warning(path)
+        if warning is not None:
+            warnings.append(warning)
+    return tuple(warnings)
 
 
-__all__ = ["read_codex_network_configs"]
+__all__ = ["codex_network_config_warnings"]

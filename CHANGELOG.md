@@ -9,7 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Launches now require a Mars bundle with `provenance.network_source` (Mars 0.18.0 or newer); older bundles fail instead of keeping harness network defaults.
 - Agents in a Meridian-projected `read-only`/`workspace-write` sandbox can launch children only if their profile lists `subagents:`, never with a weaker sandbox, never with native args after `--`. See [Sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
 - Spawn-capable sandboxed Codex launches write a Meridian-owned `$CODEX_HOME/rules/meridian.rules` that lets `meridian spawn` run outside Codex's sandbox, in every Codex session of that user.
-- An unset profile `network` now follows its sandbox: `read-only`/`workspace-write` project deny, while `danger-full-access` stays online and an unset/default sandbox stays harness-native. Set `network: allow` to opt a constrained profile into shell network. Sandboxed child delegation compares the caller's and child's effective network, including the inferred deny. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults) and [sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
+- An unset profile `network` now follows its sandbox: `read-only`/`workspace-write` project deny, while `danger-full-access` stays online and an unset/default sandbox stays harness-native. Set `network: allow` to opt a constrained profile into shell network. Sandboxed child delegation compares the caller's and child's Meridian-projected network, including the inferred deny. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults) and [sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
 
 ### Added
 - `meridian`, `meridian spawn`, and `meridian bootstrap` accept `--network allow|deny|allowlist` with repeatable `--network-allow HOST` and `--network-deny HOST` additions.
@@ -19,19 +19,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian spawn` run inside a sandbox that would kill its child (`cd x && meridian spawn`, pipes, `$()`, `VAR=1` prefix) fails before any state write with "run as a standalone shell command".
 - Read-only Codex spawns whose profile can spawn get the completion confirmation turn again; others still skip it, as since 0.12.4.
 - Profile `network: allow | deny` controls shell connections separately from built-in web tools; every harness reports what it enforces.
-- Sandboxed child delegation cannot weaken the caller's effective network; a legacy boundary record without a network key remains unrestricted for mid-session compatibility.
+- Sandboxed child delegation cannot weaken the caller's Meridian-projected network; a legacy boundary record without a network key remains unrestricted for mid-session compatibility.
 
 ### Changed
-- Network policy is one typed allow-or-host-set value from bundle parsing through harness projection and the caller guardrail. Detecting a Claude or Codex harness setting that can widen network access conservatively makes the agent's effective policy fully online; narrowing harness settings are not modelled.
+- Network policy is one typed allow-or-host-set value from final sandbox resolution through harness projection and the caller guardrail. The guardrail compares only Meridian's projected policy; widening Claude or Codex config stays in force and is reported as a warning without changing that comparison.
 
 ### Fixed
-- Permission reports and sandboxed-child containment detect Claude user allow/proxy
-  settings plus Codex user and project proxy-domain allows. A detected file is named and
-  treated as bypassing network enforcement; malformed files contribute no widening.
-- Claude child containment, caller boundary records, and shell guidance now read network
-  domains from the same child-selected user settings root. Offline children are contained by
-  every caller, and `[primary] sandbox` resolves an unset network only after primary config
-  precedence is applied.
+- Dry runs and launches warn when child-selected Claude user allow/proxy settings or Codex
+  user/ancestor-project proxy-domain allows can widen access beyond Meridian's projected
+  policy. Each warning names its file; malformed files are also named when inspection fails.
+- Caller boundary records, child containment, shell guidance, and permission reports use
+  only Meridian's projected policy. User harness config can widen the launched process but
+  cannot raise a caller's child-spawn floor. `[primary] sandbox` resolves an unset network
+  only after primary config precedence is applied.
 - Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).
 - Spawn help examples no longer use `$(...)` inside `meridian spawn`.
 - Invalid or unaddressable deprecated Codex native network overrides no longer suppress the portable profile network policy.

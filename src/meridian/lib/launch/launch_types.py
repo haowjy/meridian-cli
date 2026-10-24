@@ -12,7 +12,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    PrivateAttr,
     model_validator,
 )
 
@@ -24,7 +23,7 @@ from meridian.lib.core.execution_policy import (
 )
 from meridian.lib.core.native_identity import NativeIdentity
 from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
-from meridian.lib.safety.policy import EffectiveNetworkFacts, PermissionPolicy
+from meridian.lib.safety.policy import PermissionPolicy
 
 if TYPE_CHECKING:
     from meridian.lib.core.types import HarnessId
@@ -109,10 +108,6 @@ class ResolvedLaunchSpec(BaseModel):
     native_config: NativeConfigValue = Field(
         default_factory=lambda: ResolvedExecutionPolicy().native_config
     )
-    # Bound once from resolved policy + harness + child environment. Private because it is
-    # bind-time projection state, not part of the persisted transport spec.
-    _bound_network_facts: EffectiveNetworkFacts | None = PrivateAttr(default=None)
-
     # Passthrough args forwarded verbatim to the harness process.
     extra_args: tuple[str, ...] = ()
 
@@ -159,23 +154,6 @@ class ResolvedLaunchSpec(BaseModel):
     # Pi only
     pi_extension_entrypoints: tuple[str, ...] = ()
     load_all_pi_extensions: bool = False
-
-    def effective_network_facts(self) -> EffectiveNetworkFacts:
-        """Return the complete, bound facts consumed by a harness network projector."""
-
-        if self._bound_network_facts is None:
-            raise RuntimeError("launch spec has no bound effective network facts")
-        return self._bound_network_facts
-
-    def with_effective_network_facts(
-        self,
-        facts: EffectiveNetworkFacts,
-    ) -> ResolvedLaunchSpec:
-        """Return a spec carrying the network facts selected during bind."""
-
-        bound = self.model_copy()
-        bound._bound_network_facts = facts
-        return bound
 
     @model_validator(mode="after")
     def _validate_continue_fork_requires_session(self) -> ResolvedLaunchSpec:

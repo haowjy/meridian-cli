@@ -127,7 +127,8 @@ def test_current_mars_unset_network_stays_typed_until_final_sandbox(
 
     result = invoke(tmp_path, monkeypatch, payload)
 
-    assert result.execution_policy.network == SandboxDerivedNetwork()
+    assert result.network == SandboxDerivedNetwork()
+    assert result.execution_policy.network is None
     assert result.warnings == ()
 
 
@@ -146,7 +147,7 @@ def test_bundle_network_object_carries_unset_mode_and_hosts(
 
     result = invoke(tmp_path, monkeypatch, payload)
 
-    assert result.execution_policy.network == SandboxDerivedNetwork(
+    assert result.network == SandboxDerivedNetwork(
         allow=frozenset((Host("inert.example"),)),
         deny=frozenset((Host("blocked.example"),)),
     )

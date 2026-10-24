@@ -21,7 +21,7 @@ from meridian.lib.launch.spawn_guidance import (
     build_spawn_usage_contract,
     has_spawn_capability,
 )
-from meridian.lib.safety.policy import EffectiveNetworkFacts, parse_network_policy
+from meridian.lib.safety.policy import Allow, Host, Hosts
 
 CONTRACT_MARKER = "# Spawning subagents (meridian)"
 INVENTORY = "## Meridian Agents\n\n- tech-lead\n- explorer"
@@ -77,56 +77,51 @@ def test_claude_linux_sandbox_network_guidance(monkeypatch: pytest.MonkeyPatch) 
 
     assert (
         adapter.shell_network_guidance(
-            EffectiveNetworkFacts.from_values(sandbox="workspace-write", network=None)
+            sandbox="workspace-write",
+            network=Hosts(),
+            native_config={},
         )
         is None
     )
     assert "--noproxy ''" in (
         adapter.shell_network_guidance(
-            EffectiveNetworkFacts.from_values(
-                sandbox="read-only", network=parse_network_policy("allow")
-            )
+            sandbox="read-only",
+            network=Allow(),
+            native_config={},
         )
         or ""
     )
     assert "--noproxy ''" in (
         adapter.shell_network_guidance(
-            EffectiveNetworkFacts.from_values(
-                sandbox="workspace-write",
-                network=parse_network_policy(
-                    {"allow": ["localhost"], "deny": []}
-                ),
-            )
+            sandbox="workspace-write",
+            network=Hosts(allow=frozenset((Host("localhost"),))),
+            native_config={},
         )
         or ""
     )
     assert (
         adapter.shell_network_guidance(
-            EffectiveNetworkFacts.from_values(
-                sandbox="workspace-write",
-                network=parse_network_policy(
-                    {
-                        "allow": "*",
-                        "deny": ["localhost", "127.0.0.1"],
-                    }
-                ),
-            )
+            sandbox="workspace-write",
+            network=Allow(
+                deny=frozenset((Host("localhost"), Host("127.0.0.1")))
+            ),
+            native_config={},
         )
         is None
     )
     assert (
         adapter.shell_network_guidance(
-            EffectiveNetworkFacts.from_values(
-                sandbox="workspace-write", network=parse_network_policy("deny")
-            )
+            sandbox="workspace-write",
+            network=Hosts(),
+            native_config={},
         )
         is None
     )
     assert (
         adapter.shell_network_guidance(
-            EffectiveNetworkFacts.from_values(
-                sandbox="danger-full-access", network=parse_network_policy("allow")
-            )
+            sandbox="danger-full-access",
+            network=Allow(),
+            native_config={},
         )
         is None
     )

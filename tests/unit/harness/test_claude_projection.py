@@ -13,8 +13,8 @@ from meridian.lib.harness.projections.project_claude import project_claude_spec_
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
-    EffectiveNetworkFacts,
-    HarnessNetworkConfig,
+    Allow,
+    Hosts,
     PermissionPolicy,
     PlatformCommand,
     PlatformRule,
@@ -32,17 +32,14 @@ _STRICT_OFFLINE_NETWORK = {
 
 
 def _spec(**values: object) -> ResolvedLaunchSpec:
-    spec = ResolvedLaunchSpec.model_validate(values)
-    return spec.with_effective_network_facts(
-        EffectiveNetworkFacts.from_permission_policy(
-            spec.permission_policy,
-            native_config=spec.native_config,
-        )
-    )
+    return ResolvedLaunchSpec.model_validate(values)
 
 
 def _effective_network(spec: ResolvedLaunchSpec) -> str:
-    projection = project_claude_network(spec.effective_network_facts())
+    projection = project_claude_network(
+        spec.permission_policy,
+        native_config=spec.native_config,
+    )
     return network_policy_name(projection.effective)
 
 
@@ -108,7 +105,8 @@ def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent()
         prompt="test",
         permission_policy=build_permission_policy(
             rules=(tool_rule("agent", "deny", "Agent"), tool_rule("bash", "allow", "Bash")),
-            network_facts=EffectiveNetworkFacts.from_values(sandbox=None, network=None),
+            sandbox=None,
+            network=Allow(),
         ),
         extra_args=("--allowedTools", "Agent,Bash(meridian spawn *)"),
     )
@@ -218,10 +216,10 @@ def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:
     assert _effective_network(spec) == "deny"
 
 
-def test_claude_detected_user_widening_assumes_open_without_changing_projection(
+def test_claude_network_report_stays_on_meridian_projected_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("meridian.lib.harness.projections.permissions_claude.sys.platform", "linux")
+    monkeypatch.setattr("meridian.lib.harness.projections.network_claude.sys.platform", "linux")
     spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
@@ -235,17 +233,6 @@ def test_claude_detected_user_widening_assumes_open_without_changing_projection(
                 ),
             ),
         ),
-    ).with_effective_network_facts(
-        EffectiveNetworkFacts.from_values(
-            sandbox="workspace-write",
-            network=None,
-            harness_configs=(
-                HarnessNetworkConfig(
-                    path="/home/test/.claude/settings.json",
-                    bypasses_enforcement=True,
-                ),
-            ),
-        )
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
@@ -253,11 +240,9 @@ def test_claude_detected_user_widening_assumes_open_without_changing_projection(
 
     assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     _, report = compile_claude_permissions(spec)
-    line = next(item for item in report if item.element == "network: allow")
-    assert "/home/test/.claude/settings.json" in line.note
-    assert "network enforcement as bypassed" in line.note
+    line = next(item for item in report if item.element == "network: deny")
     assert line.status == "partial"
-    assert _effective_network(spec) == "allow"
+    assert _effective_network(spec) == "deny"
 
 
 def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
@@ -266,9 +251,8 @@ def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
         prompt="test",
         permission_policy=build_permission_policy(
             rules=(tool_rule("*", "deny"), tool_rule("bash", "allow", "Bash")),
-            network_facts=EffectiveNetworkFacts.from_values(
-                sandbox="workspace-write", network=None
-            ),
+            sandbox="workspace-write",
+            network=Hosts(),
             approval="never",
         ),
     )
@@ -376,7 +360,8 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
                 tool_rule("web", "ask", "WebSearch", pattern="query"),
                 tool_rule("agent", "deny", "Agent"),
             ),
-            network_facts=EffectiveNetworkFacts.from_values(sandbox=None, network=None),
+            sandbox=None,
+            network=Allow(),
         ),
         extra_args=(
             "--allowedTools=Agent,Agent(custom),Bash(meridian spawn *)",
@@ -414,9 +399,8 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
         prompt="test",
         permission_policy=build_permission_policy(
             rules=(tool_rule("*", "deny"), tool_rule("agent", "allow", "Agent")),
-            network_facts=EffectiveNetworkFacts.from_values(
-                sandbox="workspace-write", network=None
-            ),
+            sandbox="workspace-write",
+            network=Hosts(),
             approval="auto",
             platform_rules=(PlatformRule(kind="builtin-agents"),),
         ),

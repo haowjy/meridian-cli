@@ -205,10 +205,9 @@ call the typed compile directly for its native value; nothing generic reads that
 `LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
 `permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
 Each harness also registers `HarnessProjectionPorts.effective_network`: a pure function of
-`EffectiveNetworkFacts` (sandbox, network, native config, and user settings that affect the
-result). `build_effective_network_facts()` constructs it from the resolved policy, harness,
-and selected child environment; Claude's binder reads the user settings root selected by
-`CLAUDE_CONFIG_DIR`.
+the resolved `PermissionPolicy` and Meridian-owned native config. Harness user/project
+configuration is not an input: Claude and Codex adapters inspect the final child environment
+and cwd separately and emit attributed warnings when those files can widen actual access.
 Claude and Codex call their registered derivation for the `network:` report line;
 `complete_report()` uses unrestricted network for the other harnesses' default line. The
 child-spawn guardrail calls the same registered port, so the public three-field `ReportLine`
@@ -221,8 +220,8 @@ set's count and first three entries. Claude projects finite allows and denies th
 binding and Unix sockets off unless `localhost` or `127.0.0.1` is effectively allowed; the
 launch emits explicit `false` values so wider user settings cannot survive. The native
 switches are coarse, so enabling either is partial. On Linux host localhost is also
-partial because clients must use the sandbox proxy. Claude's user settings can widen the
-effective allow set or add denies, and the report names widening sources. Codex enables
+partial because clients must use the sandbox proxy. Claude user settings can widen actual
+access, but warnings name the source without changing the projected policy. Codex enables
 network only for `workspace-write`: finite allows, and allow-all with denies, use its proxy
 with one inline TOML domain map and remain partial because local services stay reachable.
 `read-only` reports an authored allow or non-empty allowlist as unsupported and stays

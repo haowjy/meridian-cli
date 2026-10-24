@@ -272,7 +272,7 @@ async def _prepare_execution_handoff(
         handoff_stack = local_stack
         local_stack = ExitStack()
         return PreparedExecutionHandoff(
-            resolved_request=final_request,
+            resolved_request=launch_context.resolved_request,
             launch_context=launch_context,
             session_context=session_context,
             session_exit_stack=handoff_stack,
@@ -336,6 +336,7 @@ async def launch_prepared_spawn(
     debug: bool = False,
     ctx: RuntimeContext | None = None,
     prepared: PreparedLaunchSurface | None = None,
+    warning_observer: Callable[[str | None], None] | None = None,
 ) -> int:
     """Shared post-row, pre-run launch handoff for foreground/background spawns."""
 
@@ -370,6 +371,9 @@ async def launch_prepared_spawn(
             exc=exc,
         )
         return 1
+
+    if warning_observer is not None:
+        warning_observer(handoff.resolved_request.warning)
 
     try:
         try:

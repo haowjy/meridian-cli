@@ -11,8 +11,8 @@ from typing import cast
 import structlog
 
 from meridian.lib.harness.claude_sessions import resolve_claude_config_root
+from meridian.lib.launch.launch_types import CompositionWarning
 from meridian.lib.launch.text_utils import dedupe_nonempty
-from meridian.lib.safety.policy import HarnessNetworkConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -46,44 +46,60 @@ def _read_settings_payload(settings_path: Path) -> _SettingsRead:
     return _SettingsRead(unreadable_reason=reason)
 
 
-def _network_widens(payload: dict[str, object]) -> bool:
+def _network_widening_reason(payload: dict[str, object]) -> str | None:
     raw_sandbox = payload.get("sandbox")
     if not isinstance(raw_sandbox, dict):
-        return False
+        return None
     raw_network = cast("dict[str, object]", raw_sandbox).get("network")
     if not isinstance(raw_network, dict):
-        return False
+        return None
     network = cast("dict[str, object]", raw_network)
     allowed_domains = network.get("allowedDomains")
-    return (
-        (
-            isinstance(allowed_domains, list)
-            and bool(cast("list[object]", allowed_domains))
-        )
-        or "httpProxyPort" in network
-        or "socksProxyPort" in network
-    )
+    reasons: list[str] = []
+    if isinstance(allowed_domains, list) and bool(cast("list[object]", allowed_domains)):
+        reasons.append("a non-empty sandbox.network.allowedDomains list")
+    if "httpProxyPort" in network:
+        reasons.append("sandbox.network.httpProxyPort")
+    if "socksProxyPort" in network:
+        reasons.append("sandbox.network.socksProxyPort")
+    return ", ".join(reasons) or None
 
 
-def read_claude_user_network_config(
+def claude_network_config_warnings(
+    child_cwd: Path,
     env: Mapping[str, str],
-) -> HarnessNetworkConfig | None:
-    """Return network facts from the user settings root selected by the child env."""
+) -> tuple[CompositionWarning, ...]:
+    """Warn when child-selected Claude user settings can widen projected network."""
 
-    child_cwd = Path(env.get("MERIDIAN_PROJECT_DIR", "") or Path.cwd())
     settings_path = resolve_claude_config_root(env, child_cwd) / "settings.json"
     settings = _read_settings_payload(settings_path)
     if settings.payload is None and settings.unreadable_reason is None:
-        return None
+        return ()
     if settings.payload is None:
-        return HarnessNetworkConfig(
-            path=settings_path.as_posix(),
-            unreadable_reason=settings.unreadable_reason,
+        return (
+            CompositionWarning(
+                code="claude_network_config_unreadable",
+                message=(
+                    f"Could not inspect Claude network config {settings_path.as_posix()} "
+                    f"({settings.unreadable_reason}); it may widen network access beyond "
+                    "Meridian's projected policy."
+                ),
+            ),
         )
 
-    if not _network_widens(settings.payload):
-        return None
-    return HarnessNetworkConfig(path=settings_path.as_posix(), bypasses_enforcement=True)
+    reason = _network_widening_reason(settings.payload)
+    if reason is None:
+        return ()
+    return (
+        CompositionWarning(
+            code="claude_network_config_may_widen",
+            message=(
+                f"Claude network config {settings_path.as_posix()} contains {reason} and "
+                "can widen network access beyond Meridian's projected policy; the "
+                "child-spawn guardrail compares only Meridian's projected policy."
+            ),
+        ),
+    )
 
 
 def read_claude_settings_permissions(
@@ -120,4 +136,4 @@ def read_claude_settings_permissions(
     return tuple(permission_allows)
 
 
-__all__ = ["read_claude_settings_permissions", "read_claude_user_network_config"]
+__all__ = ["claude_network_config_warnings", "read_claude_settings_permissions"]

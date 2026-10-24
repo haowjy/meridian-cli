@@ -16,7 +16,7 @@ from meridian.lib.core.caller_boundary import (
 )
 from meridian.lib.core.context_ref import SpawnContextRef, context_ref_values
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.bundle import get_harness_bundle
+from meridian.lib.harness.bundle import project_effective_network
 from meridian.lib.harness.registry import (
     HarnessRegistry,
     get_default_harness_registry,
@@ -31,7 +31,6 @@ from meridian.lib.launch.plan import (
 from meridian.lib.launch.request import LaunchCompositionSurface, SessionRequest, SpawnRequest
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.safety.policy import (
-    Allow,
     Host,
     Hosts,
     SandboxDerivedNetwork,
@@ -125,15 +124,17 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     boundary = CallerBoundary.from_env_value(env[CALLER_BOUNDARY_ENV])
     assert boundary == CallerBoundary.from_policy(
         preview.binding.spec.permission_policy,
-        effective_network=get_harness_bundle(preview.harness.id).projections.effective_network(
-            preview.binding.spec.effective_network_facts()
+        effective_network=project_effective_network(
+            preview.harness.id,
+            preview.binding.spec.permission_policy,
+            native_config=preview.binding.spec.native_config,
         ),
         pid_namespace=current_pid_namespace(),
     )
     assert ("ANTHROPIC_API_KEY" not in env) == expected
 
 
-def test_claude_user_allowed_domains_detection_assumes_open(
+def test_claude_user_allowed_domains_warns_without_changing_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,19 +182,20 @@ def test_claude_user_allowed_domains_detection_assumes_open(
     boundary = CallerBoundary.from_env_value(
         preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
     )
-    assert boundary.network == Allow()
+    assert boundary.network == Hosts()
     network_line = next(
         line
         for line in preview.enforcement_report()
-        if line.element == "network: allow"
+        if line.element == "network: deny"
     )
-    assert user_config.as_posix() in network_line.note
-    assert "network enforcement as bypassed" in network_line.note
+    warning = next(warning for warning in preview.warnings if warning.code.endswith("may_widen"))
+    assert (user_config / "settings.json").as_posix() in warning.message
+    assert "beyond Meridian's projected policy" in warning.message
     assert "project.example.com" not in network_line.note
 
 
 @pytest.mark.parametrize("port_key", ["httpProxyPort", "socksProxyPort"])
-def test_claude_user_proxy_port_detection_assumes_open(
+def test_claude_user_proxy_port_warns_without_changing_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     port_key: str,
@@ -237,25 +239,34 @@ def test_claude_user_proxy_port_detection_assumes_open(
     boundary = CallerBoundary.from_env_value(
         preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
     )
-    assert boundary.network == Allow()
+    assert boundary.network == Hosts(
+        allow=frozenset((Host("github.com"),)),
+        deny=frozenset((Host("evil.example"),)),
+    )
     network_line = next(
         line for line in preview.enforcement_report() if line.element.startswith("network: allow")
     )
-    assert settings_path.as_posix() in network_line.note
-    assert "network enforcement as bypassed" in network_line.note
+    warning = next(warning for warning in preview.warnings if warning.code.endswith("may_widen"))
+    assert settings_path.as_posix() in warning.message
+    assert port_key in warning.message
+    assert settings_path.as_posix() not in network_line.note
 
 
-@pytest.mark.parametrize("config_source", ["home", "relative-home", "project"])
-def test_codex_allow_domain_detection_assumes_open(
+@pytest.mark.parametrize("config_source", ["home", "relative-home", "project", "parent"])
+def test_codex_allow_domain_warns_without_changing_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     config_source: str,
 ) -> None:
-    _write_minimal_mars_config(tmp_path)
+    project_root = tmp_path / "nested" / "project" if config_source == "parent" else tmp_path
+    project_root.mkdir(parents=True, exist_ok=True)
+    _write_minimal_mars_config(project_root)
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
     if config_source == "project":
-        config_path = tmp_path / ".codex" / "config.toml"
+        config_path = project_root / ".codex" / "config.toml"
+    elif config_source == "parent":
+        config_path = project_root.parent / ".codex" / "config.toml"
     else:
         config_path = codex_home / "config.toml"
     config_path.parent.mkdir(exist_ok=True)
@@ -283,7 +294,7 @@ def test_codex_allow_domain_detection_assumes_open(
     preview = build_launch_context(
         spawn_id="dry-run-codex-user-domains",
         request=build_primary_spawn_request(request=LaunchRequest(model="gpt-5.6-luna")),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        runtime=build_primary_launch_runtime(project_root=project_root),
         harness_registry=get_default_harness_registry(),
         dry_run=True,
     )
@@ -291,21 +302,55 @@ def test_codex_allow_domain_detection_assumes_open(
     boundary = CallerBoundary.from_env_value(
         preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
     )
-    assert boundary.network == Allow()
+    assert boundary.network == Hosts(
+        allow=frozenset((Host("github.com"),)),
+        deny=frozenset((Host("evil.example"),)),
+    )
     network_line = next(
         line
         for line in preview.enforcement_report()
-        if line.element == "network: allow"
+        if line.element.startswith("network: allowlist")
     )
-    assert config_path.as_posix() in network_line.note
-    assert "features.network_proxy.domains" in network_line.note
-    assert "network enforcement as bypassed" in network_line.note
+    warning = next(warning for warning in preview.warnings if warning.code.endswith("may_widen"))
+    assert config_path.as_posix() in warning.message
+    assert "features.network_proxy.domains" in warning.message
+    assert config_path.as_posix() not in network_line.note
     assert "example.com" not in " ".join(preview.binding.argv)
     assert "blocked.example" not in " ".join(preview.binding.argv)
 
 
+def test_codex_boolean_network_proxy_has_no_domains_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "[features]\nnetwork_proxy = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.6-luna",
+        harness=HarnessId.CODEX,
+        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write", network="deny"),
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-codex-bool-proxy",
+        request=build_primary_spawn_request(request=LaunchRequest(model="gpt-5.6-luna")),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert not any("Codex network config" in warning.message for warning in preview.warnings)
+
+
 @pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX])
-def test_unreadable_user_network_config_is_reported_and_contributes_nothing(
+def test_unreadable_user_network_config_warns_and_contributes_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     harness: HarnessId,
@@ -343,14 +388,11 @@ def test_unreadable_user_network_config_is_reported_and_contributes_nothing(
         preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
     )
     assert boundary.network == Hosts(allow=frozenset((Host("github.com"),)))
-    network_line = next(
-        line
-        for line in preview.enforcement_report()
-        if line.element.startswith("network: allowlist")
+    warning = next(
+        warning for warning in preview.warnings if warning.code.endswith("config_unreadable")
     )
-    assert config_path.as_posix() in network_line.note
-    assert "is unreadable" in network_line.note
-    assert "contributes no widening detection" in network_line.note
+    assert config_path.as_posix() in warning.message
+    assert "may widen network access beyond Meridian's projected policy" in warning.message
 
 
 def test_primary_config_sandbox_resolves_unset_network_after_final_precedence(
@@ -362,11 +404,9 @@ def test_primary_config_sandbox_resolves_unset_network_after_final_precedence(
         monkeypatch,
         model="claude-sonnet-4",
         harness=HarnessId.CLAUDE,
-        execution_policy=ResolvedExecutionPolicy(
-            network=SandboxDerivedNetwork(
-                allow=frozenset((Host("github.com"),)),
-                deny=frozenset((Host("evil.com"),)),
-            )
+        bundle_network=SandboxDerivedNetwork(
+            allow=frozenset((Host("github.com"),)),
+            deny=frozenset((Host("evil.com"),)),
         ),
     )
     runtime = build_primary_launch_runtime(

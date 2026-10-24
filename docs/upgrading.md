@@ -62,23 +62,25 @@ local-binding and Unix-socket settings disabled unless it contains `localhost` o
 `127.0.0.1`; either name enables Claude's coarse local-binding and all-Unix-sockets
 switches.
 
-Meridian does not try to reproduce either harness's config precedence. It detects settings
-that can widen access and then treats the agent as fully online (`network: allow`, with no
-denies):
+Meridian does not try to reproduce either harness's config precedence. It warns about
+settings that can widen access beyond the policy Meridian projected:
 
 - in the user `settings.json` under the root selected by the child
   `CLAUDE_CONFIG_DIR`, a non-empty `sandbox.network.allowedDomains` or the presence of
   `httpProxyPort` or `socksProxyPort` (including a JSON number written as a float);
 - in the child-selected `$CODEX_HOME/config.toml`, any `allow` entry under
   `features.network_proxy.domains`;
-- in `.codex/config.toml` at the child's project root, the same Codex allow entry,
-  regardless of project trust settings.
+- in `.codex/config.toml` in the child's working directory or any ancestor, the same Codex
+  allow entry, regardless of project trust settings.
 
-The dry-run report names every detected file and says network enforcement is treated as
-bypassed. The caller boundary and sandboxed-child guardrail use that fully online value.
-Narrowing settings such as Claude `deniedDomains` and Codex domain `deny` entries are not
-modelled. If a selected file is unreadable or malformed, Meridian names it in the report
-and records no widening from it; the native harness can still refuse the file itself.
+Dry runs and launches name every detected file and warn that it can widen access. These
+warnings do not change the permission report, caller boundary, or sandboxed-child
+guardrail: those compare only Meridian's projected policy. The harness still reads its own
+configuration, so actual access can be wider. Narrowing settings such as Claude
+`deniedDomains` and Codex domain `deny` entries are not modelled. A boolean Codex
+`features.network_proxy` value declares no domains and does not warn. If a selected file is
+unreadable or malformed, Meridian names it in a warning; the native harness can still
+refuse the file itself.
 
 A Mars bundle without `provenance.network_source` predates the portable field. Meridian
 refuses the launch, names the Mars executable it used, and asks you to upgrade Meridian
@@ -100,7 +102,7 @@ continue, and fork operations now refuse when:
 - the caller profile has no non-empty `subagents:` list (or explicitly disables Meridian
   spawn capability);
 - the child's resolved sandbox is weaker than the caller's;
-- the child's harness-effective network is not contained by the caller's. For host policies,
+- the child's Meridian-projected network is not contained by the caller's. For host policies,
   every child allow must remain in the caller's allow set and every caller deny must remain
   denied by the child;
 - native harness arguments follow `--`, because they could override the resolved policy.
@@ -108,12 +110,13 @@ continue, and fork operations now refuse when:
 These calls worked without this boundary before. Put the intended children in the caller
 profile's `subagents:` list and move required harness-native arguments into the profile.
 Approval is not compared independently. A current `read-only` or `workspace-write` caller
-always records its effective network, so an omitted profile value records deny and accepts an
+always records its projected network, so an omitted profile value records deny and accepts an
 omitted constrained child. A boundary record written before the network field existed still
 creates no network floor, preventing a mid-session upgrade from refusing nested spawns.
-When a listed Claude or Codex widening setting is detected, the effective value is fully
-online rather than an attempted merge of the harness config. This includes Codex project
-`.codex/config.toml` without modelling trust. Narrowing harness settings are ignored.
+Claude and Codex widening settings do not raise that floor: they produce attributed
+warnings, while the guardrail continues to compare Meridian's projected policies. This
+includes Codex `.codex/config.toml` in any ancestor without modelling trust. Narrowing
+harness settings are ignored.
 Child write roots and `--env` are not part of the guardrail. Profiles using
 `sandbox: default` or `danger-full-access`, and top-level shells not launched by Meridian,
 carry no floor.

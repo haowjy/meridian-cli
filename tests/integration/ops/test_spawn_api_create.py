@@ -658,27 +658,27 @@ def test_spawn_create_caller_guardrail_compares_effective_network(
 
 
 @pytest.mark.parametrize(
-    ("settings_network", "caller_network", "expected_status"),
+    ("settings_network", "caller_network", "warns"),
     [
         (
             {"allowedDomains": ["github.com"]},
             {"allow": [], "deny": ["evil.com"]},
-            "failed",
+            True,
         ),
         (
             {"deniedDomains": ["bad.com"]},
             {"allow": [], "deny": ["bad.com", "evil.com"]},
-            "dry-run",
+            False,
         ),
     ],
     ids=["user-allow-cannot-widen", "user-deny-does-not-falsely-refuse"],
 )
-def test_spawn_create_guardrail_uses_child_selected_claude_user_settings(
+def test_spawn_create_guardrail_ignores_claude_user_settings_and_warns_on_widening(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     settings_network: dict[str, list[str]],
     caller_network: object,
-    expected_status: str,
+    warns: bool,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -708,11 +708,14 @@ def test_spawn_create_guardrail_uses_child_selected_claude_user_settings(
         )
     )
 
-    assert result.status == expected_status
+    assert result.status == "dry-run"
+    assert (
+        "can widen network access beyond Meridian's projected policy" in (result.warning or "")
+    ) is warns
 
 
 @pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX])
-def test_spawn_create_guardrail_rejects_harness_user_config_widening(
+def test_spawn_create_guardrail_compares_projection_and_warns_about_user_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     harness: HarnessId,
@@ -764,9 +767,9 @@ enabled = true
         )
     )
 
-    assert result.status == "failed"
-    assert result.message is not None
-    assert "effective network" in result.message
+    assert result.status == "dry-run"
+    assert config_home.as_posix() in (result.warning or "")
+    assert "can widen network access beyond Meridian's projected policy" in (result.warning or "")
 
 
 def test_spawn_create_caller_guardrail_does_not_restrict_child_workspace_roots(

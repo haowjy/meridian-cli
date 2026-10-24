@@ -506,7 +506,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         profile_overrides=profile_overrides,
     )
     final_sandbox = resolved_execution_policy_overrides.sandbox
-    network_input = bundle_result.execution_policy.network
+    network_input = bundle_result.network
     resolved_network = resolve_network_policy(
         network_input,
         final_sandbox or "default",
@@ -623,6 +623,14 @@ def _resolve_policy_from_snapshot(
         harness_registry=surface.harness_registry,
         alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
     )
+    execution_policy = replayed.execution_policy.model_copy(
+        update={
+            "network": resolve_network_policy(
+                replayed.execution_policy.network,
+                replayed.execution_policy.sandbox,
+            )
+        }
+    )
     return ResolvedLaunchPolicy(
         profile=replayed.profile,
         model=replayed.model,
@@ -630,7 +638,7 @@ def _resolve_policy_from_snapshot(
         adapter=replayed.adapter,
         resolved_skills=replayed.resolved_skills,
         routing=replayed.routing,
-        execution_policy=replayed.execution_policy,
+        execution_policy=execution_policy,
         resolved_tool_rules=replayed.resolved_tool_rules,
         platform_tool_rules=replayed.platform_tool_rules,
         terminal_surface_mode=replayed.terminal_surface_mode,

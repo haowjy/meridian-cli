@@ -44,11 +44,10 @@ level creates a circular import at load time.
 the defaulted typed network policy (`Allow(deny)` or `Hosts(allow, deny)`, with empty Hosts
 meaning deny), the explicit workspace roots a native read-only sandbox must protect, and
 approval. A bundle may carry `SandboxDerivedNetwork` until Meridian's final sandbox
-precedence is applied; `ResolvedLaunchSpec.permission_policy` always carries the resolved
-value. `EffectiveNetworkFacts.harness_configs` carries attributed harness files selected by
-the final child environment: each file either signals that enforcement must be treated as
-bypassed or records why it was unreadable. Each harness compiles those facts in
-`harness/projections/permissions_<harness>.py`; nothing in `safety/` knows their meaning.
+precedence is applied; the durable `ResolvedExecutionPolicy` uses only a resolved network
+or `None`, and `ResolvedLaunchSpec.permission_policy` always carries the resolved value.
+Harness-owned user-config diagnostics are warnings, not policy inputs; nothing in
+`safety/` knows their meaning.
 The tool rules are Mars's typed rules (`lib/tools.py`). The policy
 answers the allowlist questions (`is_allowlist`, `allowed_tools`) and writes each
 per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them.
