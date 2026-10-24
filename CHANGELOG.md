@@ -25,6 +25,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Network policy is one typed allow-or-host-set value from bundle parsing through harness projection and the caller guardrail. Claude effective policy includes user-level domain widening, and child containment preserves both allow subsets and deny supersets.
 
 ### Fixed
+- Claude child containment, caller boundary records, and shell guidance now read network
+  domains from the same child-selected user settings root. Offline children are contained by
+  every caller, and `[primary] sandbox` resolves an unset network only after primary config
+  precedence is applied.
 - Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).
 - Spawn help examples no longer use `$(...)` inside `meridian spawn`.
 - Invalid or unaddressable deprecated Codex native network overrides no longer suppress the portable profile network policy.

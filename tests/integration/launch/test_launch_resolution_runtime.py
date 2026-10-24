@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.config.models import MeridianConfig, PrimaryConfig
 from meridian.lib.core.caller_boundary import (
     CALLER_BOUNDARY_ENV,
     CallerBoundary,
@@ -29,7 +30,7 @@ from meridian.lib.launch.plan import (
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, SessionRequest, SpawnRequest
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
-from meridian.lib.safety.policy import parse_network_policy
+from meridian.lib.safety.policy import Host, Hosts, SandboxDerivedNetwork, parse_network_policy
 from meridian.lib.state import work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from tests.support.fixtures import write_agent
@@ -139,7 +140,7 @@ def test_launch_boundary_includes_only_claude_user_network_settings(
             {
                 "sandbox": {
                     "network": {
-                        "allowedDomains": ["API.example.com."],
+                        "allowedDomains": ["API.example.com.", "localhost"],
                         "deniedDomains": ["BLOCKED.example.com"],
                     }
                 }
@@ -177,7 +178,7 @@ def test_launch_boundary_includes_only_claude_user_network_settings(
     )
     assert boundary.network == parse_network_policy(
         {
-            "allow": ["api.example.com"],
+            "allow": ["api.example.com", "localhost"],
             "deny": ["blocked.example.com"],
         }
     )
@@ -186,12 +187,52 @@ def test_launch_boundary_includes_only_claude_user_network_settings(
         for line in preview.enforcement_report()
         if line.element
         == (
-            "network: allowlist (allow=1 [api.example.com]; "
+            "network: allowlist (allow=2 [api.example.com, localhost]; "
             "deny=1 [blocked.example.com])"
         )
     )
     assert user_config.as_posix() in network_line.note
     assert "project.example.com" not in network_line.note
+    assert preview.projected_content is not None
+    assert "curl --noproxy ''" in preview.projected_content.system_prompt
+
+
+def test_primary_config_sandbox_resolves_unset_network_after_final_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(
+            network=SandboxDerivedNetwork(
+                allow=frozenset((Host("github.com"),)),
+                deny=frozenset((Host("evil.com"),)),
+            )
+        ),
+    )
+    runtime = build_primary_launch_runtime(
+        project_root=tmp_path,
+        config=MeridianConfig(primary=PrimaryConfig(sandbox="workspace-write")),
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-primary-sandbox",
+        request=build_primary_spawn_request(
+            request=LaunchRequest(model="claude-sonnet-4")
+        ),
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.binding.spec.permission_policy.sandbox == "workspace-write"
+    assert preview.binding.spec.permission_policy.network == Hosts(
+        deny=frozenset((Host("evil.com"),))
+    )
+    assert any(warning.code == "network_allow_hosts_dropped" for warning in preview.warnings)
 
 
 @pytest.mark.parametrize(

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
@@ -26,11 +26,15 @@ from meridian.lib.safety.policy import (
     EnforcementReport,
     NetworkPolicy,
     project_unenforced_network,
+    resolve_network_policy,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
 BootstrapPayloadT = TypeVar("BootstrapPayloadT", covariant=True)
+
+if TYPE_CHECKING:
+    from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 
 
 class SubprocessProjector(Protocol[ProjectorSpecT]):
@@ -95,6 +99,11 @@ class HarnessProjectionPorts(Generic[SpecT]):
     permission_report: Callable[[SpecT], EnforcementReport]
     # Reports and child-spawn guardrails share this pure, harness-owned policy fact.
     effective_network: EffectiveNetwork
+    # Adds environment-selected user settings to the shared network facts. Harnesses that
+    # do not merge such settings leave this unset.
+    bind_network_facts: (
+        Callable[[EffectiveNetworkFacts, Mapping[str, str]], EffectiveNetworkFacts] | None
+    ) = None
     # Resolves the spec's facts that depend on the launch environment or child cwd once at
     # bind, so every projection and the connection read one value.
     bind_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None
@@ -354,6 +363,22 @@ def bind_launch_spec(
     return cast("SpecT", bundle.projections.bind_spec(spec, env, child_cwd))
 
 
+def build_effective_network_facts(
+    policy: ResolvedExecutionPolicy,
+    harness_id: HarnessId,
+    child_env: Mapping[str, str],
+) -> EffectiveNetworkFacts:
+    """Build every input to a harness's network projector from the selected child env."""
+
+    facts = EffectiveNetworkFacts.from_values(
+        sandbox=policy.sandbox,
+        network=resolve_network_policy(policy.network, policy.sandbox),
+        native_config=policy.native_config,
+    )
+    binder = get_harness_bundle(harness_id).projections.bind_network_facts
+    return binder(facts, child_env) if binder is not None else facts
+
+
 def materialize_launch_spec(
     harness_id: HarnessId,
     spec: SpecT,
@@ -438,6 +463,7 @@ __all__ = [
     "PrimaryInbox",
     "PrimaryInboxError",
     "bind_launch_spec",
+    "build_effective_network_facts",
     "get_bundle_registry",
     "get_connection_cls",
     "get_harness_bundle",

@@ -27,9 +27,9 @@ from meridian.lib.core.overrides import (
     normalize_execution_policy_fields,
 )
 from meridian.lib.safety.policy import (
-    NetworkPolicy,
-    network_policy_to_wire,
-    parse_network_policy,
+    NetworkPolicyInput,
+    network_policy_input_to_wire,
+    parse_network_policy_input,
 )
 
 type NativeConfig = Mapping[str, object]
@@ -107,7 +107,7 @@ class ResolvedExecutionPolicy(BaseModel):
 
     effort: str | None = None
     sandbox: str | None = None
-    network: NetworkPolicy | None = None
+    network: NetworkPolicyInput | None = None
     approval: str | None = None
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None
@@ -117,12 +117,12 @@ class ResolvedExecutionPolicy(BaseModel):
 
     @field_validator("network", mode="before")
     @classmethod
-    def _parse_network(cls, value: object) -> NetworkPolicy | None:
-        return parse_network_policy(value)
+    def _parse_network(cls, value: object) -> NetworkPolicyInput | None:
+        return parse_network_policy_input(value)
 
     @field_serializer("network")
-    def _serialize_network(self, value: NetworkPolicy | None) -> dict[str, object] | None:
-        return network_policy_to_wire(value) if value is not None else None
+    def _serialize_network(self, value: NetworkPolicyInput | None) -> dict[str, object] | None:
+        return network_policy_input_to_wire(value) if value is not None else None
 
     @field_validator("resident_rearm_budget")
     @classmethod

@@ -55,7 +55,10 @@ from meridian.lib.harness.claude_sessions import (
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
 )
-from meridian.lib.harness.claude_settings import read_claude_settings_permissions
+from meridian.lib.harness.claude_settings import (
+    read_claude_settings_permissions,
+    read_claude_user_network_domains,
+)
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
@@ -96,6 +99,7 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
     EffectiveNetworkFacts,
+    host_set,
     network_allows_local_services,
 )
 
@@ -149,6 +153,24 @@ def bind_claude_spec(
                 settings_network_denied_domains=network_denied_domains,
             )
         }
+    )
+
+
+def bind_claude_network_facts(
+    facts: EffectiveNetworkFacts,
+    env: Mapping[str, str],
+) -> EffectiveNetworkFacts:
+    """Add the child-selected Claude user network settings to shared policy facts."""
+
+    allowed, denied = read_claude_user_network_domains(env)
+    return replace(
+        facts,
+        settings_allow=host_set(
+            domain for _path, domains in allowed for domain in domains
+        ),
+        settings_deny=host_set(
+            domain for _path, domains in denied for domain in domains
+        ),
     )
 
 
@@ -592,6 +614,7 @@ register_harness_bundle(
             subprocess_cli_args=project_claude_spec_to_cli_args,
             permission_report=lambda spec: compile_claude_permissions(spec)[1],
             effective_network=lambda facts: project_claude_network(facts).effective,
+            bind_network_facts=bind_claude_network_facts,
             bind_spec=bind_claude_spec,
         ),
         semantics=CLAUDE_SEMANTICS,

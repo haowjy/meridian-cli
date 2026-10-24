@@ -10,6 +10,7 @@ from meridian.lib.safety.policy import (
     EffectiveNetworkFacts,
     Hosts,
     build_permission_policy,
+    network_policy_name,
     parse_network_policy,
 )
 from meridian.lib.tools import ToolRule
@@ -84,6 +85,12 @@ def test_network_default_follows_sandbox_without_losing_authored_allow() -> None
         )
     )
 
-    assert (native_default.network, native_default.network_mode) == (Allow(), "allow")
-    assert (sandboxed_default.network, sandboxed_default.network_mode) == (Hosts(), "deny")
-    assert (authored.network, authored.network_mode) == (Allow(), "allow")
+    assert (native_default.network, network_policy_name(native_default.network)) == (
+        Allow(),
+        "allow",
+    )
+    assert (sandboxed_default.network, network_policy_name(sandboxed_default.network)) == (
+        Hosts(),
+        "deny",
+    )
+    assert (authored.network, network_policy_name(authored.network)) == (Allow(), "allow")

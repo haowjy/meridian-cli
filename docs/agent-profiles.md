@@ -410,7 +410,8 @@ form exposes the same lines as `permission_report`.
 | **Cursor** | **Not enforced**, including restrictive profiles and `ask`. | **Native**: `read-only` enables Cursor's binary sandbox and `danger-full-access` disables it. **Partial**: `workspace-write` also disables it because Cursor has no middle setting. Unset uses Cursor's default. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Native** for `auto` (`--force`) and `never`/`yolo` (`--yolo`). `confirm` is **Not enforced**. | **Not enforced**. |
 
 If Mars predates the bundle's `network_source` field, Meridian refuses the launch and asks
-for Mars 0.18.0 or newer; it never falls back to a harness network default.
+you to upgrade Meridian; it names the selected executable because Meridian's bundled Mars
+wins over `PATH`. It never falls back to a harness network default.
 
 The same harness limits apply when `approval` or `sandbox` comes from a CLI flag,
 environment variable, [Mars agent overlay](configuration/mars.md#agent-runtime-overlays),
@@ -554,15 +555,16 @@ them:
   `workspace-write` callers have a floor, because only those explicit modes receive a
   sandbox escape. `spawn`, `spawn --continue`, and `spawn --fork` (including `--dry-run`)
   refuse a floored caller whose profile cannot spawn, a child whose resolved sandbox is
-  weaker, or a child with effective network `allow` under the caller's deny floor. Each
-  harness owns that network fact,
+  weaker, or a child whose effective network is not contained by the caller's. An offline
+  child is contained by every caller; otherwise child allows must stay within caller allows
+  and child denies must preserve caller denies. Each harness owns that network fact,
   which also drives its `network:` report line. Harness-native passthrough
   arguments after `--` are refused
   because they can override Meridian's resolved sandbox or sandbox flags. A child emits its
   own resolved floor to its descendants.
   A missing network key creates no floor for compatibility with an older running caller. A
-  network refusal says to set `network: deny` on a child profile whose harness enforces it,
-  or to set `network: allow` on the caller profile.
+  network refusal says to narrow the child's allowed hosts, preserve the caller's denied
+  hosts, or widen the caller policy.
   `danger-full-access` and `default` callers, top-level commands, and shells that were not
   launched by Meridian have no floor; read commands, `spawn done`, and `spawn rearm` do
   not consult it. A non-empty `subagents:` list supplies spawn capability but does not yet

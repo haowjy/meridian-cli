@@ -205,9 +205,12 @@ call the typed compile directly for its native value; nothing generic reads that
 `LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
 `permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
 Each harness also registers `HarnessProjectionPorts.effective_network`: a pure function of
-`EffectiveNetworkFacts` (sandbox, network, projection availability, and native config).
+`EffectiveNetworkFacts` (sandbox, network, native config, and user settings that affect the
+result). `build_effective_network_facts()` constructs it from the resolved policy, harness,
+and selected child environment; Claude's binder reads the user settings root selected by
+`CLAUDE_CONFIG_DIR`.
 Claude and Codex call their registered derivation for the `network:` report line;
-`complete_report()` calls `unenforced_network` for the other harnesses' default line. The
+`complete_report()` uses unrestricted network for the other harnesses' default line. The
 child-spawn guardrail calls the same registered port, so the public three-field `ReportLine`
 has no hidden propagation state.
 

@@ -38,10 +38,10 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import NetworkOverrides
 from meridian.lib.safety.policy import (
-    CONSTRAINED_SANDBOX_MODES,
     Allow,
     Hosts,
-    NetworkPolicy,
+    NetworkPolicyInput,
+    SandboxDerivedNetwork,
     canonical_host,
 )
 from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
@@ -226,7 +226,7 @@ class _BundleNetwork(BaseModel):
     deny: tuple[str, ...]
 
 
-def _parse_bundle_network(raw: object, *, sandbox: object) -> NetworkPolicy:
+def _parse_bundle_network(raw: object, *, sandbox: object) -> NetworkPolicyInput:
     """Parse the current Mars object once; durable legacy shapes use their own parser."""
 
     try:
@@ -248,14 +248,17 @@ def _parse_bundle_network(raw: object, *, sandbox: object) -> NetworkPolicy:
         return Allow(deny=deny)
 
     normalized_sandbox = _normalize_str(sandbox) or "default"
-    if normalized_sandbox in CONSTRAINED_SANDBOX_MODES:
-        return Hosts(deny=deny)
-    if normalized_sandbox in {"default", "danger-full-access"}:
-        return Allow(deny=deny)
-    raise _bundle_schema_error(
-        "'execution_policy.sandbox' must be default, read-only, workspace-write, "
-        "danger-full-access, or null when network.mode is null"
-    )
+    if normalized_sandbox not in {
+        "default",
+        "read-only",
+        "workspace-write",
+        "danger-full-access",
+    }:
+        raise _bundle_schema_error(
+            "'execution_policy.sandbox' must be default, read-only, workspace-write, "
+            "danger-full-access, or null when network.mode is null"
+        )
+    return SandboxDerivedNetwork(allow=allow, deny=deny)
 
 
 def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
@@ -563,6 +566,7 @@ def _parse_bundle_payload(
     payload: dict[str, object],
     *,
     harness_registry: HarnessRegistry,
+    mars_executable: str,
 ) -> BundleResult:
     version = payload.get("version")
     if isinstance(version, bool) or not isinstance(version, int):
@@ -597,8 +601,10 @@ def _parse_bundle_payload(
     provenance = _as_str_dict(payload.get("provenance"))
     if "network_source" not in provenance:
         raise RuntimeError(
-            "Mars launch-bundle has no provenance.network_source, so this Mars predates "
-            f"portable network policy. Install mars >= {_MARS_BUNDLE_MIN_VERSION}."
+            f"Mars executable '{mars_executable}' returned a launch bundle without "
+            "provenance.network_source, so the bundled Mars predates portable network "
+            "policy. Upgrade Meridian (for uv tools: uv tool upgrade meridian-cli); "
+            "Meridian prefers its bundled Mars over PATH."
         )
     execution_policy_payload = _required_object_field(payload, "execution_policy")
     native_config = _optional_object_field(execution_policy_payload, "native_config")
@@ -695,7 +701,11 @@ def request_and_resolve(
     if not isinstance(payload_obj, dict):
         raise RuntimeError("Mars launch-bundle returned a non-object JSON payload.")
     payload = cast("dict[str, object]", payload_obj)
-    bundle = _parse_bundle_payload(payload, harness_registry=harness_registry)
+    bundle = _parse_bundle_payload(
+        payload,
+        harness_registry=harness_registry,
+        mars_executable=command[0],
+    )
     if not request.no_refresh_models:
         return bundle
     return replace(

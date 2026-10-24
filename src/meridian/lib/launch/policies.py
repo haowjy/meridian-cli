@@ -22,6 +22,11 @@ from meridian.lib.core.overrides import (
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.safety.policy import (
+    CONSTRAINED_SANDBOX_MODES,
+    SandboxDerivedNetwork,
+    resolve_network_policy,
+)
 from meridian.lib.tools import ToolRule
 
 from . import bundle_adapter
@@ -500,10 +505,16 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         bundle_execution_policy=bundle_execution_policy,
         profile_overrides=profile_overrides,
     )
+    final_sandbox = resolved_execution_policy_overrides.sandbox
+    network_input = bundle_result.execution_policy.network
+    resolved_network = resolve_network_policy(
+        network_input,
+        final_sandbox or "default",
+    )
     resolved_execution_policy = ResolvedExecutionPolicy(
         effort=resolved_execution_policy_overrides.effort,
-        sandbox=resolved_execution_policy_overrides.sandbox,
-        network=bundle_result.execution_policy.network,
+        sandbox=final_sandbox,
+        network=resolved_network,
         approval=resolved_execution_policy_overrides.approval,
         autocompact=resolved_execution_policy_overrides.autocompact,
         autocompact_pct=resolved_execution_policy_overrides.autocompact_pct,
@@ -525,6 +536,21 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
             model_warning=bundle_model_warning,
         )
     )
+    if (
+        isinstance(network_input, SandboxDerivedNetwork)
+        and final_sandbox in CONSTRAINED_SANDBOX_MODES
+        and network_input.allow
+    ):
+        policy_warnings.append(
+            CompositionWarning(
+                code="network_allow_hosts_dropped",
+                message=(
+                    f"network mode is unset and sandbox resolved to {final_sandbox}; "
+                    f"dropping {len(network_input.allow)} network-allow host(s) as "
+                    "the sandbox-derived network policy resolves to deny"
+                ),
+            )
+        )
 
     # Post-bundle missing-runnable-path check:
     # - primary condition: no harness-specific model ID and the resolved harness

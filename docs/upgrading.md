@@ -32,8 +32,14 @@ network-deny: [uploads.github.com]
 
 For one launch, `meridian`, `meridian spawn`, and `meridian bootstrap` accept
 `--network allow|deny|allowlist` plus repeatable `--network-allow HOST` and
-`--network-deny HOST`. The host flags add to the lower-layer sets. Exact continue rejects
-them, as it does `--sandbox`; a fork recomposes policy with them.
+`--network-deny HOST`. The host flags add to the lower-layer sets. `meridian spawn
+--continue` rejects network and sandbox overrides. Primary `meridian --continue` replays
+the stored network and sandbox policy, ignoring new values for either; a fork recomposes
+policy with the new flags.
+
+`[primary] sandbox = "read-only"` or `"workspace-write"` in `meridian.toml` now also takes
+the primary shell offline when the network mode is unset. Set the network in Mars config or
+pass `--network allow` (or an allowlist) to opt in.
 
 Claude now projects `sandbox.network.strictAllowlist: true` for an omitted network under a
 constrained sandbox. In particular, sandboxed launches using `approval: never` (or the old
@@ -58,8 +64,9 @@ switches. User-level Claude
 `allowedDomains` still widen the effective allowlist, and user denies win.
 
 A Mars bundle without `provenance.network_source` predates the portable field. Meridian
-refuses the launch with `Install mars >= 0.18.0` rather than silently leaving the harness at
-its native network default.
+refuses the launch, names the Mars executable it used, and asks you to upgrade Meridian
+rather than silently leaving the harness at its native network default. Meridian prefers
+its bundled Mars over a separate executable on `PATH`.
 
 Replace Codex `harness-overrides.codex.sandbox_workspace_write.network_access` with the
 portable profile field. A well-formed boolean native value is deprecated in this release

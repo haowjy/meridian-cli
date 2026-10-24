@@ -54,7 +54,16 @@ class Hosts:
     deny: frozenset[Host] = frozenset()
 
 
+@dataclass(frozen=True)
+class SandboxDerivedNetwork:
+    """Host sets whose mode follows the final resolved sandbox."""
+
+    allow: frozenset[Host] = frozenset()
+    deny: frozenset[Host] = frozenset()
+
+
 type NetworkPolicy = Allow | Hosts
+type NetworkPolicyInput = NetworkPolicy | SandboxDerivedNetwork
 NativeNetworkT = TypeVar("NativeNetworkT", covariant=True)
 
 
@@ -243,12 +252,6 @@ class PermissionPolicy(BaseModel):
         return network_policy_to_wire(value)
 
     @property
-    def network_mode(self) -> Literal["allow", "deny", "allowlist"]:
-        """Return a compact human-facing name for the typed policy."""
-
-        return network_policy_name(self.network)
-
-    @property
     def outside_sandbox_commands(self) -> tuple[PlatformCommand, ...]:
         """Platform commands whose harness projection escapes native confinement."""
 
@@ -429,9 +432,7 @@ def complete_report(
         defaults.append(
             ReportLine(f"sandbox: {policy.sandbox}", "unsupported", f"not projected for {harness}")
         )
-    effective_network = project_unenforced_network(
-        EffectiveNetworkFacts.from_permission_policy(policy)
-    ).effective
+    effective_network = Allow()
     defaults.append(
         ReportLine(
             network_policy_element(
@@ -545,11 +546,69 @@ def parse_network_policy(raw: object) -> NetworkPolicy | None:
     return Hosts(allow=host_set(cast("Iterable[str]", raw_allow)), deny=deny)
 
 
+def parse_network_policy_input(raw: object) -> NetworkPolicyInput | None:
+    """Parse a resolved policy or the durable sandbox-derived wire form."""
+
+    if isinstance(raw, SandboxDerivedNetwork):
+        return raw
+    if not isinstance(raw, Mapping):
+        return parse_network_policy(raw)
+    payload = cast("Mapping[object, object]", raw)
+    if "mode" not in payload:
+        return parse_network_policy(payload)
+    if payload.get("mode") is not None:
+        raise ValueError("network.mode must be null in an unresolved network object")
+    raw_allow = payload.get("allow")
+    raw_deny = payload.get("deny", ())
+    if not isinstance(raw_allow, (list, tuple, frozenset, set)):
+        raise ValueError("network.allow must be a list of hosts when network.mode is null")
+    if not isinstance(raw_deny, (list, tuple, frozenset, set)):
+        raise ValueError("network.deny must be a list of hosts")
+    allow_values = cast("Iterable[object]", raw_allow)
+    deny_values = cast("Iterable[object]", raw_deny)
+    if not all(isinstance(value, str) for value in allow_values):
+        raise ValueError("network.allow must be a list of hosts")
+    if not all(isinstance(value, str) for value in deny_values):
+        raise ValueError("network.deny must be a list of hosts")
+    return SandboxDerivedNetwork(
+        allow=host_set(cast("Iterable[str]", raw_allow)),
+        deny=host_set(cast("Iterable[str]", raw_deny)),
+    )
+
+
 def network_policy_to_wire(policy: NetworkPolicy) -> dict[str, object]:
     """Serialize one policy deterministically for durable and environment records."""
 
     allowed: str | list[str] = "*" if isinstance(policy, Allow) else sorted(policy.allow)
     return {"allow": allowed, "deny": sorted(policy.deny)}
+
+
+def network_policy_input_to_wire(policy: NetworkPolicyInput) -> dict[str, object]:
+    """Serialize a resolved or sandbox-derived policy for durable state."""
+
+    if isinstance(policy, SandboxDerivedNetwork):
+        return {
+            "mode": None,
+            "allow": sorted(policy.allow),
+            "deny": sorted(policy.deny),
+        }
+    return network_policy_to_wire(policy)
+
+
+def resolve_network_policy(
+    policy: NetworkPolicyInput | None,
+    sandbox: str | None,
+) -> NetworkPolicy:
+    """Resolve a sandbox-derived policy after sandbox precedence is final."""
+
+    resolved_sandbox = _parse_sandbox_value(sandbox)
+    if policy is None:
+        return default_network_policy(resolved_sandbox)
+    if isinstance(policy, SandboxDerivedNetwork):
+        if resolved_sandbox in CONSTRAINED_SANDBOX_MODES:
+            return Hosts(deny=policy.deny)
+        return Allow(deny=policy.deny)
+    return policy
 
 
 def network_policy_name(policy: NetworkPolicy) -> Literal["allow", "deny", "allowlist"]:
@@ -591,6 +650,8 @@ def network_policy_element(policy: NetworkPolicy) -> str:
 def network_policy_contains(caller: NetworkPolicy, child: NetworkPolicy) -> bool:
     """Return whether the child's exact host policy is contained by the caller's."""
 
+    if isinstance(child, Hosts) and not child.allow - child.deny:
+        return True
     if not child.deny.issuperset(caller.deny):
         return False
     if isinstance(caller, Allow):
@@ -739,6 +800,7 @@ __all__ = [
     "Host",
     "Hosts",
     "NetworkPolicy",
+    "NetworkPolicyInput",
     "NetworkProjection",
     "PermissionPolicy",
     "PlatformCommand",
@@ -746,6 +808,7 @@ __all__ = [
     "PlatformRule",
     "ReportLine",
     "ReportStatus",
+    "SandboxDerivedNetwork",
     "SandboxMode",
     "build_permission_policy",
     "canonical_host",
@@ -757,10 +820,13 @@ __all__ = [
     "network_allows_local_services",
     "network_policy_contains",
     "network_policy_element",
+    "network_policy_input_to_wire",
     "network_policy_name",
     "network_policy_to_wire",
     "parse_network_policy",
+    "parse_network_policy_input",
     "platform_element",
     "project_unenforced_network",
+    "resolve_network_policy",
     "rule_element",
 ]
