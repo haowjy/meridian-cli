@@ -60,14 +60,55 @@ awareness) unless `yield_after_secs` is explicitly passed.
 ## No-Arg Wait Scoping
 
 When `spawn wait` is called with no explicit IDs (from inside a spawn):
-- Discovers active spawns for the current `MERIDIAN_CHAT_ID`
-- **When called from a nested spawn**, scopes to descendants only — not siblings, ancestors, or the
-  primary session. This prevents a nested spawn's `wait` from blocking on the entire chat tree.
+- Discovers the same active set as before: the primary's chat-owned descendants, or a nested
+  caller's transitive subtree. A nested wait still excludes siblings, ancestors, and the primary.
+- Adds terminal results still owed to the caller. A primary uses `owed.py`'s collection scope:
+  background direct children of every primary generation for `MERIDIAN_CHAT_ID`, minus
+  consumption and live leases read across those generations. A nested caller owns only its own
+  background direct children, so its parent scope contains only itself. Consumption still uses
+  the shared current/legacy observations, Pi receipts, and clears; leases come from observations.
+  Foreground, archived, retired, historical, and quarantined rows are not owed wait targets.
+- Takes at most the oldest 32 rows already terminal when target resolution runs, using the same
+  `_DELIVERY_MAX_MEMBERS` bound as collection. Later owed rows remain eligible for the next wait
+  or collection. Active targets are not capped.
+- Keeps owed-finished rows out of polling: `owed.py` resolves them once, removes IDs already in
+  the active set, and caps the remainder. `models.py:render_delivery` renders their details
+  (status/outcome, worker, failure, distinct task directory, and show lookup) without
+  `report_body`, including JSON `--full`. JSON places them in
+  `owed_spawns`; `spawns`, run counts, fail-fast, single-result compatibility fields, and the exit
+  code describe only rows active at resolution. Those blocked-on rows keep normal wait rendering
+  and their requested report body after the wait blocks for them.
+- An observing wait leases the combined set, then polls only the active IDs. Its existing
+  `finally` releases the lease and consumes terminal blocked-on details plus every resolved owed
+  ID. Collect can still win the pre-lease race and cause one duplicate header; this accepted cost
+  avoids a second snapshot/recheck mechanism.
+- `--no-observe` still includes owed terminal results because it means fetch without consuming; it
+  creates no lease or observation, so the same header can appear again until a normal wait or ack.
+- On every complete, fail-fast, or checkpoint return after successful initial discovery, runs the
+  same target discovery once more and appends children that appeared after target resolution under
+  `Since this wait started:`. An initial discovery-pending checkpoint has no baseline and skips the
+  trailer. Active children outside the original blocked-on set render as `running`. Newly owed
+  terminal children outside the original blocked-on and owed sets render as `finished` for success
+  or retain the failure terminal word (`failed`, `timed_out`, or `cancelled`). "Appeared" is set
+  membership, not time: the initial discovery keeps every finished owed id it saw, including rows the
+  32-member cap held back, and the return discovery excludes those before applying the cap. Crashed
+  children with no recorded finish time are therefore still listed. Structured output uses
+  `since_started_spawns`.
+- The two halves keep the start-of-wait scopes: `running` comes from the descendant subtree (so a
+  grandchild can appear), `finished` from the owed scope (background direct children only). A
+  grandchild listed as running at one return is not listed once it finishes; that is the owed
+  scope, not a gap to fix here.
+- The return-time discovery is advisory and read-only: its rows are not waited on, leased, consumed,
+  counted, or included in fail-fast and exit decisions. It runs once at return, never per poll. Any
+  state or index failure (busy or incomplete index, OS error, quarantined row) omits the section:
+  the wait's `finally` consumes its results regardless, so failing the wait here would lose them. Explicit-ID waits do not
+  run it. `--no-observe` keeps the same trailer.
 - If `MERIDIAN_CHAT_ID` is absent, raises `ValueError` (not in a session)
 
 ## Idle Spawn Delivery Contract
 
-`owed.py` owns the hidden Claude runtime protocol:
+`owed.py` owns the owed-child definition shared by no-arg wait and the hidden Claude runtime
+protocol:
 
 - `spawn collect --exclude p1,p2` returns exactly one JSON object with
   `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. It never
@@ -75,8 +116,12 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   authority rows with derived status.
 - Owed membership is background direct children of all primary generations for
   `MERIDIAN_CHAT_ID`, minus consumption read across those same generations and
-  minus `--exclude`. Birth-verified explicit-wait leases skip a child without
-  letting the collector exit early.
+  minus `--exclude`. Consumption includes CLI wait/ack observations plus Pi's
+  delivery receipts and cleared IDs. One Pi-private-state reader unions the current
+  and legacy observations, receipts, and cleared IDs per parent. It skips a damaged
+  source with a diagnostic, accepting a possible repeated header instead of failing
+  wait or retrying collection forever. Birth-verified explicit-wait leases skip a
+  child without letting the collector exit early.
 - An initially ready result returns the ready terminal subset. Otherwise the fixed
   owed set settles together. A final consumption/lease check precedes return.
 - A delivery admits at most 32 results. Each member is header-only: identity and

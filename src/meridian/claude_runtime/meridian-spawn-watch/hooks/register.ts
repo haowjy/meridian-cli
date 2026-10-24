@@ -28,7 +28,7 @@ const QUIET_MS = 10_000
 const HOLD_POLL_MS = 1_000
 const ACK_TIMEOUT_MS = 20_000
 const LOG_LIMIT = 100
-/** `collect` renders at most 64 KiB of text, JSON-escaped; anything past this is not its output. */
+/** Safety cap for the collector subprocess's JSON output. */
 const STDOUT_CHAR_CAP = 1 << 20
 const STDERR_CHAR_CAP = 500
 const SPAWN_ID = /^[A-Za-z0-9][\w.-]*$/

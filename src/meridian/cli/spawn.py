@@ -80,7 +80,7 @@ _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
 _SPAWN_USAGE_EPILOGUE = (
     "Launch detached, then track:\n\n"
     "  meridian spawn --prompt-file PATH --bg    Detach; returns a spawn id\n"
-    "  meridian spawn wait                       Track this session's pending spawns\n\n"
+    "  meridian spawn wait                       Track running and owed spawns\n\n"
     "Do not block-foreground a long spawn — the harness command timeout will kill\n"
     "your shell while the spawn keeps running and you lose the thread.\n\n"
     "Harness command lifecycle ≠ meridian spawn lifecycle. The launch command\n"
@@ -89,7 +89,11 @@ _SPAWN_USAGE_EPILOGUE = (
     "`meridian status`.\n"
 )
 _SPAWN_WAIT_HELP_EPILOGUE = (
-    "Without spawn ids, discovers your session's pending spawns.\n"
+    "Without spawn ids, discovers running descendants and finished background\n"
+    "children whose results you have not consumed. Returns at most 32 already-\n"
+    "finished children as lookup headers; children waited to completion keep\n"
+    "their report bodies. On return it also lists children that appeared while\n"
+    "the wait ran, without waiting on or consuming them.\n"
     "Exits cleanly at a safe checkpoint;\n"
     "re-invoke to keep waiting.\n\n"
     "Examples:\n\n"
@@ -1034,8 +1038,9 @@ def _spawn_wait(
         Parameter(
             name="spawn_id",
             help=(
-                "Spawn IDs to wait for. Omit to discover your session's pending "
-                "spawns and wait on them."
+                "Spawn IDs to wait for. Omit to discover running descendants and "
+                "unconsumed finished background children, then list children that "
+                "appeared while waiting."
             ),
         ),
     ] = (),
