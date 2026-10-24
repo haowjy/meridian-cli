@@ -34,6 +34,15 @@ Codex `read-only` cannot enable network. Its dry-run report calls out an explici
 enforce `network: deny`
 under `danger-full-access`, and OpenCode, Pi, and Cursor cannot enforce it in any mode.
 
+**Before installing**
+
+Upgrade Meridian so its installed `mars-agents` dependency is 0.18.0 or later:
+
+```bash
+uv tool upgrade meridian-cli
+meridian mars --version
+```
+
 A Mars bundle without `provenance.network_source` predates the portable field. Meridian
 refuses the launch with `Install mars >= 0.18.0` rather than silently leaving the harness at
 its native network default.
