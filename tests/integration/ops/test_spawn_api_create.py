@@ -549,7 +549,14 @@ def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
             "is not contained by caller floor",
         ),
         (HarnessId.CLAUDE, "deny", None, "default", "dry-run", None),
-        (HarnessId.CLAUDE, "deny", "deny", "default", "dry-run", None),
+        (
+            HarnessId.CLAUDE,
+            {"allow": [], "deny": ["evil.com"]},
+            "deny",
+            "default",
+            "dry-run",
+            None,
+        ),
         (HarnessId.CLAUDE, "deny", "deny", "never", "dry-run", None),
         (
             HarnessId.CLAUDE,
@@ -623,7 +630,7 @@ def test_spawn_create_caller_guardrail_compares_effective_network(
     _set_caller_guardrail(monkeypatch, network=caller_network)
     stub_bundle_request_and_resolve(
         monkeypatch,
-        model="claude-haiku-5-5",
+        model=("google/gemini-2.5-pro" if harness == HarnessId.OPENCODE else "claude-haiku-5-5"),
         harness=harness,
         execution_policy=ResolvedExecutionPolicy(
             sandbox="workspace-write",
@@ -635,7 +642,9 @@ def test_spawn_create_caller_guardrail_compares_effective_network(
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
             prompt="run",
-            model="claude-haiku-5-5",
+            model=(
+                "google/gemini-2.5-pro" if harness == HarnessId.OPENCODE else "claude-haiku-5-5"
+            ),
             harness=harness.value,
             project_root=project_root.as_posix(),
             dry_run=True,
@@ -646,6 +655,121 @@ def test_spawn_create_caller_guardrail_compares_effective_network(
     if expected_message is not None:
         assert result.message is not None
         assert expected_message in result.message
+
+
+@pytest.mark.parametrize(
+    ("settings_network", "caller_network", "warns"),
+    [
+        (
+            {"allowedDomains": ["github.com"]},
+            {"allow": [], "deny": ["evil.com"]},
+            True,
+        ),
+        (
+            {"deniedDomains": ["bad.com"]},
+            {"allow": [], "deny": ["bad.com", "evil.com"]},
+            False,
+        ),
+    ],
+    ids=["user-allow-cannot-widen", "user-deny-does-not-falsely-refuse"],
+)
+def test_spawn_create_guardrail_ignores_claude_user_settings_and_warns_on_widening(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings_network: dict[str, list[str]],
+    caller_network: object,
+    warns: bool,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    claude_config = tmp_path / "claude-config"
+    claude_config.mkdir()
+    (claude_config / "settings.json").write_text(
+        json.dumps({"sandbox": {"network": settings_network}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", claude_config.as_posix())
+    _set_caller_guardrail(monkeypatch, network=caller_network)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert (
+        "can widen network access beyond Meridian's projected policy" in (result.warning or "")
+    ) is warns
+
+
+@pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX])
+def test_spawn_create_guardrail_compares_projection_and_warns_about_user_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harness: HarnessId,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    config_home = tmp_path / f"{harness.value}-config"
+    config_home.mkdir()
+    if harness == HarnessId.CLAUDE:
+        (config_home / "settings.json").write_text(
+            json.dumps({"sandbox": {"network": {"httpProxyPort": 3128}}}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", config_home.as_posix())
+        model = "claude-haiku-5-5"
+    else:
+        (config_home / "config.toml").write_text(
+            """[features.network_proxy]
+enabled = true
+[features.network_proxy.domains]
+"example.com" = "allow"
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("CODEX_HOME", config_home.as_posix())
+        model = "gpt-5.6-luna"
+    _set_caller_guardrail(
+        monkeypatch,
+        network={"allow": ["github.com"], "deny": []},
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=model,
+        harness=harness,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="workspace-write",
+            network=parse_network_policy({"allow": ["github.com"], "deny": []}),
+        ),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model=model,
+            harness=harness.value,
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert config_home.as_posix() in (result.warning or "")
+    assert "can widen network access beyond Meridian's projected policy" in (result.warning or "")
 
 
 def test_spawn_create_caller_guardrail_does_not_restrict_child_workspace_roots(

@@ -2,9 +2,16 @@
 
 ## Shell network policy defaults
 
-Agent profiles can set `network: allow` or `network: deny` to control connections made by
-shell commands, including public internet access, host services, and local sockets. Built-in
-web tools remain controlled separately by `tools: web`.
+Agent profiles can set `network: allow`, `network: deny`, or `network: allowlist` to control
+connections made by shell commands, including public internet access, host services, and
+local sockets. Built-in web tools remain controlled separately by `tools: web`.
+
+`allowlist` permits the `network-allow` host set, less the `network-deny` set. `allow` may
+also carry denies. Exact hosts, IP addresses, `*.x` (subdomains only), and `**.x` (apex plus
+subdomains) are accepted. Plain host lists add across config/profile/overlay/CLI layers,
+while an allowed `{replace: [...]}` clears lower entries; denies win. An empty allowlist
+fails closed to `deny`. See Mars's [network profile reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/agent-profiles.md#network)
+for full merge and replacement rules.
 
 When `network` is omitted, it follows the profile sandbox:
 
@@ -18,8 +25,21 @@ set:
 
 ```yaml
 sandbox: workspace-write
-network: allow
+network: allowlist
+network-allow: [github.com, "*.github.com"]
+network-deny: [uploads.github.com]
 ```
+
+For one launch, `meridian`, `meridian spawn`, and `meridian bootstrap` accept
+`--network allow|deny|allowlist` plus repeatable `--network-allow HOST` and
+`--network-deny HOST`. The host flags add to the lower-layer sets. `meridian spawn
+--continue` rejects network and sandbox overrides. Primary `meridian --continue` replays
+the stored network and sandbox policy, ignoring new values for either; a fork recomposes
+policy with the new flags.
+
+`[primary] sandbox = "read-only"` or `"workspace-write"` in `meridian.toml` now also takes
+the primary shell offline when the network mode is unset. Set the network in Mars config or
+pass `--network allow` (or an allowlist) to opt in.
 
 Claude now projects `sandbox.network.strictAllowlist: true` for an omitted network under a
 constrained sandbox. In particular, sandboxed launches using `approval: never` (or the old
@@ -29,10 +49,38 @@ user `config.toml` value of `true` unless the profile explicitly sets `network: 
 Continued sessions with an older launch-policy snapshot and no network value follow the same
 sandbox-derived default.
 
-Codex `read-only` cannot enable network. Its dry-run report calls out an explicit
-`network: allow`; leaving the field unset reports and keeps native deny. No harness can
+Codex `workspace-write` uses its network proxy for finite allowlists and `allow` with
+denies. Local services remain reachable, so the dry-run report marks those policies
+partial. Codex `read-only` cannot enable network. Its dry-run report calls out an explicit
+`network: allow` or non-empty allowlist; leaving the field unset reports and keeps native
+deny. No harness can
 enforce `network: deny`
 under `danger-full-access`, and OpenCode, Pi, and Cursor cannot enforce it in any mode.
+
+Claude translates `**.x` to `x` plus `*.x`. A finite allowlist keeps ordinary user
+local-binding and Unix-socket settings disabled unless it contains `localhost` or
+`127.0.0.1`; either name enables Claude's coarse local-binding and all-Unix-sockets
+switches.
+
+Meridian does not try to reproduce either harness's config precedence. It warns about
+settings that can widen access beyond the policy Meridian projected:
+
+- in the user `settings.json` under the root selected by the child
+  `CLAUDE_CONFIG_DIR`, a non-empty `sandbox.network.allowedDomains` or the presence of
+  `httpProxyPort` or `socksProxyPort` (including a JSON number written as a float);
+- in the child-selected `$CODEX_HOME/config.toml`, any `allow` entry under
+  `features.network_proxy.domains`;
+- in `.codex/config.toml` in the child's working directory or any ancestor, the same Codex
+  allow entry, regardless of project trust settings.
+
+Dry runs and launches name every detected file and warn that it can widen access. These
+warnings do not change the permission report, caller boundary, or sandboxed-child
+guardrail: those compare only Meridian's projected policy. The harness still reads its own
+configuration, so actual access can be wider. Narrowing settings such as Claude
+`deniedDomains` and Codex domain `deny` entries are not modelled. A boolean Codex
+`features.network_proxy` value declares no domains and does not warn. If a selected file is
+unreadable or malformed, Meridian names it in a warning; the native harness can still
+refuse the file itself.
 
 **Before installing**
 
@@ -44,8 +92,9 @@ meridian mars --version
 ```
 
 A Mars bundle without `provenance.network_source` predates the portable field. Meridian
-refuses the launch with `Install mars >= 0.18.0` rather than silently leaving the harness at
-its native network default.
+refuses the launch, names the Mars executable it used, and asks you to upgrade Meridian
+rather than silently leaving the harness at its native network default. Meridian prefers
+its bundled Mars over a separate executable on `PATH`.
 
 Replace Codex `harness-overrides.codex.sandbox_workspace_write.network_access` with the
 portable profile field. A well-formed boolean native value is deprecated in this release
@@ -62,7 +111,7 @@ continue, and fork operations now refuse when:
 - the caller profile has no non-empty `subagents:` list (or explicitly disables Meridian
   spawn capability);
 - the child's resolved sandbox is weaker than the caller's;
-- the child's harness-effective network is not contained by the caller's. For host policies,
+- the child's Meridian-projected network is not contained by the caller's. For host policies,
   every child allow must remain in the caller's allow set and every caller deny must remain
   denied by the child;
 - native harness arguments follow `--`, because they could override the resolved policy.
@@ -70,12 +119,13 @@ continue, and fork operations now refuse when:
 These calls worked without this boundary before. Put the intended children in the caller
 profile's `subagents:` list and move required harness-native arguments into the profile.
 Approval is not compared independently. A current `read-only` or `workspace-write` caller
-always records its effective network, so an omitted profile value records deny and accepts an
+always records its projected network, so an omitted profile value records deny and accepts an
 omitted constrained child. A boundary record written before the network field existed still
 creates no network floor, preventing a mid-session upgrade from refusing nested spawns.
-Claude's effective value includes user-level `sandbox.network.allowedDomains` widening and
-`deniedDomains` narrowing; project `.claude/settings*.json` did not widen the launch-local
-strict allowlist and is not included.
+Claude and Codex widening settings do not raise that floor: they produce attributed
+warnings, while the guardrail continues to compare Meridian's projected policies. This
+includes Codex `.codex/config.toml` in any ancestor without modelling trust. Narrowing
+harness settings are ignored.
 Child write roots and `--env` are not part of the guardrail. Profiles using
 `sandbox: default` or `danger-full-access`, and top-level shells not launched by Meridian,
 carry no floor.

@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
@@ -36,7 +36,14 @@ from meridian.lib.launch.launch_types import (
     ResolvedExecutionPolicy,
     TerminalSurfaceMode,
 )
-from meridian.lib.safety.policy import parse_network_policy
+from meridian.lib.launch.request import NetworkOverrides
+from meridian.lib.safety.policy import (
+    Allow,
+    Hosts,
+    NetworkPolicy,
+    SandboxDerivedNetwork,
+    canonical_host,
+)
 from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from meridian.lib.utils.json_shapes import json_object
 
@@ -70,6 +77,7 @@ class BundleRequest:
     effort_override: str | None = None
     approval_override: str | None = None
     sandbox_override: str | None = None
+    network_overrides: NetworkOverrides = field(default_factory=NetworkOverrides)
     extra_skills: tuple[str, ...] = ()
     no_refresh_models: bool = False
 
@@ -94,6 +102,7 @@ class BundleResult:
     harness: HarnessId
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
+    network: NetworkPolicy | SandboxDerivedNetwork
     provenance: dict[str, str]
     warnings: tuple[str, ...]
     prompt_surface_inventory_prompt: str
@@ -206,6 +215,53 @@ def _optional_object_field(payload: dict[str, object], field_name: str) -> dict[
     if not isinstance(raw_value, dict):
         raise _bundle_schema_error(f"'{field_name}' must be an object when present")
     return cast("dict[str, object]", raw_value)
+
+
+class _BundleNetwork(BaseModel):
+    """Current Mars network object before sandbox-derived default resolution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["allow", "deny", "allowlist"] | None
+    allow: tuple[str, ...]
+    deny: tuple[str, ...]
+
+
+def _parse_bundle_network(
+    raw: object, *, sandbox: object
+) -> NetworkPolicy | SandboxDerivedNetwork:
+    """Parse the current Mars object once; durable legacy shapes use their own parser."""
+
+    try:
+        bundle_network = _BundleNetwork.model_validate(raw)
+    except ValidationError as exc:
+        raise _bundle_schema_error(f"invalid 'execution_policy.network' object: {exc}") from exc
+
+    try:
+        allow = frozenset(canonical_host(host) for host in bundle_network.allow)
+        deny = frozenset(canonical_host(host) for host in bundle_network.deny)
+    except ValueError as exc:
+        raise _bundle_schema_error(f"invalid 'execution_policy.network' host: {exc}") from exc
+
+    if bundle_network.mode == "deny":
+        return Hosts()
+    if bundle_network.mode == "allowlist":
+        return Hosts(allow=allow, deny=deny)
+    if bundle_network.mode == "allow":
+        return Allow(deny=deny)
+
+    normalized_sandbox = _normalize_str(sandbox) or "default"
+    if normalized_sandbox not in {
+        "default",
+        "read-only",
+        "workspace-write",
+        "danger-full-access",
+    }:
+        raise _bundle_schema_error(
+            "'execution_policy.sandbox' must be default, read-only, workspace-write, "
+            "danger-full-access, or null when network.mode is null"
+        )
+    return SandboxDerivedNetwork(allow=allow, deny=deny)
 
 
 def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
@@ -353,6 +409,12 @@ def _build_bundle_command(
         command.extend(["--approval", request.approval_override])
     if request.sandbox_override:
         command.extend(["--sandbox", request.sandbox_override])
+    if request.network_overrides.mode is not None:
+        command.extend(["--network", request.network_overrides.mode])
+    for host in request.network_overrides.allow:
+        command.extend(["--network-allow", host])
+    for host in request.network_overrides.deny:
+        command.extend(["--network-deny", host])
     for skill in request.extra_skills:
         command.extend(["--skill", skill])
     return command
@@ -507,6 +569,7 @@ def _parse_bundle_payload(
     payload: dict[str, object],
     *,
     harness_registry: HarnessRegistry,
+    mars_executable: str,
 ) -> BundleResult:
     version = payload.get("version")
     if isinstance(version, bool) or not isinstance(version, int):
@@ -541,17 +604,23 @@ def _parse_bundle_payload(
     provenance = _as_str_dict(payload.get("provenance"))
     if "network_source" not in provenance:
         raise RuntimeError(
-            "Mars launch-bundle has no provenance.network_source, so this Mars predates "
-            f"portable network policy. Install mars >= {_MARS_BUNDLE_MIN_VERSION}."
+            f"Mars executable '{mars_executable}' returned a launch bundle without "
+            "provenance.network_source, so the bundled Mars predates portable network "
+            "policy. Upgrade Meridian (for uv tools: uv tool upgrade meridian-cli); "
+            "Meridian prefers its bundled Mars over PATH."
         )
     execution_policy_payload = _required_object_field(payload, "execution_policy")
     native_config = _optional_object_field(execution_policy_payload, "native_config")
+    sandbox = execution_policy_payload.get("sandbox")
+    network = _parse_bundle_network(
+        execution_policy_payload.get("network"),
+        sandbox=sandbox,
+    )
     execution_policy = ResolvedExecutionPolicy.model_validate(
         {
             "effort": execution_policy_payload.get("effort"),
             "approval": execution_policy_payload.get("approval"),
-            "sandbox": execution_policy_payload.get("sandbox"),
-            "network": parse_network_policy(execution_policy_payload.get("network")),
+            "sandbox": sandbox,
             "autocompact": execution_policy_payload.get("autocompact"),
             "autocompact_pct": execution_policy_payload.get("autocompact_pct"),
             "timeout": execution_policy_payload.get("timeout"),
@@ -575,6 +644,7 @@ def _parse_bundle_payload(
         harness=harness,
         harness_model=harness_model,
         execution_policy=execution_policy,
+        network=network,
         provenance=provenance,
         warnings=_as_str_tuple(payload.get("warnings")),
         prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
@@ -635,7 +705,11 @@ def request_and_resolve(
     if not isinstance(payload_obj, dict):
         raise RuntimeError("Mars launch-bundle returned a non-object JSON payload.")
     payload = cast("dict[str, object]", payload_obj)
-    bundle = _parse_bundle_payload(payload, harness_registry=harness_registry)
+    bundle = _parse_bundle_payload(
+        payload,
+        harness_registry=harness_registry,
+        mars_executable=command[0],
+    )
     if not request.no_refresh_models:
         return bundle
     return replace(

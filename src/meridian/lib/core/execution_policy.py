@@ -118,6 +118,7 @@ class ResolvedExecutionPolicy(BaseModel):
     @field_validator("network", mode="before")
     @classmethod
     def _parse_network(cls, value: object) -> NetworkPolicy | None:
+        # Scalar strings are the durable shape written before typed host policies.
         return parse_network_policy(value)
 
     @field_serializer("network")

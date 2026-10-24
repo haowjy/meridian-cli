@@ -11,7 +11,7 @@ from meridian.lib.launch.env import (
     inherit_child_env,
     merge_env_overrides,
 )
-from meridian.lib.safety.policy import EffectiveNetworkFacts, build_permission_policy
+from meridian.lib.safety.policy import Allow, build_permission_policy
 
 _MERIDIAN_RUNTIME_KEYS = (
     "MERIDIAN_PROJECT_DIR",
@@ -28,9 +28,8 @@ _MERIDIAN_RUNTIME_KEYS = (
 def test_invalid_approval_raises() -> None:
     with pytest.raises(ValueError, match="Unsupported approval mode"):
         build_permission_policy(
-            network_facts=EffectiveNetworkFacts.from_values(
-                sandbox="danger-full-access", network=None
-            ),
+            sandbox="danger-full-access",
+            network=Allow(),
             approval="sometimes",
         )
 

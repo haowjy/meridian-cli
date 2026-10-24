@@ -12,7 +12,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from meridian.lib.platform import get_home_path
+from meridian.lib.platform import expand_home_path, get_home_path
 from meridian.lib.platform.atomic import atomic_replace
 
 CODEX_ROLLOUT_FILENAME_RE = re.compile(
@@ -87,13 +87,9 @@ def materialize_fork_rollout(*, source_path: Path, target_path: Path, new_sessio
 def resolve_codex_home(launch_env: Mapping[str, str]) -> Path:
     codex_home = launch_env.get("CODEX_HOME", "").strip()
     if codex_home:
-        return Path(codex_home).expanduser()
+        return expand_home_path(codex_home, env=launch_env)
 
-    home = launch_env.get("HOME", "").strip()
-    if home:
-        return Path(home).expanduser() / ".codex"
-
-    return get_home_path() / ".codex"
+    return get_home_path(env=launch_env) / ".codex"
 
 
 def resolve_rollout_session_id(

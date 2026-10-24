@@ -9,10 +9,10 @@ import subprocess
 import tomllib
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import suppress
-from pathlib import Path
 from typing import Protocol, cast
 
 from meridian.lib.harness.codex_bootstrap import is_bootstrap_turn_prompt
+from meridian.lib.harness.codex_rollout import resolve_codex_home
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import (
     IdleEvent,
@@ -21,7 +21,6 @@ from meridian.lib.harness.idle_types import (
     NativeIdleHook,
     PinnedIdleSession,
 )
-from meridian.lib.platform import get_home_path
 
 IDLE_NOTIFY_COMMAND = ("meridian", "idle", "event", "--harness", "codex")
 
@@ -59,15 +58,9 @@ def pane_busy(capture: str) -> bool:
     return "Working (" in capture
 
 
-def _codex_config_path(env: Mapping[str, str]) -> Path:
-    configured = env.get("CODEX_HOME", "").strip()
-    home = Path(configured).expanduser() if configured else get_home_path() / ".codex"
-    return home / "config.toml"
-
-
 def _read_user_notify(env: Mapping[str, str]) -> tuple[str, ...] | None:
     try:
-        with _codex_config_path(env).open("rb") as handle:
+        with (resolve_codex_home(env) / "config.toml").open("rb") as handle:
             config = cast("dict[str, object]", tomllib.load(handle))
             value = config.get("notify")
     except (OSError, tomllib.TOMLDecodeError):
@@ -147,9 +140,7 @@ def parse_idle_event(
         implies_return=input_count > previous_count,
         input_count=input_count,
         last_user_text=last_input if isinstance(last_input, str) else None,
-        last_assistant_text=(
-            last_assistant if isinstance(last_assistant, str) else None
-        ),
+        last_assistant_text=(last_assistant if isinstance(last_assistant, str) else None),
     )
 
 

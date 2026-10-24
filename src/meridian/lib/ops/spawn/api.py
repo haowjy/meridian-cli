@@ -37,6 +37,7 @@ from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.bundle import project_effective_network
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
@@ -113,6 +114,7 @@ from .owed import resolve_owed_finished_rows, select_delivery_rows
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import (
     SpawnCreateArtifacts,
+    bind_create_payload_context,
     bind_create_payload_preview,
     build_create_payload,
     validate_create_input,
@@ -419,26 +421,27 @@ def _prepare_spawn_create(
         ctx=resolved_context,
         models_readonly=True,
     )
-    from meridian.lib.harness.bundle import get_harness_bundle
-    from meridian.lib.safety.policy import EffectiveNetworkFacts
-
-    execution_policy = artifacts.request.execution_policy
-    network_facts = EffectiveNetworkFacts.from_values(
-        sandbox=execution_policy.sandbox,
-        network=execution_policy.network,
-        native_config=execution_policy.native_config,
-    )
-    effective_network = get_harness_bundle(
-        artifacts.prepared.harness.id
-    ).projections.effective_network(network_facts)
-    floor_check.enforce(
-        execution_policy.sandbox,
-        child_network=effective_network,
-    )
+    preview_context = None
+    if floor_check.caller is not None:
+        preview_context = bind_create_payload_context(
+            artifacts,
+            harness_registry=harness_registry,
+        )
+        spec = preview_context.binding.spec
+        effective_network = project_effective_network(
+            artifacts.prepared.harness.id,
+            spec.permission_policy,
+            native_config=spec.native_config,
+        )
+        floor_check.enforce(
+            spec.permission_policy.sandbox,
+            child_network=effective_network,
+        )
     if payload.dry_run:
         artifacts = bind_create_payload_preview(
             artifacts,
             harness_registry=harness_registry,
+            preview_context=preview_context,
         )
     return SpawnCreatePreparation(
         payload=payload,
@@ -2200,6 +2203,12 @@ def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
         rejected.append("--approval")
     if payload.sandbox is not None:
         rejected.append("--sandbox")
+    if payload.network.mode is not None:
+        rejected.append("--network")
+    if payload.network.allow:
+        rejected.append("--network-allow")
+    if payload.network.deny:
+        rejected.append("--network-deny")
     if payload.effort is not None:
         rejected.append("--effort")
     if payload.autocompact is not None:

@@ -113,10 +113,10 @@ def _settings_json(settings: ClaudeSettings) -> str:
                     network["allowedDomains"] = list(network_settings.allowed_domains)
                 if network_settings.denied_domains:
                     network["deniedDomains"] = list(network_settings.denied_domains)
-                if network_settings.allow_local_binding:
-                    network["allowLocalBinding"] = True
-                if network_settings.allow_all_unix_sockets:
-                    network["allowAllUnixSockets"] = True
+                # Launch-local false values must narrow user settings that enabled these
+                # coarse switches; omission would preserve the wider user policy.
+                network["allowLocalBinding"] = network_settings.allow_local_binding
+                network["allowAllUnixSockets"] = network_settings.allow_all_unix_sockets
                 sandbox["network"] = network
         if sandbox_settings.excluded_commands:
             sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)
