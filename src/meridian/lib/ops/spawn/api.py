@@ -1821,21 +1821,7 @@ def spawn_wait_sync(
     if not blocked_on_ids and not owed_rows:
         chat_display = wait_chat_id or "current chat"
         active_sink.status(f"No pending spawns for chat {chat_display}.")
-        output = SpawnWaitMultiOutput()
-        if not has_explicit_ids:
-            output = output.model_copy(
-                update={
-                    "since_started_spawns": _since_started_spawns(
-                        payload=payload,
-                        runtime_root=runtime_root,
-                        project_root=project_root,
-                        ctx=resolved_context,
-                        initial_targets=targets,
-                        wait_started_at_epoch=wait_started_at_epoch,
-                    )
-                }
-            )
-        return output
+        return SpawnWaitMultiOutput()
 
     if has_explicit_ids:
         blocked_on_ids = resolve_spawn_references(
