@@ -48,6 +48,11 @@ and do not affect fail-fast, waited-run aggregates, or the command's exit status
 existing `finally` consumes the owed IDs beside terminal active details.
 `--no-observe` includes owed children with the same rendering but neither leases nor
 consumes them, so they remain eligible for a later normal wait or delivery.
+Every no-arg return after successful initial discovery runs that same discovery once
+more and appends children that appeared while the wait ran. An initial
+discovery-pending checkpoint has no baseline and skips the trailer. This
+`since_started_spawns` trailer is advisory: it is not leased, consumed, counted, or
+included in fail-fast and exit decisions.
 
 `--fail-fast` exits as soon as any spawn reaches `failed` or `timed_out`, reporting
 which spawns failed and which are still pending. `cancelled` does not trigger

@@ -62,6 +62,18 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   avoids a second snapshot/recheck mechanism.
 - `--no-observe` still includes owed terminal results because it means fetch without consuming; it
   creates no lease or observation, so the same header can appear again until a normal wait or ack.
+- On every complete, fail-fast, or checkpoint return after successful initial discovery, runs the
+  same target discovery once more and appends children that appeared after target resolution under
+  `Since this wait started:`. An initial discovery-pending checkpoint has no baseline and skips the
+  trailer. Active children outside the original blocked-on set render as `running`. Newly owed
+  terminal children outside the original blocked-on and owed sets render as `finished` for success
+  or retain the failure terminal word (`failed`, `timed_out`, or `cancelled`). The completion-time
+  cutoff is applied before the 32-member owed cap, so older rows held back by the initial cap are
+  excluded rather than displacing new completions. Structured output uses `since_started_spawns`.
+- The return-time discovery is advisory and read-only: its rows are not waited on, leased, consumed,
+  counted, or included in fail-fast and exit decisions. It runs once at return, never per poll; an
+  exhausted discovery deadline or busy history index silently omits it. Explicit-ID waits do not
+  run it. `--no-observe` keeps the same trailer.
 - If `MERIDIAN_CHAT_ID` is absent, raises `ValueError` (not in a session)
 
 ## Idle Spawn Delivery Contract

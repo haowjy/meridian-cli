@@ -92,7 +92,8 @@ _SPAWN_WAIT_HELP_EPILOGUE = (
     "Without spawn ids, discovers running descendants and finished background\n"
     "children whose results you have not consumed. Returns at most 32 already-\n"
     "finished children as lookup headers; children waited to completion keep\n"
-    "their report bodies.\n"
+    "their report bodies. On return it also lists children that appeared while\n"
+    "the wait ran, without waiting on or consuming them.\n"
     "Exits cleanly at a safe checkpoint;\n"
     "re-invoke to keep waiting.\n\n"
     "Examples:\n\n"
@@ -1042,7 +1043,8 @@ def _spawn_wait(
             name="spawn_id",
             help=(
                 "Spawn IDs to wait for. Omit to discover running descendants and "
-                "unconsumed finished background children."
+                "unconsumed finished background children, then list children that "
+                "appeared while waiting."
             ),
         ),
     ] = (),

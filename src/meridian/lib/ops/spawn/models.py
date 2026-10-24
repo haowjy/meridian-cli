@@ -1352,6 +1352,7 @@ class SpawnWaitMultiOutput(BaseModel):
 
     spawns: tuple[SpawnDetailOutput, ...] = ()
     owed_spawns: tuple[SpawnDetailOutput, ...] = ()
+    since_started_spawns: tuple[SpawnDetailOutput, ...] = ()
     total_runs: int = 0
     succeeded_runs: int = 0
     failed_runs: int = 0
@@ -1375,10 +1376,7 @@ class SpawnWaitMultiOutput(BaseModel):
         """Render waited spawns, expanding report content when available."""
         effective_ctx = ctx or FormatContext()
         if self.checkpoint:
-            checkpoint = self._format_checkpoint_text()
-            if not self.owed_spawns:
-                return checkpoint
-            return f"{checkpoint}\n\n{render_delivery(self.owed_spawns)}"
+            return self._format_with_advisories(self._format_checkpoint_text())
         if self.fail_fast:
             failed_ids = ", ".join(
                 spawn.spawn_id for spawn in self.spawns if spawn.status in {"failed", "timed_out"}
@@ -1397,9 +1395,24 @@ class SpawnWaitMultiOutput(BaseModel):
             sections.append(self.spawns[0].format_wait_text(ctx))
         elif self.spawns:
             sections.append(self._format_multiple_results_text(self.spawns))
+        return self._format_with_advisories(*sections)
+
+    def _format_with_advisories(self, *primary_sections: str) -> str:
+        sections = [section for section in primary_sections if section]
         if self.owed_spawns:
             sections.append(render_delivery(self.owed_spawns))
-        return "\n\n".join(section for section in sections if section)
+        if self.since_started_spawns:
+            lines = ["Since this wait started:"]
+            for spawn in self.since_started_spawns:
+                if is_active_spawn_status(spawn.status):
+                    status = "running"
+                elif spawn.status == "succeeded":
+                    status = "finished"
+                else:
+                    status = spawn.status
+                lines.append(f"{spawn.spawn_id} {status}")
+            sections.append("\n".join(lines))
+        return "\n\n".join(sections)
 
     @staticmethod
     def _format_multiple_results_text(spawns: tuple[SpawnDetailOutput, ...]) -> str:
@@ -1509,6 +1522,9 @@ class SpawnWaitMultiOutput(BaseModel):
         # Sparse spawn details.
         wire["spawns"] = [_spawn_wire(spawn) for spawn in self.spawns]
         wire["owed_spawns"] = [_spawn_wire(spawn) for spawn in self.owed_spawns]
+        wire["since_started_spawns"] = [
+            _spawn_wire(spawn) for spawn in self.since_started_spawns
+        ]
         return wire
 
     def to_cli_output(

@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A no-argument `spawn wait` now lists children that appeared while it ran, after
+  its waited and owed results, without waiting on or consuming the new children.
+
 ## [0.12.9] - 2026-10-24
 
 ### Fixed

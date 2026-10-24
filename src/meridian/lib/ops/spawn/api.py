@@ -5,6 +5,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +126,7 @@ _WAIT_POLL_INTERVAL_SECS = 0.25
 @dataclass(frozen=True)
 class _WaitTargetDiscovery:
     blocked_on_ids: tuple[str, ...] = ()
+    active_rows: tuple[SpawnRecord, ...] = ()
     owed_rows: tuple[SpawnRecord, ...] = ()
     discovery_pending: bool = False
 
@@ -1462,6 +1464,7 @@ def _resolve_wait_targets(
     ctx: RuntimeContext,
     *,
     deadline: float,
+    owed_finished_after_epoch: float | None = None,
 ) -> _WaitTargetDiscovery:
     """Resolve explicit IDs or report that bounded no-arg discovery is unfinished."""
     candidates: list[str] = []
@@ -1503,6 +1506,7 @@ def _resolve_wait_targets(
                 chat_id=chat_id,
                 caller_spawn_id=self_spawn_id,
                 blocked_on_ids=blocked_on_ids,
+                finished_after_epoch=owed_finished_after_epoch,
                 deadline=deadline,
             )
         except history_index.HistoryIndexBusy:
@@ -1510,6 +1514,7 @@ def _resolve_wait_targets(
 
     return _WaitTargetDiscovery(
         blocked_on_ids=blocked_on_ids,
+        active_rows=tuple(pending),
         owed_rows=owed_rows,
     )
 
@@ -1568,6 +1573,49 @@ def _discover_pending_spawns(
             pending.append(row)
     pending.sort(key=lambda row: row.id)
     return pending
+
+
+def _since_started_spawns(
+    *,
+    payload: SpawnWaitInput,
+    runtime_root: Path,
+    project_root: Path,
+    ctx: RuntimeContext,
+    initial_targets: _WaitTargetDiscovery,
+    wait_started_at_epoch: float,
+) -> tuple[SpawnDetailOutput, ...]:
+    """Discover advisory rows that entered this no-argument wait's scope later."""
+
+    try:
+        current_targets = _resolve_wait_targets(
+            payload,
+            runtime_root,
+            ctx,
+            deadline=time.monotonic() + history_index.QUERY_TIMEOUT,
+            owed_finished_after_epoch=wait_started_at_epoch,
+        )
+    except (history_index.HistoryIndexBusy, TimeoutError):
+        return ()
+    if current_targets.discovery_pending:
+        return ()
+
+    initial_ids = {
+        *initial_targets.blocked_on_ids,
+        *(row.id for row in initial_targets.owed_rows),
+    }
+    rows = (
+        *(row for row in current_targets.owed_rows if row.id not in initial_ids),
+        *(row for row in current_targets.active_rows if row.id not in initial_ids),
+    )
+    return tuple(
+        detail_from_row(
+            project_root=project_root,
+            row=row,
+            include_report_body=False,
+            runtime_root=runtime_root,
+        )
+        for row in rows
+    )
 
 
 def _emit_wait_set(
@@ -1749,6 +1797,7 @@ def spawn_wait_sync(
     )
     timeout_seconds = timeout_minutes * 60.0
     checkpoint_seconds = _resolve_wait_checkpoint_seconds(payload=payload, config=config)
+    wait_started_at_epoch = datetime.now(UTC).timestamp()
     started = time.monotonic()
     use_checkpoint = not payload.timeout_explicit
     wait_seconds = checkpoint_seconds if use_checkpoint else timeout_seconds
@@ -1772,7 +1821,21 @@ def spawn_wait_sync(
     if not blocked_on_ids and not owed_rows:
         chat_display = wait_chat_id or "current chat"
         active_sink.status(f"No pending spawns for chat {chat_display}.")
-        return SpawnWaitMultiOutput()
+        output = SpawnWaitMultiOutput()
+        if not has_explicit_ids:
+            output = output.model_copy(
+                update={
+                    "since_started_spawns": _since_started_spawns(
+                        payload=payload,
+                        runtime_root=runtime_root,
+                        project_root=project_root,
+                        ctx=resolved_context,
+                        initial_targets=targets,
+                        wait_started_at_epoch=wait_started_at_epoch,
+                    )
+                }
+            )
+        return output
 
     if has_explicit_ids:
         blocked_on_ids = resolve_spawn_references(
@@ -1907,7 +1970,21 @@ def spawn_wait_sync(
                         elapsed_secs=now - started,
                     )
                 break
-        return output.model_copy(update={"owed_spawns": owed_spawns})
+        output = output.model_copy(update={"owed_spawns": owed_spawns})
+        if not has_explicit_ids:
+            output = output.model_copy(
+                update={
+                    "since_started_spawns": _since_started_spawns(
+                        payload=payload,
+                        runtime_root=runtime_root,
+                        project_root=project_root,
+                        ctx=resolved_context,
+                        initial_targets=targets,
+                        wait_started_at_epoch=wait_started_at_epoch,
+                    )
+                }
+            )
+        return output
     finally:
         record_spawn_observation(
             runtime_root=runtime_root,

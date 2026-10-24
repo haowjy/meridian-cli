@@ -308,6 +308,7 @@ def test_spawn_wait_json_contract(
         "any_failed",
         "spawns",
         "owed_spawns",
+        "since_started_spawns",
     } <= payload.keys()
     assert {"spawn_id", "status", "model", "harness"} <= payload["spawns"][0].keys()
     _assert_noisy_keys_absent(payload)
@@ -396,6 +397,7 @@ def test_spawn_collect_and_ack_json_contract(
         "--full",
     )
     assert fetched_json["spawns"] == []
+    assert fetched_json["since_started_spawns"] == []
     assert fetched_json["owed_spawns"][0]["report_summary"] == (
         "Another delivered child report."
     )
@@ -406,6 +408,7 @@ def test_spawn_collect_and_ack_json_contract(
 
     waited = _run_json(project_root, env, "spawn", "wait", "--full")
     assert waited["spawns"] == []
+    assert waited["since_started_spawns"] == []
     assert [spawn["spawn_id"] for spawn in waited["owed_spawns"]] == ["p3"]
     assert "report_body" not in waited
     assert "report_body" not in waited["owed_spawns"][0]
