@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -109,6 +110,7 @@ from .models import (
     SpawnWaitMultiOutput,
     format_spawn_identity_table,
 )
+from .owed import resolve_owed_finished_rows, select_delivery_rows
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import (
     SpawnCreateArtifacts,
@@ -131,7 +133,11 @@ _WAIT_POLL_INTERVAL_SECS = 0.25
 
 @dataclass(frozen=True)
 class _WaitTargetDiscovery:
-    spawn_ids: tuple[str, ...] = ()
+    blocked_on_ids: tuple[str, ...] = ()
+    active_rows: tuple[SpawnRecord, ...] = ()
+    owed_rows: tuple[SpawnRecord, ...] = ()
+    # Every finished owed id seen, including rows the delivery cap held back.
+    owed_candidate_ids: frozenset[str] = frozenset()
     discovery_pending: bool = False
 
 
@@ -1581,6 +1587,7 @@ def _resolve_wait_targets(
     ctx: RuntimeContext,
     *,
     deadline: float,
+    excluded_owed_ids: frozenset[str] = frozenset(),
 ) -> _WaitTargetDiscovery:
     """Resolve explicit IDs or report that bounded no-arg discovery is unfinished."""
     candidates: list[str] = []
@@ -1593,7 +1600,7 @@ def _resolve_wait_targets(
         candidates.append(payload.spawn_id.strip())
 
     if candidates:
-        return _WaitTargetDiscovery(tuple(dict.fromkeys(candidates)))
+        return _WaitTargetDiscovery(blocked_on_ids=tuple(dict.fromkeys(candidates)))
 
     chat_id = (ctx.chat_id or "").strip()
     if not chat_id:
@@ -1612,7 +1619,27 @@ def _resolve_wait_targets(
         )
     except history_index.HistoryIndexBusy:
         return _WaitTargetDiscovery(discovery_pending=True)
-    return _WaitTargetDiscovery(tuple(row.id for row in pending))
+
+    blocked_on_ids = tuple(row.id for row in pending)
+    owed_candidates: tuple[SpawnRecord, ...] = ()
+    if self_spawn_id is not None:
+        try:
+            owed_candidates = resolve_owed_finished_rows(
+                runtime_root=runtime_root,
+                chat_id=chat_id,
+                caller_spawn_id=self_spawn_id,
+                excluded_ids=excluded_owed_ids.union(blocked_on_ids),
+                deadline=deadline,
+            )
+        except history_index.HistoryIndexBusy:
+            return _WaitTargetDiscovery(discovery_pending=True)
+
+    return _WaitTargetDiscovery(
+        blocked_on_ids=blocked_on_ids,
+        active_rows=tuple(pending),
+        owed_rows=select_delivery_rows(owed_candidates),
+        owed_candidate_ids=frozenset(row.id for row in owed_candidates),
+    )
 
 
 def _discover_pending_spawns(
@@ -1669,6 +1696,52 @@ def _discover_pending_spawns(
             pending.append(row)
     pending.sort(key=lambda row: row.id)
     return pending
+
+
+def _since_started_spawns(
+    *,
+    payload: SpawnWaitInput,
+    runtime_root: Path,
+    project_root: Path,
+    ctx: RuntimeContext,
+    initial_targets: _WaitTargetDiscovery,
+) -> tuple[SpawnDetailOutput, ...]:
+    """Discover advisory rows that entered this no-argument wait's scope later.
+
+    "Later" is set membership, not time: anything the wait saw at start (blocked
+    on, or finished and owed, even if the delivery cap held it back) is excluded.
+    """
+
+    try:
+        current_targets = _resolve_wait_targets(
+            payload,
+            runtime_root,
+            ctx,
+            deadline=time.monotonic() + history_index.QUERY_TIMEOUT,
+            excluded_owed_ids=initial_targets.owed_candidate_ids.union(
+                initial_targets.blocked_on_ids
+            ),
+        )
+        if current_targets.discovery_pending:
+            return ()
+        initial_blocked = frozenset(initial_targets.blocked_on_ids)
+        rows = (
+            *current_targets.owed_rows,
+            *(row for row in current_targets.active_rows if row.id not in initial_blocked),
+        )
+        return tuple(
+            detail_from_row(
+                project_root=project_root,
+                row=row,
+                include_report_body=False,
+                runtime_root=runtime_root,
+            )
+            for row in rows
+        )
+    # Advisory only, and this wait's `finally` consumes its results either way:
+    # any state or index failure here must omit the section, never fail the wait.
+    except (OSError, ValueError, RuntimeError, sqlite3.Error):
+        return ()
 
 
 def _emit_wait_set(
@@ -1748,7 +1821,6 @@ def _build_wait_multi_output(
 def _build_wait_checkpoint_output(
     details: tuple[SpawnDetailOutput, ...],
     *,
-    total_runs: int,
     pending_ids: tuple[str, ...],
     runtime_root: Path,
     chat_id: str | None,
@@ -1766,26 +1838,18 @@ def _build_wait_checkpoint_output(
         )
         for spawn_id in pending_ids
     }
-    return SpawnWaitMultiOutput(
-        spawns=details,
-        total_runs=total_runs,
-        succeeded_runs=sum(1 for detail in details if detail.status == "succeeded"),
-        failed_runs=sum(1 for detail in details if detail.status == "failed"),
-        cancelled_runs=sum(1 for detail in details if detail.status == "cancelled"),
-        timed_out_runs=sum(1 for detail in details if detail.status == "timed_out"),
-        any_failed=any(
-            detail.status in FAILURE_SPAWN_STATUSES or detail.status == "cancelled"
-            for detail in details
-        ),
-        checkpoint=True,
-        checkpoint_pending_ids=pending_ids,
-        checkpoint_descendants={
-            spawn_id: descendants
-            for spawn_id, descendants in checkpoint_descendants.items()
-            if descendants
-        },
-        checkpoint_chat_id=chat_id,
-        checkpoint_elapsed_secs=elapsed_secs,
+    return _build_wait_multi_output(details).model_copy(
+        update={
+            "checkpoint": True,
+            "checkpoint_pending_ids": pending_ids,
+            "checkpoint_descendants": {
+                spawn_id: descendants
+                for spawn_id, descendants in checkpoint_descendants.items()
+                if descendants
+            },
+            "checkpoint_chat_id": chat_id,
+            "checkpoint_elapsed_secs": elapsed_secs,
+        }
     )
 
 
@@ -1849,14 +1913,7 @@ def spawn_wait_sync(
         runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
         active_sink.status("No pending spawns.")
-        return SpawnWaitMultiOutput(
-            spawns=(),
-            total_runs=0,
-            succeeded_runs=0,
-            failed_runs=0,
-            cancelled_runs=0,
-            any_failed=False,
-        )
+        return SpawnWaitMultiOutput()
     has_explicit_ids = bool(payload.spawn_ids) or bool(
         payload.spawn_id is not None and payload.spawn_id.strip()
     )
@@ -1878,46 +1935,32 @@ def spawn_wait_sync(
     )
     if targets.discovery_pending:
         return SpawnWaitMultiOutput(
-            spawns=(),
-            total_runs=0,
-            succeeded_runs=0,
-            failed_runs=0,
-            cancelled_runs=0,
-            any_failed=False,
             checkpoint=True,
             checkpoint_discovery_pending=True,
             checkpoint_chat_id=wait_chat_id,
             checkpoint_elapsed_secs=time.monotonic() - started,
         )
-    spawn_ids = targets.spawn_ids
+    blocked_on_ids = targets.blocked_on_ids
+    owed_rows = targets.owed_rows
 
-    if not spawn_ids:
+    if not blocked_on_ids and not owed_rows:
         chat_display = wait_chat_id or "current chat"
         active_sink.status(f"No pending spawns for chat {chat_display}.")
-        return SpawnWaitMultiOutput(
-            spawns=(),
-            total_runs=0,
-            succeeded_runs=0,
-            failed_runs=0,
-            cancelled_runs=0,
-            any_failed=False,
-        )
+        return SpawnWaitMultiOutput()
 
     if has_explicit_ids:
-        spawn_ids = resolve_spawn_references(project_root, spawn_ids, runtime_root=runtime_root)
+        blocked_on_ids = resolve_spawn_references(
+            project_root,
+            blocked_on_ids,
+            runtime_root=runtime_root,
+        )
 
-    for spawn_id in spawn_ids:
+    observed_ids = tuple((*blocked_on_ids, *(row.id for row in owed_rows)))
+
+    for spawn_id in observed_ids:
         record = spawn_store.get_spawn(runtime_root, spawn_id)
         if record is not None and record.record_mode == "historical":
             raise ValueError("Historical records cannot be waited on")
-
-    _emit_wait_set(
-        spawn_ids,
-        project_root,
-        chat_id=wait_chat_id,
-        runtime_root=runtime_root,
-        sink=active_sink,
-    )
 
     poll = (
         payload.poll_interval_secs
@@ -1927,16 +1970,6 @@ def spawn_wait_sync(
     if poll <= 0:
         poll = _WAIT_POLL_INTERVAL_SECS
 
-    rows: dict[str, SpawnRecord] = {}
-    pending: set[str] = set(spawn_ids)
-    progress_mode = _resolve_wait_progress_mode(
-        verbose=payload.verbose,
-        quiet=payload.quiet,
-        config_verbosity=getattr(getattr(config, "output", None), "verbosity", None),
-    )
-    progress_interval = max(_WAIT_PROGRESS_INTERVAL_SECS, poll)
-    next_progress = started + progress_interval
-
     parent_wait_observer_id = (
         str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
     )
@@ -1944,82 +1977,136 @@ def spawn_wait_sync(
     record_spawn_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_wait_observer_id,
-        waiting_add=spawn_ids,
+        waiting_add=observed_ids,
         lease_seconds=lease_seconds,
     )
     details: tuple[SpawnDetailOutput, ...] = ()
+    owed_spawns: tuple[SpawnDetailOutput, ...] = ()
     try:
-        while True:
-            record_spawn_observation(
+        owed_spawns = tuple(
+            detail_from_row(
+                project_root=project_root,
+                row=row,
+                include_report_body=False,
                 runtime_root=runtime_root,
-                parent_spawn_id=parent_wait_observer_id,
-                waiting_add=tuple(pending),
-                lease_seconds=lease_seconds,
             )
-            for spawn_id in tuple(pending):
-                row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-                if row is None:
-                    if has_explicit_ids:
-                        raise ValueError(f"Spawn '{spawn_id}' not found")
-                    # No-arg discovery is chat-scoped: if a discovered spawn vanishes while
-                    # waiting, treat it as resolved instead of failing unrelated waits.
-                    pending.discard(spawn_id)
-                    rows.pop(spawn_id, None)
-                    continue
-                rows[spawn_id] = row
-                if _spawn_is_terminal(row.status):
-                    pending.remove(spawn_id)
-
-            now = time.monotonic()
-            failed_fast = payload.fail_fast and any(
-                row.status in FAILURE_SPAWN_STATUSES for row in rows.values()
-            )
-            if pending and not failed_fast:
-                if now < wait_deadline:
-                    if now >= next_progress:
-                        progress = _render_wait_progress(
-                            pending,
-                            elapsed_secs=max(now - started, 0.0),
-                            mode=progress_mode,
-                        )
-                        if progress is not None:
-                            _emit_wait_progress(progress, sink=active_sink)
-                        next_progress = now + progress_interval
-                    time.sleep(min(poll, max(0.0, wait_deadline - time.monotonic())))
-                    continue
-                if not use_checkpoint:
-                    raise TimeoutError(_build_wait_timeout_message(pending, now - started))
-
-            details = tuple(
-                detail_from_row(
-                    project_root=project_root,
-                    row=rows[spawn_id],
-                    include_report_body=payload.include_report_body,
-                    runtime_root=runtime_root,
-                )
-                for spawn_id in spawn_ids
-                if spawn_id in rows
-            )
-            pending_ids = tuple(sorted(pending))
-            if not pending_ids:
-                return _build_wait_multi_output(details)
-            if failed_fast:
-                return _build_wait_multi_output(details, fail_fast=True, pending_ids=pending_ids)
-            return _build_wait_checkpoint_output(
-                details,
-                total_runs=len(spawn_ids),
-                pending_ids=pending_ids,
-                runtime_root=runtime_root,
+            for row in owed_rows
+        )
+        if not blocked_on_ids:
+            output = _build_wait_multi_output(())
+        else:
+            _emit_wait_set(
+                blocked_on_ids,
+                project_root,
                 chat_id=wait_chat_id,
-                elapsed_secs=now - started,
+                runtime_root=runtime_root,
+                sink=active_sink,
             )
+            rows: dict[str, SpawnRecord] = {}
+            pending: set[str] = set(blocked_on_ids)
+            progress_mode = _resolve_wait_progress_mode(
+                verbose=payload.verbose,
+                quiet=payload.quiet,
+                config_verbosity=getattr(getattr(config, "output", None), "verbosity", None),
+            )
+            progress_interval = max(_WAIT_PROGRESS_INTERVAL_SECS, poll)
+            next_progress = started + progress_interval
+
+            while True:
+                record_spawn_observation(
+                    runtime_root=runtime_root,
+                    parent_spawn_id=parent_wait_observer_id,
+                    waiting_add=tuple(pending),
+                    lease_seconds=lease_seconds,
+                )
+                for spawn_id in tuple(pending):
+                    row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+                    if row is None:
+                        if has_explicit_ids:
+                            raise ValueError(f"Spawn '{spawn_id}' not found")
+                        # No-arg discovery is chat-scoped: if a discovered spawn vanishes while
+                        # waiting, treat it as resolved instead of failing unrelated waits.
+                        pending.discard(spawn_id)
+                        rows.pop(spawn_id, None)
+                        continue
+                    rows[spawn_id] = row
+                    if _spawn_is_terminal(row.status):
+                        pending.remove(spawn_id)
+
+                now = time.monotonic()
+                failed_fast = payload.fail_fast and any(
+                    row.status in FAILURE_SPAWN_STATUSES for row in rows.values()
+                )
+                if pending and not failed_fast:
+                    if now < wait_deadline:
+                        if now >= next_progress:
+                            progress = _render_wait_progress(
+                                pending,
+                                elapsed_secs=max(now - started, 0.0),
+                                mode=progress_mode,
+                            )
+                            if progress is not None:
+                                _emit_wait_progress(progress, sink=active_sink)
+                            next_progress = now + progress_interval
+                        time.sleep(min(poll, max(0.0, wait_deadline - time.monotonic())))
+                        continue
+                    if not use_checkpoint:
+                        raise TimeoutError(_build_wait_timeout_message(pending, now - started))
+
+                details = tuple(
+                    detail_from_row(
+                        project_root=project_root,
+                        row=rows[spawn_id],
+                        include_report_body=payload.include_report_body,
+                        runtime_root=runtime_root,
+                    )
+                    for spawn_id in blocked_on_ids
+                    if spawn_id in rows
+                )
+                pending_ids = tuple(sorted(pending))
+                if not pending_ids:
+                    output = _build_wait_multi_output(details)
+                elif failed_fast:
+                    output = _build_wait_multi_output(
+                        details,
+                        fail_fast=True,
+                        pending_ids=pending_ids,
+                    )
+                else:
+                    output = _build_wait_checkpoint_output(
+                        details,
+                        pending_ids=pending_ids,
+                        runtime_root=runtime_root,
+                        chat_id=wait_chat_id,
+                        elapsed_secs=now - started,
+                    )
+                break
+        output = output.model_copy(update={"owed_spawns": owed_spawns})
+        if not has_explicit_ids:
+            output = output.model_copy(
+                update={
+                    "since_started_spawns": _since_started_spawns(
+                        payload=payload,
+                        runtime_root=runtime_root,
+                        project_root=project_root,
+                        ctx=resolved_context,
+                        initial_targets=targets,
+                    )
+                }
+            )
+        return output
     finally:
         record_spawn_observation(
             runtime_root=runtime_root,
             parent_spawn_id=parent_wait_observer_id,
-            waiting_remove=spawn_ids,
-            observed_add=tuple(
-                detail.spawn_id for detail in details if _spawn_is_terminal(detail.status)
+            waiting_remove=observed_ids,
+            observed_add=(
+                *(
+                    detail.spawn_id
+                    for detail in details
+                    if _spawn_is_terminal(detail.status)
+                ),
+                *(row.id for row in owed_rows),
             ),
         )
 

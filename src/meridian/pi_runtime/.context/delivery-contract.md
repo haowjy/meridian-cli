@@ -127,3 +127,12 @@ across a process crash.
 or admission; upgrading an old unconsumed terminal result can repeat a notice
 whose former admission cannot be proved. Start fresh sessions when changing
 bundles; never mix old and new writers for one parent.
+
+One Python reader in `lib/harness/pi_private_state.py` supplies both CLI owed-result
+discovery and this watcher with the same consumption set: admitted work IDs from
+`delivery-receipts.json`, CLI observations from the current and legacy
+`observed-spawns.json`, and explicit dismissals from `cleared-spawns.json`. It reads
+each source once per parent and skips a damaged source independently. The watcher
+retains that failure in its evidence ledger; wait/collect report the skip and may repeat
+one header rather than fail or retry forever. With readable state, no-argument
+`spawn wait` and `spawn collect` do not replay a result already delivered or cleared.

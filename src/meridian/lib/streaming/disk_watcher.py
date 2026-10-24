@@ -16,17 +16,17 @@ from watchfiles import (
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.pi_private_state import (
+    CLEARED_SPAWNS_FILENAME,
+    DELIVERY_RECEIPTS_FILENAME,
+    OBSERVED_SPAWNS_FILENAME,
     BashEvidenceFile,
-    ClearedSpawns,
     DeliveryFault,
     DeliveryObservations,
-    DeliveryReceipts,
+    pi_coordination_dir,
+    read_pi_consumption_state,
+    read_pi_private_doc,
 )
 from meridian.lib.state.paths import observed_spawns_path
-from meridian.lib.state.spawn_observations import (
-    SpawnObservations,
-    read_legacy,  # legacy-observed-spawns (#719)
-)
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 
@@ -37,10 +37,10 @@ _Model = TypeVar("_Model", bound=BaseModel)
 _WATCHED_NAMES = frozenset(
     {
         "bash-records.json",
-        "delivery-receipts.json",
+        DELIVERY_RECEIPTS_FILENAME,
         "delivery-observations.json",
-        "observed-spawns.json",
-        "cleared-spawns.json",
+        OBSERVED_SPAWNS_FILENAME,
+        CLEARED_SPAWNS_FILENAME,
         "delivery-fault.json",
     }
 )
@@ -59,7 +59,7 @@ class PiDiskWatcher:
     ) -> None:
         self._spawn_id = str(current_spawn_id)
         self._runtime_root = runtime_root
-        self._bash_dir = runtime_root / "pi-bash" / self._spawn_id
+        self._bash_dir = pi_coordination_dir(runtime_root, self._spawn_id)
         self._observations_path = observed_spawns_path(runtime_root, self._spawn_id)
         self._ledger = ledger or PiPrivateWorkLedger()
         self._tasks: list[asyncio.Task[None]] = []
@@ -103,12 +103,12 @@ class PiDiskWatcher:
     def _refresh_cached_state(self) -> bool:
         prior = self._ledger.blocker_snapshot()
         bash = self._read(self._bash_dir / "bash-records.json", BashEvidenceFile)
-        receipts = self._read(self._bash_dir / "delivery-receipts.json", DeliveryReceipts)
         observed = self._read(self._bash_dir / "delivery-observations.json", DeliveryObservations)
-        explicit = self._read(self._observations_path, SpawnObservations)
-        # legacy-observed-spawns (#719): merge the old file leniently during transition.
-        legacy_explicit = read_legacy(self._runtime_root, self._spawn_id)
-        cleared = self._read(self._bash_dir / "cleared-spawns.json", ClearedSpawns)
+        consumption = read_pi_consumption_state(
+            self._runtime_root,
+            self._spawn_id,
+            on_read=self._record_consumption_read,
+        )
         fault = self._read(self._bash_dir / "delivery-fault.json", DeliveryFault)
         if fault is not None and fault.error:
             self._ledger.record_read_failure(self._bash_dir / "delivery-fault.json", fault.error)
@@ -121,20 +121,12 @@ class PiDiskWatcher:
                 self._ledger.record_read_failure(
                     self._bash_dir / "bash-records.json", bash.runtime_error
                 )
-        consumed: set[str] = (
-            {work_id for ids in receipts.messages.values() for work_id in ids}
-            if receipts
-            else set()
-        )
-        consumed.update(explicit.observed_spawn_ids if explicit else ())
-        consumed.update(legacy_explicit.observed_spawn_ids if legacy_explicit else ())
-        consumed.update(cleared.cleared_spawn_ids if cleared else ())
-        unobserved = set(receipts.messages if receipts else ()) - set(
+        unobserved = set(consumption.receipt_message_ids) - set(
             observed.observed_message_ids if observed else ()
         )
         self._ledger.update_disk_evidence(
             bash=tuple(bash.records.values()) if bash else (),
-            consumed=frozenset(consumed),
+            consumed=consumption.consumed_ids,
             unobserved_messages=frozenset(unobserved),
         )
         changed = self._ledger.blocker_snapshot() != prior
@@ -172,17 +164,21 @@ class PiDiskWatcher:
 
     def _read(self, file: Path, model: type[_Model]) -> _Model | None:
         try:
-            value = model.model_validate_json(file.read_text(encoding="utf-8"))
-            if getattr(value, "spawn_id", None) != self._spawn_id:
-                raise ValueError("private-file parent identity mismatch")
-        except FileNotFoundError:
-            self._ledger.clear_read_failure(file)
-            return None
+            value = read_pi_private_doc(file, model, spawn_id=self._spawn_id)
         except (OSError, UnicodeError, ValueError) as exc:
             self._ledger.record_read_failure(file, str(exc))
             return None
+        if value is None:
+            self._ledger.clear_read_failure(file)
+            return None
         self._ledger.clear_read_failure(file)
         return value
+
+    def _record_consumption_read(self, file: Path, error: str | None) -> None:
+        if error is None:
+            self._ledger.clear_read_failure(file)
+        else:
+            self._ledger.record_read_failure(file, error)
 
 
 def _consume_task_result(task: asyncio.Task[None]) -> None:

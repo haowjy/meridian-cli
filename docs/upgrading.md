@@ -82,6 +82,15 @@ configuration, so actual access can be wider. Narrowing settings such as Claude
 unreadable or malformed, Meridian names it in a warning; the native harness can still
 refuse the file itself.
 
+**Before installing**
+
+Upgrade Meridian so its installed `mars-agents` dependency is 0.18.0 or later:
+
+```bash
+uv tool upgrade meridian-cli
+meridian mars --version
+```
+
 A Mars bundle without `provenance.network_source` predates the portable field. Meridian
 refuses the launch, names the Mars executable it used, and asks you to upgrade Meridian
 rather than silently leaving the harness at its native network default. Meridian prefers

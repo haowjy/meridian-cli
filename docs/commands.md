@@ -17,7 +17,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
-| `meridian spawn wait` | Discover this session's pending spawns and wait for them; yields a retry checkpoint if concurrent history writes delay discovery |
+| `meridian spawn wait` | Wait for this session's running descendants and return up to 32 unconsumed finished background children as lookup headers; children waited to completion retain full reports; on return, list children that appeared while waiting without consuming them; yields a retry checkpoint if concurrent history writes delay discovery |
 | `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-full` to suppress |
 | `meridian spawn show ID` | Read a spawn's report and status |
 | `meridian spawn status ID` | Read spawn status summary (report body off by default; add `--full` to include) |
@@ -48,7 +48,15 @@ busy, the command exits cleanly with a discovery-pending checkpoint. Re-run it; 
 does not print "No pending spawns" until discovery has complete coverage.
 Candidate lookup is scoped to the current chat in the index, or to the caller's
 recursive subtree for nested spawns, before selected rows are checked against
-authoritative spawn state.
+authoritative spawn state. Already-finished owed children are selected oldest first,
+at most 32 per invocation, and render with the same status/worker/failure/task-dir
+header and `meridian spawn show <id>` lookup as `spawn collect`. Running targets are
+not capped; after the wait blocks for them, their normal report output is preserved.
+In structured output, blocked-on results are in `spawns` and already-finished owed
+results are in `owed_spawns`; the latter omit `report_body` even with `--full`.
+Children discovered only when the wait returns are in `since_started_spawns`; they
+are advisory and do not affect counts, fail-fast, observation, or the exit code.
+`--no-observe` uses the same rendering and cap without consuming any result.
 
 | Flag | Description |
 | ---- | ----------- |

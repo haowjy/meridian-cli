@@ -6,7 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Upgrade notes
 - Shell network policy now accepts `allowlist` plus additive `network-allow` and `network-deny` host sets. Current Mars bundles carry one network object instead of a scalar; durable snapshots written by older Meridian builds remain readable. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
-- Launches now require a Mars bundle with `provenance.network_source` (Mars 0.18.0 or newer); older bundles fail instead of keeping harness network defaults.
+- Requires Mars >= 0.18.0 for portable network policy bundles with `provenance.network_source` and `{mode, allow, deny}`. Older Mars stops launches with `Install mars >= 0.18.0` instead of keeping harness network defaults. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
 - Agents in a Meridian-projected `read-only`/`workspace-write` sandbox can launch children only if their profile lists `subagents:`, never with a weaker sandbox, never with native args after `--`. See [Sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
 - Spawn-capable sandboxed Codex launches write a Meridian-owned `$CODEX_HOME/rules/meridian.rules` that lets `meridian spawn` run outside Codex's sandbox, in every Codex session of that user.
 - An unset profile `network` now follows its sandbox: `read-only`/`workspace-write` project deny, while `danger-full-access` stays online and an unset/default sandbox stays harness-native. Set `network: allow` to opt a constrained profile into shell network. Sandboxed child delegation compares the caller's and child's Meridian-projected network, including the inferred deny. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults) and [sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
@@ -38,6 +38,23 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Deprecated
 - Codex `harness-overrides.codex.sandbox_workspace_write.network_access`; use profile `network`. Native passthrough wins during this warning release, then the key becomes reserved.
+
+## [0.12.10] - 2026-10-24
+
+### Added
+- A no-argument `spawn wait` now ends with a `Since this wait started:` list of
+  children that were launched or finished while it ran (`since_started_spawns` in
+  JSON). It doesn't wait on or consume them, and they don't affect the exit code.
+
+## [0.12.9] - 2026-10-24
+
+### Fixed
+- A no-argument `spawn wait` now returns up to 32 finished background children
+  whose results are still owed, alongside uncapped running descendants. Owed results
+  render as lookup headers, do not affect waited-run counts, fail-fast, or the exit
+  code, and exclude results Pi already delivered or dismissed. Unreadable Pi
+  consumption sources are diagnosed and skipped instead of failing wait or stalling
+  collection.
 
 ## [0.12.8] - 2026-10-23
 

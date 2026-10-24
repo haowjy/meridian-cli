@@ -165,7 +165,8 @@ session drains that keep the harness alive across turns.
 - `rearm_window.py` — shared resident/native absolute deadline and persisted rearm budget
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — validated Pi-private task/receipt disk
-  observation and exact public-message admission fencing; disk evidence feeds the ledger
+  observation and exact public-message admission fencing; consumption uses the shared
+  `harness/pi_private_state.py` reader, and its per-source failures feed the ledger
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
 - `control_socket.py` — per-spawn inject endpoint
