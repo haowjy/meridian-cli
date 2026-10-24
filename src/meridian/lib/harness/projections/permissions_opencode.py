@@ -25,6 +25,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     EnforcementReport,
     ReportLine,
+    command_grant_covers_pattern,
     complete_report,
     platform_element,
     rule_element,
@@ -337,67 +338,104 @@ def compile_opencode_permissions(
     ]
     ordered.extend(platform_entries)
 
+    profile_by_key = {
+        (entry.action, entry.resource): entry for entry in _collapse_exact_rules(profile_entries)
+    }
     final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
+    final_platform_grants: list[OpenCodePermissionRule] = []
 
     for platform in policy.platform_rules:
-        if platform.kind != "completion-commands":
+        if platform.kind != "meridian-commands":
             continue
         action = _native_action("bash", version=resolved_version)
         entries: list[OpenCodePermissionRule] = []
         kept: list[OpenCodePermissionRule] = []
         for command in platform.commands:
-            pair = tuple(
+            command_entries = tuple(
                 OpenCodePermissionRule(action=action, resource=resource, effect="allow")
-                for resource in (command, f"{command} *")
+                for resource in (
+                    (command.command,)
+                    if command.match == "exact"
+                    else (command.command, f"{command.command} *")
+                )
             )
-            entries.extend(pair)
-            stricter = [
-                existing
-                for entry in pair
-                if (existing := final_by_key.get((entry.action, entry.resource))) is not None
+            entries.extend(command_entries)
+            if not command.profile_restrictable:
+                final_platform_grants.extend(command_entries)
+                continue
+            stricter_by_key = {
+                (existing.action, resource): existing
+                for (existing_action, resource), existing in profile_by_key.items()
+                if existing_action == action
                 and existing.effect != "allow"
-            ]
+                and command_grant_covers_pattern(command, resource)
+            }
+            stricter_by_key.update(
+                {
+                    (existing.action, existing.resource): existing
+                    for existing in ordered
+                    if existing.action == action
+                    and existing.effect != "allow"
+                    and command_grant_covers_pattern(command, existing.resource)
+                }
+            )
+            stricter = list(stricter_by_key.values())
             if stricter:
-                # OpenCode's ``cmd *`` pattern also matches bare ``cmd``. Treat the two
-                # spellings as one exception so either profile restriction covers both.
-                strictest = max(stricter, key=lambda entry: _STRICTNESS[entry.effect])
-                pair_keys = {(entry.action, entry.resource) for entry in pair}
+                command_keys = {(entry.action, entry.resource) for entry in command_entries}
+                pair_stricter = [
+                    entry for entry in stricter if (entry.action, entry.resource) in command_keys
+                ]
+                if pair_stricter:
+                    # OpenCode's ``cmd *`` pattern also matches bare ``cmd``. Treat those
+                    # two spellings as one exception, as the completion-only rules did.
+                    strictest = max(pair_stricter, key=lambda entry: _STRICTNESS[entry.effect])
+                    replacements = [
+                        OpenCodePermissionRule(
+                            action=entry.action,
+                            resource=entry.resource,
+                            effect=strictest.effect,
+                        )
+                        for entry in command_entries
+                    ]
+                else:
+                    replacements = list(command_entries)
+                exception_keys = {
+                    (entry.action, entry.resource) for entry in (*command_entries, *stricter)
+                }
                 ordered = [
                     entry
                     for entry in ordered
-                    if (entry.action, entry.resource) not in pair_keys
-                ]
-                replacements = [
-                    OpenCodePermissionRule(
-                        action=entry.action,
-                        resource=entry.resource,
-                        effect=strictest.effect,
-                    )
-                    for entry in pair
+                    if (entry.action, entry.resource) not in exception_keys
                 ]
                 ordered.extend(replacements)
-                final_by_key.update(
-                    {
-                        (entry.action, entry.resource): entry
-                        for entry in replacements
-                    }
+                # A narrower profile restriction must follow the broader platform allow:
+                # OpenCode resolves the last matching resource.
+                ordered.extend(
+                    sorted(
+                        (
+                            entry
+                            for entry in stricter
+                            if (entry.action, entry.resource)
+                            not in {(item.action, item.resource) for item in replacements}
+                        ),
+                        key=_specificity,
+                    )
                 )
-                kept.extend(replacements)
+                final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
+                kept.extend(stricter)
                 continue
-            for entry in pair:
+            for entry in command_entries:
                 if (entry.action, entry.resource) not in final_by_key:
                     ordered.append(entry)
                     final_by_key[(entry.action, entry.resource)] = entry
-        rendered = ", ".join(
-            f"{entry.action}({entry.resource})" for entry in entries
-        )
+        rendered = ", ".join(f"{entry.action}({entry.resource})" for entry in entries)
         if kept:
             lines.append(
                 ReportLine(
                     platform_element(platform),
                     "partial",
                     f"permission {rendered}: allow; an overlapping profile rule keeps its "
-                    "command pair stricter",
+                    "command match stricter",
                 )
             )
         else:
@@ -408,6 +446,15 @@ def compile_opencode_permissions(
                     f"permission {rendered}: allow",
                 )
             )
+
+    # Non-restrictable completion grants follow every profile rule. OpenCode resolves the
+    # last match, so this makes the command role's precedence exact.
+    final_grant_keys = {(entry.action, entry.resource) for entry in final_platform_grants}
+    ordered = [
+        entry for entry in ordered if (entry.action, entry.resource) not in final_grant_keys
+    ]
+    ordered.extend(dict.fromkeys(final_platform_grants))
+    final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
 
     lines.extend(
         _tool_rule_lines(

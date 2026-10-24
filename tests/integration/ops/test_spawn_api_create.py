@@ -15,17 +15,45 @@ from structlog.testing import capture_logs
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.prepare as spawn_prepare
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
+from meridian.lib.core.caller_boundary import (
+    CALLER_BOUNDARY_ENV,
+    CallerBoundary,
+    CallerBoundaryCheck,
+    current_pid_namespace,
+)
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
+from meridian.lib.safety.policy import SandboxMode
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
 from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 from tests.support.launch import FakeBundleResult, stub_bundle_request_and_resolve
+
+
+def _set_caller_guardrail(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sandbox: SandboxMode = "workspace-write",
+    has_spawn_capability: bool = True,
+) -> None:
+    record = json.loads(
+        CallerBoundary(
+            sandbox=sandbox,
+            has_spawn_capability=has_spawn_capability,
+            pid_namespace=None,
+        ).to_env_value()
+    )
+    record["network"] = "future-axis"
+    monkeypatch.setenv(
+        CALLER_BOUNDARY_ENV,
+        json.dumps(record),
+    )
 
 
 def _noop_setup_telemetry(**_kwargs: object) -> None:
@@ -87,7 +115,6 @@ def test_background_headless_deny_rejects_before_reservation_without_affecting_a
             project_root=project_root.as_posix(),
             background=True,
         ),
-        prepared=prepared,
     )
     allowed = spawn_api.spawn_create_sync(
         SpawnCreateInput(
@@ -97,7 +124,6 @@ def test_background_headless_deny_rejects_before_reservation_without_affecting_a
             project_root=project_root.as_posix(),
             background=True,
         ),
-        prepared=prepared,
     )
 
     assert denied.status == "failed"
@@ -226,44 +252,6 @@ def test_spawn_create_dry_run_emits_usage_events(
     assert usage_events["usage.spawn.launched"].data == {"harness": "codex"}
 
 
-def test_spawn_create_with_prepared_skips_self_bootstrap(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / ".git").mkdir()
-    (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
-
-    def _forbidden(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("self-bootstrap helper should not be called")
-
-    monkeypatch.setattr(spawn_api, "setup_telemetry", _forbidden)
-    monkeypatch.setattr(spawn_api, "load_config", _forbidden)
-    monkeypatch.setattr(spawn_api, "resolve_runtime_root_and_config", _forbidden)
-    monkeypatch.setattr(spawn_api, "resolve_runtime_root", _forbidden)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.3-codex",
-        harness=HarnessId.CODEX,
-    )
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            model="gpt-5.3-codex",
-            harness="codex",
-            project_root=project_root.as_posix(),
-            dry_run=True,
-        ),
-        prepared=prepared,
-    )
-
-    assert result.status == "dry-run"
-    assert result.harness_id == "codex"
-
-
 def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -272,7 +260,6 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
     project_root.mkdir()
     (project_root / ".git").mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
 
     def _raise_build_create_payload(*_args: object, **_kwargs: object) -> object:
         raise ValueError("model resolution failed")
@@ -289,7 +276,6 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
             task_dir=(tmp_path / "task").as_posix(),
             work="browser-investigation",
         ),
-        prepared=prepared,
     )
 
     assert result.status == "failed"
@@ -307,6 +293,281 @@ def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
     assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
 
 
+def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = current_pid_namespace()
+    if namespace is None:
+        pytest.skip("PID namespaces are not exposed on this platform")
+    monkeypatch.setenv(
+        CALLER_BOUNDARY_ENV,
+        CallerBoundary(
+            sandbox="workspace-write",
+            has_spawn_capability=True,
+            pid_namespace=f"{namespace}:different",
+        ).to_env_value(),
+    )
+
+    result = spawn_api.spawn_create_sync(SpawnCreateInput(prompt="run"))
+
+    assert result.status == "failed"
+    assert result.spawn_id is None
+    assert result.error == "pre_init_failed"
+    assert result.message is not None
+
+
+def test_unsandboxed_caller_has_no_guardrail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        CALLER_BOUNDARY_ENV,
+        json.dumps(
+            {
+                "pid_namespace": None,
+                "sandbox": "default",
+                # A newer axis and a missing spawn axis are irrelevant when unfloored.
+                "network": "future-axis",
+            }
+        ),
+    )
+
+    check = CallerBoundaryCheck.from_environment(
+        dry_run=True,
+        passthrough_args=("--dangerously-skip-permissions",),
+    )
+
+    assert check.caller is None
+
+
+@pytest.mark.parametrize(
+    "child_policy",
+    [
+        ResolvedExecutionPolicy(sandbox="danger-full-access"),
+        ResolvedExecutionPolicy(),
+    ],
+)
+def test_spawn_create_caller_guardrail_refuses_weaker_policy_before_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    child_policy: ResolvedExecutionPolicy,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    meridian_home = tmp_path / "meridian-home"
+    monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
+    _set_caller_guardrail(monkeypatch)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=child_policy,
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=False,
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
+    assert not meridian_home.exists()
+
+
+def test_spawn_create_caller_guardrail_requires_spawn_capability_before_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_caller_guardrail(
+        monkeypatch,
+        has_spawn_capability=False,
+    )
+
+    def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("delegation precondition must refuse before Mars")
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _must_not_resolve)
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
+
+
+def test_spawn_create_caller_guardrail_rejects_passthrough_before_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_caller_guardrail(monkeypatch)
+
+    def _must_not_resolve(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("delegation precondition must refuse before Mars")
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _must_not_resolve)
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+            passthrough_args=("--dangerously-skip-permissions",),
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.error == "pre_init_failed"
+    assert result.spawn_id is None
+
+
+def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_caller_guardrail(monkeypatch)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="read-only",
+            approval="never",
+        ),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+
+
+def test_spawn_create_caller_guardrail_does_not_restrict_child_workspace_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_caller_guardrail(monkeypatch)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            task_dir=outside.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert result.task_cwd == outside.as_posix()
+
+
+def test_spawn_create_caller_guardrail_allows_harness_home_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_caller_guardrail(monkeypatch)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="read-only",
+            approval="default",
+        ),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+            launch_policy_snapshot=LaunchPolicySnapshot(
+                model="claude-haiku-5-5",
+                harness="claude",
+                env={"CLAUDE_CONFIG_DIR": "/tmp/owned"},
+                execution_policy=ResolvedExecutionPolicy(sandbox="read-only"),
+            ),
+        )
+    )
+
+    assert result.status == "dry-run"
+
+
+def test_spawn_create_without_caller_guardrail_does_not_clamp_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    monkeypatch.delenv(CALLER_BOUNDARY_ENV, raising=False)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=HarnessId.CLAUDE,
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness="claude",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+            env=("LD_PRELOAD=/tmp/user-choice.so",),
+        )
+    )
+
+    assert result.status == "dry-run"
+
+
 def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -315,7 +576,6 @@ def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_
     project_root.mkdir()
     (project_root / ".git").mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
 
     def _raise_build_create_payload(*_args: object, **_kwargs: object) -> object:
         raise TypeError("bug in launch composition")
@@ -330,8 +590,7 @@ def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_
                 harness="opencode",
                 project_root=project_root.as_posix(),
             ),
-            prepared=prepared,
-        )
+            )
 
     assert result.status == "failed"
     assert result.error == "pre_init_unexpected_error"
@@ -353,7 +612,6 @@ def test_spawn_create_validation_failure_returns_pre_init_failed_output(
     project_root.mkdir()
     (project_root / ".git").mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
@@ -364,7 +622,6 @@ def test_spawn_create_validation_failure_returns_pre_init_failed_output(
             task_dir=(tmp_path / "task").as_posix(),
             work="browser-investigation",
         ),
-        prepared=prepared,
     )
 
     assert result.status == "failed"
@@ -595,12 +852,12 @@ def test_spawn_create_unresolvable_work_task_dir_has_distinct_error(
     missing_authority = runtime.authority.model_copy(update={"project_root": missing_root})
     monkeypatch.setattr(
         spawn_api,
-        "resolve_runtime_authority_for_read",
+        "inspect_runtime_authority_for_read",
         lambda _project_root: missing_authority,
     )
     monkeypatch.setattr(
-        spawn_prepare,
-        "resolve_runtime_authority_for_read",
+        spawn_api,
+        "plan_runtime_authority_for_write",
         lambda _project_root: missing_authority,
     )
     monkeypatch.setattr(spawn_api, "resolve_project_paths", lambda _root: project_paths)

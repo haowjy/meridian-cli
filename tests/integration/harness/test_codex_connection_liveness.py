@@ -12,6 +12,9 @@ import pytest
 from meridian.lib.harness.connections import codex_ws
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.codex_ws import CodexConnection
+from meridian.lib.launch.launch_types import CodexRuntimeResolution, ResolvedLaunchSpec
+from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
+from meridian.lib.safety.policy import PermissionPolicy, PlatformRule, SandboxMode
 from tests.support.async_determinism import AsyncDeterminism
 
 
@@ -92,6 +95,46 @@ class _FailingWebSocket:
 
 async def _collect_events(connection: CodexConnection) -> list[RawHarnessEvent]:
     return [event async for event in connection.events()]
+
+
+@pytest.mark.parametrize(
+    ("sandbox", "spawn_capability", "rules_path", "rules_error", "expected"),
+    [
+        ("read-only", True, "/tmp/meridian.rules", "rules directory is read-only", False),
+        ("read-only", True, "/tmp/meridian.rules", None, True),
+        ("read-only", True, None, None, False),
+        ("read-only", False, None, None, False),
+        ("workspace-write", False, None, "rules directory is read-only", True),
+        ("default", False, None, "rules directory is read-only", True),
+    ],
+)
+def test_codex_completion_signals_require_read_only_rules_escape(
+    sandbox: SandboxMode,
+    spawn_capability: bool,
+    rules_path: str | None,
+    rules_error: str | None,
+    expected: bool,
+) -> None:
+    platform_rules = (
+        (
+            PlatformRule(
+                kind="meridian-commands",
+                commands=(SPAWN_PLATFORM_COMMAND,),
+            ),
+        )
+        if spawn_capability
+        else ()
+    )
+    connection = CodexConnection()
+    connection._launch_spec = ResolvedLaunchSpec(
+        permission_policy=PermissionPolicy(sandbox=sandbox, platform_rules=platform_rules),
+        codex_runtime=CodexRuntimeResolution(
+            rules_file_path=rules_path,
+            rules_file_error=rules_error,
+        ),
+    )
+
+    assert connection.completion_signals_available is expected
 
 
 def _drain_raw_event_queue(

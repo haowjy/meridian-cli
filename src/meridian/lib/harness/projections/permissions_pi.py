@@ -16,7 +16,9 @@ from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
     EnforcementReport,
     PermissionPolicy,
+    PlatformCommand,
     ReportLine,
+    command_grant_covers_pattern,
     complete_report,
     platform_element,
     rule_element,
@@ -53,7 +55,7 @@ class PiExtensionPolicy(BaseModel):
 
     version: int = 1
     rules: tuple[PiExtensionRule, ...]
-    completion_commands: tuple[str, ...] = ()
+    meridian_commands: tuple[PlatformCommand, ...] = ()
     headless_reject_reason: str = HEADLESS_REJECT_REASON
     # Whether the handler refuses a bash command it cannot split into simple commands.
     bash_fail_closed: bool = False
@@ -107,13 +109,11 @@ def _extension_rules(rules: tuple[ToolRule, ...]) -> tuple[PiExtensionRule, ...]
     return tuple(projected)
 
 
-def _completion_commands(policy: PermissionPolicy, *, interactive: bool) -> tuple[str, ...]:
-    if interactive:
-        return ()
+def _meridian_commands(policy: PermissionPolicy) -> tuple[PlatformCommand, ...]:
     return tuple(
         command
         for platform in policy.platform_rules
-        if platform.kind == "completion-commands"
+        if platform.kind == "meridian-commands"
         for command in platform.commands
     )
 
@@ -127,7 +127,7 @@ def _strictest(rules: Iterable[PiExtensionRule]) -> ToolAction | None:
 def _compile_flags(
     policy: PermissionPolicy,
     rules: tuple[PiExtensionRule, ...],
-    completion_commands: tuple[str, ...],
+    meridian_commands: tuple[PlatformCommand, ...],
 ) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
     named = tuple(
         rule for rule in policy.rules if rule.native_status == "known" and not rule.is_wildcard
@@ -135,7 +135,7 @@ def _compile_flags(
     # A plain deny removes its tools unless a scoped rule still needs them; the extension
     # then refuses what the scoped rules don't allow.
     scoped_tools = frozenset(tool for rule in named if rule.is_scoped for tool in rule.tools)
-    completion_tools = frozenset({"bash"} if completion_commands else ())
+    meridian_tools = frozenset({"bash"} if meridian_commands else ())
 
     exclude = tuple(
         dedupe_nonempty(
@@ -143,13 +143,13 @@ def _compile_flags(
             for rule in named
             if rule.action == "deny" and not rule.is_scoped
             for tool in rule.tools
-            if tool not in scoped_tools and tool not in completion_tools
+            if tool not in scoped_tools and tool not in meridian_tools
         )
     )
     callable_tools = policy.allowed_tools
     wildcard = _strictest(rule for rule in rules if rule.tool == "*" and rule.pattern is None)
     if wildcard == "deny":
-        allowed = tuple(dedupe_nonempty((*callable_tools, *completion_tools)))
+        allowed = tuple(dedupe_nonempty((*callable_tools, *meridian_tools)))
         return allowed, exclude
     if wildcard in {"allow", "ask"}:
         return ("*",), exclude
@@ -178,12 +178,11 @@ def _bash_fails_closed(rules: tuple[PiExtensionRule, ...]) -> bool:
 
 
 def _needs_extension(
-    rules: tuple[PiExtensionRule, ...], *, completion_commands: tuple[str, ...]
+    rules: tuple[PiExtensionRule, ...], *, meridian_commands: tuple[PlatformCommand, ...]
 ) -> bool:
-    # Every spawn carries the completion commands; they need the extension only when a
-    # rule could otherwise restrict the shell.
+    # Meridian commands need the extension only when a rule could otherwise restrict the shell.
     return bool(
-        (completion_commands and rules)
+        (meridian_commands and rules)
         or any(
             rule.pattern is not None
             or rule.action == "ask"
@@ -285,12 +284,28 @@ def _report(
         is not None
     ]
     for platform in policy.platform_rules:
-        if platform.kind == "completion-commands" and not spec.interactive:
+        if platform.kind == "meridian-commands":
+            stricter = any(
+                rule.tool in {"bash", "*"}
+                and rule.pattern is not None
+                and rule.action != "allow"
+                and any(
+                    command.profile_restrictable
+                    and command_grant_covers_pattern(command, rule.pattern)
+                    for command in platform.commands
+                )
+                for rule in extension_rules
+            )
             lines.append(
                 ReportLine(
                     platform_element(platform),
-                    "platform",
-                    "--tools bash plus fixed tool_call grants"
+                    "partial" if stricter else "platform",
+                    (
+                        "--tools bash plus fixed tool_call grants; narrower profile rules "
+                        "remain stricter"
+                        if stricter
+                        else "--tools bash plus fixed tool_call grants"
+                    )
                     if permissions.extension_policy is not None
                     else "no rule restricts bash, so they run",
                 )
@@ -315,15 +330,15 @@ def compile_pi_permissions(
 
     policy = spec.permission_policy
     rules = _extension_rules(policy.rules)
-    completion_commands = _completion_commands(policy, interactive=spec.interactive)
-    tools, exclude_tools = _compile_flags(policy, rules, completion_commands)
+    meridian_commands = _meridian_commands(policy)
+    tools, exclude_tools = _compile_flags(policy, rules, meridian_commands)
     extension_policy = (
         PiExtensionPolicy(
             rules=rules,
-            completion_commands=completion_commands,
+            meridian_commands=meridian_commands,
             bash_fail_closed=_bash_fails_closed(rules),
         )
-        if _needs_extension(rules, completion_commands=completion_commands)
+        if _needs_extension(rules, meridian_commands=meridian_commands)
         else None
     )
     permissions = PiPermissions(

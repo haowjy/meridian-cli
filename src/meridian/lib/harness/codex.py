@@ -37,6 +37,7 @@ from meridian.lib.harness.codex_rollout import (
     find_rollout,
     materialize_fork_rollout,
 )
+from meridian.lib.harness.codex_rules import ensure_codex_meridian_rules
 from meridian.lib.harness.common import extract_codex_thread_id
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -80,8 +81,28 @@ from meridian.lib.launch.constants import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
+from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES
 
 logger = logging.getLogger(__name__)
+
+
+def materialize_codex_spec(
+    spec: ResolvedLaunchSpec,
+    env: Mapping[str, str],
+    child_cwd: Path,
+) -> ResolvedLaunchSpec:
+    """Project Meridian's execpolicy rule for a real constrained Codex launch."""
+
+    if (
+        spec.permission_policy.sandbox not in CONSTRAINED_SANDBOX_MODES
+        or not spec.permission_policy.has_spawn_capability
+    ):
+        return spec
+    return spec.model_copy(
+        update={
+            "codex_runtime": ensure_codex_meridian_rules(env, child_cwd=child_cwd),
+        }
+    )
 
 
 def _codex_home() -> Path:
@@ -583,6 +604,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
             permission_report=lambda spec: compile_codex_permissions(spec)[1],
+            materialize_spec=materialize_codex_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,
                 bootstrap_payload=project_codex_spec_to_thread_request_for_project,

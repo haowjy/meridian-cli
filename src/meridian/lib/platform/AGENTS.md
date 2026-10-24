@@ -12,8 +12,8 @@ best-effort legacy code; do not add or expand them.
 
 Two layers:
 
-1. **Detection and primitives** (`__init__.py`, `locking.py`, `terminate.py`) —
-   `IS_WINDOWS`, `IS_POSIX`, `get_home_path()`, file locking, process-tree teardown shim.
+1. **Detection and primitives** (`__init__.py`, `locking.py`, `terminate.py`) — `IS_WINDOWS`, `IS_POSIX`,
+   `get_home_path()`, file locking, process-tree teardown shim.
 
 2. **Process containment** (`process_scope/`) — ensures the full subprocess tree
    Meridian starts is killed on spawn completion, cancel, or crash. Three backends:
@@ -50,6 +50,8 @@ uses `LOCK_SH`; a held shared lock cannot be upgraded to exclusive in place. The
 legacy Windows branch enforces exclusive locks but its shared mode is advisory-only;
 POSIX enforces shared mode. Windows exclusive locking writes a guard byte and fsyncs
 before the first lock attempt; this behavior is untested.
+Existing lock files open read/write by default. `read_only_existing=True` is reserved for
+the project-lifetime lock projected read-only into harness sandboxes.
 
 Coordination lock paths are unlinked only through `unlink_validated_lock()`, while a
 fresh, non-reentrant exclusive acquisition still validates against the linked inode,

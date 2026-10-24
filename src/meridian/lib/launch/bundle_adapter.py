@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -390,6 +390,15 @@ def _append_error_note(message: str, note: str | None) -> str:
     return f"{message}\n{note}" if note is not None else message
 
 
+def _describe_read_only_model_resolution(message: str, *, enabled: bool) -> str:
+    if not enabled:
+        return message
+    return message.replace(
+        "--no-refresh-models was passed",
+        "Model resolution is read-only",
+    )
+
+
 class MarsSelectionError(RuntimeError):
     """A failed Mars decision with its diagnostic report retained for callers."""
 
@@ -443,6 +452,7 @@ def _raise_bundle_error(
     stderr: str,
     returncode: int | None = None,
     note: str | None = None,
+    models_readonly: bool = False,
 ) -> None:
     try:
         raw_payload = json.loads(stdout)
@@ -453,11 +463,16 @@ def _raise_bundle_error(
         envelope = _MarsErrorEnvelope.model_validate(payload)
         raise MarsSelectionError(
             str(envelope.error.code),
-            str(envelope.error.message),
+            _describe_read_only_model_resolution(
+                str(envelope.error.message), enabled=models_readonly
+            ),
             envelope.route_trace,
             note=note,
         )
-    message = _extract_error_message(stdout=stdout, stderr=stderr)
+    message = _describe_read_only_model_resolution(
+        _extract_error_message(stdout=stdout, stderr=stderr),
+        enabled=models_readonly,
+    )
     normalized = message.lower()
     if "launch-bundle" in normalized and (
         "unrecognized" in normalized
@@ -605,6 +620,7 @@ def request_and_resolve(
             stderr=result.stderr,
             returncode=result.returncode,
             note=_fallback_agent_error_note(request, roots),
+            models_readonly=request.no_refresh_models,
         )
 
     try:
@@ -617,7 +633,16 @@ def request_and_resolve(
     if not isinstance(payload_obj, dict):
         raise RuntimeError("Mars launch-bundle returned a non-object JSON payload.")
     payload = cast("dict[str, object]", payload_obj)
-    return _parse_bundle_payload(payload, harness_registry=harness_registry)
+    bundle = _parse_bundle_payload(payload, harness_registry=harness_registry)
+    if not request.no_refresh_models:
+        return bundle
+    return replace(
+        bundle,
+        warnings=tuple(
+            _describe_read_only_model_resolution(warning, enabled=True)
+            for warning in bundle.warnings
+        ),
+    )
 
 
 def _map_provenance_level(value: str | None) -> ProvenanceLevel:

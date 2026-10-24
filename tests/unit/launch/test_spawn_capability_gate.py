@@ -62,6 +62,8 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "run_in_background" in contract.content
     assert "confirmation message's instructions" in contract.content
     assert "reply is kept as the report" not in contract.content
+    work = next(block for block in blocks if block.name == "work-discovery")
+    assert "standalone shell calls" in work.content
 
 
 def test_spawn_capability_requires_inventory_and_honors_explicit_disable() -> None:

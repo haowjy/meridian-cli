@@ -38,6 +38,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "prompt",
         "prompt_file_path",
         "claude_runtime",
+        "codex_runtime",
         "user_turn_content",
     }
 )
@@ -93,13 +94,18 @@ def _settings_json(settings: ClaudeSettings) -> str:
         permissions["ask"] = list(settings.ask)
     if permissions:
         payload["permissions"] = permissions
-    if settings.sandbox_enabled is not None:
-        sandbox: dict[str, object] = {"enabled": settings.sandbox_enabled}
-        if settings.sandbox_enabled:
+    if settings.sandbox is not None:
+        sandbox_settings = settings.sandbox
+        sandbox: dict[str, object] = {}
+        if sandbox_settings.enabled is not None:
+            sandbox["enabled"] = sandbox_settings.enabled
+        if sandbox_settings.enabled is True:
             sandbox["allowUnsandboxedCommands"] = False
-            sandbox["autoAllowBashIfSandboxed"] = settings.auto_allow_bash_if_sandboxed
-            if settings.sandbox_deny_write:
-                sandbox["filesystem"] = {"denyWrite": list(settings.sandbox_deny_write)}
+            sandbox["autoAllowBashIfSandboxed"] = sandbox_settings.auto_allow_bash
+            if sandbox_settings.deny_write:
+                sandbox["filesystem"] = {"denyWrite": list(sandbox_settings.deny_write)}
+        if sandbox_settings.excluded_commands:
+            sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)
         payload["sandbox"] = sandbox
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 

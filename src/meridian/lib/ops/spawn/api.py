@@ -14,9 +14,11 @@ from meridian.lib.bootstrap.services import (
     RuntimeWriteContext,
     build_spawn_application_service,
     build_spawn_application_service_from_roots,
+    prepare_for_runtime_write,
 )
 from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
+from meridian.lib.core.caller_boundary import CallerBoundaryCheck
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
@@ -45,10 +47,9 @@ from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.runtime import (
     OperationRuntime,
-    build_runtime_from_root_and_config,
+    inspect_runtime_authority_for_read,
+    plan_runtime_authority_for_write,
     resolve_project_authority,
-    resolve_runtime_authority_for_read,
-    resolve_runtime_authority_for_write,
     resolve_runtime_root,
     resolve_runtime_root_and_config,
     resolve_runtime_root_and_config_for_read,
@@ -110,7 +111,12 @@ from .models import (
 )
 from .owed import resolve_owed_finished_rows, select_delivery_rows
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
-from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
+from .prepare import (
+    SpawnCreateArtifacts,
+    bind_create_payload_preview,
+    build_create_payload,
+    validate_create_input,
+)
 from .query import (
     denied_requests,
     detail_from_row,
@@ -281,10 +287,59 @@ class SpawnCreatePreparation:
     payload: SpawnCreateInput
     resolved_context: RuntimeContext
     authority: Any
-    runtime: OperationRuntime | None
+    planning_runtime: OperationRuntime | None
     artifacts: SpawnCreateArtifacts | None
     dry_run_work_warning: str | None
     depth_exceeded: SpawnActionOutput | None = None
+
+
+def _failure_create_input(
+    payload: SpawnCreateInput | SpawnContinueInput | SpawnForkInput,
+) -> SpawnCreateInput:
+    """Give the shared pre-init boundary one failure payload shape."""
+
+    if isinstance(payload, SpawnCreateInput):
+        return payload
+    return SpawnCreateInput(
+        prompt=payload.prompt,
+        model=payload.model,
+        files=payload.files,
+        template_vars=payload.template_vars,
+        agent=payload.agent,
+        agent_opt_out=payload.agent_opt_out,
+        skills=payload.skills,
+        goal=payload.goal,
+        desc=payload.desc,
+        work=payload.work,
+        task_dir=payload.task_dir,
+        caller_cwd=payload.caller_cwd,
+        **payload.launch_option_updates(),
+    )
+
+
+def _run_spawn_creation_boundary(
+    payload: SpawnCreateInput | SpawnContinueInput | SpawnForkInput,
+    *,
+    existing_check: CallerBoundaryCheck | None = None,
+    replayed_passthrough_args: tuple[str, ...] = (),
+) -> CallerBoundaryCheck | SpawnActionOutput:
+    """Run a caller-boundary phase and present every refusal as pre-init failure."""
+
+    failure_payload = _failure_create_input(payload)
+
+    def _build() -> CallerBoundaryCheck:
+        try:
+            if existing_check is not None:
+                existing_check.enforce_passthrough_args(replayed_passthrough_args)
+                return existing_check
+            return CallerBoundaryCheck.from_environment(
+                dry_run=payload.dry_run,
+                passthrough_args=payload.passthrough_args,
+            )
+        except EXPECTED_PRE_INIT_EXCEPTIONS as exc:
+            raise PreInitFailure(str(exc)) from exc
+
+    return run_pre_init_boundary(payload=failure_payload, operation=_build)
 
 
 def _prepare_spawn_create(
@@ -292,34 +347,19 @@ def _prepare_spawn_create(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
-    prepared: RuntimeWriteContext | None,
+    floor_check: CallerBoundaryCheck,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
-    prepared_context = prepared
     register_debug_trace_observer()
     resolved_context = runtime_context(ctx)
     spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
     logical_owner = spawn_env_id if spawn_env_id else "cli"
-    authority = None
-    if prepared_context is not None:
-        resolved_root = _project_root_from_prepared(prepared_context)
-        config = _config_from_prepared(prepared_context)
-        authority = prepared_context.authority
-        register_spawn_telemetry_observer()
-    elif payload.dry_run:
-        authority = resolve_runtime_authority_for_read(payload.project_root)
-        resolved_root = authority.project_root
-        config = load_config(resolved_root, authority=authority)
+    authority = inspect_runtime_authority_for_read(payload.project_root)
+    planning_authority = plan_runtime_authority_for_write(authority.project_root)
+    resolved_root = authority.project_root
+    config = load_config(resolved_root, authority=authority)
+    if payload.dry_run:
         setup_telemetry(runtime_root=None, logical_owner=logical_owner)
-        register_spawn_telemetry_observer()
-    else:
-        authority = resolve_runtime_authority_for_write(payload.project_root)
-        resolved_root = authority.project_root
-        config = load_config(resolved_root, authority=authority)
-        setup_telemetry(
-            runtime_root=authority.runtime_root,
-            logical_owner=logical_owner,
-        )
         register_spawn_telemetry_observer()
     payload = payload.model_copy(update={"project_root": resolved_root.as_posix()})
     failure_payload[0] = payload
@@ -340,7 +380,6 @@ def _prepare_spawn_create(
                 "Dry-run leaves state unchanged; it would be created on launch."
             )
 
-    runtime = None
     if not payload.dry_run:
         current_depth, max_depth = depth_limits(config.max_depth, ctx=resolved_context)
         if max_depth_reached(current_depth, max_depth):
@@ -348,38 +387,49 @@ def _prepare_spawn_create(
                 payload=payload,
                 resolved_context=resolved_context,
                 authority=authority,
-                runtime=None,
+                planning_runtime=None,
                 artifacts=None,
                 dry_run_work_warning=dry_run_work_warning,
                 depth_exceeded=depth_exceeded_output(current_depth, max_depth),
             )
-    if prepared_context is not None:
-        from meridian.lib.harness.registry import get_default_harness_registry
 
-        runtime = OperationRuntime.from_prepared(
-            prepared_context,
-            harness_registry=get_default_harness_registry(),
-            sink=sink,
+    from meridian.lib.harness.registry import get_default_harness_registry
+
+    harness_registry = get_default_harness_registry()
+    planned_runtime_root = planning_authority.runtime_root
+    if planned_runtime_root is None:
+        from meridian.lib.state.user_paths import get_dry_run_preview_root
+
+        planned_runtime_root = get_dry_run_preview_root(user_home=planning_authority.user_home)
+        planning_authority = planning_authority.model_copy(
+            update={"runtime_root": planned_runtime_root}
         )
-    elif not payload.dry_run:
-        runtime = build_runtime_from_root_and_config(
-            resolved_root,
-            config,
-            authority=authority,
-            sink=sink,
-        )
+    planning_runtime = OperationRuntime(
+        project_root=resolved_root,
+        authority=planning_authority,
+        config=config,
+        harness_registry=harness_registry,
+        sink=sink or NullSink(),
+    )
 
     artifacts = build_create_payload(
         payload,
-        runtime=runtime,
+        runtime=planning_runtime,
         preflight_warning=preflight_warning,
         ctx=resolved_context,
+        models_readonly=True,
     )
+    floor_check.enforce(artifacts.request.execution_policy.sandbox)
+    if payload.dry_run:
+        artifacts = bind_create_payload_preview(
+            artifacts,
+            harness_registry=harness_registry,
+        )
     return SpawnCreatePreparation(
         payload=payload,
         resolved_context=resolved_context,
         authority=authority,
-        runtime=runtime,
+        planning_runtime=planning_runtime,
         artifacts=artifacts,
         dry_run_work_warning=dry_run_work_warning,
     )
@@ -390,7 +440,7 @@ def _prepare_spawn_create_with_expected_failures(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None,
     sink: OutputSink | None,
-    prepared: RuntimeWriteContext | None,
+    floor_check: CallerBoundaryCheck,
     failure_payload: list[SpawnCreateInput],
 ) -> SpawnCreatePreparation:
     try:
@@ -398,41 +448,72 @@ def _prepare_spawn_create_with_expected_failures(
             payload=payload,
             ctx=ctx,
             sink=sink,
-            prepared=prepared,
+            floor_check=floor_check,
             failure_payload=failure_payload,
         )
     except (*EXPECTED_PRE_INIT_EXCEPTIONS, RuntimeError) as exc:
         raise PreInitFailure(str(exc)) from exc
 
 
-def spawn_create_sync(
+def _run_spawn_create_preparation(
     payload: SpawnCreateInput,
-    ctx: RuntimeContext | None = None,
     *,
+    ctx: RuntimeContext | None,
+    floor_check: CallerBoundaryCheck,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
-    on_spawn_id: Callable[[str], None] | None = None,
-) -> SpawnActionOutput:
+) -> SpawnCreatePreparation | SpawnActionOutput:
     failure_payload = [payload]
-    preparation = run_pre_init_boundary(
+    return run_pre_init_boundary(
         payload=lambda: failure_payload[0],
         operation=lambda: _prepare_spawn_create_with_expected_failures(
             payload=payload,
             ctx=ctx,
             sink=sink,
-            prepared=prepared,
+            floor_check=floor_check,
             failure_payload=failure_payload,
         ),
     )
-    if isinstance(preparation, SpawnActionOutput):
-        return preparation
+
+
+def _materialize_spawn_runtime(
+    preparation: SpawnCreatePreparation,
+    *,
+    sink: OutputSink | None,
+) -> tuple[OperationRuntime, Any]:
+    planning_runtime = preparation.planning_runtime
+    if planning_runtime is None:
+        raise RuntimeError("Spawn create preparation did not produce a runtime plan.")
+    prepared_context = prepare_for_runtime_write(preparation.authority.project_root)
+    runtime_root = prepared_context.runtime_root
+    if runtime_root is None:
+        raise RuntimeError("Prepared runtime context is missing runtime root.")
+    setup_telemetry(
+        runtime_root=runtime_root,
+        logical_owner=os.environ.get("MERIDIAN_SPAWN_ID") or "cli",
+    )
+    register_spawn_telemetry_observer()
+    runtime = OperationRuntime(
+        project_root=prepared_context.project_root,
+        authority=prepared_context.authority,
+        config=planning_runtime.config,
+        harness_registry=planning_runtime.harness_registry,
+        sink=sink or NullSink(),
+    )
+    return runtime, prepared_context.authority
+
+
+def _execute_prepared_spawn_create(
+    preparation: SpawnCreatePreparation,
+    *,
+    sink: OutputSink | None,
+    on_spawn_id: Callable[[str], None] | None = None,
+) -> SpawnActionOutput:
     if preparation.depth_exceeded is not None:
         return preparation.depth_exceeded
 
     payload = preparation.payload
     resolved_context = preparation.resolved_context
     authority = preparation.authority
-    runtime = preparation.runtime
     artifacts = preparation.artifacts
     dry_run_work_warning = preparation.dry_run_work_warning
     if artifacts is None:
@@ -487,8 +568,7 @@ def spawn_create_sync(
             forked_from=forked_from,
         )
 
-    if runtime is None:
-        raise RuntimeError("Spawn runtime was not initialized.")
+    runtime, authority = _materialize_spawn_runtime(preparation, sink=sink)
     if payload.background:
         result = execute_spawn_background(
             payload=payload,
@@ -517,19 +597,42 @@ def spawn_create_sync(
     return result.model_copy(update=updates)
 
 
+def spawn_create_sync(
+    payload: SpawnCreateInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    on_spawn_id: Callable[[str], None] | None = None,
+) -> SpawnActionOutput:
+    floor_check = _run_spawn_creation_boundary(payload)
+    if isinstance(floor_check, SpawnActionOutput):
+        return floor_check
+    preparation = _run_spawn_create_preparation(
+        payload,
+        ctx=ctx,
+        floor_check=floor_check,
+        sink=sink,
+    )
+    if isinstance(preparation, SpawnActionOutput):
+        return preparation
+    return _execute_prepared_spawn_create(
+        preparation,
+        sink=sink,
+        on_spawn_id=on_spawn_id,
+    )
+
+
 async def spawn_create(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     return await asyncio.to_thread(
         spawn_create_sync,
         payload,
         ctx=ctx,
         sink=sink,
-        prepared=prepared,
     )
 
 
@@ -2224,38 +2327,17 @@ def _build_fork_create_input(
     )
 
 
-def _resolve_effective_fork_target_harness(
-    create_input: SpawnCreateInput,
-    *,
-    resolved_project_root: Path | None = None,
-) -> str:
-    preview_input = create_input
-    if resolved_project_root is not None:
-        preview_input = create_input.model_copy(
-            update={"project_root": resolved_project_root.as_posix()},
-        )
-
-    validated_payload, preflight_warning = validate_create_input(preview_input)
-    preview_request = build_create_payload(
-        validated_payload,
-        preflight_warning=preflight_warning,
-    ).request
-    resolved_harness = (preview_request.harness or "").strip()
-    if not resolved_harness:
-        raise ValueError("Fork target harness could not be resolved.")
-    return resolved_harness
-
-
 def spawn_fork_sync(
     payload: SpawnForkInput,
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
+    floor_check = _run_spawn_creation_boundary(payload)
+    if isinstance(floor_check, SpawnActionOutput):
+        return floor_check
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
-        prepared=prepared,
     )
     normalized_source_ref = payload.source_ref.strip()
     if not normalized_source_ref:
@@ -2268,6 +2350,17 @@ def spawn_fork_sync(
         normalized_source_ref,
         runtime_root=runtime_root,
     )
+    source_snapshot = resolved_reference.source_launch_policy_snapshot
+    source_check = _run_spawn_creation_boundary(
+        payload,
+        existing_check=floor_check,
+        replayed_passthrough_args=(
+            source_snapshot.extra_args if source_snapshot is not None else ()
+        ),
+    )
+    if isinstance(source_check, SpawnActionOutput):
+        return source_check
+    floor_check = source_check
     if resolved_reference.missing_harness_session_id:
         raise NativeSessionUnavailable(normalized_source_ref, "unbound")
 
@@ -2305,22 +2398,33 @@ def spawn_fork_sync(
         requested_goal=requested_goal,
         harness=requested_harness,
     )
-    target_harness = _resolve_effective_fork_target_harness(
-        unresolved_create_input,
-        resolved_project_root=project_root,
+    create_input = unresolved_create_input.model_copy(
+        update={"project_root": project_root.as_posix()},
     )
+    preparation = _run_spawn_create_preparation(
+        create_input,
+        ctx=ctx,
+        sink=sink,
+        floor_check=floor_check,
+    )
+    if isinstance(preparation, SpawnActionOutput):
+        return preparation
+    artifacts = preparation.artifacts
+    if artifacts is None:
+        raise RuntimeError("Fork preparation did not produce launch artifacts.")
+    target_harness = (artifacts.request.harness or "").strip()
+    if not target_harness:
+        raise ValueError("Fork target harness could not be resolved.")
     if source_harness is not None and source_harness != target_harness:
         raise ValueError(
             "Cannot fork across harnesses: "
             f"source is '{source_harness}', target is '{target_harness}'."
         )
 
-    create_input = unresolved_create_input.model_copy(
-        update={"harness": target_harness},
+    return _execute_prepared_spawn_create(
+        preparation,
+        sink=sink,
     )
-    if prepared is not None:
-        return spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)
-    return spawn_create_sync(create_input, ctx=ctx, sink=sink)
 
 
 async def spawn_fork(
@@ -2328,14 +2432,12 @@ async def spawn_fork(
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     return await asyncio.to_thread(
         spawn_fork_sync,
         payload,
         ctx=ctx,
         sink=sink,
-        prepared=prepared,
     )
 
 
@@ -2344,13 +2446,14 @@ def spawn_continue_sync(
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
+    floor_check = _run_spawn_creation_boundary(payload)
+    if isinstance(floor_check, SpawnActionOutput):
+        return _with_command(floor_check, "spawn.continue")
     if payload.model is not None and not payload.model.strip():
         raise ValueError("--model must not be empty")
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
-        prepared=prepared,
     )
     if runtime_root is None:
         normalized = payload.spawn_id.strip()
@@ -2361,16 +2464,21 @@ def spawn_continue_sync(
         runtime_root=runtime_root,
         harness_hint=payload.harness,
     )
+    source_snapshot = resolved_reference.source_launch_policy_snapshot
+    source_check = _run_spawn_creation_boundary(
+        payload,
+        existing_check=floor_check,
+        replayed_passthrough_args=(
+            source_snapshot.extra_args if source_snapshot is not None else ()
+        ),
+    )
+    if isinstance(source_check, SpawnActionOutput):
+        return _with_command(source_check, "spawn.continue")
+    floor_check = source_check
     if resolved_reference.missing_harness_session_id:
         raise NativeSessionUnavailable(resolved_spawn_id, "unbound")
 
     _reject_continue_policy_overrides(payload)
-    sweep_before_continue(
-        runtime_root,
-        resolved_spawn_id,
-        chat_id=resolved_reference.source_chat_id,
-        dry_run=payload.dry_run,
-    )
     create_input = _build_continue_create_input(
         payload=payload,
         source_spawn=source_spawn,
@@ -2378,10 +2486,21 @@ def spawn_continue_sync(
         resolved_reference=resolved_reference,
         runtime_root=runtime_root,
     )
-    if prepared is not None:
-        result = spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)
-    else:
-        result = spawn_create_sync(create_input, ctx=ctx, sink=sink)
+    preparation = _run_spawn_create_preparation(
+        create_input,
+        ctx=ctx,
+        sink=sink,
+        floor_check=floor_check,
+    )
+    if isinstance(preparation, SpawnActionOutput):
+        return _with_command(preparation, "spawn.continue")
+    sweep_before_continue(
+        runtime_root,
+        resolved_spawn_id,
+        chat_id=resolved_reference.source_chat_id,
+        dry_run=payload.dry_run,
+    )
+    result = _execute_prepared_spawn_create(preparation, sink=sink)
     return _with_command(result, "spawn.continue")
 
 
@@ -2390,12 +2509,10 @@ async def spawn_continue(
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     return await asyncio.to_thread(
         spawn_continue_sync,
         payload,
         ctx=ctx,
         sink=sink,
-        prepared=prepared,
     )

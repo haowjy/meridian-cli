@@ -25,6 +25,7 @@ from meridian.lib.safety.policy import (
     PlatformRuleKind,
     ReportLine,
     ReportStatus,
+    command_grant_covers_pattern,
     complete_report,
     platform_element,
     rule_element,
@@ -54,25 +55,28 @@ _PASSTHROUGH_ALLOW_ELEMENT = "source: passthrough --allowedTools"
 
 
 @dataclass(frozen=True)
+class ClaudeSandboxSettings:
+    """The Claude ``sandbox`` settings Meridian owns for one launch."""
+
+    # None preserves the user's configured enabled state while adding exclusions.
+    enabled: bool | None = None
+    deny_write: tuple[str, ...] = ()
+    auto_allow_bash: bool = False
+    excluded_commands: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ClaudeSettings:
     """The subset of Claude ``--settings`` Meridian owns for one launch."""
 
     allow: tuple[str, ...] = ()
     deny: tuple[str, ...] = ()
     ask: tuple[str, ...] = ()
-    sandbox_enabled: bool | None = None
-    sandbox_deny_write: tuple[str, ...] = ()
-    auto_allow_bash_if_sandboxed: bool = False
+    sandbox: ClaudeSandboxSettings | None = None
 
     @property
     def empty(self) -> bool:
-        return not (
-            self.allow
-            or self.deny
-            or self.ask
-            or self.sandbox_enabled is not None
-            or self.auto_allow_bash_if_sandboxed
-        )
+        return not (self.allow or self.deny or self.ask or self.sandbox is not None)
 
 
 @dataclass(frozen=True)
@@ -259,14 +263,18 @@ def _read_passthrough(extra_args: tuple[str, ...]) -> _Passthrough:
     )
 
 
-def _completion_tools(policy: PermissionPolicy) -> tuple[str, ...]:
-    platform = _platform_rule(policy, "completion-commands")
+def _meridian_tools(policy: PermissionPolicy) -> tuple[str, ...]:
+    platform = _platform_rule(policy, "meridian-commands")
     if platform is None:
         return ()
     return tuple(
         native
         for command in platform.commands
-        for native in (f"Bash({command})", f"Bash({command} *)")
+        for native in (
+            (f"Bash({command.command})",)
+            if command.match == "exact"
+            else (f"Bash({command.command})", f"Bash({command.command} *)")
+        )
     )
 
 
@@ -298,7 +306,7 @@ def _compile_channels(
     effective: tuple[_Effective, ...],
     passthrough: _Passthrough,
 ) -> _Channels:
-    completion = _completion_tools(policy)
+    meridian_tools = _meridian_tools(policy)
     # A plain rule shadows a scoped allow when Claude checks it for the calls the allow lets
     # through: it names a tool the allow concerns, or the permission the allow is spelled
     # with. A scoped write allow is Edit(src/*), so both a plain Write and a plain Edit do.
@@ -343,12 +351,12 @@ def _compile_channels(
         or required_mode == "manual"
         or (required_mode is None and policy.approval in ("default", "confirm"))
     )
-    completion_bases = {split_native(native)[0] for native in completion}
+    meridian_bases = {split_native(native)[0] for native in meridian_tools}
     disallowed: list[str] = []
     for entry, native in plain:
         if (entry.rule.capability, native) in gates:
             continue
-        if native in completion_bases and completion_gates_free:
+        if native in meridian_bases and completion_gates_free:
             gates[(entry.rule.capability, native)] = _Gate(
                 entry.rule.capability, native, entry.action
             )
@@ -361,7 +369,7 @@ def _compile_channels(
         disallowed.extend(f"Agent({pattern})" for pattern in _BUILTIN_AGENT_PATTERNS)
 
     gate_tuple = tuple(gates.values())
-    allow.extend(completion)
+    allow.extend(meridian_tools)
     kept, _ = _filter_passthrough_allows(
         policy, passthrough, frozenset(gate.base for gate in gate_tuple)
     )
@@ -387,25 +395,33 @@ def _compile_channels(
 def _available_tools(policy: PermissionPolicy) -> tuple[str, ...]:
     if not policy.is_allowlist:
         return ()
-    completion = (split_native(native)[0] for native in _completion_tools(policy))
-    return tuple(dedupe_nonempty((*policy.allowed_tools, *completion)))
+    meridian_tools = (split_native(native)[0] for native in _meridian_tools(policy))
+    return tuple(dedupe_nonempty((*policy.allowed_tools, *meridian_tools)))
 
 
-def _compile_sandbox(
-    policy: PermissionPolicy, channels: _Channels
-) -> tuple[bool | None, tuple[str, ...], bool]:
+def _outside_sandbox_commands(policy: PermissionPolicy) -> tuple[str, ...]:
+    return tuple(
+        f"{command.command} *" if command.match == "prefix" else command.command
+        for command in policy.outside_sandbox_commands
+    )
+
+
+def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSandboxSettings | None:
     if policy.sandbox == "default":
-        return None, (), False
+        return None
     if policy.sandbox == "danger-full-access":
-        return False, (), False
+        return ClaudeSandboxSettings(enabled=False)
     # Sandbox auto-approval accepts unmatched Bash before any mode can refuse it.
-    return (
-        True,
-        policy.sandbox_write_roots if policy.sandbox == "read-only" else (),
-        policy.approval == "auto"
-        and not policy.is_allowlist
-        and not channels.gates
-        and not channels.ask,
+    return ClaudeSandboxSettings(
+        enabled=True,
+        deny_write=policy.sandbox_write_roots if policy.sandbox == "read-only" else (),
+        auto_allow_bash=(
+            policy.approval == "auto"
+            and not policy.is_allowlist
+            and not channels.gates
+            and not channels.ask
+        ),
+        excluded_commands=_outside_sandbox_commands(policy),
     )
 
 
@@ -607,22 +623,54 @@ def _tool_rule_line(
     return ReportLine(element, "partial" if partial else "native", note)
 
 
-def _completion_line(
+def _meridian_commands_line(
     policy: PermissionPolicy, platform: PlatformRule, permissions: ClaudePermissions
 ) -> ReportLine:
-    natives = _completion_tools(policy)
+    native_commands = tuple(
+        (native, command)
+        for command in platform.commands
+        for native in (
+            (f"Bash({command.command})",)
+            if command.match == "exact"
+            else (f"Bash({command.command})", f"Bash({command.command} *)")
+        )
+    )
+    natives = tuple(native for native, _command in native_commands)
     emitted = [native for native in natives if native in permissions.settings.allow]
-    blocked: dict[str, list[str]] = {}
-    for native in natives:
+    blocked: dict[tuple[str, bool], list[str]] = {}
+    for native, command in native_commands:
         blocker = _shadow(native, permissions)
         if native not in emitted or blocker is not None:
-            blocked.setdefault(blocker or "", []).append(native)
+            blocked.setdefault((blocker or "", command.profile_restrictable), []).append(native)
+    for command in platform.commands:
+        for rule in policy.rules:
+            if rule.origin == PLATFORM_ORIGIN or rule.action == "allow":
+                continue
+            for native in rule.native:
+                base, pattern = split_native(native)
+                if (
+                    base == "Bash"
+                    and pattern is not None
+                    and command_grant_covers_pattern(command, pattern)
+                ):
+                    blocked.setdefault((native, command.profile_restrictable), []).append(
+                        f"Bash({command.command}{' *' if command.match == 'prefix' else ''})"
+                    )
     if blocked:
-        problems = [
-            f"{','.join(names)}: Claude checks {blocker} first" if blocker else
-            f"{','.join(names)} omitted"
-            for blocker, names in blocked.items()
-        ]
+        problems: list[str] = []
+        for (blocker, profile_restrictable), names in blocked.items():
+            subject = ",".join(names)
+            if profile_restrictable:
+                problems.append(
+                    f"{subject}: profile restriction {blocker or 'omission'} remains stricter"
+                )
+            elif blocker:
+                problems.append(
+                    f"{subject}: Claude checks {blocker} first, so it cannot keep the "
+                    "completion grant final"
+                )
+            else:
+                problems.append(f"{subject} omitted, so the completion grant is not final")
         return ReportLine(platform_element(platform), "partial", "; ".join(problems))
     note = "--settings permissions.allow " + ",".join(emitted)
     if permissions.restrict_tools and "Bash" not in policy.allowed_tools:
@@ -635,20 +683,16 @@ def _completion_line(
     return ReportLine(platform_element(platform), "platform", note)
 
 
-def _platform_lines(
-    policy: PermissionPolicy, permissions: ClaudePermissions
-) -> list[ReportLine]:
+def _platform_lines(policy: PermissionPolicy, permissions: ClaudePermissions) -> list[ReportLine]:
     lines: list[ReportLine] = []
     for platform in policy.platform_rules:
         if platform.kind == "builtin-agents":
             names = ",".join(f"Agent({pattern})" for pattern in _BUILTIN_AGENT_PATTERNS)
             lines.append(
-                ReportLine(
-                    platform_element(platform), "platform", f"--disallowedTools {names}"
-                )
+                ReportLine(platform_element(platform), "platform", f"--disallowedTools {names}")
             )
-        elif platform.kind == "completion-commands":
-            lines.append(_completion_line(policy, platform, permissions))
+        elif platform.kind == "meridian-commands":
+            lines.append(_meridian_commands_line(policy, platform, permissions))
     return lines
 
 
@@ -777,13 +821,21 @@ def _source_lines(
 
 
 def _sandbox_line(policy: PermissionPolicy, permissions: ClaudePermissions) -> ReportLine:
-    settings = "--settings sandbox.enabled=" + str(permissions.settings.sandbox_enabled).lower()
+    sandbox = permissions.settings.sandbox
+    assert sandbox is not None
+    settings = "--settings sandbox.enabled=" + str(sandbox.enabled).lower()
     if policy.sandbox == "read-only":
         settings += " with filesystem.denyWrite on workspace roots"
     status: ReportStatus = "native"
     if policy.sandbox != "danger-full-access":
         status = "partial"
         settings += "; confines Bash subprocesses only, not Edit/Write"
+    if sandbox.excluded_commands:
+        settings += (
+            "; excludedCommands="
+            + ",".join(sandbox.excluded_commands)
+            + "; a matching command runs fully outside the sandbox"
+        )
     return ReportLine(f"sandbox: {policy.sandbox}", status, settings)
 
 
@@ -796,7 +848,7 @@ def compile_claude_permissions(
     effective = _effective_rules(policy)
     passthrough = _read_passthrough(spec.extra_args)
     channels = _compile_channels(policy, effective, passthrough)
-    sandbox_enabled, sandbox_deny_write, auto_allow_bash = _compile_sandbox(policy, channels)
+    sandbox = _compile_sandbox(policy, channels)
     policy_mode = _policy_mode(policy, channels)
     # A passthrough mode is the launcher's own choice; Claude takes the last one, so
     # Meridian omits its mode rather than silently overriding it.
@@ -812,9 +864,7 @@ def compile_claude_permissions(
             allow=channels.allow,
             deny=channels.deny,
             ask=channels.ask,
-            sandbox_enabled=sandbox_enabled,
-            sandbox_deny_write=sandbox_deny_write,
-            auto_allow_bash_if_sandboxed=auto_allow_bash,
+            sandbox=sandbox,
         ),
         passthrough_args=passthrough.args,
     )
@@ -823,20 +873,14 @@ def compile_claude_permissions(
     lines = [
         line
         for entry in effective
-        if (
-            line := _tool_rule_line(
-                policy, entry, permissions, channels, interactive=interactive
-            )
-        )
+        if (line := _tool_rule_line(policy, entry, permissions, channels, interactive=interactive))
         is not None
     ]
     lines.extend(_platform_lines(policy, permissions))
     if policy.sandbox != "default":
         lines.append(_sandbox_line(policy, permissions))
     if policy.approval != "default":
-        lines.append(
-            _approval_line(policy, passthrough, policy_mode=policy_mode)
-        )
+        lines.append(_approval_line(policy, passthrough, policy_mode=policy_mode))
     lines.extend(
         _source_lines(
             policy,
@@ -852,4 +896,9 @@ def compile_claude_permissions(
     return permissions, complete_report(policy, lines, harness="Claude")
 
 
-__all__ = ["ClaudePermissions", "ClaudeSettings", "compile_claude_permissions"]
+__all__ = [
+    "ClaudePermissions",
+    "ClaudeSandboxSettings",
+    "ClaudeSettings",
+    "compile_claude_permissions",
+]

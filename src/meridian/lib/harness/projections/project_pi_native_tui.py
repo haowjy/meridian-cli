@@ -48,6 +48,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "agent_name",
         "agents_payload",
         "claude_runtime",
+        "codex_runtime",
         "prompt_file_path",
         "user_turn_content",
         "base_instructions",

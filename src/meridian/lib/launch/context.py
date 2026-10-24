@@ -31,6 +31,11 @@ from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
+from meridian.lib.core.caller_boundary import (
+    CALLER_BOUNDARY_ENV,
+    CallerBoundary,
+    current_pid_namespace,
+)
 from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.context_ref import ContextRef, render_context_refs
 from meridian.lib.core.execution_policy import NativeConfig
@@ -38,7 +43,11 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
-from meridian.lib.harness.bundle import bind_launch_spec, get_harness_bundle
+from meridian.lib.harness.bundle import (
+    bind_launch_spec,
+    get_harness_bundle,
+    materialize_launch_spec,
+)
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     PreparedLaunchContent,
@@ -64,6 +73,7 @@ from meridian.lib.state.paths import (
     resolve_spawn_log_dir,
 )
 from meridian.lib.state.spawn.model import LaunchMode
+from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
@@ -126,7 +136,11 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
-from .spawn_guidance import build_guidance_blocks, build_spawn_usage_contract
+from .spawn_guidance import (
+    build_guidance_blocks,
+    build_spawn_usage_contract,
+    has_spawn_capability,
+)
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
 
@@ -254,9 +268,7 @@ class LaunchContext:
     def enforcement_report(self) -> EnforcementReport:
         """What this launch's harness enforces from the permission policy."""
 
-        return get_harness_bundle(self.harness.id).projections.permission_report(
-            self.binding.spec
-        )
+        return get_harness_bundle(self.harness.id).projections.permission_report(self.binding.spec)
 
 
 @dataclass(frozen=True)
@@ -274,6 +286,7 @@ class PreparedLaunchSurface:
     content: PreparedLaunchContent
     runtime_seeds: PreparedLaunchRuntimeSeeds
     profile_tool_rules: tuple[ToolRule, ...]
+    has_spawn_capability: bool
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
     # Original launch request preserved for LaunchContext.request compatibility.
@@ -908,9 +921,7 @@ def _resolve_session_continuation(
             or request.session.continue_source_ref
             or "the source chat"
         )
-        raise ValueError(
-            cross_harness_continue_error(chat_ref, requested_harness, str(harness.id))
-        )
+        raise ValueError(cross_harness_continue_error(chat_ref, requested_harness, str(harness.id)))
     if not harness.capabilities.supports_session_resume:
         raise ValueError(f"{harness.id} cannot resume sessions")
     if requested_continue_fork and not harness.capabilities.supports_session_fork:
@@ -1502,6 +1513,7 @@ def prepare_launch_surface(
             seed_session_args=seed_session_args,
         ),
         profile_tool_rules=profile_tool_rules,
+        has_spawn_capability=has_spawn_capability(profile),
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1678,6 +1690,7 @@ def bind_launch_context(
         profile_tool_rules=profile_tool_rules,
         platform_tool_rules=resolved_request.platform_tool_rules,
         spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
+        has_spawn_capability=prepared.has_spawn_capability,
         native_agent_copy=native_agent_copy,
         allow_builtin_agents=allow_builtin_agents,
     )
@@ -1686,9 +1699,7 @@ def bind_launch_context(
         sandbox=resolved_request.execution_policy.sandbox,
         sandbox_write_roots=tuple(
             root.as_posix()
-            for root in _dedupe_roots_in_order(
-                (resolved_control_root, *workspace_authority_roots)
-            )
+            for root in _dedupe_roots_in_order((resolved_control_root, *workspace_authority_roots))
         ),
         approval=resolved_request.execution_policy.approval or "default",
         platform_rules=platform_rules,
@@ -1810,6 +1821,10 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
+    child_context_env[CALLER_BOUNDARY_ENV] = CallerBoundary.from_policy(
+        permission_policy,
+        pid_namespace=current_pid_namespace(),
+    ).to_env_value()
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     resolved_agent = (resolved_request.agent or "").strip()
     if resolved_agent:
@@ -1837,9 +1852,30 @@ def bind_launch_context(
         run_inputs=run_params,
         runtime_env_overrides=bind_env_overrides,
     )
-    # Facts that depend on the final launch environment or child cwd are resolved once here;
-    # the env projection, argv, report and connection all read the same bound spec.
-    spec = bind_launch_spec(harness.id, spec, env=env, child_cwd=child_cwd)
+    intent = harness.plan_native_identity(
+        run_params, preforked_session_id=bindings.forked_harness_session_id
+    )
+    if intent is not None:
+        spec = spec.model_copy(
+            update={
+                "native_identity": harness.finalize_native_identity(
+                    intent,
+                    child_env=env,
+                    child_cwd=child_cwd,
+                    session=resolved_request.session,
+                    spawn_id=SpawnId(bindings.spawn_id),
+                    interactive=run_params.interactive,
+                )
+            }
+        )
+    # Native resume/fork may pin a recorded harness home in ``env``. Resolve
+    # environment-dependent adapter facts only after that final namespace is known.
+    spec = bind_launch_spec(
+        harness.id,
+        spec,
+        env=env,
+        child_cwd=child_cwd,
+    )
     env.update(
         harness.project_launch_env(
             spec=spec,
@@ -1847,14 +1883,6 @@ def bind_launch_context(
             env=env,
         )
     )
-    intent = harness.plan_native_identity(
-        run_params, preforked_session_id=bindings.forked_harness_session_id)
-    if intent is not None:
-        spec = spec.model_copy(update={"native_identity": harness.finalize_native_identity(
-            intent, child_env=env, child_cwd=child_cwd,
-            session=resolved_request.session, spawn_id=SpawnId(bindings.spawn_id),
-            interactive=run_params.interactive,
-        )})
     environment = ResolvedLaunchEnvironment.build(
         child_context_env=child_context_env,
         plan_env=dict(bindings.plan_overrides),
@@ -1898,6 +1926,22 @@ def bind_launch_context(
     )
 
 
+def materialize_launch_context(context: LaunchContext) -> LaunchContext:
+    """Perform real-launch-only adapter writes after pure context binding."""
+
+    ensure_project_lifetime_lock(context.runtime_root)
+    binding = context.binding
+    spec = materialize_launch_spec(
+        context.harness.id,
+        binding.spec,
+        env=binding.environment.final_env,
+        child_cwd=binding.child_cwd,
+    )
+    if spec is binding.spec:
+        return context
+    return replace(context, binding=replace(binding, spec=spec))
+
+
 __all__ = [
     "ChildEnvContext",
     "LaunchContext",
@@ -1913,6 +1957,7 @@ __all__ = [
     "build_launch_policy_snapshot",
     "compile_prepared_policy_surface",
     "materialize_launch_artifacts",
+    "materialize_launch_context",
     "normalize_usage_model_family",
     "prepare_launch_surface",
     "prepare_prompt_payload",

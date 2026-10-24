@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path
 
 from meridian.lib.platform import IS_WINDOWS, expand_home_path, get_home_path
@@ -58,6 +59,16 @@ def project_lifetime_lock_path(runtime_root: Path) -> Path:
     """Return the stable gate coordinating use and deletion of a runtime root."""
 
     return runtime_root.parent / ".locks" / f"{runtime_root.name}.lock"
+
+
+def ensure_project_lifetime_lock(runtime_root: Path) -> Path:
+    """Create the exact lifetime-lock inode before a real harness launch."""
+
+    lock_path = project_lifetime_lock_path(runtime_root)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with suppress(FileExistsError):
+        lock_path.touch(exist_ok=False)
+    return lock_path
 
 
 def get_context_home(project_id: str, *, user_home: Path | None = None) -> Path:

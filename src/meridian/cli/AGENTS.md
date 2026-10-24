@@ -64,6 +64,12 @@ argv
 
 `startup_class` drives telemetry installation and primary-launch background repairs — not bootstrap. Bootstrap is selected solely by `state_requirement`.
 
+The default `spawn` route is the deliberate exception within `WRITE_RUNTIME`: its
+descriptor performs project-read bootstrap only. The ops preparation path must resolve
+and enforce an inherited caller boundary before it materializes runtime state. Every
+launch uses that same deferred materialization path. Other mutating spawn
+subcommands retain normal runtime-write bootstrap.
+
 ## Entry Points
 
 - `entrypoint.py` — `main()`: trivial fast paths (help/version), delegates to `main.py`

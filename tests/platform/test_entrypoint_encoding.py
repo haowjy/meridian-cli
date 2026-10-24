@@ -6,10 +6,12 @@ import io
 import os
 import sys
 import types
-
-import pytest  # noqa: TC002
+from typing import TYPE_CHECKING
 
 import meridian.cli.entrypoint as entrypoint_module
+
+if TYPE_CHECKING:
+    import pytest
 
 
 class _FakeTextIOWrapper(io.TextIOWrapper):

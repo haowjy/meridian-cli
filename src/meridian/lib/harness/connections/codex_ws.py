@@ -310,6 +310,19 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return process.pid
 
     @property
+    def completion_signals_available(self) -> bool:
+        """Whether this Codex launch can write Meridian's completion signals."""
+
+        spec = self._launch_spec
+        if spec is None or spec.permission_policy.sandbox != "read-only":
+            return True
+        return (
+            spec.permission_policy.has_spawn_capability
+            and spec.codex_runtime.rules_file_path is not None
+            and spec.codex_runtime.rules_file_error is None
+        )
+
+    @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
         if not self._primary_observer_mode:
             return None
@@ -532,12 +545,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             backend_dead=self._resident_backend_dead,
             begin_followup_turn=self._begin_followup_turn,
         )
-
-    @property
-    def completion_signals_available(self) -> bool:
-        spec = self._launch_spec
-        assert spec is not None, "Codex launch spec is not initialized"
-        return spec.permission_policy.sandbox != "read-only"
 
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy

@@ -37,8 +37,18 @@ type ApprovalMode = Literal[
     "confirm",
 ]
 
+SANDBOX_MODE_WEAKNESS: dict[SandboxMode, int] = {
+    "read-only": 0,
+    "workspace-write": 1,
+    "danger-full-access": 2,
+    # A harness default is unknown, so compare it as weaker than every explicit mode.
+    "default": 3,
+}
 _SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
     {"default", "read-only", "workspace-write", "danger-full-access"}
+)
+CONSTRAINED_SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
+    {"read-only", "workspace-write"}
 )
 _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
     {"default", "auto", "never", "yolo", "confirm"}
@@ -50,7 +60,26 @@ _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
 ALLOWLIST_ORIGIN = "allowlist"
 
 
-type PlatformRuleKind = Literal["builtin-agents", "completion-commands"]
+type PlatformRuleKind = Literal["builtin-agents", "meridian-commands"]
+type CommandMatch = Literal["exact", "prefix"]
+type PlatformCommandRole = Literal["completion", "read", "launch"]
+
+
+class PlatformCommand(BaseModel):
+    """One Meridian-owned shell command grant."""
+
+    model_config = ConfigDict(frozen=True)
+
+    command: str
+    match: CommandMatch
+    role: PlatformCommandRole = "read"
+    runs_outside_sandbox: bool = False
+
+    @property
+    def profile_restrictable(self) -> bool:
+        """Whether a narrower profile rule may keep this command restricted."""
+
+        return self.role != "completion"
 
 
 class PlatformRule(BaseModel):
@@ -58,16 +87,15 @@ class PlatformRule(BaseModel):
 
     Ordinary agent/task denies are ``ToolRule`` values named by Mars. ``builtin-agents``
     controls harness mechanisms that cannot be expressed as such a rule. The
-    ``completion-commands`` allow carries the shell commands a child runs to confirm or
-    reject its own completion (``meridian spawn done`` / ``rearm``), which must stay runnable
-    under any allowlist or deny of the shell. A harness spells each command and its argument
-    form in its own scope syntax.
+    ``meridian-commands`` carries the shell commands Meridian itself makes available under
+    any profile allowlist: completion signals, read operations, and child launch commands
+    when the profile can spawn. A harness spells exact and prefix matches in its own syntax.
     """
 
     model_config = ConfigDict(frozen=True)
 
     kind: PlatformRuleKind
-    commands: tuple[str, ...] = ()
+    commands: tuple[PlatformCommand, ...] = ()
 
 
 class PermissionPolicy(BaseModel):
@@ -92,6 +120,31 @@ class PermissionPolicy(BaseModel):
     # these separate from projected runtime/temp roots, which must remain writable.
     sandbox_write_roots: tuple[str, ...] = Field(default=(), exclude=True)
     approval: ApprovalMode = "default"
+
+    @property
+    def outside_sandbox_commands(self) -> tuple[PlatformCommand, ...]:
+        """Platform commands whose harness projection escapes native confinement."""
+
+        return tuple(
+            command
+            for rule in self.platform_rules
+            for command in rule.commands
+            if command.runs_outside_sandbox
+        )
+
+    @property
+    def has_spawn_capability(self) -> bool:
+        """Whether this policy carries the canonical child-launch command grant."""
+
+        return any(
+            command.role == "launch"
+            and command.command == "meridian spawn"
+            and command.match == "prefix"
+            and command.runs_outside_sandbox
+            for rule in self.platform_rules
+            if rule.kind == "meridian-commands"
+            for command in rule.commands
+        )
 
     @property
     def is_allowlist(self) -> bool:
@@ -150,18 +203,25 @@ def rule_element(rule: ToolRule) -> str:
 
 
 def platform_element(rule: PlatformRule) -> str:
-    if rule.kind == "completion-commands":
-        return f"platform: allow completion commands ({', '.join(rule.commands)})"
+    if rule.kind == "meridian-commands":
+        commands = ", ".join(f"{command.match}: {command.command}" for command in rule.commands)
+        return f"platform: allow Meridian commands ({commands})"
     return "platform: deny built-in agents"
+
+
+def command_grant_covers_pattern(command: PlatformCommand, pattern: str) -> bool:
+    """Whether a scoped shell pattern is wholly inside a platform command grant."""
+
+    if command.match == "exact":
+        return pattern == command.command
+    return pattern == command.command or pattern.startswith(f"{command.command} ")
 
 
 def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
     """What the report says about a rule the compile left unreported."""
 
     element = rule_element(rule)
-    satisfied_status: ReportStatus = (
-        "platform" if rule.origin == PLATFORM_ORIGIN else "native"
-    )
+    satisfied_status: ReportStatus = "platform" if rule.origin == PLATFORM_ORIGIN else "native"
     if rule.native_status == "unknown":
         return ReportLine(
             element,
@@ -404,9 +464,14 @@ def build_permission_policy(
 
 __all__ = [
     "ALLOWLIST_ORIGIN",
+    "CONSTRAINED_SANDBOX_MODES",
+    "SANDBOX_MODE_WEAKNESS",
     "ApprovalMode",
+    "CommandMatch",
     "EnforcementReport",
     "PermissionPolicy",
+    "PlatformCommand",
+    "PlatformCommandRole",
     "PlatformRule",
     "ReportLine",
     "ReportStatus",

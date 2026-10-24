@@ -16,9 +16,10 @@ import pytest
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import ForkMaterializationMode
+from meridian.lib.harness.codex_rules import MERIDIAN_RULES_FILE_CONTENT
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import command as launch_command
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, ResolvedLaunchSpec
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
@@ -31,6 +32,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
+from tests.support.fixtures import write_agent
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
@@ -56,8 +58,10 @@ def _build_primary_launch_context(
     harness_id: HarnessId,
     model: str,
     prompt: str = "primary prompt",
+    agent: str | None = None,
     extra_args: tuple[str, ...] = (),
     session: SessionRequest | None = None,
+    dry_run: bool = True,
 ) -> tuple[Any, Any]:
     _write_minimal_mars_config(project_root)
     harness_registry = get_default_harness_registry()
@@ -68,6 +72,7 @@ def _build_primary_launch_context(
             prompt=prompt,
             model=model,
             harness=harness_id.value,
+            agent=agent,
             extra_args=extra_args,
             session=session or SessionRequest(),
         ),
@@ -80,7 +85,7 @@ def _build_primary_launch_context(
             project_paths_execution_cwd=project_root.as_posix(),
         ),
         harness_registry=harness_registry,
-        dry_run=True,
+        dry_run=dry_run,
     )
     return launch_context, harness_registry
 
@@ -345,6 +350,24 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ambient-decoy"))
+    write_agent(
+        tmp_path,
+        name="lead",
+        model="gpt-5.4",
+        harness="codex",
+        sandbox="workspace-write",
+        subagents=("reviewer",),
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
+        prompt_surface_inventory_prompt=(
+            "# Meridian Agents\n\n## Subagent\n"
+            "- `meridian spawn -a reviewer`: Review.\n"
+        ),
+    )
     sid = "12345678-1234-4234-8234-123456789abc"
     store = tmp_path / "recorded" / "sessions"
     store.mkdir(parents=True)
@@ -380,8 +403,12 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         project_root=tmp_path,
         harness_id=HarnessId.CODEX,
         model="gpt-5.4",
+        agent="lead",
         session=fork.session.model_copy(update={"primary_session_mode": "fork"}),
+        dry_run=False,
     )
+    rules_path = store.parent / "rules" / "meridian.rules"
+    assert not rules_path.exists()
     shim = tmp_path / "codex-shim"
     shim.write_text('#!/bin/sh\nprintf "%s\\n%s\\n" "$CODEX_HOME" "$1"\n')
     observed: list[str] = []
@@ -398,6 +425,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         on_running,
         session_id_observer,
     ):
+        assert spec.codex_runtime.rules_file_path == rules_path.as_posix()
         assert spec.native_identity is not None
         target_id = spec.native_identity.session_id
         assert target_id and target_id != sid
@@ -424,6 +452,8 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         context, registry, prepared=context.prepared, run_primary_attach_fn=attach
     )
     assert outcome.exit_code == 0
+    assert rules_path.read_text(encoding="utf-8") == MERIDIAN_RULES_FILE_CONTENT
+    assert not (tmp_path / "ambient-decoy" / "rules" / "meridian.rules").exists()
     assert len(observed) == 1
     chat = session_store.chat_record(context.runtime_root, outcome.chat_id)
     assert chat is not None and chat.harness_session_id == observed[0]

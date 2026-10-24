@@ -181,7 +181,9 @@ def test_primary_surface_denies_agent_but_not_task(
     )
 
     disallowed = _tool_flag_entries(argv, "--disallowedTools")
-    assert {"Agent", "Bash", *_BUILTIN_AGENT_DENIES}.issubset(disallowed)
+    assert {"Agent", *_BUILTIN_AGENT_DENIES}.issubset(disallowed)
+    assert "Bash" not in disallowed
+    assert "Bash(meridian task-dir)" in _settings_permission_entries(argv, "allow")
     assert _TASK_DENIES.isdisjoint(disallowed)
 
 

@@ -76,6 +76,8 @@ class HarnessProjectionPorts(Generic[SpecT]):
     # Resolves the spec's facts that depend on the launch environment or child cwd once at
     # bind, so every projection and the connection read one value.
     bind_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None
+    # Performs adapter-owned writes only on a real launch, after pure bind.
+    materialize_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None
     managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
 
 
@@ -330,6 +332,21 @@ def bind_launch_spec(
     return cast("SpecT", bundle.projections.bind_spec(spec, env, child_cwd))
 
 
+def materialize_launch_spec(
+    harness_id: HarnessId,
+    spec: SpecT,
+    *,
+    env: Mapping[str, str],
+    child_cwd: Path,
+) -> SpecT:
+    """Perform a harness's real-launch-only spec materialization."""
+
+    bundle = _require_bundle_spec(harness_id, spec)
+    if bundle.projections.materialize_spec is None:
+        return spec
+    return cast("SpecT", bundle.projections.materialize_spec(spec, env, child_cwd))
+
+
 def project_subprocess_spec(
     harness_id: HarnessId,
     spec: object,
@@ -402,6 +419,7 @@ __all__ = [
     "get_bundle_registry",
     "get_connection_cls",
     "get_harness_bundle",
+    "materialize_launch_spec",
     "post_to_primary",
     "project_managed_primary_backend_command",
     "project_managed_primary_bootstrap",

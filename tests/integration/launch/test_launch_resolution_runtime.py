@@ -7,6 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.caller_boundary import (
+    CALLER_BOUNDARY_ENV,
+    CallerBoundary,
+    current_pid_namespace,
+)
 from meridian.lib.core.context_ref import SpawnContextRef, context_ref_values
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import (
@@ -70,7 +75,9 @@ def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) ->
 
 @pytest.mark.parametrize("override", [None, True, False])
 def test_launch_direnv_policy_uses_snapshot_and_propagates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: bool | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    override: bool | None,
 ) -> None:
     import meridian.lib.launch.context as context_module
 
@@ -80,6 +87,7 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     )
     monkeypatch.setenv("MERIDIAN_IGNORE_DIRENV", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-direnv-key")
+    monkeypatch.setenv(CALLER_BOUNDARY_ENV, "inherited-boundary-must-not-survive")
     runtime = build_primary_launch_runtime(project_root=tmp_path)
     # A captured policy must not change when the ambient input disappears.
     monkeypatch.delenv("MERIDIAN_IGNORE_DIRENV")
@@ -98,6 +106,11 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     env = preview.binding.environment.final_env
     expected = override is not False
     assert env["MERIDIAN_IGNORE_DIRENV"] == str(expected).lower()
+    boundary = CallerBoundary.from_env_value(env[CALLER_BOUNDARY_ENV])
+    assert boundary == CallerBoundary.from_policy(
+        preview.binding.spec.permission_policy,
+        pid_namespace=current_pid_namespace(),
+    )
     assert ("ANTHROPIC_API_KEY" not in env) == expected
 
 
@@ -232,6 +245,10 @@ def test_primary_launch_injects_bundle_inventory(
     assert f"`meridian spawn -a {peer_name}`" in text
     assert "SKILLS" not in text
     assert f"{skill_name}: {skill_description}" not in text
+    floor = CallerBoundary.from_env_value(
+        preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
+    )
+    assert floor.has_spawn_capability is True
 
 
 def test_launch_env_sets_resolved_agent_and_clears_inherited_agent(

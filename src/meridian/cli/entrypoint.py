@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from meridian.cli.argv_normalization import canonicalize_argv
-from meridian.cli.bootstrap import first_positional_token, meridian_managed_env_default
+from meridian.cli.bootstrap import (
+    first_positional_token,
+    meridian_managed_env_default,
+)
 from meridian.cli.mode import extract_forced_render_mode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
@@ -48,7 +51,7 @@ def _main_impl() -> None:
 
     # Keep classifier import/use on this startup-cheap path so command catalog
     # regressions surface before the full CLI tree is loaded.
-    _ = classify_invocation(args, COMMAND_CATALOG)
+    classify_invocation(args, COMMAND_CATALOG)
 
     if _is_root_help_request(args):
         from meridian.cli.startup.help import render_root_help

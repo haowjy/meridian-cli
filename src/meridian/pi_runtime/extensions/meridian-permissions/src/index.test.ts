@@ -20,7 +20,7 @@ function policy(
   return {
     version: 1,
     rules,
-    completion_commands: [],
+    meridian_commands: [],
     headless_reject_reason: HEADLESS_REASON,
     bash_fail_closed: false,
     ...overrides,
@@ -162,44 +162,64 @@ describe("bash command evaluation", () => {
     expect(decideToolCall(openShell, "bash", {})).toBeUndefined();
   });
 
-  it("allows a fixed completion command but still checks compound commands", () => {
-    const withCompletion = policy(
-      [rule({ capability: "*", tool: "*", action: "deny", label: "*" })],
+  it("keeps completion grants final but still checks profile-restrictable and compound commands", () => {
+    const withMeridianCommands = policy(
+      [
+        rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
+        rule({ pattern: "meridian spawn done private *", action: "deny", label: "private" }),
+        rule({ pattern: "meridian spawn rearm", action: "ask", label: "rearm" }),
+      ],
       {
-        completion_commands: ["meridian spawn done", "meridian spawn rearm"],
+        meridian_commands: [
+          { command: "meridian task-dir", match: "exact", role: "read" },
+          { command: "meridian spawn done", match: "prefix", role: "completion" },
+          { command: "meridian spawn rearm", match: "prefix", role: "completion" },
+        ],
         bash_fail_closed: true,
       },
     );
     for (const command of [
+      "meridian task-dir",
       "meridian spawn done",
       "meridian spawn done p-1",
-      "meridian spawn rearm --candidate_1.v2",
-    ]) {
-      expect(decideToolCall(withCompletion, "bash", { command })?.action).toBe("allow");
-    }
-    for (const command of [
       "meridian spawn done --flag=value",
       "meridian spawn done 'p-1'",
-      "meridian spawn done p/1",
+    ]) {
+      expect(decideToolCall(withMeridianCommands, "bash", { command })?.action).toBe("allow");
+    }
+    expect(
+      decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn done private p-1" })?.action,
+    ).toBe("allow");
+    expect(
+      decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn rearm" })?.action,
+    ).toBe("allow");
+    expect(
+      decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn rearm p-1" })?.action,
+    ).toBe("allow");
+    for (const command of [
+      "meridian task-dir set /tmp",
       "meridian spawn donex",
       "meridian spawn done p-1; touch y",
       "meridian spawn done; meridian spawn rearm",
       "meridian spawn done > output",
     ]) {
-      expect(decideToolCall(withCompletion, "bash", { command })?.action).toBe("deny");
+      expect(decideToolCall(withMeridianCommands, "bash", { command })?.action).toBe("deny");
     }
   });
 
-  it("does not restrict ordinary bash when completion is the only policy", () => {
-    const completionOnly = policy([], {
-      completion_commands: ["meridian spawn done", "meridian spawn rearm"],
+  it("does not restrict ordinary bash when Meridian commands are the only policy", () => {
+    const meridianOnly = policy([], {
+      meridian_commands: [
+        { command: "meridian spawn done", match: "prefix", role: "completion" },
+        { command: "meridian spawn rearm", match: "prefix", role: "completion" },
+      ],
     });
 
     expect(
-      decideToolCall(completionOnly, "bash", { command: "printf ordinary > output" }),
+      decideToolCall(meridianOnly, "bash", { command: "printf ordinary > output" }),
     ).toBeUndefined();
     expect(
-      decideToolCall(completionOnly, "bash", { command: "meridian spawn done > output" }),
+      decideToolCall(meridianOnly, "bash", { command: "meridian spawn done > output" }),
     ).toBeUndefined();
   });
 
@@ -296,9 +316,11 @@ describe("policy loading", () => {
     expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow();
   });
 
-  it("refuses completion grants outside the fixed command set", () => {
+  it("refuses malformed Meridian command grants", () => {
     process.env._MERIDIAN_PI_PERMISSION_POLICY = JSON.stringify(
-      policy([], { completion_commands: ["meridian spawn done; printf hidden"] }),
+      policy([], {
+        meridian_commands: [{ command: "printf hidden", match: "prefix" }],
+      }),
     );
     expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow(
       "Pi permission policy has an unsupported shape",

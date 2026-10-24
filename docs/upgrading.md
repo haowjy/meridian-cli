@@ -1,5 +1,34 @@
 # Upgrade notes
 
+## Sandboxed child delegation
+
+A standalone `meridian spawn ...` can run outside a sandbox that Meridian projected for
+the caller. Callers launched with an explicit `sandbox: read-only` or
+`sandbox: workspace-write` therefore have a child-spawn CLI guardrail. Child create,
+continue, and fork operations now refuse when:
+
+- the caller profile has no non-empty `subagents:` list (or explicitly disables Meridian
+  spawn capability);
+- the child's resolved sandbox is weaker than the caller's;
+- native harness arguments follow `--`, because they could override the resolved policy.
+
+These calls worked without this boundary before. Put the intended children in the caller
+profile's `subagents:` list and move required harness-native arguments into the profile.
+Approval mode, child write roots, and `--env` are not part of the guardrail. Profiles using
+`sandbox: default` or `danger-full-access`, and top-level shells not launched by Meridian,
+carry no floor.
+
+This is a guardrail against widening a child through Meridian's CLI, not confinement
+against an agent that can rewrite launch inputs. In particular, a sandbox plus spawn
+capability does not confine an adversarial agent. See the residual inputs and scope in the
+[platform-rules reference](agent-profiles.md#platform-rules) and
+[#747](https://github.com/haowjy/meridian-cli/issues/747).
+
+If Claude's own settings enable its sandbox while a profile leaves `sandbox` unset,
+Meridian does not run child creation outside that user-configured sandbox. The PID-namespace
+guard refuses the nested launch instead. Set `sandbox:` explicitly in the profile when it
+must launch children.
+
 ## Agent-profile permissions
 
 Agent permission profiles are now binding on more harnesses and use typed rules from Mars.

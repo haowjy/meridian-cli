@@ -8,7 +8,13 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
-from meridian.lib.safety.policy import PermissionPolicy, PlatformRule, build_permission_policy
+from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
+from meridian.lib.safety.policy import (
+    PermissionPolicy,
+    PlatformCommand,
+    PlatformRule,
+    build_permission_policy,
+)
 from meridian.lib.tools import PLATFORM_ORIGIN
 from tests.support.launch import tool_rule
 
@@ -41,9 +47,7 @@ def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled()
         prompt="test",
         permission_policy=PermissionPolicy(
             rules=(
-                tool_rule("agent", "deny", "Agent").model_copy(
-                    update={"origin": PLATFORM_ORIGIN}
-                ),
+                tool_rule("agent", "deny", "Agent").model_copy(update={"origin": PLATFORM_ORIGIN}),
             )
         ),
         extra_args=("--allowedTools", "Agent,Agent(custom),Bash(meridian spawn *)"),
@@ -91,6 +95,133 @@ def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent()
     assert "Agent" in _tool_flag_entries(command, "--disallowedTools")
 
 
+def test_claude_projection_spells_exact_and_prefix_meridian_commands() -> None:
+    platform = PlatformRule(
+        kind="meridian-commands",
+        commands=(
+            PlatformCommand(command="meridian task-dir", match="exact"),
+            PlatformCommand(command="meridian spawn list", match="prefix"),
+        ),
+    )
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(platform_rules=(platform,)),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    assert _settings_permission_entries(command, "allow") == (
+        "Bash(meridian task-dir)",
+        "Bash(meridian spawn list)",
+        "Bash(meridian spawn list *)",
+    )
+    assert "Bash(meridian task-dir *)" not in _settings_permission_entries(command, "allow")
+    _, report = compile_claude_permissions(spec)
+    line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
+    assert "exact: meridian task-dir" in line.element
+    assert "prefix: meridian spawn list" in line.element
+
+
+def test_claude_meridian_report_distinguishes_command_precedence() -> None:
+    platform = PlatformRule(
+        kind="meridian-commands",
+        commands=(
+            PlatformCommand(command="meridian spawn", match="prefix", role="launch"),
+            PlatformCommand(
+                command="meridian spawn done",
+                match="prefix",
+                role="completion",
+            ),
+        ),
+    )
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            rules=(
+                tool_rule(
+                    "bash",
+                    "deny",
+                    "Bash(meridian spawn cancel-all *)",
+                    pattern="meridian spawn cancel-all *",
+                ),
+                tool_rule(
+                    "bash",
+                    "deny",
+                    "Bash(meridian spawn done private *)",
+                    pattern="meridian spawn done private *",
+                ),
+            ),
+            platform_rules=(platform,),
+        ),
+    )
+
+    permissions, report = compile_claude_permissions(spec)
+
+    assert "Bash(meridian spawn cancel-all *)" in permissions.settings.deny
+    line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
+    assert line.status == "partial"
+    assert "Bash(meridian spawn cancel-all *)" in line.note
+    assert "cannot keep the completion grant final" in line.note
+
+
+def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            platform_rules=(
+                PlatformRule(kind="meridian-commands", commands=(SPAWN_PLATFORM_COMMAND,)),
+            ),
+            sandbox="workspace-write",
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    settings = json.loads(command[command.index("--settings") + 1])
+    assert settings["sandbox"]["excludedCommands"] == ["meridian spawn *"]
+    _, report = compile_claude_permissions(spec)
+    sandbox_line = next(item for item in report if item.element == "sandbox: workspace-write")
+    assert "runs fully outside the sandbox" in sandbox_line.note
+
+
+def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            platform_rules=(
+                PlatformRule(kind="meridian-commands", commands=(SPAWN_PLATFORM_COMMAND,)),
+            )
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    settings = json.loads(command[command.index("--settings") + 1])
+    assert "sandbox" not in settings
+
+
+def test_claude_projection_does_not_exclude_spawn_when_sandbox_is_disabled() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            platform_rules=(
+                PlatformRule(kind="meridian-commands", commands=(SPAWN_PLATFORM_COMMAND,)),
+            ),
+            sandbox="danger-full-access",
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    settings = json.loads(command[command.index("--settings") + 1])
+    assert settings["sandbox"] == {"enabled": False}
+
+
 def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
@@ -127,11 +258,7 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
     assert _flag_count(command, "--disallowedTools") == 1
     assert command.index("--settings") < command.index("--disallowedTools")
     _, report = compile_claude_permissions(spec)
-    external = next(
-        line
-        for line in report
-        if line.element == "source: passthrough --allowedTools"
-    )
+    external = next(line for line in report if line.element == "source: passthrough --allowedTools")
     assert external.status == "partial"
     assert "Bash(meridian spawn *)" in external.note
     assert "Agent" in external.note
@@ -198,8 +325,6 @@ def test_claude_projection_loads_selected_plugin_dirs(
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
     projected_dirs = tuple(
-        command[index + 1]
-        for index, token in enumerate(command)
-        if token == "--plugin-dir"
+        command[index + 1] for index, token in enumerate(command) if token == "--plugin-dir"
     )
     assert projected_dirs == plugin_dirs

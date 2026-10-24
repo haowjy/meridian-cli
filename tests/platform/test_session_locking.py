@@ -22,6 +22,36 @@ from meridian.lib.state.spawn.repository import write_state_locked
 from tests.conftest import posix_only
 
 
+@posix_only
+@pytest.mark.parametrize(
+    ("read_only_existing", "expected_mode"),
+    [(False, "r+b"), (True, "rb")],
+)
+def test_acquire_file_lock_existing_file_mode_is_explicit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    read_only_existing: bool,
+    expected_mode: str,
+) -> None:
+    lock_path = tmp_path / "shared" / "project.lock"
+    lock_path.parent.mkdir()
+    lock_path.touch()
+    modes: list[str] = []
+    real_open = Path.open
+
+    def _record_open(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if self == lock_path:
+            modes.append(mode)
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _record_open)
+
+    handle = acquire_file_lock(lock_path, read_only_existing=read_only_existing)
+    release_file_lock(handle)
+
+    assert modes == [expected_mode]
+
+
 def _fork_while_release_is_paused(
     lock_path: Path, ready_fd: int, stop_fd: int
 ) -> None:

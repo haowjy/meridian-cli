@@ -42,6 +42,7 @@ _WORK_DISCOVERY = """\
 # Work coordination (meridian)
 
 Group related spawns under a work item — shared dir, goal, session history.
+Run `meridian` commands as standalone shell calls (no `cd ... &&`, pipes, `$()`, or `VAR=1`).
 Learn the commands:  meridian work -h"""
 
 _TASK_DIR_DISCOVERY = """\

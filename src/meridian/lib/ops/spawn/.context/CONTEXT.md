@@ -1,5 +1,27 @@
 # ops/spawn — Contracts and Architecture
 
+## Spawn Creation Boundary
+
+`spawn_create_sync()`, continue, and fork share one preparation path. It inspects
+authority and checks the launcher-owned caller boundary before write bootstrap. With
+a boundary, it composes the resolved launch policy read-only and enforces the floor.
+Every real launch calls `prepare_for_runtime_write()` afterward through one deferred
+materialization path. Dry-run binds its preview without materializing. Continue
+performs its state sweep after preparation succeeds; fork reuses the prepared artifacts
+for its cross-harness guard.
+
+The caller boundary rejects a no-capability caller and explicit harness-native
+passthrough arguments before source-state reads. Continue and fork can discover
+additional passthrough arguments in the resolved source launch snapshot; they run
+the same `CallerBoundaryCheck` again immediately after source resolution and before
+model or policy composition. Passthrough is all-or-nothing under a floor because
+each harness owns native flags that can supersede Meridian's resolved sandbox or
+approval arguments.
+
+This ordering is security-sensitive: the standalone harness escape runs `meridian`
+outside the native sandbox, so policy refusal must precede identity creation, state
+locks, telemetry files, and spawn rows.
+
 ## Depth Guard
 
 `spawn_create_sync()` checks `max_depth_reached()` **before** executing any spawn. When depth

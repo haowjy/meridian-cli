@@ -438,7 +438,11 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
         ):
             continue
         paths = RuntimePaths.from_root_dir(runtime_root)
-        with try_lock_file(paths.project_lifetime_flock, reentrant=False) as lifetime_handle:
+        with try_lock_file(
+            paths.project_lifetime_flock,
+            reentrant=False,
+            read_only_existing=True,
+        ) as lifetime_handle:
             if lifetime_handle is None:
                 continue
             if not _is_quiescent(runtime_root):
@@ -473,6 +477,7 @@ def prune_adhoc_project_dirs(
             paths.project_lifetime_flock,
             mode="exclusive",
             reentrant=False,
+            read_only_existing=True,
         ) as lifetime_handle:
             if lifetime_handle is None:
                 continue
