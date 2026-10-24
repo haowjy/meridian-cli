@@ -4,12 +4,4 @@
   rewritten (lock, atomic write, psutil birth lookup) on every 0.25 s poll for
   a lease that lasts at least 30 s, and `spawn collect` reads that file every
   second. Renew only when the pending set changes or about a third of
-  `lease_seconds` has passed. The lease write just before the loop's `try:` is
-  also redundant: the first pass writes the same `waiting_add`.
-- `api.py` `_build_wait_checkpoint_output` repeats the success/failure/
-  cancelled/timed-out counts and `any_failed` from `_build_wait_multi_output`;
-  build the base output there and add checkpoint fields with `model_copy`.
-- No test pins `render_delivery` (`models.py`): the 32-member / 64 KiB bounds,
-  reserved per-member identity lines and UTF-8-safe cuts it shares with Pi's
-  `pi_runtime/.context/delivery-contract.md`. Worth one unit test if the
-  renderer changes.
+  `lease_seconds` has passed.

@@ -26,6 +26,42 @@ def task_dir_line(task_cwd: str | None, work_id: str | None) -> str:
     return task_line
 
 
+def render_delivery(rows: Sequence["SpawnDetailOutput"]) -> str:
+    """Render header-only notifications for terminal child details."""
+
+    rendered: list[str] = []
+    for row in rows:
+        outcome: list[str] = []
+        if row.duration_secs is not None:
+            outcome.append(f"{row.duration_secs:.1f}s")
+        outcome.append(f"exit {row.exit_code}")
+        if row.failure_reason is not None:
+            outcome.append("result error")
+        lines = [
+            f"{row.spawn_id} {row.status} ({', '.join(outcome)})",
+            f"Worker: {row.model} ({row.harness})",
+        ]
+        if row.failure_reason is not None:
+            lines.append(f"Failure: {row.failure_reason}")
+        if (
+            row.authority_root is not None
+            and row.task_cwd is not None
+            and row.task_cwd != row.authority_root
+        ):
+            lines.append(task_dir_line(row.task_cwd, row.work_id))
+        lines.append(f"meridian spawn show {row.spawn_id}")
+        rendered.append("\n".join(lines))
+    return "\n\n".join(rendered)
+
+
+def _spawn_wire(spawn: "SpawnDetailOutput") -> dict[str, object]:
+    wire = spawn.to_cli_wire()
+    transcript_command = spawn.transcript_command()
+    if transcript_command is not None:
+        wire["transcript_command"] = transcript_command
+    return wire
+
+
 def _empty_template_vars() -> dict[str, str]:
     return {}
 
@@ -64,7 +100,7 @@ def _background_wait_note(spawn_id: str) -> str:
         f"\n"
         f"  meridian spawn wait\n"
         f"\n"
-        f"This waits for all pending spawns for this chat.\n"
+        f"This waits for running spawns and returns owed finished results for this chat.\n"
         f"Or wait for this spawn only: meridian spawn wait {spawn_id}"
     )
 
@@ -1314,13 +1350,14 @@ class SpawnWaitInput(BaseModel):
 class SpawnWaitMultiOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    spawns: tuple[SpawnDetailOutput, ...]
-    total_runs: int
-    succeeded_runs: int
-    failed_runs: int
-    cancelled_runs: int
+    spawns: tuple[SpawnDetailOutput, ...] = ()
+    owed_spawns: tuple[SpawnDetailOutput, ...] = ()
+    total_runs: int = 0
+    succeeded_runs: int = 0
+    failed_runs: int = 0
+    cancelled_runs: int = 0
     timed_out_runs: int = 0
-    any_failed: bool
+    any_failed: bool = False
     fail_fast: bool = False
     pending_ids: tuple[str, ...] = ()
     checkpoint: bool = False
@@ -1338,7 +1375,10 @@ class SpawnWaitMultiOutput(BaseModel):
         """Render waited spawns, expanding report content when available."""
         effective_ctx = ctx or FormatContext()
         if self.checkpoint:
-            return self._format_checkpoint_text()
+            checkpoint = self._format_checkpoint_text()
+            if not self.owed_spawns:
+                return checkpoint
+            return f"{checkpoint}\n\n{render_delivery(self.owed_spawns)}"
         if self.fail_fast:
             failed_ids = ", ".join(
                 spawn.spawn_id for spawn in self.spawns if spawn.status in {"failed", "timed_out"}
@@ -1349,10 +1389,22 @@ class SpawnWaitMultiOutput(BaseModel):
             )
             summary = f"Fail-fast: {failed_ids} failed or timed out. Still pending: {pending_ids}."
             return f"{summary}\n\n{details}" if details else summary
-        if not self.spawns:
-            return ""
+        return self._format_results_text(effective_ctx)
+
+    def _format_results_text(self, ctx: FormatContext) -> str:
+        sections: list[str] = []
         if len(self.spawns) == 1:
-            return self.spawns[0].format_wait_text(effective_ctx)
+            sections.append(self.spawns[0].format_wait_text(ctx))
+        elif self.spawns:
+            sections.append(self._format_multiple_results_text(self.spawns))
+        if self.owed_spawns:
+            sections.append(render_delivery(self.owed_spawns))
+        return "\n\n".join(section for section in sections if section)
+
+    @staticmethod
+    def _format_multiple_results_text(spawns: tuple[SpawnDetailOutput, ...]) -> str:
+        if not spawns:
+            return ""
 
         from meridian.lib.core.formatting import tabular
 
@@ -1365,12 +1417,12 @@ class SpawnWaitMultiOutput(BaseModel):
                 str(run.exit_code) if run.exit_code is not None else "-",
                 run.report_table_value(),
             ]
-            for run in self.spawns
+            for run in spawns
         )
         table = tabular(rows)
 
         report_sections: list[str] = []
-        for run in self.spawns:
+        for run in spawns:
             section = run.report_section()
             if section is not None:
                 report_sections.append(section)
@@ -1455,14 +1507,8 @@ class SpawnWaitMultiOutput(BaseModel):
             if single.report_body is not None:
                 wire["report_body"] = single.report_body
         # Sparse spawn details.
-        spawn_wires: list[dict[str, object]] = []
-        for spawn in self.spawns:
-            spawn_wire = spawn.to_cli_wire()
-            transcript_command = spawn.transcript_command()
-            if transcript_command is not None:
-                spawn_wire["transcript_command"] = transcript_command
-            spawn_wires.append(spawn_wire)
-        wire["spawns"] = spawn_wires
+        wire["spawns"] = [_spawn_wire(spawn) for spawn in self.spawns]
+        wire["owed_spawns"] = [_spawn_wire(spawn) for spawn in self.owed_spawns]
         return wire
 
     def to_cli_output(
@@ -1503,5 +1549,6 @@ __all__ = [
     "SpawnWaitMultiOutput",
     "build_goal_contract_preview",
     "normalize_goal",
+    "render_delivery",
     "task_dir_line",
 ]

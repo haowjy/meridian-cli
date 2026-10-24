@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A no-argument `spawn wait` now returns up to 32 finished background children
+  whose results are still owed, alongside uncapped running descendants. Owed results
+  render as lookup headers, do not affect waited-run counts, fail-fast, or the exit
+  code, and exclude results Pi already delivered or dismissed. Unreadable Pi
+  consumption sources are diagnosed and skipped instead of failing wait or stalling
+  collection.
+
 ## [0.12.8] - 2026-10-23
 
 ### Changed
