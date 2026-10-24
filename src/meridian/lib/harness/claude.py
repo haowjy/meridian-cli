@@ -153,9 +153,10 @@ def bind_claude_network_facts(
     facts: EffectiveNetworkFacts,
     env: Mapping[str, str],
 ) -> EffectiveNetworkFacts:
-    """Add the child-selected Claude user network settings to shared policy facts."""
+    """Detect child-selected Claude config that can widen shared policy facts."""
 
-    return replace(facts, user_config=read_claude_user_network_config(env))
+    config = read_claude_user_network_config(env)
+    return replace(facts, harness_configs=(config,) if config is not None else ())
 
 
 def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:

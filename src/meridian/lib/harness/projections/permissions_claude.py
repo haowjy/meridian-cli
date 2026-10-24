@@ -23,8 +23,6 @@ from meridian.lib.safety.policy import (
     Allow,
     EffectiveNetworkFacts,
     EnforcementReport,
-    Host,
-    Hosts,
     NetworkProjection,
     PermissionPolicy,
     PlatformRule,
@@ -33,7 +31,6 @@ from meridian.lib.safety.policy import (
     ReportStatus,
     command_grant_covers_pattern,
     complete_report,
-    format_network_policy,
     network_allows_local_services,
     network_policy_element,
     platform_element,
@@ -444,23 +441,13 @@ def _claude_domains(hosts: frozenset[str]) -> tuple[str, ...]:
 def project_claude_network(
     facts: EffectiveNetworkFacts,
 ) -> NetworkProjection[ClaudeNetworkSettings | None]:
-    """Project Claude network settings and the access left after user settings merge."""
+    """Project Claude settings and conservatively account for harness config widening."""
 
     if facts.sandbox not in {"read-only", "workspace-write"}:
         return NetworkProjection(native=None, effective=Allow())
 
     policy = facts.network
-    user_config = facts.user_config
-    user_allow: frozenset[Host] = (
-        user_config.allow if user_config is not None else frozenset()
-    )
-    user_deny: frozenset[Host] = (
-        user_config.deny if user_config is not None else frozenset()
-    )
-    bypasses_domain_filter = (
-        user_config.bypasses_domain_filter if user_config is not None else False
-    )
-    denied = policy.deny | user_deny
+    bypasses_enforcement = facts.harness_config_bypasses_enforcement
     if isinstance(policy, Allow):
         native = ClaudeNetworkSettings(
             allowed_domains=CLAUDE_NETWORK_ALLOW_DOMAINS,
@@ -468,13 +455,12 @@ def project_claude_network(
             allow_local_binding=True,
             allow_all_unix_sockets=True,
         )
-        return NetworkProjection(native=native, effective=Allow(deny=denied))
+        return NetworkProjection(
+            native=native,
+            effective=Allow() if bypasses_enforcement else policy,
+        )
 
-    filtered_effective = Hosts(
-        allow=policy.allow | user_allow,
-        deny=denied,
-    )
-    allow_local_services = network_allows_local_services(filtered_effective)
+    allow_local_services = network_allows_local_services(policy)
     native = ClaudeNetworkSettings(
         strict_allowlist=True,
         allowed_domains=_claude_domains(policy.allow),
@@ -484,7 +470,7 @@ def project_claude_network(
     )
     return NetworkProjection(
         native=native,
-        effective=Allow(deny=denied) if bypasses_domain_filter else filtered_effective,
+        effective=Allow() if bypasses_enforcement else policy,
     )
 
 
@@ -932,38 +918,22 @@ def _network_line(
     projection: NetworkProjection[ClaudeNetworkSettings | None],
     facts: EffectiveNetworkFacts,
 ) -> ReportLine:
-    reported_network = projection.effective if projection.native is not None else policy.network
+    config_bypasses = facts.harness_config_bypasses_enforcement
+    reported_network = projection.effective if config_bypasses else policy.network
     element = network_policy_element(reported_network)
     sandbox = permissions.settings.sandbox
-    user_config = facts.user_config
     user_notes: list[str] = []
-    user_widens = False
-    if user_config is not None:
+    for user_config in facts.harness_configs:
         if user_config.unreadable_reason is not None:
             user_notes.append(
                 f"{user_config.path} is unreadable ({user_config.unreadable_reason}) and "
-                "contributes no user network settings"
+                "contributes no widening detection"
             )
-        else:
-            if user_config.bypasses_domain_filter:
-                user_notes.append(
-                    f"{user_config.path} sets sandbox.network.httpProxyPort or "
-                    "socksProxyPort; the user proxy bypasses Claude's domain filter"
-                )
-                user_widens = True
-            if user_config.allow:
-                user_notes.append(
-                    "Claude merges user allowedDomains from "
-                    f"{user_config.path}: "
-                    f"{format_network_policy(Hosts(allow=user_config.allow))}"
-                )
-                user_widens = True
-            if user_config.deny:
-                user_notes.append(
-                    "Claude merges user deniedDomains from "
-                    f"{user_config.path}: "
-                    f"{format_network_policy(Hosts(deny=user_config.deny))}"
-                )
+        elif user_config.bypasses_enforcement:
+            user_notes.append(
+                f"{user_config.path} contains user allowedDomains or a proxy-port setting; "
+                "Meridian treats Claude network enforcement as bypassed"
+            )
 
     if isinstance(policy.network, Allow):
         if projection.native is None:
@@ -988,7 +958,7 @@ def _network_line(
             notes.append("host localhost remains mediated by Claude's proxy on Linux")
         return ReportLine(
             element,
-            "partial" if sys.platform.startswith("linux") or user_widens else "native",
+            "partial" if sys.platform.startswith("linux") or config_bypasses else "native",
             "; ".join(notes),
         )
 
@@ -1033,7 +1003,7 @@ def _network_line(
         "partial"
         if sys.platform.startswith("linux")
         or local_services
-        or user_widens
+        or config_bypasses
         or sandbox.excluded_commands
         else "native",
         "; ".join(notes),
@@ -1103,11 +1073,12 @@ def compile_claude_permissions(
     )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Claude"))
     lines.extend(compaction_report(spec, harness="Claude"))
+    config_bypasses = spec.effective_network_facts().harness_config_bypasses_enforcement
     return permissions, complete_report(
         policy,
         lines,
         harness="Claude",
-        reported_network=network.effective if network.native is not None else policy.network,
+        reported_network=(network.effective if config_bypasses else policy.network),
     )
 
 

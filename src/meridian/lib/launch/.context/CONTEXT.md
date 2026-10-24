@@ -57,10 +57,10 @@ about to start. It contains the launcher's PID namespace, resolved sandbox mode,
 the prepared profile's spawn capability, and the harness-effective typed network policy for every
 constrained sandbox. A missing network key means no network floor, preserving boundaries
 written by older builds. `build_effective_network_facts()` derives the projector input from
-the resolved policy, harness, and selected child environment; caller-boundary recording
-runs after harness bind so Claude and Codex user-config widening is included. The child
-guardrail and shell guidance use the same builder. The permission report uses the same
-projection.
+the resolved policy, harness, and one final child environment; caller-boundary recording
+runs after harness bind so Claude and Codex widening detections are included. Policy
+construction and prepare-time shell guidance do not read harness config files. The child
+guardrail and permission report use the final bound projection.
 Projected roots are not part of this CLI-escalation guardrail.
 
 ### RuntimeBindings

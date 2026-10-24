@@ -20,12 +20,15 @@ from meridian.lib.safety.policy import EffectiveNetworkFacts, build_permission_p
     ],
 )
 def test_codex_approval_policy_mapping_contract(approval_mode: str, expected: str | None) -> None:
+    policy = build_permission_policy(
+        network_facts=EffectiveNetworkFacts.from_values(sandbox=None, network=None),
+        approval=approval_mode,
+    )
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CODEX,
-        permission_policy=build_permission_policy(
-            network_facts=EffectiveNetworkFacts.from_values(sandbox=None, network=None),
-            approval=approval_mode,
-        ),
+        permission_policy=policy,
+    ).with_effective_network_facts(
+        EffectiveNetworkFacts.from_permission_policy(policy)
     )
 
     assert compile_codex_permissions(spec)[0].approval_policy == expected

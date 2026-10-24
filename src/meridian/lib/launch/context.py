@@ -65,9 +65,11 @@ from meridian.lib.launch.workspace_projection import (
 )
 from meridian.lib.platform import IS_POSIX
 from meridian.lib.safety.policy import (
+    EffectiveNetworkFacts,
     EnforcementReport,
     PermissionPolicy,
     build_permission_policy,
+    resolve_network_policy,
 )
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
@@ -102,7 +104,7 @@ from .composition import (
 )
 from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
 from .cwd import LaunchDirectoryContext
-from .env import build_env_plan, inherit_child_env, merge_env_overrides, undo_direnv
+from .env import build_env_plan, merge_env_overrides, undo_direnv
 from .permissions import launch_permission_rules
 from .policies import (
     ModelSelectionContext,
@@ -574,6 +576,14 @@ def materialize_launch_artifacts(
         permission_policy=permission_policy,
         native_config=native_config,
     )
+    # Launch-spec warnings run before the final child environment exists. Bind only the
+    # already-resolved policy here; final bind replaces this with harness config detections.
+    spec = spec.with_effective_network_facts(
+        EffectiveNetworkFacts.from_permission_policy(
+            permission_policy,
+            native_config=native_config,
+        )
+    )
     return MaterializedLaunchArtifacts(
         run_params=run_params,
         spec=spec,
@@ -1030,7 +1040,6 @@ def _build_shared_composition(
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
-    runtime: LaunchRuntime,
 ) -> _SharedComposition:
     context_prompt = (
         build_context_prompt(
@@ -1042,29 +1051,13 @@ def _build_shared_composition(
     spawn_usage_contract = build_spawn_usage_contract(
         policy.adapter.run_prompt_policy().spawn_usage_contract_variants
     )
-    config = (
-        MeridianConfig.model_validate(runtime.config_snapshot)
-        if runtime.config_snapshot
-        else load_config(project_paths.project_root)
-    )
-    ignore_direnv = (
-        request.ignore_direnv
-        if request.ignore_direnv is not None
-        else config.environment.ignore_direnv
-    )
-    base_env = undo_direnv(os.environ) if ignore_direnv else dict(os.environ)
-    child_env = inherit_child_env(
-        base_env,
-        {
-            **config.env,
-            **request.env,
-            "MERIDIAN_PROJECT_DIR": project_paths.project_root.as_posix(),
-        },
-    )
-    network_facts = build_effective_network_facts(
-        policy.execution_policy,
-        policy.harness,
-        child_env,
+    network_facts = EffectiveNetworkFacts.from_values(
+        sandbox=policy.execution_policy.sandbox,
+        network=resolve_network_policy(
+            policy.execution_policy.network,
+            policy.execution_policy.sandbox,
+        ),
+        native_config=policy.execution_policy.native_config,
     )
     guidance_blocks = build_guidance_blocks(
         profile=policy.profile,
@@ -1139,7 +1132,6 @@ def _resolve_spawn_prepare_projection(
         project_paths=project_paths,
         active_work_dir=active_work_dir,
         policy=policy,
-        runtime=runtime,
     )
 
     composed = ComposedLaunchContent(
@@ -1186,7 +1178,6 @@ def _resolve_primary_projection(
         project_paths=project_paths,
         active_work_dir=active_work_dir,
         policy=policy,
-        runtime=runtime,
     )
 
     seed = harness.seed_session(
@@ -1736,17 +1727,13 @@ def bind_launch_context(
         native_agent_copy=native_agent_copy,
         allow_builtin_agents=allow_builtin_agents,
     )
-    policy_child_env = inherit_child_env(
-        base_env,
-        {
-            **bindings.plan_overrides,
-            "MERIDIAN_PROJECT_DIR": resolved_control_root.as_posix(),
-        },
-    )
-    network_facts = build_effective_network_facts(
-        resolved_request.execution_policy,
-        harness.id,
-        policy_child_env,
+    network_facts = EffectiveNetworkFacts.from_values(
+        sandbox=resolved_request.execution_policy.sandbox,
+        network=resolve_network_policy(
+            resolved_request.execution_policy.network,
+            resolved_request.execution_policy.sandbox,
+        ),
+        native_config=resolved_request.execution_policy.native_config,
     )
     permission_policy = build_permission_policy(
         rules=(*resolved_request.tool_rules, *platform_tool_rules),

@@ -17,21 +17,32 @@ from meridian.lib.harness.projections.project_codex_subprocess import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
+    Allow,
     EffectiveNetworkFacts,
+    HarnessNetworkConfig,
     PermissionPolicy,
     PlatformCommand,
     PlatformRule,
-    UserNetworkConfig,
-    host_set,
     network_policy_name,
 )
 
 
+def _bind(spec: ResolvedLaunchSpec) -> ResolvedLaunchSpec:
+    return spec.with_effective_network_facts(
+        EffectiveNetworkFacts.from_permission_policy(
+            spec.permission_policy,
+            native_config=spec.native_config,
+        )
+    )
+
+
 def _spec(*, interactive: bool) -> ResolvedLaunchSpec:
-    return ResolvedLaunchSpec(
-        harness=HarnessId.CODEX,
-        prompt="test",
-        interactive=interactive,
+    return _bind(
+        ResolvedLaunchSpec(
+            harness=HarnessId.CODEX,
+            prompt="test",
+            interactive=interactive,
+        )
     )
 
 
@@ -43,6 +54,13 @@ def _effective_network(spec: ResolvedLaunchSpec) -> str:
         )
     )
     return network_policy_name(projection.effective)
+
+
+def test_effective_network_facts_require_launch_binding() -> None:
+    spec = ResolvedLaunchSpec(harness=HarnessId.CODEX, prompt="test")
+
+    with pytest.raises(RuntimeError, match="no bound effective network facts"):
+        spec.effective_network_facts()
 
 
 def test_interactive_codex_app_server_injects_idle_notify() -> None:
@@ -94,6 +112,7 @@ def test_codex_report_names_unsupported_meridian_command_match_forms() -> None:
             )
         }
     )
+    spec = _bind(spec)
 
     _, report = compile_codex_permissions(spec)
 
@@ -120,6 +139,7 @@ def test_codex_sandbox_report_describes_user_wide_spawn_escape() -> None:
             )
         }
     )
+    spec = _bind(spec)
 
     _, report = compile_codex_permissions(spec)
 
@@ -145,6 +165,7 @@ def test_codex_workspace_network_reaches_every_launch_boundary(
             "projected_roots": (Path("/workspace/extra"),),
         }
     )
+    spec = _bind(spec)
 
     subprocess = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
     appserver = project_codex_spec_to_appserver_command(
@@ -175,6 +196,7 @@ def test_codex_allowlist_reaches_every_launch_boundary_as_one_domain_map() -> No
             )
         }
     )
+    spec = _bind(spec)
 
     subprocess = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
     appserver = project_codex_spec_to_appserver_command(
@@ -201,7 +223,7 @@ def test_codex_allowlist_reaches_every_launch_boundary_as_one_domain_map() -> No
     }
 
 
-def test_codex_user_domains_change_effective_policy_without_copying_the_user_map() -> None:
+def test_codex_detected_user_widening_assumes_open_without_changing_projection() -> None:
     from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 
     spec = _spec(interactive=False).model_copy(
@@ -215,26 +237,25 @@ def test_codex_user_domains_change_effective_policy_without_copying_the_user_map
     spec = spec.with_effective_network_facts(
         EffectiveNetworkFacts.from_permission_policy(
             spec.permission_policy,
-            user_config=UserNetworkConfig(
-                path="/home/test/.codex/config.toml",
-                allow=host_set(("example.com",)),
-                deny=host_set(("blocked.example",)),
+            harness_configs=(
+                HarnessNetworkConfig(
+                    path="/home/test/.codex/config.toml",
+                    bypasses_enforcement=True,
+                ),
             ),
         )
     )
 
-    command = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
-    _, report = compile_codex_permissions(spec)
-    line = next(item for item in report if item.element.startswith("network: allowlist"))
+    permissions, report = compile_codex_permissions(spec)
+    line = next(item for item in report if item.element == "network: allow")
 
-    assert (
-        'features.network_proxy.domains={ "github.com" = "allow", "evil.example" = "deny" }'
-    ) in command
-    assert "example.com" not in " ".join(command)
-    assert "blocked.example" not in " ".join(command)
-    assert "allow=2 [example.com, github.com]" in line.element
-    assert "deny=2 [blocked.example, evil.example]" in line.element
+    assert permissions.network.domains == (
+        ("github.com", "allow"),
+        ("evil.example", "deny"),
+    )
+    assert project_codex_network(spec.effective_network_facts()).effective == Allow()
     assert "/home/test/.codex/config.toml" in line.note
+    assert "network enforcement as bypassed" in line.note
 
 
 def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
@@ -259,6 +280,9 @@ def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
             )
         }
     )
+    defaulted = _bind(defaulted)
+    authored = _bind(authored)
+    allowlisted = _bind(allowlisted)
 
     _, defaulted_report = compile_codex_permissions(defaulted)
     _, authored_report = compile_codex_permissions(authored)
@@ -289,6 +313,7 @@ def test_codex_deprecated_native_network_override_wins_for_warning_release() -> 
             "native_config": {"sandbox_workspace_write": {"network_access": False}},
         }
     )
+    spec = _bind(spec)
 
     subprocess = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
     appserver = project_codex_spec_to_appserver_command(
@@ -330,6 +355,7 @@ def test_codex_native_network_override_matching_profile_reports_native() -> None
             "native_config": {"sandbox_workspace_write": {"network_access": False}},
         }
     )
+    spec = _bind(spec)
 
     _, report = compile_codex_permissions(spec)
 
@@ -362,6 +388,7 @@ def test_codex_invalid_native_network_override_keeps_portable_deny(
             "native_config": native_config,
         }
     )
+    spec = _bind(spec)
 
     _, report = compile_codex_permissions(spec)
     subprocess = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))

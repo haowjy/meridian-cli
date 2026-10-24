@@ -35,7 +35,6 @@ from meridian.lib.safety.policy import (
     Host,
     Hosts,
     SandboxDerivedNetwork,
-    parse_network_policy,
 )
 from meridian.lib.state import work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
@@ -134,7 +133,7 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     assert ("ANTHROPIC_API_KEY" not in env) == expected
 
 
-def test_launch_boundary_includes_only_claude_user_network_settings(
+def test_claude_user_allowed_domains_detection_assumes_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -182,30 +181,22 @@ def test_launch_boundary_includes_only_claude_user_network_settings(
     boundary = CallerBoundary.from_env_value(
         preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
     )
-    assert boundary.network == parse_network_policy(
-        {
-            "allow": ["api.example.com", "localhost"],
-            "deny": ["blocked.example.com"],
-        }
-    )
+    assert boundary.network == Allow()
     network_line = next(
         line
         for line in preview.enforcement_report()
-        if line.element
-        == (
-            "network: allowlist (allow=2 [api.example.com, localhost]; "
-            "deny=1 [blocked.example.com])"
-        )
+        if line.element == "network: allow"
     )
     assert user_config.as_posix() in network_line.note
+    assert "network enforcement as bypassed" in network_line.note
     assert "project.example.com" not in network_line.note
-    assert preview.projected_content is not None
-    assert "curl --noproxy ''" in preview.projected_content.system_prompt
 
 
-def test_claude_user_proxy_port_widens_effective_network(
+@pytest.mark.parametrize("port_key", ["httpProxyPort", "socksProxyPort"])
+def test_claude_user_proxy_port_detection_assumes_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    port_key: str,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
     user_config = tmp_path / "claude-home"
@@ -216,7 +207,7 @@ def test_claude_user_proxy_port_widens_effective_network(
             {
                 "sandbox": {
                     "network": {
-                        "httpProxyPort": 3128,
+                        port_key: 3128.0,
                         "deniedDomains": ["blocked.example"],
                     }
                 }
@@ -246,28 +237,30 @@ def test_claude_user_proxy_port_widens_effective_network(
     boundary = CallerBoundary.from_env_value(
         preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
     )
-    assert boundary.network == Allow(
-        deny=frozenset((Host("blocked.example"), Host("evil.example")))
-    )
+    assert boundary.network == Allow()
     network_line = next(
         line for line in preview.enforcement_report() if line.element.startswith("network: allow")
     )
     assert settings_path.as_posix() in network_line.note
-    assert "user proxy bypasses Claude's domain filter" in network_line.note
+    assert "network enforcement as bypassed" in network_line.note
 
 
-def test_codex_user_proxy_domains_join_effective_network(
+@pytest.mark.parametrize("config_source", ["home", "relative-home", "project"])
+def test_codex_allow_domain_detection_assumes_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    config_source: str,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
-    config_path = codex_home / "config.toml"
+    if config_source == "project":
+        config_path = tmp_path / ".codex" / "config.toml"
+    else:
+        config_path = codex_home / "config.toml"
+    config_path.parent.mkdir(exist_ok=True)
     config_path.write_text(
-        """[features.network_proxy]
-enabled = true
-[features.network_proxy.domains]
+        """[features.network_proxy.domains]
 "example.com" = "allow"
 "blocked.example" = "deny"
 """,
@@ -282,7 +275,10 @@ enabled = true
             network={"allow": ["github.com"], "deny": ["evil.example"]},
         ),
     )
-    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
+    monkeypatch.setenv(
+        "CODEX_HOME",
+        codex_home.name if config_source == "relative-home" else codex_home.as_posix(),
+    )
 
     preview = build_launch_context(
         spawn_id="dry-run-codex-user-domains",
@@ -295,19 +291,17 @@ enabled = true
     boundary = CallerBoundary.from_env_value(
         preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
     )
-    assert boundary.network == parse_network_policy(
-        {
-            "allow": ["example.com", "github.com"],
-            "deny": ["blocked.example", "evil.example"],
-        }
-    )
+    assert boundary.network == Allow()
     network_line = next(
         line
         for line in preview.enforcement_report()
-        if line.element.startswith("network: allowlist")
+        if line.element == "network: allow"
     )
     assert config_path.as_posix() in network_line.note
     assert "features.network_proxy.domains" in network_line.note
+    assert "network enforcement as bypassed" in network_line.note
+    assert "example.com" not in " ".join(preview.binding.argv)
+    assert "blocked.example" not in " ".join(preview.binding.argv)
 
 
 @pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX])
@@ -356,7 +350,7 @@ def test_unreadable_user_network_config_is_reported_and_contributes_nothing(
     )
     assert config_path.as_posix() in network_line.note
     assert "is unreadable" in network_line.note
-    assert "contributes no user network settings" in network_line.note
+    assert "contributes no widening detection" in network_line.note
 
 
 def test_primary_config_sandbox_resolves_unset_network_after_final_precedence(

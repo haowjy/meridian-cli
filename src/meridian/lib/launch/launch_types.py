@@ -163,12 +163,9 @@ class ResolvedLaunchSpec(BaseModel):
     def effective_network_facts(self) -> EffectiveNetworkFacts:
         """Return the complete, bound facts consumed by a harness network projector."""
 
-        if self._bound_network_facts is not None:
-            return self._bound_network_facts
-        return EffectiveNetworkFacts.from_permission_policy(
-            self.permission_policy,
-            native_config=self.native_config,
-        )
+        if self._bound_network_facts is None:
+            raise RuntimeError("launch spec has no bound effective network facts")
+        return self._bound_network_facts
 
     def with_effective_network_facts(
         self,

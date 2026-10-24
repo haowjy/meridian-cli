@@ -12,7 +12,7 @@ import structlog
 
 from meridian.lib.harness.claude_sessions import resolve_claude_config_root
 from meridian.lib.launch.text_utils import dedupe_nonempty
-from meridian.lib.safety.policy import UserNetworkConfig, host_set
+from meridian.lib.safety.policy import HarnessNetworkConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -46,36 +46,28 @@ def _read_settings_payload(settings_path: Path) -> _SettingsRead:
     return _SettingsRead(unreadable_reason=reason)
 
 
-def _network_domains(
-    payload: dict[str, object],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _network_widens(payload: dict[str, object]) -> bool:
     raw_sandbox = payload.get("sandbox")
     if not isinstance(raw_sandbox, dict):
-        return (), ()
+        return False
     raw_network = cast("dict[str, object]", raw_sandbox).get("network")
     if not isinstance(raw_network, dict):
-        return (), ()
+        return False
     network = cast("dict[str, object]", raw_network)
-
-    def domains(key: str) -> tuple[str, ...]:
-        raw_domains = network.get(key)
-        if not isinstance(raw_domains, list):
-            return ()
-        return tuple(
-            dedupe_nonempty(
-                entry for entry in cast("list[object]", raw_domains) if isinstance(entry, str)
-            )
-        )
-
+    allowed_domains = network.get("allowedDomains")
     return (
-        domains("allowedDomains"),
-        domains("deniedDomains"),
+        (
+            isinstance(allowed_domains, list)
+            and bool(cast("list[object]", allowed_domains))
+        )
+        or "httpProxyPort" in network
+        or "socksProxyPort" in network
     )
 
 
 def read_claude_user_network_config(
     env: Mapping[str, str],
-) -> UserNetworkConfig | None:
+) -> HarnessNetworkConfig | None:
     """Return network facts from the user settings root selected by the child env."""
 
     child_cwd = Path(env.get("MERIDIAN_PROJECT_DIR", "") or Path.cwd())
@@ -84,29 +76,14 @@ def read_claude_user_network_config(
     if settings.payload is None and settings.unreadable_reason is None:
         return None
     if settings.payload is None:
-        return UserNetworkConfig(
+        return HarnessNetworkConfig(
             path=settings_path.as_posix(),
             unreadable_reason=settings.unreadable_reason,
         )
 
-    allowed, denied = _network_domains(settings.payload)
-    raw_sandbox = settings.payload.get("sandbox")
-    raw_network = (
-        cast("dict[str, object]", raw_sandbox).get("network")
-        if isinstance(raw_sandbox, dict)
-        else None
-    )
-    network = cast("dict[str, object]", raw_network) if isinstance(raw_network, dict) else {}
-    bypasses_domain_filter = any(
-        isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535
-        for value in (network.get("httpProxyPort"), network.get("socksProxyPort"))
-    )
-    return UserNetworkConfig(
-        path=settings_path.as_posix(),
-        allow=host_set(allowed),
-        deny=host_set(denied),
-        bypasses_domain_filter=bypasses_domain_filter,
-    )
+    if not _network_widens(settings.payload):
+        return None
+    return HarnessNetworkConfig(path=settings_path.as_posix(), bypasses_enforcement=True)
 
 
 def read_claude_settings_permissions(

@@ -76,13 +76,11 @@ class NetworkProjection(Generic[NativeNetworkT]):
 
 
 @dataclass(frozen=True)
-class UserNetworkConfig:
-    """Network facts read from the harness config selected by the child environment."""
+class HarnessNetworkConfig:
+    """One harness config file that may bypass Meridian's network enforcement."""
 
     path: str
-    allow: frozenset[Host] = frozenset()
-    deny: frozenset[Host] = frozenset()
-    bypasses_domain_filter: bool = False
+    bypasses_enforcement: bool = False
     unreadable_reason: str | None = None
 
 
@@ -119,7 +117,11 @@ class EffectiveNetworkFacts:
     sandbox: SandboxMode
     network: NetworkPolicy
     native_config: Mapping[str, object]
-    user_config: UserNetworkConfig | None = None
+    harness_configs: tuple[HarnessNetworkConfig, ...] = ()
+
+    @property
+    def harness_config_bypasses_enforcement(self) -> bool:
+        return any(config.bypasses_enforcement for config in self.harness_configs)
 
     @classmethod
     def from_values(
@@ -128,7 +130,7 @@ class EffectiveNetworkFacts:
         sandbox: str | None,
         network: NetworkPolicy | None,
         native_config: Mapping[str, object] | None = None,
-        user_config: UserNetworkConfig | None = None,
+        harness_configs: tuple[HarnessNetworkConfig, ...] = (),
     ) -> EffectiveNetworkFacts:
         """Validate resolved execution-policy values at the effective-network port."""
 
@@ -137,7 +139,7 @@ class EffectiveNetworkFacts:
             sandbox=parsed_sandbox,
             network=network or default_network_policy(parsed_sandbox),
             native_config=native_config or _EMPTY_NATIVE_CONFIG,
-            user_config=user_config,
+            harness_configs=harness_configs,
         )
 
     @classmethod
@@ -146,7 +148,7 @@ class EffectiveNetworkFacts:
         policy: PermissionPolicy,
         *,
         native_config: Mapping[str, object] | None = None,
-        user_config: UserNetworkConfig | None = None,
+        harness_configs: tuple[HarnessNetworkConfig, ...] = (),
     ) -> EffectiveNetworkFacts:
         """Take only effective-network facts from a compiled permission policy."""
 
@@ -154,7 +156,7 @@ class EffectiveNetworkFacts:
             sandbox=policy.sandbox,
             network=policy.network,
             native_config=native_config or _EMPTY_NATIVE_CONFIG,
-            user_config=user_config,
+            harness_configs=harness_configs,
         )
 
 
@@ -803,6 +805,7 @@ __all__ = [
     "CommandMatch",
     "EffectiveNetworkFacts",
     "EnforcementReport",
+    "HarnessNetworkConfig",
     "Host",
     "Hosts",
     "NetworkPolicy",
@@ -816,7 +819,6 @@ __all__ = [
     "ReportStatus",
     "SandboxDerivedNetwork",
     "SandboxMode",
-    "UserNetworkConfig",
     "build_permission_policy",
     "canonical_host",
     "complete_report",

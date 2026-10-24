@@ -23,7 +23,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.platform.atomic import AtomicReplaceDurabilityError
-from meridian.lib.safety.policy import PermissionPolicy, PlatformRule
+from meridian.lib.safety.policy import EffectiveNetworkFacts, PermissionPolicy, PlatformRule
 
 
 @pytest.fixture(autouse=True)
@@ -488,6 +488,9 @@ def test_codex_materialize_reports_rules_write_failure_without_refusing_launch(
                 ),
             ),
         )
+    )
+    spec = spec.with_effective_network_facts(
+        EffectiveNetworkFacts.from_permission_policy(spec.permission_policy)
     )
 
     bound = materialize_codex_spec(

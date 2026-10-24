@@ -26,23 +26,22 @@ fallback, no investment; new work targets V2.
 Claude's spec bind port reads the settings files selected by the final child cwd and
 environment. Tool allows from user and project files live on
 `ClaudeRuntimeResolution.settings_allows`. The separate network-facts bind port owns the
-selected user settings path, network domains, unreadable state, and proxy-port filter bypass
-for native projection, guidance, reports, boundary records, and child containment. Project
-network settings did not widen a launch-local strict allowlist in the live probe, so they are
-not effective facts.
+selected user settings path and detects a non-empty `sandbox.network.allowedDomains` or
+either proxy-port key. Any detection makes the effective network `Allow()`; narrowing
+settings are not modelled. Project network settings did not widen a launch-local strict
+allowlist in the live probe, so they are not detection inputs.
 The adapter's `shell_network_guidance()` is the sole owner of Claude's Linux-only
 host-service proxy hint. `project_claude_network()` returns both its native settings and
 typed effective policy; compile reads the former, while the report and child-spawn
 guardrail read the latter. Shared prompt composition only places the returned guidance.
 
-Codex's network-facts bind port reads `features.network_proxy.domains` from the
-`config.toml` selected by the child `CODEX_HOME` (or child `HOME/.codex`). Its allow and
-deny entries affect only the effective projection; Meridian still emits only its own inline
-map, and Codex merges the user map. The explicit sandbox mode on Meridian launches selects
-Codex's legacy sandbox configuration, so `default_permissions` / `[permissions.*]` profiles
-do not contribute. Recheck that fact when changing the `-s` projection. Both harness readers
-distinguish a missing file from an unreadable one; unreadable files contribute nothing and
-remain visible in permission reports.
+Codex's network-facts bind port detects any `allow` under
+`features.network_proxy.domains` in both the child-selected `$CODEX_HOME/config.toml` and
+the child project root's `.codex/config.toml`. Any detection makes the effective network
+`Allow()` without modelling proxy activation, project trust, or narrowing `deny` entries;
+Meridian still emits only its own inline map. Both harness readers distinguish a missing
+file from an unreadable one; unreadable files contribute nothing and remain visible in
+permission reports.
 
 ## Translation Pipeline
 

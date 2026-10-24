@@ -45,9 +45,9 @@ the defaulted typed network policy (`Allow(deny)` or `Hosts(allow, deny)`, with 
 meaning deny), the explicit workspace roots a native read-only sandbox must protect, and
 approval. A bundle may carry `SandboxDerivedNetwork` until Meridian's final sandbox
 precedence is applied; `ResolvedLaunchSpec.permission_policy` always carries the resolved
-value. `EffectiveNetworkFacts.user_config` is the one attributed contribution from the
-harness config selected by the child environment: path, canonical host sets, domain-filter
-bypass, or an unreadable reason. Each harness compiles those facts in
+value. `EffectiveNetworkFacts.harness_configs` carries attributed harness files selected by
+the final child environment: each file either signals that enforcement must be treated as
+bypassed or records why it was unreadable. Each harness compiles those facts in
 `harness/projections/permissions_<harness>.py`; nothing in `safety/` knows their meaning.
 The tool rules are Mars's typed rules (`lib/tools.py`). The policy
 answers the allowlist questions (`is_allowlist`, `allowed_tools`) and writes each

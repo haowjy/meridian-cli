@@ -14,12 +14,11 @@ from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLa
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
     EffectiveNetworkFacts,
+    HarnessNetworkConfig,
     PermissionPolicy,
     PlatformCommand,
     PlatformRule,
-    UserNetworkConfig,
     build_permission_policy,
-    host_set,
     network_policy_name,
 )
 from meridian.lib.tools import PLATFORM_ORIGIN
@@ -30,6 +29,16 @@ _STRICT_OFFLINE_NETWORK = {
     "allowLocalBinding": False,
     "allowAllUnixSockets": False,
 }
+
+
+def _spec(**values: object) -> ResolvedLaunchSpec:
+    spec = ResolvedLaunchSpec.model_validate(values)
+    return spec.with_effective_network_facts(
+        EffectiveNetworkFacts.from_permission_policy(
+            spec.permission_policy,
+            native_config=spec.native_config,
+        )
+    )
 
 
 def _effective_network(spec: ResolvedLaunchSpec) -> str:
@@ -60,7 +69,7 @@ def _settings_permission_entries(argv: list[str], action: str) -> tuple[str, ...
 
 
 def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -77,7 +86,7 @@ def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled()
 
 
 def test_claude_projection_keeps_passthrough_agent_when_native_agents_enabled() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(),
@@ -94,7 +103,7 @@ def test_claude_projection_keeps_passthrough_agent_when_native_agents_enabled() 
 
 
 def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
@@ -121,7 +130,7 @@ def test_claude_projection_spells_exact_and_prefix_meridian_commands() -> None:
             PlatformCommand(command="meridian spawn list", match="prefix"),
         ),
     )
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(platform_rules=(platform,)),
@@ -153,7 +162,7 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
             ),
         ),
     )
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -185,7 +194,7 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
 
 
 def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -209,11 +218,11 @@ def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:
     assert _effective_network(spec) == "deny"
 
 
-def test_claude_network_deny_projects_strict_allowlist(
+def test_claude_detected_user_widening_assumes_open_without_changing_projection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("meridian.lib.harness.projections.permissions_claude.sys.platform", "linux")
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -230,10 +239,11 @@ def test_claude_network_deny_projects_strict_allowlist(
         EffectiveNetworkFacts.from_values(
             sandbox="workspace-write",
             network=None,
-            user_config=UserNetworkConfig(
-                path="/home/test/.claude/settings.json",
-                allow=host_set(("a.example", "b.example", "c.example", "z.example")),
-                deny=host_set(("blocked.example",)),
+            harness_configs=(
+                HarnessNetworkConfig(
+                    path="/home/test/.claude/settings.json",
+                    bypasses_enforcement=True,
+                ),
             ),
         )
     )
@@ -243,32 +253,15 @@ def test_claude_network_deny_projects_strict_allowlist(
 
     assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     _, report = compile_claude_permissions(spec)
-    line = next(item for item in report if item.element.startswith("network: allowlist"))
-    assert "allow=4 [a.example, b.example, c.example, …]" in line.element
-    assert "deny=1 [blocked.example]" in line.element
-    assert "z.example" not in line.note
+    line = next(item for item in report if item.element == "network: allow")
+    assert "/home/test/.claude/settings.json" in line.note
+    assert "network enforcement as bypassed" in line.note
     assert line.status == "partial"
-    assert _effective_network(spec) == "allowlist"
-
-    bypassed = spec.model_copy(
-        update={
-            "permission_policy": PermissionPolicy(
-                sandbox="workspace-write",
-                network="deny",
-                approval="never",
-            )
-        }
-    )
-    _, bypassed_report = compile_claude_permissions(bypassed)
-    bypassed_line = next(
-        item for item in bypassed_report if item.element.startswith("network: allowlist")
-    )
-    assert bypassed_line.status == "partial"
-    assert _effective_network(bypassed) == "allowlist"
+    assert _effective_network(spec) == "allow"
 
 
 def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
@@ -289,7 +282,7 @@ def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
 
 
 def test_claude_typed_deny_policy_projects_network_settings() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -308,7 +301,7 @@ def test_claude_typed_deny_policy_projects_network_settings() -> None:
 
 
 def test_claude_allowlist_translates_double_wildcards_and_gates_local_switches() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -339,7 +332,7 @@ def test_claude_allowlist_translates_double_wildcards_and_gates_local_switches()
 
 
 def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -356,7 +349,7 @@ def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> 
 
 
 def test_claude_projection_does_not_exclude_spawn_when_sandbox_is_disabled() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -374,7 +367,7 @@ def test_claude_projection_does_not_exclude_spawn_when_sandbox_is_disabled() -> 
 
 
 def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
@@ -416,7 +409,7 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
 
 
 def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
@@ -447,7 +440,7 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
 @pytest.mark.parametrize("continuation", [False, True])
 def test_interactive_prompt_is_unconsumable_after_passthrough(continuation: bool) -> None:
     prompt = "Reply exactly: hello"
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         interactive=True,
         user_turn_content=prompt,
@@ -469,7 +462,7 @@ def test_claude_projection_loads_selected_plugin_dirs(
     interactive: bool,
 ) -> None:
     plugin_dirs = ("/plugins/first", "/plugins/second")
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         interactive=interactive,
         claude_runtime=ClaudeRuntimeResolution(plugin_dirs=plugin_dirs),

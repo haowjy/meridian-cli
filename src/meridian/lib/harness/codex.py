@@ -37,9 +37,10 @@ from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
     find_rollout,
     materialize_fork_rollout,
+    resolve_codex_home,
 )
 from meridian.lib.harness.codex_rules import ensure_codex_meridian_rules
-from meridian.lib.harness.codex_settings import read_codex_user_network_config
+from meridian.lib.harness.codex_settings import read_codex_network_configs
 from meridian.lib.harness.common import extract_codex_thread_id
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -89,7 +90,6 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
-from meridian.lib.platform import get_home_path
 from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES, EffectiveNetworkFacts
 
 logger = logging.getLogger(__name__)
@@ -99,9 +99,9 @@ def bind_codex_network_facts(
     facts: EffectiveNetworkFacts,
     env: Mapping[str, str],
 ) -> EffectiveNetworkFacts:
-    """Add the child-selected Codex proxy domains to shared policy facts."""
+    """Detect child-selected Codex config that can widen shared policy facts."""
 
-    return replace(facts, user_config=read_codex_user_network_config(env))
+    return replace(facts, harness_configs=read_codex_network_configs(env))
 
 
 def materialize_codex_spec(
@@ -121,13 +121,6 @@ def materialize_codex_spec(
             "codex_runtime": ensure_codex_meridian_rules(env, child_cwd=child_cwd),
         }
     )
-
-
-def _codex_home() -> Path:
-    configured_home = os.environ.get("CODEX_HOME", "").strip()
-    if configured_home:
-        return Path(configured_home).expanduser()
-    return get_home_path() / ".codex"
 
 
 def _fork_rollout_path(*, source_path: Path, source_session_id: str, new_session_id: str) -> Path:
@@ -233,7 +226,7 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
         return False
 
     resolved_repo = project_root.resolve()
-    codex_root = _codex_home() / "sessions"
+    codex_root = resolve_codex_home(os.environ) / "sessions"
     if not codex_root.is_dir():
         return False
 
@@ -379,8 +372,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         operation: Operation,
         interactive: bool,
     ) -> str:
-        from meridian.lib.harness.codex_rollout import resolve_codex_home
-
         home = resolve_codex_home(child_env)
         if not home.is_absolute():
             home = child_cwd / home
@@ -484,7 +475,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if not normalized_session_id:
             return None
 
-        sessions_root = config_root_hint or (_codex_home() / "sessions")
+        sessions_root = config_root_hint or (resolve_codex_home(os.environ) / "sessions")
         if not sessions_root.is_dir():
             return None
 
@@ -498,7 +489,9 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if not normalized_source_session_id:
             raise ValueError("source_session_id is required.")
 
-        db_path = (Path(native_store).parent if native_store else _codex_home()) / "state_5.sqlite"
+        db_path = (
+            Path(native_store).parent if native_store else resolve_codex_home(os.environ)
+        ) / "state_5.sqlite"
         connection: sqlite3.Connection | None = None
         new_session_id: str | None = None
         target_rollout_path: Path | None = None

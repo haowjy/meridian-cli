@@ -22,12 +22,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Sandboxed child delegation cannot weaken the caller's effective network; a legacy boundary record without a network key remains unrestricted for mid-session compatibility.
 
 ### Changed
-- Network policy is one typed allow-or-host-set value from bundle parsing through harness projection and the caller guardrail. Claude effective policy includes user-level domain widening, and child containment preserves both allow subsets and deny supersets.
+- Network policy is one typed allow-or-host-set value from bundle parsing through harness projection and the caller guardrail. Detecting a Claude or Codex harness setting that can widen network access conservatively makes the agent's effective policy fully online; narrowing harness settings are not modelled.
 
 ### Fixed
-- Permission reports and sandboxed-child containment now include Claude user proxy ports
-  that bypass domain filtering and Codex user proxy-domain entries. Malformed selected
-  harness config files are reported and contribute no user network access.
+- Permission reports and sandboxed-child containment detect Claude user allow/proxy
+  settings plus Codex user and project proxy-domain allows. A detected file is named and
+  treated as bypassing network enforcement; malformed files contribute no widening.
 - Claude child containment, caller boundary records, and shell guidance now read network
   domains from the same child-selected user settings root. Offline children are contained by
   every caller, and `[primary] sandbox` resolves an unset network only after primary config
