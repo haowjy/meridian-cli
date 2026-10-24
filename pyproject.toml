@@ -160,3 +160,8 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.11",
 ]
+
+[tool.uv]
+# Copy packages into each venv instead of hardlinking them from the uv cache. Worktrees share
+# that cache, so a hardlinked file (e.g. .venv/bin/mars) overwritten in one venv changes it in all.
+link-mode = "copy"
