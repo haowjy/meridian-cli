@@ -72,7 +72,8 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   background direct children of every primary generation for `MERIDIAN_CHAT_ID`, minus
   consumption and live leases read across those generations. A nested caller owns only its own
   background direct children, so its parent scope contains only itself. Consumption still uses
-  the shared current/legacy observations, Pi receipts, and clears; leases come from observations.
+  the shared current/legacy observations (including terminal results shown by cancel, show, or
+  report-show surfaces), Pi receipts, and clears; leases come from observations.
   Foreground, archived, retired, historical, and quarantined rows are not owed wait targets.
 - Takes at most the oldest 32 rows already terminal when target resolution runs, using the same
   `_DELIVERY_MAX_MEMBERS` bound as collection. Later owed rows remain eligible for the next wait
@@ -122,8 +123,9 @@ protocol:
   authority rows with derived status.
 - Owed membership is background direct children of all primary generations for
   `MERIDIAN_CHAT_ID`, minus consumption read across those same generations and
-  minus `--exclude`. Consumption includes CLI wait/ack observations plus Pi's
-  delivery receipts and cleared IDs. One Pi-private-state reader unions the current
+  minus `--exclude`. Consumption includes CLI wait/ack observations, cancelled results,
+  and terminal report bodies shown by the CLI, plus Pi's delivery receipts and cleared
+  IDs. One Pi-private-state reader unions the current
   and legacy observations, receipts, and cleared IDs per parent. It skips a damaged
   source with a diagnostic, accepting a possible repeated header instead of failing
   wait or retrying collection forever. Birth-verified explicit-wait leases skip a
@@ -133,22 +135,41 @@ protocol:
 - A delivery admits at most 32 results. Each member is header-only: identity and
   outcome, worker, failure and distinct task directory when present, then a
   `meridian spawn show <id>` lookup. The collector does not read report bodies;
-  Claude leads explicitly read one with `spawn show`. Only `spawn wait` completion
-  and `spawn ack` consume, so an earlier report read may still get one short header ping.
+  Claude leads explicitly read one with `spawn show`. Printing a terminal report body
+  through `spawn show` or `spawn report show` consumes it, as do `spawn wait`
+  completion, `spawn ack`, and a `spawn cancel` that reports `cancelled`.
 - `spawn ack <ids...>` writes those IDs under the caller's current primary and
-  returns exactly `{acked: [...]}`; it fails when that primary's row is gone. Reading across the chat is what makes an ack
-  written after resume consume a child of an earlier primary.
+  returns exactly `{acked: [...]}`; it fails when that primary's row is gone. The CLI
+  refuses `spawn ack -C` before calling the operation. Reading across the chat is what
+  makes an ack written after resume consume a child of an earlier primary.
 
 Both commands use `observed-spawns.json`, the same state as explicit `spawn wait`.
 The collector retries index contention and malformed owned authority internally,
 and exits cleanly when its parent PID changes.
 
+`owed.py:record_result_shown_to_caller()` is the one best-effort write path for
+operations that put a terminal result in front of their caller. It records under the caller,
+like wait and ack. Only scopes that read that caller's observations consume it, so a nested
+non-owner's read or cancel does not consume the primary's child. Calls without a caller
+spawn, active results, and empty report bodies are not recorded. `consume_result_if_shown()`
+owns those shared show/status/report-show conditions. Show and status record only when
+`observe=True` and their selected output includes a report body; report-show records a
+non-empty terminal report in every format.
+Cancel records only an outcome reported as `cancelled`; `finalizing` and already-completed
+non-cancel outcomes stay owed. Show, status, report-show, cancel, and cancel-all operations
+default `observe=False` so internal readers remain pure; their CLI surfaces opt in and expose
+`--no-observe`, except cancel-all, whose CLI always opts in. The shared CLI observer helper
+withholds the caller spawn ID under `-C`, so commands directed at another project do not
+record (and ack is refused). An observation failure never replaces the result already shown: lock
+contention after about one second is a warning, read-only-filesystem errors are debug-only.
+
 ## Cancel-All Identity Model
 
 `SpawnCancelAllInput` does not carry a `chat_id` field. Caller identity is derived via
 `runtime_context(ctx)` inside `spawn_cancel_all_sync()` — the same pattern `spawn_wait_sync()`
-uses. The CLI passes `ctx=RuntimeContext.from_environment()` rather than reading
-`os.getenv("MERIDIAN_CHAT_ID")` directly.
+uses. The CLI's shared observer helper passes the ambient chat ID for scoping plus an
+observer spawn ID only when allowed. This preserves normal no-arg wait and cancel-all
+scoping while making `-C` non-observing.
 
 This matters: env reading in op API inputs leaks CLI-layer concerns into the service layer.
 If you add a new cancel or wait operation, derive identity from `ctx`, not from input fields.
@@ -275,7 +296,8 @@ which uses verbosity-gated compact vs verbose.
 
 `meridian.spawn.status` now has a manifest-level default of `include_report_body=False`
 (`SpawnStatusInput`), while `meridian.spawn.show` keeps `include_report_body=True`
-(`SpawnShowInput`). CLI defaults were already aligned (`status` report-off, `show` report-on).
+(`SpawnShowInput`). Both operation inputs default `observe=False`; CLI defaults opt in, but
+status can consume only when `--full` actually includes a non-empty terminal report.
 
 ## Foreground Path Populates report
 

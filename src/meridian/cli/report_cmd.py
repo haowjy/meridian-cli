@@ -8,6 +8,10 @@ from cyclopts import Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, emit
+from meridian.cli.utils import (
+    resolve_cli_observer_context,
+    resolve_cli_project_root,
+)
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.report import (
     ReportSearchInput,
@@ -23,14 +27,26 @@ def _report_show(
         str | None,
         Parameter(name="--spawn", help="Spawn id or reference (e.g. @latest)."),
     ] = None,
+    observe: Annotated[
+        bool,
+        Parameter(
+            name="--observe",
+            help="Consume the terminal result. Use --no-observe for a pure read.",
+        ),
+    ] = True,
 ) -> None:
-    emit(
-        report_show_sync(
-            ReportShowInput(
-                spawn_id=spawn,
-            )
-        )
+    project_root = resolve_cli_project_root()
+    result = report_show_sync(
+        ReportShowInput(
+            spawn_id=spawn,
+            observe=observe,
+            project_root=project_root.as_posix(),
+        ),
+        # The caller ID also resolves the no-argument form; payload.observe still
+        # decides whether showing the report consumes it.
+        ctx=resolve_cli_observer_context(observe=True),
     )
+    emit(result)
 
 
 def _report_search(
@@ -70,7 +86,12 @@ def register_report_commands(app: Any) -> None:
         group="report",
         handlers=handlers,
         command_help_epilogues={
-            "meridian.report.show": ("Example:\n\n  meridian spawn report show p107\n"),
+            "meridian.report.show": (
+                "Inside a Meridian spawn, showing a terminal report consumes its pending "
+                "completion notice, including when output is piped or redirected. Use "
+                "--no-observe for a pure read.\n\nExample:\n\n"
+                "  meridian spawn report show p107\n"
+            ),
             "meridian.report.search": ('Example:\n\n  meridian spawn report search "auth bug"\n'),
         },
     )

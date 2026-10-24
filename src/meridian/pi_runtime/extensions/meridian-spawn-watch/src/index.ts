@@ -657,7 +657,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
                   const result = await runMeridianCommand(["session", "log", row.id], 15_000);
                   const text = (result.stdout || result.stderr).trimEnd();
                   if (text) return text;
-                  const showResult = await runMeridianCommand(["spawn", "show", row.id], 15_000);
+                  const showResult = await runMeridianCommand(["spawn", "show", "--no-observe", row.id], 15_000);
                   return (showResult.stdout || showResult.stderr).trimEnd() || `No output for ${row.id}`;
                 },
               },
@@ -679,7 +679,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   pi.registerCommand("spawn:show", {
     description: "Show a correlated Meridian spawn.",
     handler: async (args, ctx) => {
-      const result = await runMeridianCommand(["spawn", "show", args.trim()], 15_000);
+      const result = await runMeridianCommand(["spawn", "show", "--no-observe", args.trim()], 15_000);
       ctx.ui.notify(result.stdout || result.stderr, result.exitCode === 0 ? "info" : "error");
     },
   });
@@ -687,7 +687,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   pi.registerCommand("spawn:wait", {
     description: "Wait for a correlated Meridian spawn.",
     handler: async (args, ctx) => {
-      const result = await runMeridianCommand(["spawn", "wait", args.trim()], 60_000);
+      const result = await runMeridianCommand(["spawn", "wait", "--no-observe", args.trim()], 60_000);
       ctx.ui.notify(result.stdout || result.stderr, result.exitCode === 0 ? "info" : "error");
     },
   });
@@ -695,7 +695,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   pi.registerCommand("spawn:cancel", {
     description: "Cancel a correlated Meridian spawn.",
     handler: async (args, ctx) => {
-      const result = await runMeridianCommand(["spawn", "cancel", args.trim()], 15_000);
+      const result = await runMeridianCommand(["spawn", "cancel", "--no-observe", args.trim()], 15_000);
       ctx.ui.notify(result.stdout || result.stderr, result.exitCode === 0 ? "info" : "error");
     },
   });

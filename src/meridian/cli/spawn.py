@@ -19,6 +19,7 @@ from meridian.cli.invocation import Emitter, current_output_sink, emit, get_glob
 from meridian.cli.spawn_inject import inject_message
 from meridian.cli.utils import (
     parse_csv_list,
+    resolve_cli_observer_context,
     resolve_cli_project_root,
 )
 from meridian.lib.bootstrap.services import (
@@ -936,6 +937,13 @@ def _spawn_show(
             help="Include the full report body (default: summary in JSON, full in text).",
         ),
     ] = None,
+    observe: Annotated[
+        bool,
+        Parameter(
+            name="--observe",
+            help="Consume terminal results shown with a report. Use --no-observe for a pure read.",
+        ),
+    ] = True,
 ) -> None:
     output_format = get_global_options().output.format
     include_report_body = full if full is not None else output_format != "json"
@@ -946,8 +954,10 @@ def _spawn_show(
         build_input=lambda spawn_id: SpawnShowInput(
             spawn_id=spawn_id,
             include_report_body=include_report_body,
+            observe=observe,
         ),
         handler=spawn_show_sync,
+        observe=observe,
     )
 
 
@@ -968,6 +978,16 @@ def _spawn_status(
             help="Include the full report body (default: disabled).",
         ),
     ] = False,
+    observe: Annotated[
+        bool,
+        Parameter(
+            name="--observe",
+            help=(
+                "Consume terminal results when --full shows a report. "
+                "Use --no-observe for a pure read."
+            ),
+        ),
+    ] = True,
 ) -> None:
     _spawn_show_like(
         emit,
@@ -976,8 +996,10 @@ def _spawn_status(
         build_input=lambda spawn_id: SpawnStatusInput(
             spawn_id=spawn_id,
             include_report_body=full,
+            observe=observe,
         ),
         handler=spawn_status_sync,
+        observe=observe,
     )
 
 
@@ -988,12 +1010,15 @@ def _spawn_show_like(
     verbose: bool,
     build_input: Callable[[str], SpawnShowInput | SpawnStatusInput],
     handler: Callable[..., Any],
+    observe: bool,
 ) -> None:
     sink = current_output_sink()
     prepared = _prepare_spawn_runtime_read()
+    observer = resolve_cli_observer_context(observe=observe)
     results = tuple(
         handler(
             build_input(spawn_id),
+            ctx=observer,
             sink=sink,
             prepared=prepared,
         )
@@ -1006,14 +1031,11 @@ def _spawn_show_like(
             emit(results[0].format_text(FormatContext(verbosity=1)))
         else:
             emit(results[0])
-        return
-
-    if output_format == "json":
+    elif output_format == "json":
         emit([result.to_cli_wire() for result in results])
-        return
-
-    fmt_ctx = FormatContext(verbosity=1) if verbose else None
-    emit("\n\n".join(result.format_text(fmt_ctx) for result in results))
+    else:
+        fmt_ctx = FormatContext(verbosity=1) if verbose else None
+        emit("\n\n".join(result.format_text(fmt_ctx) for result in results))
 
 
 def _spawn_stats(
@@ -1054,12 +1076,24 @@ def _spawn_cancel(
             help="Cancel even when the target is a live managed primary session.",
         ),
     ] = False,
+    observe: Annotated[
+        bool,
+        Parameter(
+            name="--observe",
+            help=(
+                "Consume a cancellation reported as cancelled. "
+                "Use --no-observe when cancelling on another caller's behalf."
+            ),
+        ),
+    ] = True,
 ) -> None:
     result = spawn_cancel_sync(
         SpawnCancelInput(
             spawn_id=spawn_id,
             force=force,
+            observe=observe,
         ),
+        ctx=resolve_cli_observer_context(observe=observe),
         sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
@@ -1156,6 +1190,9 @@ def _spawn_wait(
             include_report_body=include_report_body,
             observe=observe,
         ),
+        # No-arg discovery needs the caller anchor even for --no-observe; the
+        # payload flag independently controls leases and consumption.
+        ctx=resolve_cli_observer_context(observe=True),
         sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
@@ -1192,8 +1229,11 @@ def _spawn_ack(
         Parameter(name="spawn_id", show=False),
     ],
 ) -> None:
+    if get_global_options().directory_explicit:
+        raise ValueError("Spawn acknowledgement must run in the caller's project")
     result = ack_owed_sync(
         SpawnAckInput(spawn_ids=spawn_ids),
+        ctx=resolve_cli_observer_context(observe=True),
         prepared=_prepare_spawn_runtime_read(),
     )
     emit(result.to_wire())
@@ -1248,8 +1288,9 @@ def _spawn_cancel_all(
             work=work,
             include_primaries=include_primaries,
             include_others=include_others,
+            observe=True,
         ),
-        ctx=RuntimeContext.from_environment(),
+        ctx=resolve_cli_observer_context(observe=True),
         sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
@@ -1392,6 +1433,11 @@ def register_spawn_commands(app: App) -> None:
         group="spawn",
         handlers=handlers,
         command_help_epilogues={
+            "meridian.spawn.show": (
+                "Inside a Meridian spawn, showing a terminal report body consumes its "
+                "pending completion notice, including when output is piped or redirected. "
+                "Use --no-observe for a pure read.\n"
+            ),
             "meridian.spawn.wait": _SPAWN_WAIT_HELP_EPILOGUE,
         },
     )

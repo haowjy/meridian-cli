@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Commands that show a terminal child result now consume its completion notice: a
+  `spawn cancel` that reports `cancelled`, `spawn show` or `spawn status --full`
+  with the report body, and `spawn report show` no longer trigger a duplicate
+  Claude spawn-watch or Pi delivery turn. Each command accepts `--no-observe` for
+  callers that must leave delivery owed; commands directed through `-C` never
+  consume results.
+
 ## [0.14.1] - 2026-10-25
 
 ### Fixed

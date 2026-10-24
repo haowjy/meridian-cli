@@ -1,9 +1,13 @@
 """Shared CLI-local parsing and validation helpers."""
 
+import os
 from pathlib import Path
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 from meridian.cli.invocation import get_global_options
+
+if TYPE_CHECKING:
+    from meridian.lib.core.context import RuntimeContext
 
 
 def resolve_cli_project_root() -> Path:
@@ -15,6 +19,24 @@ def resolve_cli_project_root() -> Path:
     if opts.project_root is not None:
         return opts.project_root
     return resolve_project_root_resolution(execution_cwd=Path.cwd()).project_root
+
+
+def resolve_cli_observer_context(*, observe: bool) -> "RuntimeContext":
+    """Return the allowed observer and ambient chat scope for this invocation."""
+
+    from meridian.lib.core.context import RuntimeContext
+    from meridian.lib.core.types import SpawnId
+
+    options = get_global_options()
+    observer = (
+        os.environ.get("MERIDIAN_SPAWN_ID", "").strip()
+        if observe and not options.directory_explicit
+        else ""
+    )
+    return RuntimeContext(
+        spawn_id=SpawnId(observer) if observer else None,
+        chat_id=os.environ.get("MERIDIAN_CHAT_ID", "").strip(),
+    )
 
 
 def cli_project_root_posix() -> str:

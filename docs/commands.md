@@ -19,8 +19,8 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
 | `meridian spawn wait` | Wait for this session's running descendants and return up to 32 unconsumed finished background children as lookup headers; children waited to completion retain full reports; on return, list children that appeared while waiting without consuming them; yields a retry checkpoint if concurrent history writes delay discovery |
 | `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-full` to suppress |
-| `meridian spawn show ID` | Read a spawn's report and status |
-| `meridian spawn status ID` | Read spawn status summary (report body off by default; add `--full` to include) |
+| `meridian spawn show ID` | Show a spawn's report and status; inside a spawn, a terminal report body consumes its pending completion notice (`--no-observe` opts out) |
+| `meridian spawn status ID` | Read spawn status summary; `--full` includes and consumes a terminal report body unless combined with `--no-observe` |
 | `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input |
 | `meridian spawn --fork [REF] -p "next"` | Start a new spawn by forking while preserving launch identity (agent/model/skills) |
 | `meridian spawn --fork-fresh [REF] -p "next"` | Start a new spawn by forking and allowing launch identity changes (`-m`, `-a`, `--skills`) |
@@ -119,6 +119,14 @@ timestamps, paths, model) is hidden by default.
 | `--bg` | Spawn ID + wait instructions (unchanged) |
 
 `spawn show` and `spawn status` default to a moderate tier: status/model/duration plus actionable failure context.
+Inside a spawn, printing a non-empty terminal report through `spawn show`,
+`spawn status --full`, or `spawn report show` consumes its pending completion
+notice. `spawn cancel` likewise consumes an outcome it reports as `cancelled`.
+Pass `--no-observe` to any of those commands to leave the result owed. Piped or
+redirected output still counts as shown; use
+`--no-observe` when another process, UI, or file is the actual recipient.
+An invocation directed through `-C` never observes: show, full status, report show,
+cancel, cancel-all, and wait write no consumption record, while ack is refused.
 Use `--verbose` to include internal diagnostics (tokens, lifecycle fields, backend metadata, and other internals).
 
 Progressive disclosure:
@@ -169,7 +177,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 
 | Command | Description |
 | ------- | ----------- |
-| `meridian spawn report show ID` | Show one spawn's report |
+| `meridian spawn report show ID` | Show one spawn's report; inside a spawn, a non-empty terminal report consumes its pending completion notice (`--no-observe` opts out) |
 | `meridian spawn report search "query"` | Search across all spawn reports |
 | `meridian session browse [--status active\|archived] [--sort updated\|created]` | Browse sessions (Space opens a transcript, `l` the fork/`--from` lineage, Tab the Status and Sort filters); `/` searches the bound native transcripts of the rows the Status view shows, never ZIP contents |
 | `meridian session log REF` | Read a chat, spawn, harness session, or ZIP-backed history UUID |

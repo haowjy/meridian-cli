@@ -44,7 +44,9 @@ selected `state.json` files with derived status before answering liveness. Recur
 archived ancestors as edges so active descendants beneath them remain visible.
 `owed.py` separately owns the shared wait/collect definition of finished unconsumed,
 unleased background children, including Pi delivery receipts and explicit dismissals as
-consumption. No-arg wait resolves at most the oldest 32 already-finished members once,
+consumption. `owed.py` owns caller-scoped observation: normal wait/ack, a cancel reported
+as `cancelled`, and non-empty terminal report bodies returned by show, status, or
+report-show operations with `observe=True`. No-arg wait resolves at most the oldest 32 already-finished members once,
 minus the active target IDs, leases them without putting them through the poll loop, and
 renders their details with `models.py`'s shared header-only renderer. Active targets remain
 uncapped and keep report output. Owed rows are separate from `spawns` in structured output
@@ -70,8 +72,12 @@ is still busy, wait yields an explicit discovery-pending checkpoint instead of
 claiming the session has no pending spawns.
 
 Result fetchers that do not consume a parent's completion notification must use
-`SpawnWaitInput(observe=False)` (`spawn wait --no-observe`). Normal waits observe
-by default; formatting a notification is not delivery.
+`observe=False` (`--no-observe` on the CLI). Show, status, report-show, cancel, and
+cancel-all operations default false so internal readers and UI/MCP callers stay pure;
+the CLI opts in (cancel-all has no observation toggle). Normal waits observe by default;
+formatting a notification is not delivery. CLI invocations that use `-C` supply no
+observer spawn ID, so show, status, report-show, cancel, cancel-all, and wait stay pure;
+ack is refused before it reaches the operation.
 
 Hidden `spawn collect` is the idle-runtime counterpart, not another wait mode. It
 discovers background direct children of every primary generation in the caller's
