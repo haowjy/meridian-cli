@@ -384,7 +384,7 @@ network-deny: [uploads.example]
 
 Mars lowercases, sorts, and deduplicates these sets. Plain lists add across user, project,
 local, profile, overlay, and launch CLI layers; a `{replace: [...]}` value clears lower
-entries where that surface permits replacement. Denies win. An empty allowlist becomes
+entries where that surface permits replacement ([how lists combine](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/mars-toml.md#adding-to-or-replacing-a-permission-list)). Denies win. An empty allowlist becomes
 `deny`. See Mars's [network profile reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/agent-profiles.md#network)
 for the complete host grammar, precedence, and replacement rules.
 
