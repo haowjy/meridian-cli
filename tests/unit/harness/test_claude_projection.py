@@ -177,7 +177,7 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
     assert "cannot keep the completion grant final" in line.note
 
 
-def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> None:
+def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
@@ -193,18 +193,13 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
 
     settings = json.loads(command[command.index("--settings") + 1])
     assert settings["sandbox"]["excludedCommands"] == ["meridian spawn *"]
-    assert settings["sandbox"]["network"]["allowedDomains"] == [
-        "*",
-        "localhost",
-        "127.0.0.1",
-    ]
-    assert settings["sandbox"]["network"]["allowLocalBinding"] is True
-    assert settings["sandbox"]["network"]["allowAllUnixSockets"] is True
+    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
     _, report = compile_claude_permissions(spec)
     sandbox_line = next(item for item in report if item.element == "sandbox: workspace-write")
     assert "runs fully outside the sandbox" in sandbox_line.note
-    network_line = next(item for item in report if item.element == "network: allow")
+    network_line = next(item for item in report if item.element == "network: deny")
     assert network_line.status == "partial"
+    assert _effective_network(spec) == "deny"
 
 
 def test_claude_network_deny_projects_strict_allowlist(

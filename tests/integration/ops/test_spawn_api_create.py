@@ -46,7 +46,7 @@ def _set_caller_guardrail(
     record = json.loads(
         CallerBoundary(
             sandbox=sandbox,
-            network_deny_floor=network == "deny",
+            network=network,
             has_spawn_capability=has_spawn_capability,
             pid_namespace=None,
         ).to_env_value()
@@ -305,7 +305,7 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="workspace-write",
-            network_deny_floor=False,
+            network=None,
             has_spawn_capability=True,
             pid_namespace=f"{namespace}:different",
         ).to_env_value(),
@@ -343,7 +343,7 @@ def test_unsandboxed_caller_has_no_guardrail(
 
 
 @pytest.mark.parametrize("legacy_network", [None, "allow"], ids=["missing", "allow"])
-def test_floored_legacy_caller_without_deny_has_no_network_floor(
+def test_floored_legacy_caller_preserves_optional_network_floor(
     monkeypatch: pytest.MonkeyPatch,
     legacy_network: str | None,
 ) -> None:
@@ -362,31 +362,30 @@ def test_floored_legacy_caller_without_deny_has_no_network_floor(
     check = CallerBoundaryCheck.from_environment(dry_run=True)
 
     assert check.caller is not None
-    assert not check.caller.network_deny_floor
+    assert check.caller.network == legacy_network
 
 
 @pytest.mark.parametrize(
-    ("authored_network", "effective_network", "expected_floor"),
+    ("sandbox", "effective_network", "expected_floor"),
     [
-        (None, "allow", False),
-        ("allow", "allow", False),
-        ("deny", "allow", False),
-        ("deny", "deny", True),
+        ("workspace-write", "allow", "allow"),
+        ("workspace-write", "deny", "deny"),
+        ("danger-full-access", "allow", None),
     ],
 )
-def test_caller_boundary_records_only_an_enforced_authored_deny(
-    authored_network: NetworkMode | None,
+def test_caller_boundary_records_effective_network_for_every_sandboxed_caller(
+    sandbox: SandboxMode,
     effective_network: NetworkMode,
-    expected_floor: bool,
+    expected_floor: NetworkMode | None,
 ) -> None:
     boundary = CallerBoundary.from_policy(
-        PermissionPolicy(sandbox="workspace-write", network=authored_network),
+        PermissionPolicy(sandbox=sandbox),
         effective_network=effective_network,
         pid_namespace=None,
     )
 
-    assert boundary.network_deny_floor is expected_floor
-    assert ("network" in json.loads(boundary.to_env_value())) is expected_floor
+    assert boundary.network == expected_floor
+    assert json.loads(boundary.to_env_value()).get("network") == expected_floor
 
 
 @pytest.mark.parametrize(
@@ -529,8 +528,10 @@ def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
             "allow",
             "default",
             "failed",
-            "set `network: deny` on the child profile",
+            "set `network: deny` on a child profile whose harness enforces it, or set "
+            "`network: allow` on the caller profile",
         ),
+        (HarnessId.CLAUDE, None, "default", "dry-run", None),
         (HarnessId.CLAUDE, "deny", "default", "dry-run", None),
         (HarnessId.CLAUDE, "deny", "never", "dry-run", None),
         (
@@ -538,7 +539,8 @@ def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
             "deny",
             "default",
             "failed",
-            "declares `network: deny`, but its harness or native override does not enforce it",
+            "set `network: deny` on a child profile whose harness enforces it, or set "
+            "`network: allow` on the caller profile",
         ),
     ],
 )
@@ -546,7 +548,7 @@ def test_spawn_create_caller_guardrail_compares_effective_network(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     harness: HarnessId,
-    child_network: NetworkMode,
+    child_network: NetworkMode | None,
     approval: str,
     expected_status: str,
     expected_message: str | None,

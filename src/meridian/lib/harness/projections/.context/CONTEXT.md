@@ -222,8 +222,9 @@ tools. Claude projects allowed domains plus local-binding/Unix-socket settings w
 Bash sandbox is enabled; on Linux host localhost remains partial because clients must use
 the sandbox proxy. Claude's own settings files can merge allowed domains back into a deny,
 and the report names those sources. Codex enables network only for `workspace-write`;
-`read-only` reports an explicit authored allow as unsupported while an unset/defaulted
-allow is informational. OpenCode, Pi, and Cursor satisfy allow through their unrestricted
+`read-only` reports an explicit authored allow as unsupported and treats unset as deny.
+Unset also projects deny for Claude and Codex `workspace-write`; an authored allow opts in.
+OpenCode, Pi, and Cursor satisfy allow through their unrestricted
 shells and report deny as unenforced. A `meridian spawn` sandbox escape remains visible on
 the network line because that command runs with host network access.
 

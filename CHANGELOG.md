@@ -7,7 +7,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Upgrade notes
 - Agents in a Meridian-projected `read-only`/`workspace-write` sandbox can launch children only if their profile lists `subagents:`, never with a weaker sandbox, never with native args after `--`. See [Sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
 - Spawn-capable sandboxed Codex launches write a Meridian-owned `$CODEX_HOME/rules/meridian.rules` that lets `meridian spawn` run outside Codex's sandbox, in every Codex session of that user.
-- An unset profile `network` now enables shell network in Claude `read-only`/`workspace-write` and Codex `workspace-write`; set `network: deny` to retain their former network-off behavior. A sandboxed caller with an enforced, authored deny refuses a child unless the child also resolves to denied network. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults) and [sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
+- An unset profile `network` now follows its sandbox: `read-only`/`workspace-write` project deny, while `danger-full-access` stays online and an unset/default sandbox stays harness-native. Set `network: allow` to opt a constrained profile into shell network. Sandboxed child delegation compares the caller's and child's effective network, including the inferred deny. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults) and [sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
 
 ### Added
 - Sandboxed agents operate inside Meridian on any harness without profile changes: Meridian's read commands and `spawn done`/`rearm` stay allowed under shell allowlists; spawn-capable profiles also get `meridian spawn`.
@@ -15,7 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian spawn` run inside a sandbox that would kill its child (`cd x && meridian spawn`, pipes, `$()`, `VAR=1` prefix) fails before any state write with "run as a standalone shell command".
 - Read-only Codex spawns whose profile can spawn get the completion confirmation turn again; others still skip it, as since 0.12.4.
 - Profile `network: allow | deny` controls shell connections separately from built-in web tools; every harness reports what it enforces.
-- Sandboxed child delegation cannot weaken an enforced `network: deny` that the caller authored; the refusal distinguishes a missing child deny from a harness or native override that cannot enforce one.
+- Sandboxed child delegation cannot weaken the caller's effective network; a legacy boundary record without a network key remains unrestricted for mid-session compatibility.
 
 ### Fixed
 - Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).

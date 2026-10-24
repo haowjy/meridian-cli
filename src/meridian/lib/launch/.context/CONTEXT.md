@@ -54,11 +54,11 @@ version used by `bind_launch_context()`.
 
 Every bind replaces the inherited caller boundary with one record for the process it is
 about to start. It contains the launcher's PID namespace, resolved sandbox mode,
-the prepared profile's spawn capability, and `network: deny` only when the profile authored
-deny and the harness enforces it. A missing network key means no network floor. The harness
-projection port derives effective network from the already-resolved policy before bind;
-the permission report calls the same harness function. Projected roots are not part of this
-CLI-escalation guardrail.
+the prepared profile's spawn capability, and the harness-effective network mode for every
+constrained sandbox. A missing network key means no network floor, preserving boundaries
+written by older builds. The harness projection port derives effective network from the
+already-resolved policy before bind; the permission report calls the same harness function.
+Projected roots are not part of this CLI-escalation guardrail.
 
 ### RuntimeBindings
 
@@ -215,8 +215,8 @@ The adapter checks report pointers and selected identity against executable rout
 Structured Mars errors retain their code and available report across pre-init failure.
 A schema-4 bundle without `provenance.network_source` came from Mars < 0.18: composition
 warns, `network_projection` is false, and each harness keeps its native network default.
-Current Mars includes the source even when it is `unset`, so the portable `allow` default
-still projects.
+Current Mars includes the source even when it is `unset`, so explicit constrained sandboxes
+project deny while `danger-full-access` remains online.
 
 ### _MERIDIAN_HARNESS Child Env
 

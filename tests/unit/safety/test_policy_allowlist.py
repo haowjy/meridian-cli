@@ -59,9 +59,11 @@ def test_allowlist_queries(
     assert policy.allowed_tools == allowed
 
 
-def test_network_defaults_to_allow_without_losing_authored_allow() -> None:
-    defaulted = build_permission_policy(sandbox=None)
-    authored = build_permission_policy(sandbox=None, network="allow")
+def test_network_default_follows_sandbox_without_losing_authored_allow() -> None:
+    native_default = build_permission_policy(sandbox=None)
+    sandboxed_default = build_permission_policy(sandbox="workspace-write")
+    authored = build_permission_policy(sandbox="workspace-write", network="allow")
 
-    assert (defaulted.network, defaulted.network_mode) == (None, "allow")
+    assert (native_default.network, native_default.network_mode) == (None, "allow")
+    assert (sandboxed_default.network, sandboxed_default.network_mode) == (None, "deny")
     assert (authored.network, authored.network_mode) == ("allow", "allow")

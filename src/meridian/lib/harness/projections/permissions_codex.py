@@ -393,21 +393,12 @@ def _codex_report(
                 )
             )
     elif policy.sandbox == "read-only":
-        if policy.network_mode == "allow" and policy.network is not None:
+        if policy.network == "allow":
             lines.append(
                 ReportLine(
                     network_element,
                     "unsupported",
                     "Codex read-only has no network-enabled mode",
-                )
-            )
-        elif policy.network_mode == "allow":
-            lines.append(
-                ReportLine(
-                    network_element,
-                    "native",
-                    "network was left unset; Codex read-only keeps its native shell "
-                    "network-off behavior, with no authored allow request to report as a gap",
                 )
             )
         else:

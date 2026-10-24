@@ -70,9 +70,9 @@ class EffectiveNetworkFacts:
 
     @property
     def network_mode(self) -> NetworkMode:
-        """Return the authored network mode or the cross-harness default."""
+        """Return the authored mode or the default implied by the sandbox."""
 
-        return self.network or "allow"
+        return self.network or _default_network_mode(self.sandbox)
 
     @classmethod
     def from_values(
@@ -185,9 +185,9 @@ class PermissionPolicy(BaseModel):
 
     @property
     def network_mode(self) -> NetworkMode:
-        """Return the authored network mode or the cross-harness default."""
+        """Return the authored mode or the default implied by the sandbox."""
 
-        return self.network or "allow"
+        return self.network or _default_network_mode(self.sandbox)
 
     @property
     def outside_sandbox_commands(self) -> tuple[PlatformCommand, ...]:
@@ -435,6 +435,12 @@ def _parse_sandbox_value(raw: str | None) -> SandboxMode:
         return normalized
     allowed = ", ".join(sorted(_SANDBOX_MODES))
     raise ValueError(f"Unsupported sandbox mode '{raw}'. Expected: {allowed}.")
+
+
+def _default_network_mode(sandbox: SandboxMode) -> NetworkMode:
+    """Keep an explicitly requested sandbox offline unless the profile opts in."""
+
+    return "deny" if sandbox in CONSTRAINED_SANDBOX_MODES else "allow"
 
 
 def parse_network_mode(raw: str | None) -> NetworkMode | None:

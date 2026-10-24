@@ -125,9 +125,13 @@ def test_codex_sandbox_report_describes_user_wide_spawn_escape() -> None:
     assert "$CODEX_HOME/rules/meridian.rules" in line.note
 
 
-@pytest.mark.parametrize(("network", "expected"), [("allow", True), ("deny", False)])
+@pytest.mark.parametrize(
+    ("network", "expected"),
+    [(None, False), ("allow", True), ("deny", False)],
+    ids=["sandbox-default", "allow", "deny"],
+)
 def test_codex_workspace_network_reaches_every_launch_boundary(
-    network: NetworkMode, expected: bool
+    network: NetworkMode | None, expected: bool
 ) -> None:
     spec = _spec(interactive=False).model_copy(
         update={
@@ -194,7 +198,7 @@ def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
     _, defaulted_report = compile_codex_permissions(defaulted)
     _, authored_report = compile_codex_permissions(authored)
 
-    defaulted_line = next(line for line in defaulted_report if line.element == "network: allow")
+    defaulted_line = next(line for line in defaulted_report if line.element == "network: deny")
     authored_line = next(line for line in authored_report if line.element == "network: allow")
     assert defaulted_line.status == "native"
     assert _effective_network(defaulted) == "deny"

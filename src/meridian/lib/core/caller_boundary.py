@@ -28,6 +28,7 @@ SANDBOXED_SPAWN_LAUNCH_ERROR = (
 )
 
 _PID_NAMESPACE_PATH = "/proc/self/ns/pid"
+_NETWORK_MODE_WEAKNESS: dict[NetworkMode, int] = {"deny": 0, "allow": 1}
 
 
 def current_pid_namespace() -> str | None:
@@ -45,7 +46,7 @@ class CallerBoundary:
 
     pid_namespace: str | None
     sandbox: SandboxMode
-    network_deny_floor: bool
+    network: NetworkMode | None
     has_spawn_capability: bool
 
     @classmethod
@@ -62,8 +63,8 @@ class CallerBoundary:
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
-            network_deny_floor=(
-                policy.network == "deny" and effective_network == "deny"
+            network=(
+                effective_network if sandbox in CONSTRAINED_SANDBOX_MODES else None
             ),
             has_spawn_capability=policy.has_spawn_capability,
         )
@@ -82,8 +83,8 @@ class CallerBoundary:
             "sandbox": self.sandbox,
             "spawn": self.has_spawn_capability,
         }
-        if self.network_deny_floor:
-            payload["network"] = "deny"
+        if self.network is not None:
+            payload["network"] = self.network
         return json.dumps(
             payload,
             separators=(",", ":"),
@@ -122,8 +123,7 @@ class CallerBoundary:
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
-            # Older builds wrote "allow" explicitly. It carried no restrictive floor.
-            network_deny_floor=parsed_network == "deny",
+            network=parsed_network,
             has_spawn_capability=spawn,
         )
 
@@ -175,7 +175,6 @@ class CallerBoundaryCheck:
         child_sandbox: str | None,
         *,
         child_network: NetworkMode,
-        child_declared_network: NetworkMode | None,
     ) -> None:
         """Refuse a resolved child policy weaker than the caller's guardrail."""
 
@@ -190,16 +189,15 @@ class CallerBoundaryCheck:
                 f"Child spawn refused: sandbox '{normalized}' is weaker than "
                 f"caller floor '{caller.sandbox}'."
             )
-        if caller.network_deny_floor and child_network != "deny":
-            remedy = (
-                "the child declares `network: deny`, but its harness or native override "
-                "does not enforce it"
-                if child_declared_network == "deny"
-                else "set `network: deny` on the child profile"
-            )
+        if (
+            caller.network is not None
+            and _NETWORK_MODE_WEAKNESS[child_network]
+            > _NETWORK_MODE_WEAKNESS[caller.network]
+        ):
             raise ValueError(
                 f"Child spawn refused: effective network '{child_network}' is weaker than "
-                f"caller floor 'deny'; {remedy}."
+                f"caller floor '{caller.network}'; set `network: deny` on a child profile "
+                "whose harness enforces it, or set `network: allow` on the caller profile."
             )
 
 

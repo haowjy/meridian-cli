@@ -3,28 +3,35 @@
 ## Shell network policy defaults
 
 Agent profiles can set `network: allow` or `network: deny` to control connections made by
-shell commands, including public internet access, host services, and local sockets. An
-omitted field resolves to `allow`; built-in web tools remain controlled separately by
-`tools: web`.
+shell commands, including public internet access, host services, and local sockets. Built-in
+web tools remain controlled separately by `tools: web`.
 
-This changes both Claude and Codex. Claude `read-only` and `workspace-write` previously
-left its sandbox network allowlist empty; Codex `workspace-write` used its native network-off
-default. Meridian now projects the cross-harness `allow` default for both when `network` is
-omitted. Continued sessions whose launch-policy snapshot predates this change also follow
-the new default. To keep an existing profile offline, set:
+When `network` is omitted, it follows the profile sandbox:
+
+- `read-only` and `workspace-write` project deny, exactly as if the profile authored
+  `network: deny`;
+- `danger-full-access` stays online; and
+- an omitted or `default` sandbox stays at the harness's native behavior.
+
+Sandboxed profiles therefore stay offline unless they opt in. To give one shell network,
+set:
 
 ```yaml
 sandbox: workspace-write
-network: deny
+network: allow
 ```
 
-Claude `deny` projects `sandbox.network.strictAllowlist: true`. Codex `deny` projects
-`sandbox_workspace_write.network_access=false`, so a user `config.toml` value cannot reopen
-the workspace-write sandbox.
+Claude now projects `sandbox.network.strictAllowlist: true` for an omitted network under a
+constrained sandbox. In particular, sandboxed launches using `approval: never` (or the old
+`yolo` spelling) that reached the network when Claude received no network keys are now
+blocked. Codex projects `sandbox_workspace_write.network_access=false`; this overrides a
+user `config.toml` value of `true` unless the profile explicitly sets `network: allow`.
+Continued sessions with an older launch-policy snapshot and no network value follow the same
+sandbox-derived default.
 
 Codex `read-only` cannot enable network. Its dry-run report calls out an explicit
-`network: allow`; leaving the field unset preserves read-only's network-off behavior without
-reporting an authored allow request as unsupported. No harness can enforce `network: deny`
+`network: allow`; leaving the field unset reports and keeps native deny. No harness can
+enforce `network: deny`
 under `danger-full-access`, and OpenCode, Pi, and Cursor cannot enforce it in any mode.
 
 A Mars bundle without `provenance.network_source` predates the portable field. Meridian
@@ -46,16 +53,16 @@ continue, and fork operations now refuse when:
 - the caller profile has no non-empty `subagents:` list (or explicitly disables Meridian
   spawn capability);
 - the child's resolved sandbox is weaker than the caller's;
-- the caller authored `network: deny` and its harness enforces it, but the child's
-  harness-effective network is `allow`. Set `network: deny` on the child profile; if it
-  already declares deny, its harness or native override does not enforce it;
+- the child's harness-effective network is weaker than the caller's. Set `network: deny` on
+  a child profile whose harness enforces it, or set `network: allow` on the caller profile;
 - native harness arguments follow `--`, because they could override the resolved policy.
 
 These calls worked without this boundary before. Put the intended children in the caller
 profile's `subagents:` list and move required harness-native arguments into the profile.
-Approval is not compared independently.
-An omitted caller `network`, including a boundary record written before this field existed,
-creates no network floor.
+Approval is not compared independently. A current `read-only` or `workspace-write` caller
+always records its effective network, so an omitted profile value records deny and accepts an
+omitted constrained child. A boundary record written before the network field existed still
+creates no network floor, preventing a mid-session upgrade from refusing nested spawns.
 Child write roots and `--env` are not part of the guardrail. Profiles using
 `sandbox: default` or `danger-full-access`, and top-level shells not launched by Meridian,
 carry no floor.

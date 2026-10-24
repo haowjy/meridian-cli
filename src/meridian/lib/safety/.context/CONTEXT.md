@@ -50,8 +50,9 @@ Exit code conventions: non-zero → `GuardrailFailure`; timeout → 124; `OSErro
 
 `build_permission_policy(rules, sandbox, network, approval, platform_rules, sandbox_write_roots)`
 returns the frozen `PermissionPolicy`: `rules` (Mars's typed tool rules), `platform_rules`,
-`sandbox`, optional authored `network` (`network_mode` returns the effective `allow`
-default), `network_projection` (false for a pre-0.18 Mars bundle, which leaves the harness
+`sandbox`, optional authored `network` (`network_mode` returns deny for an explicit
+`read-only`/`workspace-write` sandbox and allow otherwise), `network_projection` (false for
+a pre-0.18 Mars bundle, which leaves the harness
 default untouched), the protected workspace roots
 and `approval`. Spawn
 capability is derived from the platform command marked as running outside the sandbox. Bind supplies control/task/context
