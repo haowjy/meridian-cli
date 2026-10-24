@@ -100,6 +100,24 @@ def _run_default_json(
     return payload
 
 
+def _run_text(
+    project_root: Path,
+    env: dict[str, str],
+    *args: str,
+) -> str:
+    result = subprocess.run(
+        [sys.executable, "-m", "meridian", "--format", "text", *args],
+        cwd=project_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
 def _assert_noisy_keys_absent(payload: object) -> None:
     if isinstance(payload, dict):
         assert _NOISY_KEYS.isdisjoint(payload)
@@ -289,6 +307,8 @@ def test_spawn_wait_json_contract(
         "timed_out_runs",
         "any_failed",
         "spawns",
+        "owed_spawns",
+        "since_started_spawns",
     } <= payload.keys()
     assert {"spawn_id", "status", "model", "harness"} <= payload["spawns"][0].keys()
     _assert_noisy_keys_absent(payload)
@@ -329,19 +349,72 @@ def test_spawn_collect_and_ack_json_contract(
         "Delivered from the child.\n",
         encoding="utf-8",
     )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p3",
+        chat_id="c-child-2",
+        owner_chat_id="c-owed",
+        parent_id="p1",
+        model="claude-haiku-5-5",
+        agent="coder",
+        harness="claude",
+        prompt="Report another result.",
+        launch_mode="background",
+    )
+    spawn_store.finalize_spawn(runtime_root, "p3", "failed", 1, origin="runner")
+    (runtime_root / "spawns" / "p3" / "report.md").write_text(
+        "Another delivered child report.\n",
+        encoding="utf-8",
+    )
     env.update({"MERIDIAN_CHAT_ID": "c-owed", "MERIDIAN_SPAWN_ID": "p1"})
 
     delivered = _run_default_json(project_root, env, "spawn", "collect")
     assert set(delivered) == {"kind", "ids", "text"}
     assert delivered["kind"] == "delivery"
-    assert delivered["ids"] == ["p2"]
+    assert set(delivered["ids"]) == {"p2", "p3"}
     assert "p2 succeeded" in delivered["text"]
     assert "Worker: claude-haiku-5-5 (claude)" in delivered["text"]
     assert "Delivered from the child." not in delivered["text"]
-    assert delivered["text"].endswith("meridian spawn show p2")
+    assert "meridian spawn show p2" in delivered["text"]
+    assert "meridian spawn show p3" in delivered["text"]
 
     acked = _run_default_json(project_root, env, "spawn", "ack", "p2")
     assert acked == {"acked": ["p2"]}
+
+    fetched_text = _run_text(project_root, env, "spawn", "wait", "--no-observe")
+    assert fetched_text == (
+        "p3 failed (exit 1)\n"
+        "Worker: claude-haiku-5-5 (claude)\n"
+        "meridian spawn show p3"
+    )
+
+    fetched_json = _run_json(
+        project_root,
+        env,
+        "spawn",
+        "wait",
+        "--no-observe",
+        "--full",
+    )
+    assert fetched_json["spawns"] == []
+    assert fetched_json["since_started_spawns"] == []
+    assert fetched_json["owed_spawns"][0]["report_summary"] == (
+        "Another delivered child report."
+    )
+    assert "report_body" not in fetched_json
+    assert "report_body" not in fetched_json["owed_spawns"][0]
+    assert fetched_json["total_runs"] == 0
+    assert not fetched_json["any_failed"]
+
+    waited = _run_json(project_root, env, "spawn", "wait", "--full")
+    assert waited["spawns"] == []
+    assert waited["since_started_spawns"] == []
+    assert [spawn["spawn_id"] for spawn in waited["owed_spawns"]] == ["p3"]
+    assert "report_body" not in waited
+    assert "report_body" not in waited["owed_spawns"][0]
+    assert waited["total_runs"] == 0
+    assert not waited["any_failed"]
+    assert _run_json(project_root, env, "spawn", "wait")["total_runs"] == 0
     assert _run_default_json(project_root, env, "spawn", "collect") == {
         "kind": "empty",
         "ids": [],

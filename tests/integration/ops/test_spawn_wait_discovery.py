@@ -1,17 +1,20 @@
 """SQL-scoped no-argument spawn-wait discovery."""
 
 import json
+import time
 from pathlib import Path
 
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.state.history_index as history_index
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.ops.session_archive import archive_history, materialize_native_history
+from meridian.lib.ops.spawn.models import SpawnWaitInput
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
-from meridian.lib.state.spawn.model import SpawnKind, SpawnRecord
+from meridian.lib.state.spawn.model import LaunchMode, SpawnKind, SpawnRecord
 from tests.support.resident_drain import start_row
 
 
@@ -31,6 +34,7 @@ def _spawn(
     owner: str | None = "c-owner",
     parent: str | None = None,
     kind: SpawnKind = "child",
+    launch_mode: LaunchMode | None = None,
 ) -> str:
     return str(
         spawn_store.start_spawn(
@@ -44,6 +48,7 @@ def _spawn(
             harness="pi",
             kind=kind,
             prompt="wait discovery",
+            launch_mode=launch_mode,
         )
     )
 
@@ -86,15 +91,53 @@ def _bind_pi_transcript(project: Path, root: Path, spawn_id: str) -> None:
     materialize_native_history(project, root, spawn_id)
 
 
-def test_discovery_selects_only_the_owners_active_spawns(
+def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, root = _runtime(tmp_path)
     primary = _spawn(root, "p-primary", owner=None, kind="primary")
-    legacy_child = _spawn(root, "p-legacy", owner=None)
-    continued_child = _spawn(root, "p-continued", chat="c-continued")
+    legacy_child = _spawn(root, "p-legacy", owner=None, parent=primary)
+    continued_child = _spawn(root, "p-continued", chat="c-continued", parent=primary)
     unrelated = _spawn(root, "p-unrelated", chat="c-other", owner=None)
+    owed_ids = tuple(
+        _spawn(root, f"p-owed-{index:02d}", parent=primary, launch_mode="background")
+        for index in range(36)
+    )
+    foreground = _spawn(root, "p-foreground", parent=primary, launch_mode="foreground")
+    for index, spawn_id in enumerate(owed_ids):
+        spawn_store.finalize_spawn(
+            root,
+            spawn_id,
+            "succeeded",
+            0,
+            origin="runner",
+            finished_at=f"2026-01-01T00:00:{index:02d}Z",
+        )
+    spawn_store.finalize_spawn(root, foreground, "succeeded", 0, origin="runner")
+    coordination_dir = root / "pi-bash" / primary
+    coordination_dir.mkdir(parents=True)
+    (coordination_dir / "delivery-receipts.json").write_text(
+        json.dumps(
+            {
+                "v": 1,
+                "spawn_id": primary,
+                "messages": {"delivery-1": [owed_ids[0]]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (coordination_dir / "cleared-spawns.json").write_text(
+        json.dumps(
+            {
+                "v": 1,
+                "spawn_id": primary,
+                "updated_at_ms": 1.0,
+                "cleared_spawn_ids": [owed_ids[1]],
+            }
+        ),
+        encoding="utf-8",
+    )
     history_index.HistoryIndex(root).rebuild()
     original = SpawnRecord.model_validate_json
 
@@ -104,9 +147,19 @@ def test_discovery_selects_only_the_owners_active_spawns(
 
     monkeypatch.setattr(SpawnRecord, "model_validate_json", reject_unrelated_candidate)
 
-    rows = spawn_api._discover_pending_spawns(root, "c-owner")
+    targets = spawn_api._resolve_wait_targets(
+        SpawnWaitInput(),
+        root,
+        RuntimeContext(spawn_id=SpawnId(primary), chat_id="c-owner"),
+        deadline=time.monotonic() + 5,
+    )
 
-    assert {row.id for row in rows} == {primary, legacy_child, continued_child}
+    assert not targets.discovery_pending
+    assert targets.blocked_on_ids == (continued_child, legacy_child)
+    assert tuple(row.id for row in targets.owed_rows) == owed_ids[2:34]
+    assert set(owed_ids[:2]).isdisjoint(row.id for row in targets.owed_rows)
+    assert set(owed_ids[34:]).isdisjoint(row.id for row in targets.owed_rows)
+    assert foreground not in targets.blocked_on_ids
 
 
 def test_nested_discovery_reaches_live_child_through_archived_ancestor(
@@ -116,6 +169,7 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
     start_row(root, "p1", HarnessId.PI, None)
     start_row(root, "p2", HarnessId.CODEX, "p1")
     start_row(root, "p-sibling", HarnessId.PI, None)
+    spawn_store.update_spawn(root, "p2", launch_mode="background")
     for spawn_id in ("p1", "p2"):
         spawn_store.finalize_spawn(root, spawn_id, "succeeded", 0, origin="runner")
     _bind_pi_transcript(project, root, "p2")
@@ -129,16 +183,34 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
     assert spawn_store.get_spawn(root, "p2") is None
     start_row(root, "p3", HarnessId.CODEX, "p2")
     spawn_store.mark_finalizing(root, "p3")
-
-    rows = spawn_api._discover_pending_spawns(
+    owed = _spawn(
         root,
-        "c-owner",
-        exclude_spawn_id="p1",
-        only_descendants_of="p1",
+        "p-direct-owed",
+        chat="c-direct",
+        parent="p1",
+        launch_mode="background",
+    )
+    foreground = _spawn(
+        root,
+        "p-direct-foreground",
+        chat="c-direct-foreground",
+        parent="p1",
+        launch_mode="foreground",
+    )
+    spawn_store.finalize_spawn(root, owed, "succeeded", 0, origin="runner")
+    spawn_store.finalize_spawn(root, foreground, "succeeded", 0, origin="runner")
+
+    targets = spawn_api._resolve_wait_targets(
+        SpawnWaitInput(),
+        root,
+        RuntimeContext(spawn_id=SpawnId("p1"), chat_id="c-owner"),
+        deadline=time.monotonic() + 5,
     )
 
-    assert [row.id for row in rows] == ["p3"]
-    assert "p-sibling" not in {row.id for row in rows}
+    assert targets.blocked_on_ids == ("p3",)
+    assert tuple(row.id for row in targets.owed_rows) == (owed,)
+    assert "p-sibling" not in targets.blocked_on_ids
+    assert foreground not in targets.blocked_on_ids
 
 
 def test_discovery_rereads_terminal_authority_for_active_index_row(

@@ -41,6 +41,19 @@ contains or reads the report body. A lead that wants the body runs the lookup.
 Report reads do not consume the notification, so a result read before delivery may
 still produce one later header-only ping.
 
+A normal no-argument `meridian spawn wait` uses the same owed-child definition. It
+leases its targets while running and consumes terminal results on return, so the
+collector skips those children during the wait and does not deliver them afterward.
+Wait takes at most the oldest 32 children that were already finished when target
+resolution ran and renders them through the same header-only delivery formatter.
+Running targets are uncapped and keep their full report output after wait blocks for
+them. Already-finished rows do not affect waited-run counts, fail-fast, or exit status;
+JSON returns them separately in `owed_spawns`. The remaining finished children stay
+owed for the next wait or collection. Pi delivery receipts and cleared IDs count as
+consumed for both wait and collection, so those results are not replayed here.
+`spawn wait --no-observe` deliberately does neither and may return the same finished
+child again until a normal wait or `spawn ack` consumes it; its rendering is unchanged.
+
 ## Delivery, step by step
 
 Consumption is recorded only once the lead's conversation has the text.
