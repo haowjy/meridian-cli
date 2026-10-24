@@ -25,6 +25,24 @@ to `main` skip auto-release because there is no associated PR to inspect.
 Put `release:skip` in the pushed head commit message to skip auto-release even
 when a release label is present.
 
+### Breaking changes split across several PRs
+
+Each PR merged to `main` with `release:minor` or `release:major` cuts its own breaking
+release. When one piece of work breaks behaviour in several PRs (a stack, or lanes of one
+feature), users should get one breaking release, not one per PR.
+
+1. Create an integration branch from `main` (for example `release/<topic>`) and open its
+   PR to `main` early, as a draft. That PR carries the `release:minor`/`release:major`
+   label, the combined changelog and upgrade notes, and the whole-change review.
+2. Point each part's PR at the integration branch, not `main`. Merging into it releases
+   nothing, so those PRs need no release label. Their changelog entries go under
+   `[Unreleased]` as usual and arrive in `main` together.
+3. When the last part lands and the combined change passes the full gate, mark the
+   integration PR ready, merge it, and CI releases everything once.
+
+Work that must ship separately (for example, a part another release depends on) gets its
+own release. Decide that when the work is planned, not at merge time.
+
 ### Changes to on-disk state
 
 A release that changes on-disk state (state or session file fields, index schema,

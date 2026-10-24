@@ -64,8 +64,15 @@ Docs never state release status ("unreleased", "next release"): `CHANGELOG.md`
 `[Unreleased]` owns that, and a release stamps the version. Title upgrade notes
 in `docs/upgrading.md` by topic; the changelog entry that links to them dates them.
 
+Docs-only changes (`docs/`, `AGENTS.md`, `.context/`) need no PR: push them straight to
+`main`. A direct push to `main` releases nothing.
+
 PRs: use `.github/PULL_REQUEST_TEMPLATE.md` — fill every section. Set a
 `release:*` label before merging. No label defaults to RC.
+
+A breaking change split across several PRs ships as one release: merge the parts into an
+integration branch whose single PR to `main` carries the `release:minor`/`release:major`
+label. Plan this when you split the work. See `docs/releasing.md#breaking-changes-split-across-several-prs`.
 
 Prompt packages: `meridian mars version patch [--push]` from the prompt repo.
 meridian-cli and mars-agents: CI auto-release on labeled PR merge.
