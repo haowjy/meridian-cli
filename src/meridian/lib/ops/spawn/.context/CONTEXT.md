@@ -67,12 +67,19 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   `Since this wait started:`. An initial discovery-pending checkpoint has no baseline and skips the
   trailer. Active children outside the original blocked-on set render as `running`. Newly owed
   terminal children outside the original blocked-on and owed sets render as `finished` for success
-  or retain the failure terminal word (`failed`, `timed_out`, or `cancelled`). The completion-time
-  cutoff is applied before the 32-member owed cap, so older rows held back by the initial cap are
-  excluded rather than displacing new completions. Structured output uses `since_started_spawns`.
+  or retain the failure terminal word (`failed`, `timed_out`, or `cancelled`). "Appeared" is set
+  membership, not time: the initial discovery keeps every finished owed id it saw, including rows the
+  32-member cap held back, and the return discovery excludes those before applying the cap. Crashed
+  children with no recorded finish time are therefore still listed. Structured output uses
+  `since_started_spawns`.
+- The two halves keep the start-of-wait scopes: `running` comes from the descendant subtree (so a
+  grandchild can appear), `finished` from the owed scope (background direct children only). A
+  grandchild listed as running at one return is not listed once it finishes; that is the owed
+  scope, not a gap to fix here.
 - The return-time discovery is advisory and read-only: its rows are not waited on, leased, consumed,
-  counted, or included in fail-fast and exit decisions. It runs once at return, never per poll; an
-  exhausted discovery deadline or busy history index silently omits it. Explicit-ID waits do not
+  counted, or included in fail-fast and exit decisions. It runs once at return, never per poll. Any
+  state or index failure (busy or incomplete index, OS error, quarantined row) omits the section:
+  the wait's `finally` consumes its results regardless, so failing the wait here would lose them. Explicit-ID waits do not
   run it. `--no-observe` keeps the same trailer.
 - If `MERIDIAN_CHAT_ID` is absent, raises `ValueError` (not in a session)
 

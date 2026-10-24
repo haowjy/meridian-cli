@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -27,7 +27,6 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_observations import leased_ids, record
 from meridian.lib.state.spawn_status import read_derived
-from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 
 from .models import render_delivery
 from .query import detail_from_row
@@ -239,11 +238,10 @@ def resolve_owed_finished_rows(
     runtime_root: Path,
     chat_id: str,
     caller_spawn_id: str,
-    blocked_on_ids: Sequence[str],
-    finished_after_epoch: float | None = None,
+    excluded_ids: Collection[str],
     deadline: float | None = None,
 ) -> tuple[SpawnRecord, ...]:
-    """Resolve one bounded batch of finished owed rows for no-argument wait."""
+    """Resolve every finished owed row for no-argument wait, oldest first, uncapped."""
 
     scope = discover_owed_scope(
         runtime_root=runtime_root,
@@ -252,24 +250,10 @@ def resolve_owed_finished_rows(
         deadline=deadline,
     )
     snapshot = read_owed_snapshot(runtime_root=runtime_root, scope=scope)
-    blocked = frozenset(blocked_on_ids)
-
-    def finished_after_start(row: SpawnRecord) -> bool:
-        if finished_after_epoch is None:
-            return True
-        finished_at = iso_timestamp_to_epoch(
-            row.terminal.finished_at if row.terminal is not None else None
-        )
-        return finished_at is not None and finished_at > finished_after_epoch
-
-    return select_delivery_rows(
-        tuple(
-            row
-            for row in snapshot.rows
-            if row.id not in blocked
-            and is_terminal_spawn_status(row.status)
-            and finished_after_start(row)
-        )
+    return tuple(
+        row
+        for row in snapshot.rows
+        if row.id not in excluded_ids and is_terminal_spawn_status(row.status)
     )
 
 
