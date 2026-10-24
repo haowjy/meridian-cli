@@ -22,6 +22,11 @@ from meridian.lib.core.overrides import (
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.safety.policy import (
+    CONSTRAINED_SANDBOX_MODES,
+    SandboxDerivedNetwork,
+    resolve_network_policy,
+)
 from meridian.lib.tools import ToolRule
 
 from . import bundle_adapter
@@ -42,7 +47,12 @@ from .policy_snapshot import (
     ReplayedModelSelection,
     replay_launch_policy_snapshot,
 )
-from .request import LaunchCompositionSurface, LaunchPolicySnapshot, SessionRequest
+from .request import (
+    LaunchCompositionSurface,
+    LaunchPolicySnapshot,
+    NetworkOverrides,
+    SessionRequest,
+)
 from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
@@ -117,6 +127,7 @@ class SurfacePolicyInput:
     harness_registry: HarnessRegistry
     models_readonly: bool = False
     requested_skills: tuple[str, ...] = ()
+    network_overrides: NetworkOverrides = field(default_factory=NetworkOverrides)
     policy_snapshot: LaunchPolicySnapshot | None = None
     continuation: SessionRequest | None = None
     agent_opt_out: bool = False
@@ -452,6 +463,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         effort_override=explicit_user_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
+        network_overrides=surface.network_overrides,
         extra_skills=requested_skill_names,
         no_refresh_models=surface.models_readonly,
     )
@@ -493,10 +505,16 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         bundle_execution_policy=bundle_execution_policy,
         profile_overrides=profile_overrides,
     )
+    final_sandbox = resolved_execution_policy_overrides.sandbox
+    network_input = bundle_result.network
+    resolved_network = resolve_network_policy(
+        network_input,
+        final_sandbox or "default",
+    )
     resolved_execution_policy = ResolvedExecutionPolicy(
         effort=resolved_execution_policy_overrides.effort,
-        sandbox=resolved_execution_policy_overrides.sandbox,
-        network=bundle_result.execution_policy.network,
+        sandbox=final_sandbox,
+        network=resolved_network,
         approval=resolved_execution_policy_overrides.approval,
         autocompact=resolved_execution_policy_overrides.autocompact,
         autocompact_pct=resolved_execution_policy_overrides.autocompact_pct,
@@ -518,6 +536,21 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
             model_warning=bundle_model_warning,
         )
     )
+    if (
+        isinstance(network_input, SandboxDerivedNetwork)
+        and final_sandbox in CONSTRAINED_SANDBOX_MODES
+        and network_input.allow
+    ):
+        policy_warnings.append(
+            CompositionWarning(
+                code="network_allow_hosts_dropped",
+                message=(
+                    f"network mode is unset and sandbox resolved to {final_sandbox}; "
+                    f"dropping {len(network_input.allow)} network-allow host(s) as "
+                    "the sandbox-derived network policy resolves to deny"
+                ),
+            )
+        )
 
     # Post-bundle missing-runnable-path check:
     # - primary condition: no harness-specific model ID and the resolved harness
@@ -590,6 +623,14 @@ def _resolve_policy_from_snapshot(
         harness_registry=surface.harness_registry,
         alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
     )
+    execution_policy = replayed.execution_policy.model_copy(
+        update={
+            "network": resolve_network_policy(
+                replayed.execution_policy.network,
+                replayed.execution_policy.sandbox,
+            )
+        }
+    )
     return ResolvedLaunchPolicy(
         profile=replayed.profile,
         model=replayed.model,
@@ -597,7 +638,7 @@ def _resolve_policy_from_snapshot(
         adapter=replayed.adapter,
         resolved_skills=replayed.resolved_skills,
         routing=replayed.routing,
-        execution_policy=replayed.execution_policy,
+        execution_policy=execution_policy,
         resolved_tool_rules=replayed.resolved_tool_rules,
         platform_tool_rules=replayed.platform_tool_rules,
         terminal_surface_mode=replayed.terminal_surface_mode,

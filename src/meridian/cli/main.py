@@ -6,7 +6,7 @@ import sys
 from collections.abc import Callable, Generator, Sequence
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 from cyclopts import Parameter
 
@@ -382,6 +382,29 @@ def root(
             help=("Sandbox mode: default, read-only, workspace-write, danger-full-access."),
         ),
     ] = None,
+    network: Annotated[
+        Literal["allow", "deny", "allowlist"] | None,
+        Parameter(
+            name="--network",
+            help="Shell network mode: allow, deny, or allowlist.",
+        ),
+    ] = None,
+    network_allow: Annotated[
+        tuple[str, ...],
+        Parameter(
+            name="--network-allow",
+            help="Add a host to the shell network allow set (repeatable).",
+            negative_iterable=(),
+        ),
+    ] = (),
+    network_deny: Annotated[
+        tuple[str, ...],
+        Parameter(
+            name="--network-deny",
+            help="Add a host to the shell network deny set (repeatable).",
+            negative_iterable=(),
+        ),
+    ] = (),
     approval: Annotated[
         str | None,
         Parameter(
@@ -462,6 +485,9 @@ def root(
                 autocompact_pct=autocompact_pct,
                 effort=effort,
                 sandbox=sandbox,
+                network=network,
+                network_allow=network_allow,
+                network_deny=network_deny,
                 timeout=timeout,
                 dry_run=dry_run,
                 ignore_direnv=ignore_direnv,

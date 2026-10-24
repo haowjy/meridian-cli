@@ -489,7 +489,6 @@ def test_codex_materialize_reports_rules_write_failure_without_refusing_launch(
             ),
         )
     )
-
     bound = materialize_codex_spec(
         spec,
         {"CODEX_HOME": str(tmp_path / "unwritable-codex-home")},

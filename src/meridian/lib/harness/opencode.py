@@ -27,7 +27,6 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     ManagedPrimaryProjectionPorts,
     register_harness_bundle,
-    unenforced_network,
 )
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -664,7 +663,6 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_opencode_spec_to_cli_args,
             permission_report=lambda spec: compile_opencode_permissions(spec)[1],
-            effective_network=unenforced_network,
             bind_spec=bind_opencode_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_opencode_spec_to_serve_command,

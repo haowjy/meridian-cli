@@ -23,15 +23,25 @@ binary or the env var. V2's session model populates `IdleEvent.provider` for the
 harness `detect_ttl` port. **OpenCode 1.x is legacy and frozen** — registered as
 fallback, no investment; new work targets V2.
 
-Claude uses the same bind port to read the settings files selected by the final child
-cwd and environment. Tool allows from user and project files live on
-`ClaudeRuntimeResolution.settings_allows`; user-level network allow/deny domains live on
-the corresponding `settings_network_*_domains` fields. Project network settings did not
-widen a launch-local strict allowlist in the live probe, so they are not effective facts.
+Claude's spec bind port reads the settings files selected by the final child cwd and
+environment. Tool allows from user and project files live on
+`ClaudeRuntimeResolution.settings_allows`. The adapter separately warns when the selected
+user settings contain a non-empty `sandbox.network.allowedDomains` or either proxy-port
+key. That report-only detection never changes the projected network or child guardrail;
+narrowing settings are not modelled. Project network settings did not widen a launch-local
+strict allowlist in the live probe, so they are not detection inputs.
 The adapter's `shell_network_guidance()` is the sole owner of Claude's Linux-only
 host-service proxy hint. `project_claude_network()` returns both its native settings and
 typed effective policy; compile reads the former, while the report and child-spawn
 guardrail read the latter. Shared prompt composition only places the returned guidance.
+
+Codex's adapter warns about any `allow` under `features.network_proxy.domains` in both the
+child-selected `$CODEX_HOME/config.toml` and `.codex/config.toml` in the child cwd or any
+ancestor. A boolean `features.network_proxy` declares no domains. Detection is report-only:
+it does not model proxy activation, project trust, or narrowing `deny` entries and never
+changes the projected network or guardrail. Meridian still emits only its own inline map.
+Both harness readers distinguish a missing file from an unreadable one; unreadable files
+produce attributed warnings.
 
 ## Translation Pipeline
 

@@ -23,7 +23,7 @@ from meridian.lib.core.execution_policy import (
 )
 from meridian.lib.core.native_identity import NativeIdentity
 from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
-from meridian.lib.safety.policy import EffectiveNetworkFacts, PermissionPolicy
+from meridian.lib.safety.policy import PermissionPolicy
 
 if TYPE_CHECKING:
     from meridian.lib.core.types import HarnessId
@@ -71,8 +71,6 @@ class ClaudeRuntimeResolution:
     # Populated from the final child environment by Claude's ``bind_spec`` port;
     # empty on a spec that did not pass through bind.
     settings_allows: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    settings_network_denied_domains: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,7 +108,6 @@ class ResolvedLaunchSpec(BaseModel):
     native_config: NativeConfigValue = Field(
         default_factory=lambda: ResolvedExecutionPolicy().native_config
     )
-
     # Passthrough args forwarded verbatim to the harness process.
     extra_args: tuple[str, ...] = ()
 
@@ -157,24 +154,6 @@ class ResolvedLaunchSpec(BaseModel):
     # Pi only
     pi_extension_entrypoints: tuple[str, ...] = ()
     load_all_pi_extensions: bool = False
-
-    def effective_network_facts(self) -> EffectiveNetworkFacts:
-        """Return the complete, bound facts consumed by a harness network projector."""
-
-        return EffectiveNetworkFacts.from_permission_policy(
-            self.permission_policy,
-            native_config=self.native_config,
-            settings_allow=(
-                domain
-                for _path, domains in self.claude_runtime.settings_network_allowed_domains
-                for domain in domains
-            ),
-            settings_deny=(
-                domain
-                for _path, domains in self.claude_runtime.settings_network_denied_domains
-                for domain in domains
-            ),
-        )
 
     @model_validator(mode="after")
     def _validate_continue_fork_requires_session(self) -> ResolvedLaunchSpec:

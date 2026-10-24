@@ -54,11 +54,12 @@ version used by `bind_launch_context()`.
 
 Every bind replaces the inherited caller boundary with one record for the process it is
 about to start. It contains the launcher's PID namespace, resolved sandbox mode,
-the prepared profile's spawn capability, and the harness-effective typed network policy for every
+the prepared profile's spawn capability, and the Meridian-projected typed network policy for every
 constrained sandbox. A missing network key means no network floor, preserving boundaries
-written by older builds. The harness projection port derives effective network from the
-already-resolved policy; caller-boundary recording runs after harness bind so Claude's
-user-level domain widening is included. The permission report uses the same projection.
+written by older builds. The projection is a pure function of Meridian's resolved sandbox,
+network, and native override. Harness-owned user-config detection runs after the final child
+environment and cwd are bound, but contributes only attributed warnings. The child
+guardrail and permission report ignore those settings and use the same pure projection.
 Projected roots are not part of this CLI-escalation guardrail.
 
 ### RuntimeBindings
@@ -215,9 +216,15 @@ previews, and failure outputs as diagnostic history, never an executable retry q
 The adapter checks report pointers and selected identity against executable routing.
 Structured Mars errors retain their code and available report across pre-init failure.
 A schema-4 bundle without `provenance.network_source` came from Mars < 0.18 and is a hard
-composition error naming `Install mars >= 0.18.0`. Current Mars includes the source even
-when it is `unset`, so constrained sandboxes project deny while `danger-full-access` remains
-online.
+composition error that names the selected executable and tells the user to upgrade
+Meridian. At this boundary, current
+`execution_policy.network` must be the Mars object `{mode, allow, deny}`; it is parsed once
+into `Allow(deny)`, `Hosts(allow, deny)`, or a typed sandbox-derived value. A null mode is
+resolved only after Meridian applies final sandbox precedence (including
+`primary.sandbox`), retaining denies and warning when a constrained sandbox drops allow
+hosts. The separate durable-policy parser continues to accept old scalar snapshots. Raw
+launch `NetworkOverrides` ride `BundleRequest` to Mars so its normal profile/overlay/CLI
+merge remains the only precedence implementation.
 
 ### _MERIDIAN_HARNESS Child Env
 

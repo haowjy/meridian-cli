@@ -35,9 +35,9 @@ without updating the corresponding projector → startup failure.
   registered as `HarnessProjectionPorts.permission_report`; the harness's pure effective
 shell-network port is registered beside it. Claude and Codex each have one pure network
 projector returning native settings plus the typed effective policy, so compile, report,
-and child guardrails cannot decide independently. OpenCode, Pi, and Cursor share
-`project_unenforced_network()`, which `complete_report()` uses for their network line
-instead of repeating it in each compile. The projectors, `--dry-run` and
+and child guardrails cannot decide independently. OpenCode, Pi, and Cursor omit that port;
+the registry's shared `UNENFORCED_NETWORK` constant supplies their effective network and
+`complete_report()` supplies their report line. The projectors, `--dry-run` and
   `projection-manifest.json` all read these same policy facts.
 
 ## Key Rules
