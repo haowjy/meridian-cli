@@ -17,7 +17,9 @@ from meridian.lib.safety.policy import (
     PermissionPolicy,
     PlatformCommand,
     PlatformRule,
+    UserNetworkConfig,
     build_permission_policy,
+    host_set,
     network_policy_name,
 )
 from meridian.lib.tools import PLATFORM_ORIGIN
@@ -31,21 +33,7 @@ _STRICT_OFFLINE_NETWORK = {
 
 
 def _effective_network(spec: ResolvedLaunchSpec) -> str:
-    projection = project_claude_network(
-        EffectiveNetworkFacts.from_permission_policy(
-            spec.permission_policy,
-            settings_allow=(
-                domain
-                for _path, domains in spec.claude_runtime.settings_network_allowed_domains
-                for domain in domains
-            ),
-            settings_deny=(
-                domain
-                for _path, domains in spec.claude_runtime.settings_network_denied_domains
-                for domain in domains
-            ),
-        )
-    )
+    projection = project_claude_network(spec.effective_network_facts())
     return network_policy_name(projection.effective)
 
 
@@ -238,17 +226,16 @@ def test_claude_network_deny_projects_strict_allowlist(
                 ),
             ),
         ),
-        claude_runtime=ClaudeRuntimeResolution(
-            settings_network_allowed_domains=(
-                (
-                    "/home/test/.claude/settings.json",
-                    ("a.example", "b.example", "c.example", "z.example"),
-                ),
+    ).with_effective_network_facts(
+        EffectiveNetworkFacts.from_values(
+            sandbox="workspace-write",
+            network=None,
+            user_config=UserNetworkConfig(
+                path="/home/test/.claude/settings.json",
+                allow=host_set(("a.example", "b.example", "c.example", "z.example")),
+                deny=host_set(("blocked.example",)),
             ),
-            settings_network_denied_domains=(
-                ("/home/test/.claude/settings.json", ("blocked.example",)),
-            ),
-        ),
+        )
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))

@@ -21,6 +21,8 @@ from meridian.lib.safety.policy import (
     PermissionPolicy,
     PlatformCommand,
     PlatformRule,
+    UserNetworkConfig,
+    host_set,
     network_policy_name,
 )
 
@@ -88,7 +90,7 @@ def test_codex_report_names_unsupported_meridian_command_match_forms() -> None:
                             PlatformCommand(command="meridian spawn list", match="prefix"),
                         ),
                     ),
-                )
+                ),
             )
         }
     )
@@ -197,6 +199,42 @@ def test_codex_allowlist_reaches_every_launch_boundary_as_one_domain_map() -> No
             "example.com": "deny",
         },
     }
+
+
+def test_codex_user_domains_change_effective_policy_without_copying_the_user_map() -> None:
+    from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+
+    spec = _spec(interactive=False).model_copy(
+        update={
+            "permission_policy": PermissionPolicy(
+                sandbox="workspace-write",
+                network={"allow": ["github.com"], "deny": ["evil.example"]},
+            )
+        }
+    )
+    spec = spec.with_effective_network_facts(
+        EffectiveNetworkFacts.from_permission_policy(
+            spec.permission_policy,
+            user_config=UserNetworkConfig(
+                path="/home/test/.codex/config.toml",
+                allow=host_set(("example.com",)),
+                deny=host_set(("blocked.example",)),
+            ),
+        )
+    )
+
+    command = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
+    _, report = compile_codex_permissions(spec)
+    line = next(item for item in report if item.element.startswith("network: allowlist"))
+
+    assert (
+        'features.network_proxy.domains={ "github.com" = "allow", "evil.example" = "deny" }'
+    ) in command
+    assert "example.com" not in " ".join(command)
+    assert "blocked.example" not in " ".join(command)
+    assert "allow=2 [example.com, github.com]" in line.element
+    assert "deny=2 [blocked.example, evil.example]" in line.element
+    assert "/home/test/.codex/config.toml" in line.note
 
 
 def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
@@ -358,12 +396,8 @@ def test_spawn_capability_requires_the_canonical_spawn_command() -> None:
     )
 
     assert not PermissionPolicy(
-        platform_rules=(
-            PlatformRule(kind="meridian-commands", commands=(unrelated_escape,)),
-        )
+        platform_rules=(PlatformRule(kind="meridian-commands", commands=(unrelated_escape,)),)
     ).has_spawn_capability
     assert PermissionPolicy(
-        platform_rules=(
-            PlatformRule(kind="meridian-commands", commands=(SPAWN_PLATFORM_COMMAND,)),
-        )
+        platform_rules=(PlatformRule(kind="meridian-commands", commands=(SPAWN_PLATFORM_COMMAND,)),)
     ).has_spawn_capability

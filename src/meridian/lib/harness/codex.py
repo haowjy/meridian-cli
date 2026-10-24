@@ -7,6 +7,7 @@ import sqlite3
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, cast
 from uuid import uuid4
@@ -38,6 +39,7 @@ from meridian.lib.harness.codex_rollout import (
     materialize_fork_rollout,
 )
 from meridian.lib.harness.codex_rules import ensure_codex_meridian_rules
+from meridian.lib.harness.codex_settings import read_codex_user_network_config
 from meridian.lib.harness.common import extract_codex_thread_id
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -88,9 +90,18 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.platform import get_home_path
-from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES
+from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES, EffectiveNetworkFacts
 
 logger = logging.getLogger(__name__)
+
+
+def bind_codex_network_facts(
+    facts: EffectiveNetworkFacts,
+    env: Mapping[str, str],
+) -> EffectiveNetworkFacts:
+    """Add the child-selected Codex proxy domains to shared policy facts."""
+
+    return replace(facts, user_config=read_codex_user_network_config(env))
 
 
 def materialize_codex_spec(
@@ -401,9 +412,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             user_turn_content=run.user_turn_content,
         )
 
-    def launch_spec_warnings(
-        self, spec: ResolvedLaunchSpec
-    ) -> tuple[CompositionWarning, ...]:
+    def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]:
         permissions, _ = compile_codex_permissions(spec)
         override = permissions.network.override
         if override is None:
@@ -640,6 +649,7 @@ register_harness_bundle(
             subprocess_cli_args=project_codex_spec_to_cli_args,
             permission_report=lambda spec: compile_codex_permissions(spec)[1],
             effective_network=lambda facts: project_codex_network(facts).effective,
+            bind_network_facts=bind_codex_network_facts,
             materialize_spec=materialize_codex_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,

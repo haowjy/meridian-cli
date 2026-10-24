@@ -36,6 +36,7 @@ from meridian.lib.safety.policy import (
     ReportStatus,
     SandboxMode,
     complete_report,
+    format_network_policy,
     network_policy_element,
     platform_element,
     rule_element,
@@ -143,6 +144,18 @@ def project_codex_network(
     """Project Codex network config and the access it actually leaves."""
 
     override = _network_override(facts.native_config)
+
+    def with_user_domains(policy: Allow | Hosts) -> Allow | Hosts:
+        user_config = facts.user_config
+        if user_config is None or user_config.unreadable_reason is not None:
+            return policy
+        if isinstance(policy, Allow):
+            return Allow(deny=policy.deny | user_config.deny)
+        return Hosts(
+            allow=policy.allow | user_config.allow,
+            deny=policy.deny | user_config.deny,
+        )
+
     if facts.sandbox == "read-only":
         return NetworkProjection(
             native=CodexNetworkSettings(override=override),
@@ -157,19 +170,19 @@ def project_codex_network(
         assert isinstance(override.value, bool)
         return NetworkProjection(
             native=CodexNetworkSettings(override=override),
-            effective=Allow() if override.value else Hosts(),
+            effective=with_user_domains(Allow()) if override.value else Hosts(),
         )
 
     policy = facts.network
     if isinstance(policy, Allow) and not policy.deny:
         return NetworkProjection(
             native=CodexNetworkSettings(network_access=True, override=override),
-            effective=policy,
+            effective=with_user_domains(policy),
         )
     if isinstance(policy, Hosts) and not policy.allow:
         return NetworkProjection(
             native=CodexNetworkSettings(network_access=False, override=override),
-            effective=policy,
+            effective=with_user_domains(policy),
         )
 
     domains: dict[str, Literal["allow", "deny"]] = {}
@@ -185,7 +198,7 @@ def project_codex_network(
             domains=tuple(domains.items()),
             override=override,
         ),
-        effective=policy,
+        effective=with_user_domains(policy),
     )
 
 
@@ -361,7 +374,36 @@ def _codex_report(
                 sandbox_note,
             )
         )
-    network_element = network_policy_element(policy.network)
+    user_config = spec.effective_network_facts().user_config
+    user_note: str | None = None
+    user_widens = False
+    user_contributes = False
+    if user_config is not None and user_config.unreadable_reason is not None:
+        user_note = (
+            f"{user_config.path} is unreadable ({user_config.unreadable_reason}) and "
+            "contributes no user network settings"
+        )
+    elif user_config is not None and policy.sandbox == "workspace-write":
+        contributions: list[str] = []
+        if user_config.allow:
+            contributions.append("allows " + format_network_policy(Hosts(allow=user_config.allow)))
+            user_widens = isinstance(policy.network, Hosts)
+        if user_config.deny:
+            contributions.append("denies " + format_network_policy(Hosts(deny=user_config.deny)))
+        if contributions:
+            user_contributes = True
+            user_note = (
+                "Codex merges features.network_proxy.domains from "
+                f"{user_config.path}: " + "; ".join(contributions)
+            )
+
+    network_element = network_policy_element(
+        network.effective if user_contributes else policy.network
+    )
+
+    def reported_note(note: str) -> str:
+        return note if user_note is None else f"{note}; {user_note}"
+
     network_override = network.native.override
     if (
         policy.sandbox == "workspace-write"
@@ -380,7 +422,7 @@ def _codex_report(
             ReportLine(
                 network_element,
                 status,
-                note,
+                reported_note(note),
             )
         )
     elif policy.sandbox == "workspace-write":
@@ -389,18 +431,21 @@ def _codex_report(
                 ReportLine(
                     network_element,
                     "partial",
-                    "-c sandbox_workspace_write.network_access=true; "
-                    "-c features.network_proxy.enabled=true; "
-                    "-c features.network_proxy.domains=<inline map from the host sets above>; "
-                    "Codex still permits local services",
+                    reported_note(
+                        "-c sandbox_workspace_write.network_access=true; "
+                        "-c features.network_proxy.enabled=true; "
+                        "-c features.network_proxy.domains=<inline map from Meridian's "
+                        "host sets>; "
+                        "Codex still permits local services"
+                    ),
                 )
             )
         elif isinstance(network.effective, Allow):
             lines.append(
                 ReportLine(
                     network_element,
-                    "native",
-                    "-c sandbox_workspace_write.network_access=true",
+                    "partial" if user_widens else "native",
+                    reported_note("-c sandbox_workspace_write.network_access=true"),
                 )
             )
         else:
@@ -409,13 +454,15 @@ def _codex_report(
             lines.append(
                 ReportLine(
                     network_element,
-                    "partial" if escaped else "native",
-                    "-c sandbox_workspace_write.network_access=false"
-                    + (
-                        "; the Meridian-owned user rule still lets `meridian spawn` run "
-                        "outside the sandbox with network access"
-                        if escaped
-                        else ""
+                    "partial" if escaped or network.effective != policy.network else "native",
+                    reported_note(
+                        "-c sandbox_workspace_write.network_access=false"
+                        + (
+                            "; the Meridian-owned user rule still lets `meridian spawn` run "
+                            "outside the sandbox with network access"
+                            if escaped
+                            else ""
+                        )
                     ),
                 )
             )
@@ -425,7 +472,7 @@ def _codex_report(
                 ReportLine(
                     network_element,
                     "unsupported",
-                    "Codex read-only has no network-enabled mode",
+                    reported_note("Codex read-only has no network-enabled mode"),
                 )
             )
         else:
@@ -433,7 +480,7 @@ def _codex_report(
                 ReportLine(
                     network_element,
                     "native",
-                    "Codex read-only keeps shell network and sockets off",
+                    reported_note("Codex read-only keeps shell network and sockets off"),
                 )
             )
     elif policy.sandbox == "danger-full-access":
@@ -442,9 +489,11 @@ def _codex_report(
             ReportLine(
                 network_element,
                 "native" if enforced else "unsupported",
-                "danger-full-access leaves shell network unrestricted"
-                if enforced
-                else "not enforced under danger-full-access; shell network remains available",
+                reported_note(
+                    "danger-full-access leaves shell network unrestricted"
+                    if enforced
+                    else "not enforced under danger-full-access; shell network remains available"
+                ),
             )
         )
     else:
@@ -453,7 +502,9 @@ def _codex_report(
             ReportLine(
                 network_element,
                 "partial" if enforced else "unsupported",
-                "sandbox is left to Codex, so Meridian does not project network_access",
+                reported_note(
+                    "sandbox is left to Codex, so Meridian does not project network_access"
+                ),
             )
         )
     if permissions.approval_policy is not None:
@@ -470,7 +521,12 @@ def _codex_report(
             lines.append(ReportLine(f"approval: {policy.approval}", "native", note))
     lines.extend(native_config_report)
     lines.extend(compaction_report(spec, harness="Codex"))
-    return complete_report(policy, lines, harness="Codex")
+    return complete_report(
+        policy,
+        lines,
+        harness="Codex",
+        reported_network=network.effective if user_contributes else None,
+    )
 
 
 def compile_codex_permissions(

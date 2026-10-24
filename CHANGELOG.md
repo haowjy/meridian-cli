@@ -25,6 +25,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Network policy is one typed allow-or-host-set value from bundle parsing through harness projection and the caller guardrail. Claude effective policy includes user-level domain widening, and child containment preserves both allow subsets and deny supersets.
 
 ### Fixed
+- Permission reports and sandboxed-child containment now include Claude user proxy ports
+  that bypass domain filtering and Codex user proxy-domain entries. Malformed selected
+  harness config files are reported and contribute no user network access.
 - Claude child containment, caller boundary records, and shell guidance now read network
   domains from the same child-selected user settings root. Offline children are contained by
   every caller, and `[primary] sandbox` resolves an unset network only after primary config

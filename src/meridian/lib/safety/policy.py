@@ -75,6 +75,17 @@ class NetworkProjection(Generic[NativeNetworkT]):
     effective: NetworkPolicy
 
 
+@dataclass(frozen=True)
+class UserNetworkConfig:
+    """Network facts read from the harness config selected by the child environment."""
+
+    path: str
+    allow: frozenset[Host] = frozenset()
+    deny: frozenset[Host] = frozenset()
+    bypasses_domain_filter: bool = False
+    unreadable_reason: str | None = None
+
+
 type ApprovalMode = Literal[
     "default",
     "auto",
@@ -108,8 +119,7 @@ class EffectiveNetworkFacts:
     sandbox: SandboxMode
     network: NetworkPolicy
     native_config: Mapping[str, object]
-    settings_allow: frozenset[Host] = frozenset()
-    settings_deny: frozenset[Host] = frozenset()
+    user_config: UserNetworkConfig | None = None
 
     @classmethod
     def from_values(
@@ -118,8 +128,7 @@ class EffectiveNetworkFacts:
         sandbox: str | None,
         network: NetworkPolicy | None,
         native_config: Mapping[str, object] | None = None,
-        settings_allow: Iterable[str] = (),
-        settings_deny: Iterable[str] = (),
+        user_config: UserNetworkConfig | None = None,
     ) -> EffectiveNetworkFacts:
         """Validate resolved execution-policy values at the effective-network port."""
 
@@ -128,8 +137,7 @@ class EffectiveNetworkFacts:
             sandbox=parsed_sandbox,
             network=network or default_network_policy(parsed_sandbox),
             native_config=native_config or _EMPTY_NATIVE_CONFIG,
-            settings_allow=host_set(settings_allow),
-            settings_deny=host_set(settings_deny),
+            user_config=user_config,
         )
 
     @classmethod
@@ -138,8 +146,7 @@ class EffectiveNetworkFacts:
         policy: PermissionPolicy,
         *,
         native_config: Mapping[str, object] | None = None,
-        settings_allow: Iterable[str] = (),
-        settings_deny: Iterable[str] = (),
+        user_config: UserNetworkConfig | None = None,
     ) -> EffectiveNetworkFacts:
         """Take only effective-network facts from a compiled permission policy."""
 
@@ -147,8 +154,7 @@ class EffectiveNetworkFacts:
             sandbox=policy.sandbox,
             network=policy.network,
             native_config=native_config or _EMPTY_NATIVE_CONFIG,
-            settings_allow=host_set(settings_allow),
-            settings_deny=host_set(settings_deny),
+            user_config=user_config,
         )
 
 
@@ -810,6 +816,7 @@ __all__ = [
     "ReportStatus",
     "SandboxDerivedNetwork",
     "SandboxMode",
+    "UserNetworkConfig",
     "build_permission_policy",
     "canonical_host",
     "complete_report",

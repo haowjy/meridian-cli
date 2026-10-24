@@ -58,7 +58,7 @@ the prepared profile's spawn capability, and the harness-effective typed network
 constrained sandbox. A missing network key means no network floor, preserving boundaries
 written by older builds. `build_effective_network_facts()` derives the projector input from
 the resolved policy, harness, and selected child environment; caller-boundary recording
-runs after harness bind so Claude's user-level domain widening is included. The child
+runs after harness bind so Claude and Codex user-config widening is included. The child
 guardrail and shell guidance use the same builder. The permission report uses the same
 projection.
 Projected roots are not part of this CLI-escalation guardrail.

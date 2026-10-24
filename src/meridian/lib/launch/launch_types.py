@@ -72,8 +72,6 @@ class ClaudeRuntimeResolution:
     # Populated from the final child environment by Claude's ``bind_spec`` port;
     # empty on a spec that did not pass through bind.
     settings_allows: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    settings_network_denied_domains: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -170,16 +168,6 @@ class ResolvedLaunchSpec(BaseModel):
         return EffectiveNetworkFacts.from_permission_policy(
             self.permission_policy,
             native_config=self.native_config,
-            settings_allow=(
-                domain
-                for _path, domains in self.claude_runtime.settings_network_allowed_domains
-                for domain in domains
-            ),
-            settings_deny=(
-                domain
-                for _path, domains in self.claude_runtime.settings_network_denied_domains
-                for domain in domains
-            ),
         )
 
     def with_effective_network_facts(

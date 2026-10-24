@@ -23,6 +23,7 @@ from meridian.lib.safety.policy import (
     Allow,
     EffectiveNetworkFacts,
     EnforcementReport,
+    Host,
     Hosts,
     NetworkProjection,
     PermissionPolicy,
@@ -33,7 +34,6 @@ from meridian.lib.safety.policy import (
     command_grant_covers_pattern,
     complete_report,
     format_network_policy,
-    host_set,
     network_allows_local_services,
     network_policy_element,
     platform_element,
@@ -450,7 +450,17 @@ def project_claude_network(
         return NetworkProjection(native=None, effective=Allow())
 
     policy = facts.network
-    denied = policy.deny | facts.settings_deny
+    user_config = facts.user_config
+    user_allow: frozenset[Host] = (
+        user_config.allow if user_config is not None else frozenset()
+    )
+    user_deny: frozenset[Host] = (
+        user_config.deny if user_config is not None else frozenset()
+    )
+    bypasses_domain_filter = (
+        user_config.bypasses_domain_filter if user_config is not None else False
+    )
+    denied = policy.deny | user_deny
     if isinstance(policy, Allow):
         native = ClaudeNetworkSettings(
             allowed_domains=CLAUDE_NETWORK_ALLOW_DOMAINS,
@@ -460,11 +470,11 @@ def project_claude_network(
         )
         return NetworkProjection(native=native, effective=Allow(deny=denied))
 
-    effective = Hosts(
-        allow=policy.allow | facts.settings_allow,
+    filtered_effective = Hosts(
+        allow=policy.allow | user_allow,
         deny=denied,
     )
-    allow_local_services = network_allows_local_services(effective)
+    allow_local_services = network_allows_local_services(filtered_effective)
     native = ClaudeNetworkSettings(
         strict_allowlist=True,
         allowed_domains=_claude_domains(policy.allow),
@@ -472,7 +482,10 @@ def project_claude_network(
         allow_local_binding=allow_local_services,
         allow_all_unix_sockets=allow_local_services,
     )
-    return NetworkProjection(native=native, effective=effective)
+    return NetworkProjection(
+        native=native,
+        effective=Allow(deny=denied) if bypasses_domain_filter else filtered_effective,
+    )
 
 
 def _compile_sandbox(
@@ -917,45 +930,76 @@ def _network_line(
     policy: PermissionPolicy,
     permissions: ClaudePermissions,
     projection: NetworkProjection[ClaudeNetworkSettings | None],
-    settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...],
+    facts: EffectiveNetworkFacts,
 ) -> ReportLine:
     reported_network = projection.effective if projection.native is not None else policy.network
     element = network_policy_element(reported_network)
     sandbox = permissions.settings.sandbox
+    user_config = facts.user_config
+    user_notes: list[str] = []
+    user_widens = False
+    if user_config is not None:
+        if user_config.unreadable_reason is not None:
+            user_notes.append(
+                f"{user_config.path} is unreadable ({user_config.unreadable_reason}) and "
+                "contributes no user network settings"
+            )
+        else:
+            if user_config.bypasses_domain_filter:
+                user_notes.append(
+                    f"{user_config.path} sets sandbox.network.httpProxyPort or "
+                    "socksProxyPort; the user proxy bypasses Claude's domain filter"
+                )
+                user_widens = True
+            if user_config.allow:
+                user_notes.append(
+                    "Claude merges user allowedDomains from "
+                    f"{user_config.path}: "
+                    f"{format_network_policy(Hosts(allow=user_config.allow))}"
+                )
+                user_widens = True
+            if user_config.deny:
+                user_notes.append(
+                    "Claude merges user deniedDomains from "
+                    f"{user_config.path}: "
+                    f"{format_network_policy(Hosts(deny=user_config.deny))}"
+                )
+
     if isinstance(policy.network, Allow):
         if projection.native is None:
-            if projection.effective != policy.network:
-                return ReportLine(
-                    element,
-                    "unsupported",
-                    "no Claude Bash sandbox is projected; shell network remains available",
-                )
+            note = "no Claude Bash sandbox is projected; shell network remains available"
+            if user_notes:
+                note += "; " + "; ".join(user_notes)
             return ReportLine(
                 element,
-                "native",
-                "shell network is available without a projected Claude Bash sandbox",
+                "unsupported" if projection.effective != policy.network else "native",
+                note,
             )
         assert sandbox is not None and sandbox.enabled
-        note = (
+        notes = [
             "--settings sandbox.network.allowedDomains allows all destinations, "
             "sandbox.network.allowLocalBinding=true, "
             "sandbox.network.allowAllUnixSockets=true"
-        )
+        ]
         if projection.native.denied_domains:
-            note += "; deniedDomains projects the deny set above"
+            notes.append("deniedDomains projects the deny set above")
+        notes.extend(user_notes)
         if sys.platform.startswith("linux"):
-            return ReportLine(
-                element,
-                "partial",
-                note + "; host localhost remains mediated by Claude's proxy on Linux",
-            )
-        return ReportLine(element, "native", note)
+            notes.append("host localhost remains mediated by Claude's proxy on Linux")
+        return ReportLine(
+            element,
+            "partial" if sys.platform.startswith("linux") or user_widens else "native",
+            "; ".join(notes),
+        )
 
     if projection.native is None:
+        note = "no Claude Bash sandbox is projected; shell network remains available"
+        if user_notes:
+            note += "; " + "; ".join(user_notes)
         return ReportLine(
             element,
             "unsupported",
-            "no Claude Bash sandbox is projected; shell network remains available",
+            note,
         )
     assert sandbox is not None and sandbox.enabled and projection.native is not None
     notes = ["--settings sandbox.network.strictAllowlist=true"]
@@ -978,16 +1022,7 @@ def _network_line(
             "processes in the same sandbox can still connect over its private TCP "
             "loopback, so deny is partial on Linux"
         )
-    widening: list[str] = []
-    for path, domains in settings_network_allowed_domains:
-        widening.append(
-            f"{path}: {format_network_policy(Hosts(allow=host_set(domains)))}"
-        )
-    if widening:
-        notes.append(
-            "Claude merges allowedDomains from its user settings, so the allowlist can "
-            "be widened outside Meridian (" + "; ".join(widening) + ")"
-        )
+    notes.extend(user_notes)
     if sandbox.excluded_commands:
         notes.append(
             "excludedCommands run outside the sandbox and can still use the network: "
@@ -998,7 +1033,7 @@ def _network_line(
         "partial"
         if sys.platform.startswith("linux")
         or local_services
-        or widening
+        or user_widens
         or sandbox.excluded_commands
         else "native",
         "; ".join(notes),
@@ -1051,7 +1086,7 @@ def compile_claude_permissions(
             policy,
             permissions,
             network,
-            spec.claude_runtime.settings_network_allowed_domains,
+            spec.effective_network_facts(),
         )
     )
     if policy.approval != "default":

@@ -57,7 +57,7 @@ from meridian.lib.harness.claude_sessions import (
 )
 from meridian.lib.harness.claude_settings import (
     read_claude_settings_permissions,
-    read_claude_user_network_domains,
+    read_claude_user_network_config,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
@@ -99,7 +99,6 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
     EffectiveNetworkFacts,
-    host_set,
     network_allows_local_services,
 )
 
@@ -139,18 +138,12 @@ def bind_claude_spec(
 ) -> ResolvedLaunchSpec:
     """Resolve settings-file allows once from the launch environment and cwd."""
 
-    (
-        settings_allows,
-        network_allowed_domains,
-        network_denied_domains,
-    ) = read_claude_settings_permissions(child_cwd, env)
+    settings_allows = read_claude_settings_permissions(child_cwd, env)
     return spec.model_copy(
         update={
             "claude_runtime": replace(
                 spec.claude_runtime,
                 settings_allows=settings_allows,
-                settings_network_allowed_domains=network_allowed_domains,
-                settings_network_denied_domains=network_denied_domains,
             )
         }
     )
@@ -162,16 +155,7 @@ def bind_claude_network_facts(
 ) -> EffectiveNetworkFacts:
     """Add the child-selected Claude user network settings to shared policy facts."""
 
-    allowed, denied = read_claude_user_network_domains(env)
-    return replace(
-        facts,
-        settings_allow=host_set(
-            domain for _path, domains in allowed for domain in domains
-        ),
-        settings_deny=host_set(
-            domain for _path, domains in denied for domain in domains
-        ),
-    )
+    return replace(facts, user_config=read_claude_user_network_config(env))
 
 
 def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:

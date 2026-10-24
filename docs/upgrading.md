@@ -57,11 +57,24 @@ deny. No harness can
 enforce `network: deny`
 under `danger-full-access`, and OpenCode, Pi, and Cursor cannot enforce it in any mode.
 
-Claude translates `**.x` to `x` plus `*.x`. A finite allowlist keeps local binding and Unix
-sockets disabled, overriding wider user settings, unless it contains `localhost` or
+Claude translates `**.x` to `x` plus `*.x`. A finite allowlist keeps ordinary user
+local-binding and Unix-socket settings disabled unless it contains `localhost` or
 `127.0.0.1`; either name enables Claude's coarse local-binding and all-Unix-sockets
-switches. User-level Claude
-`allowedDomains` still widen the effective allowlist, and user denies win.
+switches. User-level Claude `allowedDomains` still widen the effective allowlist, and user
+denies win. A user `sandbox.network.httpProxyPort` or `socksProxyPort` is a separate bypass:
+it routes traffic around Claude's domain filter, so Meridian reports the effective policy as
+`allow` with its denies retained and uses that value for child containment.
+
+Codex merges `$CODEX_HOME/config.toml` `features.network_proxy.domains` with Meridian's
+inline map. User `allow` entries join the effective allow set of a host policy and user
+`deny` entries join its denies. The report names the file and child containment uses the
+merged value. Codex's `default_permissions` and `[permissions.<name>]` network domains do
+not apply to these launches because Meridian passes an explicit sandbox mode, selecting
+Codex's legacy sandbox configuration path.
+
+If either selected user file is unreadable or malformed, Meridian's policy composition
+continues, names the unreadable file in the permission report, and counts no contribution
+from it. The native harness can still refuse to start because it cannot parse the same file.
 
 A Mars bundle without `provenance.network_source` predates the portable field. Meridian
 refuses the launch, names the Mars executable it used, and asks you to upgrade Meridian
@@ -94,9 +107,11 @@ Approval is not compared independently. A current `read-only` or `workspace-writ
 always records its effective network, so an omitted profile value records deny and accepts an
 omitted constrained child. A boundary record written before the network field existed still
 creates no network floor, preventing a mid-session upgrade from refusing nested spawns.
-Claude's effective value includes user-level `sandbox.network.allowedDomains` widening and
-`deniedDomains` narrowing; project `.claude/settings*.json` did not widen the launch-local
-strict allowlist and is not included.
+Claude's effective value includes user-level `sandbox.network.allowedDomains` widening,
+`deniedDomains` narrowing, and the domain-filter bypass from `httpProxyPort` or
+`socksProxyPort`; project `.claude/settings*.json` did not widen the launch-local strict
+allowlist and is not included. Codex's effective value includes
+`$CODEX_HOME/config.toml` `features.network_proxy.domains` allows and denies.
 Child write roots and `--env` are not part of the guardrail. Profiles using
 `sandbox: default` or `danger-full-access`, and top-level shells not launched by Meridian,
 carry no floor.
