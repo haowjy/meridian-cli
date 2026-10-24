@@ -13,6 +13,7 @@ from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY,
     CODEX_CONFIG_WEB_SEARCH_KEY,
     CODEX_CONFIG_WRITABLE_ROOTS_KEY,
+    codex_toml_literal,
 )
 from meridian.lib.harness.projections.permissions_codex import CodexPermissions
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -27,6 +28,8 @@ CODEX_DISABLE_BUILTIN_AGENT_FLAGS: tuple[str, ...] = (
     "-c",
     f"{CODEX_CONFIG_AGENTS_PREFIX}.max_depth=0",
 )
+_CODEX_NETWORK_PROXY_ENABLED_KEY = "features.network_proxy.enabled"
+_CODEX_NETWORK_PROXY_DOMAINS_KEY = "features.network_proxy.domains"
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,8 @@ class CodexSandboxProjection:
     sandbox_mode: str | None
     writable_roots: tuple[str, ...]
     network_access: bool | None
+    network_proxy_enabled: bool
+    network_domains: tuple[tuple[str, str], ...]
 
     def subprocess_args(self) -> tuple[str, ...]:
         """Return sandbox arguments for ``codex exec``."""
@@ -83,6 +88,11 @@ class CodexSandboxProjection:
                     f"{str(self.network_access).lower()}",
                 )
             )
+        if self.network_proxy_enabled:
+            arguments.extend(("-c", f"{_CODEX_NETWORK_PROXY_ENABLED_KEY}=true"))
+            domains = codex_toml_literal(dict(self.network_domains))
+            assert domains is not None
+            arguments.extend(("-c", f"{_CODEX_NETWORK_PROXY_DOMAINS_KEY}={domains}"))
 
     def thread_fields(self) -> tuple[dict[str, object], dict[str, object]]:
         """Return thread request fields and config overrides for app-server."""
@@ -96,6 +106,9 @@ class CodexSandboxProjection:
             config[CODEX_CONFIG_WRITABLE_ROOTS_KEY] = list(self.writable_roots)
         if self.network_access is not None:
             config[CODEX_CONFIG_NETWORK_ACCESS_KEY] = self.network_access
+        if self.network_proxy_enabled:
+            config[_CODEX_NETWORK_PROXY_ENABLED_KEY] = True
+            config[_CODEX_NETWORK_PROXY_DOMAINS_KEY] = dict(self.network_domains)
         return fields, config
 
 
@@ -108,7 +121,9 @@ def project_codex_sandbox(
     return CodexSandboxProjection(
         sandbox_mode=permissions.sandbox_mode,
         writable_roots=tuple(root.as_posix() for root in spec.projected_roots),
-        network_access=permissions.network_access,
+        network_access=permissions.network.network_access,
+        network_proxy_enabled=permissions.network.proxy_enabled,
+        network_domains=permissions.network.domains,
     )
 
 

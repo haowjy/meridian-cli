@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from meridian.lib.safety.policy import ALLOWLIST_ORIGIN, build_permission_policy
+from meridian.lib.safety.policy import (
+    ALLOWLIST_ORIGIN,
+    Allow,
+    EffectiveNetworkFacts,
+    Hosts,
+    build_permission_policy,
+    parse_network_policy,
+)
 from meridian.lib.tools import ToolRule
 from tests.support.launch import tool_rule
 
@@ -48,7 +55,10 @@ def test_allowlist_queries(
     denied: tuple[tuple[str, tuple[str, ...]], ...],
     allowed: tuple[str, ...],
 ) -> None:
-    policy = build_permission_policy(rules=rules, sandbox=None)
+    policy = build_permission_policy(
+        rules=rules,
+        network_facts=EffectiveNetworkFacts.from_values(sandbox=None, network=None),
+    )
 
     written = policy.rules[: len(policy.rules) - len(rules)]
     assert policy.rules[len(written) :] == rules
@@ -60,10 +70,20 @@ def test_allowlist_queries(
 
 
 def test_network_default_follows_sandbox_without_losing_authored_allow() -> None:
-    native_default = build_permission_policy(sandbox=None)
-    sandboxed_default = build_permission_policy(sandbox="workspace-write")
-    authored = build_permission_policy(sandbox="workspace-write", network="allow")
+    native_default = build_permission_policy(
+        network_facts=EffectiveNetworkFacts.from_values(sandbox=None, network=None)
+    )
+    sandboxed_default = build_permission_policy(
+        network_facts=EffectiveNetworkFacts.from_values(
+            sandbox="workspace-write", network=None
+        )
+    )
+    authored = build_permission_policy(
+        network_facts=EffectiveNetworkFacts.from_values(
+            sandbox="workspace-write", network=parse_network_policy("allow")
+        )
+    )
 
-    assert (native_default.network, native_default.network_mode) == (None, "allow")
-    assert (sandboxed_default.network, sandboxed_default.network_mode) == (None, "deny")
-    assert (authored.network, authored.network_mode) == ("allow", "allow")
+    assert (native_default.network, native_default.network_mode) == (Allow(), "allow")
+    assert (sandboxed_default.network, sandboxed_default.network_mode) == (Hosts(), "deny")
+    assert (authored.network, authored.network_mode) == (Allow(), "allow")

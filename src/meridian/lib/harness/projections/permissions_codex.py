@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import (
@@ -24,10 +25,12 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
     CONSTRAINED_SANDBOX_MODES,
+    Allow,
     ApprovalMode,
     EffectiveNetworkFacts,
     EnforcementReport,
-    NetworkMode,
+    Hosts,
+    NetworkProjection,
     PermissionPolicy,
     ReportLine,
     ReportStatus,
@@ -65,6 +68,16 @@ class CodexNetworkOverride:
 
 
 @dataclass(frozen=True)
+class CodexNetworkSettings:
+    """The Codex config values Meridian owns for one launch."""
+
+    network_access: bool | None = None
+    proxy_enabled: bool = False
+    domains: tuple[tuple[str, Literal["allow", "deny"]], ...] = ()
+    override: CodexNetworkOverride | None = None
+
+
+@dataclass(frozen=True)
 class CodexPermissions:
     """Codex's launch-time permission settings; ``None`` leaves Codex's default.
 
@@ -74,8 +87,7 @@ class CodexPermissions:
     """
 
     sandbox_mode: str | None
-    network_access: bool | None
-    network_override: CodexNetworkOverride | None
+    network: CodexNetworkSettings
     approval_policy: str | None
     shell_tool: bool | None
     web_search: bool | None
@@ -117,21 +129,71 @@ def _network_override(native_config: Mapping[str, object]) -> CodexNetworkOverri
         literal = codex_toml_literal(value)
         argument = (
             f"{key}={literal}"
-            if isinstance(value, bool)
-            and literal is not None
-            and codex_key_addressable(segments)
+            if isinstance(value, bool) and literal is not None and codex_key_addressable(segments)
             else None
         )
         return CodexNetworkOverride(value=value, argument=argument)
     return None
 
 
+def project_codex_network(
+    facts: EffectiveNetworkFacts,
+) -> NetworkProjection[CodexNetworkSettings]:
+    """Project Codex network config and the access it actually leaves."""
+
+    override = _network_override(facts.native_config)
+    if facts.sandbox == "read-only":
+        return NetworkProjection(
+            native=CodexNetworkSettings(override=override),
+            effective=Hosts(),
+        )
+    if facts.sandbox != "workspace-write":
+        return NetworkProjection(
+            native=CodexNetworkSettings(override=override),
+            effective=Allow(),
+        )
+    if override is not None and override.argument is not None:
+        assert isinstance(override.value, bool)
+        return NetworkProjection(
+            native=CodexNetworkSettings(override=override),
+            effective=Allow() if override.value else Hosts(),
+        )
+
+    policy = facts.network
+    if isinstance(policy, Allow) and not policy.deny:
+        return NetworkProjection(
+            native=CodexNetworkSettings(network_access=True, override=override),
+            effective=policy,
+        )
+    if isinstance(policy, Hosts) and not policy.allow:
+        return NetworkProjection(
+            native=CodexNetworkSettings(network_access=False, override=override),
+            effective=policy,
+        )
+
+    domains: dict[str, Literal["allow", "deny"]] = {}
+    if isinstance(policy, Allow):
+        domains["*"] = "allow"
+    else:
+        domains.update((host, "allow") for host in sorted(policy.allow))
+    domains.update((host, "deny") for host in sorted(policy.deny))
+    return NetworkProjection(
+        native=CodexNetworkSettings(
+            network_access=True,
+            proxy_enabled=True,
+            domains=tuple(domains.items()),
+            override=override,
+        ),
+        effective=policy,
+    )
+
+
 def _compile_codex_permission_values(
-    policy: PermissionPolicy,
-    native_config: Mapping[str, object],
-) -> CodexPermissions:
+    spec: ResolvedLaunchSpec,
+) -> tuple[CodexPermissions, NetworkProjection[CodexNetworkSettings]]:
     """Resolve every native permission value, including the deprecated override, once."""
 
+    policy = spec.permission_policy
     # Under an allowlist, search and image viewing are off unless a rule allows them. The
     # shell stays on because Codex reads files through it.
     off = False if policy.is_allowlist else None
@@ -146,58 +208,28 @@ def _compile_codex_permission_values(
         if switch is not None:
             switches[switch[0]] = switch[1]
 
-    network_override = _network_override(native_config)
-    network_access = (
-        policy.network_mode == "allow"
-        if policy.network_projection and policy.sandbox == "workspace-write"
-        else None
-    )
-    if network_override is not None and network_override.argument is not None:
-        network_access = None
-
-    return CodexPermissions(
-        sandbox_mode=_SANDBOX_MODE_BY_MODE[policy.sandbox],
-        network_access=network_access,
-        network_override=network_override,
-        approval_policy=_APPROVAL_POLICY_BY_MODE[policy.approval],
-        shell_tool=switches["shell_tool"],
-        web_search=switches["web_search"],
-        view_image=switches["view_image"],
-        builtin_agents_disabled=any(
-            rule.kind == "builtin-agents" for rule in policy.platform_rules
+    network = project_codex_network(spec.effective_network_facts())
+    return (
+        CodexPermissions(
+            sandbox_mode=_SANDBOX_MODE_BY_MODE[policy.sandbox],
+            network=network.native,
+            approval_policy=_APPROVAL_POLICY_BY_MODE[policy.approval],
+            shell_tool=switches["shell_tool"],
+            web_search=switches["web_search"],
+            view_image=switches["view_image"],
+            builtin_agents_disabled=any(
+                rule.kind == "builtin-agents" for rule in policy.platform_rules
+            ),
         ),
+        network,
     )
-
-
-def _effective_codex_network(
-    facts: EffectiveNetworkFacts,
-    network_override: CodexNetworkOverride | None,
-) -> NetworkMode:
-    if not facts.network_projection:
-        return "allow"
-    if facts.sandbox == "read-only":
-        return "deny"
-    if facts.sandbox == "workspace-write":
-        override = network_override
-        if override is not None and override.argument is not None:
-            assert isinstance(override.value, bool)
-            return "allow" if override.value else "deny"
-        return facts.network_mode
-    return "allow"
-
-
-def effective_codex_network(
-    facts: EffectiveNetworkFacts,
-) -> NetworkMode:
-    """Return the shell-network policy Codex actually enforces."""
-
-    return _effective_codex_network(facts, _network_override(facts.native_config))
 
 
 def _codex_report(
     spec: ResolvedLaunchSpec,
     policy: PermissionPolicy,
     permissions: CodexPermissions,
+    network: NetworkProjection[CodexNetworkSettings],
     native_config_report: EnforcementReport,
 ) -> EnforcementReport:
     lines: list[ReportLine] = []
@@ -301,10 +333,7 @@ def _codex_report(
     if permissions.sandbox_mode is not None:
         sandbox_note = f"sandbox_mode={permissions.sandbox_mode}"
         sandbox_status = "native"
-        if (
-            policy.sandbox in CONSTRAINED_SANDBOX_MODES
-            and policy.has_spawn_capability
-        ):
+        if policy.sandbox in CONSTRAINED_SANDBOX_MODES and policy.has_spawn_capability:
             rules_error = spec.codex_runtime.rules_file_error
             rules_path = spec.codex_runtime.rules_file_path
             if rules_error is not None:
@@ -332,33 +361,19 @@ def _codex_report(
             )
         )
     network_element = f"network: {policy.network_mode}"
-    effective_network = _effective_codex_network(
-        EffectiveNetworkFacts.from_permission_policy(
-            policy,
-            native_config=spec.native_config,
-        ),
-        permissions.network_override,
-    )
-    network_override = permissions.network_override
-    if not policy.network_projection:
-        pass
-    elif (
+    network_override = network.native.override
+    if (
         policy.sandbox == "workspace-write"
         and network_override is not None
         and network_override.argument is not None
     ):
         override_value = network_override.value
         assert isinstance(override_value, bool)
-        status: ReportStatus = (
-            "native" if effective_network == policy.network_mode else "partial"
-        )
-        note = (
-            "deprecated native_config sandbox_workspace_write.network_access "
-            + (
-                "matches the profile network field"
-                if status == "native"
-                else "takes precedence over the profile network field for this release"
-            )
+        status: ReportStatus = "native" if network.effective == policy.network else "partial"
+        note = "deprecated native_config sandbox_workspace_write.network_access " + (
+            "matches the profile network field"
+            if status == "native"
+            else "takes precedence over the profile network field for this release"
         )
         lines.append(
             ReportLine(
@@ -368,7 +383,19 @@ def _codex_report(
             )
         )
     elif policy.sandbox == "workspace-write":
-        if effective_network == "allow":
+        if network.native.proxy_enabled:
+            domains = codex_toml_literal(dict(network.native.domains))
+            lines.append(
+                ReportLine(
+                    network_element,
+                    "partial",
+                    "-c sandbox_workspace_write.network_access=true; "
+                    "-c features.network_proxy.enabled=true; "
+                    f"-c features.network_proxy.domains={domains}; "
+                    "Codex still permits local services",
+                )
+            )
+        elif isinstance(network.effective, Allow):
             lines.append(
                 ReportLine(
                     network_element,
@@ -393,7 +420,7 @@ def _codex_report(
                 )
             )
     elif policy.sandbox == "read-only":
-        if policy.network == "allow":
+        if isinstance(policy.network, Allow):
             lines.append(
                 ReportLine(
                     network_element,
@@ -410,20 +437,22 @@ def _codex_report(
                 )
             )
     elif policy.sandbox == "danger-full-access":
+        enforced = network.effective == policy.network
         lines.append(
             ReportLine(
                 network_element,
-                "native" if policy.network_mode == "allow" else "unsupported",
+                "native" if enforced else "unsupported",
                 "danger-full-access leaves shell network unrestricted"
-                if policy.network_mode == "allow"
+                if enforced
                 else "not enforced under danger-full-access; shell network remains available",
             )
         )
     else:
+        enforced = network.effective == policy.network
         lines.append(
             ReportLine(
                 network_element,
-                "partial" if policy.network_mode == "allow" else "unsupported",
+                "partial" if enforced else "unsupported",
                 "sandbox is left to Codex, so Meridian does not project network_access",
             )
         )
@@ -450,13 +479,19 @@ def compile_codex_permissions(
     """Compile ``spec.permission_policy`` for Codex, with the report of what it did."""
 
     policy = spec.permission_policy
-    permissions = _compile_codex_permission_values(policy, spec.native_config)
+    permissions, network = _compile_codex_permission_values(spec)
     _, native_config_report = project_codex_native_config(spec.native_config)
-    return permissions, _codex_report(spec, policy, permissions, native_config_report)
+    return permissions, _codex_report(
+        spec,
+        policy,
+        permissions,
+        network,
+        native_config_report,
+    )
 
 
 __all__ = [
     "CodexPermissions",
     "compile_codex_permissions",
-    "effective_codex_network",
+    "project_codex_network",
 ]

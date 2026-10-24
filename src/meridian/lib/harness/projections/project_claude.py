@@ -12,7 +12,6 @@ from meridian.lib.harness.projections._guards import (
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.harness.projections.compaction import project_claude_autocompact_args
 from meridian.lib.harness.projections.permissions_claude import (
-    CLAUDE_NETWORK_ALLOW_DOMAINS,
     ClaudeSettings,
     compile_claude_permissions,
 )
@@ -105,14 +104,20 @@ def _settings_json(settings: ClaudeSettings) -> str:
             sandbox["autoAllowBashIfSandboxed"] = sandbox_settings.auto_allow_bash
             if sandbox_settings.deny_write:
                 sandbox["filesystem"] = {"denyWrite": list(sandbox_settings.deny_write)}
-            if sandbox_settings.network_open is True:
-                sandbox["network"] = {
-                    "allowedDomains": list(CLAUDE_NETWORK_ALLOW_DOMAINS),
-                    "allowLocalBinding": True,
-                    "allowAllUnixSockets": True,
-                }
-            elif sandbox_settings.network_open is False:
-                sandbox["network"] = {"strictAllowlist": True}
+            if sandbox_settings.network is not None:
+                network_settings = sandbox_settings.network
+                network: dict[str, object] = {}
+                if network_settings.strict_allowlist:
+                    network["strictAllowlist"] = True
+                if network_settings.allowed_domains:
+                    network["allowedDomains"] = list(network_settings.allowed_domains)
+                if network_settings.denied_domains:
+                    network["deniedDomains"] = list(network_settings.denied_domains)
+                if network_settings.allow_local_binding:
+                    network["allowLocalBinding"] = True
+                if network_settings.allow_all_unix_sockets:
+                    network["allowAllUnixSockets"] = True
+                sandbox["network"] = network
         if sandbox_settings.excluded_commands:
             sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)
         payload["sandbox"] = sandbox

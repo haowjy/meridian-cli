@@ -33,9 +33,11 @@ without updating the corresponding projector → startup failure.
   spell the result as argv, env or payload; nothing outside the harness module reads the
   policy's rules. The compile returns `(native value, EnforcementReport)`; its report is
   registered as `HarnessProjectionPorts.permission_report`; the harness's pure effective
-  shell-network function is registered beside it. OpenCode, Pi, and Cursor share
-  `unenforced_network`, which `complete_report()` uses for their default network line
-  instead of repeating it in each compile. The projectors, `--dry-run` and
+shell-network port is registered beside it. Claude and Codex each have one pure network
+projector returning native settings plus the typed effective policy, so compile, report,
+and child guardrails cannot decide independently. OpenCode, Pi, and Cursor share
+`project_unenforced_network()`, which `complete_report()` uses for their network line
+instead of repeating it in each compile. The projectors, `--dry-run` and
   `projection-manifest.json` all read these same policy facts.
 
 ## Key Rules

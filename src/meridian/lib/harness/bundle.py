@@ -24,8 +24,8 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
 from meridian.lib.safety.policy import (
     EffectiveNetworkFacts,
     EnforcementReport,
-    NetworkMode,
-    unenforced_network,
+    NetworkPolicy,
+    project_unenforced_network,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -45,7 +45,13 @@ class EffectiveNetwork(Protocol):
     def __call__(
         self,
         facts: EffectiveNetworkFacts,
-    ) -> NetworkMode: ...
+    ) -> NetworkPolicy: ...
+
+
+def unenforced_network(facts: EffectiveNetworkFacts) -> NetworkPolicy:
+    """Return the shared effective policy for harnesses without enforcement."""
+
+    return project_unenforced_network(facts).effective
 
 
 class ManagedPrimaryBackendProjector(Protocol[ProjectorSpecT]):

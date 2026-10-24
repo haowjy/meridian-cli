@@ -58,6 +58,7 @@ def bundle() -> dict[str, object]:
             "route_trace": report(),
         },
         "execution_policy": {},
+        "provenance": {"network_source": "unset"},
         "tools": {
             "rules": [],
             "capability_natives": {
@@ -100,19 +101,16 @@ def test_report_v3_survives_bundle_and_snapshot(
     assert "fallback_chain" not in snapshot.model_dump()
 
 
-def test_old_mars_bundle_warns_and_keeps_harness_network_default(
+def test_old_mars_bundle_without_network_provenance_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     payload = bundle()
     payload["execution_policy"] = {"network": "deny"}
 
-    result = invoke(tmp_path, monkeypatch, payload)
+    payload.pop("provenance")
 
-    assert result.execution_policy.network is None
-    assert result.execution_policy.network_projection is False
-    assert result.warnings == (
-        "Mars < 0.18 does not carry `network`; using harness defaults.",
-    )
+    with pytest.raises(RuntimeError, match=r"Install mars >= 0\.18\.0"):
+        invoke(tmp_path, monkeypatch, payload)
 
 
 def test_current_mars_unset_network_still_projects_portable_default(
@@ -124,7 +122,6 @@ def test_current_mars_unset_network_still_projects_portable_default(
     result = invoke(tmp_path, monkeypatch, payload)
 
     assert result.execution_policy.network is None
-    assert result.execution_policy.network_projection is True
     assert result.warnings == ()
 
 

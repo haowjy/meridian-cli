@@ -7,7 +7,7 @@ import pytest
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import build_permission_policy
+from meridian.lib.safety.policy import EffectiveNetworkFacts, build_permission_policy
 
 
 @pytest.mark.parametrize(
@@ -22,7 +22,10 @@ from meridian.lib.safety.policy import build_permission_policy
 def test_codex_approval_policy_mapping_contract(approval_mode: str, expected: str | None) -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CODEX,
-        permission_policy=build_permission_policy(sandbox=None, approval=approval_mode),
+        permission_policy=build_permission_policy(
+            network_facts=EffectiveNetworkFacts.from_values(sandbox=None, network=None),
+            approval=approval_mode,
+        ),
     )
 
     assert compile_codex_permissions(spec)[0].approval_policy == expected

@@ -35,8 +35,8 @@ enforce `network: deny`
 under `danger-full-access`, and OpenCode, Pi, and Cursor cannot enforce it in any mode.
 
 A Mars bundle without `provenance.network_source` predates the portable field. Meridian
-warns that Mars < 0.18 does not carry `network`, projects no network setting, and leaves
-each harness at its native default. Upgrade Mars before relying on a profile `network` value.
+refuses the launch with `Install mars >= 0.18.0` rather than silently leaving the harness at
+its native network default.
 
 Replace Codex `harness-overrides.codex.sandbox_workspace_write.network_access` with the
 portable profile field. A well-formed boolean native value is deprecated in this release
@@ -53,8 +53,9 @@ continue, and fork operations now refuse when:
 - the caller profile has no non-empty `subagents:` list (or explicitly disables Meridian
   spawn capability);
 - the child's resolved sandbox is weaker than the caller's;
-- the child's harness-effective network is weaker than the caller's. Set `network: deny` on
-  a child profile whose harness enforces it, or set `network: allow` on the caller profile;
+- the child's harness-effective network is not contained by the caller's. For host policies,
+  every child allow must remain in the caller's allow set and every caller deny must remain
+  denied by the child;
 - native harness arguments follow `--`, because they could override the resolved policy.
 
 These calls worked without this boundary before. Put the intended children in the caller
@@ -63,6 +64,9 @@ Approval is not compared independently. A current `read-only` or `workspace-writ
 always records its effective network, so an omitted profile value records deny and accepts an
 omitted constrained child. A boundary record written before the network field existed still
 creates no network floor, preventing a mid-session upgrade from refusing nested spawns.
+Claude's effective value includes user-level `sandbox.network.allowedDomains` widening and
+`deniedDomains` narrowing; project `.claude/settings*.json` did not widen the launch-local
+strict allowlist and is not included.
 Child write roots and `--env` are not part of the guardrail. Profiles using
 `sandbox: default` or `danger-full-access`, and top-level shells not launched by Meridian,
 carry no floor.

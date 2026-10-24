@@ -36,6 +36,7 @@ from meridian.lib.launch.launch_types import (
     ResolvedExecutionPolicy,
     TerminalSurfaceMode,
 )
+from meridian.lib.safety.policy import parse_network_policy
 from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from meridian.lib.utils.json_shapes import json_object
 
@@ -48,8 +49,7 @@ if TYPE_CHECKING:
 
 
 # First Mars release whose launch bundle carries ``execution_policy.network`` and
-# ``provenance.network_source``. An older producer gets a warning and leaves every harness
-# at its native network default.
+# ``provenance.network_source``.
 _MARS_BUNDLE_MIN_VERSION = "0.18.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
@@ -539,7 +539,11 @@ def _parse_bundle_payload(
         raise _bundle_schema_error("named model is missing routing.harness_model")
 
     provenance = _as_str_dict(payload.get("provenance"))
-    network_projection = "network_source" in provenance
+    if "network_source" not in provenance:
+        raise RuntimeError(
+            "Mars launch-bundle has no provenance.network_source, so this Mars predates "
+            f"portable network policy. Install mars >= {_MARS_BUNDLE_MIN_VERSION}."
+        )
     execution_policy_payload = _required_object_field(payload, "execution_policy")
     native_config = _optional_object_field(execution_policy_payload, "native_config")
     execution_policy = ResolvedExecutionPolicy.model_validate(
@@ -547,10 +551,7 @@ def _parse_bundle_payload(
             "effort": execution_policy_payload.get("effort"),
             "approval": execution_policy_payload.get("approval"),
             "sandbox": execution_policy_payload.get("sandbox"),
-            "network": (
-                execution_policy_payload.get("network") if network_projection else None
-            ),
-            "network_projection": network_projection,
+            "network": parse_network_policy(execution_policy_payload.get("network")),
             "autocompact": execution_policy_payload.get("autocompact"),
             "autocompact_pct": execution_policy_payload.get("autocompact_pct"),
             "timeout": execution_policy_payload.get("timeout"),
@@ -575,14 +576,7 @@ def _parse_bundle_payload(
         harness_model=harness_model,
         execution_policy=execution_policy,
         provenance=provenance,
-        warnings=(
-            *_as_str_tuple(payload.get("warnings")),
-            *(
-                ()
-                if network_projection
-                else ("Mars < 0.18 does not carry `network`; using harness defaults.",)
-            ),
-        ),
+        warnings=_as_str_tuple(payload.get("warnings")),
         prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
         tool_rules=_parse_tool_rules(tools),
         platform_tool_rules=_parse_platform_tool_rules(tools),

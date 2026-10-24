@@ -128,7 +128,7 @@ Both streaming-serve (`SpawnApplicationService.prepare_spawn()`) and the spawn
 subprocess prepare launch policy before creating a row. Only callers in a Meridian-projected
 `read-only` or `workspace-write` sandbox inherit the child-spawn CLI guardrail. Spawn
 preparation checks the resolved request's sandbox and the caller's recorded effective-network
-floor against the child's harness-owned effective network mode
+floor against the child's harness-owned effective typed policy by exact containment
 before materializing runtime authority and state; binding does not change that request
 policy. Every creation form resolves models
 from the existing cache during this preparation, so catalog refresh cannot write before

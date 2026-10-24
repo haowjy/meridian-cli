@@ -420,7 +420,6 @@ def _prepare_spawn_create(
     network_facts = EffectiveNetworkFacts.from_values(
         sandbox=execution_policy.sandbox,
         network=execution_policy.network,
-        network_projection=execution_policy.network_projection,
         native_config=execution_policy.native_config,
     )
     effective_network = get_harness_bundle(

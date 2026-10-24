@@ -21,6 +21,7 @@ from meridian.lib.launch.spawn_guidance import (
     build_spawn_usage_contract,
     has_spawn_capability,
 )
+from meridian.lib.safety.policy import EffectiveNetworkFacts, parse_network_policy
 
 CONTRACT_MARKER = "# Spawning subagents (meridian)"
 INVENTORY = "## Meridian Agents\n\n- tech-lead\n- explorer"
@@ -76,25 +77,31 @@ def test_claude_linux_sandbox_network_guidance(monkeypatch: pytest.MonkeyPatch) 
 
     assert (
         adapter.shell_network_guidance(
-            sandbox="workspace-write", network=None, network_projection=True
+            EffectiveNetworkFacts.from_values(sandbox="workspace-write", network=None)
         )
         is None
     )
     assert "--noproxy ''" in (
         adapter.shell_network_guidance(
-            sandbox="read-only", network="allow", network_projection=True
+            EffectiveNetworkFacts.from_values(
+                sandbox="read-only", network=parse_network_policy("allow")
+            )
         )
         or ""
     )
     assert (
         adapter.shell_network_guidance(
-            sandbox="workspace-write", network="deny", network_projection=True
+            EffectiveNetworkFacts.from_values(
+                sandbox="workspace-write", network=parse_network_policy("deny")
+            )
         )
         is None
     )
     assert (
         adapter.shell_network_guidance(
-            sandbox="danger-full-access", network="allow", network_projection=True
+            EffectiveNetworkFacts.from_values(
+                sandbox="danger-full-access", network=parse_network_policy("allow")
+            )
         )
         is None
     )

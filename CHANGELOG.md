@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Upgrade notes
+- Launches now require a Mars bundle with `provenance.network_source` (Mars 0.18.0 or newer); older bundles fail instead of keeping harness network defaults.
 - Agents in a Meridian-projected `read-only`/`workspace-write` sandbox can launch children only if their profile lists `subagents:`, never with a weaker sandbox, never with native args after `--`. See [Sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
 - Spawn-capable sandboxed Codex launches write a Meridian-owned `$CODEX_HOME/rules/meridian.rules` that lets `meridian spawn` run outside Codex's sandbox, in every Codex session of that user.
 - An unset profile `network` now follows its sandbox: `read-only`/`workspace-write` project deny, while `danger-full-access` stays online and an unset/default sandbox stays harness-native. Set `network: allow` to opt a constrained profile into shell network. Sandboxed child delegation compares the caller's and child's effective network, including the inferred deny. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults) and [sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
@@ -16,6 +17,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Read-only Codex spawns whose profile can spawn get the completion confirmation turn again; others still skip it, as since 0.12.4.
 - Profile `network: allow | deny` controls shell connections separately from built-in web tools; every harness reports what it enforces.
 - Sandboxed child delegation cannot weaken the caller's effective network; a legacy boundary record without a network key remains unrestricted for mid-session compatibility.
+
+### Changed
+- Network policy is one typed allow-or-host-set value from bundle parsing through harness projection and the caller guardrail. Claude effective policy includes user-level domain widening, and child containment preserves both allow subsets and deny supersets.
 
 ### Fixed
 - Sandboxed launches can take the project lifetime lock (was `EROFS` under Claude and Codex sandboxes).

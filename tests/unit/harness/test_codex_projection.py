@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.projections.permissions_codex import effective_codex_network
+from meridian.lib.harness.projections.permissions_codex import project_codex_network
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
@@ -18,10 +18,10 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
     EffectiveNetworkFacts,
-    NetworkMode,
     PermissionPolicy,
     PlatformCommand,
     PlatformRule,
+    network_policy_name,
 )
 
 
@@ -33,13 +33,14 @@ def _spec(*, interactive: bool) -> ResolvedLaunchSpec:
     )
 
 
-def _effective_network(spec: ResolvedLaunchSpec) -> NetworkMode:
-    return effective_codex_network(
+def _effective_network(spec: ResolvedLaunchSpec) -> str:
+    projection = project_codex_network(
         EffectiveNetworkFacts.from_permission_policy(
             spec.permission_policy,
             native_config=spec.native_config,
         )
     )
+    return network_policy_name(projection.effective)
 
 
 def test_interactive_codex_app_server_injects_idle_notify() -> None:
@@ -131,7 +132,7 @@ def test_codex_sandbox_report_describes_user_wide_spawn_escape() -> None:
     ids=["sandbox-default", "allow", "deny"],
 )
 def test_codex_workspace_network_reaches_every_launch_boundary(
-    network: NetworkMode | None, expected: bool
+    network: str | None, expected: bool
 ) -> None:
     spec = _spec(interactive=False).model_copy(
         update={
@@ -158,26 +159,6 @@ def test_codex_workspace_network_reaches_every_launch_boundary(
         "sandbox_workspace_write.writable_roots": ["/workspace/extra"],
         "sandbox_workspace_write.network_access": expected,
     }
-
-
-def test_codex_old_mars_policy_keeps_native_network_default() -> None:
-    from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
-
-    spec = _spec(interactive=False).model_copy(
-        update={
-            "permission_policy": PermissionPolicy(
-                sandbox="workspace-write",
-                network_projection=False,
-            )
-        }
-    )
-
-    command = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
-    _, report = compile_codex_permissions(spec)
-
-    assert not any("sandbox_workspace_write.network_access" in item for item in command)
-    assert _effective_network(spec) == "allow"
-    assert any(line.element == "network: harness default" for line in report)
 
 
 def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
