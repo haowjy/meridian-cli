@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.9] - 2026-10-24
+
 ### Fixed
 - A no-argument `spawn wait` now returns up to 32 finished background children
   whose results are still owed, alongside uncapped running descendants. Owed results
