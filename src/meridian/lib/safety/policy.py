@@ -8,11 +8,19 @@ platform rules natively; nothing here knows a harness.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from types import MappingProxyType
+from typing import Generic, Literal, NewType, TypeVar, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from meridian.lib.tools import (
     LEGACY_SNAPSHOT_ORIGIN,
@@ -28,6 +36,35 @@ type SandboxMode = Literal[
     "workspace-write",
     "danger-full-access",
 ]
+Host = NewType("Host", str)
+
+
+@dataclass(frozen=True)
+class Allow:
+    """Unbounded network access, except for exact denied hosts."""
+
+    deny: frozenset[Host] = frozenset()
+
+
+@dataclass(frozen=True)
+class Hosts:
+    """Access limited to exact allowed hosts; denies always win."""
+
+    allow: frozenset[Host] = frozenset()
+    deny: frozenset[Host] = frozenset()
+
+
+type NetworkPolicy = Allow | Hosts
+NativeNetworkT = TypeVar("NativeNetworkT", covariant=True)
+
+
+@dataclass(frozen=True)
+class NetworkProjection(Generic[NativeNetworkT]):
+    """One harness's native network settings and the access they actually leave."""
+
+    native: NativeNetworkT
+    effective: NetworkPolicy
+
 
 type ApprovalMode = Literal[
     "default",
@@ -47,12 +84,71 @@ SANDBOX_MODE_WEAKNESS: dict[SandboxMode, int] = {
 _SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
     {"default", "read-only", "workspace-write", "danger-full-access"}
 )
-CONSTRAINED_SANDBOX_MODES: frozenset[SandboxMode] = frozenset(
-    {"read-only", "workspace-write"}
-)
+CONSTRAINED_SANDBOX_MODES: frozenset[SandboxMode] = frozenset({"read-only", "workspace-write"})
 _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
     {"default", "auto", "never", "yolo", "confirm"}
 )
+_EMPTY_NATIVE_CONFIG: Mapping[str, object] = MappingProxyType({})
+
+
+@dataclass(frozen=True)
+class EffectiveNetworkFacts:
+    """The complete input to one harness's effective shell-network decision."""
+
+    sandbox: SandboxMode
+    network: NetworkPolicy
+    native_config: Mapping[str, object]
+    settings_allow: frozenset[Host] = frozenset()
+    settings_deny: frozenset[Host] = frozenset()
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        sandbox: str | None,
+        network: NetworkPolicy | None,
+        native_config: Mapping[str, object] | None = None,
+        settings_allow: Iterable[str] = (),
+        settings_deny: Iterable[str] = (),
+    ) -> EffectiveNetworkFacts:
+        """Validate resolved execution-policy values at the effective-network port."""
+
+        parsed_sandbox = _parse_sandbox_value(sandbox)
+        return cls(
+            sandbox=parsed_sandbox,
+            network=network or default_network_policy(parsed_sandbox),
+            native_config=native_config or _EMPTY_NATIVE_CONFIG,
+            settings_allow=host_set(settings_allow),
+            settings_deny=host_set(settings_deny),
+        )
+
+    @classmethod
+    def from_permission_policy(
+        cls,
+        policy: PermissionPolicy,
+        *,
+        native_config: Mapping[str, object] | None = None,
+        settings_allow: Iterable[str] = (),
+        settings_deny: Iterable[str] = (),
+    ) -> EffectiveNetworkFacts:
+        """Take only effective-network facts from a compiled permission policy."""
+
+        return cls(
+            sandbox=policy.sandbox,
+            network=policy.network,
+            native_config=native_config or _EMPTY_NATIVE_CONFIG,
+            settings_allow=host_set(settings_allow),
+            settings_deny=host_set(settings_deny),
+        )
+
+
+def project_unenforced_network(
+    facts: EffectiveNetworkFacts,
+) -> NetworkProjection[None]:
+    """Project a harness with no shell-network enforcement."""
+
+    _ = facts
+    return NetworkProjection(native=None, effective=Allow())
 
 
 # The origin of the unscoped deny ``build_permission_policy`` writes for a per-capability
@@ -111,15 +207,45 @@ class PermissionPolicy(BaseModel):
       ``ALLOWLIST_ORIGIN``), so a compile handles it as any plain deny beside scoped allows.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     rules: tuple[ToolRule, ...] = ()
     platform_rules: tuple[PlatformRule, ...] = ()
     sandbox: SandboxMode = "default"
+    network: NetworkPolicy = Allow()
     # Workspace roots whose writes a read-only native sandbox must block. Bind keeps
     # these separate from projected runtime/temp roots, which must remain writable.
     sandbox_write_roots: tuple[str, ...] = Field(default=(), exclude=True)
     approval: ApprovalMode = "default"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_network_default(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(cast("Mapping[str, object]", value))
+        if payload.get("network") is None:
+            sandbox = _parse_sandbox_value(cast("str | None", payload.get("sandbox")))
+            payload["network"] = default_network_policy(sandbox)
+        return payload
+
+    @field_validator("network", mode="before")
+    @classmethod
+    def _parse_network(cls, value: object) -> NetworkPolicy:
+        parsed = parse_network_policy(value)
+        if parsed is None:
+            raise ValueError("network must be resolved on PermissionPolicy")
+        return parsed
+
+    @field_serializer("network")
+    def _serialize_network(self, value: NetworkPolicy) -> dict[str, object]:
+        return network_policy_to_wire(value)
+
+    @property
+    def network_mode(self) -> Literal["allow", "deny", "hosts"]:
+        """Return a compact human-facing name for the typed policy."""
+
+        return network_policy_name(self.network)
 
     @property
     def outside_sandbox_commands(self) -> tuple[PlatformCommand, ...]:
@@ -183,6 +309,11 @@ class ReportLine:
     element: str
     status: ReportStatus
     note: str
+
+    def to_wire(self) -> dict[str, str]:
+        """Return the stable public permission-report shape."""
+
+        return {"element": self.element, "status": self.status, "note": self.note}
 
 
 type EnforcementReport = tuple[ReportLine, ...]
@@ -273,7 +404,8 @@ def complete_report(
 ) -> EnforcementReport:
     """Give every policy element exactly one line, in policy order.
 
-    Elements are the rules, the platform rules, the sandbox and the approval mode.
+    Elements are the rules, the platform rules, the sandbox, the network mode, and the
+    approval mode.
 
     A compile reports only what it enforces or has something specific to say about; any
     element it left out gets the default line: a rule Mars could not name for ``harness`` is
@@ -292,6 +424,16 @@ def complete_report(
         defaults.append(
             ReportLine(f"sandbox: {policy.sandbox}", "unsupported", f"not projected for {harness}")
         )
+    effective_network = project_unenforced_network(
+        EffectiveNetworkFacts.from_permission_policy(policy)
+    ).effective
+    defaults.append(
+        ReportLine(
+            f"network: {policy.network_mode}",
+            "native" if effective_network == policy.network else "unsupported",
+            f"{harness} leaves shell network unrestricted",
+        )
+    )
     if policy.approval != "default":
         defaults.append(
             ReportLine(
@@ -340,6 +482,98 @@ def _parse_sandbox_value(raw: str | None) -> SandboxMode:
         return normalized
     allowed = ", ".join(sorted(_SANDBOX_MODES))
     raise ValueError(f"Unsupported sandbox mode '{raw}'. Expected: {allowed}.")
+
+
+def canonical_host(raw: str) -> Host:
+    """Canonicalize one exact host token without interpreting wildcards."""
+
+    normalized = raw.strip().lower().removesuffix(".")
+    if not normalized:
+        raise ValueError("network hosts must not be empty")
+    return Host(normalized)
+
+
+def host_set(values: Iterable[str]) -> frozenset[Host]:
+    """Canonicalize and deduplicate exact host strings."""
+
+    return frozenset(canonical_host(value) for value in values if value.strip())
+
+
+def default_network_policy(sandbox: SandboxMode) -> NetworkPolicy:
+    """Keep a projected sandbox offline unless the profile opts in."""
+
+    return Hosts() if sandbox in CONSTRAINED_SANDBOX_MODES else Allow()
+
+
+def parse_network_policy(raw: object) -> NetworkPolicy | None:
+    """Parse the scalar or durable wire form at a trust boundary."""
+
+    if raw is None or isinstance(raw, Allow | Hosts):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized == "allow":
+            return Allow()
+        if normalized == "deny":
+            return Hosts()
+        raise ValueError(f"Unsupported network mode '{raw}'. Expected: allow, deny.")
+    if not isinstance(raw, Mapping):
+        raise ValueError("network must be allow, deny, or a typed network object")
+    payload = cast("Mapping[object, object]", raw)
+    raw_allow = payload.get("allow")
+    raw_deny = payload.get("deny", ())
+    if not isinstance(raw_deny, (list, tuple, frozenset, set)):
+        raise ValueError("network.deny must be a list of hosts")
+    deny_values = cast("Iterable[object]", raw_deny)
+    if not all(isinstance(value, str) for value in deny_values):
+        raise ValueError("network.deny must be a list of hosts")
+    deny = host_set(cast("Iterable[str]", raw_deny))
+    if raw_allow == "*":
+        return Allow(deny=deny)
+    if not isinstance(raw_allow, (list, tuple, frozenset, set)):
+        raise ValueError("network.allow must be '*' or a list of hosts")
+    allow_values = cast("Iterable[object]", raw_allow)
+    if not all(isinstance(value, str) for value in allow_values):
+        raise ValueError("network.allow must be '*' or a list of hosts")
+    return Hosts(allow=host_set(cast("Iterable[str]", raw_allow)), deny=deny)
+
+
+def network_policy_to_wire(policy: NetworkPolicy) -> dict[str, object]:
+    """Serialize one policy deterministically for durable and environment records."""
+
+    allowed: str | list[str] = "*" if isinstance(policy, Allow) else sorted(policy.allow)
+    return {"allow": allowed, "deny": sorted(policy.deny)}
+
+
+def network_policy_name(policy: NetworkPolicy) -> Literal["allow", "deny", "hosts"]:
+    """Name a policy without expanding or interpreting host wildcards."""
+
+    if isinstance(policy, Allow) and not policy.deny:
+        return "allow"
+    if isinstance(policy, Hosts) and not policy.allow and not policy.deny:
+        return "deny"
+    return "hosts"
+
+
+def format_network_policy(policy: NetworkPolicy) -> str:
+    """Return a stable compact rendering for reports and refusal messages."""
+
+    name = network_policy_name(policy)
+    if name != "hosts":
+        return name
+    allowed = "*" if isinstance(policy, Allow) else ",".join(sorted(policy.allow))
+    denied = ",".join(sorted(policy.deny))
+    return f"hosts(allow=[{allowed}], deny=[{denied}])"
+
+
+def network_policy_contains(caller: NetworkPolicy, child: NetworkPolicy) -> bool:
+    """Return whether the child's exact host policy is contained by the caller's."""
+
+    if not child.deny.issuperset(caller.deny):
+        return False
+    if isinstance(caller, Allow):
+        return True
+    return isinstance(child, Hosts) and child.allow.issubset(caller.allow)
 
 
 def _allowlist_denies(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
@@ -436,15 +670,15 @@ def _resolve_allowlist_overlap(
 def build_permission_policy(
     *,
     rules: tuple[ToolRule, ...] = (),
-    sandbox: str | None,
+    network_facts: EffectiveNetworkFacts,
     approval: str = "default",
     platform_rules: tuple[PlatformRule, ...] = (),
     sandbox_write_roots: tuple[str, ...] = (),
 ) -> PermissionPolicy:
     """Build the policy from Mars's resolved tool rules and the execution policy.
 
-    ``sandbox`` and ``approval`` are the already-resolved execution policy values; this
-    validates them and never re-resolves precedence. Each per-capability allowlist gains
+    ``network_facts`` and ``approval`` are already-resolved execution policy values; this
+    never re-resolves precedence. Each per-capability allowlist gains
     the unscoped deny it means (see ``PermissionPolicy``), resolved against the other
     unscoped rules by specificity, so every compile reads the same rules.
     """
@@ -456,7 +690,8 @@ def build_permission_policy(
         # allowlist became a rule.
         rules=(*denies, *resolved),
         platform_rules=platform_rules,
-        sandbox=_parse_sandbox_value(sandbox),
+        sandbox=network_facts.sandbox,
+        network=network_facts.network,
         sandbox_write_roots=tuple(dict.fromkeys(root for root in sandbox_write_roots if root)),
         approval=_parse_approval_value(approval),
     )
@@ -466,9 +701,15 @@ __all__ = [
     "ALLOWLIST_ORIGIN",
     "CONSTRAINED_SANDBOX_MODES",
     "SANDBOX_MODE_WEAKNESS",
+    "Allow",
     "ApprovalMode",
     "CommandMatch",
+    "EffectiveNetworkFacts",
     "EnforcementReport",
+    "Host",
+    "Hosts",
+    "NetworkPolicy",
+    "NetworkProjection",
     "PermissionPolicy",
     "PlatformCommand",
     "PlatformCommandRole",
@@ -477,8 +718,17 @@ __all__ = [
     "ReportStatus",
     "SandboxMode",
     "build_permission_policy",
+    "canonical_host",
     "complete_report",
+    "default_network_policy",
+    "format_network_policy",
     "format_report_lines",
+    "host_set",
+    "network_policy_contains",
+    "network_policy_name",
+    "network_policy_to_wire",
+    "parse_network_policy",
     "platform_element",
+    "project_unenforced_network",
     "rule_element",
 ]

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from meridian.lib.core.caller_boundary import (
 )
 from meridian.lib.core.context_ref import SpawnContextRef, context_ref_values
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.registry import (
     HarnessRegistry,
     get_default_harness_registry,
@@ -27,6 +29,7 @@ from meridian.lib.launch.plan import (
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, SessionRequest, SpawnRequest
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
+from meridian.lib.safety.policy import parse_network_policy
 from meridian.lib.state import work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from tests.support.fixtures import write_agent
@@ -83,7 +86,9 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
 
     _write_minimal_mars_config(tmp_path)
     stub_bundle_request_and_resolve(
-        monkeypatch, model="claude-sonnet-4", harness=HarnessId.CLAUDE,
+        monkeypatch,
+        model="claude-sonnet-4",
+        harness=HarnessId.CLAUDE,
     )
     monkeypatch.setenv("MERIDIAN_IGNORE_DIRENV", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-direnv-key")
@@ -91,14 +96,19 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     runtime = build_primary_launch_runtime(project_root=tmp_path)
     # A captured policy must not change when the ambient input disappears.
     monkeypatch.delenv("MERIDIAN_IGNORE_DIRENV")
-    monkeypatch.setattr(context_module, "undo_direnv", lambda env: {
-        key: value for key, value in env.items() if key != "ANTHROPIC_API_KEY"
-    })
+    monkeypatch.setattr(
+        context_module,
+        "undo_direnv",
+        lambda env: {key: value for key, value in env.items() if key != "ANTHROPIC_API_KEY"},
+    )
     preview = build_launch_context(
         spawn_id="dry-run-direnv",
-        request=build_primary_spawn_request(request=LaunchRequest(
-            model="claude-sonnet-4", ignore_direnv=override,
-        )),
+        request=build_primary_spawn_request(
+            request=LaunchRequest(
+                model="claude-sonnet-4",
+                ignore_direnv=override,
+            )
+        ),
         runtime=runtime,
         harness_registry=get_default_harness_registry(),
         dry_run=True,
@@ -109,9 +119,73 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     boundary = CallerBoundary.from_env_value(env[CALLER_BOUNDARY_ENV])
     assert boundary == CallerBoundary.from_policy(
         preview.binding.spec.permission_policy,
+        effective_network=get_harness_bundle(preview.harness.id).projections.effective_network(
+            preview.binding.spec.effective_network_facts()
+        ),
         pid_namespace=current_pid_namespace(),
     )
     assert ("ANTHROPIC_API_KEY" not in env) == expected
+
+
+def test_launch_boundary_includes_only_claude_user_network_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    user_config = tmp_path / "claude-home"
+    user_config.mkdir()
+    (user_config / "settings.json").write_text(
+        json.dumps(
+            {
+                "sandbox": {
+                    "network": {
+                        "allowedDomains": ["API.example.com."],
+                        "deniedDomains": ["BLOCKED.example.com"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    project_settings = tmp_path / ".claude" / "settings.json"
+    project_settings.parent.mkdir()
+    project_settings.write_text(
+        json.dumps({"sandbox": {"network": {"allowedDomains": ["project.example.com"]}}}),
+        encoding="utf-8",
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="workspace-write",
+            network="deny",
+        ),
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", user_config.as_posix())
+
+    preview = build_launch_context(
+        spawn_id="dry-run-claude-network-settings",
+        request=build_primary_spawn_request(request=LaunchRequest(model="claude-sonnet-4")),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    boundary = CallerBoundary.from_env_value(
+        preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
+    )
+    assert boundary.network == parse_network_policy(
+        {
+            "allow": ["api.example.com"],
+            "deny": ["blocked.example.com"],
+        }
+    )
+    network_line = next(
+        line for line in preview.enforcement_report() if line.element == "network: deny"
+    )
+    assert user_config.as_posix() in network_line.note
+    assert "project.example.com" not in network_line.note
 
 
 @pytest.mark.parametrize(
@@ -267,9 +341,7 @@ def test_launch_env_sets_resolved_agent_and_clears_inherited_agent(
 
     with_agent = build_launch_context(
         spawn_id="dry-run-agent",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model=model, agent="coder")
-        ),
+        request=build_primary_spawn_request(request=LaunchRequest(model=model, agent="coder")),
         runtime=build_primary_launch_runtime(project_root=tmp_path),
         harness_registry=get_default_harness_registry(),
         dry_run=True,
@@ -287,9 +359,7 @@ def test_launch_env_sets_resolved_agent_and_clears_inherited_agent(
     )
     without_agent = build_launch_context(
         spawn_id="dry-run-no-agent",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model=model, agent_opt_out=True)
-        ),
+        request=build_primary_spawn_request(request=LaunchRequest(model=model, agent_opt_out=True)),
         runtime=build_primary_launch_runtime(project_root=tmp_path),
         harness_registry=get_default_harness_registry(),
         dry_run=True,
@@ -757,6 +827,7 @@ def test_opencode_named_primary_continue_preserves_explicit_model(
     )
 
     from tests.support.opencode_db import write_opencode_v2_db_session
+
     native_db = tmp_path / "opencode.db"
     write_opencode_v2_db_session(db_path=native_db, session_id="ses_abc")
 

@@ -1,5 +1,57 @@
 # Upgrade notes
 
+## Shell network policy defaults
+
+Agent profiles can set `network: allow` or `network: deny` to control connections made by
+shell commands, including public internet access, host services, and local sockets. Built-in
+web tools remain controlled separately by `tools: web`.
+
+When `network` is omitted, it follows the profile sandbox:
+
+- `read-only` and `workspace-write` project deny, exactly as if the profile authored
+  `network: deny`;
+- `danger-full-access` stays online; and
+- an omitted or `default` sandbox stays at the harness's native behavior.
+
+Sandboxed profiles therefore stay offline unless they opt in. To give one shell network,
+set:
+
+```yaml
+sandbox: workspace-write
+network: allow
+```
+
+Claude now projects `sandbox.network.strictAllowlist: true` for an omitted network under a
+constrained sandbox. In particular, sandboxed launches using `approval: never` (or the old
+`yolo` spelling) that reached the network when Claude received no network keys are now
+blocked. Codex projects `sandbox_workspace_write.network_access=false`; this overrides a
+user `config.toml` value of `true` unless the profile explicitly sets `network: allow`.
+Continued sessions with an older launch-policy snapshot and no network value follow the same
+sandbox-derived default.
+
+Codex `read-only` cannot enable network. Its dry-run report calls out an explicit
+`network: allow`; leaving the field unset reports and keeps native deny. No harness can
+enforce `network: deny`
+under `danger-full-access`, and OpenCode, Pi, and Cursor cannot enforce it in any mode.
+
+**Before installing**
+
+Upgrade Meridian so its installed `mars-agents` dependency is 0.18.0 or later:
+
+```bash
+uv tool upgrade meridian-cli
+meridian mars --version
+```
+
+A Mars bundle without `provenance.network_source` predates the portable field. Meridian
+refuses the launch with `Install mars >= 0.18.0` rather than silently leaving the harness at
+its native network default.
+
+Replace Codex `harness-overrides.codex.sandbox_workspace_write.network_access` with the
+portable profile field. A well-formed boolean native value is deprecated in this release
+and still wins over the projected value; invalid values are ignored. The key becomes
+reserved and skipped in the following release.
+
 ## Sandboxed child delegation
 
 A standalone `meridian spawn ...` can run outside a sandbox that Meridian projected for
@@ -10,11 +62,21 @@ continue, and fork operations now refuse when:
 - the caller profile has no non-empty `subagents:` list (or explicitly disables Meridian
   spawn capability);
 - the child's resolved sandbox is weaker than the caller's;
+- the child's harness-effective network is not contained by the caller's. For host policies,
+  every child allow must remain in the caller's allow set and every caller deny must remain
+  denied by the child;
 - native harness arguments follow `--`, because they could override the resolved policy.
 
 These calls worked without this boundary before. Put the intended children in the caller
 profile's `subagents:` list and move required harness-native arguments into the profile.
-Approval mode, child write roots, and `--env` are not part of the guardrail. Profiles using
+Approval is not compared independently. A current `read-only` or `workspace-write` caller
+always records its effective network, so an omitted profile value records deny and accepts an
+omitted constrained child. A boundary record written before the network field existed still
+creates no network floor, preventing a mid-session upgrade from refusing nested spawns.
+Claude's effective value includes user-level `sandbox.network.allowedDomains` widening and
+`deniedDomains` narrowing; project `.claude/settings*.json` did not widen the launch-local
+strict allowlist and is not included.
+Child write roots and `--env` are not part of the guardrail. Profiles using
 `sandbox: default` or `danger-full-access`, and top-level shells not launched by Meridian,
 carry no floor.
 

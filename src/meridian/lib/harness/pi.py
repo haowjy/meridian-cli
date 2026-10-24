@@ -35,6 +35,7 @@ from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
     register_harness_bundle,
+    unenforced_network,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
@@ -616,6 +617,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=_project_pi_subprocess_cli_args,
             permission_report=lambda spec: compile_pi_permissions(spec)[1],
+            effective_network=unenforced_network,
         ),
         semantics=PI_SEMANTICS,
         event_sinks=_event_sinks,

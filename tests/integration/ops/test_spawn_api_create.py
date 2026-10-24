@@ -28,7 +28,12 @@ from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.safety.policy import SandboxMode
+from meridian.lib.safety.policy import (
+    PermissionPolicy,
+    SandboxMode,
+    network_policy_to_wire,
+    parse_network_policy,
+)
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
 from meridian.lib.telemetry import init_telemetry
@@ -40,16 +45,18 @@ def _set_caller_guardrail(
     monkeypatch: pytest.MonkeyPatch,
     *,
     sandbox: SandboxMode = "workspace-write",
+    network: object = None,
     has_spawn_capability: bool = True,
 ) -> None:
     record = json.loads(
         CallerBoundary(
             sandbox=sandbox,
+            network=parse_network_policy(network),
             has_spawn_capability=has_spawn_capability,
             pid_namespace=None,
         ).to_env_value()
     )
-    record["network"] = "future-axis"
+    record["future_axis"] = "ignored"
     monkeypatch.setenv(
         CALLER_BOUNDARY_ENV,
         json.dumps(record),
@@ -303,6 +310,7 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="workspace-write",
+            network=None,
             has_spawn_capability=True,
             pid_namespace=f"{namespace}:different",
         ).to_env_value(),
@@ -326,7 +334,7 @@ def test_unsandboxed_caller_has_no_guardrail(
                 "pid_namespace": None,
                 "sandbox": "default",
                 # A newer axis and a missing spawn axis are irrelevant when unfloored.
-                "network": "future-axis",
+                "future_axis": "ignored",
             }
         ),
     )
@@ -337,6 +345,57 @@ def test_unsandboxed_caller_has_no_guardrail(
     )
 
     assert check.caller is None
+
+
+@pytest.mark.parametrize("legacy_network", [None, "allow"], ids=["missing", "allow"])
+def test_floored_legacy_caller_preserves_optional_network_floor(
+    monkeypatch: pytest.MonkeyPatch,
+    legacy_network: str | None,
+) -> None:
+    payload: dict[str, object] = {
+        "pid_namespace": None,
+        "sandbox": "workspace-write",
+        "spawn": True,
+    }
+    if legacy_network is not None:
+        payload["network"] = legacy_network
+    monkeypatch.setenv(
+        CALLER_BOUNDARY_ENV,
+        json.dumps(payload),
+    )
+
+    check = CallerBoundaryCheck.from_environment(dry_run=True)
+
+    assert check.caller is not None
+    assert check.caller.network == parse_network_policy(legacy_network)
+
+
+@pytest.mark.parametrize(
+    ("sandbox", "effective_network", "expected_floor"),
+    [
+        ("workspace-write", "allow", "allow"),
+        ("workspace-write", "deny", "deny"),
+        ("danger-full-access", "allow", None),
+    ],
+)
+def test_caller_boundary_records_effective_network_for_every_sandboxed_caller(
+    sandbox: SandboxMode,
+    effective_network: str,
+    expected_floor: str | None,
+) -> None:
+    parsed_effective = parse_network_policy(effective_network)
+    assert parsed_effective is not None
+    boundary = CallerBoundary.from_policy(
+        PermissionPolicy(sandbox=sandbox),
+        effective_network=parsed_effective,
+        pid_namespace=None,
+    )
+
+    parsed_floor = parse_network_policy(expected_floor)
+    assert boundary.network == parsed_floor
+    assert json.loads(boundary.to_env_value()).get("network") == (
+        network_policy_to_wire(parsed_floor) if parsed_floor is not None else None
+    )
 
 
 @pytest.mark.parametrize(
@@ -471,6 +530,124 @@ def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
     assert result.status == "dry-run"
 
 
+@pytest.mark.parametrize(
+    (
+        "harness",
+        "caller_network",
+        "child_network",
+        "approval",
+        "expected_status",
+        "expected_message",
+    ),
+    [
+        (
+            HarnessId.CLAUDE,
+            "deny",
+            "allow",
+            "default",
+            "failed",
+            "is not contained by caller floor",
+        ),
+        (HarnessId.CLAUDE, "deny", None, "default", "dry-run", None),
+        (HarnessId.CLAUDE, "deny", "deny", "default", "dry-run", None),
+        (HarnessId.CLAUDE, "deny", "deny", "never", "dry-run", None),
+        (
+            HarnessId.CLAUDE,
+            {"allow": ["API.example.com."], "deny": ["blocked.example.com"]},
+            {
+                "allow": ["api.example.com"],
+                "deny": ["blocked.example.com", "more.example.com"],
+            },
+            "default",
+            "dry-run",
+            None,
+        ),
+        (
+            HarnessId.CLAUDE,
+            {"allow": ["api.example.com"], "deny": ["blocked.example.com"]},
+            {
+                "allow": ["api.example.com", "extra.example.com"],
+                "deny": ["blocked.example.com"],
+            },
+            "default",
+            "failed",
+            "is not contained by caller floor",
+        ),
+        (
+            HarnessId.CLAUDE,
+            {"allow": ["api.example.com"], "deny": ["blocked.example.com"]},
+            {"allow": ["api.example.com"], "deny": []},
+            "default",
+            "failed",
+            "is not contained by caller floor",
+        ),
+        (
+            HarnessId.CLAUDE,
+            {"allow": ["*.example.com"], "deny": []},
+            {"allow": ["api.example.com"], "deny": []},
+            "default",
+            "failed",
+            "is not contained by caller floor",
+        ),
+        (
+            HarnessId.CLAUDE,
+            {"allow": "*", "deny": []},
+            {"allow": ["api.example.com"], "deny": []},
+            "default",
+            "dry-run",
+            None,
+        ),
+        (
+            HarnessId.OPENCODE,
+            "deny",
+            "deny",
+            "default",
+            "failed",
+            "is not contained by caller floor",
+        ),
+    ],
+)
+def test_spawn_create_caller_guardrail_compares_effective_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harness: HarnessId,
+    caller_network: object,
+    child_network: object,
+    approval: str,
+    expected_status: str,
+    expected_message: str | None,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    _set_caller_guardrail(monkeypatch, network=caller_network)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-haiku-5-5",
+        harness=harness,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="workspace-write",
+            network=parse_network_policy(child_network),
+            approval=approval,
+        ),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="claude-haiku-5-5",
+            harness=harness.value,
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == expected_status
+    if expected_message is not None:
+        assert result.message is not None
+        assert expected_message in result.message
+
+
 def test_spawn_create_caller_guardrail_does_not_restrict_child_workspace_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -590,7 +767,7 @@ def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_
                 harness="opencode",
                 project_root=project_root.as_posix(),
             ),
-            )
+        )
 
     assert result.status == "failed"
     assert result.error == "pre_init_unexpected_error"
@@ -839,9 +1016,7 @@ def test_spawn_create_unresolvable_work_task_dir_has_distinct_error(
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     runtime = build_runtime(project_root)
     project_paths = resolve_project_paths(project_root)
-    work = work_repository.create_work_item(
-        project_paths.root_dir, "unresolvable-work", "", None
-    )
+    work = work_repository.create_work_item(project_paths.root_dir, "unresolvable-work", "", None)
     stale = tmp_path / "removed-worktree"
     work_repository.update_work_item_task_dir(
         project_paths.root_dir,

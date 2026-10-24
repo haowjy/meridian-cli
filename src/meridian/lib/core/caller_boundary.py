@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
     SANDBOX_MODE_WEAKNESS,
+    NetworkPolicy,
     SandboxMode,
+    format_network_policy,
+    network_policy_contains,
+    network_policy_to_wire,
+    parse_network_policy,
 )
 from meridian.lib.utils.json_shapes import loads_json_object
 
@@ -26,8 +31,6 @@ SANDBOXED_SPAWN_LAUNCH_ERROR = (
 )
 
 _PID_NAMESPACE_PATH = "/proc/self/ns/pid"
-
-
 def current_pid_namespace() -> str | None:
     """Return this process's PID-namespace identity when procfs exposes it."""
 
@@ -43,6 +46,7 @@ class CallerBoundary:
 
     pid_namespace: str | None
     sandbox: SandboxMode
+    network: NetworkPolicy | None
     has_spawn_capability: bool
 
     @classmethod
@@ -50,6 +54,7 @@ class CallerBoundary:
         cls,
         policy: PermissionPolicy,
         *,
+        effective_network: NetworkPolicy,
         pid_namespace: str | None,
     ) -> CallerBoundary:
         """Take the child-launch boundary fields from one resolved policy."""
@@ -58,6 +63,9 @@ class CallerBoundary:
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
+            network=(
+                effective_network if sandbox in CONSTRAINED_SANDBOX_MODES else None
+            ),
             has_spawn_capability=policy.has_spawn_capability,
         )
 
@@ -70,12 +78,15 @@ class CallerBoundary:
     def to_env_value(self) -> str:
         """Serialize the complete launcher-owned record deterministically."""
 
+        payload: dict[str, object] = {
+            "pid_namespace": self.pid_namespace,
+            "sandbox": self.sandbox,
+            "spawn": self.has_spawn_capability,
+        }
+        if self.network is not None:
+            payload["network"] = network_policy_to_wire(self.network)
         return json.dumps(
-            {
-                "pid_namespace": self.pid_namespace,
-                "sandbox": self.sandbox,
-                "spawn": self.has_spawn_capability,
-            },
+            payload,
             separators=(",", ":"),
             sort_keys=True,
         )
@@ -91,8 +102,7 @@ class CallerBoundary:
             raise ValueError("Child spawn refused: caller boundary is invalid.")
         pid_namespace = payload.get("pid_namespace")
         sandbox = payload.get("sandbox")
-        # Capability axes added after this record's producer default closed for a floored
-        # caller. They are irrelevant for an unfloored caller, which is discarded below.
+        network = payload.get("network")
         spawn = payload.get("spawn", False)
         if (
             (pid_namespace is not None and not isinstance(pid_namespace, str))
@@ -101,9 +111,16 @@ class CallerBoundary:
             or sandbox not in SANDBOX_MODE_WEAKNESS
         ):
             raise ValueError("Child spawn refused: caller boundary is invalid.")
+        try:
+            parsed_network = parse_network_policy(network)
+        except ValueError as error:
+            raise ValueError(
+                "Child spawn refused: caller boundary is invalid."
+            ) from error
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
+            network=parsed_network,
             has_spawn_capability=spawn,
         )
 
@@ -150,8 +167,13 @@ class CallerBoundaryCheck:
                 "unsandboxed child policy."
             )
 
-    def enforce(self, child_sandbox: str | None) -> None:
-        """Refuse a resolved child sandbox weaker than the caller's guardrail."""
+    def enforce(
+        self,
+        child_sandbox: str | None,
+        *,
+        child_network: NetworkPolicy,
+    ) -> None:
+        """Refuse a resolved child policy weaker than the caller's guardrail."""
 
         caller = self.caller
         if caller is None:
@@ -163,6 +185,15 @@ class CallerBoundaryCheck:
             raise ValueError(
                 f"Child spawn refused: sandbox '{normalized}' is weaker than "
                 f"caller floor '{caller.sandbox}'."
+            )
+        if caller.network is not None and not network_policy_contains(
+            caller.network, child_network
+        ):
+            raise ValueError(
+                "Child spawn refused: effective network "
+                f"'{format_network_policy(child_network)}' is not contained by caller floor "
+                f"'{format_network_policy(caller.network)}'; narrow the child's allowed "
+                "hosts, preserve the caller's denied hosts, or widen the caller policy."
             )
 
 

@@ -58,6 +58,7 @@ def bundle() -> dict[str, object]:
             "route_trace": report(),
         },
         "execution_policy": {},
+        "provenance": {"network_source": "unset"},
         "tools": {
             "rules": [],
             "capability_natives": {
@@ -98,6 +99,30 @@ def test_report_v3_survives_bundle_and_snapshot(
     snapshot = build_launch_policy_snapshot(request=request)
     assert snapshot.model_dump(mode="json")["selection_report"] == report()
     assert "fallback_chain" not in snapshot.model_dump()
+
+
+def test_old_mars_bundle_without_network_provenance_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = bundle()
+    payload["execution_policy"] = {"network": "deny"}
+
+    payload.pop("provenance")
+
+    with pytest.raises(RuntimeError, match=r"Install mars >= 0\.18\.0"):
+        invoke(tmp_path, monkeypatch, payload)
+
+
+def test_current_mars_unset_network_still_projects_portable_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = bundle()
+    payload["provenance"] = {"network_source": "unset"}
+
+    result = invoke(tmp_path, monkeypatch, payload)
+
+    assert result.execution_policy.network is None
+    assert result.warnings == ()
 
 
 def test_bundle_v3_is_not_accepted_as_report_contract(

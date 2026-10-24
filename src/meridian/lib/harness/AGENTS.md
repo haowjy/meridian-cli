@@ -24,8 +24,14 @@ harness `detect_ttl` port. **OpenCode 1.x is legacy and frozen** — registered 
 fallback, no investment; new work targets V2.
 
 Claude uses the same bind port to read the settings files selected by the final child
-cwd and environment. Their allows live on `ClaudeRuntimeResolution.settings_allows`,
-where the permission report reads them without sending internal data through argv.
+cwd and environment. Tool allows from user and project files live on
+`ClaudeRuntimeResolution.settings_allows`; user-level network allow/deny domains live on
+the corresponding `settings_network_*_domains` fields. Project network settings did not
+widen a launch-local strict allowlist in the live probe, so they are not effective facts.
+The adapter's `shell_network_guidance()` is the sole owner of Claude's Linux-only
+host-service proxy hint. `project_claude_network()` returns both its native settings and
+typed effective policy; compile reads the former, while the report and child-spawn
+guardrail read the latter. Shared prompt composition only places the returned guidance.
 
 ## Translation Pipeline
 

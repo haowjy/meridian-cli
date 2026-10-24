@@ -243,7 +243,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_HARNESS", "Harness identity propagated one level."),
     _internal_handle(
         "_MERIDIAN_CALLER_BOUNDARY",
-        "Launcher-recorded PID namespace and child-spawn CLI guardrail.",
+        "Launcher-recorded PID namespace, sandbox, network, and spawn CLI guardrail.",
     ),
     _internal_handle("_MERIDIAN_GUARDRAIL_RUN_ID", "Guardrail run identifier."),
     _internal_handle("_MERIDIAN_GUARDRAIL_CHAT_ID", "Chat id for `meridian session log`."),

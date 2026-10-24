@@ -63,7 +63,12 @@ from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
 from meridian.lib.platform import IS_POSIX
-from meridian.lib.safety.policy import EnforcementReport, PermissionPolicy, build_permission_policy
+from meridian.lib.safety.policy import (
+    EffectiveNetworkFacts,
+    EnforcementReport,
+    PermissionPolicy,
+    build_permission_policy,
+)
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
@@ -1035,11 +1040,17 @@ def _build_shared_composition(
     spawn_usage_contract = build_spawn_usage_contract(
         policy.adapter.run_prompt_policy().spawn_usage_contract_variants
     )
+    network_facts = EffectiveNetworkFacts.from_values(
+        sandbox=policy.execution_policy.sandbox,
+        network=policy.execution_policy.network,
+        native_config=policy.execution_policy.native_config,
+    )
     guidance_blocks = build_guidance_blocks(
         profile=policy.profile,
         spawn_usage_contract=spawn_usage_contract,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
         context_prompt=context_prompt,
+        harness_guidance=policy.adapter.shell_network_guidance(network_facts),
     )
     resolved_work_id = (request.work_id_hint or "").strip()
     work_goal: str | None = None
@@ -1694,9 +1705,14 @@ def bind_launch_context(
         native_agent_copy=native_agent_copy,
         allow_builtin_agents=allow_builtin_agents,
     )
+    network_facts = EffectiveNetworkFacts.from_values(
+        sandbox=resolved_request.execution_policy.sandbox,
+        network=resolved_request.execution_policy.network,
+        native_config=resolved_request.execution_policy.native_config,
+    )
     permission_policy = build_permission_policy(
         rules=(*resolved_request.tool_rules, *platform_tool_rules),
-        sandbox=resolved_request.execution_policy.sandbox,
+        network_facts=network_facts,
         sandbox_write_roots=tuple(
             root.as_posix()
             for root in _dedupe_roots_in_order((resolved_control_root, *workspace_authority_roots))
@@ -1821,10 +1837,6 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
-    child_context_env[CALLER_BOUNDARY_ENV] = CallerBoundary.from_policy(
-        permission_policy,
-        pid_namespace=current_pid_namespace(),
-    ).to_env_value()
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     resolved_agent = (resolved_request.agent or "").strip()
     if resolved_agent:
@@ -1836,7 +1848,6 @@ def bind_launch_context(
     child_context_env["MERIDIAN_TASK_DIR"] = directory_context.logical_task_cwd.as_posix()
     if harness.id == HarnessId.PI:
         child_context_env["_MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
-    validate_child_env_keys(child_context_env)
     runtime_override_env = (
         runtime.resolved_runtime_overrides.to_env()
         if runtime.has_runtime_override_snapshot
@@ -1876,6 +1887,16 @@ def bind_launch_context(
         env=env,
         child_cwd=child_cwd,
     )
+    caller_boundary = CallerBoundary.from_policy(
+        permission_policy,
+        effective_network=get_harness_bundle(harness.id)
+        .projections.effective_network(spec.effective_network_facts()),
+        pid_namespace=current_pid_namespace(),
+    ).to_env_value()
+    child_context_env[CALLER_BOUNDARY_ENV] = caller_boundary
+    bind_env_overrides[CALLER_BOUNDARY_ENV] = caller_boundary
+    env[CALLER_BOUNDARY_ENV] = caller_boundary
+    validate_child_env_keys(child_context_env)
     env.update(
         harness.project_launch_env(
             spec=spec,

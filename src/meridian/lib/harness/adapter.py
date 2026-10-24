@@ -53,6 +53,7 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.safety.policy import EffectiveNetworkFacts
 
 if TYPE_CHECKING:
     from meridian.lib.harness.extractors.base import AttemptFold
@@ -347,6 +348,11 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def capabilities(self) -> HarnessCapabilities: ...
 
     def run_prompt_policy(self) -> RunPromptPolicy: ...
+
+    def shell_network_guidance(
+        self,
+        facts: EffectiveNetworkFacts,
+    ) -> str | None: ...
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str: ...
 
@@ -643,6 +649,13 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy()
+
+    def shell_network_guidance(
+        self,
+        facts: EffectiveNetworkFacts,
+    ) -> str | None:
+        _ = facts
+        return None
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         _ = name, description, prompt

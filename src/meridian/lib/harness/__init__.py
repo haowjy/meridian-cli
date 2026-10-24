@@ -40,7 +40,7 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
     (
         "src/meridian/lib/harness/projections/permissions_<new_harness>.py "
         "(the harness's compile of the permission policy and its enforcement report; "
-        "register its report as HarnessProjectionPorts.permission_report)"
+        "register its report and effective-network function as HarnessProjectionPorts)"
     ),
 )
 

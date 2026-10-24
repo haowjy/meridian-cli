@@ -10,6 +10,7 @@ channels, so a rule that order shadows, or that the compile left out, says so.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Literal
@@ -19,7 +20,11 @@ from meridian.lib.harness.projections.native_config import unsupported_native_co
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 from meridian.lib.safety.policy import (
+    Allow,
+    EffectiveNetworkFacts,
     EnforcementReport,
+    Hosts,
+    NetworkProjection,
     PermissionPolicy,
     PlatformRule,
     PlatformRuleKind,
@@ -52,6 +57,18 @@ _ALLOW_BYPASS_FLAG = "--allow-dangerously-skip-permissions"
 _MODE_FLAG = "--permission-mode"
 _SETTINGS_FLAG = "--settings"
 _PASSTHROUGH_ALLOW_ELEMENT = "source: passthrough --allowedTools"
+CLAUDE_NETWORK_ALLOW_DOMAINS = ("*", "localhost", "127.0.0.1")
+
+
+@dataclass(frozen=True)
+class ClaudeNetworkSettings:
+    """The Claude ``sandbox.network`` settings Meridian owns for one launch."""
+
+    strict_allowlist: bool = False
+    allowed_domains: tuple[str, ...] = ()
+    denied_domains: tuple[str, ...] = ()
+    allow_local_binding: bool = False
+    allow_all_unix_sockets: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,6 +80,7 @@ class ClaudeSandboxSettings:
     deny_write: tuple[str, ...] = ()
     auto_allow_bash: bool = False
     excluded_commands: tuple[str, ...] = ()
+    network: ClaudeNetworkSettings | None = None
 
 
 @dataclass(frozen=True)
@@ -406,7 +424,44 @@ def _outside_sandbox_commands(policy: PermissionPolicy) -> tuple[str, ...]:
     )
 
 
-def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSandboxSettings | None:
+def project_claude_network(
+    facts: EffectiveNetworkFacts,
+) -> NetworkProjection[ClaudeNetworkSettings | None]:
+    """Project Claude network settings and the access left after user settings merge."""
+
+    if facts.sandbox not in {"read-only", "workspace-write"}:
+        return NetworkProjection(native=None, effective=Allow())
+
+    policy = facts.network
+    denied = policy.deny | facts.settings_deny
+    if isinstance(policy, Allow):
+        native = ClaudeNetworkSettings(
+            allowed_domains=CLAUDE_NETWORK_ALLOW_DOMAINS,
+            denied_domains=tuple(sorted(policy.deny)),
+            allow_local_binding=True,
+            allow_all_unix_sockets=True,
+        )
+        return NetworkProjection(native=native, effective=Allow(deny=denied))
+
+    native = ClaudeNetworkSettings(
+        strict_allowlist=True,
+        allowed_domains=tuple(sorted(policy.allow)),
+        denied_domains=tuple(sorted(policy.deny)),
+    )
+    return NetworkProjection(
+        native=native,
+        effective=Hosts(
+            allow=policy.allow | facts.settings_allow,
+            deny=denied,
+        ),
+    )
+
+
+def _compile_sandbox(
+    policy: PermissionPolicy,
+    channels: _Channels,
+    network: ClaudeNetworkSettings | None,
+) -> ClaudeSandboxSettings | None:
     if policy.sandbox == "default":
         return None
     if policy.sandbox == "danger-full-access":
@@ -422,6 +477,7 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
             and not channels.ask
         ),
         excluded_commands=_outside_sandbox_commands(policy),
+        network=network,
     )
 
 
@@ -839,6 +895,83 @@ def _sandbox_line(policy: PermissionPolicy, permissions: ClaudePermissions) -> R
     return ReportLine(f"sandbox: {policy.sandbox}", status, settings)
 
 
+def _network_line(
+    policy: PermissionPolicy,
+    permissions: ClaudePermissions,
+    projection: NetworkProjection[ClaudeNetworkSettings | None],
+    settings_network_allowed_domains: tuple[tuple[str, tuple[str, ...]], ...],
+) -> ReportLine:
+    element = f"network: {policy.network_mode}"
+    sandbox = permissions.settings.sandbox
+    if isinstance(policy.network, Allow):
+        if projection.native is None:
+            if projection.effective != policy.network:
+                return ReportLine(
+                    element,
+                    "unsupported",
+                    "no Claude Bash sandbox is projected; shell network remains available",
+                )
+            return ReportLine(
+                element,
+                "native",
+                "shell network is available without a projected Claude Bash sandbox",
+            )
+        assert sandbox is not None and sandbox.enabled
+        domains = ",".join(f'"{domain}"' for domain in projection.native.allowed_domains)
+        note = (
+            f"--settings sandbox.network.allowedDomains=[{domains}], "
+            "sandbox.network.allowLocalBinding=true, "
+            "sandbox.network.allowAllUnixSockets=true"
+        )
+        if projection.native.denied_domains:
+            note += "; deniedDomains=" + ",".join(projection.native.denied_domains)
+        if sys.platform.startswith("linux"):
+            return ReportLine(
+                element,
+                "partial",
+                note + "; host localhost remains mediated by Claude's proxy on Linux",
+            )
+        return ReportLine(element, "native", note)
+
+    if projection.native is None:
+        return ReportLine(
+            element,
+            "unsupported",
+            "no Claude Bash sandbox is projected; shell network remains available",
+        )
+    assert sandbox is not None and sandbox.enabled and projection.native is not None
+    notes = ["--settings sandbox.network.strictAllowlist=true"]
+    if projection.native.allowed_domains:
+        notes.append("allowedDomains=" + ",".join(projection.native.allowed_domains))
+    if projection.native.denied_domains:
+        notes.append("deniedDomains=" + ",".join(projection.native.denied_domains))
+    if sys.platform.startswith("linux"):
+        notes.append(
+            "processes in the same sandbox can still connect over its private TCP "
+            "loopback, so deny is partial on Linux"
+        )
+    widening: list[str] = []
+    for path, domains in settings_network_allowed_domains:
+        widening.append(f"{path}: {','.join(domains)}")
+    if widening:
+        notes.append(
+            "Claude merges allowedDomains from its user settings, so network deny can "
+            "be widened outside Meridian (" + "; ".join(widening) + ")"
+        )
+    if sandbox.excluded_commands:
+        notes.append(
+            "excludedCommands run outside the sandbox and can still use the network: "
+            + ",".join(sandbox.excluded_commands)
+        )
+    return ReportLine(
+        element,
+        "partial"
+        if sys.platform.startswith("linux") or widening or sandbox.excluded_commands
+        else "native",
+        "; ".join(notes),
+    )
+
+
 def compile_claude_permissions(
     spec: ResolvedLaunchSpec,
 ) -> tuple[ClaudePermissions, EnforcementReport]:
@@ -848,7 +981,8 @@ def compile_claude_permissions(
     effective = _effective_rules(policy)
     passthrough = _read_passthrough(spec.extra_args)
     channels = _compile_channels(policy, effective, passthrough)
-    sandbox = _compile_sandbox(policy, channels)
+    network = project_claude_network(spec.effective_network_facts())
+    sandbox = _compile_sandbox(policy, channels, network.native)
     policy_mode = _policy_mode(policy, channels)
     # A passthrough mode is the launcher's own choice; Claude takes the last one, so
     # Meridian omits its mode rather than silently overriding it.
@@ -879,6 +1013,14 @@ def compile_claude_permissions(
     lines.extend(_platform_lines(policy, permissions))
     if policy.sandbox != "default":
         lines.append(_sandbox_line(policy, permissions))
+    lines.append(
+        _network_line(
+            policy,
+            permissions,
+            network,
+            spec.claude_runtime.settings_network_allowed_domains,
+        )
+    )
     if policy.approval != "default":
         lines.append(_approval_line(policy, passthrough, policy_mode=policy_mode))
     lines.extend(
@@ -897,8 +1039,11 @@ def compile_claude_permissions(
 
 
 __all__ = [
+    "CLAUDE_NETWORK_ALLOW_DOMAINS",
+    "ClaudeNetworkSettings",
     "ClaudePermissions",
     "ClaudeSandboxSettings",
     "ClaudeSettings",
     "compile_claude_permissions",
+    "project_claude_network",
 ]

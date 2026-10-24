@@ -40,14 +40,19 @@ level creates a circular import at load time.
 
 ## Permission Policy
 
-`policy.py` builds one `PermissionPolicy` per launch: the tool and platform rules, the
-sandbox mode, the explicit workspace roots a native read-only sandbox must protect, and
-the approval mode, already resolved. `ResolvedLaunchSpec.permission_policy` carries it, and
+`policy.py` builds one `PermissionPolicy` per launch: the tool and platform rules, sandbox,
+the defaulted typed network policy (`Allow(deny)` or `Hosts(allow, deny)`, with empty Hosts
+meaning deny), the explicit workspace roots a native read-only sandbox must protect, and
+approval. `ResolvedExecutionPolicy` alone may carry network unset before the sandbox default
+is applied. `ResolvedLaunchSpec.permission_policy` carries the resolved value, and
 each harness compiles it in `harness/projections/permissions_<harness>.py`. Nothing in
 `safety/` knows a harness. The tool rules are Mars's typed rules (`lib/tools.py`). The policy
 answers the allowlist questions (`is_allowlist`, `allowed_tools`) and writes each
-per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them. `EnforcementReport` (a tuple of `ReportLine`) is the shape each compile
-reports what it enforced in; the formatting helpers for it live here too.
+per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them.
+`EnforcementReport` (a tuple of `ReportLine`) is the shape each compile reports what it
+enforced in. Each harness network projector returns native settings and the effective typed
+policy together. Guardrail containment is exact: finite child allows are a subset of the
+caller, and child denies are a superset. Wildcards are canonical strings, not expanded.
 
 ## Entry Points
 

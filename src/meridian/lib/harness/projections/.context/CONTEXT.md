@@ -19,13 +19,30 @@ pi_extension_projection.py → (built extension artifacts → stable -e paths, n
 ```
 
 `project_codex_common.py` is not a projector — it holds the Codex spellings both Codex
-projectors share (tool-switch and built-in-agent flags). `native_config.py` flattens
+projectors share (sandbox, writable-root and network settings, tool switches, and
+built-in-agent flags). The shared sandbox value spells `--add-dir` for subprocesses and
+Codex config for app-server startup/thread creation so those boundaries cannot drift.
+`native_config.py` flattens
 the selected harness-native config, spells Codex TOML literals, and owns the reserved keys
 that Meridian's Codex projections write themselves. Meridian writes no Codex MCP config,
 so `mcp_servers.*` passes through. `compaction.py` owns the semantic
 `autocompact` / `autocompact_pct` projection and report: Claude gets its token flag and
 percentage environment variable, Codex gets config overrides, and the other harnesses
 report both fields unsupported.
+
+One warning-release exception is tracked in [TODO](TODO): a native
+`sandbox_workspace_write.network_access` leaf is deprecated. The Codex permission compile
+resolves it once and carries it on `CodexPermissions`. Only an addressable, TOML-encodable
+boolean suppresses the portable value and wins on subprocess, app-server and thread
+creation; invalid candidates are ignored and leave the portable projection in place. The
+next release makes the key reserved like `writable_roots` and removes that one compile-time
+carveout.
+
+`PermissionPolicy.network_projection=false` marks a bundle from Mars < 0.18. Compiles emit
+no portable network setting in that state: Claude and Codex retain their constrained
+sandbox defaults, while OpenCode, Pi, and Cursor remain unrestricted. The report's single
+network line is `network: harness default`. The child guardrail classifies that unknown
+default as `allow`, the conservative choice when checking whether a child weakens a caller.
 
 `pi_extension_projection.py` is not a spec projector — it resolves stable
 Meridian-owned Pi extension entrypoints without copying or materializing them.
@@ -183,7 +200,8 @@ remaining exact/prefix list as unsupported. A rules-file write failure is report
 blocking the launch.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
-(`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying
+(`element`, `status`, `note`) per tool rule, platform rule, sandbox, network and approval
+value, saying
 what that harness did with it. Status `native` means enforced as stated, `partial` means part
 of the meaning reaches the harness (the note says which), `unsupported` means nothing does,
 `platform` means a Meridian platform rule decided it. The report states today's
@@ -192,6 +210,23 @@ compile's report is registered as `HarnessProjectionPorts.permission_report` (th
 call the typed compile directly for its native value; nothing generic reads that value);
 `LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
 `permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
+Each harness also registers `HarnessProjectionPorts.effective_network`: a pure function of
+`EffectiveNetworkFacts` (sandbox, network, projection availability, and native config).
+Claude and Codex call their registered derivation for the `network:` report line;
+`complete_report()` calls `unenforced_network` for the other harnesses' default line. The
+child-spawn guardrail calls the same registered port, so the public three-field `ReportLine`
+has no hidden propagation state.
+
+Every compile reports the effective shell `network` policy separately from built-in web
+tools. Claude projects allowed domains plus local-binding/Unix-socket settings when its
+Bash sandbox is enabled; on Linux host localhost remains partial because clients must use
+the sandbox proxy. Claude's own settings files can merge allowed domains back into a deny,
+and the report names those sources. Codex enables network only for `workspace-write`;
+`read-only` reports an explicit authored allow as unsupported and treats unset as deny.
+Unset also projects deny for Claude and Codex `workspace-write`; an authored allow opts in.
+OpenCode, Pi, and Cursor satisfy allow through their unrestricted
+shells and report deny as unenforced. A `meridian spawn` sandbox escape remains visible on
+the network line because that command runs with host network access.
 
 ### Adding a New Harness
 

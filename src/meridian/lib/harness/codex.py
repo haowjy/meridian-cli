@@ -50,7 +50,10 @@ from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
-from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+from meridian.lib.harness.projections.permissions_codex import (
+    compile_codex_permissions,
+    project_codex_network,
+)
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
@@ -79,7 +82,11 @@ from meridian.lib.launch.constants import (
     BASE_COMMAND_CODEX_SUBPROCESS,
     PRIMARY_BASE_COMMAND_CODEX,
 )
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.launch.launch_types import (
+    CompositionWarning,
+    ResolvedLaunchSpec,
+    TerminalSurfaceMode,
+)
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES
 
@@ -394,6 +401,34 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             user_turn_content=run.user_turn_content,
         )
 
+    def launch_spec_warnings(
+        self, spec: ResolvedLaunchSpec
+    ) -> tuple[CompositionWarning, ...]:
+        permissions, _ = compile_codex_permissions(spec)
+        override = permissions.network.override
+        if override is None:
+            return ()
+        if override.argument is None:
+            return (
+                CompositionWarning(
+                    code="invalid_codex_network_access_native_config",
+                    message=(
+                        "Codex native_config sandbox_workspace_write.network_access must be "
+                        "an addressable boolean. It was ignored; use the profile network field."
+                    ),
+                ),
+            )
+        return (
+            CompositionWarning(
+                code="deprecated_codex_network_access_native_config",
+                message=(
+                    "Codex native_config sandbox_workspace_write.network_access is "
+                    "deprecated; use the profile network field instead. The native value "
+                    "wins for this release and becomes reserved in the next release."
+                ),
+            ),
+        )
+
     def build_primary_runtime_request_handler(
         self,
         *,
@@ -604,6 +639,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
             permission_report=lambda spec: compile_codex_permissions(spec)[1],
+            effective_network=lambda facts: project_codex_network(facts).effective,
             materialize_spec=materialize_codex_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,

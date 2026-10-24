@@ -5,18 +5,42 @@ import json
 import pytest
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
+from meridian.lib.harness.projections.permissions_claude import (
+    compile_claude_permissions,
+    project_claude_network,
+)
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
+    EffectiveNetworkFacts,
     PermissionPolicy,
     PlatformCommand,
     PlatformRule,
     build_permission_policy,
+    network_policy_name,
 )
 from meridian.lib.tools import PLATFORM_ORIGIN
 from tests.support.launch import tool_rule
+
+
+def _effective_network(spec: ResolvedLaunchSpec) -> str:
+    projection = project_claude_network(
+        EffectiveNetworkFacts.from_permission_policy(
+            spec.permission_policy,
+            settings_allow=(
+                domain
+                for _path, domains in spec.claude_runtime.settings_network_allowed_domains
+                for domain in domains
+            ),
+            settings_deny=(
+                domain
+                for _path, domains in spec.claude_runtime.settings_network_denied_domains
+                for domain in domains
+            ),
+        )
+    )
+    return network_policy_name(projection.effective)
 
 
 def _tool_flag_entries(argv: list[str], flag: str) -> tuple[str, ...]:
@@ -81,7 +105,7 @@ def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent()
         prompt="test",
         permission_policy=build_permission_policy(
             rules=(tool_rule("agent", "deny", "Agent"), tool_rule("bash", "allow", "Bash")),
-            sandbox=None,
+            network_facts=EffectiveNetworkFacts.from_values(sandbox=None, network=None),
         ),
         extra_args=("--allowedTools", "Agent,Bash(meridian spawn *)"),
     )
@@ -166,7 +190,7 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
     assert "cannot keep the completion grant final" in line.note
 
 
-def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> None:
+def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CLAUDE,
         prompt="test",
@@ -182,9 +206,99 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
 
     settings = json.loads(command[command.index("--settings") + 1])
     assert settings["sandbox"]["excludedCommands"] == ["meridian spawn *"]
+    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
     _, report = compile_claude_permissions(spec)
     sandbox_line = next(item for item in report if item.element == "sandbox: workspace-write")
     assert "runs fully outside the sandbox" in sandbox_line.note
+    network_line = next(item for item in report if item.element == "network: deny")
+    assert network_line.status == "partial"
+    assert _effective_network(spec) == "deny"
+
+
+def test_claude_network_deny_projects_strict_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("meridian.lib.harness.projections.permissions_claude.sys.platform", "linux")
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            sandbox="workspace-write",
+            network="deny",
+            platform_rules=(
+                PlatformRule(
+                    kind="meridian-commands",
+                    commands=(SPAWN_PLATFORM_COMMAND,),
+                ),
+            ),
+        ),
+        claude_runtime=ClaudeRuntimeResolution(
+            settings_network_allowed_domains=(("/home/test/.claude/settings.json", ("*",)),)
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+
+    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
+    _, report = compile_claude_permissions(spec)
+    line = next(item for item in report if item.element == "network: deny")
+    assert line.status == "partial"
+    assert _effective_network(spec) == "hosts"
+
+    bypassed = spec.model_copy(
+        update={
+            "permission_policy": PermissionPolicy(
+                sandbox="workspace-write",
+                network="deny",
+                approval="never",
+            )
+        }
+    )
+    _, bypassed_report = compile_claude_permissions(bypassed)
+    bypassed_line = next(item for item in bypassed_report if item.element == "network: deny")
+    assert bypassed_line.status == "partial"
+    assert _effective_network(bypassed) == "hosts"
+
+
+def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=build_permission_policy(
+            rules=(tool_rule("*", "deny"), tool_rule("bash", "allow", "Bash")),
+            network_facts=EffectiveNetworkFacts.from_values(
+                sandbox="workspace-write", network=None
+            ),
+            approval="never",
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+
+    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
+    assert "--dangerously-skip-permissions" not in command
+    assert _effective_network(spec) == "deny"
+
+
+def test_claude_typed_deny_policy_projects_network_settings() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            sandbox="workspace-write",
+            network="deny",
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+    _, report = compile_claude_permissions(spec)
+
+    assert settings["sandbox"]["network"] == {"strictAllowlist": True}
+    assert _effective_network(spec) == "deny"
+    assert any(line.element == "network: deny" for line in report)
 
 
 def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> None:
@@ -232,7 +346,7 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
                 tool_rule("web", "ask", "WebSearch", pattern="query"),
                 tool_rule("agent", "deny", "Agent"),
             ),
-            sandbox=None,
+            network_facts=EffectiveNetworkFacts.from_values(sandbox=None, network=None),
         ),
         extra_args=(
             "--allowedTools=Agent,Agent(custom),Bash(meridian spawn *)",
@@ -270,7 +384,9 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
         prompt="test",
         permission_policy=build_permission_policy(
             rules=(tool_rule("*", "deny"), tool_rule("agent", "allow", "Agent")),
-            sandbox="workspace-write",
+            network_facts=EffectiveNetworkFacts.from_values(
+                sandbox="workspace-write", network=None
+            ),
             approval="auto",
             platform_rules=(PlatformRule(kind="builtin-agents"),),
         ),

@@ -27,6 +27,7 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     ManagedPrimaryProjectionPorts,
     register_harness_bundle,
+    unenforced_network,
 )
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -61,7 +62,9 @@ from meridian.lib.harness.passthrough.opencode import (
     build_opencode_server_attach_command,
 )
 from meridian.lib.harness.permission_broker import PermissionBroker
-from meridian.lib.harness.projections.permissions_opencode import compile_opencode_permissions
+from meridian.lib.harness.projections.permissions_opencode import (
+    compile_opencode_permissions,
+)
 from meridian.lib.harness.projections.project_opencode_config import (
     OPENCODE_CONFIG_CONTENT_ENV,
     meridian_agent_id,
@@ -661,6 +664,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_opencode_spec_to_cli_args,
             permission_report=lambda spec: compile_opencode_permissions(spec)[1],
+            effective_network=unenforced_network,
             bind_spec=bind_opencode_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_opencode_spec_to_serve_command,

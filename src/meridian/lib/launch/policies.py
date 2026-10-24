@@ -496,6 +496,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     resolved_execution_policy = ResolvedExecutionPolicy(
         effort=resolved_execution_policy_overrides.effort,
         sandbox=resolved_execution_policy_overrides.sandbox,
+        network=bundle_result.execution_policy.network,
         approval=resolved_execution_policy_overrides.approval,
         autocompact=resolved_execution_policy_overrides.autocompact,
         autocompact_pct=resolved_execution_policy_overrides.autocompact_pct,

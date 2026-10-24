@@ -4,6 +4,23 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Requires Mars >= 0.18.0 for portable network policy bundles with `provenance.network_source` and `{mode, allow, deny}`. Older Mars stops launches with `Install mars >= 0.18.0` instead of keeping harness network defaults. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
+- An unset profile `network` now follows its sandbox: `read-only`/`workspace-write` project deny, while `danger-full-access` stays online and an unset/default sandbox stays harness-native. Set `network: allow` to opt a constrained profile into shell network. Sandboxed child delegation compares the caller's and child's effective network, including the inferred deny. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults) and [sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
+
+### Added
+- Profile `network: allow | deny` controls shell connections separately from built-in web tools; every harness reports what it enforces.
+- Sandboxed child delegation cannot weaken the caller's effective network; a legacy boundary record without a network key remains unrestricted for mid-session compatibility.
+
+### Changed
+- Network policy is one typed allow-or-host-set value from bundle parsing through harness projection and the caller guardrail. Claude effective policy includes user-level domain widening, and child containment preserves both allow subsets and deny supersets.
+
+### Fixed
+- Invalid or unaddressable deprecated Codex native network overrides no longer suppress the portable profile network policy.
+
+### Deprecated
+- Codex `harness-overrides.codex.sandbox_workspace_write.network_access`; use profile `network`. Native passthrough wins during this warning release, then the key becomes reserved.
+
 ## [0.13.0] - 2026-10-24
 
 ### Upgrade notes
