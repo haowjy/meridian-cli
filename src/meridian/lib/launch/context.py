@@ -97,8 +97,8 @@ from .composition import (
     build_inline_file_contributions,
     build_reference_routing,
     composed_content_for_bind_refresh,
-    has_context_env_block,
-    replace_context_env_block,
+    has_capabilities_block,
+    replace_capabilities_block,
 )
 from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
 from .cwd import LaunchDirectoryContext
@@ -118,10 +118,7 @@ from .prompt import (
     build_spawn_preamble,
     build_work_goal_instruction,
 )
-from .prompt_context import (
-    build_context_prompt,
-    compose_skill_prompt_documents,
-)
+from .prompt_context import compose_skill_prompt_documents
 from .reference import (
     ReferenceItem,
     load_reference_items,
@@ -142,6 +139,7 @@ from .resolve import (
     resolve_skill_paths,
 )
 from .spawn_guidance import (
+    build_capabilities_prompt,
     build_guidance_blocks,
     build_spawn_usage_contract,
     has_spawn_capability,
@@ -516,35 +514,11 @@ def materialize_launch_artifacts(
     continue_fork: bool = False,
     model_override_explicit: bool = False,
     reference_items: tuple[ReferenceItem, ...] = (),
-    inject_task_cwd_instruction: bool = False,
     permission_policy: PermissionPolicy,
     native_config: NativeConfig,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
-
-    task_cwd_instruction = ""
-    if task_cwd and inject_task_cwd_instruction:
-        task_cwd_instruction = (
-            "\n\n# Source-edit directory\n"
-            "Use `MERIDIAN_PROJECT_DIR` for project coordination files and harness context.\n"
-            "`MERIDIAN_ACTIVE_WORK_DIR` is for scratch/work artifacts — not your checkout.\n"
-            f"`MERIDIAN_TASK_DIR` is {task_cwd}. Your shell cwd is the project root, NOT this "
-            "directory — relative paths resolve against the project root and will miss source "
-            "files.\n"
-            f"For all source-code operations (reads, edits, git, builds, commands), `cd` into "
-            f"`{task_cwd}` first or use absolute paths under it. Never assume cwd is the task "
-            "dir.\n"
-            "Live query: `meridian task-dir`. To reset a stale inherited value: "
-            "`meridian task-dir clear`.\n"
-        )
-    effective_appended_system = prompt_payload.appended_system_prompt or ""
-    if task_cwd_instruction:
-        effective_appended_system = (
-            effective_appended_system + task_cwd_instruction
-            if effective_appended_system
-            else task_cwd_instruction.lstrip()
-        )
 
     run_params = SpawnParams(
         prompt=prompt,
@@ -563,7 +537,7 @@ def materialize_launch_artifacts(
         interactive=interactive,
         continue_harness_session_id=continue_harness_session_id,
         continue_fork=continue_fork,
-        appended_system_prompt=effective_appended_system or None,
+        appended_system_prompt=prompt_payload.appended_system_prompt,
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
         pi_harness_profile=pi_harness_profile,
@@ -863,7 +837,7 @@ def _resolve_bound_active_work_dir(
     return scope.root if scope is not None else None
 
 
-def _reproject_context_env_at_bind(
+def _reproject_capabilities_at_bind(
     *,
     composed_prompt: str,
     prompt_payload: PreparedPromptPayload,
@@ -871,24 +845,33 @@ def _reproject_context_env_at_bind(
     composed_content: ComposedLaunchContent | None,
     harness: SubprocessHarness,
     project_root: Path,
+    control_root: Path,
+    task_dir: Path,
     bound_work_dir: Path | None,
+    spawn_id: str,
+    chat_id: str | None,
+    work_id: str | None,
+    spawn_capable: bool,
     primary_prompt_is_synthetic: bool = False,
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
-    """Re-render the typed context-env block and re-project prompt channels at bind."""
+    """Render the capability block with bound paths and re-project prompt channels."""
 
-    if composed_content is None or not has_context_env_block(composed_content.guidance_blocks):
+    if composed_content is None or not has_capabilities_block(composed_content.guidance_blocks):
         return composed_prompt, prompt_payload, projected_content
 
-    new_context = build_context_prompt(
+    capabilities = build_capabilities_prompt(
+        spawn_capable=spawn_capable,
         project_root=project_root,
+        control_root=control_root,
+        task_dir=task_dir,
         active_work_dir=bound_work_dir,
+        spawn_id=spawn_id,
+        chat_id=chat_id,
+        work_id=work_id,
     )
-    if new_context is None or not new_context.strip():
-        return composed_prompt, prompt_payload, projected_content
-
-    refreshed_guidance = replace_context_env_block(
+    refreshed_guidance = replace_capabilities_block(
         composed_content.guidance_blocks,
-        new_content=new_context,
+        new_content=capabilities,
     )
     refreshed_content = replace(composed_content, guidance_blocks=refreshed_guidance)
     updated_projected = harness.project_content(refreshed_content)
@@ -1028,16 +1011,8 @@ def _build_shared_composition(
     *,
     request: SpawnRequest,
     project_paths: ProjectConfigPaths,
-    active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
 ) -> _SharedComposition:
-    context_prompt = (
-        build_context_prompt(
-            project_root=project_paths.project_root,
-            active_work_dir=active_work_dir,
-        )
-        or ""
-    )
     spawn_usage_contract = build_spawn_usage_contract(
         policy.adapter.run_prompt_policy().spawn_usage_contract_variants
     )
@@ -1047,7 +1022,6 @@ def _build_shared_composition(
         profile=policy.profile,
         spawn_usage_contract=spawn_usage_contract,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
-        context_prompt=context_prompt,
         harness_guidance=policy.adapter.shell_network_guidance(
             sandbox=policy.execution_policy.sandbox,
             network=network,
@@ -1077,7 +1051,6 @@ def _resolve_spawn_prepare_projection(
     *,
     request: SpawnRequest,
     project_paths: ProjectConfigPaths,
-    active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
     runtime: LaunchRuntime,
     launch_mode: LaunchMode | None = None,
@@ -1118,7 +1091,6 @@ def _resolve_spawn_prepare_projection(
     shared = _build_shared_composition(
         request=request,
         project_paths=project_paths,
-        active_work_dir=active_work_dir,
         policy=policy,
     )
 
@@ -1151,7 +1123,6 @@ def _resolve_primary_projection(
     *,
     request: SpawnRequest,
     project_paths: ProjectConfigPaths,
-    active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
     runtime: LaunchRuntime,
     resolved_continue_harness_session_id: str | None,
@@ -1164,7 +1135,6 @@ def _resolve_primary_projection(
     shared = _build_shared_composition(
         request=request,
         project_paths=project_paths,
-        active_work_dir=active_work_dir,
         policy=policy,
     )
 
@@ -1238,7 +1208,6 @@ def _prepare_spawn_surface(
     *,
     request: SpawnRequest,
     project_paths: ProjectConfigPaths,
-    active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
     runtime: LaunchRuntime,
     launch_mode: LaunchMode | None = None,
@@ -1246,7 +1215,6 @@ def _prepare_spawn_surface(
     content = _resolve_spawn_prepare_projection(
         request=request,
         project_paths=project_paths,
-        active_work_dir=active_work_dir,
         policy=policy,
         runtime=runtime,
         launch_mode=launch_mode,
@@ -1262,7 +1230,6 @@ def _prepare_primary_surface(
     *,
     request: SpawnRequest,
     project_paths: ProjectConfigPaths,
-    active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
     runtime: LaunchRuntime,
 ) -> tuple[
@@ -1296,7 +1263,6 @@ def _prepare_primary_surface(
     ) = _resolve_primary_projection(
         request=request,
         project_paths=project_paths,
-        active_work_dir=active_work_dir,
         policy=policy,
         runtime=runtime,
         resolved_continue_harness_session_id=continuation.harness_session_id,
@@ -1319,7 +1285,6 @@ def prepare_launch_surface(
 ) -> PreparedLaunchSurface:
     """Resolve the expensive, spawn-stable launch surface."""
     project_paths = prepared_policy.project_paths
-    active_work_dir = prepared_policy.active_work_dir
     policies = prepared_policy.resolved_policy
     if request.agent_opt_out:
         policies = replace(
@@ -1344,7 +1309,6 @@ def prepare_launch_surface(
         content, continuation = _prepare_spawn_surface(
             request=request,
             project_paths=project_paths,
-            active_work_dir=active_work_dir,
             policy=policies,
             runtime=runtime,
             launch_mode=launch_mode,
@@ -1360,7 +1324,6 @@ def prepare_launch_surface(
         ) = _prepare_primary_surface(
             request=request,
             project_paths=project_paths,
-            active_work_dir=active_work_dir,
             policy=policies,
             runtime=runtime,
         )
@@ -1738,9 +1701,6 @@ def bind_launch_context(
     )
 
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-    inject_task_cwd_instruction = directory_context.should_inject_task_cwd_instruction(
-        runtime.composition_surface
-    )
     pi_harness_profile = (
         resolve_pi_harness_profile_for_launch(
             config_snapshot=runtime.config_snapshot,
@@ -1759,14 +1719,20 @@ def bind_launch_context(
         child_spawn_id=bindings.spawn_id,
         runtime_root=runtime_root,
     )
-    refreshed_prompt, prompt_payload, projected_content = _reproject_context_env_at_bind(
+    refreshed_prompt, prompt_payload, projected_content = _reproject_capabilities_at_bind(
         composed_prompt=resolved_request.prompt,
         prompt_payload=prompt_payload,
         projected_content=projected_content,
         composed_content=prepared.content.composed_content,
         harness=harness,
         project_root=project_paths.project_root,
+        control_root=resolved_control_root,
+        task_dir=directory_context.logical_task_cwd,
         bound_work_dir=bound_active_work_dir,
+        spawn_id=bindings.spawn_id,
+        chat_id=bindings.chat_id or base_env.get("MERIDIAN_CHAT_ID"),
+        work_id=requested_work_id,
+        spawn_capable=prepared.has_spawn_capability,
         primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
     )
     conversation_intent = resolved_request.session.conversation_intent
@@ -1787,7 +1753,6 @@ def bind_launch_context(
         extra_args=tuple(resolved_request.extra_args),
         control_root=resolved_control_root.as_posix(),
         task_cwd=(task_cwd.as_posix() if task_cwd is not None else None),
-        inject_task_cwd_instruction=inject_task_cwd_instruction,
         projected_roots=projected_roots,
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,

@@ -47,7 +47,7 @@ class GuidancePhase(IntEnum):
     ENVIRONMENT = 1
 
 
-CONTEXT_ENV_BLOCK_NAME = "context-env"
+CAPABILITIES_BLOCK_NAME = "capabilities"
 
 
 @dataclass(frozen=True)
@@ -186,15 +186,15 @@ class ComposedLaunchContent:
     """On-demand skills listed by name in the prompt (not loaded until triggered)."""
 
     guidance_blocks: tuple[CompositionBlock, ...] = ()
-    """Ordered guidance blocks (inventory, spawn contract, discovery pointers, context env)."""
+    """Ordered guidance (inventory, capabilities, prompting, rules, context paths)."""
 
 
 def composed_content_for_bind_refresh(
     composed: ComposedLaunchContent,
 ) -> ComposedLaunchContent | None:
-    """Return composed content when bind must re-project the context-env block."""
+    """Return composed content when bind must render the capabilities block."""
 
-    if not has_context_env_block(composed.guidance_blocks):
+    if not has_capabilities_block(composed.guidance_blocks):
         return None
     return composed
 
@@ -301,25 +301,25 @@ def join_content_blocks(*blocks: str) -> str:
     return "\n\n".join(block.strip() for block in blocks if block.strip())
 
 
-def has_context_env_block(guidance_blocks: tuple[CompositionBlock, ...]) -> bool:
-    """Return whether guidance blocks include the late-bound context-env block."""
+def has_capabilities_block(guidance_blocks: tuple[CompositionBlock, ...]) -> bool:
+    """Return whether guidance includes the late-bound capabilities block."""
 
-    return any(block.name == CONTEXT_ENV_BLOCK_NAME for block in guidance_blocks)
+    return any(block.name == CAPABILITIES_BLOCK_NAME for block in guidance_blocks)
 
 
-def replace_context_env_block(
+def replace_capabilities_block(
     guidance_blocks: tuple[CompositionBlock, ...],
     *,
     new_content: str,
 ) -> tuple[CompositionBlock, ...]:
-    """Return guidance blocks with the context-env content replaced."""
+    """Return guidance blocks with the capabilities content replaced."""
 
-    if not has_context_env_block(guidance_blocks):
+    if not has_capabilities_block(guidance_blocks):
         return guidance_blocks
     normalized = new_content.strip()
     return tuple(
         replace(block, content=normalized)
-        if block.name == CONTEXT_ENV_BLOCK_NAME
+        if block.name == CAPABILITIES_BLOCK_NAME
         else block
         for block in guidance_blocks
     )
@@ -488,7 +488,7 @@ def project_inline_content(content: ComposedLaunchContent) -> ProjectedContent:
 
 
 __all__ = [
-    "CONTEXT_ENV_BLOCK_NAME",
+    "CAPABILITIES_BLOCK_NAME",
     "INLINE_BLOCK_ORDER",
     "SYSTEM_INSTRUCTION_BLOCK_ORDER",
     "AvailableSkillEntry",
@@ -503,10 +503,10 @@ __all__ = [
     "build_inline_file_contributions",
     "build_reference_routing",
     "composed_content_for_bind_refresh",
-    "has_context_env_block",
+    "has_capabilities_block",
     "join_content_blocks",
     "project_inline_content",
     "render_system_instruction_blocks",
     "render_task_context",
-    "replace_context_env_block",
+    "replace_capabilities_block",
 ]

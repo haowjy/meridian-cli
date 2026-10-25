@@ -60,7 +60,7 @@ def cmd_notify(
     title: Annotated[str, Parameter(help="One line: what the human needs to decide or see.")],
     body: Annotated[
         str | None,
-        Parameter(help='Optional detail; `"$(cat <file>)"` for longer text.'),
+        Parameter(help="Optional detail; attach a file for longer text."),
     ] = None,
     *,
     no_email: Annotated[

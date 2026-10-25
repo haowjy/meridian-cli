@@ -241,6 +241,22 @@ literal root key and is flattened like any other key; Meridian does not unwrap i
 
 ## Skills and Skill Variants
 
+Meridian's own operating guidance is separate from profile/package skills. Every
+launch receives a compact `# Meridian skills` trigger list generated from the
+binary's bundled descriptions. The agent reads one only when needed with
+`meridian skills NAME [RESOURCE-PATH]`; `meridian skills list` shows the same
+catalog, with structured entries under `--json`. These binary-owned skills may name
+the concrete Meridian commands and flags they explain. A skill whose frontmatter has
+`spawn-only: true` appears only for a profile with delegation capability. Bundled
+skills are named `escalation__meridian`, `handoff__meridian`,
+`notify__meridian`, `sessions__meridian`, and `work__meridian`. The
+`name__meridian` suffix follows Mars's `name__source` collision spelling and stays
+stable across profiles instead of appearing only when a package skill collides.
+Bundled skills version with the CLI and do not belong in `skills.load`,
+`skills.available`, or `--skills`.
+
+Package skills continue to use the harness-native loading path described below.
+
 `skills:` takes a flat list or a mapping:
 
 ```yaml
@@ -282,9 +298,9 @@ already loaded and where its resource files are. An agent body can name a loaded
 skill (`/solo-dev`) even though the skill won't appear in the harness's skill
 list.
 
-**Bundle interface.** Skill content comes from the Mars launch-bundle JSON, not
-from Meridian reading `.mars/skills/` on disk. Mars owns the `.mars/` directory
-schema, skill variant selection, and compilation:
+**Package bundle interface.** Package skill content comes from the Mars
+launch-bundle JSON, not from Meridian reading `.mars/skills/` on disk. Mars owns
+the `.mars/` directory schema, skill variant selection, and compilation:
 
 ```
 Mars launch-bundle → skills.loaded[{name, skill_type, source_path, body}]

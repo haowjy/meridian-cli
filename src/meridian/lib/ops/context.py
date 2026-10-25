@@ -137,7 +137,6 @@ class ContextOutput(BaseModel):
                 f"project_identity_source: {self.project_identity_source}",
                 *render_context_lines(
                     self._to_resolved_paths(),
-                    check_env=True,
                     active_work_dir=active_work_dir,
                 ),
             ]

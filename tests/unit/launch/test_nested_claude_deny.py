@@ -181,9 +181,29 @@ def test_primary_surface_denies_agent_but_not_task(
     )
 
     disallowed = _tool_flag_entries(argv, "--disallowedTools")
+    allowed = _settings_permission_entries(argv, "allow")
     assert {"Agent", *_BUILTIN_AGENT_DENIES}.issubset(disallowed)
     assert "Bash" not in disallowed
-    assert "Bash(meridian task-dir)" in _settings_permission_entries(argv, "allow")
+    assert "Bash(meridian task-dir)" in allowed
+    for command in (
+        "meridian notify -h",
+        "meridian mermaid -h",
+        "meridian mars -h",
+        "meridian task-dir -h",
+        "meridian work task-dir -h",
+    ):
+        assert f"Bash({command})" in allowed
+    assert "Bash(meridian notify *)" not in allowed
+    for command in (
+        "meridian kg graph",
+        "meridian mars models list",
+        "meridian mars models prompting",
+        "meridian skills",
+    ):
+        assert f"Bash({command})" in allowed
+        assert f"Bash({command} *)" in allowed
+    assert "Bash(meridian work path *)" not in allowed
+    assert "Bash(meridian work task-dir *)" not in allowed
     assert _TASK_DENIES.isdisjoint(disallowed)
 
 

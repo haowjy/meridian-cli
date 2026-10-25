@@ -38,6 +38,7 @@ _COMPLETION_COMMANDS: tuple[PlatformCommand, ...] = (
 )
 
 # Commands whose registered behavior reads or reports without mutating project/runtime authority.
+# Mars model-catalog reads may refresh their local caches while preserving that authority.
 # Keep mixed surfaces exact (task-dir and work task-dir) so their mutation forms remain governed by
 # the profile. CLI help used by the injected guidance is listed explicitly for the same reason.
 _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
@@ -53,6 +54,20 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
     _exact("meridian work --help"),
     _exact("meridian context -h"),
     _exact("meridian context --help"),
+    _exact("meridian kg -h"),
+    _exact("meridian kg --help"),
+    _exact("meridian mars -h"),
+    _exact("meridian mars --help"),
+    _exact("meridian mars models -h"),
+    _exact("meridian mars models --help"),
+    _exact("meridian mermaid -h"),
+    _exact("meridian mermaid --help"),
+    _exact("meridian notify -h"),
+    _exact("meridian notify --help"),
+    _exact("meridian task-dir -h"),
+    _exact("meridian task-dir --help"),
+    _exact("meridian work task-dir -h"),
+    _exact("meridian work task-dir --help"),
     _prefix("meridian artifact list"),
     _prefix("meridian completion bash"),
     _prefix("meridian completion fish"),
@@ -70,6 +85,8 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
     _prefix("meridian idle status"),
     _prefix("meridian kg check"),
     _prefix("meridian kg graph"),
+    _prefix("meridian mars models list"),
+    _prefix("meridian mars models prompting"),
     _prefix("meridian mermaid check"),
     _prefix("meridian qi check"),
     _prefix("meridian qi graph"),
@@ -77,6 +94,7 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
     _prefix("meridian session export"),
     _prefix("meridian session log"),
     _prefix("meridian session search"),
+    _prefix("meridian skills"),
     _prefix("meridian spawn children"),
     _prefix("meridian spawn list"),
     _prefix("meridian spawn report search"),
@@ -106,6 +124,10 @@ SPAWN_PLATFORM_COMMAND = _prefix(
     role="launch",
     runs_outside_sandbox=True,
 )
+
+# Preparing a delegated brief is part of spawn capability. ``work path`` may create parent
+# directories beneath the active work directory, so it is intentionally not a general read grant.
+_SPAWN_WORK_PATH_COMMAND = _prefix("meridian work path", role="launch")
 
 
 def _native_subagent_capabilities(
@@ -174,7 +196,7 @@ def launch_permission_rules(
         rules.append(PlatformRule(kind="builtin-agents"))
     commands = (*_COMPLETION_COMMANDS, *_READ_ONLY_COMMANDS)
     if has_spawn_capability:
-        commands = (*commands, SPAWN_PLATFORM_COMMAND)
+        commands = (*commands, _SPAWN_WORK_PATH_COMMAND, SPAWN_PLATFORM_COMMAND)
     rules.append(PlatformRule(kind="meridian-commands", commands=commands))
     return denies, tuple(rules)
 

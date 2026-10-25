@@ -119,7 +119,10 @@ def cmd_kg_check(
         Parameter(name="--strict", help="Treat warnings as errors."),
     ] = False,
 ) -> None:
-    """Check for KG findings. Exit 1 if errors found."""
+    """Check Markdown links and conflict markers; exit 1 on errors.
+
+    Broken links are warnings unless --strict makes them errors.
+    """
     from meridian.lib.kg.graph import build_check
     from meridian.lib.kg.report import format_check_findings
     from meridian.lib.kg.serializer import serialize_check_findings

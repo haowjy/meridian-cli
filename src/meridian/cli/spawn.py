@@ -471,14 +471,7 @@ def _spawn_create(
         bool,
         Parameter(
             name=["--background", "--bg"],
-            help=(
-                "Run detached; returns a spawn id without waiting. NEVER wrap "
-                "`meridian spawn --bg` inside the harness's own background "
-                "execution (e.g. run_in_background Bash) — it already detaches, "
-                "and double-wrapping can kill the launcher before it hands off "
-                "to the detached worker (the spawn then fails visibly without "
-                "running)."
-            ),
+            help="Run detached; returns a spawn ID.",
         ),
     ] = False,
     timeout: Annotated[
@@ -571,7 +564,10 @@ def _spawn_create(
         Parameter(
             name="--yolo",
             group=ADVANCED_PARAMS,
-            help="Skip all harness safety prompts and sandboxing.",
+            help=(
+                "Shorthand for --approval never: no tool-call approval prompts. "
+                "The sandbox is unchanged."
+            ),
         ),
     ] = False,
     continue_from: Annotated[

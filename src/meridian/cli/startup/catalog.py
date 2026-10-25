@@ -234,6 +234,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "text",
         "Inspect the curated harness-model view.",
     ),
+    _read_rootless(("skills",), "Read a bundled Meridian skill or list their triggers."),
     _descriptor(
         ("completion", "bash"),
         StartupClass.TRIVIAL,

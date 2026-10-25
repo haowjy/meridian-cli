@@ -18,7 +18,7 @@ never queries the extension registry for routing answers.
 | Class | Examples | Bootstrap | Telemetry |
 |---|---|---|---|
 | `TRIVIAL` | `--help`, `--version` | none | none |
-| `READ_ROOTLESS` | `doctor`, `kg check`, `qi`, `mermaid check`, `config show`, `ext list` | none | none |
+| `READ_ROOTLESS` | `doctor`, `kg check`, `qi`, `mermaid check`, `config show`, `ext list`, `skills` | none | none |
 | `READ_PROJECT` | `context`, `work current`, `hooks list` | project-read | none |
 | `READ_RUNTIME` | `spawn list`, `session log` | runtime-read | none |
 | `WRITE_PROJECT` | `config init` | project-write | optional |
@@ -54,6 +54,12 @@ Four independent mechanisms reduce startup latency and keep dependencies acyclic
 
 Together these mechanisms keep startup and help paths from importing command
 implementations they do not need.
+
+`skills` is one root command with positional dispatch rather than a Cyclopts
+sub-app: `list` occupies the same positional slot as a skill name, so both
+`meridian skills list` and `meridian skills NAME [RESOURCE-PATH]` stay valid.
+Bundled names end in `__meridian` to share Mars's `name__source` collision rule. The
+command reads only package data and therefore uses `READ_ROOTLESS`.
 
 ## Mars passthrough roots
 

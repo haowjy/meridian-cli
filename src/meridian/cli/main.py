@@ -354,7 +354,10 @@ def root(
         bool,
         Parameter(
             name="--yolo",
-            help="Skip all harness safety prompts and sandboxing.",
+            help=(
+                "Shorthand for --approval never: no tool-call approval prompts. "
+                "The sandbox is unchanged."
+            ),
         ),
     ] = False,
     autocompact: Annotated[
@@ -658,6 +661,11 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             register_ext_commands(app)
 
+        def _register_skills() -> None:
+            from meridian.cli.skills_cmd import register_skills_commands
+
+            register_skills_commands(app)
+
         def _register_telemetry() -> None:
             from meridian.cli.telemetry_cmd import register_telemetry_commands
 
@@ -738,6 +746,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "task-dir": _register_task_dir,
             "models": _register_models,
             "ext": _register_ext,
+            "skills": _register_skills,
             "telemetry": _register_telemetry,
             "workspace": _register_workspace,
             "doctor": _register_doctor,

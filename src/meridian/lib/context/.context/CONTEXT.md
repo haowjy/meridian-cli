@@ -38,19 +38,6 @@ Special cases:
 - `work_archive` → `MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR`
 - `kb` → `MERIDIAN_CONTEXT_KB_DIR`
 
-### Rendering Modes
-
-`render_context_lines()` has two modes controlled by `check_env`:
-
-- `check_env=True` (default — CLI display): shows `$ENV_VAR` when the env var is set
-  and matches the resolved path; otherwise shows the raw resolved path.
-- `check_env=False` (prompt injection): always shows `$ENV_VAR (resolved_path)`
-  regardless of current env state. Use this when building the agent's system prompt —
-  the env vars will be set by launch time.
-
-Do not use `check_env=False` for display to humans — the format is verbose and
-includes paths even when env vars are already set.
-
 ## Related KB
 
 - `$MERIDIAN_CONTEXT_KB_DIR/concepts/context-resolution.md` — cross-cutting context design (see `meridian context kb`)

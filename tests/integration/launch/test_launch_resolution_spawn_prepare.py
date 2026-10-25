@@ -268,7 +268,7 @@ def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
     assert preview.projected_content is not None
     system_prompt = preview.projected_content.system_prompt
     assert "# Meridian Agents" not in system_prompt
-    assert "# Spawning subagents (meridian)" not in system_prompt
+    assert "# Meridian spawn rules" not in system_prompt
 
 
 def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_prompt(
@@ -414,7 +414,7 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     assert projected.system_prompt.count("# Skill: /verification") == 1
     assert "# Meridian Agents" in projected.system_prompt
     assert "# Report" in projected.system_prompt
-    assert projected.system_prompt.count("# Spawning subagents (meridian)") == 1
+    assert projected.system_prompt.count("# Meridian spawn rules") == 1
     assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
     assert preview.binding.run_params.appended_system_prompt is not None
     assert preview.binding.run_params.appended_system_prompt.count(

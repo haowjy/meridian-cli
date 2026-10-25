@@ -183,17 +183,9 @@ def context_env_key(name: str) -> str:
 def render_context_lines(
     resolved: ResolvedContextPaths,
     *,
-    check_env: bool = True,
     active_work_dir: Path | None = None,
 ) -> list[str]:
-    """Render context paths as display lines.
-
-    When *check_env* is True (default — CLI display), each line shows
-    ``$ENV_VAR`` when the env var is set and matches the resolved path,
-    otherwise the resolved path.  When False (prompt injection), each line
-    always shows ``$ENV_VAR (resolved_path)`` regardless of current env
-    state, since the env vars will be set by the time the agent reads it.
-    """
+    """Render context paths for CLI display."""
 
     lines: list[str] = []
 
@@ -203,13 +195,10 @@ def render_context_lines(
         else os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
     )
     if active_work_resolved:
-        if check_env:
-            if os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "") == active_work_resolved:
-                lines.append("work: $MERIDIAN_ACTIVE_WORK_DIR")
-            else:
-                lines.append(f"work: {active_work_resolved}")
+        if os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "") == active_work_resolved:
+            lines.append("work: $MERIDIAN_ACTIVE_WORK_DIR")
         else:
-            lines.append(f"work: $MERIDIAN_ACTIVE_WORK_DIR ({active_work_resolved})")
+            lines.append(f"work: {active_work_resolved}")
     else:
         lines.append("work: (no active work item — run 'meridian work start')")
 
@@ -218,24 +207,18 @@ def render_context_lines(
     )
     if archive_resolved:
         archive_env_key = context_env_key("work_archive")
-        if check_env:
-            if os.getenv(archive_env_key, "") == archive_resolved:
-                lines.append(f"  archive: ${archive_env_key}")
-            else:
-                lines.append(f"  archive: {archive_resolved}")
+        if os.getenv(archive_env_key, "") == archive_resolved:
+            lines.append(f"  archive: ${archive_env_key}")
         else:
-            lines.append(f"  archive: ${archive_env_key} ({archive_resolved})")
+            lines.append(f"  archive: {archive_resolved}")
 
     if resolved.kb_root is not None:
         kb_resolved = resolved.kb_root.as_posix()
         kb_env_key = context_env_key("kb")
-        if check_env:
-            if os.getenv(kb_env_key, "") == kb_resolved:
-                lines.append(f"kb: ${kb_env_key}")
-            else:
-                lines.append(f"kb: {kb_resolved}")
+        if os.getenv(kb_env_key, "") == kb_resolved:
+            lines.append(f"kb: ${kb_env_key}")
         else:
-            lines.append(f"kb: ${kb_env_key} ({kb_resolved})")
+            lines.append(f"kb: {kb_resolved}")
     else:
         lines.append("kb: (unresolved — project state is not materialized)")
 
@@ -243,12 +226,9 @@ def render_context_lines(
         path, _ = resolved.extra[name]
         env_key = context_env_key(name)
         path_str = path.as_posix()
-        if check_env:
-            if os.getenv(env_key, "") == path_str:
-                lines.append(f"{name}: ${env_key}")
-            else:
-                lines.append(f"{name}: {path_str}")
+        if os.getenv(env_key, "") == path_str:
+            lines.append(f"{name}: ${env_key}")
         else:
-            lines.append(f"{name}: ${env_key} ({path_str})")
+            lines.append(f"{name}: {path_str}")
 
     return lines

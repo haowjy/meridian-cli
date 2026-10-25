@@ -17,14 +17,24 @@ from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policy_snapshot import _snapshot_profile, replay_launch_policy_snapshot
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.spawn_guidance import (
+    build_capabilities_prompt,
     build_guidance_blocks,
     build_spawn_usage_contract,
     has_spawn_capability,
 )
 from meridian.lib.safety.policy import Allow, Host, Hosts
 
-CONTRACT_MARKER = "# Spawning subagents (meridian)"
-INVENTORY = "## Meridian Agents\n\n- tech-lead\n- explorer"
+CONTRACT_MARKER = "# Meridian spawn rules"
+INVENTORY = """\
+# Meridian Agents
+
+Write prompts to `$(meridian work path prompts/<name>.md)`.
+Use `--bg` + `meridian spawn wait` for parallel work.
+Declared backups are automatic fallback candidates, not native fanout.
+
+## Subagent
+- tech-lead
+- explorer"""
 
 
 def _profile(
@@ -50,14 +60,16 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         profile=_profile(),
         spawn_usage_contract=build_spawn_usage_contract(CLAUDE_SPAWN_USAGE_VARIANTS),
         bundle_inventory_prompt=INVENTORY,
-        context_prompt="",
         harness_guidance="Host network hint",
     )
 
-    assert [block.name for block in blocks[:3]] == [
+    assert [block.name for block in blocks] == [
         "inventory",
+        "meridian-skills",
+        "capabilities",
         "spawn-prompting",
         "spawn-contract",
+        "harness-guidance",
     ]
     assert blocks[0].content == INVENTORY
     contract = next(block for block in blocks if block.name == "spawn-contract")
@@ -65,8 +77,45 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "run_in_background" in contract.content
     assert "confirmation message's instructions" in contract.content
     assert "reply is kept as the report" not in contract.content
-    work = next(block for block in blocks if block.name == "work-discovery")
-    assert "standalone shell calls" in work.content
+    placeholder = next(block for block in blocks if block.name == "capabilities")
+    assert placeholder.content == ""
+    capabilities = build_capabilities_prompt(
+        spawn_capable=True,
+        project_root=Path("/tmp/project"),
+        control_root=Path("/tmp/project"),
+        task_dir=Path("/tmp/checkout"),
+    )
+    assert "as its own shell call" in capabilities
+    assert "meridian spawn subagents" in capabilities
+    assert "work directory's `prompts/`" in capabilities
+    assert "attach skills with `--skills`" in capabilities
+    assert "pass files or a folder with `-f`" in capabilities
+    assert "carry a prior run with `--from`" in capabilities
+    assert "choose its checkout with `--task-dir`" in capabilities
+    assert "override its model with `-m`" in capabilities
+    assert "meridian mars models prompting" in capabilities
+    assert "meridian notify" in capabilities
+    assert "meridian mermaid check" in capabilities
+    assert "Every command has `-h`" in capabilities
+    assert "`meridian session search`" in capabilities
+    assert "`meridian kg graph`" in capabilities
+    assert "`meridian qi graph`" in capabilities
+    meridian_skills = next(block for block in blocks if block.name == "meridian-skills")
+    assert "Read `meridian skills escalation__meridian`" in meridian_skills.content
+    assert "Read `meridian skills handoff__meridian`" in meridian_skills.content
+    leaf_blocks = build_guidance_blocks(
+        profile=None,
+        spawn_usage_contract="",
+        bundle_inventory_prompt=None,
+    )
+    leaf_skills = next(block for block in leaf_blocks if block.name == "meridian-skills")
+    assert "meridian skills sessions__meridian" in leaf_skills.content
+    assert "meridian skills escalation__meridian" not in leaf_skills.content
+    prompting = next(block for block in blocks if block.name == "spawn-prompting")
+    assert "Every spawn starts with fresh context" in prompting.content
+    assert "name your suspicions as risks to check" in prompting.content
+    assert "State what the spawn may edit" in prompting.content
+    assert "To get more depth, change the model, not the agent" in prompting.content
     hint = next(block for block in blocks if block.name == "harness-guidance")
     assert hint.content == "Host network hint"
 

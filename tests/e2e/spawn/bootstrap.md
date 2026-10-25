@@ -60,7 +60,7 @@ positions = [prompt.index(marker) for marker in expected]
 assert positions == sorted(positions)
 for content in ('alpha skill docs', 'shared skill docs', 'beta package docs', 'shared package docs'):
     assert content in prompt
-assert prompt.index('# Bootstrap: shared (package)') < prompt.index('# Meridian Context')
+assert prompt.index('# Bootstrap: shared (package)') < prompt.index('# Meridian capabilities')
 print('PASS: skill tier precedes package tier; explicit launch choices are visible')
 PY
 ```

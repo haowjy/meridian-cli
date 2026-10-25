@@ -305,12 +305,13 @@ def stub_bundle_request_and_resolve(
 def assert_task_cwd_instruction(system_prompt: str, task_dir: Path | str) -> None:
     """Assert the harness-aware task-dir guidance is present and unambiguous."""
     task_dir_posix = Path(task_dir).as_posix()
-    assert "# Source-edit directory" in system_prompt
-    assert "Use `MERIDIAN_PROJECT_DIR` for project coordination files" in system_prompt
+    assert "# Meridian capabilities" in system_prompt
+    assert "source checkout" in system_prompt
     assert task_dir_posix in system_prompt
     assert "MERIDIAN_TASK_DIR" in system_prompt
-    assert "project root, NOT" in system_prompt
-    assert "relative paths resolve against the project root" in system_prompt
+    assert "MERIDIAN_PROJECT_DIR" in system_prompt
+    assert "shell cwd is" in system_prompt
     assert "absolute paths" in system_prompt
-    assert "`cd`" in system_prompt
-    assert "Never assume cwd is the task dir" in system_prompt
+    assert '`cd "$MERIDIAN_TASK_DIR"`' not in system_prompt
+    assert "`meridian work task-dir`" not in system_prompt
+    assert "`meridian spawn --task-dir`" not in system_prompt

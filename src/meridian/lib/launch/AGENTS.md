@@ -7,12 +7,20 @@ composition seam that wires them together.
 
 ## Skill Loading
 
-Skill content comes from the Mars launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
+Package skill content comes from the Mars launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
 not from reading `.mars/skills/` on disk. `_build_resolved_skills_from_bundle()` in `policies.py`
 constructs `ResolvedSkills` from bundle data and preserves `source_path` for snapshots and
 workspace projection. It reconstructs a primary-root path only for older producers that omit
 provenance. Snapshot replay uses only its persisted `loaded_skills`; an empty field means no
 skills are loaded.
+
+Meridian-owned operational skills are a separate read-only package-data surface.
+`bundled_skills.py` reads their names and descriptions to build the always-present
+`# Meridian skills` trigger block; `meridian skills` prints their full content on
+demand. Their `name__meridian` spelling follows Mars's source-suffix collision rule.
+A skill's optional `spawn-only` frontmatter gates its trigger on the resolved profile
+capability. They never enter Mars's load/available lists or harness-native skill
+loading.
 
 The `bundle_adapter.py` module docstring inventories bundle fields Meridian deliberately does
 not read. `tools.rules` is the permission contract; `tools.mcp` is a flat list of permission
@@ -204,8 +212,8 @@ See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) f
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — spawn CWD three-directory model
-   (authority_root, logical_task_cwd, actual_process_cwd), task CWD instruction
-   injection, reference loading and anchor semantics (`kb:` prefix, `@` unsupported),
+   (authority_root, logical_task_cwd, actual_process_cwd), the one bind-rendered capability
+   guidance, reference loading and anchor semantics (`kb:` prefix, `@` unsupported),
    worktree path assignment vs managed ownership separation, workspace projection
    detail, env injection, background worker trust model, _MERIDIAN_HARNESS child env
    behavior, exact continue replay contract, full invariant table, Mars launch-bundle
