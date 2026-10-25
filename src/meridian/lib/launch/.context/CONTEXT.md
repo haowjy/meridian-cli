@@ -327,10 +327,10 @@ directory instruction before or after projection.
 Every prompt also has a short `# Meridian skills` block generated from the
 descriptions under `meridian.skills`. It is a trigger index, not loaded skill
 content: the agent reads a matching entry through the read-only `meridian skills`
-command. The delegation-only `escalation` trigger remains spawn-gated; the other
-triggers are always present. That gate comes from each skill's `spawn-only`
-frontmatter, not a hardcoded name set. Package skills remain on the Mars/harness path
-below.
+command. Bundled names use the `name__meridian` collision spelling. The
+delegation-only `escalation__meridian` trigger remains spawn-gated; the other triggers
+are always present. That gate comes from each skill's `spawn-only` frontmatter, not a
+hardcoded name set. Package skills remain on the Mars/harness path below.
 
 Spawn-capable prompts also receive `# Prompting subagents`: durable briefing
 judgment that must remain in the prompt even though flag mechanics live in the

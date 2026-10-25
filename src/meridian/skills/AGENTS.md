@@ -6,5 +6,7 @@ that syntax aligned with the command help.
 
 Every `SKILL.md` requires `name` and a trigger-shaped `description` beginning with
 "When". Use `spawn-only: true` when the skill is meaningless without delegation.
-Bundled skills must not depend on package-specific agent or skill names: describe the
-role conditionally and state any load-bearing rule inline.
+Bundled skill folders and frontmatter names end in `__meridian`, matching Mars's
+`name__source` collision spelling. Bundled skills must not depend on package-specific
+agent or skill names: describe the role conditionally and state any load-bearing rule
+inline.

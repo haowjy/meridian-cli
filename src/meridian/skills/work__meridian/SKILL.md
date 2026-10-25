@@ -1,5 +1,5 @@
 ---
-name: work
+name: work__meridian
 description: When an effort needs a shared work item or owned lifecycle across sessions.
 ---
 

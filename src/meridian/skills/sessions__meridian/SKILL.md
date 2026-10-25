@@ -1,5 +1,5 @@
 ---
-name: sessions
+name: sessions__meridian
 description: When decisions or context must be recovered from past sessions.
 ---
 

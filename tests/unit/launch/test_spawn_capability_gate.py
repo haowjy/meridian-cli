@@ -101,16 +101,16 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "`meridian kg graph`" in capabilities
     assert "`meridian qi graph`" in capabilities
     meridian_skills = next(block for block in blocks if block.name == "meridian-skills")
-    assert "Read `meridian skills escalation`" in meridian_skills.content
-    assert "Read `meridian skills handoff`" in meridian_skills.content
+    assert "Read `meridian skills escalation__meridian`" in meridian_skills.content
+    assert "Read `meridian skills handoff__meridian`" in meridian_skills.content
     leaf_blocks = build_guidance_blocks(
         profile=None,
         spawn_usage_contract="",
         bundle_inventory_prompt=None,
     )
     leaf_skills = next(block for block in leaf_blocks if block.name == "meridian-skills")
-    assert "meridian skills sessions" in leaf_skills.content
-    assert "meridian skills escalation" not in leaf_skills.content
+    assert "meridian skills sessions__meridian" in leaf_skills.content
+    assert "meridian skills escalation__meridian" not in leaf_skills.content
     prompting = next(block for block in blocks if block.name == "spawn-prompting")
     assert "Every spawn starts with fresh context" in prompting.content
     assert "name your suspicions as risks to check" in prompting.content

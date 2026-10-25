@@ -58,7 +58,8 @@ implementations they do not need.
 `skills` is one root command with positional dispatch rather than a Cyclopts
 sub-app: `list` occupies the same positional slot as a skill name, so both
 `meridian skills list` and `meridian skills NAME [RESOURCE-PATH]` stay valid.
-It reads only package data and therefore uses `READ_ROOTLESS`.
+Bundled names end in `__meridian` to share Mars's `name__source` collision rule. The
+command reads only package data and therefore uses `READ_ROOTLESS`.
 
 ## Mars passthrough roots
 

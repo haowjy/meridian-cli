@@ -1,5 +1,5 @@
 ---
-name: handoff
+name: handoff__meridian
 description: When a prepared transition brief must launch a new interactive Meridian lead.
 ---
 

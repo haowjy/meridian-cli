@@ -543,17 +543,9 @@ def register_session_commands(app: App) -> None:
             "meridian.session.log": (
                 "Examples:\n\n"
                 "  meridian session log c123\n\n"
-                "  meridian session log c123 --tail\n\n"
                 "  meridian session log c123 --tail 20\n\n"
-                "  meridian session log c123 --full\n\n"
-                "  meridian session log c123 --full --no-truncate\n\n"
-                "  meridian session log c123 --raw\n\n"
-                "  meridian session log c123 --from 120 --limit 30\n\n"
                 "  meridian session log c123 --around 240 --context 8\n\n"
-                "  meridian session log c123 --global --around 240 --context 8\n\n"
-                "  meridian session log c123 --segment previous\n\n"
-                "  meridian session log c123 --segment current --from 0 --limit 1\n\n"
-                "  meridian session log c123 --before 240 --limit 30\n"
+                "  meridian session log c123 --segment previous\n"
             ),
             "meridian.session.export": (
                 "Examples:\n\n"

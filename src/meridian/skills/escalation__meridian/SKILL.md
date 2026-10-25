@@ -1,5 +1,5 @@
 ---
-name: escalation
+name: escalation__meridian
 description: When a delegated agent is refused access or needs a wider boundary.
 spawn-only: true
 ---
