@@ -37,7 +37,7 @@ from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.bundle import project_effective_network
+from meridian.lib.harness.bundle import project_effective_policy
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
@@ -428,14 +428,15 @@ def _prepare_spawn_create(
             harness_registry=harness_registry,
         )
         spec = preview_context.binding.spec
-        effective_network = project_effective_network(
-            artifacts.prepared.harness.id,
-            spec.permission_policy,
-            native_config=spec.native_config,
-        )
+        child_harness = artifacts.prepared.harness.id
         floor_check.enforce(
-            spec.permission_policy.sandbox,
-            child_network=effective_network,
+            project_effective_policy(
+                child_harness,
+                spec.permission_policy,
+                native_config=spec.native_config,
+            ),
+            requested_sandbox=spec.permission_policy.sandbox,
+            harness=str(child_harness),
         )
     if payload.dry_run:
         artifacts = bind_create_payload_preview(

@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 from meridian.lib.safety.policy import (
     Allow,
+    EffectivePolicy,
     Host,
-    NetworkPolicy,
     NetworkProjection,
     PermissionPolicy,
     ReportLine,
@@ -80,14 +80,17 @@ def project_claude_network(
     )
 
 
-def effective_claude_network(
+def effective_claude_policy(
     policy: PermissionPolicy,
     *,
     native_config: Mapping[str, object],
-) -> NetworkPolicy:
-    """Return the network policy Claude enforces from Meridian-owned inputs."""
+) -> EffectivePolicy:
+    """Return the sandbox and network Claude enforces from Meridian-owned inputs."""
 
-    return project_claude_network(policy, native_config=native_config).effective
+    return EffectivePolicy(
+        sandbox=policy.sandbox,
+        network=project_claude_network(policy, native_config=native_config).effective,
+    )
 
 
 def claude_network_line(
@@ -168,6 +171,6 @@ __all__ = [
     "CLAUDE_NETWORK_ALLOW_DOMAINS",
     "ClaudeNetworkSettings",
     "claude_network_line",
-    "effective_claude_network",
+    "effective_claude_policy",
     "project_claude_network",
 ]

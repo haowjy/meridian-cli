@@ -54,7 +54,7 @@ from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.permissions_codex import (
     compile_codex_permissions,
-    effective_codex_network,
+    effective_codex_policy,
 )
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
@@ -639,7 +639,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
             permission_report=lambda spec: compile_codex_permissions(spec)[1],
-            effective_network=effective_codex_network,
+            effective_policy=effective_codex_policy,
             materialize_spec=materialize_codex_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,

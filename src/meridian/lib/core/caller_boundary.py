@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
     SANDBOX_MODE_WEAKNESS,
+    EffectivePolicy,
     NetworkPolicy,
     SandboxMode,
     format_network_policy,
@@ -54,17 +55,18 @@ class CallerBoundary:
         cls,
         policy: PermissionPolicy,
         *,
-        effective_network: NetworkPolicy,
+        effective: EffectivePolicy,
         pid_namespace: str | None,
     ) -> CallerBoundary:
-        """Take the child-launch boundary fields from one resolved policy."""
+        """Take the boundary from what the caller's harness enforces for its policy."""
 
-        sandbox = policy.sandbox
         return cls(
             pid_namespace=pid_namespace,
-            sandbox=sandbox,
+            sandbox=effective.sandbox,
             network=(
-                effective_network if sandbox in CONSTRAINED_SANDBOX_MODES else None
+                effective.network
+                if effective.sandbox in CONSTRAINED_SANDBOX_MODES
+                else None
             ),
             has_spawn_capability=policy.has_spawn_capability,
         )
@@ -169,29 +171,33 @@ class CallerBoundaryCheck:
 
     def enforce(
         self,
-        child_sandbox: str | None,
+        child: EffectivePolicy,
         *,
-        child_network: NetworkPolicy,
+        requested_sandbox: SandboxMode,
+        harness: str,
     ) -> None:
-        """Refuse a resolved child policy weaker than the caller's guardrail."""
+        """Refuse a child whose harness-enforced policy is weaker than the caller's floor."""
 
         caller = self.caller
         if caller is None:
             return
-        normalized = (child_sandbox or "default").strip().lower()
-        if normalized not in SANDBOX_MODE_WEAKNESS:
-            raise ValueError(f"Unsupported sandbox mode '{child_sandbox}'.")
-        if SANDBOX_MODE_WEAKNESS[normalized] > SANDBOX_MODE_WEAKNESS[caller.sandbox]:
+        if SANDBOX_MODE_WEAKNESS[child.sandbox] > SANDBOX_MODE_WEAKNESS[caller.sandbox]:
+            note = (
+                f" Harness '{harness}' runs sandbox '{requested_sandbox}' as "
+                f"'{child.sandbox}'; route the child to a harness that enforces it."
+                if SANDBOX_MODE_WEAKNESS[child.sandbox] > SANDBOX_MODE_WEAKNESS[requested_sandbox]
+                else ""
+            )
             raise ValueError(
-                f"Child spawn refused: sandbox '{normalized}' is weaker than "
-                f"caller floor '{caller.sandbox}'."
+                f"Child spawn refused: sandbox '{child.sandbox}' is weaker than "
+                f"caller floor '{caller.sandbox}'.{note}"
             )
         if caller.network is not None and not network_policy_contains(
-            caller.network, child_network
+            caller.network, child.network
         ):
             raise ValueError(
                 "Child spawn refused: effective network "
-                f"'{format_network_policy(child_network)}' is not contained by caller floor "
+                f"'{format_network_policy(child.network)}' is not contained by caller floor "
                 f"'{format_network_policy(caller.network)}'; narrow the child's allowed "
                 "hosts, preserve the caller's denied hosts, or widen the caller policy."
             )

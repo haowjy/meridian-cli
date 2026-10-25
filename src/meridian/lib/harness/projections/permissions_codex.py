@@ -27,6 +27,7 @@ from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
     Allow,
     ApprovalMode,
+    EffectivePolicy,
     EnforcementReport,
     Hosts,
     NetworkProjection,
@@ -190,14 +191,17 @@ def project_codex_network(
     )
 
 
-def effective_codex_network(
+def effective_codex_policy(
     policy: PermissionPolicy,
     *,
     native_config: Mapping[str, object],
-) -> Allow | Hosts:
-    """Return the network policy Codex enforces from Meridian-owned inputs."""
+) -> EffectivePolicy:
+    """Return the sandbox and network Codex enforces from Meridian-owned inputs."""
 
-    return project_codex_network(policy, native_config=native_config).effective
+    return EffectivePolicy(
+        sandbox=policy.sandbox,
+        network=project_codex_network(policy, native_config=native_config).effective,
+    )
 
 
 def _compile_codex_permission_values(
@@ -522,6 +526,6 @@ def compile_codex_permissions(
 __all__ = [
     "CodexPermissions",
     "compile_codex_permissions",
-    "effective_codex_network",
+    "effective_codex_policy",
     "project_codex_network",
 ]

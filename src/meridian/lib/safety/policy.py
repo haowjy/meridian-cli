@@ -62,6 +62,21 @@ class SandboxDerivedNetwork:
 
 
 type NetworkPolicy = Allow | Hosts
+
+# Shell network for a harness that does not confine its shell.
+UNENFORCED_NETWORK: NetworkPolicy = Allow()
+
+
+@dataclass(frozen=True)
+class EffectivePolicy:
+    """The sandbox and shell network a harness actually applies to one launch."""
+
+    sandbox: SandboxMode
+    network: NetworkPolicy
+
+
+# What a harness that enforces neither sandbox nor network gives every launch.
+UNENFORCED_POLICY = EffectivePolicy(sandbox="danger-full-access", network=UNENFORCED_NETWORK)
 NativeNetworkT = TypeVar("NativeNetworkT", covariant=True)
 
 
@@ -685,9 +700,12 @@ __all__ = [
     "ALLOWLIST_ORIGIN",
     "CONSTRAINED_SANDBOX_MODES",
     "SANDBOX_MODE_WEAKNESS",
+    "UNENFORCED_NETWORK",
+    "UNENFORCED_POLICY",
     "Allow",
     "ApprovalMode",
     "CommandMatch",
+    "EffectivePolicy",
     "EnforcementReport",
     "Host",
     "Hosts",

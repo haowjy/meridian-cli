@@ -101,11 +101,33 @@ portable profile field. A well-formed boolean native value is deprecated in this
 and still wins over the projected value; invalid values are ignored. The key becomes
 reserved and skipped in the following release.
 
+## Child guardrail follows the harness
+
+The child-spawn guardrail compares the sandbox and network each harness actually enforces,
+on both the caller's and the child's side.
+
+| Harness | `read-only` runs as | `workspace-write` runs as | Shell network |
+|---|---|---|---|
+| Claude, Codex | `read-only` | `workspace-write` | enforced |
+| Cursor | `workspace-write` (its sandbox still allows workspace writes) | `danger-full-access` | open |
+| OpenCode, Pi | `danger-full-access` | `danger-full-access` | open |
+
+- A caller whose harness runs it as `danger-full-access` (OpenCode, Pi, or a Cursor
+  `workspace-write` profile) has no floor: it can launch any child.
+- A child is compared by what its harness runs. A sandboxed caller is refused a `read-only`
+  explorer routed to Pi, with a message naming the harness. This previously passed,
+  although nothing confined the child.
+
+If a sandboxed caller's subagent routes to one of those harnesses by default, pass
+`--harness claude`/`--harness codex` or a model that routes there, or change the child
+profile's model.
+
 ## Sandboxed child delegation
 
 A standalone `meridian spawn ...` can run outside a sandbox that Meridian projected for
 the caller. Callers launched with an explicit `sandbox: read-only` or
-`sandbox: workspace-write` therefore have a child-spawn CLI guardrail. Child create,
+`sandbox: workspace-write` on Claude or Codex therefore have a child-spawn CLI guardrail
+(see [child guardrail follows the harness](#child-guardrail-follows-the-harness)). Child create,
 continue, and fork operations now refuse when:
 
 - the caller profile has no non-empty `subagents:` list (or explicitly disables Meridian
