@@ -247,8 +247,8 @@ literal root key and is flattened like any other key; Meridian does not unwrap i
 Meridian's own operating guidance ships with the binary and is provided into the
 resolved Mars root before launch. Every launch receives a compact `# Meridian
 skills` trigger list generated from the binary's bundled descriptions, except for
-a skill the profile already loaded through Mars. The agent reads a trigger only
-when needed with
+a skill Mars loaded with non-blank content into the prompt. The agent reads a
+trigger only when needed with
 `meridian skills NAME [RESOURCE-PATH]`, which prints a skill under the same header a
 loaded skill gets, naming its installed folder; `meridian skills list` shows the same
 catalog, with structured entries under `--json`. These binary-owned skills may name

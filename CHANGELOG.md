@@ -8,8 +8,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Meridian provides its bundled `*__meridian` skills to Mars before launches and
   package-resolving `meridian mars` commands. `meridian skills NAME` reads the
   project `.mars/skills/` copy Mars recorded for this build, while older Mars
-  versions, contention, pending sync recovery, and bare directories keep the wheel
-  fallback.
+  versions, contention, pending sync recovery, missing or invalid provided copies,
+  and bare directories keep the wheel fallback. Help and invalid skill requests do
+  not invoke the provider.
 
 ## [0.14.6] - 2026-10-25
 

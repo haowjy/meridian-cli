@@ -50,6 +50,12 @@ def cmd_skills(
             sink.result("\n".join(f"{skill.name}: {skill.description}" for skill in skills))
         return
 
+    known_names = {skill.name for skill in list_bundled_skills()}
+    if name not in known_names:
+        available = ", ".join(sorted(known_names))
+        sink.error(f"unknown Meridian skill {name!r}; choose one of: {available}", exit_code=2)
+        raise SystemExit(2)
+
     roots = resolve_mars_roots(resolve_cli_project_root())
     source = WHEEL
     if roots.scope == "project":

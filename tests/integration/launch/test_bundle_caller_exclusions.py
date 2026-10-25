@@ -84,7 +84,12 @@ def test_exclusions_are_transported_as_repeated_harness_flags(
         str(tmp_path),
         "--json",
     ]
-    assert recorded[-13:] == [
+    bundle_index = next(
+        index
+        for index in range(len(recorded))
+        if recorded[index : index + 3] == ["build", "launch-bundle", "--json"]
+    )
+    assert recorded[bundle_index : bundle_index + 13] == [
         "build",
         "launch-bundle",
         "--json",

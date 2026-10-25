@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 from importlib.resources.abc import Traversable
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import TextIO, cast
 
 import meridian
 from meridian import __version__
@@ -28,15 +29,23 @@ class BundledSkill:
 
 
 @dataclass(frozen=True)
-class BundledSkillSource:
-    """Locations this command may read for Meridian's bundled skills."""
+class WheelSkillSource:
+    """Read bundled skills from the installed wheel."""
 
-    skills_dir: Path | None
+    sync_pending: bool = False
+
+
+@dataclass(frozen=True)
+class ProvidedSkillSource:
+    """Mars-provided skill names and their common parent directory."""
+
+    skills_dir: Path
     provided: frozenset[str]
     sync_pending: bool = False
 
 
-WHEEL = BundledSkillSource(skills_dir=None, provided=frozenset())
+BundledSkillSource = WheelSkillSource | ProvidedSkillSource
+WHEEL = WheelSkillSource()
 SYNC_PENDING_MESSAGE = "an interrupted mars sync is pending; run `meridian mars sync`"
 
 
@@ -100,6 +109,8 @@ def provide_bundled_skills(
     primary_root: Path,
     *,
     executable: str | None,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    stderr: TextIO | None = None,
 ) -> BundledSkillSource:
     """Ask Mars to install this build's bundled skills into ``primary_root``."""
 
@@ -114,7 +125,7 @@ def provide_bundled_skills(
         "--json",
     ]
     try:
-        result = subprocess.run(
+        result = run(
             command,
             check=False,
             capture_output=True,
@@ -123,25 +134,21 @@ def provide_bundled_skills(
             errors="replace",
             timeout=10,
         )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired):
         return WHEEL
     if result.returncode != 0:
         return WHEEL
 
     try:
         payload_obj = json.loads(result.stdout)
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         return WHEEL
     if not isinstance(payload_obj, dict):
         return WHEEL
     payload = cast("dict[str, object]", payload_obj)
     status = payload.get("status")
     if status == "sync-pending":
-        return BundledSkillSource(
-            skills_dir=None,
-            provided=frozenset(),
-            sync_pending=True,
-        )
+        return WheelSkillSource(sync_pending=True)
     if status not in {"up-to-date", "applied"}:
         return WHEEL
 
@@ -159,8 +166,8 @@ def provide_bundled_skills(
         if isinstance(raw_warnings, list):
             for warning in cast("list[object]", raw_warnings):
                 if isinstance(warning, str) and warning.strip():
-                    print(warning, file=sys.stderr)
-    return BundledSkillSource(
+                    print(warning, file=sys.stderr if stderr is None else stderr)
+    return ProvidedSkillSource(
         skills_dir=primary_root / ".mars" / "skills",
         provided=provided,
     )
@@ -174,9 +181,19 @@ def _skill_dir(name: str, source: BundledSkillSource) -> Traversable:
     if normalized not in known_names:
         available = ", ".join(sorted(known_names))
         raise ValueError(f"unknown Meridian skill {name!r}; choose one of: {available}")
-    if normalized in source.provided:
-        assert source.skills_dir is not None
-        return source.skills_dir / normalized
+    if isinstance(source, ProvidedSkillSource) and normalized in source.provided:
+        provided_dir = source.skills_dir / normalized
+        skill_file = provided_dir / "SKILL.md"
+        if skill_file.is_file():
+            try:
+                _parse_skill_metadata(
+                    skill_file.read_text(encoding="utf-8"),
+                    folder_name=normalized,
+                )
+            except (OSError, RuntimeError):
+                pass
+            else:
+                return provided_dir
     return _skills_root().joinpath(normalized)
 
 
@@ -195,10 +212,12 @@ def load_bundled_skill(name: str, source: BundledSkillSource) -> SkillContent:
     import frontmatter  # pyright: ignore[reportMissingTypeStubs]  # No stubs upstream.
 
     skill_file = _skill_dir(name, source).joinpath("SKILL.md")
-    post = frontmatter.loads(skill_file.read_text(encoding="utf-8"))
+    text = skill_file.read_text(encoding="utf-8")
+    metadata = _parse_skill_metadata(text, folder_name=name)
+    post = frontmatter.loads(text)
     return SkillContent(
         name=name,
-        description=str(dict(post.metadata)["description"]).strip(),
+        description=metadata.description,
         content=post.content,
         path=str(skill_file),
     )
@@ -222,6 +241,8 @@ __all__ = [
     "WHEEL",
     "BundledSkill",
     "BundledSkillSource",
+    "ProvidedSkillSource",
+    "WheelSkillSource",
     "list_bundled_skills",
     "load_bundled_skill",
     "provide_bundled_skills",

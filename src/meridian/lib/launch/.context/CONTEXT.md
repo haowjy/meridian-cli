@@ -329,7 +329,8 @@ or after projection.
 Every prompt also has a short `# Meridian skills` block generated from the
 descriptions under `meridian.skills`. It is a trigger index, not loaded skill
 content: the agent reads a matching entry through `meridian skills`. A skill Mars
-already loaded into the prompt is omitted from the index. Bundled names use the
+loaded with non-blank content into the prompt is omitted from the index. An empty
+loaded entry has no prompt document, so its trigger remains. Bundled names use the
 `name__meridian` collision spelling. The
 `handoff__meridian`, `notify__meridian`, `work__meridian`, `escalation__meridian`,
 and `prompt-authoring__meridian` triggers carry `mode: primary`; `sessions__meridian` remains

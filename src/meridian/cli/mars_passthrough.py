@@ -168,7 +168,12 @@ def parse_mars_passthrough(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
         wants_json=wants_json,
-        provide_root=selected_root if subcommand in _PROVIDE_COMMANDS else None,
+        provide_root=(
+            selected_root
+            if subcommand in _PROVIDE_COMMANDS
+            and not any(argument in {"-h", "--help"} for argument in mars_args)
+            else None
+        ),
         user_scope=selected_root == user_mars_root(),
     )
 
@@ -193,6 +198,8 @@ def execute_mars_passthrough(
         provide_bundled_skills(
             request.provide_root,
             executable=request.command[0],
+            run=run,
+            stderr=stderr_stream,
         )
 
     run_kwargs: dict[str, object] = {
