@@ -21,10 +21,6 @@ mint or materialize identity. An unmaterialized ad-hoc path stays unresolved;
 after a write its default user-home context paths resolve. Project-relative paths
 remain unresolved for ad-hoc places so bootstrap never writes into them.
 
-**`check_env=False` is for prompt injection, not human display.** `render_context_lines()`
-with `check_env=False` always emits `$ENV_VAR (resolved_path)` — verbose and not
-intended for terminal output. Use the default `check_env=True` for human-readable display.
-
 **Git-backed contexts do not trigger cloning.** When `source == ContextSourceType.GIT`,
 `_resolve_path()` only derives the expected path from `resolve_clone_path(remote)`.
 Actual cloning is handled by git-autosync hooks at a different layer.
@@ -46,7 +42,7 @@ Key types:
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — placeholder substitution rules,
-git-backed resolution, identity-free read behavior, env var naming convention, rendering modes
+git-backed resolution, identity-free read behavior, and the env var naming convention
 
 ## Related
 

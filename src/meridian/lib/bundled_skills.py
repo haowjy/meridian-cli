@@ -15,6 +15,7 @@ class BundledSkill:
 
     name: str
     description: str
+    spawn_only: bool = False
 
 
 def _parse_skill_metadata(text: str, *, folder_name: str) -> BundledSkill:
@@ -24,13 +25,16 @@ def _parse_skill_metadata(text: str, *, folder_name: str) -> BundledSkill:
     metadata = dict(post.metadata)
     name = str(metadata.get("name", "")).strip()
     description = str(metadata.get("description", "")).strip()
+    spawn_only = metadata.get("spawn-only", False)
     if not name or not description:
         raise RuntimeError(f"bundled skill {folder_name!r} needs name and description")
     if name != folder_name:
         raise RuntimeError(
             f"bundled skill folder {folder_name!r} does not match frontmatter name {name!r}"
         )
-    return BundledSkill(name=name, description=description)
+    if not isinstance(spawn_only, bool):
+        raise RuntimeError(f"bundled skill {folder_name!r} spawn-only must be a boolean")
+    return BundledSkill(name=name, description=description, spawn_only=spawn_only)
 
 
 def _skills_root() -> Traversable:

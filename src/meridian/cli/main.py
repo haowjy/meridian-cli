@@ -659,9 +659,9 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             register_ext_commands(app)
 
         def _register_skills() -> None:
-            import meridian.cli.skills_cmd as _skills_cmd
+            from meridian.cli.skills_cmd import register_skills_commands
 
-            _ = _skills_cmd
+            register_skills_commands(app)
 
         def _register_telemetry() -> None:
             from meridian.cli.telemetry_cmd import register_telemetry_commands

@@ -1,59 +1,46 @@
 ---
 name: escalation
 description: When a delegated agent is refused access or needs a wider boundary.
+spawn-only: true
 ---
 
 # Privilege Escalation
 
-Treat access as part of staffing. A sandboxed caller cannot give a delegated
-agent a weaker sandbox, broader network access, or a capability the caller does
-not have. Return that failure to the caller instead of retrying the same task
-with broader access.
+Treat access as part of staffing. What you can do depends on your own sandbox. The
+one-run controls below are documented under `meridian spawn -h --advanced`.
 
-An unsandboxed caller may grant a one-off sandbox or network override for one
-run. Surface it to the user and get approval first; an agent silently granting
-itself maximum access defeats the permission boundary. Inspect the available
-launch controls with `meridian spawn -h`.
+- **You are sandboxed** (`read-only` or `workspace-write`): Meridian refuses a
+  child with a weaker sandbox, broader network access, or no declared spawn
+  capability. Retrying with broader access is refused; return the failure to your
+  caller.
+- **You are not sandboxed** (`danger-full-access`): a per-spawn `--sandbox` or
+  `--network` override can work. Surface it to the human first and let them approve
+  it; silently granting maximum access defeats the boundary.
 
 ## Escalation Discipline
 
-Name the operation the delegated agent could not perform and the access it
-needs. Pass the failed task and exact error to whoever acts next so it does not
-repeat the diagnosis.
+Name the failed operation, exact error, and access needed so the next actor does not
+repeat the diagnosis. Prefer a profile that already declares the access, then a
+human-approved one-off override. Ask for a profile change only when the need recurs.
 
-Prefer the narrowest fix: an existing agent profile that already declares the
-access, then a user-approved one-off exception from a caller allowed to grant
-it. Ask for a profile change only when the need recurs; a one-off failure is not
-a reason for a permanent grant.
+`--approval` controls tool-call prompts, not the sandbox: `default` leaves the choice
+to the harness, `confirm` asks for each call, `auto` approves safe calls, and `never`
+runs without approval prompts. `--yolo` is the shorthand for `--approval never`. Use the
+least permissive mode that works and surface fully automatic approval to the human first.
 
-Approval policy changes how the harness handles tool prompts; it does not widen
-the caller's sandbox. Use the least permissive policy that allows the work and
-surface any fully automatic approval to the user first.
+## Model, Sandbox, and Network Controls
 
-## Model and Harness Switching
+Use `-m MODEL_ALIAS` only when the task needs a model capability already allowed by
+the profile. `meridian mars models list` shows aliases and routing;
+`meridian mars models list --live` confirms the route is runnable. Model routing is
+not a way around the caller's boundary.
 
-Different models may route to different harnesses. Check the live model catalog
-and model-specific prompting guidance before rerouting. Switch only when the
-task needs a capability that the selected profile already permits; model
-routing is not a way around the caller's boundary.
+`--sandbox` sets the one-run filesystem boundary. `--network allow|deny|allowlist`
+sets shell network access. `--network-allow HOST` takes effect only with
+`--network allowlist`; `--network-deny HOST` can narrow `allow`. A sandboxed caller
+cannot grant a child more network or filesystem access than it has.
 
-## Common Escalation Scenarios
-
-**Can't bind to a port or start a server:** local listeners require network
-access. A sandboxed caller can grant it only if it already has that access;
-otherwise return the error and port to the caller.
-
-**Can't write outside the workspace:** return the target path and failed
-operation to the caller; use a profile whose sandbox declares that scope.
-
-**Can't reach a URL:** use the profile's web tools when they fit. Otherwise use
-the narrowest network access that permits the destination. A child refused for
-the network floor can be relaunched with narrower access when the task permits;
-otherwise return the failed destination and operation.
-
-**Permission denied on a tool call:** use the least permissive approval policy
-that permits it. Surface unbounded approval to the user first.
-
-**Context too small:** choose a model with a larger context window from the live
-catalog.
-
+For a blocked listener, URL, filesystem path, or tool call, return the concrete port,
+destination, path, or permission error when the caller cannot authorize the narrowest
+fix. For a context limit, choose a larger-context model from the live catalog rather
+than widening permissions.

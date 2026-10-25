@@ -1,38 +1,31 @@
 ---
 name: handoff
-description: When the next phase belongs to a different interactive lead.
+description: When a prepared transition brief must launch a new interactive Meridian lead.
 ---
 
-# Handoff
+# Handoff Launch
 
-Write a transition brief and give the human what they need to start a new
-interactive session with a different agent lead. Do not start it for them.
+Follow the transition brief already prepared for the next lead. The user starts the
+new primary session; print the launch command, but never run it.
 
-## Write the Transition Brief
+Choose the requested agent, or inspect available agents and ask if the choice is
+ambiguous. Show the work item's primary-session trail first:
 
-Separate what the human said from what they want to be true when the work is
-done. Then compact the conversation into a file the next agent reads as its
-opening prompt:
+```bash
+meridian work sessions --primary
+```
 
-- Human intent: the end goal in their terms, not implementation steps
-- Current state: what was accomplished and where things stand
-- Key decisions and why
-- Open questions or blockers
-- Exact artifact paths to read first
-- Suggested skills to invoke
+Print a root primary launch, not `meridian spawn`, in this shape:
 
-Keep artifact content in its files and put the brief in the work directory.
-Without a work item, use a temporary file.
+```bash
+meridian -a AGENT \
+  --work WORK_ID \
+  --task-dir /absolute/source/checkout \
+  --prompt-file /absolute/work/directory/prompts/handoff.md \
+  --from cNNN
+```
 
-Before completing the handoff, run any installed `pre-*` checkpoint that
-applies to the next phase. Choose the next agent from the human's request or
-the available agents; ask when the choice is ambiguous. Show the work item's
-primary-session trail with `meridian work sessions`.
-
-## Prepare the Human's Launch
-
-Print the root `meridian` launch command, but never run it. It runs in a new
-terminal where your environment is gone, so every reference must be a concrete
-value rather than a variable: the work item, source checkout, brief path, and
-current chat ID as the parent. Use `meridian -h` for the launch flags.
-
+Write every reference as its concrete value because the user's new terminal does not
+inherit this session's shell variables. Include `--work` when attached, `--task-dir`
+for a worktree or sibling checkout, the prepared brief's absolute path, and the current
+root conversation ID as `--from`.

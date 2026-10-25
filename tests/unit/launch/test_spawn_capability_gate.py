@@ -17,6 +17,7 @@ from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policy_snapshot import _snapshot_profile, replay_launch_policy_snapshot
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.spawn_guidance import (
+    build_capabilities_prompt,
     build_guidance_blocks,
     build_spawn_usage_contract,
     has_spawn_capability,
@@ -59,7 +60,6 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         profile=_profile(),
         spawn_usage_contract=build_spawn_usage_contract(CLAUDE_SPAWN_USAGE_VARIANTS),
         bundle_inventory_prompt=INVENTORY,
-        context_prompt="",
         harness_guidance="Host network hint",
     )
 
@@ -77,20 +77,29 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "run_in_background" in contract.content
     assert "confirmation message's instructions" in contract.content
     assert "reply is kept as the report" not in contract.content
-    capabilities = next(block for block in blocks if block.name == "capabilities")
-    assert "a correct standalone call" in capabilities.content
-    assert "meridian spawn subagents" in capabilities.content
-    assert "attach skills `--skills`" in capabilities.content
-    assert "pass files or a folder `-f`" in capabilities.content
-    assert "carry a prior run `--from`" in capabilities.content
-    assert "choose its checkout `--task-dir`" in capabilities.content
-    assert "override its model `-m`" in capabilities.content
-    assert "meridian mars models prompting" in capabilities.content
-    assert "meridian notify" in capabilities.content
-    assert "meridian mermaid check" in capabilities.content
-    assert "Every command has `-h`" in capabilities.content
-    assert "`meridian session search`" in capabilities.content
-    assert "`meridian kg graph`" in capabilities.content
+    placeholder = next(block for block in blocks if block.name == "capabilities")
+    assert placeholder.content == ""
+    capabilities = build_capabilities_prompt(
+        spawn_capable=True,
+        project_root=Path("/tmp/project"),
+        control_root=Path("/tmp/project"),
+        task_dir=Path("/tmp/checkout"),
+    )
+    assert "as its own shell call" in capabilities
+    assert "meridian spawn subagents" in capabilities
+    assert "work directory's `prompts/`" in capabilities
+    assert "attach skills with `--skills`" in capabilities
+    assert "pass files or a folder with `-f`" in capabilities
+    assert "carry a prior run with `--from`" in capabilities
+    assert "choose its checkout with `--task-dir`" in capabilities
+    assert "override its model with `-m`" in capabilities
+    assert "meridian mars models prompting" in capabilities
+    assert "meridian notify" in capabilities
+    assert "meridian mermaid check" in capabilities
+    assert "Every command has `-h`" in capabilities
+    assert "`meridian session search`" in capabilities
+    assert "`meridian kg graph`" in capabilities
+    assert "`meridian qi graph`" in capabilities
     meridian_skills = next(block for block in blocks if block.name == "meridian-skills")
     assert "Read `meridian skills escalation`" in meridian_skills.content
     assert "Read `meridian skills handoff`" in meridian_skills.content
@@ -98,7 +107,6 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         profile=None,
         spawn_usage_contract="",
         bundle_inventory_prompt=None,
-        context_prompt="",
     )
     leaf_skills = next(block for block in leaf_blocks if block.name == "meridian-skills")
     assert "meridian skills sessions" in leaf_skills.content

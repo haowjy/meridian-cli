@@ -245,8 +245,11 @@ Meridian's own operating guidance is separate from profile/package skills. Every
 launch receives a compact `# Meridian skills` trigger list generated from the
 binary's bundled descriptions. The agent reads one only when needed with
 `meridian skills NAME [RESOURCE-PATH]`; `meridian skills list` shows the same
-catalog. These skills version with the CLI and do not belong in `skills.load`,
-`skills.available`, or `--skills`.
+catalog, with structured entries under `--json`. These binary-owned skills may name
+the concrete Meridian commands and flags they explain. A skill whose frontmatter has
+`spawn-only: true` appears only for a profile with delegation capability. Bundled
+skills version with the CLI and do not belong in `skills.load`, `skills.available`,
+or `--skills`.
 
 Package skills continue to use the harness-native loading path described below.
 

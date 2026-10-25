@@ -38,6 +38,7 @@ _COMPLETION_COMMANDS: tuple[PlatformCommand, ...] = (
 )
 
 # Commands whose registered behavior reads or reports without mutating project/runtime authority.
+# Mars model-catalog reads may refresh their local caches while preserving that authority.
 # Keep mixed surfaces exact (task-dir and work task-dir) so their mutation forms remain governed by
 # the profile. CLI help used by the injected guidance is listed explicitly for the same reason.
 _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
@@ -124,6 +125,10 @@ SPAWN_PLATFORM_COMMAND = _prefix(
     runs_outside_sandbox=True,
 )
 
+# Preparing a delegated brief is part of spawn capability. ``work path`` may create parent
+# directories beneath the active work directory, so it is intentionally not a general read grant.
+_SPAWN_WORK_PATH_COMMAND = _prefix("meridian work path", role="launch")
+
 
 def _native_subagent_capabilities(
     *,
@@ -191,7 +196,7 @@ def launch_permission_rules(
         rules.append(PlatformRule(kind="builtin-agents"))
     commands = (*_COMPLETION_COMMANDS, *_READ_ONLY_COMMANDS)
     if has_spawn_capability:
-        commands = (*commands, SPAWN_PLATFORM_COMMAND)
+        commands = (*commands, _SPAWN_WORK_PATH_COMMAND, SPAWN_PLATFORM_COMMAND)
     rules.append(PlatformRule(kind="meridian-commands", commands=commands))
     return denies, tuple(rules)
 

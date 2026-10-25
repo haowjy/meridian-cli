@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from cyclopts import Parameter
+from cyclopts import App, Parameter
 
-from meridian.cli.app_tree import app
-from meridian.cli.invocation import current_output_sink
+from meridian.cli.invocation import current_output_sink, get_global_options
 from meridian.lib.bundled_skills import list_bundled_skills, read_bundled_skill
 
 
-@app.command(name="skills")
 def cmd_skills(
     name: Annotated[
         str,
@@ -19,7 +17,7 @@ def cmd_skills(
     ],
     resource_path: Annotated[
         str | None,
-        Parameter(help="Optional path inside that skill, such as resources/lifecycle.md."),
+        Parameter(help="Optional path inside that skill, such as resources/delivery.md."),
     ] = None,
 ) -> None:
     """Read Meridian's bundled operational skills on demand."""
@@ -29,11 +27,16 @@ def cmd_skills(
         if resource_path is not None:
             sink.error("meridian skills list does not accept a resource path", exit_code=2)
             raise SystemExit(2)
-        sink.result(
-            "\n".join(
-                f"{skill.name}: {skill.description}" for skill in list_bundled_skills()
+        skills = list_bundled_skills()
+        if get_global_options().output.format == "json":
+            sink.result(
+                [
+                    {"name": skill.name, "description": skill.description}
+                    for skill in skills
+                ]
             )
-        )
+        else:
+            sink.result("\n".join(f"{skill.name}: {skill.description}" for skill in skills))
         return
 
     try:
@@ -44,4 +47,10 @@ def cmd_skills(
     sink.result(content.rstrip())
 
 
-__all__ = ["cmd_skills"]
+def register_skills_commands(app: App) -> None:
+    """Register the bundled-skills root command."""
+
+    app.command(cmd_skills, name="skills")
+
+
+__all__ = ["cmd_skills", "register_skills_commands"]

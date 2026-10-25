@@ -5,34 +5,41 @@ description: When decisions or context must be recovered from past sessions.
 
 # Session Mining
 
-Design decisions, rejected alternatives, and discovered constraints often live
-in conversation instead of code or docs. Compaction makes that context
-expensive to recover later, so mine it before the next implementation or
-documentation step starts.
+Design decisions, rejected alternatives, and discovered constraints often live in
+conversation instead of code. Mine only the gaps after skimming current artifacts.
 
-## Recover From the Top-Level Session First
+## Start at the Root
 
-Start from the top-level conversation, regardless of how deep in the delegated
-run tree you are. Its decisions and framing are usually the highest-leverage
-read.
+`$MERIDIAN_CHAT_ID` identifies the root conversation, regardless of delegation depth.
+The capabilities block gives its concrete `cNNN` value; use that literal in restricted
+shells. Begin with recent context:
 
-Read recent history first, then widen only when needed. Search instead of
-paging when you know the decision, term, or file you need. When compaction has
-split a transcript into segments, stay within the relevant segment so entry
-references remain stable, and include its setup or handoff when the missing
-context may have arrived there.
+```bash
+meridian session log cNNN --tail 20
+```
+
+Bare `session log cNNN` reads five interaction entries from the current segment.
+`--from`, `--before`, and `--around` are segment-local ordinals; entry 0 is the segment
+setup. Select `--segment previous|current|N`, use `--full` for the selected segment,
+`--no-truncate` for complete content, and `--around N --context M` for a stable window.
+Use `--global` only for a flat cross-segment stream; it conflicts with `--segment` and
+requires an anchor flag.
+
+Search when you know the term or decision:
+
+```bash
+meridian session search "decision text" cNNN
+meridian session search "auth" --work WORK_ID
+meridian session search "shape" --workspace
+```
+
+Run the deterministic `Open:` command printed for a hit instead of rebuilding a
+window. For interrupted or multi-day work, list all related sessions first with
+`meridian work sessions WORK_ID --all`.
 
 ## Delegate Bulk Reading
 
-When the question spans long histories or multiple sessions, delegate mining
-and synthesis to `@session-miner`. That keeps your context focused on decisions
-instead of raw transcript paging. If you are `@session-miner`, mine directly
-rather than delegating recursively.
-
-When work spans interruptions, reopenings, or multiple days, list every session
-related to the work item before mining. Reading only the current session misses
-prior decisions.
-
-Skip mining if the handoff or current design artifacts already contain the
-needed rationale. Skim artifacts first and mine only the gaps.
-
+For long histories or multiple sessions, delegate synthesis to a session-mining agent
+if one is listed, passing a prompt file with the question and scope. If you are that
+agent, mine directly rather than delegating recursively. Read narrowly first, widen
+only when the missing context requires it.

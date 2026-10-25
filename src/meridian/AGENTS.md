@@ -74,9 +74,10 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/markdown/` | Markdown parsing utilities |
 | `lib/utils/` | Dependency-free shared utility helpers |
 
-Bundled Meridian skills under `skills/<name>/` have a `SKILL.md` whose only
-required frontmatter is `name` and a trigger-shaped `description` beginning
-with “When”; optional on-demand files stay beneath `resources/`.
+Bundled Meridian skills under `skills/<name>/` follow `skills/AGENTS.md`. Required
+frontmatter is `name` and a trigger-shaped `description` beginning with “When”;
+`spawn-only: true` gates a trigger on delegation capability, and optional on-demand
+files stay beneath `resources/`.
 
 ## Entry Points
 

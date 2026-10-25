@@ -5,12 +5,19 @@ description: When an effort needs a shared work item or owned lifecycle across s
 
 # Work Items
 
-Small direct tasks can run without a work item. Use one when the effort needs
-its own artifacts or tracking, or attach to an existing item when continuing
-it. Delegated agents inherit the attachment. Point the item at the source
-checkout where edits happen and keep its current phase visible.
+Small direct tasks can run without a work item. Start one when the effort needs shared
+artifacts or tracking:
 
-The agent that started a work item owns its state. Leave another agent's item
-alone unless the brief says otherwise. Read `resources/lifecycle.md` before
-starting, handing off, or finishing one.
+```bash
+meridian work start "NAME"
+```
 
+Attach to an existing item with `meridian work switch NAME`; delegated agents inherit
+the attachment. Point it at the source checkout with `meridian work task-dir PATH`, and
+keep its phase visible with `meridian work update NAME --status PHASE`.
+`meridian work -h` lists the read and management commands.
+
+Handing work off for review is not finishing it: set a status such as `pr-open` and
+leave the item active until the change is accepted and cleaned up. Then
+`meridian work done NAME` closes, archives, and detaches it. Do that only when you own
+the whole lifecycle; use `meridian work clear` to detach from an item you do not own.

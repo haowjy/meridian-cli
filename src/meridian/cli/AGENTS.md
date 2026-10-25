@@ -84,7 +84,8 @@ subcommands retain normal runtime-write bootstrap.
 - `argv_normalization.py` — pre-classifier canonicalization of session-initiation flags; `validate_fork_mode()`; `ForkModeResolution`
 - `startup/catalog.py` — `COMMAND_CATALOG`, `CommandDescriptor`
 - `startup/classify.py` — `classify_invocation()`
-- `skills_cmd.py` — rootless read surface for the packaged `meridian.skills` data
+- `skills_cmd.py` — rootless read surface for packaged `meridian.skills` data;
+  registers through `register_skills_commands()` like the other command modules
 
 ## Anti-Patterns
 

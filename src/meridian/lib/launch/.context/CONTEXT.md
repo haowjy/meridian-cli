@@ -315,22 +315,22 @@ bind-time env, and capability guidance — not by starting the process in the
 task directory.
 
 **Directory capability guidance.** Every primary and spawn prompt has one
-`# Meridian capabilities` section. Its late-bound `context-env` composition block
-states the resolved work, source, KB, and extra context directories before their
-environment-variable labels, plus the bound spawn/chat identities. The source line
-states that shell cwd remains `MERIDIAN_PROJECT_DIR` and gives the absolute
-`MERIDIAN_TASK_DIR`; restricted shells need the resolved path because they refuse
-variable expansion and compound `cd` calls. `bind_launch_context()` rebuilds that
-block with the final logical task cwd, work directory/id, spawn ID, and available
-chat ID, then asks the harness to re-project the composed prompt. Do not append a
-second task-directory instruction after projection; that recreates the duplicate
-guidance this block replaced.
+`# Meridian capabilities` section. Preparation leaves one typed placeholder;
+`bind_launch_context()` renders the whole block once, after the profile's spawn
+capability and the final control root, logical task cwd, work directory/id, spawn ID,
+chat ID, KB, and extra contexts are known. The source line names the actual control
+root as shell cwd and gives the absolute task directory; when they match it collapses
+to one shorter line. Restricted shells need the resolved paths because they refuse
+variable expansion and compound `cd` calls. Do not compose or append a second
+directory instruction before or after projection.
 
 Every prompt also has a short `# Meridian skills` block generated from the
 descriptions under `meridian.skills`. It is a trigger index, not loaded skill
 content: the agent reads a matching entry through the read-only `meridian skills`
 command. The delegation-only `escalation` trigger remains spawn-gated; the other
-triggers are always present. Package skills remain on the Mars/harness path below.
+triggers are always present. That gate comes from each skill's `spawn-only`
+frontmatter, not a hardcoded name set. Package skills remain on the Mars/harness path
+below.
 
 Spawn-capable prompts also receive `# Prompting subagents`: durable briefing
 judgment that must remain in the prompt even though flag mechanics live in the

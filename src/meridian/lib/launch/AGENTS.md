@@ -17,7 +17,9 @@ skills are loaded.
 Meridian-owned operational skills are a separate read-only package-data surface.
 `bundled_skills.py` reads their names and descriptions to build the always-present
 `# Meridian skills` trigger block; `meridian skills` prints their full content on
-demand. They never enter Mars's load/available lists or harness-native skill loading.
+demand. A skill's optional `spawn-only` frontmatter gates its trigger on the resolved
+profile capability. They never enter Mars's load/available lists or harness-native
+skill loading.
 
 The `bundle_adapter.py` module docstring inventories bundle fields Meridian deliberately does
 not read. `tools.rules` is the permission contract; `tools.mcp` is a flat list of permission
@@ -209,7 +211,7 @@ See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) f
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — spawn CWD three-directory model
-   (authority_root, logical_task_cwd, actual_process_cwd), bind-refreshed capability
+   (authority_root, logical_task_cwd, actual_process_cwd), the one bind-rendered capability
    guidance, reference loading and anchor semantics (`kb:` prefix, `@` unsupported),
    worktree path assignment vs managed ownership separation, workspace projection
    detail, env injection, background worker trust model, _MERIDIAN_HARNESS child env
