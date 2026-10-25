@@ -286,7 +286,9 @@ model lookups rather than scanning observations once per row.
 - `spawn_observations.py` — consumption records and birth-verified explicit-wait
   leases across primary generations. Writes go through the parent's published-spawn
   lock and never recreate a deleted spawn directory; readers union the current file
-  with the legacy `pi-bash/` one.
+  with the legacy `pi-bash/` one. Normal wait/ack writers block for that lock;
+  best-effort shown-result observations wait up to one second and preserve their
+  output when the lock or filesystem is unavailable.
 - `reaper.py` — root-only repair that claims dead launches, persists their projected
   outcome through the application service, then cleans claimed process scopes.
 

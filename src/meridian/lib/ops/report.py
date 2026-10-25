@@ -12,9 +12,10 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
+from meridian.lib.ops.spawn.owed import consume_result_if_shown
 from meridian.lib.ops.spawn.query import resolve_spawn_reference
-from meridian.lib.state import spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
+from meridian.lib.state.spawn_status import read_derived
 
 
 def _resolve_target_spawn_id(
@@ -37,7 +38,7 @@ def _resolve_spawn(
     project_root: Path,
     spawn_id: str | None,
     ctx: RuntimeContext | None = None,
-) -> str:
+) -> tuple[str, str, Path]:
     resolved_ctx = runtime_context(ctx)
     resolved_spawn = _resolve_target_spawn_id(
         project_root,
@@ -47,9 +48,10 @@ def _resolve_spawn(
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
         raise ValueError(f"Spawn '{resolved_spawn}' not found")
-    if spawn_store.get_spawn(runtime_root, resolved_spawn) is None:
+    row = read_derived(runtime_root, resolved_spawn)
+    if row is None:
         raise ValueError(f"Spawn '{resolved_spawn}' not found")
-    return resolved_spawn
+    return resolved_spawn, row.status, runtime_root
 
 
 def _report_path(project_root: Path, *, spawn_id: str) -> Path:
@@ -79,6 +81,7 @@ class ReportShowInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spawn_id: str | None = None
+    observe: bool = False
     project_root: str | None = None
 
 
@@ -86,6 +89,7 @@ class ReportShowOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spawn_id: str
+    status: str
     report_path: str
     report: str
 
@@ -133,16 +137,31 @@ def report_show_sync(
         Path(payload.project_root).expanduser().resolve() if payload.project_root else None
     )
     project_root = resolve_project_root_resolution(explicit_project_root).project_root
-    spawn_id = _resolve_spawn(project_root=project_root, spawn_id=payload.spawn_id, ctx=ctx)
-    report_path = _report_path(project_root, spawn_id=spawn_id)
+    resolved_ctx = runtime_context(ctx)
+    spawn_id, status, runtime_root = _resolve_spawn(
+        project_root=project_root,
+        spawn_id=payload.spawn_id,
+        ctx=resolved_ctx,
+    )
+    report_path = runtime_root / "spawns" / spawn_id / "report.md"
     if not report_path.is_file():
         raise ValueError(f"Report for spawn '{spawn_id}' not found")
     report = report_path.read_text(encoding="utf-8", errors="ignore").strip()
-    return ReportShowOutput(
+    result = ReportShowOutput(
         spawn_id=spawn_id,
+        status=status,
         report_path=report_path.as_posix(),
         report=report,
     )
+    consume_result_if_shown(
+        observe=payload.observe,
+        runtime_root=runtime_root,
+        caller=resolved_ctx,
+        spawn_id=spawn_id,
+        status=status,
+        body=report,
+    )
+    return result
 
 
 def report_search_sync(

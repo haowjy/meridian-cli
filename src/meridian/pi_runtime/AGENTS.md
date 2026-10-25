@@ -46,8 +46,11 @@ fatal launch error.
 - Use the shared JSON-file helpers for disk state; readers can encounter a
   missing or truncated file.
 - Python readers union Pi result consumption through
-  `lib/harness/pi_private_state.py`: current and legacy CLI observations, exact
-  delivery receipts, and explicit clears. A damaged source is skipped and diagnosed
+  `lib/harness/pi_private_state.py`: current and legacy CLI observations from wait,
+  ack, terminal reports observed by show/status/report-show, and cancelled results
+  recorded under their caller, exact delivery receipts, and explicit clears. Pi's
+  human-facing show/wait/cancel commands pass `--no-observe` so model delivery stays
+  owed. A damaged source is skipped and diagnosed
   independently, never treated as a reason for no-arg wait to fail.
 - Scope children by canonical `parent_id`; transfer launcher work through the
   row's `originating_bash_id`. Logs and origin sidecars are not authority.

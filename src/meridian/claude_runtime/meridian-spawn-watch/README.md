@@ -38,8 +38,13 @@ retried at the next idle. Its stderr is diagnostics.
 Delivery text is intentionally header-only: status/outcome, worker, failure and
 distinct task directory when present, plus the exact `spawn show` lookup. It never
 contains or reads the report body. A lead that wants the body runs the lookup.
-Report reads do not consume the notification, so a result read before delivery may
-still produce one later header-only ping.
+A terminal report body shown by `spawn show` or `spawn report show` consumes the
+notification, so the fallback announces only results the lead has not already seen.
+`spawn status --full` follows the same rule. Summary-only output, report search, and
+session logs do not consume it. `--no-observe` keeps any show or cancel result owed;
+piped or redirected output otherwise still counts as shown.
+Commands directed through `-C` never consume results in either project. In particular,
+`spawn wait -C` is a pure read and `spawn ack -C` is refused.
 
 A normal no-argument `meridian spawn wait` uses the same owed-child definition. It
 leases its targets while running and consumes terminal results on return, so the
@@ -49,14 +54,15 @@ resolution ran and renders them through the same header-only delivery formatter.
 Running targets are uncapped and keep their full report output after wait blocks for
 them. Already-finished rows do not affect waited-run counts, fail-fast, or exit status;
 JSON returns them separately in `owed_spawns`. The remaining finished children stay
-owed for the next wait or collection. Pi delivery receipts and cleared IDs count as
-consumed for both wait and collection, so those results are not replayed here.
+owed for the next wait or collection. Pi delivery receipts, cleared IDs, terminal
+reports observed by CLI operations, and caller-issued cancels that report `cancelled`
+count as consumed for both wait and collection, so those results are not replayed here.
 `spawn wait --no-observe` deliberately does neither and may return the same finished
 child again until a normal wait or `spawn ack` consumes it; its rendering is unchanged.
 
 ## Delivery, step by step
 
-Consumption is recorded only once the lead's conversation has the text.
+Delivery consumption is recorded only once the lead's conversation has the text.
 
 1. The collector returns a `delivery`. The mod **claims** its ids in memory;
    any collector started before the ack gets them as `--exclude`.
@@ -72,7 +78,7 @@ Consumption is recorded only once the lead's conversation has the text.
 | Situation | Outcome |
 |---|---|
 | Esc (`aborted`), an API or context error, a refusal | No collector after that turn. Results stay owed; the next normal idle delivers them. |
-| The user sends something before delivery | The `turn.start` kills the collector or ends the hold and releases the claim. Whatever the lead did not consume is delivered at the next idle. |
+| The user sends something before delivery | The `turn.start` kills the collector or ends the hold and releases the claim. Whatever the lead did not consume through wait, cancel, or a full report read is delivered at the next idle. |
 | Prompt queued, then the queue is cleared | No turn carries the nonce, so nothing is acked. The next idle (2 s after a turn ends with no prompt behind it) releases the stale claim and the collector redelivers. |
 | Ack fails (lock, disk, retired row) | Logged. The ids **stay excluded** until the mod reloads: releasing them would redeliver the same results at every idle. After a restart they are delivered once more. |
 | Mod reload | The engine kills a running collector. The new copy gets `session.start`, starts with clean state, and begins an idle run 2 s later. |
@@ -84,8 +90,9 @@ deletion (a kill included) arrive as `prompt.edit`; history recall, clears and
 a plugin's fill arrive as `prompt.change`. A draft that sits in the box holds
 the delivery for as long as it is there.
 
-`/clear` delivers into the cleared context. Children the lead cancelled itself
-are delivered as cancelled.
+`/clear` delivers into the cleared context. A child the lead cancels itself is
+consumed only when the cancel reports `cancelled`; a `finalizing` cancel is delivered
+later unless the lead sees its terminal report first.
 
 ## `/meridian-spawn-watch`
 

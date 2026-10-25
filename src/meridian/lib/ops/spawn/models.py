@@ -787,6 +787,7 @@ class SpawnShowInput(BaseModel):
 
     spawn_id: str
     include_report_body: bool = True
+    observe: bool = False
     project_root: str | None = None
 
 
@@ -802,6 +803,7 @@ class SpawnStatusInput(BaseModel):
 
     spawn_id: str
     include_report_body: bool = False
+    observe: bool = False
     project_root: str | None = None
 
 
@@ -811,6 +813,7 @@ class SpawnCancelInput(BaseModel):
     spawn_id: str
     project_root: str | None = None
     force: bool = False
+    observe: bool = False
 
 
 class SpawnCancelAllInput(BaseModel):
@@ -820,6 +823,7 @@ class SpawnCancelAllInput(BaseModel):
     project_root: str | None = None
     include_primaries: bool = False
     include_others: bool = False
+    observe: bool = False
 
 
 class SpawnCancelAllOutput(BaseModel):

@@ -110,7 +110,12 @@ from .models import (
     SpawnWaitMultiOutput,
     format_spawn_identity_table,
 )
-from .owed import resolve_owed_finished_rows, select_delivery_rows
+from .owed import (
+    consume_result_if_shown,
+    record_result_shown_to_caller,
+    resolve_owed_finished_rows,
+    select_delivery_rows,
+)
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import (
     SpawnCreateArtifacts,
@@ -967,7 +972,8 @@ def spawn_show_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnDetailOutput:
-    _ = (ctx, sink)
+    _ = sink
+    resolved_context = runtime_context(ctx)
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
@@ -1009,7 +1015,7 @@ def spawn_show_sync(
         runtime_root=runtime_root,
     )
     surfaced_activity = _surface_primary_activity(row.status, activity)
-    return detail.model_copy(
+    result = detail.model_copy(
         update={
             "denied_requests": denied_requests(runtime_root, spawn_id),
             "kind": kind,
@@ -1021,6 +1027,15 @@ def spawn_show_sync(
             "harness_session_id": harness_session_id or detail.harness_session_id,
         }
     )
+    consume_result_if_shown(
+        observe=payload.observe,
+        runtime_root=runtime_root,
+        caller=resolved_context,
+        spawn_id=result.spawn_id,
+        status=result.status,
+        body=result.report_body,
+    )
+    return result
 
 
 def spawn_status_sync(
@@ -1034,6 +1049,7 @@ def spawn_status_sync(
         SpawnShowInput(
             spawn_id=payload.spawn_id,
             include_report_body=payload.include_report_body,
+            observe=payload.observe,
             project_root=payload.project_root,
         ),
         ctx=ctx,
@@ -1380,11 +1396,13 @@ def spawn_rearm_sync(
 
 async def _spawn_cancel_impl(
     payload: SpawnCancelInput,
+    ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     _ = sink
+    resolved_context = runtime_context(ctx)
     if prepared is not None:
         project_root = _project_root_from_prepared(prepared)
         runtime_root = _runtime_root_from_prepared_for_read(
@@ -1411,7 +1429,7 @@ async def _spawn_cancel_impl(
     if record is not None and record.record_mode == "historical":
         raise ValueError("Historical records cannot be cancelled")
     register_debug_trace_observer()
-    cancel_owner = os.environ.get("MERIDIAN_SPAWN_ID") or "cli"
+    cancel_owner = str(resolved_context.spawn_id or "cli")
     if prepared is None:
         setup_telemetry(runtime_root=runtime_root, logical_owner=cancel_owner)
     register_spawn_telemetry_observer()
@@ -1425,6 +1443,12 @@ async def _spawn_cancel_impl(
             message=f"Cancel failed: {exc}",
             error=str(exc),
             exit_code=1,
+        )
+    if payload.observe and outcome.status == "cancelled":
+        record_result_shown_to_caller(
+            runtime_root=runtime_root,
+            caller=resolved_context,
+            spawn_id=outcome.spawn_id,
         )
     return _spawn_cancel_output_from_outcome(outcome)
 
@@ -1503,7 +1527,9 @@ def spawn_cancel_all_sync(
                     spawn_id=row.id,
                     project_root=project_root.as_posix(),
                     force=payload.include_primaries,
+                    observe=payload.observe,
                 ),
+                ctx=resolved_context,
                 sink=sink,
                 prepared=prepared,
             )
@@ -1563,8 +1589,7 @@ def spawn_cancel_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
-    _ = ctx
-    return asyncio.run(_spawn_cancel_impl(payload, sink=sink, prepared=prepared))
+    return asyncio.run(_spawn_cancel_impl(payload, ctx=ctx, sink=sink, prepared=prepared))
 
 
 async def spawn_cancel(
@@ -1574,8 +1599,7 @@ async def spawn_cancel(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
-    _ = ctx
-    return await _spawn_cancel_impl(payload, sink=sink, prepared=prepared)
+    return await _spawn_cancel_impl(payload, ctx=ctx, sink=sink, prepared=prepared)
 
 
 def _spawn_is_terminal(status: str) -> bool:

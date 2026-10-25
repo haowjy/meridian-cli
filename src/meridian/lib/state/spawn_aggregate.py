@@ -37,6 +37,7 @@ def published_artifact_lock(
     spawn_id: SpawnId,
     *,
     can_mutate: Callable[[SpawnRecord], bool] | None = None,
+    timeout: float | None = None,
 ) -> Generator[None, None, None]:
     """Lock a spawn-owned artifact after verifying its published row."""
 
@@ -46,8 +47,12 @@ def published_artifact_lock(
         raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
 
     with (
-        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id), reentrant=False),
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared", timeout=timeout),
+        lock_file(
+            spawn_lock_path(paths.spawns_dir, resolved_spawn_id),
+            reentrant=False,
+            timeout=timeout,
+        ),
     ):
         current = read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
         if (

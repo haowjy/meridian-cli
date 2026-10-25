@@ -79,12 +79,14 @@ def record(
     waiting_remove: Iterable[str] = (),
     observed_add: Iterable[str] = (),
     lease_seconds: float = 30.0,
+    lock_timeout: float | None = None,
 ) -> bool:
     """Record results consumed by a parent or leased by its explicit wait.
 
     Returns ``False`` when the parent's published row is gone or unreadable, so
     nothing was written. ``spawn ack`` treats that as an error; ``spawn wait``
     proceeds without a record because no reader selects that parent's children.
+    A finite ``lock_timeout`` bounds best-effort shown-result observation.
     """
 
     waiting_add_ids = tuple(waiting_add)
@@ -145,7 +147,11 @@ def record(
             path,
             SpawnObservations,
             update,
-            lock=published_artifact_lock(runtime_root, SpawnId(parent_spawn_id)),
+            lock=published_artifact_lock(
+                runtime_root,
+                SpawnId(parent_spawn_id),
+                timeout=lock_timeout,
+            ),
             read_current=lambda: _read(path, parent_spawn_id),
             indent=2,
         )
@@ -160,7 +166,7 @@ def record(
             legacy_path,
             SpawnObservations,
             update,
-            lock=lock_file(legacy_dir / "observed-spawns.lock"),
+            lock=lock_file(legacy_dir / "observed-spawns.lock", timeout=lock_timeout),
             read_current=lambda: _read(legacy_path, parent_spawn_id),
             indent=2,
         )

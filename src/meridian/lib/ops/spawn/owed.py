@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import time
 from collections.abc import Collection, Sequence
@@ -25,7 +26,8 @@ from meridian.lib.state.history_index import HistoryIndexBusy
 from meridian.lib.state.session_identity import spawn_owner_chat_id
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
-from meridian.lib.state.spawn_observations import leased_ids, record
+from meridian.lib.state.spawn_observations import leased_ids
+from meridian.lib.state.spawn_observations import record as record_spawn_observation
 from meridian.lib.state.spawn_status import read_derived
 
 from .models import render_delivery
@@ -33,6 +35,7 @@ from .query import detail_from_row
 
 _COLLECT_POLL_INTERVAL_SECS = 1.0
 _DELIVERY_MAX_MEMBERS = 32
+_OBSERVATION_LOCK_TIMEOUT_SECS = 1.0
 logger = structlog.get_logger(__name__)
 
 
@@ -332,6 +335,64 @@ def collect_owed_sync(
     return _EMPTY
 
 
+def record_result_shown_to_caller(
+    *,
+    runtime_root: Path | None,
+    caller: RuntimeContext,
+    spawn_id: str,
+) -> None:
+    """Best-effort consumption for a result shown to a calling spawn."""
+
+    if runtime_root is None:
+        return
+    try:
+        recorded = record_spawn_observation(
+            runtime_root=runtime_root,
+            parent_spawn_id=str(caller.spawn_id) if caller.spawn_id else None,
+            observed_add=(spawn_id,),
+            lock_timeout=_OBSERVATION_LOCK_TIMEOUT_SECS,
+        )
+    except OSError as exc:
+        log = (
+            logger.debug
+            if isinstance(exc, PermissionError) or exc.errno == errno.EROFS
+            else logger.warning
+        )
+        log(
+            "spawn_result_consumption_failed",
+            spawn_id=spawn_id,
+            caller_spawn_id=str(caller.spawn_id),
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        return
+    if not recorded:
+        logger.warning(
+            "spawn_result_consumption_not_recorded",
+            spawn_id=spawn_id,
+            caller_spawn_id=str(caller.spawn_id),
+        )
+
+
+def consume_result_if_shown(
+    *,
+    observe: bool,
+    runtime_root: Path | None,
+    caller: RuntimeContext,
+    spawn_id: str,
+    status: str,
+    body: str | None,
+) -> None:
+    """Consume a non-empty terminal result returned to an observing caller."""
+
+    if observe and is_terminal_spawn_status(status) and (body or "").strip():
+        record_result_shown_to_caller(
+            runtime_root=runtime_root,
+            caller=caller,
+            spawn_id=spawn_id,
+        )
+
+
 def ack_owed_sync(
     payload: SpawnAckInput,
     ctx: RuntimeContext | None = None,
@@ -352,11 +413,12 @@ def ack_owed_sync(
             spawn_id.strip() for spawn_id in payload.spawn_ids if spawn_id.strip()
         )
     )
-    if not record(
+    recorded = record_spawn_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_spawn_id,
         observed_add=acked,
-    ):
+    )
+    if not recorded:
         raise ValueError(f"Spawn acknowledgement: spawn '{parent_spawn_id}' is not published")
     return SpawnAckOutput(acked=acked)
 
@@ -368,9 +430,11 @@ __all__ = [
     "SpawnCollectOutput",
     "ack_owed_sync",
     "collect_owed_sync",
+    "consume_result_if_shown",
     "discover_owed_scope",
     "owed_consumed_ids",
     "read_owed_snapshot",
+    "record_result_shown_to_caller",
     "resolve_owed_finished_rows",
     "select_delivery_rows",
 ]

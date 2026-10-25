@@ -290,6 +290,7 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
             prompt="running",
             launch_lock=launch,
         )
+        cancel_context = RuntimeContext(spawn_id="p-owner", chat_id="c11")
 
         def _fake_spawn_cancel_sync(
             _payload: SpawnCancelInput,
@@ -298,7 +299,8 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
             sink=None,
             prepared=None,
         ) -> SpawnActionOutput:
-            _ = (ctx, sink, prepared)
+            _ = (sink, prepared)
+            assert ctx == cancel_context
             return SpawnActionOutput(
                 command="spawn.cancel",
                 status="finalizing",
@@ -310,6 +312,7 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
 
         output = spawn_api.spawn_cancel_all_sync(
             SpawnCancelAllInput(project_root=project_root.as_posix(), include_others=True),
+            ctx=cancel_context,
             prepared=prepared,
         )
 
