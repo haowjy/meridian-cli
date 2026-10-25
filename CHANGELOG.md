@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.5] - 2026-10-25
+
 ### Changed
 - Lead-only bundled skill triggers and the notify capability now appear only for
   profiles declaring `mode: primary`; subagent profiles retain session-mining guidance,
