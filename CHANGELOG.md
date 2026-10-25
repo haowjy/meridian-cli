@@ -13,7 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Bundled operational skills now use stable `name__meridian` names, following
   Mars's source-suffix collision spelling. Agent-mode help is shorter: repeated
-  spawn rules moved out of default help, advanced session maintenance commands are
+  spawn rules trimmed from default help, advanced session maintenance commands are
   hidden until `--advanced`, and unsafe shell-substitution advice was removed.
 - Agent system prompts map Meridian capabilities, bound directories, and run identity
   in one bind-rendered section; spawn-only commands stay off leaf profiles and the
