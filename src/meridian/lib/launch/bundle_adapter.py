@@ -14,12 +14,17 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
+from meridian.lib.bundled_skills import (
+    SYNC_PENDING_MESSAGE,
+    provide_bundled_skills,
+)
 from meridian.lib.catalog.mars_roots import (
     MarsRoots,
     ensure_resolved_mars_root,
@@ -666,6 +671,9 @@ def request_and_resolve(
     roots = resolve_mars_roots(request.project_root)
     command = _build_bundle_command(request, roots=roots)
     ensure_resolved_mars_root(roots, executable=command[0])
+    bundled_source = provide_bundled_skills(roots.primary, executable=command[0])
+    if bundled_source.sync_pending:
+        print(SYNC_PENDING_MESSAGE, file=sys.stderr)
     try:
         result = subprocess.run(
             command,

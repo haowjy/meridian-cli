@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TextIO
 
 from meridian import __version__
+from meridian.lib.bundled_skills import provide_bundled_skills
 from meridian.lib.catalog.mars_roots import (
     ensure_user_mars_root,
     mars_fallback_args,
@@ -38,6 +39,9 @@ _MUTATING_COMMANDS = frozenset(
     }
 )
 _MUTATING_COMMAND_PAIRS = frozenset({("models", "alias")})
+_PROVIDE_COMMANDS = frozenset(
+    {"sync", "upgrade", "add", "remove", "repair", "validate", "doctor", "build"}
+)
 _USER_MUTATION_ERROR = (
     "no project Mars root here; run 'meridian init --link', or use "
     "'meridian mars --user …'"
@@ -49,6 +53,7 @@ class MarsPassthroughRequest:
     command: tuple[str, ...]
     mars_args: tuple[str, ...]
     wants_json: bool
+    provide_root: Path | None
     user_scope: bool = False
 
 
@@ -163,6 +168,7 @@ def parse_mars_passthrough(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
         wants_json=wants_json,
+        provide_root=selected_root if subcommand in _PROVIDE_COMMANDS else None,
         user_scope=selected_root == user_mars_root(),
     )
 
@@ -182,6 +188,12 @@ def execute_mars_passthrough(
         except RuntimeError as exc:
             print(f"error: {exc}", file=stderr_stream)
             raise SystemExit(1) from None
+
+    if request.provide_root is not None:
+        provide_bundled_skills(
+            request.provide_root,
+            executable=request.command[0],
+        )
 
     run_kwargs: dict[str, object] = {
         "env": {

@@ -244,9 +244,11 @@ literal root key and is flattened like any other key; Meridian does not unwrap i
 
 ## Skills and Skill Variants
 
-Meridian's own operating guidance is separate from profile/package skills. Every
-launch receives a compact `# Meridian skills` trigger list generated from the
-binary's bundled descriptions. The agent reads one only when needed with
+Meridian's own operating guidance ships with the binary and is provided into the
+resolved Mars root before launch. Every launch receives a compact `# Meridian
+skills` trigger list generated from the binary's bundled descriptions, except for
+a skill the profile already loaded through Mars. The agent reads a trigger only
+when needed with
 `meridian skills NAME [RESOURCE-PATH]`, which prints a skill under the same header a
 loaded skill gets, naming its installed folder; `meridian skills list` shows the same
 catalog, with structured entries under `--json`. These binary-owned skills may name
@@ -262,8 +264,11 @@ shows `meridian notify` only to primary-mode profiles. Bundled skills are named
 without a prompt package. The
 `name__meridian` suffix follows Mars's `name__source` collision spelling and stays
 stable across profiles instead of appearing only when a package skill collides.
-Bundled skills version with the CLI and do not belong in `skills.load`,
-`skills.available`, or `--skills`.
+Bundled skills version with the CLI. A profile that needs one on every turn may put
+its suffixed name in `skills.load` (or receive it through `--skills`); its full body
+then follows the same loaded-skill path described below and its trigger is omitted.
+They do not belong in `skills.available`, because Mars deliberately does not project
+provided skills into harness-native skill directories.
 
 Package skills continue to use the harness-native loading path described below.
 

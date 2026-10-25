@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian import __version__
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -60,7 +61,7 @@ def test_exclusions_are_transported_as_repeated_harness_flags(
     fake_mars = tmp_path / "mars"
     argv_log = tmp_path / "argv.log"
     fake_mars.write_text(
-        '#!/bin/sh\nprintf "%s\\n" "$@" > "$ARGV_LOG"\n'
+        '#!/bin/sh\nprintf "%s\\n" "$@" >> "$ARGV_LOG"\n'
         'echo "fixture stops after recording arguments" >&2\nexit 2\n'
     )
     fake_mars.chmod(0o755)
@@ -75,7 +76,15 @@ def test_exclusions_are_transported_as_repeated_harness_flags(
     )
     with pytest.raises(RuntimeError, match="fixture stops after recording arguments"):
         bundle_adapter.request_and_resolve(request, harness_registry=get_default_harness_registry())
-    assert argv_log.read_text().splitlines() == [
+    recorded = argv_log.read_text().splitlines()
+    provide_index = recorded.index("provide")
+    assert recorded[provide_index + 1].startswith(f"meridian@{__version__}=")
+    assert recorded[provide_index + 2 : provide_index + 5] == [
+        "--root",
+        str(tmp_path),
+        "--json",
+    ]
+    assert recorded[-13:] == [
         "build",
         "launch-bundle",
         "--json",
