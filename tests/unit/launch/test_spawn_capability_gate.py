@@ -59,6 +59,7 @@ def _profile(
 def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     blocks = build_guidance_blocks(
         profile=_profile(),
+        loaded_skills=frozenset(("notify__meridian",)),
         spawn_usage_contract=build_spawn_usage_contract(CLAUDE_SPAWN_USAGE_VARIANTS),
         bundle_inventory_prompt=INVENTORY,
         harness_guidance="Host network hint",
@@ -105,8 +106,10 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     meridian_skills = next(block for block in blocks if block.name == "meridian-skills")
     assert "Read `meridian skills escalation__meridian`" in meridian_skills.content
     assert "Read `meridian skills handoff__meridian`" in meridian_skills.content
+    assert "Read `meridian skills notify__meridian`" not in meridian_skills.content
     reviewer_blocks = build_guidance_blocks(
         profile=_profile(mode="subagent"),
+        loaded_skills=frozenset(),
         spawn_usage_contract="spawn contract",
         bundle_inventory_prompt=INVENTORY,
     )
@@ -129,6 +132,7 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "meridian notify" not in reviewer_capabilities
     leaf_blocks = build_guidance_blocks(
         profile=None,
+        loaded_skills=frozenset(),
         spawn_usage_contract="",
         bundle_inventory_prompt=None,
     )

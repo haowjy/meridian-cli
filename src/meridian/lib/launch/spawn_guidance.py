@@ -64,9 +64,15 @@ Agent defaults fit most work. Say why before overriding the model: do so only
 when the caller asks or the work needs more depth or a capability the defaults
 lack. To get more depth, change the model, not the agent."""
 
-def _build_meridian_skills_prompt(*, profile_mode: AgentMode) -> str:
+def _build_meridian_skills_prompt(
+    *,
+    profile_mode: AgentMode,
+    loaded: frozenset[str],
+) -> str:
     lines = ["# Meridian skills", ""]
     for skill in list_bundled_skills():
+        if skill.name in loaded:
+            continue
         if skill.mode is not None and skill.mode != profile_mode:
             continue
         description = skill.description
@@ -224,6 +230,7 @@ def has_spawn_capability(profile: AgentProfile | None) -> bool:
 def build_guidance_blocks(
     *,
     profile: AgentProfile | None,
+    loaded_skills: frozenset[str],
     spawn_usage_contract: str,
     bundle_inventory_prompt: str | None,
     harness_guidance: str | None = None,
@@ -248,7 +255,10 @@ def build_guidance_blocks(
             "meridian-skills",
             GuidancePhase.GUIDANCE,
             4,
-            _build_meridian_skills_prompt(profile_mode=profile_mode),
+            _build_meridian_skills_prompt(
+                profile_mode=profile_mode,
+                loaded=loaded_skills,
+            ),
         )
     )
     blocks.append(

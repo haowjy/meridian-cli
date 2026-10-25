@@ -57,11 +57,13 @@ def list_bundled_skills() -> tuple[BundledSkill, ...]:
 
     skills: list[BundledSkill] = []
     for skill_dir in sorted(_skills_root().iterdir(), key=lambda entry: entry.name):
-        if not skill_dir.is_dir() or skill_dir.name.startswith("_"):
+        if not skill_dir.is_dir() or skill_dir.name.startswith(("_", ".")):
             continue
         skill_file = skill_dir.joinpath("SKILL.md")
         if not skill_file.is_file():
-            continue
+            raise RuntimeError(
+                f"bundled skill {skill_dir.name!r} is missing SKILL.md"
+            )
         skills.append(
             _parse_skill_metadata(
                 skill_file.read_text(encoding="utf-8"),
