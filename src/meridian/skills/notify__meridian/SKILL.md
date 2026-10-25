@@ -1,6 +1,7 @@
 ---
 name: notify__meridian
 description: When a human decision, blocker, costly uncertainty, or finished task the human is waiting on needs attention.
+mode: primary
 ---
 
 # Notify

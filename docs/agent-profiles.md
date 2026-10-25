@@ -246,10 +246,14 @@ launch receives a compact `# Meridian skills` trigger list generated from the
 binary's bundled descriptions. The agent reads one only when needed with
 `meridian skills NAME [RESOURCE-PATH]`; `meridian skills list` shows the same
 catalog, with structured entries under `--json`. These binary-owned skills may name
-the concrete Meridian commands and flags they explain. A skill whose frontmatter has
-`spawn-only: true` appears only for a profile with delegation capability. Bundled
-skills are named `escalation__meridian`, `handoff__meridian`,
-`notify__meridian`, `sessions__meridian`, and `work__meridian`. The
+the concrete Meridian commands and flags they explain. Bundled skill frontmatter may
+set `mode: primary`; its trigger then appears only when the agent profile declares
+`mode: primary`, even when that profile is launched as a spawn. Handoff, notification,
+work-item, and privilege-escalation guidance use this lead-only gate, while session
+mining remains visible to every profile. The capabilities block likewise shows
+`meridian notify` only to primary-mode profiles. Bundled skills are named
+`escalation__meridian`, `handoff__meridian`, `notify__meridian`,
+`sessions__meridian`, and `work__meridian`. The
 `name__meridian` suffix follows Mars's `name__source` collision spelling and stays
 stable across profiles instead of appearing only when a package skill collides.
 Bundled skills version with the CLI and do not belong in `skills.load`,

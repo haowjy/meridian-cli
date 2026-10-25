@@ -11,6 +11,8 @@ from meridian.lib.catalog.mars_roots import (
 )
 from meridian.lib.config.project_root import resolve_project_root_resolution
 
+AgentMode = Literal["primary", "subagent"]
+
 
 class MeridianCapabilities(BaseModel):
     """Typed meridian-specific capability overrides from profile frontmatter."""
@@ -27,7 +29,7 @@ class AgentProfile(BaseModel):
 
     name: str
     description: str
-    mode: Literal["primary", "subagent"] = "subagent"
+    mode: AgentMode = "subagent"
     subagents: tuple[str, ...] = ()
     meridian_capabilities: MeridianCapabilities | None = None
     model_invocable: bool = True
@@ -98,7 +100,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     return AgentProfile(
         name=profile_name,
         description=str(description_value).strip() if description_value is not None else "",
-        mode=cast("Literal['primary', 'subagent']", mode),
+        mode=cast("AgentMode", mode),
         subagents=_normalize_string_list(frontmatter.get("subagents")),
         meridian_capabilities=_parse_meridian_capabilities(
             frontmatter.get("meridian-capabilities")

@@ -9,6 +9,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - CLI help now omits generated no-op negations, empty-list forms, and redundant
   positional labels while continuing to accept the existing spellings.
+- Lead-only bundled skill triggers and the notify capability now appear only for
+  profiles declaring `mode: primary`; subagent profiles retain session-mining guidance.
 
 ## [0.14.3] - 2026-10-25
 

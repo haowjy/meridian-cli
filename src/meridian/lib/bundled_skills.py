@@ -8,6 +8,8 @@ from importlib.resources import files
 from importlib.resources.abc import Traversable
 from pathlib import PurePosixPath
 
+from meridian.lib.catalog.agent import AgentMode
+
 
 @dataclass(frozen=True)
 class BundledSkill:
@@ -15,7 +17,7 @@ class BundledSkill:
 
     name: str
     description: str
-    spawn_only: bool = False
+    mode: AgentMode | None = None
 
 
 def _parse_skill_metadata(text: str, *, folder_name: str) -> BundledSkill:
@@ -25,16 +27,23 @@ def _parse_skill_metadata(text: str, *, folder_name: str) -> BundledSkill:
     metadata = dict(post.metadata)
     name = str(metadata.get("name", "")).strip()
     description = str(metadata.get("description", "")).strip()
-    spawn_only = metadata.get("spawn-only", False)
+    raw_mode = metadata.get("mode")
     if not name or not description:
         raise RuntimeError(f"bundled skill {folder_name!r} needs name and description")
     if name != folder_name:
         raise RuntimeError(
             f"bundled skill folder {folder_name!r} does not match frontmatter name {name!r}"
         )
-    if not isinstance(spawn_only, bool):
-        raise RuntimeError(f"bundled skill {folder_name!r} spawn-only must be a boolean")
-    return BundledSkill(name=name, description=description, spawn_only=spawn_only)
+    mode: AgentMode | None = None
+    if raw_mode == "primary":
+        mode = "primary"
+    elif raw_mode == "subagent":
+        mode = "subagent"
+    elif raw_mode is not None:
+        raise RuntimeError(
+            f"bundled skill {folder_name!r} mode must be 'primary' or 'subagent'"
+        )
+    return BundledSkill(name=name, description=description, mode=mode)
 
 
 def _skills_root() -> Traversable:

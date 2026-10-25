@@ -76,8 +76,8 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 
 Bundled Meridian skills under `skills/<name>__meridian/` follow `skills/AGENTS.md`.
 Required frontmatter is the suffixed `name` and a trigger-shaped `description`
-beginning with “When”; `spawn-only: true` gates a trigger on delegation capability,
-and optional on-demand files stay beneath `resources/`.
+beginning with “When”; optional `mode: primary` gates a trigger on the profile's
+declared mode, and optional on-demand files stay beneath `resources/`.
 
 ## Entry Points
 
