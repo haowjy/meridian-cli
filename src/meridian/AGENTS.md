@@ -69,9 +69,14 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/telemetry/` | Process telemetry routing, sinks, lifecycle correlation, and retention |
 | `lib/mermaid/` | Mermaid syntax validation and style checks |
 | `lib/kg/` | KB document-graph analysis (links, conflicts, flags) |
+| `skills/` | Read-only Meridian-owned guidance bundled in the wheel and loaded on demand with `meridian skills` |
 | `lib/bootstrap/` | Startup preparation stages |
 | `lib/markdown/` | Markdown parsing utilities |
 | `lib/utils/` | Dependency-free shared utility helpers |
+
+Bundled Meridian skills under `skills/<name>/` have a `SKILL.md` whose only
+required frontmatter is `name` and a trigger-shaped `description` beginning
+with “When”; optional on-demand files stay beneath `resources/`.
 
 ## Entry Points
 

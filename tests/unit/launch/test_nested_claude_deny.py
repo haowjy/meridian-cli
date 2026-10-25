@@ -198,10 +198,11 @@ def test_primary_surface_denies_agent_but_not_task(
         "meridian kg graph",
         "meridian mars models list",
         "meridian mars models prompting",
-        "meridian work path",
+        "meridian skills",
     ):
         assert f"Bash({command})" in allowed
         assert f"Bash({command} *)" in allowed
+    assert "Bash(meridian work path *)" not in allowed
     assert "Bash(meridian work task-dir *)" not in allowed
     assert _TASK_DENIES.isdisjoint(disallowed)
 

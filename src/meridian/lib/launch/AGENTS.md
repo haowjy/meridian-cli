@@ -7,12 +7,17 @@ composition seam that wires them together.
 
 ## Skill Loading
 
-Skill content comes from the Mars launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
+Package skill content comes from the Mars launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
 not from reading `.mars/skills/` on disk. `_build_resolved_skills_from_bundle()` in `policies.py`
 constructs `ResolvedSkills` from bundle data and preserves `source_path` for snapshots and
 workspace projection. It reconstructs a primary-root path only for older producers that omit
 provenance. Snapshot replay uses only its persisted `loaded_skills`; an empty field means no
 skills are loaded.
+
+Meridian-owned operational skills are a separate read-only package-data surface.
+`bundled_skills.py` reads their names and descriptions to build the always-present
+`# Meridian skills` trigger block; `meridian skills` prints their full content on
+demand. They never enter Mars's load/available lists or harness-native skill loading.
 
 The `bundle_adapter.py` module docstring inventories bundle fields Meridian deliberately does
 not read. `tools.rules` is the permission contract; `tools.mcp` is a flat list of permission

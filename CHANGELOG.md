@@ -4,11 +4,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Meridian now ships its own on-demand operational guidance. `meridian skills list`
+  shows the triggers, and `meridian skills NAME [RESOURCE-PATH]` reads a bundled
+  skill without depending on a prompt package or harness-native skill loader.
+
 ### Changed
 - Agent system prompts map Meridian capabilities to their commands and help in one
   compact section; spawn-only commands stay off leaf profiles, and source/work
   directory guidance is no longer repeated. Restricted-shell profiles can run the
   named read-only inspection commands and their help without gaining write access.
+  Prompts now list bundled Meridian skill triggers so prompt packages can stop
+  carrying that judgment on every turn.
+- `meridian work path` is no longer platform-granted as a read command because it
+  creates missing parent directories; profiles must authorize that write explicitly.
 
 ### Fixed
 - Commands that show a terminal child result now consume its completion notice: a

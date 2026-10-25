@@ -658,6 +658,11 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             register_ext_commands(app)
 
+        def _register_skills() -> None:
+            import meridian.cli.skills_cmd as _skills_cmd
+
+            _ = _skills_cmd
+
         def _register_telemetry() -> None:
             from meridian.cli.telemetry_cmd import register_telemetry_commands
 
@@ -738,6 +743,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "task-dir": _register_task_dir,
             "models": _register_models,
             "ext": _register_ext,
+            "skills": _register_skills,
             "telemetry": _register_telemetry,
             "workspace": _register_workspace,
             "doctor": _register_doctor,

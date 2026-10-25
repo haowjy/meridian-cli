@@ -1,5 +1,21 @@
 # Upgrade notes
 
+## Meridian-owned operational skills
+
+Guidance whose subject is Meridian itself now ships with the CLI instead of a
+prompt package. Every agent sees short triggers for `handoff`, `notify`,
+`sessions`, and `work`; spawn-capable agents also see `escalation`. The agent
+reads applicable guidance on demand with `meridian skills NAME`.
+`meridian skills NAME RESOURCE-PATH` reads a referenced resource, and
+`meridian skills list` prints the catalog.
+
+Remove package copies of these Meridian-specific skills from agent profiles as
+their package release makes them obsolete. Package skills remain unchanged:
+`load`, `available`, and `--skills` still use the harness's native skill
+mechanism. The injected capability rows continue to name the actual Meridian
+commands; the bundled skills carry the situational judgment rather than
+duplicating it in every system prompt.
+
 ## Shell network policy defaults
 
 Agent profiles can set `network: allow`, `network: deny`, or `network: allowlist` to control

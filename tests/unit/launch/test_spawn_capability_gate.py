@@ -65,6 +65,7 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
 
     assert [block.name for block in blocks] == [
         "inventory",
+        "meridian-skills",
         "capabilities",
         "spawn-prompting",
         "spawn-contract",
@@ -90,6 +91,18 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "Every command has `-h`" in capabilities.content
     assert "`meridian session search`" in capabilities.content
     assert "`meridian kg graph`" in capabilities.content
+    meridian_skills = next(block for block in blocks if block.name == "meridian-skills")
+    assert "Read `meridian skills escalation`" in meridian_skills.content
+    assert "Read `meridian skills handoff`" in meridian_skills.content
+    leaf_blocks = build_guidance_blocks(
+        profile=None,
+        spawn_usage_contract="",
+        bundle_inventory_prompt=None,
+        context_prompt="",
+    )
+    leaf_skills = next(block for block in leaf_blocks if block.name == "meridian-skills")
+    assert "meridian skills sessions" in leaf_skills.content
+    assert "meridian skills escalation" not in leaf_skills.content
     prompting = next(block for block in blocks if block.name == "spawn-prompting")
     assert "Every spawn starts with fresh context" in prompting.content
     assert "name your suspicions as risks to check" in prompting.content

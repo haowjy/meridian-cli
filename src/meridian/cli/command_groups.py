@@ -88,6 +88,16 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         summary='Package management and agent materialization.',
         long_help='Forward all arguments to the bundled mars CLI.',
     ),
+    "skills": GroupHelp(
+        summary="Read Meridian's bundled operational skills.",
+        long_help=(
+            "Read the on-demand guidance shipped with Meridian itself.\n\n"
+            "Use `meridian skills list` to see names and triggers. Use "
+            "`meridian skills NAME [RESOURCE-PATH]` to print a SKILL.md or one of its "
+            "resources. Package-provided skills still load through the harness's native "
+            "skill mechanism."
+        ),
+    ),
     "ext": GroupHelp(
         summary='Extension command discovery and invocation.',
         long_help='Extension command discovery and invocation.',
@@ -241,6 +251,16 @@ COMMAND_GROUP_SPECS: dict[str, CommandGroupSpec] = {
         agent_root_description='List the models, agents, and skills available, so you pick real ones\nwhen you delegate. (`meridian mars models list`)',
         agent_root=True,
         human_root_order=15,
+    ),
+    "skills": CommandGroupSpec(
+        help=_GROUP_HELP["skills"],
+        agent_root_description=(
+            "Read Meridian-specific judgment only when its trigger applies. "
+            "(`meridian skills list`)"
+        ),
+        agent_root=True,
+        human_root_order=16,
+        registration_bucket="skills",
     ),
     "ext": CommandGroupSpec(
         help=_GROUP_HELP["ext"],

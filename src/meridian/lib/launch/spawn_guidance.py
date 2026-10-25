@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from meridian.lib.bundled_skills import list_bundled_skills
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.harness.adapter import SpawnUsageContractVariants
 from meridian.lib.launch.composition import (
@@ -16,12 +17,7 @@ _GENERAL_CAPABILITIES = (
     "`--workspace`, or `--global`; read with `meridian session log`.\n"
     "- Notify the human: `meridian notify`.\n"
     "- Validate Markdown links / inspect the link graph / validate Mermaid: "
-    "`meridian kg check` / `meridian kg graph` / `meridian mermaid check`.\n"
-    "- Hand off to a new primary: print, never run, a `meridian` command with concrete "
-    "`--work`, `--task-dir`, `--prompt-file`, and the shown chat ID as parent `--from`; "
-    "no variables.\n"
-    "- Delegated agent access: an unsandboxed parent may relaunch via "
-    "`meridian spawn --sandbox` / `--network`; a sandboxed parent cannot widen its floor."
+    "`meridian kg check` / `meridian kg graph` / `meridian mermaid check`."
 )
 
 _SPAWN_CAPABILITIES = (
@@ -52,12 +48,28 @@ Agent defaults fit most work. Say why before overriding the model: do so only
 when the caller asks or the work needs more depth or a capability the defaults
 lack. To get more depth, change the model, not the agent."""
 
+_SPAWN_ONLY_SKILLS = frozenset({"escalation"})
+
+
+def _build_meridian_skills_prompt(*, spawn_capable: bool) -> str:
+    lines = ["# Meridian skills", ""]
+    for skill in list_bundled_skills():
+        if skill.name in _SPAWN_ONLY_SKILLS and not spawn_capable:
+            continue
+        description = skill.description
+        if description.startswith("When "):
+            description = "when " + description.removeprefix("When ")
+        lines.append(
+            f"- {skill.name}: {description} Read `meridian skills {skill.name}`."
+        )
+    return "\n".join(lines)
+
 
 def _build_capabilities_prompt(*, spawn_capable: bool) -> str:
     lines = [
         "# Meridian capabilities",
         "",
-        "`meridian work path prompts/task.md` is a correct standalone call.",
+        "`meridian task-dir` is a correct standalone call.",
         "Restricted shells refuse `cd ... && meridian ...`, pipes, `$()`, `VAR=1`, and "
         "`$VAR` expansion.",
         "Every command has `-h`; if one is refused, tell your caller—do not work "
@@ -118,6 +130,14 @@ def build_guidance_blocks(
         inventory = (bundle_inventory_prompt or "").strip()
         if inventory:
             blocks.append(CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, inventory))
+    blocks.append(
+        CompositionBlock(
+            "meridian-skills",
+            GuidancePhase.GUIDANCE,
+            4,
+            _build_meridian_skills_prompt(spawn_capable=spawn_capable),
+        )
+    )
     blocks.append(
         CompositionBlock(
             "capabilities",

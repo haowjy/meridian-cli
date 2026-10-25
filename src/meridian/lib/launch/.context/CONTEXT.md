@@ -326,6 +326,12 @@ chat ID, then asks the harness to re-project the composed prompt. Do not append 
 second task-directory instruction after projection; that recreates the duplicate
 guidance this block replaced.
 
+Every prompt also has a short `# Meridian skills` block generated from the
+descriptions under `meridian.skills`. It is a trigger index, not loaded skill
+content: the agent reads a matching entry through the read-only `meridian skills`
+command. The delegation-only `escalation` trigger remains spawn-gated; the other
+triggers are always present. Package skills remain on the Mars/harness path below.
+
 Spawn-capable prompts also receive `# Prompting subagents`: durable briefing
 judgment that must remain in the prompt even though flag mechanics live in the
 capability row and `meridian spawn -h`.
@@ -518,9 +524,9 @@ rationale lives at `$MERIDIAN_CONTEXT_KB_DIR/concepts/session-initiation.md`;
 at this layer, the rule is simply to keep `--from` blocks in user-turn context
 blocks and out of `SystemInstruction`.
 
-### Skill Loading — Bundle as Sole Interface
+### Package Skill Loading — Mars Bundle Interface
 
-Skill content comes from the Mars launch-bundle JSON (parsed in
+Package skill content comes from the Mars launch-bundle JSON (parsed in
 `bundle_adapter.py`), not from reading `.mars/skills/` on disk. Mars reads the agent profile's `skills:` (a flat list
 means all `load`; a mapping has `load` and `available`), adds the `--skills`
 names Meridian passes as `--skill` to `load`, selects the harness variant, and

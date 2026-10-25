@@ -57,7 +57,7 @@ argv
 | Class | Examples | State prep (`state_requirement`) |
 |---|---|---|
 | `TRIVIAL` | `--help`, `--version` | none |
-| `READ_ROOTLESS` | `doctor`, `qi`, `kg check`, `config show` | none |
+| `READ_ROOTLESS` | `doctor`, `qi`, `kg check`, `config show`, `skills` | none |
 | `READ_PROJECT` | `context`, `hooks list` | `prepare_for_project_read()` |
 | `READ_RUNTIME` | `spawn list`, `session log` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `config init` | `prepare_for_project_write()` |
@@ -84,6 +84,7 @@ subcommands retain normal runtime-write bootstrap.
 - `argv_normalization.py` — pre-classifier canonicalization of session-initiation flags; `validate_fork_mode()`; `ForkModeResolution`
 - `startup/catalog.py` — `COMMAND_CATALOG`, `CommandDescriptor`
 - `startup/classify.py` — `classify_invocation()`
+- `skills_cmd.py` — rootless read surface for the packaged `meridian.skills` data
 
 ## Anti-Patterns
 
