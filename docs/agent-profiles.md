@@ -51,7 +51,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `description` | str | `""` | One-line description shown in `mars list` |
 | `model` | str | — | Default model alias or ID (e.g. `claude-sonnet`, `gpt-5.3-codex`) |
 | `harness` | str | — | Force a specific harness: `claude`, `codex`, `opencode`, `cursor`, or `pi` |
-| `mode` | str | `subagent` | `primary` or `subagent` — controls listing grouping |
+| `mode` | str | `subagent` | `primary` or `subagent` — controls listing grouping and which lead-only Meridian guidance the prompt carries; see [`mode`](#mode) |
 | `model-invocable` | bool | `true` | `false` hides agent from model-facing inventory prompt; explicit `-a NAME` invocation still works. Skills have their own `model-invocable`; see [Skills](#skills-and-skill-variants) |
 | `skills` | list[str] or `{load, available}` | `[]` | Skills the agent loads into its system prompt; the mapping form also lists skills it may load itself. See [Skills](#skills-and-skill-variants) |
 | `tools` | map or list[str] | — | Per-tool rules: `bash: allow`, `edit: deny`, or `web: ask`. A list is an allowlist containing exactly those names. A scoped key such as `bash(rg *)` limits a rule to matching calls. MCP rules use `mcp(server)` or `mcp(server/tool)`. What each harness enforces: [Permissions by harness](#permissions-by-harness) |
@@ -71,6 +71,9 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 ## `mode`
 
 Controls how agents are grouped in `meridian mars list` and in the startup system prompt.
+Primary-mode profiles also receive the lead-only bundled skill triggers and the
+`meridian notify` capability, including when launched as a spawn; see
+[Skills](#skills-and-skill-variants).
 
 ```yaml
 mode: primary    # top-level orchestrators, primary sessions
@@ -250,11 +253,13 @@ catalog, with structured entries under `--json`. These binary-owned skills may n
 the concrete Meridian commands and flags they explain. Bundled skill frontmatter may
 set `mode: primary`; its trigger then appears only when the agent profile declares
 `mode: primary`, even when that profile is launched as a spawn. Handoff, notification,
-work-item, and privilege-escalation guidance use this lead-only gate, while session
-mining remains visible to every profile. The capabilities block likewise shows
-`meridian notify` only to primary-mode profiles. Bundled skills are named
+work-item, privilege-escalation, and prompt-authoring guidance use this lead-only gate,
+while session mining remains visible to every profile. The capabilities block likewise
+shows `meridian notify` only to primary-mode profiles. Bundled skills are named
 `escalation__meridian`, `handoff__meridian`, `notify__meridian`,
-`sessions__meridian`, and `work__meridian`. The
+`prompt-authoring__meridian`, `sessions__meridian`, and `work__meridian`.
+`prompt-authoring__meridian` covers writing agent profiles and skills in `.mars-src/`
+without a prompt package. The
 `name__meridian` suffix follows Mars's `name__source` collision spelling and stays
 stable across profiles instead of appearing only when a package skill collides.
 Bundled skills version with the CLI and do not belong in `skills.load`,
