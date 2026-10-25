@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-10-25
+
 ### Changed
 - CLI help now omits generated no-op negations, empty-list forms, and redundant
   positional labels while continuing to accept the existing spellings.
