@@ -185,7 +185,7 @@ class CallerBoundaryCheck:
             note = (
                 f" Harness '{harness}' runs sandbox '{requested_sandbox}' as "
                 f"'{child.sandbox}'; route the child to a harness that enforces it."
-                if child.sandbox != requested_sandbox
+                if SANDBOX_MODE_WEAKNESS[child.sandbox] > SANDBOX_MODE_WEAKNESS[requested_sandbox]
                 else ""
             )
             raise ValueError(

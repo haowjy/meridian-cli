@@ -83,17 +83,17 @@ def _cursor_report(
     ]
     if permissions.sandbox is not None:
         note = f"--sandbox {permissions.sandbox}"
-        if policy.sandbox == "workspace-write":
+        effective = _EFFECTIVE_SANDBOX[policy.sandbox]
+        if effective == policy.sandbox:
+            lines.append(ReportLine(f"sandbox: {policy.sandbox}", "native", note))
+        else:
             lines.append(
                 ReportLine(
                     f"sandbox: {policy.sandbox}",
                     "partial",
-                    f"{note}; Cursor's sandbox is on or off, so workspace-write removes the "
-                    "restrictions",
+                    f"{note}; Cursor's sandbox is on or off, so this runs as {effective}",
                 )
             )
-        else:
-            lines.append(ReportLine(f"sandbox: {policy.sandbox}", "native", note))
     if permissions.approval is not None:
         lines.append(
             ReportLine(f"approval: {policy.approval}", "native", f"--{permissions.approval}")

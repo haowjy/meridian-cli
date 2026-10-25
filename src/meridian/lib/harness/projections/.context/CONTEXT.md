@@ -204,11 +204,13 @@ compile's report is registered as `HarnessProjectionPorts.permission_report` (th
 call the typed compile directly for its native value; nothing generic reads that value);
 `LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
 `permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
-Each harness also registers `HarnessProjectionPorts.effective_network`: a pure function of
-the resolved `PermissionPolicy` and Meridian-owned native config. Harness user/project
+Claude, Codex, and Cursor also register `HarnessProjectionPorts.effective_policy`: a pure
+function of the resolved `PermissionPolicy` and Meridian-owned native config returning the
+sandbox and shell network the harness really applies. OpenCode and Pi register none and get
+`UNENFORCED_POLICY` (`danger-full-access`, open network). Harness user/project
 configuration is not an input: Claude and Codex adapters inspect the final child environment
 and cwd separately and emit attributed warnings when those files can widen actual access.
-Claude and Codex call their registered derivation for the `network:` report line;
+Claude and Codex derive their `network:` report line from the same network projector;
 `complete_report()` uses unrestricted network for the other harnesses' default line. The
 child-spawn guardrail calls the same registered port, so the public three-field `ReportLine`
 has no hidden propagation state.
