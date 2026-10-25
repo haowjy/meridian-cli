@@ -22,7 +22,9 @@ from meridian.lib.harness.bundle import (
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
-from meridian.lib.harness.projections.permissions_cursor import compile_cursor_permissions
+from meridian.lib.harness.projections.permissions_cursor import (
+    compile_cursor_permissions,
+)
 from meridian.lib.harness.projections.project_cursor import project_cursor_spec_to_cli_args
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,

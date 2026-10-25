@@ -14,13 +14,12 @@ from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_APPROVAL_POLICY_KEY,
     CODEX_CONFIG_NOTIFY_KEY,
     CODEX_CONFIG_REASONING_EFFORT_KEY,
-    CODEX_CONFIG_SANDBOX_MODE_KEY,
-    CODEX_CONFIG_WRITABLE_ROOTS_KEY,
     project_codex_native_config,
 )
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_common import (
     CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
+    project_codex_sandbox,
     project_codex_tool_switch_flags,
 )
 from meridian.lib.launch.constants import BASE_COMMAND_CODEX_STREAMING
@@ -98,18 +97,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _build_writable_roots_config(paths: tuple[str, ...]) -> tuple[str, ...]:
-    """Build a ``-c sandbox_workspace_write.writable_roots=[...]`` flag pair.
-
-    Returns an empty tuple when *paths* is empty so callers can extend
-    unconditionally.
-    """
-    if not paths:
-        return ()
-    paths_json = json.dumps(list(paths))
-    return ("-c", f"{CODEX_CONFIG_WRITABLE_ROOTS_KEY}={paths_json}")
-
-
 def _select_thread_method(spec: ResolvedLaunchSpec) -> str:
     resume_thread_id = (spec.continue_session_id or "").strip()
     if not resume_thread_id:
@@ -177,13 +164,8 @@ def project_codex_spec_to_appserver_command(
         command.extend(("-c", f"{CODEX_CONFIG_NOTIFY_KEY}={json.dumps(IDLE_NOTIFY_COMMAND)}"))
 
     permissions, _ = compile_codex_permissions(spec)
-    if permissions.sandbox_mode is not None:
-        command.extend(
-            (
-                "-c",
-                f"{CODEX_CONFIG_SANDBOX_MODE_KEY}={json.dumps(permissions.sandbox_mode)}",
-            )
-        )
+    sandbox = project_codex_sandbox(spec, permissions)
+    command.extend(sandbox.appserver_args())
 
     if permissions.approval_policy is not None:
         command.extend(
@@ -201,15 +183,11 @@ def project_codex_spec_to_appserver_command(
             "Codex streaming ignores report_output_path; reports extracted from stream events"
         )
 
-    writable_roots_config = _build_writable_roots_config(
-        tuple(root.as_posix() for root in spec.projected_roots)
-    )
-    if writable_roots_config:
+    if sandbox.writable_roots:
         logger.debug(
             "Projecting roots to sandbox_workspace_write.writable_roots: %s",
-            [root.as_posix() for root in spec.projected_roots],
+            list(sandbox.writable_roots),
         )
-        command.extend(writable_roots_config)
 
     native_config_args, _ = project_codex_native_config(spec.native_config)
     command.extend(native_config_args)
@@ -249,15 +227,20 @@ def project_codex_spec_to_thread_request(
         payload["model"] = spec.model
 
     normalized_effort = (spec.effort or "").strip()
+    thread_config: dict[str, object] = {}
     if normalized_effort:
-        payload["config"] = {CODEX_CONFIG_REASONING_EFFORT_KEY: normalized_effort}
+        thread_config[CODEX_CONFIG_REASONING_EFFORT_KEY] = normalized_effort
 
     permissions, _ = compile_codex_permissions(spec)
+    sandbox = project_codex_sandbox(spec, permissions)
     if permissions.approval_policy is not None:
         payload["approvalPolicy"] = permissions.approval_policy
 
-    if permissions.sandbox_mode is not None:
-        payload["sandbox"] = permissions.sandbox_mode
+    sandbox_fields, sandbox_config = sandbox.thread_fields()
+    payload.update(sandbox_fields)
+    thread_config.update(sandbox_config)
+    if thread_config:
+        payload["config"] = thread_config
 
     method = _select_thread_method(spec)
     resume_thread_id = (spec.continue_session_id or "").strip()
@@ -288,7 +271,6 @@ __all__ = [
     "_LIFECYCLE_FIELDS",
     "_METHOD_SELECTION_FIELDS",
     "_PROJECTED_FIELDS",
-    "_build_writable_roots_config",
     "_check_projection_drift",
     "project_codex_spec_to_appserver_command",
     "project_codex_spec_to_thread_request",

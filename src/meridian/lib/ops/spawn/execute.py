@@ -543,6 +543,11 @@ def execute_spawn_blocking(
             on_spawn_id(spawn_id_text)
 
         warning = request.warning
+
+        def _capture_launch_warning(value: str | None) -> None:
+            nonlocal warning
+            warning = value
+
         context_from_resolved = context_ref_values(request.context_refs)
 
         try:
@@ -594,6 +599,7 @@ def execute_spawn_blocking(
                     debug=payload.debug,
                     ctx=resolved_context,
                     prepared=prepared,
+                    warning_observer=_capture_launch_warning,
                 )
             )
         except Exception as exc:

@@ -22,7 +22,7 @@ from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
-from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.launch.request import NetworkOverrides, SpawnRequest
 from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResult
 from meridian.lib.ops.spawn.execute_init import resolve_spawn_work_id
@@ -235,6 +235,7 @@ def test_spawn_continue_refuses_different_parent_pid_namespace_before_source_rea
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="workspace-write",
+            network=None,
             has_spawn_capability=True,
             pid_namespace=f"{namespace}:different",
         ).to_env_value(),
@@ -258,6 +259,7 @@ def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_r
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="read-only",
+            network=None,
             has_spawn_capability=False,
             pid_namespace=None,
         ).to_env_value(),
@@ -308,6 +310,7 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
         CALLER_BOUNDARY_ENV,
         CallerBoundary(
             sandbox="workspace-write",
+            network=None,
             has_spawn_capability=True,
             pid_namespace=None,
         ).to_env_value(),
@@ -347,6 +350,16 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
         ({"skills": ("skill-override",)}, "--skills", "--fork-fresh"),
         ({"approval": "auto"}, "--approval", "--fork-fresh"),
         ({"sandbox": "workspace-write"}, "--sandbox", "--fork-fresh"),
+        (
+            {"network": NetworkOverrides(mode="allowlist", allow=("github.com",))},
+            "--network",
+            "--fork-fresh",
+        ),
+        (
+            {"network": NetworkOverrides(deny=("example.com",))},
+            "--network-deny",
+            "--fork-fresh",
+        ),
         ({"effort": "high"}, "--effort", "--fork-fresh"),
         ({"autocompact": 5000}, "--autocompact", "--fork-fresh"),
         ({"autocompact_pct": 35}, "--autocompact-pct", "--fork-fresh"),

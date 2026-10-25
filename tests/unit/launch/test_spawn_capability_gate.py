@@ -10,6 +10,7 @@ from meridian.lib.catalog.agent import AgentProfile, MeridianCapabilities
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.harness.adapter import CLAUDE_SPAWN_USAGE_VARIANTS
+from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_policy_snapshot
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
@@ -20,6 +21,7 @@ from meridian.lib.launch.spawn_guidance import (
     build_spawn_usage_contract,
     has_spawn_capability,
 )
+from meridian.lib.safety.policy import Allow, Host, Hosts
 
 CONTRACT_MARKER = "# Spawning subagents (meridian)"
 INVENTORY = "## Meridian Agents\n\n- tech-lead\n- explorer"
@@ -49,6 +51,7 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         spawn_usage_contract=build_spawn_usage_contract(CLAUDE_SPAWN_USAGE_VARIANTS),
         bundle_inventory_prompt=INVENTORY,
         context_prompt="",
+        harness_guidance="Host network hint",
     )
 
     assert [block.name for block in blocks[:3]] == [
@@ -64,6 +67,64 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "reply is kept as the report" not in contract.content
     work = next(block for block in blocks if block.name == "work-discovery")
     assert "standalone shell calls" in work.content
+    hint = next(block for block in blocks if block.name == "harness-guidance")
+    assert hint.content == "Host network hint"
+
+
+def test_claude_linux_sandbox_network_guidance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("meridian.lib.harness.claude.sys.platform", "linux")
+    adapter = ClaudeAdapter()
+
+    assert (
+        adapter.shell_network_guidance(
+            sandbox="workspace-write",
+            network=Hosts(),
+            native_config={},
+        )
+        is None
+    )
+    assert "--noproxy ''" in (
+        adapter.shell_network_guidance(
+            sandbox="read-only",
+            network=Allow(),
+            native_config={},
+        )
+        or ""
+    )
+    assert "--noproxy ''" in (
+        adapter.shell_network_guidance(
+            sandbox="workspace-write",
+            network=Hosts(allow=frozenset((Host("localhost"),))),
+            native_config={},
+        )
+        or ""
+    )
+    assert (
+        adapter.shell_network_guidance(
+            sandbox="workspace-write",
+            network=Allow(
+                deny=frozenset((Host("localhost"), Host("127.0.0.1")))
+            ),
+            native_config={},
+        )
+        is None
+    )
+    assert (
+        adapter.shell_network_guidance(
+            sandbox="workspace-write",
+            network=Hosts(),
+            native_config={},
+        )
+        is None
+    )
+    assert (
+        adapter.shell_network_guidance(
+            sandbox="danger-full-access",
+            network=Allow(),
+            native_config={},
+        )
+        is None
+    )
 
 
 def test_spawn_capability_requires_inventory_and_honors_explicit_disable() -> None:

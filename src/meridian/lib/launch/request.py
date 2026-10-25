@@ -1,6 +1,7 @@
 """Raw launch request DTOs persisted across prepare/execute boundaries."""
 
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,6 +38,16 @@ def cross_harness_continue_error(
 
 def _empty_config_snapshot() -> dict[str, object]:
     return {}
+
+
+class NetworkOverrides(BaseModel):
+    """Raw per-launch network additions passed to Mars for policy resolution."""
+
+    model_config = ConfigDict(frozen=True)
+
+    mode: Literal["allow", "deny", "allowlist"] | None = None
+    allow: tuple[str, ...] = ()
+    deny: tuple[str, ...] = ()
 
 
 class SessionRequest(BaseModel):
@@ -114,6 +125,7 @@ class SpawnRequest(BaseModel):
     platform_tool_rules: tuple[ToolRule, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)
     ignore_direnv: bool | None = None
+    network_overrides: NetworkOverrides = NetworkOverrides()
 
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/autocompact_pct)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
@@ -235,6 +247,7 @@ __all__ = [
     "LaunchCompositionSurface",
     "LaunchPolicySnapshot",
     "LaunchRuntime",
+    "NetworkOverrides",
     "RequestPromptPayload",
     "SessionRequest",
     "SpawnRequest",

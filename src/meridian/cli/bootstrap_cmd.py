@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from cyclopts import App, Parameter
 
@@ -71,6 +71,26 @@ def register_bootstrap_command(app: App) -> None:
             str | None,
             Parameter(name="--sandbox", help="Sandbox mode."),
         ] = None,
+        network: Annotated[
+            Literal["allow", "deny", "allowlist"] | None,
+            Parameter(name="--network", help="Shell network mode: allow, deny, or allowlist."),
+        ] = None,
+        network_allow: Annotated[
+            tuple[str, ...],
+            Parameter(
+                name="--network-allow",
+                help="Add a host to the shell network allow set (repeatable).",
+                negative_iterable=(),
+            ),
+        ] = (),
+        network_deny: Annotated[
+            tuple[str, ...],
+            Parameter(
+                name="--network-deny",
+                help="Add a host to the shell network deny set (repeatable).",
+                negative_iterable=(),
+            ),
+        ] = (),
         timeout: Annotated[
             float | None,
             Parameter(name="--timeout", help="Maximum runtime in minutes."),
@@ -126,6 +146,9 @@ def register_bootstrap_command(app: App) -> None:
                 autocompact_pct=autocompact_pct,
                 effort=effort,
                 sandbox=sandbox,
+                network=network,
+                network_allow=network_allow,
+                network_deny=network_deny,
                 timeout=timeout,
                 dry_run=dry_run,
                 passthrough=options.passthrough_args,

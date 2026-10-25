@@ -108,7 +108,6 @@ class ResolvedLaunchSpec(BaseModel):
     native_config: NativeConfigValue = Field(
         default_factory=lambda: ResolvedExecutionPolicy().native_config
     )
-
     # Passthrough args forwarded verbatim to the harness process.
     extra_args: tuple[str, ...] = ()
 

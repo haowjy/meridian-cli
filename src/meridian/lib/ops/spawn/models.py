@@ -2,7 +2,6 @@
 
 import shlex
 from collections.abc import Sequence
-from dataclasses import asdict
 from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
@@ -11,7 +10,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.util import FormatContext
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import NetworkOverrides, SessionRequest
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
@@ -119,6 +118,7 @@ class SpawnLaunchOptionUpdates(TypedDict):
     autocompact_pct: NotRequired[int | None]
     effort: str | None
     sandbox: str | None
+    network: NetworkOverrides
     harness: str | None
     passthrough_args: tuple[str, ...]
     debug: bool
@@ -144,6 +144,7 @@ class SpawnLaunchOptions(BaseModel):
     autocompact_pct: int | None = None
     effort: str | None = None
     sandbox: str | None = None
+    network: NetworkOverrides = NetworkOverrides()
     harness: str | None = None
     passthrough_args: tuple[str, ...] = ()
     debug: bool = False
@@ -167,6 +168,7 @@ class SpawnLaunchOptions(BaseModel):
             "autocompact_pct": self.autocompact_pct,
             "effort": self.effort,
             "sandbox": self.sandbox,
+            "network": self.network,
             "harness": self.harness,
             "passthrough_args": self.passthrough_args,
             "debug": self.debug,
@@ -376,7 +378,7 @@ class SpawnActionOutput(BaseModel):
             if self.cli_command:
                 wire["cli_command"] = list(self.cli_command)
             if self.permission_report:
-                wire["permission_report"] = [asdict(line) for line in self.permission_report]
+                wire["permission_report"] = [line.to_wire() for line in self.permission_report]
         return wire
 
     def to_cli_wire(self) -> dict[str, object]:

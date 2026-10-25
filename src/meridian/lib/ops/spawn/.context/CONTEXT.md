@@ -5,6 +5,12 @@
 `spawn_create_sync()`, continue, and fork share one preparation path. It inspects
 authority and checks the launcher-owned caller boundary before write bootstrap. With
 a boundary, it composes the resolved launch policy read-only and enforces the floor.
+Every constrained caller records the effective network its harness applies. The child check
+pure-binds a preview before any state write, then uses the bound child environment with the
+shared network-facts builder and harness projection port. It refuses a value not contained
+by the caller: an offline child is always contained; otherwise finite allows must narrow and
+denies must grow. The report uses the same pure projection. A
+boundary written before the network field existed has no network floor.
 Every real launch calls `prepare_for_runtime_write()` afterward through one deferred
 materialization path. Dry-run binds its preview without materializing. Continue
 performs its state sweep after preparation succeeds; fork reuses the prepared artifacts

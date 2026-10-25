@@ -32,9 +32,13 @@ without updating the corresponding projector → startup failure.
   allow/deny lists, OpenCode's version-canonical ordered agent rules). The harness's projectors call it and
   spell the result as argv, env or payload; nothing outside the harness module reads the
   policy's rules. The compile returns `(native value, EnforcementReport)`; its report is
-  registered as `HarnessProjectionPorts.permission_report`. The projectors, `--dry-run` and
-  `projection-manifest.json` all go through that one function, so the report cannot drift
-  from what launched.
+  registered as `HarnessProjectionPorts.permission_report`; the harness's pure effective
+shell-network port is registered beside it. Claude and Codex each have one pure network
+projector returning native settings plus the typed effective policy, so compile, report,
+and child guardrails cannot decide independently. OpenCode, Pi, and Cursor omit that port;
+the registry's shared `UNENFORCED_NETWORK` constant supplies their effective network and
+`complete_report()` supplies their report line. The projectors, `--dry-run` and
+  `projection-manifest.json` all read these same policy facts.
 
 ## Key Rules
 

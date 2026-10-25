@@ -40,14 +40,22 @@ level creates a circular import at load time.
 
 ## Permission Policy
 
-`policy.py` builds one `PermissionPolicy` per launch: the tool and platform rules, the
-sandbox mode, the explicit workspace roots a native read-only sandbox must protect, and
-the approval mode, already resolved. `ResolvedLaunchSpec.permission_policy` carries it, and
-each harness compiles it in `harness/projections/permissions_<harness>.py`. Nothing in
-`safety/` knows a harness. The tool rules are Mars's typed rules (`lib/tools.py`). The policy
+`policy.py` builds one `PermissionPolicy` per launch: the tool and platform rules, sandbox,
+the defaulted typed network policy (`Allow(deny)` or `Hosts(allow, deny)`, with empty Hosts
+meaning deny), the explicit workspace roots a native read-only sandbox must protect, and
+approval. A bundle may carry `SandboxDerivedNetwork` until Meridian's final sandbox
+precedence is applied; the durable `ResolvedExecutionPolicy` uses only a resolved network
+or `None`, and `ResolvedLaunchSpec.permission_policy` always carries the resolved value.
+Harness-owned user-config diagnostics are warnings, not policy inputs; nothing in
+`safety/` knows their meaning.
+The tool rules are Mars's typed rules (`lib/tools.py`). The policy
 answers the allowlist questions (`is_allowlist`, `allowed_tools`) and writes each
-per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them. `EnforcementReport` (a tuple of `ReportLine`) is the shape each compile
-reports what it enforced in; the formatting helpers for it live here too.
+per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them.
+`EnforcementReport` (a tuple of `ReportLine`) is the shape each compile reports what it
+enforced in. Each harness network projector returns native settings and the effective typed
+policy together. Guardrail containment is exact: a child that allows nothing is always
+contained; otherwise finite child allows are a subset of the caller and child denies are a
+superset. Wildcards are canonical strings, not expanded.
 
 ## Entry Points
 

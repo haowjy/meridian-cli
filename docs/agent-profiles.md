@@ -57,6 +57,9 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `tools` | map or list[str] | — | Per-tool rules: `bash: allow`, `edit: deny`, or `web: ask`. A list is an allowlist containing exactly those names. A scoped key such as `bash(rg *)` limits a rule to matching calls. MCP rules use `mcp(server)` or `mcp(server/tool)`. What each harness enforces: [Permissions by harness](#permissions-by-harness) |
 | `disallowed-tools` | list[str] | `[]` | Tools to deny, with the same names and scoped keys as `tools`. Equivalent to `deny` entries in the `tools` map |
 | `sandbox` | str | — | `default`, `read-only`, `workspace-write`, or `danger-full-access`. Harness support differs: [Permissions by harness](#permissions-by-harness) |
+| `network` | str | sandbox-derived | Whether shell commands may open connections: `allow`, `deny`, or `allowlist`. `network-allow` and `network-deny` hold exact hosts, IPs, or wildcard hosts. Unset denies under `read-only`/`workspace-write`, allows under `danger-full-access`, and leaves an unset/default sandbox harness-native. Built-in web tools remain under `tools: web`. See [Permissions by harness](#permissions-by-harness) |
+| `network-allow` | list[str] | `[]` | Hosts permitted by `network: allowlist`. Plain lists add across policy layers; see the [merge rules](#permissions-by-harness) |
+| `network-deny` | list[str] | `[]` | Hosts denied under `allow` or `allowlist`. Plain lists add and denies win; see the [merge rules](#permissions-by-harness) |
 | `effort` | str | — | Effort level (`low`, `medium`, `high`) |
 | `approval` | str | — | When the harness stops to ask: `default`, `confirm`, `auto`, or `never`. `yolo` is a deprecated spelling of `never`. See [Permissions by harness](#permissions-by-harness) |
 | `autocompact` | int | — | Context-token compaction threshold (minimum 1000); harness support differs. See [Compaction by harness](#compaction-by-harness) |
@@ -125,7 +128,7 @@ launchable on older Meridian versions.
 
 Scalar overrides in `override:` accept these runtime keys:
 
-`harness`, `sandbox`, `approval`, `effort`, `autocompact`, `autocompact_pct`
+`harness`, `sandbox`, `network`, `approval`, `effort`, `autocompact`, `autocompact_pct`
 
 `resident-rearm-budget` is a top-level profile default, not a model-policy
 override. The Mars launch-bundle schema does not currently expose a per-model
@@ -208,8 +211,8 @@ in Codex's config, including providers and MCP server commands. Installing a pac
 carries harness overrides is therefore installing code you trust. Blocks in already-installed
 packages that older Meridian builds left inert now take effect. Codex flattens nested mappings
 to dotted config keys and emits TOML-compatible scalar, array, and inline-table values as
-`-c` overrides. For example, this enables network access inside Codex's `workspace-write`
-sandbox:
+`-c` overrides. The following native spelling for network access is deprecated; use the
+profile's `network: allow` field instead:
 
 ```yaml
 harness-overrides:
@@ -220,10 +223,15 @@ harness-overrides:
 
 Meridian-owned Codex settings win: native entries that collide with its model, effort,
 sandbox, approval, writable-root, tool-switch, agent, feature, or notification config are
-skipped. Meridian does not synthesize Codex MCP config, so `mcp_servers.*` entries pass
-through like other native config. A key segment containing `.`, `=`, whitespace, or quotes
-cannot be addressed by Codex's `-c` syntax and is reported as unsupported. `--dry-run`
-shows each applied or skipped key, for example
+skipped. For this compatibility release only,
+`sandbox_workspace_write.network_access` is an exception: Meridian warns, applies a
+well-formed boolean after the profile projection, and that native value wins. It becomes
+reserved and skipped like `writable_roots` in the following release. A non-boolean,
+unencodable, or unaddressable value is warned, reported as ignored, and does not suppress
+the portable profile projection. Meridian does not synthesize Codex MCP config,
+so `mcp_servers.*` entries pass through like other native config. A key segment containing
+`.`, `=`, whitespace, or quotes cannot be addressed by Codex's `-c` syntax and is reported
+as unsupported and ignored. `--dry-run` shows each applied or skipped key, for example
 `[native] native_config: sandbox_workspace_write.network_access = true -> -c sandbox_workspace_write.network_access=true`.
 Claude, OpenCode, Pi, and Cursor do not apply native config; their report lists the key
 names as `[unsupported] native_config: ... -> not applied for <Harness>`.
@@ -337,11 +345,16 @@ model-policies:
 
 ## Permissions by harness
 
-A profile has three separate permission fields:
+A profile has four separate permission fields:
 
 - `tools` says which tool calls the model may make. `allow` runs a matching call without
   asking, `deny` blocks it, and `ask` requires human approval where the harness supports it.
 - `sandbox` limits what a call that does run may touch on disk.
+- `network` decides whether shell commands may connect to the public internet, host
+  services, or local sockets. `allowlist` permits only `network-allow` hosts, less any
+  `network-deny` hosts; `allow` can also carry denies. An omitted value follows the sandbox:
+  constrained modes deny, `danger-full-access` allows, and an unset/default sandbox stays
+  harness-native. It does not decide built-in web tools; use `tools: web` for those.
 - `approval` supplies the harness's fallback prompt behavior for calls that `tools` does not
   decide. It does not widen an allowlist or turn an explicit `ask` into `allow`.
 
@@ -356,8 +369,24 @@ tools:
   'bash(git push *)': ask
   edit: deny
 sandbox: read-only
+network: deny
 approval: never
 ```
+
+An allowlist can name exact hosts and IP addresses, `*.x` for subdomains only, and
+`**.x` for the apex plus subdomains:
+
+```yaml
+network: allowlist
+network-allow: [github.com, "*.github.com", "**.pypi.org", 127.0.0.1]
+network-deny: [uploads.example]
+```
+
+Mars lowercases, sorts, and deduplicates these sets. Plain lists add across user, project,
+local, profile, overlay, and launch CLI layers; a `{replace: [...]}` value clears lower
+entries where that surface permits replacement ([how lists combine](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/mars-toml.md#adding-to-or-replacing-a-permission-list)). Denies win. An empty allowlist becomes
+`deny`. See Mars's [network profile reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/agent-profiles.md#network)
+for the complete host grammar, precedence, and replacement rules.
 
 A *spawn* is a headless agent launched with `meridian spawn`; a *primary* is the
 interactive session started with `meridian`. Supported profile rules bind both roles.
@@ -372,17 +401,22 @@ rule can still be unsupported because Mars has no native name for that capabilit
 is the per-launch report, including each gap and the native flag or setting used. The JSON
 form exposes the same lines as `permission_report`.
 
-| Harness | `tools` | `sandbox` | `approval` | Meridian platform rules |
-|---|---|---|---|---|
-| **Claude** | **Native**, with caveats. Plain and scoped `allow`/`deny`/`ask` use native permissions; a whole-policy allowlist also limits `--tools`. Claude checks file paths only through `Edit(path)` and `Read(path)`, so scoped `write`/`edit`/`notebook` rules become `Edit(path)` and scoped `read`/`glob`/`grep` rules become `Read(path)`: a scoped deny also refuses Claude's other file edits (or reads) at that path, and `--tools` still lists the tool itself (`Write`, `Grep`). **Partial** for scoped-only allowlists because Claude's `manual` mode still auto-approves Read/Grep/Glob and Bash calls it classifies as read-only, and for a spawn's plain `bash: deny` under `approval: default` or `confirm`, which that mode carries so the platform grants can run. Only a whole-policy `*: deny` allowlist uses `dontAsk`. | **Partial** for `read-only` and `workspace-write`: the native sandbox confines Bash subprocesses, not Edit/Write. **Native** for `danger-full-access`, which disables it. A spawn-capable profile's standalone `meridian spawn ...` command is excluded from the sandbox and runs fully outside it. | **Native** without an allowlist or `ask`: `auto` uses `acceptEdits`, `confirm` uses `manual`, and `never`/`yolo` bypass prompts. **Partial** with an allowlist or `ask`, which stays authoritative instead of being bypassed. | **Native** sub-agent and built-in-agent denies. **Partial** when built-in agents are enabled, because Claude cannot deny generic `Agent` while retaining them. Exact and prefix Meridian-command grants are native unless a stricter profile rule blocks them; adding Bash to a whole allowlist also exposes Claude's auto-approved read-only Bash class. |
-| **Codex** | **Partial**. Exact unscoped `bash`, `web`, `web_search`, and `image` allow/deny rules use native switches. A whole-policy allowlist turns off web search and image viewing but leaves the shell on because Codex reads files through it. Scoped rules, `ask`, per-capability allowlists, and every other capability are **not enforced**. | **Native** for every explicit non-default mode. An unset value is omitted; Codex chooses its default. Before a `read-only` or `workspace-write` launch, Meridian rewrites `$CODEX_HOME/rules/meridian.rules`; its `meridian spawn` rule runs those commands outside the sandbox for every Codex session using that home. | **Native** for `auto` (`on-request`) and `never`/`yolo` (`never`). **Partial** for `confirm`, which is also `on-request` because Codex has no stricter mode. | **Partial**. By default Meridian disables Codex's built-in multi-agent feature; `[harness.codex] allow_builtin_agents = true` removes that rule. The user-wide rules file grants the `meridian spawn` prefix under a constrained sandbox; other exact or prefix Meridian commands and the task-list deny are not projected. |
-| **OpenCode** | **Native** on the selected `meridian-<profile>` config agent in V1 and V2, for spawns and primaries. Scoped rules and allowlists work. **Partial** in V2 where distinct `write` and `patch` meanings collapse onto `edit`; the stricter conflicting effect wins. | **Not enforced**. | **Native** unless a `*` tool rule already decides unmatched calls: `confirm` asks in a primary and denies in a headless spawn; `auto` and `never`/`yolo` allow unmatched calls without prompting. `default` leaves OpenCode's behavior, except an otherwise unrestricted spawn keeps Meridian's historical allow-all fallback. | **Native** sub-agent denies and exact/prefix Meridian-command grants. Completion and read-only command grants remain authoritative over overlapping profile rules; a stricter rule may still restrict the spawn-launch grant. |
-| **Pi** | **Native** for mapped tools. Plain rules use `--tools`/`--exclude-tools`; scoped rules, allowlists, and `ask` use Meridian's `meridian-permissions` Pi extension, which checks each simple command of a Bash call. A Bash allowlist, a Bash `deny`/`ask` for unmatched commands, or a scoped Bash `ask` also refuses shell syntax the extension cannot split (expansion, redirection, loops, here-docs). **Partial** for scoped Bash denies when Bash allows unmatched commands (`bash: allow` or `*: allow`): a command the extension cannot split runs unchecked. | **Not enforced**. | **Not enforced**. This does not affect tool-level `ask`, which the extension enforces separately. | **Native**. Pi has no native sub-agent or built-in-agent tools, so those denies already hold; when a policy could restrict the shell, the extension grants exact and prefix Meridian commands. |
-| **Cursor** | **Not enforced**, including restrictive profiles and `ask`. | **Native**: `read-only` enables Cursor's binary sandbox and `danger-full-access` disables it. **Partial**: `workspace-write` also disables it because Cursor has no middle setting. Unset uses Cursor's default. | **Native** for `auto` (`--force`) and `never`/`yolo` (`--yolo`). `confirm` is **not enforced**. | **Not enforced**. |
+| Harness | `tools` | `sandbox` | `network` | `approval` | Meridian platform rules |
+|---|---|---|---|---|---|
+| **Claude** | **Native**, with caveats. Plain and scoped `allow`/`deny`/`ask` use native permissions; a whole-policy allowlist also limits `--tools`. Claude checks file paths only through `Edit(path)` and `Read(path)`, so scoped `write`/`edit`/`notebook` rules become `Edit(path)` and scoped `read`/`glob`/`grep` rules become `Read(path)`: a scoped deny also refuses Claude's other file edits (or reads) at that path, and `--tools` still lists the tool itself (`Write`, `Grep`). **Partial** for scoped-only allowlists because Claude's `manual` mode still auto-approves Read/Grep/Glob and Bash calls it classifies as read-only, and for a spawn's plain `bash: deny` under `approval: default` or `confirm`, which that mode carries so the platform grants can run. Only a whole-policy `*: deny` allowlist uses `dontAsk`. | **Partial** for `read-only` and `workspace-write`: the native sandbox confines Bash subprocesses, not Edit/Write. **Native** for `danger-full-access`, which disables it. A spawn-capable profile's standalone `meridian spawn ...` command is excluded from the sandbox and runs fully outside it. | In an enabled sandbox, **Native** for external host filtering with `strictAllowlist`, `allowedDomains`, and `deniedDomains`; denies win. `**.x` becomes Claude's equivalent pair `x` plus `*.x`. A finite allowlist explicitly disables local binding and Unix sockets from ordinary user settings unless it contains `localhost` or `127.0.0.1`; either entry enables Claude's coarse switches for all local binding and all Unix sockets, so that case is **Partial**. On Linux, host localhost is also **Partial**: it is reachable only through Claude's proxy, and clients honoring `NO_PROXY` bypass that proxy (`curl --noproxy '' ...` uses it). Strict deny is **Partial** on Linux because processes inside the same sandbox can still connect over its private TCP loopback. In the user settings root selected by `CLAUDE_CONFIG_DIR`, a non-empty `sandbox.network.allowedDomains` or either proxy-port key produces an attributed warning because the setting can widen access beyond Meridian's projection. The warning does not change the permission report or child guardrail, which compare only Meridian's projected policy. `deniedDomains` is narrowing and is not modelled; project `.claude/settings*.json` did not widen the launch-local strict allowlist. An excluded `meridian spawn ...` command runs outside the sandbox and can connect. Under `danger-full-access`, restrictions are **Not enforced**. | **Native** without an allowlist or `ask`: `auto` uses `acceptEdits`, `confirm` uses `manual`, and `never`/`yolo` bypass prompts. **Partial** with an allowlist or `ask`, which stays authoritative instead of being bypassed. | **Native** sub-agent and built-in-agent denies. **Partial** when built-in agents are enabled, because Claude cannot deny generic `Agent` while retaining them. Exact and prefix Meridian-command grants are native unless a stricter profile rule blocks them; adding Bash to a whole allowlist also exposes Claude's auto-approved read-only Bash class. |
+| **Codex** | **Partial**. Exact unscoped `bash`, `web`, `web_search`, and `image` allow/deny rules use native switches. A whole-policy allowlist turns off web search and image viewing but leaves the shell on because Codex reads files through it. Scoped rules, `ask`, per-capability allowlists, and every other capability are **not enforced**. | **Native** for every explicit non-default mode. An unset value is omitted; Codex chooses its default. Before a `read-only` or `workspace-write` launch, Meridian rewrites `$CODEX_HOME/rules/meridian.rules`; its `meridian spawn` rule runs those commands outside the sandbox for every Codex session using that home. | `workspace-write` is **Native** for `allow` without denies (`network_access=true`) and for `deny` or an empty allowlist (`false`). Host sets use Codex's network proxy and one inline domain map: finite allows are `"host"="allow"`; `allow` plus denies adds `"*"="allow"`; denies are `"host"="deny"`. Any `allow` entry under `features.network_proxy.domains` in the child-selected `$CODEX_HOME/config.toml` or `.codex/config.toml` in the child cwd or an ancestor produces an attributed warning because it can widen access beyond Meridian's projection. A boolean `features.network_proxy` declares no domains and does not warn. Warnings do not change the permission report or child guardrail, which compare only Meridian's projected policy. Domain `deny` entries are narrowing and are not modelled. Host-map cases are **Partial** because Codex always leaves local services reachable. `read-only` stays offline in Meridian's projection and reports any `allow` or non-empty allowlist **Not enforced**. Under `danger-full-access`, restrictions are **Not enforced**. The user-wide `meridian spawn` rule runs matching commands outside constrained modes with network access. | **Native** for `auto` (`on-request`) and `never`/`yolo` (`never`). **Partial** for `confirm`, which is also `on-request` because Codex has no stricter mode. | **Partial**. By default Meridian disables Codex's built-in multi-agent feature; `[harness.codex] allow_builtin_agents = true` removes that rule. The user-wide rules file grants the `meridian spawn` prefix under a constrained sandbox; other exact or prefix Meridian commands and the task-list deny are not projected. |
+| **OpenCode** | **Native** on the selected `meridian-<profile>` config agent in V1 and V2, for spawns and primaries. Scoped rules and allowlists work. **Partial** in V2 where distinct `write` and `patch` meanings collapse onto `edit`; the stricter conflicting effect wins. | **Not enforced**. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Native** unless a `*` tool rule already decides unmatched calls: `confirm` asks in a primary and denies in a headless spawn; `auto` and `never`/`yolo` allow unmatched calls without prompting. `default` leaves OpenCode's behavior, except an otherwise unrestricted spawn keeps Meridian's historical allow-all fallback. | **Native** sub-agent denies and exact/prefix Meridian-command grants. Completion and read-only command grants remain authoritative over overlapping profile rules; a stricter rule may still restrict the spawn-launch grant. |
+| **Pi** | **Native** for mapped tools. Plain rules use `--tools`/`--exclude-tools`; scoped rules, allowlists, and `ask` use Meridian's `meridian-permissions` Pi extension, which checks each simple command of a Bash call. A Bash allowlist, a Bash `deny`/`ask` for unmatched commands, or a scoped Bash `ask` also refuses shell syntax the extension cannot split (expansion, redirection, loops, here-docs). **Partial** for scoped Bash denies when Bash allows unmatched commands (`bash: allow` or `*: allow`): a command the extension cannot split runs unchecked. | **Not enforced**. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Not enforced**. This does not affect tool-level `ask`, which the extension enforces separately. | **Native**. Pi has no native sub-agent or built-in-agent tools, so those denies already hold; when a policy could restrict the shell, the extension grants exact and prefix Meridian commands. |
+| **Cursor** | **Not enforced**, including restrictive profiles and `ask`. | **Native**: `read-only` enables Cursor's binary sandbox and `danger-full-access` disables it. **Partial**: `workspace-write` also disables it because Cursor has no middle setting. Unset uses Cursor's default. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Native** for `auto` (`--force`) and `never`/`yolo` (`--yolo`). `confirm` is **Not enforced**. | **Not enforced**. |
+
+If Mars predates the bundle's `network_source` field, Meridian refuses the launch and asks
+you to upgrade Meridian; it names the selected executable because Meridian's bundled Mars
+wins over `PATH`. It never falls back to a harness network default.
 
 The same harness limits apply when `approval` or `sandbox` comes from a CLI flag,
 environment variable, [Mars agent overlay](configuration/mars.md#agent-runtime-overlays),
-or [Meridian config](configuration.md). `tools` comes from the profile.
+or [Meridian config](configuration.md). `network` can also come from a Mars agent overlay
+or model policy. `tools` comes from the profile.
 
 ### Capability names
 
@@ -451,7 +485,10 @@ already met, and a rule Mars cannot name there is reported `unsupported`.
 Meridian does not strip a harness's own configuration to make a profile stricter.
 Claude reads your user, project and local settings files as it always does, so their
 `permissions.allow` entries run even under an allowlist; `--dry-run` lists them on a
-`[partial] source:` line. Under OpenCode, a headless spawn with `approval: default` and
+`[partial] source:` line. Claude user network settings and Codex user or ancestor-project
+proxy-domain allows can also widen access beyond Meridian's projection. Dry runs and
+launches name those files in warnings; the permission report and child-spawn guardrail
+still compare only Meridian's projected policy. Under OpenCode, a headless spawn with `approval: default` and
 no rule naming an OpenCode tool gets an allow-all fallback; once the profile names a
 tool, OpenCode's defaults and your OpenCode config decide the rest.
 
@@ -516,13 +553,22 @@ them:
   spawn capability and sessions not launched by Meridian. Meridian owns and rewrites only
   `meridian.rules`; it does not touch other Codex rules files.
 - **Child-spawn CLI guardrail.** Every Meridian-launched harness receives its resolved
-  sandbox and spawn capability in a launcher-owned boundary record. Only `read-only` and
+  sandbox, spawn capability, and Meridian-projected network in a launcher-owned boundary
+  record. Only `read-only` and
   `workspace-write` callers have a floor, because only those explicit modes receive a
   sandbox escape. `spawn`, `spawn --continue`, and `spawn --fork` (including `--dry-run`)
-  refuse a floored caller whose profile cannot spawn or a child whose resolved sandbox is
-  weaker than the caller's. Harness-native passthrough arguments after `--` are refused
+  refuse a floored caller whose profile cannot spawn, a child whose resolved sandbox is
+  weaker, or a child whose projected network is not contained by the caller's. An offline
+  child is contained by every caller; otherwise child allows must stay within caller allows
+  and child denies must preserve caller denies. Each harness owns that pure projection,
+  which also drives its `network:` report line. User harness config can widen actual
+  access and is reported separately as a warning; it does not alter the floor. Harness-native passthrough
+  arguments after `--` are refused
   because they can override Meridian's resolved sandbox or sandbox flags. A child emits its
   own resolved floor to its descendants.
+  A missing network key creates no floor for compatibility with an older running caller. A
+  network refusal says to narrow the child's allowed hosts, preserve the caller's denied
+  hosts, or widen the caller policy.
   `danger-full-access` and `default` callers, top-level commands, and shells that were not
   launched by Meridian have no floor; read commands, `spawn done`, and `spawn rearm` do
   not consult it. A non-empty `subagents:` list supplies spawn capability but does not yet

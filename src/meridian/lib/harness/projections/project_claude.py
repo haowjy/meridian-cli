@@ -104,6 +104,20 @@ def _settings_json(settings: ClaudeSettings) -> str:
             sandbox["autoAllowBashIfSandboxed"] = sandbox_settings.auto_allow_bash
             if sandbox_settings.deny_write:
                 sandbox["filesystem"] = {"denyWrite": list(sandbox_settings.deny_write)}
+            if sandbox_settings.network is not None:
+                network_settings = sandbox_settings.network
+                network: dict[str, object] = {}
+                if network_settings.strict_allowlist:
+                    network["strictAllowlist"] = True
+                if network_settings.allowed_domains:
+                    network["allowedDomains"] = list(network_settings.allowed_domains)
+                if network_settings.denied_domains:
+                    network["deniedDomains"] = list(network_settings.denied_domains)
+                # Launch-local false values must narrow user settings that enabled these
+                # coarse switches; omission would preserve the wider user policy.
+                network["allowLocalBinding"] = network_settings.allow_local_binding
+                network["allowAllUnixSockets"] = network_settings.allow_all_unix_sockets
+                sandbox["network"] = network
         if sandbox_settings.excluded_commands:
             sandbox["excludedCommands"] = list(sandbox_settings.excluded_commands)
         payload["sandbox"] = sandbox

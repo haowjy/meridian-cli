@@ -47,6 +47,7 @@ from meridian.lib.harness.bundle import (
     bind_launch_spec,
     get_harness_bundle,
     materialize_launch_spec,
+    project_effective_network,
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
@@ -63,7 +64,11 @@ from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
 from meridian.lib.platform import IS_POSIX
-from meridian.lib.safety.policy import EnforcementReport, PermissionPolicy, build_permission_policy
+from meridian.lib.safety.policy import (
+    EnforcementReport,
+    PermissionPolicy,
+    build_permission_policy,
+)
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
@@ -990,6 +995,7 @@ def compile_prepared_policy_surface(
             harness_registry=harness_registry,
             models_readonly=dry_run,
             requested_skills=request.skills,
+            network_overrides=request.network_overrides,
             policy_snapshot=request.launch_policy_snapshot,
             continuation=request.session if is_exact_continue_session(request.session) else None,
             agent_opt_out=request.agent_opt_out,
@@ -1035,11 +1041,18 @@ def _build_shared_composition(
     spawn_usage_contract = build_spawn_usage_contract(
         policy.adapter.run_prompt_policy().spawn_usage_contract_variants
     )
+    network = policy.execution_policy.network
+    assert network is not None
     guidance_blocks = build_guidance_blocks(
         profile=policy.profile,
         spawn_usage_contract=spawn_usage_contract,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
         context_prompt=context_prompt,
+        harness_guidance=policy.adapter.shell_network_guidance(
+            sandbox=policy.execution_policy.sandbox,
+            network=network,
+            native_config=policy.execution_policy.native_config,
+        ),
     )
     resolved_work_id = (request.work_id_hint or "").strip()
     work_goal: str | None = None
@@ -1066,6 +1079,7 @@ def _resolve_spawn_prepare_projection(
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
+    runtime: LaunchRuntime,
     launch_mode: LaunchMode | None = None,
 ) -> PreparedLaunchContent:
     """Compose the spawn's semantic content from the request inputs and project it."""
@@ -1139,6 +1153,7 @@ def _resolve_primary_projection(
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
+    runtime: LaunchRuntime,
     resolved_continue_harness_session_id: str | None,
 ) -> tuple[PreparedLaunchContent, tuple[str, ...], str | None, tuple[str, ...]]:
     profile = policy.profile
@@ -1225,6 +1240,7 @@ def _prepare_spawn_surface(
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
+    runtime: LaunchRuntime,
     launch_mode: LaunchMode | None = None,
 ) -> tuple[PreparedLaunchContent, ResolvedContinuation]:
     content = _resolve_spawn_prepare_projection(
@@ -1232,6 +1248,7 @@ def _prepare_spawn_surface(
         project_paths=project_paths,
         active_work_dir=active_work_dir,
         policy=policy,
+        runtime=runtime,
         launch_mode=launch_mode,
     )
 
@@ -1247,6 +1264,7 @@ def _prepare_primary_surface(
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
+    runtime: LaunchRuntime,
 ) -> tuple[
     PreparedLaunchContent,
     tuple[str, ...],
@@ -1280,6 +1298,7 @@ def _prepare_primary_surface(
         project_paths=project_paths,
         active_work_dir=active_work_dir,
         policy=policy,
+        runtime=runtime,
         resolved_continue_harness_session_id=continuation.harness_session_id,
     )
     return (
@@ -1327,6 +1346,7 @@ def prepare_launch_surface(
             project_paths=project_paths,
             active_work_dir=active_work_dir,
             policy=policies,
+            runtime=runtime,
             launch_mode=launch_mode,
         )
         seed_harness_session_id = continuation.harness_session_id
@@ -1342,6 +1362,7 @@ def prepare_launch_surface(
             project_paths=project_paths,
             active_work_dir=active_work_dir,
             policy=policies,
+            runtime=runtime,
         )
 
     missing_skills_warning = (
@@ -1694,9 +1715,12 @@ def bind_launch_context(
         native_agent_copy=native_agent_copy,
         allow_builtin_agents=allow_builtin_agents,
     )
+    network = resolved_request.execution_policy.network
+    assert network is not None
     permission_policy = build_permission_policy(
         rules=(*resolved_request.tool_rules, *platform_tool_rules),
         sandbox=resolved_request.execution_policy.sandbox,
+        network=network,
         sandbox_write_roots=tuple(
             root.as_posix()
             for root in _dedupe_roots_in_order((resolved_control_root, *workspace_authority_roots))
@@ -1821,10 +1845,6 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
-    child_context_env[CALLER_BOUNDARY_ENV] = CallerBoundary.from_policy(
-        permission_policy,
-        pid_namespace=current_pid_namespace(),
-    ).to_env_value()
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     resolved_agent = (resolved_request.agent or "").strip()
     if resolved_agent:
@@ -1836,7 +1856,6 @@ def bind_launch_context(
     child_context_env["MERIDIAN_TASK_DIR"] = directory_context.logical_task_cwd.as_posix()
     if harness.id == HarnessId.PI:
         child_context_env["_MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
-    validate_child_env_keys(child_context_env)
     runtime_override_env = (
         runtime.resolved_runtime_overrides.to_env()
         if runtime.has_runtime_override_snapshot
@@ -1876,6 +1895,28 @@ def bind_launch_context(
         env=env,
         child_cwd=child_cwd,
     )
+    environment_warnings = harness.launch_environment_warnings(
+        child_env=env,
+        child_cwd=child_cwd,
+    )
+    if environment_warnings:
+        composition_warnings = (*composition_warnings, *environment_warnings)
+        resolved_request = resolved_request.model_copy(
+            update={"warning": summarize_composition_warnings(composition_warnings)}
+        )
+    caller_boundary = CallerBoundary.from_policy(
+        permission_policy,
+        effective_network=project_effective_network(
+            harness.id,
+            permission_policy,
+            native_config=resolved_request.execution_policy.native_config,
+        ),
+        pid_namespace=current_pid_namespace(),
+    ).to_env_value()
+    child_context_env[CALLER_BOUNDARY_ENV] = caller_boundary
+    bind_env_overrides[CALLER_BOUNDARY_ENV] = caller_boundary
+    env[CALLER_BOUNDARY_ENV] = caller_boundary
+    validate_child_env_keys(child_context_env)
     env.update(
         harness.project_launch_env(
             spec=spec,

@@ -48,13 +48,16 @@ Exit code conventions: non-zero → `GuardrailFailure`; timeout → 124; `OSErro
 
 ## Permission Policy (`policy.py`)
 
-`build_permission_policy(rules, sandbox, approval, platform_rules, sandbox_write_roots)`
+`build_permission_policy(rules, sandbox, network, approval, platform_rules, sandbox_write_roots)`
 returns the frozen `PermissionPolicy`: `rules` (Mars's typed tool rules), `platform_rules`,
-`sandbox`, the protected workspace roots and `approval`. Spawn capability is derived from
-the platform command marked as running outside the sandbox. Bind supplies control/task/context
+the parsed sandbox, a resolved `Allow(deny)` or `Hosts(allow, deny)` network value, protected
+workspace roots, and `approval`. A Mars mode-unset network is carried only on the bundle
+result as `SandboxDerivedNetwork` until Meridian's final sandbox precedence is known;
+`PermissionPolicy.network` is always resolved. Spawn
+capability is derived from the platform command marked as running outside the sandbox. Bind supplies control/task/context
 roots separately from projected runtime and temp roots so a native read-only sandbox does
 not block Meridian state. The roots are bind-time projection data and are excluded from
-serialized policy dumps. The builder validates the two modes and never re-resolves
+serialized policy dumps. The builder consumes the resolved network and never re-resolves
 precedence; `launch/policies.py` already did. Each harness compiles the policy in
 `harness/projections/permissions_<harness>.py`
 and returns `(native value, EnforcementReport)`; User-facing behavior is in

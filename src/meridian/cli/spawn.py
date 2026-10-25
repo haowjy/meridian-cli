@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
 from cyclopts import App, Parameter
@@ -33,6 +33,7 @@ from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.launch.continue_replay import MODEL_OVERRIDE_WARNING
+from meridian.lib.launch.request import NetworkOverrides
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.spawn.api import (
     SpawnActionOutput,
@@ -263,6 +264,9 @@ def _shared_launch_input_kwargs(
     autocompact_pct: int | None,
     effort: str | None,
     sandbox: str | None,
+    network: Literal["allow", "deny", "allowlist"] | None,
+    network_allow: tuple[str, ...],
+    network_deny: tuple[str, ...],
     harness: str | None,
     passthrough_args: tuple[str, ...],
     debug: bool,
@@ -285,6 +289,11 @@ def _shared_launch_input_kwargs(
         "autocompact_pct": autocompact_pct,
         "effort": effort,
         "sandbox": sandbox,
+        "network": NetworkOverrides(
+            mode=network,
+            allow=network_allow,
+            deny=network_deny,
+        ),
         "harness": harness,
         "passthrough_args": passthrough_args,
         "debug": debug,
@@ -530,6 +539,32 @@ def _spawn_create(
             ),
         ),
     ] = None,
+    network: Annotated[
+        Literal["allow", "deny", "allowlist"] | None,
+        Parameter(
+            name="--network",
+            group=ADVANCED_PARAMS,
+            help="Shell network mode. Overrides the profile mode for this launch.",
+        ),
+    ] = None,
+    network_allow: Annotated[
+        tuple[str, ...],
+        Parameter(
+            name="--network-allow",
+            group=ADVANCED_PARAMS,
+            help="Add a host to the shell network allow set (repeatable).",
+            negative_iterable=(),
+        ),
+    ] = (),
+    network_deny: Annotated[
+        tuple[str, ...],
+        Parameter(
+            name="--network-deny",
+            group=ADVANCED_PARAMS,
+            help="Add a host to the shell network deny set (repeatable).",
+            negative_iterable=(),
+        ),
+    ] = (),
     yolo: Annotated[
         bool,
         Parameter(
@@ -657,6 +692,9 @@ def _spawn_create(
         autocompact_pct=autocompact_pct,
         effort=effort,
         sandbox=sandbox,
+        network=network,
+        network_allow=network_allow,
+        network_deny=network_deny,
         harness=global_harness,
         passthrough_args=passthrough,
         task_ping_interval=task_ping_interval,

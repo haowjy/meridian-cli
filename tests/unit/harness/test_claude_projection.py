@@ -5,18 +5,42 @@ import json
 import pytest
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
+from meridian.lib.harness.projections.permissions_claude import (
+    compile_claude_permissions,
+    project_claude_network,
+)
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
+    Allow,
+    Hosts,
     PermissionPolicy,
     PlatformCommand,
     PlatformRule,
     build_permission_policy,
+    network_policy_name,
 )
 from meridian.lib.tools import PLATFORM_ORIGIN
 from tests.support.launch import tool_rule
+
+_STRICT_OFFLINE_NETWORK = {
+    "strictAllowlist": True,
+    "allowLocalBinding": False,
+    "allowAllUnixSockets": False,
+}
+
+
+def _spec(**values: object) -> ResolvedLaunchSpec:
+    return ResolvedLaunchSpec.model_validate(values)
+
+
+def _effective_network(spec: ResolvedLaunchSpec) -> str:
+    projection = project_claude_network(
+        spec.permission_policy,
+        native_config=spec.native_config,
+    )
+    return network_policy_name(projection.effective)
 
 
 def _tool_flag_entries(argv: list[str], flag: str) -> tuple[str, ...]:
@@ -42,7 +66,7 @@ def _settings_permission_entries(argv: list[str], action: str) -> tuple[str, ...
 
 
 def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -59,7 +83,7 @@ def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled()
 
 
 def test_claude_projection_keeps_passthrough_agent_when_native_agents_enabled() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(),
@@ -76,12 +100,13 @@ def test_claude_projection_keeps_passthrough_agent_when_native_agents_enabled() 
 
 
 def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
             rules=(tool_rule("agent", "deny", "Agent"), tool_rule("bash", "allow", "Bash")),
             sandbox=None,
+            network=Allow(),
         ),
         extra_args=("--allowedTools", "Agent,Bash(meridian spawn *)"),
     )
@@ -103,7 +128,7 @@ def test_claude_projection_spells_exact_and_prefix_meridian_commands() -> None:
             PlatformCommand(command="meridian spawn list", match="prefix"),
         ),
     )
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(platform_rules=(platform,)),
@@ -135,7 +160,7 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
             ),
         ),
     )
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -166,8 +191,8 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
     assert "cannot keep the completion grant final" in line.note
 
 
-def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> None:
-    spec = ResolvedLaunchSpec(
+def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -182,13 +207,116 @@ def test_claude_projection_excludes_spawn_launch_for_spawn_capable_sandbox() -> 
 
     settings = json.loads(command[command.index("--settings") + 1])
     assert settings["sandbox"]["excludedCommands"] == ["meridian spawn *"]
+    assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     _, report = compile_claude_permissions(spec)
     sandbox_line = next(item for item in report if item.element == "sandbox: workspace-write")
     assert "runs fully outside the sandbox" in sandbox_line.note
+    network_line = next(item for item in report if item.element == "network: deny")
+    assert network_line.status == "partial"
+    assert _effective_network(spec) == "deny"
+
+
+def test_claude_network_report_stays_on_meridian_projected_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("meridian.lib.harness.projections.network_claude.sys.platform", "linux")
+    spec = _spec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            sandbox="workspace-write",
+            network="deny",
+            platform_rules=(
+                PlatformRule(
+                    kind="meridian-commands",
+                    commands=(SPAWN_PLATFORM_COMMAND,),
+                ),
+            ),
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+
+    assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
+    _, report = compile_claude_permissions(spec)
+    line = next(item for item in report if item.element == "network: deny")
+    assert line.status == "partial"
+    assert _effective_network(spec) == "deny"
+
+
+def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
+    spec = _spec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=build_permission_policy(
+            rules=(tool_rule("*", "deny"), tool_rule("bash", "allow", "Bash")),
+            sandbox="workspace-write",
+            network=Hosts(),
+            approval="never",
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+
+    assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
+    assert "--dangerously-skip-permissions" not in command
+    assert _effective_network(spec) == "deny"
+
+
+def test_claude_typed_deny_policy_projects_network_settings() -> None:
+    spec = _spec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            sandbox="workspace-write",
+            network="deny",
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+    _, report = compile_claude_permissions(spec)
+
+    assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
+    assert _effective_network(spec) == "deny"
+    assert any(line.element == "network: deny" for line in report)
+
+
+def test_claude_allowlist_translates_double_wildcards_and_gates_local_switches() -> None:
+    spec = _spec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            sandbox="workspace-write",
+            network={
+                "allow": ["**.github.com", "localhost"],
+                "deny": ["**.blocked.example"],
+            },
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    settings = json.loads(command[command.index("--settings") + 1])
+    network = settings["sandbox"]["network"]
+    _, report = compile_claude_permissions(spec)
+    line = next(item for item in report if item.element.startswith("network: allowlist"))
+
+    assert network == {
+        "strictAllowlist": True,
+        "allowedDomains": ["github.com", "*.github.com", "localhost"],
+        "deniedDomains": ["blocked.example", "*.blocked.example"],
+        "allowLocalBinding": True,
+        "allowAllUnixSockets": True,
+    }
+    assert "allow=2 [**.github.com, localhost]" in line.element
+    assert "deny=1 [**.blocked.example]" in line.element
+    assert line.status == "partial"
 
 
 def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -205,7 +333,7 @@ def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> 
 
 
 def test_claude_projection_does_not_exclude_spawn_when_sandbox_is_disabled() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -223,7 +351,7 @@ def test_claude_projection_does_not_exclude_spawn_when_sandbox_is_disabled() -> 
 
 
 def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
@@ -233,6 +361,7 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
                 tool_rule("agent", "deny", "Agent"),
             ),
             sandbox=None,
+            network=Allow(),
         ),
         extra_args=(
             "--allowedTools=Agent,Agent(custom),Bash(meridian spawn *)",
@@ -265,12 +394,13 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
 
 
 def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> None:
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=build_permission_policy(
             rules=(tool_rule("*", "deny"), tool_rule("agent", "allow", "Agent")),
             sandbox="workspace-write",
+            network=Hosts(),
             approval="auto",
             platform_rules=(PlatformRule(kind="builtin-agents"),),
         ),
@@ -294,7 +424,7 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
 @pytest.mark.parametrize("continuation", [False, True])
 def test_interactive_prompt_is_unconsumable_after_passthrough(continuation: bool) -> None:
     prompt = "Reply exactly: hello"
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         interactive=True,
         user_turn_content=prompt,
@@ -316,7 +446,7 @@ def test_claude_projection_loads_selected_plugin_dirs(
     interactive: bool,
 ) -> None:
     plugin_dirs = ("/plugins/first", "/plugins/second")
-    spec = ResolvedLaunchSpec(
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         interactive=interactive,
         claude_runtime=ClaudeRuntimeResolution(plugin_dirs=plugin_dirs),

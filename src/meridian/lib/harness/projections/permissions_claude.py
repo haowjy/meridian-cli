@@ -16,6 +16,12 @@ from typing import Literal
 
 from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import unsupported_native_config_report
+from meridian.lib.harness.projections.network_claude import (
+    CLAUDE_NETWORK_ALLOW_DOMAINS,
+    ClaudeNetworkSettings,
+    claude_network_line,
+    project_claude_network,
+)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 from meridian.lib.safety.policy import (
@@ -63,6 +69,7 @@ class ClaudeSandboxSettings:
     deny_write: tuple[str, ...] = ()
     auto_allow_bash: bool = False
     excluded_commands: tuple[str, ...] = ()
+    network: ClaudeNetworkSettings | None = None
 
 
 @dataclass(frozen=True)
@@ -406,7 +413,11 @@ def _outside_sandbox_commands(policy: PermissionPolicy) -> tuple[str, ...]:
     )
 
 
-def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSandboxSettings | None:
+def _compile_sandbox(
+    policy: PermissionPolicy,
+    channels: _Channels,
+    network: ClaudeNetworkSettings | None,
+) -> ClaudeSandboxSettings | None:
     if policy.sandbox == "default":
         return None
     if policy.sandbox == "danger-full-access":
@@ -422,6 +433,7 @@ def _compile_sandbox(policy: PermissionPolicy, channels: _Channels) -> ClaudeSan
             and not channels.ask
         ),
         excluded_commands=_outside_sandbox_commands(policy),
+        network=network,
     )
 
 
@@ -848,7 +860,8 @@ def compile_claude_permissions(
     effective = _effective_rules(policy)
     passthrough = _read_passthrough(spec.extra_args)
     channels = _compile_channels(policy, effective, passthrough)
-    sandbox = _compile_sandbox(policy, channels)
+    network = project_claude_network(policy, native_config=spec.native_config)
+    sandbox = _compile_sandbox(policy, channels, network.native)
     policy_mode = _policy_mode(policy, channels)
     # A passthrough mode is the launcher's own choice; Claude takes the last one, so
     # Meridian omits its mode rather than silently overriding it.
@@ -879,6 +892,14 @@ def compile_claude_permissions(
     lines.extend(_platform_lines(policy, permissions))
     if policy.sandbox != "default":
         lines.append(_sandbox_line(policy, permissions))
+    lines.append(
+        claude_network_line(
+            policy,
+            network,
+            sandbox_enabled=bool(sandbox is not None and sandbox.enabled),
+            excluded_commands=sandbox.excluded_commands if sandbox is not None else (),
+        )
+    )
     if policy.approval != "default":
         lines.append(_approval_line(policy, passthrough, policy_mode=policy_mode))
     lines.extend(
@@ -893,12 +914,19 @@ def compile_claude_permissions(
     )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Claude"))
     lines.extend(compaction_report(spec, harness="Claude"))
-    return permissions, complete_report(policy, lines, harness="Claude")
+    return permissions, complete_report(
+        policy,
+        lines,
+        harness="Claude",
+    )
 
 
 __all__ = [
+    "CLAUDE_NETWORK_ALLOW_DOMAINS",
+    "ClaudeNetworkSettings",
     "ClaudePermissions",
     "ClaudeSandboxSettings",
     "ClaudeSettings",
     "compile_claude_permissions",
+    "project_claude_network",
 ]

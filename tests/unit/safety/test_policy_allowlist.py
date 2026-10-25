@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from meridian.lib.safety.policy import ALLOWLIST_ORIGIN, build_permission_policy
+from meridian.lib.safety.policy import (
+    ALLOWLIST_ORIGIN,
+    Allow,
+    Hosts,
+    build_permission_policy,
+    network_policy_name,
+    parse_network_policy,
+    resolve_network_policy,
+)
 from meridian.lib.tools import ToolRule
 from tests.support.launch import tool_rule
 
@@ -48,7 +56,11 @@ def test_allowlist_queries(
     denied: tuple[tuple[str, tuple[str, ...]], ...],
     allowed: tuple[str, ...],
 ) -> None:
-    policy = build_permission_policy(rules=rules, sandbox=None)
+    policy = build_permission_policy(
+        rules=rules,
+        sandbox=None,
+        network=Allow(),
+    )
 
     written = policy.rules[: len(policy.rules) - len(rules)]
     assert policy.rules[len(written) :] == rules
@@ -57,3 +69,28 @@ def test_allowlist_queries(
     assert policy.is_allowlist is whole_policy
     assert tuple((rule.capability, rule.native) for rule in written) == denied
     assert policy.allowed_tools == allowed
+
+
+def test_network_resolution_follows_sandbox_without_losing_authored_allow() -> None:
+    native_default = build_permission_policy(
+        sandbox=None,
+        network=resolve_network_policy(None, None),
+    )
+    sandboxed_default = build_permission_policy(
+        sandbox="workspace-write",
+        network=resolve_network_policy(None, "workspace-write"),
+    )
+    authored = build_permission_policy(
+        sandbox="workspace-write",
+        network=resolve_network_policy(parse_network_policy("allow"), "workspace-write"),
+    )
+
+    assert (native_default.network, network_policy_name(native_default.network)) == (
+        Allow(),
+        "allow",
+    )
+    assert (sandboxed_default.network, network_policy_name(sandboxed_default.network)) == (
+        Hosts(),
+        "deny",
+    )
+    assert (authored.network, network_policy_name(authored.network)) == (Allow(), "allow")

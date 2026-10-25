@@ -61,7 +61,9 @@ from meridian.lib.harness.passthrough.opencode import (
     build_opencode_server_attach_command,
 )
 from meridian.lib.harness.permission_broker import PermissionBroker
-from meridian.lib.harness.projections.permissions_opencode import compile_opencode_permissions
+from meridian.lib.harness.projections.permissions_opencode import (
+    compile_opencode_permissions,
+)
 from meridian.lib.harness.projections.project_opencode_config import (
     OPENCODE_CONFIG_CONTENT_ENV,
     meridian_agent_id,

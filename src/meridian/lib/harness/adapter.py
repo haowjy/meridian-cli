@@ -53,6 +53,7 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.safety.policy import NetworkPolicy
 
 if TYPE_CHECKING:
     from meridian.lib.harness.extractors.base import AttemptFold
@@ -338,6 +339,13 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
         self, spec: ResolvedLaunchSpec
     ) -> tuple[CompositionWarning, ...]: ...
 
+    def launch_environment_warnings(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+    ) -> tuple[CompositionWarning, ...]: ...
+
 
 @runtime_checkable
 class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
@@ -347,6 +355,14 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def capabilities(self) -> HarnessCapabilities: ...
 
     def run_prompt_policy(self) -> RunPromptPolicy: ...
+
+    def shell_network_guidance(
+        self,
+        *,
+        sandbox: str | None,
+        network: NetworkPolicy,
+        native_config: Mapping[str, object],
+    ) -> str | None: ...
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str: ...
 
@@ -641,8 +657,29 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         _ = spec
         return ()
 
+    def launch_environment_warnings(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+    ) -> tuple[CompositionWarning, ...]:
+        """Return diagnostics selected by the final child environment and cwd."""
+
+        _ = child_env, child_cwd
+        return ()
+
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy()
+
+    def shell_network_guidance(
+        self,
+        *,
+        sandbox: str | None,
+        network: NetworkPolicy,
+        native_config: Mapping[str, object],
+    ) -> str | None:
+        _ = sandbox, network, native_config
+        return None
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         _ = name, description, prompt

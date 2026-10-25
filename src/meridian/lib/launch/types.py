@@ -11,7 +11,7 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.launch.composition import PromptDocument
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import NetworkOverrides, SessionRequest
 from meridian.lib.safety.policy import EnforcementReport
 
 _CONTINUATION_GUIDANCE = (
@@ -67,6 +67,7 @@ class LaunchRequest(BaseModel):
     include_bootstrap_documents: bool = False
     dry_run: bool = False
     ignore_direnv: bool | None = None
+    network_overrides: NetworkOverrides = NetworkOverrides()
     # Replay persisted launch contract on primary --continue (idempotent resume).
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/etc.)

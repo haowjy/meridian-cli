@@ -15,6 +15,7 @@ from pydantic import (
     JsonValue,
     PlainSerializer,
     TypeAdapter,
+    field_serializer,
     field_validator,
 )
 
@@ -24,6 +25,11 @@ from meridian.lib.core.overrides import (
     ExecutionPolicyField,
     RuntimeOverrides,
     normalize_execution_policy_fields,
+)
+from meridian.lib.safety.policy import (
+    NetworkPolicy,
+    network_policy_to_wire,
+    parse_network_policy,
 )
 
 type NativeConfig = Mapping[str, object]
@@ -101,12 +107,23 @@ class ResolvedExecutionPolicy(BaseModel):
 
     effort: str | None = None
     sandbox: str | None = None
+    network: NetworkPolicy | None = None
     approval: str | None = None
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None
     timeout: float | None = None
     resident_rearm_budget: int | None = None
     native_config: NativeConfigValue = Field(default_factory=_empty_native_config)
+
+    @field_validator("network", mode="before")
+    @classmethod
+    def _parse_network(cls, value: object) -> NetworkPolicy | None:
+        # Scalar strings are the durable shape written before typed host policies.
+        return parse_network_policy(value)
+
+    @field_serializer("network")
+    def _serialize_network(self, value: NetworkPolicy | None) -> dict[str, object] | None:
+        return network_policy_to_wire(value) if value is not None else None
 
     @field_validator("resident_rearm_budget")
     @classmethod

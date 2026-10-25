@@ -4,6 +4,33 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Shell network policy now accepts `allowlist` plus additive `network-allow` and `network-deny` host sets. Current Mars bundles carry one network object instead of a scalar; durable snapshots written by older Meridian builds remain readable. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
+- Requires Mars >= 0.18.0 for portable network policy bundles with `provenance.network_source` and `{mode, allow, deny}`. Older Mars stops launches with `Install mars >= 0.18.0` instead of keeping harness network defaults. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
+- An unset profile `network` now follows its sandbox: `read-only`/`workspace-write` project deny, while `danger-full-access` stays online and an unset/default sandbox stays harness-native. Set `network: allow` to opt a constrained profile into shell network. Sandboxed child delegation compares the caller's and child's Meridian-projected network, including the inferred deny. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults) and [sandboxed child delegation](docs/upgrading.md#sandboxed-child-delegation).
+
+### Added
+- `meridian`, `meridian spawn`, and `meridian bootstrap` accept `--network allow|deny|allowlist` with repeatable `--network-allow HOST` and `--network-deny HOST` additions.
+- Claude and Codex `workspace-write` launches project finite host allowlists and deny exceptions; dry-run reports summarize both sets and identify local-service gaps.
+- Profile `network: allow | deny` controls shell connections separately from built-in web tools; every harness reports what it enforces.
+- Sandboxed child delegation cannot weaken the caller's Meridian-projected network; a legacy boundary record without a network key remains unrestricted for mid-session compatibility.
+
+### Changed
+- Network policy is one typed allow-or-host-set value from final sandbox resolution through harness projection and the caller guardrail. The guardrail compares only Meridian's projected policy; widening Claude or Codex config stays in force and is reported as a warning without changing that comparison.
+
+### Fixed
+- Dry runs and launches warn when child-selected Claude user allow/proxy settings or Codex
+  user/ancestor-project proxy-domain allows can widen access beyond Meridian's projected
+  policy. Each warning names its file; malformed files are also named when inspection fails.
+- Caller boundary records, child containment, shell guidance, and permission reports use
+  only Meridian's projected policy. User harness config can widen the launched process but
+  cannot raise a caller's child-spawn floor. `[primary] sandbox` resolves an unset network
+  only after primary config precedence is applied.
+- Invalid or unaddressable deprecated Codex native network overrides no longer suppress the portable profile network policy.
+
+### Deprecated
+- Codex `harness-overrides.codex.sandbox_workspace_write.network_access`; use profile `network`. Native passthrough wins during this warning release, then the key becomes reserved.
+
 ## [0.13.0] - 2026-10-24
 
 ### Upgrade notes

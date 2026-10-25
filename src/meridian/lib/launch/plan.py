@@ -94,6 +94,7 @@ def build_primary_spawn_request(
         skills=request.skills,
         extra_args=request.passthrough_args,
         ignore_direnv=request.ignore_direnv,
+        network_overrides=request.network_overrides,
         supplemental_prompt_documents=request.supplemental_prompt_documents,
         context_refs=request.context_refs,
         reference_files=request.reference_files,

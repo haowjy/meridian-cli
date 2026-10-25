@@ -74,7 +74,10 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 | `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
 | `--approval MODE` | `default` \| `confirm` \| `auto` \| `never`. Overrides the profile; each harness applies only some modes: [Permissions by harness](agent-profiles.md#permissions-by-harness) |
-| `--sandbox MODE` | `default` \| `read-only` \| `workspace-write` \| `danger-full-access`. Overrides the profile; only Codex and Cursor apply it |
+| `--sandbox MODE` | `default` \| `read-only` \| `workspace-write` \| `danger-full-access`. Overrides the profile; harness support differs |
+| `--network MODE` | `allow` \| `deny` \| `allowlist`. Overrides the profile mode for this launch; shell network only |
+| `--network-allow HOST` | Add an exact host, IP, `*.x`, or `**.x` to the allow set (repeatable) |
+| `--network-deny HOST` | Add a host pattern to the deny set (repeatable; denies win) |
 | `--yolo` | Shorthand for `--approval never`. Rejected together with `--approval` |
 | `--metadata` | Show detailed inline accounting (model, cost, tokens, duration, report path). Still includes report body and transcript command. |
 | `--no-full` | Suppress report body from output (default is now to show it) |

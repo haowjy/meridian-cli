@@ -100,4 +100,7 @@ def compile_cursor_permissions(
     return permissions, _cursor_report(spec, policy, permissions)
 
 
-__all__ = ["CursorPermissions", "compile_cursor_permissions"]
+__all__ = [
+    "CursorPermissions",
+    "compile_cursor_permissions",
+]

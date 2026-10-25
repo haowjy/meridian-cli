@@ -60,6 +60,7 @@ class FieldProvenance:
     effort_source: ProvenanceLevel = ProvenanceLevel.UNSET
     approval_source: ProvenanceLevel = ProvenanceLevel.UNSET
     sandbox_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    network_source: ProvenanceLevel = ProvenanceLevel.UNSET
     autocompact_source: ProvenanceLevel = ProvenanceLevel.UNSET
     autocompact_pct_source: ProvenanceLevel = ProvenanceLevel.UNSET
     timeout_source: ProvenanceLevel = ProvenanceLevel.UNSET
@@ -139,6 +140,7 @@ def render_provenance(provenance: FieldProvenance) -> dict[str, str]:
         "effort",
         "approval",
         "sandbox",
+        "network",
         "autocompact",
         "autocompact_pct",
         "timeout",
@@ -164,6 +166,7 @@ def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]
         "effort",
         "approval",
         "sandbox",
+        "network",
         "autocompact",
         "autocompact_pct",
         "timeout",

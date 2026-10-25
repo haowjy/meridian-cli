@@ -19,13 +19,24 @@ pi_extension_projection.py → (built extension artifacts → stable -e paths, n
 ```
 
 `project_codex_common.py` is not a projector — it holds the Codex spellings both Codex
-projectors share (tool-switch and built-in-agent flags). `native_config.py` flattens
+projectors share (sandbox, writable-root and network settings, tool switches, and
+built-in-agent flags). The shared sandbox value spells `--add-dir` for subprocesses and
+Codex config for app-server startup/thread creation so those boundaries cannot drift.
+`native_config.py` flattens
 the selected harness-native config, spells Codex TOML literals, and owns the reserved keys
 that Meridian's Codex projections write themselves. Meridian writes no Codex MCP config,
 so `mcp_servers.*` passes through. `compaction.py` owns the semantic
 `autocompact` / `autocompact_pct` projection and report: Claude gets its token flag and
 percentage environment variable, Codex gets config overrides, and the other harnesses
 report both fields unsupported.
+
+One warning-release exception is tracked in [TODO](TODO): a native
+`sandbox_workspace_write.network_access` leaf is deprecated. The Codex permission compile
+resolves it once and carries it on `CodexPermissions`. Only an addressable, TOML-encodable
+boolean suppresses the portable value and wins on subprocess, app-server and thread
+creation; invalid candidates are ignored and leave the portable projection in place. The
+next release makes the key reserved like `writable_roots` and removes that one compile-time
+carveout.
 
 `pi_extension_projection.py` is not a spec projector — it resolves stable
 Meridian-owned Pi extension entrypoints without copying or materializing them.
@@ -183,7 +194,8 @@ remaining exact/prefix list as unsupported. A rules-file write failure is report
 blocking the launch.
 
 Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
-(`element`, `status`, `note`) per tool rule, platform rule, sandbox and approval value, saying
+(`element`, `status`, `note`) per tool rule, platform rule, sandbox, network and approval
+value, saying
 what that harness did with it. Status `native` means enforced as stated, `partial` means part
 of the meaning reaches the harness (the note says which), `unsupported` means nothing does,
 `platform` means a Meridian platform rule decided it. The report states today's
@@ -192,6 +204,31 @@ compile's report is registered as `HarnessProjectionPorts.permission_report` (th
 call the typed compile directly for its native value; nothing generic reads that value);
 `LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
 `permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
+Each harness also registers `HarnessProjectionPorts.effective_network`: a pure function of
+the resolved `PermissionPolicy` and Meridian-owned native config. Harness user/project
+configuration is not an input: Claude and Codex adapters inspect the final child environment
+and cwd separately and emit attributed warnings when those files can widen actual access.
+Claude and Codex call their registered derivation for the `network:` report line;
+`complete_report()` uses unrestricted network for the other harnesses' default line. The
+child-spawn guardrail calls the same registered port, so the public three-field `ReportLine`
+has no hidden propagation state.
+
+Every compile reports the effective shell `network` policy separately from built-in web
+tools. The report element is the compact typed value: its mode plus each non-empty host
+set's count and first three entries. Claude projects finite allows and denies through
+`allowedDomains` / `deniedDomains`, translating `**.x` to `x` plus `*.x`. It leaves local
+binding and Unix sockets off unless `localhost` or `127.0.0.1` is effectively allowed; the
+launch emits explicit `false` values so wider user settings cannot survive. The native
+switches are coarse, so enabling either is partial. On Linux host localhost is also
+partial because clients must use the sandbox proxy. Claude user settings can widen actual
+access, but warnings name the source without changing the projected policy. Codex enables
+network only for `workspace-write`: finite allows, and allow-all with denies, use its proxy
+with one inline TOML domain map and remain partial because local services stay reachable.
+`read-only` reports an authored allow or non-empty allowlist as unsupported and stays
+offline. Unset projects deny for constrained Claude and Codex sandboxes. OpenCode, Pi, and
+Cursor satisfy unrestricted allow but report restrictions unenforced. A `meridian spawn`
+sandbox escape remains visible on the network line because that command runs with host
+network access.
 
 ### Adding a New Harness
 

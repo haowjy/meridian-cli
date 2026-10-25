@@ -21,17 +21,35 @@ from meridian.lib.harness.idle_types import (
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
-from meridian.lib.safety.policy import EnforcementReport
+from meridian.lib.safety.policy import (
+    Allow,
+    EnforcementReport,
+    NetworkPolicy,
+    PermissionPolicy,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
 BootstrapPayloadT = TypeVar("BootstrapPayloadT", covariant=True)
 
-
 class SubprocessProjector(Protocol[ProjectorSpecT]):
     """Project a resolved launch spec onto one subprocess argv."""
 
     def __call__(self, spec: ProjectorSpecT, *, base_command: tuple[str, ...]) -> list[str]: ...
+
+
+class EffectiveNetwork(Protocol):
+    """Project Meridian-owned policy inputs onto one harness's effective network."""
+
+    def __call__(
+        self,
+        policy: PermissionPolicy,
+        *,
+        native_config: Mapping[str, object],
+    ) -> NetworkPolicy: ...
+
+
+UNENFORCED_NETWORK = Allow()
 
 
 class ManagedPrimaryBackendProjector(Protocol[ProjectorSpecT]):
@@ -73,6 +91,10 @@ class HarnessProjectionPorts(Generic[SpecT]):
     # ``--dry-run`` and the projection manifest read it; the live projectors call the typed
     # compile (``permissions_<harness>.py``) directly for its native projection.
     permission_report: Callable[[SpecT], EnforcementReport]
+    # Reports and child-spawn guardrails share this pure, harness-owned policy fact.
+    # None means the harness has no shell-network enforcement and therefore leaves the
+    # shared ``UNENFORCED_NETWORK`` policy in effect.
+    effective_network: EffectiveNetwork | None = None
     # Resolves the spec's facts that depend on the launch environment or child cwd once at
     # bind, so every projection and the connection read one value.
     bind_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None
@@ -332,6 +354,20 @@ def bind_launch_spec(
     return cast("SpecT", bundle.projections.bind_spec(spec, env, child_cwd))
 
 
+def project_effective_network(
+    harness_id: HarnessId,
+    policy: PermissionPolicy,
+    *,
+    native_config: Mapping[str, object],
+) -> NetworkPolicy:
+    """Project the network policy from only inputs Meridian owns."""
+
+    projector = get_harness_bundle(harness_id).projections.effective_network
+    if projector is None:
+        return UNENFORCED_NETWORK
+    return projector(policy, native_config=native_config)
+
+
 def materialize_launch_spec(
     harness_id: HarnessId,
     spec: SpecT,
@@ -410,6 +446,7 @@ def project_managed_primary_preview(
 
 
 __all__ = [
+    "UNENFORCED_NETWORK",
     "HarnessBundle",
     "HarnessProjectionPorts",
     "ManagedPrimaryProjectionPorts",
@@ -421,6 +458,7 @@ __all__ = [
     "get_harness_bundle",
     "materialize_launch_spec",
     "post_to_primary",
+    "project_effective_network",
     "project_managed_primary_backend_command",
     "project_managed_primary_bootstrap",
     "project_subprocess_spec",

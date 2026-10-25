@@ -55,11 +55,17 @@ from meridian.lib.harness.claude_sessions import (
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
 )
-from meridian.lib.harness.claude_settings import read_claude_settings_allows
+from meridian.lib.harness.claude_settings import (
+    claude_network_config_warnings,
+    read_claude_settings_permissions,
+)
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.projections.network_claude import (
+    effective_claude_network,
+)
 from meridian.lib.harness.projections.permissions_claude import (
     compile_claude_permissions,
 )
@@ -92,6 +98,11 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.safety.policy import (
+    CONSTRAINED_SANDBOX_MODES,
+    NetworkPolicy,
+    network_allows_local_services,
+)
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
 _IDLE_PLUGIN = "meridian-idle"
@@ -129,11 +140,12 @@ def bind_claude_spec(
 ) -> ResolvedLaunchSpec:
     """Resolve settings-file allows once from the launch environment and cwd."""
 
+    settings_allows = read_claude_settings_permissions(child_cwd, env)
     return spec.model_copy(
         update={
             "claude_runtime": replace(
                 spec.claude_runtime,
-                settings_allows=read_claude_settings_allows(child_cwd, env),
+                settings_allows=settings_allows,
             )
         }
     )
@@ -230,6 +242,25 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             spawn_usage_contract_variants=CLAUDE_SPAWN_USAGE_VARIANTS,
         )
 
+    def shell_network_guidance(
+        self,
+        *,
+        sandbox: str | None,
+        network: NetworkPolicy,
+        native_config: Mapping[str, object],
+    ) -> str | None:
+        _ = native_config
+        if (
+            not sys.platform.startswith("linux")
+            or sandbox not in CONSTRAINED_SANDBOX_MODES
+            or not network_allows_local_services(network)
+        ):
+            return None
+        return (
+            "To reach a service on the host through Claude's sandbox proxy, bypass "
+            "NO_PROXY (for curl: `curl --noproxy '' ...`)."
+        )
+
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         return build_claude_adhoc_agent_json(name=name, description=description, prompt=prompt)
 
@@ -301,10 +332,16 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             claude_runtime=resolve_claude_runtime(plugin_names=plugin_names),
         )
 
-    def launch_spec_warnings(
-        self, spec: ResolvedLaunchSpec
-    ) -> tuple[CompositionWarning, ...]:
+    def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]:
         return spec.claude_runtime.warnings
+
+    def launch_environment_warnings(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+    ) -> tuple[CompositionWarning, ...]:
+        return claude_network_config_warnings(child_cwd, child_env)
 
     def project_launch_env(
         self,
@@ -354,13 +391,15 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 target_config_root=effective_config_root,
             )
 
-        return HarnessPrelaunchState(env_overrides={
-            "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(
-                claude_boundary_journal_path(runtime_root, spawn_id)
-            ),
-            "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
-            "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON": sys.executable,
-        })
+        return HarnessPrelaunchState(
+            env_overrides={
+                "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(
+                    claude_boundary_journal_path(runtime_root, spawn_id)
+                ),
+                "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
+                "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON": sys.executable,
+            }
+        )
 
     def cleanup_prelaunch(
         self,
@@ -563,6 +602,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_claude_spec_to_cli_args,
             permission_report=lambda spec: compile_claude_permissions(spec)[1],
+            effective_network=effective_claude_network,
             bind_spec=bind_claude_spec,
         ),
         semantics=CLAUDE_SEMANTICS,

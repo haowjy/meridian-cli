@@ -21,6 +21,7 @@ CODEX_CONFIG_POST_TURN_COMPACT_THRESHOLD_PERCENT_KEY = (
 CODEX_CONFIG_SANDBOX_MODE_KEY = "sandbox_mode"
 CODEX_CONFIG_APPROVAL_POLICY_KEY = "approval_policy"
 CODEX_CONFIG_WRITABLE_ROOTS_KEY = "sandbox_workspace_write.writable_roots"
+CODEX_CONFIG_NETWORK_ACCESS_KEY = "sandbox_workspace_write.network_access"
 CODEX_CONFIG_NOTIFY_KEY = "notify"
 CODEX_CONFIG_WEB_SEARCH_KEY = "web_search"
 CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY = "tools.web_search"
@@ -131,7 +132,9 @@ def codex_toml_literal(value: object) -> str | None:
     return None
 
 
-def _codex_key_addressable(segments: tuple[str, ...]) -> bool:
+def codex_key_addressable(segments: tuple[str, ...]) -> bool:
+    """Whether Codex ``-c`` can address these nested key segments."""
+
     return all(
         segment
         and not any(character in segment for character in ".='\"")
@@ -164,12 +167,12 @@ def project_codex_native_config(
     lines: list[ReportLine] = []
     for segments, value in flatten_native_config(config):
         key = ".".join(segments)
-        if not _codex_key_addressable(segments):
+        if not codex_key_addressable(segments):
             lines.append(
                 ReportLine(
                     f"native_config: {key}",
                     "unsupported",
-                    "Codex -c cannot address this key",
+                    "ignored because Codex -c cannot address this key",
                 )
             )
             continue
@@ -180,7 +183,7 @@ def project_codex_native_config(
                     ReportLine(
                         f"native_config: {key} = {{}}",
                         "unsupported",
-                        "empty mappings have no Codex -c leaf to override",
+                        "ignored because empty mappings have no Codex -c leaf to override",
                     )
                 )
                 continue
@@ -190,11 +193,21 @@ def project_codex_native_config(
                 ReportLine(
                     f"native_config: {key}",
                     "unsupported",
-                    "Codex -c cannot encode this value as TOML",
+                    "ignored because Codex -c cannot encode this value as TOML",
                 )
             )
             continue
         element = f"native_config: {key} = {literal}"
+        if key == CODEX_CONFIG_NETWORK_ACCESS_KEY and not isinstance(value, bool):
+            lines.append(
+                ReportLine(
+                    element,
+                    "unsupported",
+                    "ignored because Codex network_access requires a boolean; use the "
+                    "profile network field",
+                )
+            )
+            continue
         if _reserved_codex_key(key):
             lines.append(
                 ReportLine(
@@ -206,7 +219,13 @@ def project_codex_native_config(
             continue
         override = f"{key}={literal}"
         arguments.extend(("-c", override))
-        lines.append(ReportLine(element, "native", f"-c {override}"))
+        note = f"-c {override}"
+        if key == CODEX_CONFIG_NETWORK_ACCESS_KEY:
+            note += (
+                "; deprecated: use profile network instead; this passthrough wins for this "
+                "release and becomes a Meridian-reserved key in the next release"
+            )
+        lines.append(ReportLine(element, "native", note))
     return tuple(arguments), tuple(lines)
 
 
@@ -233,6 +252,7 @@ __all__ = [
     "CODEX_CONFIG_AUTO_COMPACT_TOKEN_LIMIT_KEY",
     "CODEX_CONFIG_FEATURES_PREFIX",
     "CODEX_CONFIG_MODEL_KEY",
+    "CODEX_CONFIG_NETWORK_ACCESS_KEY",
     "CODEX_CONFIG_NOTIFY_KEY",
     "CODEX_CONFIG_POST_TURN_COMPACT_THRESHOLD_PERCENT_KEY",
     "CODEX_CONFIG_REASONING_EFFORT_KEY",
@@ -242,6 +262,7 @@ __all__ = [
     "CODEX_CONFIG_WRITABLE_ROOTS_KEY",
     "CODEX_RESERVED_NATIVE_CONFIG_KEYS",
     "CODEX_RESERVED_NATIVE_CONFIG_PREFIXES",
+    "codex_key_addressable",
     "codex_toml_literal",
     "flatten_native_config",
     "project_codex_native_config",
