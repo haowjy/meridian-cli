@@ -1038,6 +1038,8 @@ def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     assert preview.resolved_request.execution_policy.effort == "high"
     assert str(preview.binding.run_params.model) == "claude-opus-4-7-thinking-high"
     assert preview.binding.spec.model == "claude-opus-4-7-thinking-high"
+    assert "# Meridian capabilities" in preview.binding.run_params.prompt
+    assert "`meridian notify`" in preview.binding.run_params.prompt
     assert "--model" in preview.binding.argv
     assert (
         preview.binding.argv[preview.binding.argv.index("--model") + 1]

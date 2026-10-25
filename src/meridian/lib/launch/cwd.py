@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Literal
 
 from meridian.lib.launch.errors import WorkTaskDirMissing
-from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.state import work_store
 from meridian.lib.state.spawn_scope import read_spawn_scope
 
@@ -69,12 +68,6 @@ class LaunchDirectoryContext:
     @property
     def has_distinct_task_cwd(self) -> bool:
         return self.logical_task_cwd != self.authority_root
-
-    def should_inject_task_cwd_instruction(self, surface: LaunchCompositionSurface) -> bool:
-        """Whether launch composition should tell the agent to cd into task cwd."""
-        _ = surface
-        return self.has_distinct_task_cwd
-
 
 def _active_task_dir_for_item(
     *,

@@ -186,7 +186,7 @@ class ComposedLaunchContent:
     """On-demand skills listed by name in the prompt (not loaded until triggered)."""
 
     guidance_blocks: tuple[CompositionBlock, ...] = ()
-    """Ordered guidance blocks (inventory, spawn contract, discovery pointers, context env)."""
+    """Ordered guidance blocks (inventory, capabilities, spawn rules, context paths)."""
 
 
 def composed_content_for_bind_refresh(

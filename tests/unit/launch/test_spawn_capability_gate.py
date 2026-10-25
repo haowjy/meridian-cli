@@ -23,8 +23,25 @@ from meridian.lib.launch.spawn_guidance import (
 )
 from meridian.lib.safety.policy import Allow, Host, Hosts
 
-CONTRACT_MARKER = "# Spawning subagents (meridian)"
-INVENTORY = "## Meridian Agents\n\n- tech-lead\n- explorer"
+CONTRACT_MARKER = "# Meridian spawn rules"
+INVENTORY = """\
+# Meridian Agents
+
+Write prompts to `$(meridian work path prompts/<name>.md)`.
+Use `--bg` + `meridian spawn wait` for parallel work.
+Declared backups are automatic fallback candidates, not native fanout.
+
+## Subagent
+- tech-lead
+- explorer"""
+FILTERED_INVENTORY = """\
+# Meridian Agents
+
+Declared backups are automatic fallback candidates, not native fanout.
+
+## Subagent
+- tech-lead
+- explorer"""
 
 
 def _profile(
@@ -56,17 +73,21 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
 
     assert [block.name for block in blocks[:3]] == [
         "inventory",
-        "spawn-prompting",
+        "capabilities",
         "spawn-contract",
     ]
-    assert blocks[0].content == INVENTORY
+    assert blocks[0].content == FILTERED_INVENTORY
     contract = next(block for block in blocks if block.name == "spawn-contract")
     assert contract.content.count(CONTRACT_MARKER) == 1
     assert "run_in_background" in contract.content
     assert "confirmation message's instructions" in contract.content
     assert "reply is kept as the report" not in contract.content
-    work = next(block for block in blocks if block.name == "work-discovery")
-    assert "standalone shell calls" in work.content
+    capabilities = next(block for block in blocks if block.name == "capabilities")
+    assert "standalone shell calls" in capabilities.content
+    assert "meridian spawn subagents" in capabilities.content
+    assert "meridian mars models prompting" in capabilities.content
+    assert "meridian notify" in capabilities.content
+    assert "meridian mermaid check" in capabilities.content
     hint = next(block for block in blocks if block.name == "harness-guidance")
     assert hint.content == "Host network hint"
 

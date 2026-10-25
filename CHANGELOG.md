@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Agent system prompts map Meridian capabilities to their commands and help in one
+  compact section; spawn-only commands stay off leaf profiles, and source/work
+  directory guidance is no longer repeated.
+
 ### Fixed
 - Commands that show a terminal child result now consume its completion notice: a
   `spawn cancel` that reports `cancelled`, `spawn show` or `spawn status --full`

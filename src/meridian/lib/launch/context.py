@@ -516,35 +516,11 @@ def materialize_launch_artifacts(
     continue_fork: bool = False,
     model_override_explicit: bool = False,
     reference_items: tuple[ReferenceItem, ...] = (),
-    inject_task_cwd_instruction: bool = False,
     permission_policy: PermissionPolicy,
     native_config: NativeConfig,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
-
-    task_cwd_instruction = ""
-    if task_cwd and inject_task_cwd_instruction:
-        task_cwd_instruction = (
-            "\n\n# Source-edit directory\n"
-            "Use `MERIDIAN_PROJECT_DIR` for project coordination files and harness context.\n"
-            "`MERIDIAN_ACTIVE_WORK_DIR` is for scratch/work artifacts — not your checkout.\n"
-            f"`MERIDIAN_TASK_DIR` is {task_cwd}. Your shell cwd is the project root, NOT this "
-            "directory — relative paths resolve against the project root and will miss source "
-            "files.\n"
-            f"For all source-code operations (reads, edits, git, builds, commands), `cd` into "
-            f"`{task_cwd}` first or use absolute paths under it. Never assume cwd is the task "
-            "dir.\n"
-            "Live query: `meridian task-dir`. To reset a stale inherited value: "
-            "`meridian task-dir clear`.\n"
-        )
-    effective_appended_system = prompt_payload.appended_system_prompt or ""
-    if task_cwd_instruction:
-        effective_appended_system = (
-            effective_appended_system + task_cwd_instruction
-            if effective_appended_system
-            else task_cwd_instruction.lstrip()
-        )
 
     run_params = SpawnParams(
         prompt=prompt,
@@ -563,7 +539,7 @@ def materialize_launch_artifacts(
         interactive=interactive,
         continue_harness_session_id=continue_harness_session_id,
         continue_fork=continue_fork,
-        appended_system_prompt=effective_appended_system or None,
+        appended_system_prompt=prompt_payload.appended_system_prompt,
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
         pi_harness_profile=pi_harness_profile,
@@ -871,6 +847,7 @@ def _reproject_context_env_at_bind(
     composed_content: ComposedLaunchContent | None,
     harness: SubprocessHarness,
     project_root: Path,
+    task_dir: Path,
     bound_work_dir: Path | None,
     primary_prompt_is_synthetic: bool = False,
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
@@ -881,9 +858,10 @@ def _reproject_context_env_at_bind(
 
     new_context = build_context_prompt(
         project_root=project_root,
+        task_dir=task_dir,
         active_work_dir=bound_work_dir,
     )
-    if new_context is None or not new_context.strip():
+    if not new_context.strip():
         return composed_prompt, prompt_payload, projected_content
 
     refreshed_guidance = replace_context_env_block(
@@ -1031,12 +1009,10 @@ def _build_shared_composition(
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
 ) -> _SharedComposition:
-    context_prompt = (
-        build_context_prompt(
-            project_root=project_paths.project_root,
-            active_work_dir=active_work_dir,
-        )
-        or ""
+    context_prompt = build_context_prompt(
+        project_root=project_paths.project_root,
+        task_dir=project_paths.execution_cwd,
+        active_work_dir=active_work_dir,
     )
     spawn_usage_contract = build_spawn_usage_contract(
         policy.adapter.run_prompt_policy().spawn_usage_contract_variants
@@ -1738,9 +1714,6 @@ def bind_launch_context(
     )
 
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-    inject_task_cwd_instruction = directory_context.should_inject_task_cwd_instruction(
-        runtime.composition_surface
-    )
     pi_harness_profile = (
         resolve_pi_harness_profile_for_launch(
             config_snapshot=runtime.config_snapshot,
@@ -1766,6 +1739,7 @@ def bind_launch_context(
         composed_content=prepared.content.composed_content,
         harness=harness,
         project_root=project_paths.project_root,
+        task_dir=directory_context.logical_task_cwd,
         bound_work_dir=bound_active_work_dir,
         primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
     )
@@ -1787,7 +1761,6 @@ def bind_launch_context(
         extra_args=tuple(resolved_request.extra_args),
         control_root=resolved_control_root.as_posix(),
         task_cwd=(task_cwd.as_posix() if task_cwd is not None else None),
-        inject_task_cwd_instruction=inject_task_cwd_instruction,
         projected_roots=projected_roots,
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,

@@ -1,4 +1,4 @@
-"""Spawn-capability gating and harness-templated spawn usage contracts."""
+"""Capability guidance and harness-templated spawn behavior contracts."""
 
 from __future__ import annotations
 
@@ -10,68 +10,67 @@ from meridian.lib.launch.composition import (
     GuidancePhase,
 )
 
-_SPAWN_PROMPTING = """\
-# Prompting subagents
+_GENERAL_CAPABILITIES = (
+    "- Work item (tracked effort): `meridian work` (`meridian work -h`).\n"
+    "- Past sessions and transcripts: `meridian session` (`meridian session -h`).\n"
+    "- Notify the human: `meridian notify` (`meridian notify -h`).\n"
+    "- Validate Markdown links / Mermaid diagrams: `meridian kg check` / "
+    "`meridian mermaid check` (`meridian kg check -h`; `meridian mermaid check -h`).\n"
+    "- Hand off to a new primary session: `meridian` (`meridian --mode human -h`).\n"
+    "- If a delegated agent lacks access: a sandboxed parent cannot widen its "
+    "sandbox/network floor; otherwise relaunch with `--sandbox` / `--network` on "
+    "`meridian spawn` (`meridian spawn -h`)."
+)
 
-Every spawn starts with fresh context. Lead with the task, then give it what
-you know and it doesn't: the decisions already made and why, the files and
-artifacts that matter by path, the constraints, and what done looks like.
-Pass a directory to show the shape of a tree, and name the few files whose
-content matters most.
+_SPAWN_CAPABILITIES = (
+    "- Delegate to an `@agent`: `meridian spawn` (`meridian spawn -h`).\n"
+    "- Agents you can use: `meridian spawn subagents` "
+    "(`meridian spawn subagents -h`).\n"
+    "- Prompt subagents with the task first, then decisions, paths, constraints, done "
+    "criteria, and edit scope; leave method and wider risks open: `meridian spawn` "
+    "(`meridian spawn -h`).\n"
+    "- Live model catalog / model-specific prompting: `meridian mars models list` / "
+    "`meridian mars models prompting` (`meridian mars models list -h`; "
+    "`meridian mars models prompting -h`)."
+)
 
-Point to where the work starts, and leave open what the spawn should judge
-for itself: how far to look, how to work, and what else might be wrong. A
-brief that lists the bugs to hunt or a range to stay inside gets back only
-what you already suspected; name your suspicions as risks to check, beside
-the open question. State what the spawn may edit.
 
-Compose the lane at spawn time:
-- `--skills skill1,skill2` attaches shared instructions for the task.
-- With `-a <agent>`, the profile's default model and fallbacks fit most work.
-  Override with `-m` when the caller asks for a model, or when the work needs
-  more depth or a capability the defaults lack, and say why before spawning.
-  To get more depth, change the model, not the agent.
-- `--from <spawn-or-chat id>` provides prior-run references and, for spawns,
-  any available report. Use it when earlier decisions or reasoning matter.
-- `--task-dir <path>` points the spawn's source edits at another
-  checkout, e.g. a worktree lane that must not collide with others.
+def _build_capabilities_prompt(*, spawn_capable: bool) -> str:
+    lines = [
+        "# Meridian capabilities",
+        "",
+        "Run `meridian` commands as standalone shell calls (no `cd ... &&`, pipes, "
+        "`$()`, or `VAR=1`).",
+        "",
+    ]
+    if spawn_capable:
+        lines.append(_SPAWN_CAPABILITIES)
+    lines.append(_GENERAL_CAPABILITIES)
+    return "\n".join(lines)
 
-For model-specific prompting guidance:  `meridian mars models prompting <agent-or-model>`"""
 
-_WORK_DISCOVERY = """\
-# Work coordination (meridian)
+_DUPLICATE_INVENTORY_TIPS = frozenset(
+    {
+        "Write prompts to `$(meridian work path prompts/<name>.md)`.",
+        "Use `--bg` + `meridian spawn wait` for parallel work.",
+    }
+)
 
-Group related spawns under a work item — shared dir, goal, session history.
-Run `meridian` commands as standalone shell calls (no `cd ... &&`, pipes, `$()`, or `VAR=1`).
-Learn the commands:  meridian work -h"""
 
-_TASK_DIR_DISCOVERY = """\
-# Source-edit directory (meridian)
+def _inventory_without_duplicate_tips(inventory_prompt: str) -> str:
+    """Remove only bundle tips now owned by capability and spawn-rule guidance."""
 
-`MERIDIAN_TASK_DIR` is where source reads, edits, git, builds, and tests run.
-`MERIDIAN_ACTIVE_WORK_DIR` is for scratch/work artifacts — not your checkout.
-Shell cwd may be the project/control root; `cd "$MERIDIAN_TASK_DIR"` or use absolute
-paths before source ops.
-Live query:  meridian task-dir"""
-
-_SESSION_DISCOVERY = """\
-# Session transcripts (meridian)
-
-Read what past spawns did — full transcripts and progress logs, searchable.
-Learn the commands:  meridian session -h"""
+    lines = inventory_prompt.strip().splitlines()
+    return "\n".join(line for line in lines if line not in _DUPLICATE_INVENTORY_TIPS).strip()
 
 
 def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
-    """Render the shared spawn-usage contract filled with adapter-owned phrasing."""
+    """Render the behavioral spawn contract filled with adapter-owned phrasing."""
 
     return f"""\
-# Spawning subagents (meridian)
+# Meridian spawn rules
 
-{variants.intro_line}
-
-- Do NOT use the Agent() tool for work that a meridian agent can do.
-  Use `meridian spawn -a <agent>` instead — it routes to the right
-  model and harness, tracks the work, and produces inspectable artifacts.
+- Use Meridian, not the harness's native agent tool, when a listed Meridian agent fits.
 - {variants.double_wrap_bullet}
 - {variants.timeout_bullet}
 - Drain every --bg spawn with no-arg `meridian spawn wait` before you
@@ -81,8 +80,7 @@ def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
   while it blocks — it's the launch, not the wait, that must never be
   background-wrapped. Un-waited background spawns are lost.
 - Before a child closes, Meridian may ask it to confirm completion; follow the
-  confirmation message's instructions.
-- Playbook and full flags:  meridian spawn -h"""
+  confirmation message's instructions."""
 
 
 def has_spawn_capability(profile: AgentProfile | None) -> bool:
@@ -103,17 +101,30 @@ def build_guidance_blocks(
 ) -> tuple[CompositionBlock, ...]:
     """Build all system-prompt guidance blocks.
 
-    Spawn-gated (only when has_spawn_capability): inventory + spawn contract.
-    General (always): discovery pointers + context env vars.
+    Spawn-gated (only when has_spawn_capability): inventory, spawn capabilities,
+    and the spawn behavior contract. General capabilities and context paths are
+    always present.
     """
     blocks: list[CompositionBlock] = []
-    if has_spawn_capability(profile):
-        inventory = (bundle_inventory_prompt or "").strip()
+    spawn_capable = has_spawn_capability(profile)
+    if spawn_capable:
+        inventory = _inventory_without_duplicate_tips(bundle_inventory_prompt or "")
         if inventory:
             blocks.append(CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, inventory))
-        blocks.append(
-            CompositionBlock("spawn-prompting", GuidancePhase.GUIDANCE, 5, _SPAWN_PROMPTING)
+    blocks.append(
+        CompositionBlock(
+            "capabilities",
+            GuidancePhase.GUIDANCE,
+            5,
+            _build_capabilities_prompt(spawn_capable=spawn_capable),
         )
+    )
+    context_env = (context_prompt or "").strip()
+    if context_env:
+        blocks.append(
+            CompositionBlock(CONTEXT_ENV_BLOCK_NAME, GuidancePhase.GUIDANCE, 6, context_env)
+        )
+    if spawn_capable:
         blocks.append(
             CompositionBlock(
                 "spawn-contract",
@@ -122,24 +133,10 @@ def build_guidance_blocks(
                 spawn_usage_contract,
             )
         )
-    blocks.append(
-        CompositionBlock("work-discovery", GuidancePhase.GUIDANCE, 20, _WORK_DISCOVERY)
-    )
-    blocks.append(
-        CompositionBlock("task-dir-discovery", GuidancePhase.GUIDANCE, 21, _TASK_DIR_DISCOVERY)
-    )
-    blocks.append(
-        CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 22, _SESSION_DISCOVERY)
-    )
     harness_hint = (harness_guidance or "").strip()
     if harness_hint:
         blocks.append(
             CompositionBlock("harness-guidance", GuidancePhase.GUIDANCE, 23, harness_hint)
-        )
-    context_env = (context_prompt or "").strip()
-    if context_env:
-        blocks.append(
-            CompositionBlock(CONTEXT_ENV_BLOCK_NAME, GuidancePhase.ENVIRONMENT, 0, context_env)
         )
     return tuple(blocks)
 

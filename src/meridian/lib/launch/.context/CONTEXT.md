@@ -44,8 +44,8 @@ writes, and dry-run binds never materialize them.
 ### PreparedLaunchSurface
 
 The in-memory boundary between preparation and binding. Carries: resolved request,
-harness, composition warnings, loaded references, agent inventory prompt, context
-prompt, alias catalog, model selection context. Deliberately excludes spawn IDs,
+harness, composition warnings, loaded references, agent inventory prompt, capability
+guidance, alias catalog, model selection context. Deliberately excludes spawn IDs,
 report paths, env, argv, and permission outputs — everything that varies per bind.
 
 `launch_request` on `PreparedLaunchSurface` preserves the original pre-resolution
@@ -276,8 +276,11 @@ harness [OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-pr
 
 Agent inventory is bundle-only. Mars renders harness-aware inventory in the
 launch-bundle `prompt_surface.inventory_prompt` field (Meridian spawn commands,
-native-agent sections, model metadata). Meridian passes that string through
-verbatim into the composed system prompt — no Python fallback renderer.
+native-agent sections, model metadata). Meridian passes that content through except
+for two exact producer tips now owned elsewhere: the command-substitution prompt-path
+recipe (which contradicts the standalone-shell rule) and the `--bg`/wait reminder
+(owned by the spawn contract). Unknown preface prose stays intact, including backup
+and native-fanout semantics. There is no Python fallback inventory renderer.
 
 `model_invocable` filtering happens in mars at inventory render time. Catalog
 scanning (`scan_agent_profiles()`, `load_agent_profile()`) stays neutral — CLI
@@ -310,18 +313,17 @@ when a nested spawn is launched from outside the project tree.
 **`actual_process_cwd`** is where the child process actually starts. It defaults
 to `authority_root` (the project/control root). Harness subprocess cwd always
 stays at control root; distinct task directories are exposed via `MERIDIAN_TASK_DIR`,
-bind-time env, and task-cwd instructions — not by starting the process in the
+bind-time env, and capability guidance — not by starting the process in the
 task directory.
 
-**Task CWD instruction injection.** For non-primary child spawns with a distinct
-`logical_task_cwd`, launch composition adds a prompt instruction that states the
-absolute `MERIDIAN_TASK_DIR`, states that the shell cwd is the project root (not
-the task directory), and tells the agent to `cd` into `MERIDIAN_TASK_DIR` or use
-absolute paths under it for reads, edits, git, builds, and commands. This is a
-conservative child-spawn safety contract: harnesses may bind tools differently
-than Meridian's requested process cwd. Primary sessions stay quiet unless a
-future primary flow explicitly needs task-cwd steering. Controlled by
-`LaunchDirectoryContext.should_inject_task_cwd_instruction(surface)`.
+**Directory capability guidance.** Every primary and spawn prompt has one
+`# Meridian capabilities` section. Its late-bound `context-env` composition block
+states the resolved work, source, KB, and extra context directories. The source
+line also warns that shell cwd may be `MERIDIAN_PROJECT_DIR` and directs source
+operations through `MERIDIAN_TASK_DIR`. `bind_launch_context()` rebuilds that block
+with the final `logical_task_cwd` and bound work directory, then asks the harness to
+re-project the composed prompt. Do not append a second task-directory instruction
+after projection; that recreates the duplicate guidance this block replaced.
 
 Resolution priority in `resolve_task_cwd()`:
 1. explicit task-dir override
@@ -556,8 +558,8 @@ Don't add a second channel keyed on a harness capability. A native skill list
 shows only model-invocable skills, so a loaded skill that isn't model-invocable
 reaches the agent only through composition. Claude reads the appended prompt from
 `system-prompt.md` (`--append-system-prompt-file`), which `write_projection_artifacts()`
-writes from the full appended prompt, not `projected.system_prompt`: post-projection
-additions such as the source-edit-directory instruction live only there.
+writes from the full appended prompt. Capability guidance and loaded skills have
+already passed through the same harness projection by then.
 
 Delivery is the harness's job. OpenCode's happens in bind, where `project_launch_env()`
 puts the appended prompt in the child env as a config agent reading `system-prompt.md`

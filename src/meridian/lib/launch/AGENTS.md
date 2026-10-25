@@ -204,8 +204,8 @@ See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) f
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — spawn CWD three-directory model
-   (authority_root, logical_task_cwd, actual_process_cwd), task CWD instruction
-   injection, reference loading and anchor semantics (`kb:` prefix, `@` unsupported),
+   (authority_root, logical_task_cwd, actual_process_cwd), bind-refreshed capability
+   guidance, reference loading and anchor semantics (`kb:` prefix, `@` unsupported),
    worktree path assignment vs managed ownership separation, workspace projection
    detail, env injection, background worker trust model, _MERIDIAN_HARNESS child env
    behavior, exact continue replay contract, full invariant table, Mars launch-bundle
