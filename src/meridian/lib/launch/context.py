@@ -48,6 +48,7 @@ from meridian.lib.harness.bundle import (
     get_harness_bundle,
     materialize_launch_spec,
     project_effective_network,
+    project_effective_sandbox,
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
@@ -1906,6 +1907,7 @@ def bind_launch_context(
         )
     caller_boundary = CallerBoundary.from_policy(
         permission_policy,
+        effective_sandbox=project_effective_sandbox(harness.id, permission_policy.sandbox),
         effective_network=project_effective_network(
             harness.id,
             permission_policy,

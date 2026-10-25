@@ -16,7 +16,7 @@ from meridian.lib.core.caller_boundary import (
 )
 from meridian.lib.core.context_ref import SpawnContextRef, context_ref_values
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.bundle import project_effective_network
+from meridian.lib.harness.bundle import project_effective_network, project_effective_sandbox
 from meridian.lib.harness.registry import (
     HarnessRegistry,
     get_default_harness_registry,
@@ -124,6 +124,9 @@ def test_launch_direnv_policy_uses_snapshot_and_propagates(
     boundary = CallerBoundary.from_env_value(env[CALLER_BOUNDARY_ENV])
     assert boundary == CallerBoundary.from_policy(
         preview.binding.spec.permission_policy,
+        effective_sandbox=project_effective_sandbox(
+            preview.harness.id, preview.binding.spec.permission_policy.sandbox
+        ),
         effective_network=project_effective_network(
             preview.harness.id,
             preview.binding.spec.permission_policy,

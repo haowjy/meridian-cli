@@ -54,12 +54,13 @@ class CallerBoundary:
         cls,
         policy: PermissionPolicy,
         *,
+        effective_sandbox: SandboxMode,
         effective_network: NetworkPolicy,
         pid_namespace: str | None,
     ) -> CallerBoundary:
-        """Take the child-launch boundary fields from one resolved policy."""
+        """Take the boundary from the sandbox and network the caller's harness enforces."""
 
-        sandbox = policy.sandbox
+        sandbox = effective_sandbox
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
@@ -172,19 +173,30 @@ class CallerBoundaryCheck:
         child_sandbox: str | None,
         *,
         child_network: NetworkPolicy,
+        unenforcing_harness: str | None = None,
     ) -> None:
-        """Refuse a resolved child policy weaker than the caller's guardrail."""
+        """Refuse an effective child policy weaker than the caller's guardrail.
+
+        ``unenforcing_harness`` names the child's harness when it enforces neither
+        sandbox nor network, so the child counts as fully open.
+        """
 
         caller = self.caller
         if caller is None:
             return
+        note = (
+            f" Harness '{unenforcing_harness}' does not enforce sandbox or network, so "
+            "the child would run with full access; route it to Claude or Codex."
+            if unenforcing_harness
+            else ""
+        )
         normalized = (child_sandbox or "default").strip().lower()
         if normalized not in SANDBOX_MODE_WEAKNESS:
             raise ValueError(f"Unsupported sandbox mode '{child_sandbox}'.")
         if SANDBOX_MODE_WEAKNESS[normalized] > SANDBOX_MODE_WEAKNESS[caller.sandbox]:
             raise ValueError(
                 f"Child spawn refused: sandbox '{normalized}' is weaker than "
-                f"caller floor '{caller.sandbox}'."
+                f"caller floor '{caller.sandbox}'.{note}"
             )
         if caller.network is not None and not network_policy_contains(
             caller.network, child_network
@@ -193,7 +205,7 @@ class CallerBoundaryCheck:
                 "Child spawn refused: effective network "
                 f"'{format_network_policy(child_network)}' is not contained by caller floor "
                 f"'{format_network_policy(caller.network)}'; narrow the child's allowed "
-                "hosts, preserve the caller's denied hosts, or widen the caller policy."
+                f"hosts, preserve the caller's denied hosts, or widen the caller policy.{note}"
             )
 
 

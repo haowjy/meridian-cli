@@ -37,7 +37,9 @@ shell-network port is registered beside it. Claude and Codex each have one pure 
 projector returning native settings plus the typed effective policy, so compile, report,
 and child guardrails cannot decide independently. OpenCode, Pi, and Cursor omit that port;
 the registry's shared `UNENFORCED_NETWORK` constant supplies their effective network and
-`complete_report()` supplies their report line. The projectors, `--dry-run` and
+`complete_report()` supplies their report line. Likewise only Claude and Codex set
+`enforces_sandbox`; `project_effective_sandbox()` treats every other harness as
+`danger-full-access`, so the guardrail sees the access a launch really has. The projectors, `--dry-run` and
   `projection-manifest.json` all read these same policy facts.
 
 ## Key Rules

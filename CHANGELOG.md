@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Child-spawn guardrail follows the harness each side routes to. Callers on OpenCode, Pi, or Cursor (no enforced sandbox) have no floor. A child routed there counts as `danger-full-access` and online, so a sandboxed Claude/Codex caller is refused it; the refusal names the harness. See [child guardrail follows the harness](docs/upgrading.md#child-guardrail-follows-the-harness).
+
 ## [0.14.0] - 2026-10-25
 
 ### Upgrade notes

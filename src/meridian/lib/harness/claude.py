@@ -603,6 +603,7 @@ register_harness_bundle(
             subprocess_cli_args=project_claude_spec_to_cli_args,
             permission_report=lambda spec: compile_claude_permissions(spec)[1],
             effective_network=effective_claude_network,
+            enforces_sandbox=True,
             bind_spec=bind_claude_spec,
         ),
         semantics=CLAUDE_SEMANTICS,

@@ -26,6 +26,7 @@ from meridian.lib.safety.policy import (
     EnforcementReport,
     NetworkPolicy,
     PermissionPolicy,
+    SandboxMode,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -95,6 +96,9 @@ class HarnessProjectionPorts(Generic[SpecT]):
     # None means the harness has no shell-network enforcement and therefore leaves the
     # shared ``UNENFORCED_NETWORK`` policy in effect.
     effective_network: EffectiveNetwork | None = None
+    # Whether the harness confines its shell to the projected ``sandbox`` mode. A harness
+    # that does not runs every launch with full access, whatever the profile says.
+    enforces_sandbox: bool = False
     # Resolves the spec's facts that depend on the launch environment or child cwd once at
     # bind, so every projection and the connection read one value.
     bind_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None
@@ -368,6 +372,14 @@ def project_effective_network(
     return projector(policy, native_config=native_config)
 
 
+def project_effective_sandbox(harness_id: HarnessId, sandbox: SandboxMode) -> SandboxMode:
+    """Return the sandbox the harness actually applies for one resolved mode."""
+
+    if get_harness_bundle(harness_id).projections.enforces_sandbox:
+        return sandbox
+    return "danger-full-access"
+
+
 def materialize_launch_spec(
     harness_id: HarnessId,
     spec: SpecT,
@@ -459,6 +471,7 @@ __all__ = [
     "materialize_launch_spec",
     "post_to_primary",
     "project_effective_network",
+    "project_effective_sandbox",
     "project_managed_primary_backend_command",
     "project_managed_primary_bootstrap",
     "project_subprocess_spec",
