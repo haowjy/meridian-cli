@@ -20,10 +20,8 @@ def render_skill_block(skill: SkillContent) -> str:
 
     skill_dir = Path(skill.path).parent.as_posix()
     return (
-        f"# Skill: /{skill.name}\n\n"
-        f"Loaded: its full text follows, so `/{skill.name}` in your instructions "
-        f"means this text. Its files are in `{skill_dir}/`; open the resources it "
-        f"names from there.\n\n{skill.content.strip()}"
+        f"# Skill: /{skill.name} (loaded)\n\n"
+        f"Files: `{skill_dir}/`\n\n{skill.content.strip()}"
     )
 
 
