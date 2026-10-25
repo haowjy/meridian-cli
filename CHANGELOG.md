@@ -19,6 +19,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Prompts list bundled Meridian skill triggers so prompt packages can stop carrying
   Meridian-specific judgment on every turn.
 
+## [0.14.2] - 2026-10-25
+
 ### Fixed
 - Commands that show a terminal child result now consume its completion notice: a
   `spawn cancel` that reports `cancelled`, `spawn show` or `spawn status --full`
