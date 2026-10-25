@@ -6,6 +6,7 @@ from typing import Annotated
 
 from cyclopts import App, Parameter
 
+from meridian.cli.agent_help import ALIGNED_PLAIN_FORMATTER
 from meridian.cli.help_content import GROUPS
 from meridian.cli.invocation import emit
 
@@ -17,14 +18,14 @@ def register_sync_commands(app: App) -> None:
         name="sync",
         help=GROUPS["sync"].long_help or GROUPS["sync"].summary,
         help_epilogue="",
-        help_formatter="plain",
+        help_formatter=ALIGNED_PLAIN_FORMATTER,
         help_format="plaintext",
     )
     conflict_app = App(
         name="conflict",
         help="Manage autosync conflicts.",
         help_epilogue="",
-        help_formatter="plain",
+        help_formatter=ALIGNED_PLAIN_FORMATTER,
         help_format="plaintext",
     )
     sync_app.command(conflict_app, name="conflict")

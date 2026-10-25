@@ -516,10 +516,7 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
         extension_id="meridian.work",
         command_id="list",
-        summary=(
-            "List work items. Use --done / --no-done to control whether"
-            ' items with status "done" are shown.'
-        ),
+        summary="List work items. Use --done to show only done or archived items.",
         handler="meridian.lib.ops.work_dashboard:work_list",
         sync_handler="meridian.lib.ops.work_dashboard:work_list_sync",
         input_type="meridian.lib.ops.work_dashboard:WorkListInput",
