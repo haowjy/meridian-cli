@@ -244,7 +244,8 @@ literal root key and is flattened like any other key; Meridian does not unwrap i
 Meridian's own operating guidance is separate from profile/package skills. Every
 launch receives a compact `# Meridian skills` trigger list generated from the
 binary's bundled descriptions. The agent reads one only when needed with
-`meridian skills NAME [RESOURCE-PATH]`; `meridian skills list` shows the same
+`meridian skills NAME [RESOURCE-PATH]`, which prints a skill under the same header a
+loaded skill gets, naming its installed folder; `meridian skills list` shows the same
 catalog, with structured entries under `--json`. These binary-owned skills may name
 the concrete Meridian commands and flags they explain. Bundled skill frontmatter may
 set `mode: primary`; its trigger then appears only when the agent profile declares

@@ -16,8 +16,9 @@ skills are loaded.
 
 Meridian-owned operational skills are a separate read-only package-data surface.
 `bundled_skills.py` reads their names and descriptions to build the always-present
-`# Meridian skills` trigger block; `meridian skills` prints their full content on
-demand. Their `name__meridian` spelling follows Mars's source-suffix collision rule.
+`# Meridian skills` trigger block; `meridian skills NAME` prints one on demand under
+the same activation header injected skills get (`render_skill_block()`). Their
+`name__meridian` spelling follows Mars's source-suffix collision rule.
 A skill's optional `mode` frontmatter gates its trigger on the resolved profile's
 declared mode, independent of whether the launch is a primary session or a spawn. The
 notify capability line uses the same mode gate. They never enter Mars's load/available

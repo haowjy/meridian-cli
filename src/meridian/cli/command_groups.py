@@ -92,10 +92,11 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         summary="Read Meridian's bundled operational skills.",
         long_help=(
             "Read the on-demand guidance shipped with Meridian itself.\n\n"
-            "Use `meridian skills list` to see names and triggers. Use "
-            "`meridian skills NAME [RESOURCE-PATH]` to print a SKILL.md or one of its "
-            "resources. Package-provided skills still load through the harness's native "
-            "skill mechanism."
+            "Use `meridian skills list` to see names and triggers. "
+            "`meridian skills NAME` prints the skill as a loaded skill: a header naming "
+            "its folder, then its body. `meridian skills NAME RESOURCE-PATH` prints one "
+            "file from that folder. Package-provided skills still load through the "
+            "harness's native skill mechanism."
         ),
     ),
     "ext": GroupHelp(

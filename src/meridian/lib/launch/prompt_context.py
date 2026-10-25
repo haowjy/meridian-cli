@@ -9,12 +9,13 @@ from meridian.lib.core.domain import SkillContent
 from meridian.lib.launch.composition import PromptDocument
 
 
-def _render_skill_block(skill: SkillContent, content: str) -> str:
+def render_skill_block(skill: SkillContent) -> str:
     """Head a loaded skill so the agent knows `/<name>` is already in context.
 
     Skills loaded this way are often not model-invocable, so the harness's own
     skill list omits them; without the name, an agent told to follow `/<name>`
-    concludes the skill is unavailable.
+    concludes the skill is unavailable. `meridian skills <name>` prints bundled
+    skills through this same block, so reading one looks like activating it.
     """
 
     skill_dir = Path(skill.path).parent.as_posix()
@@ -22,7 +23,7 @@ def _render_skill_block(skill: SkillContent, content: str) -> str:
         f"# Skill: /{skill.name}\n\n"
         f"Loaded: its full text follows, so `/{skill.name}` in your instructions "
         f"means this text. Its files are in `{skill_dir}/`; open the resources it "
-        f"names from there.\n\n{content}"
+        f"names from there.\n\n{skill.content.strip()}"
     )
 
 
@@ -31,8 +32,7 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
 
     documents: list[PromptDocument] = []
     for skill in skills:
-        content = skill.content.strip()
-        if not content:
+        if not skill.content.strip():
             continue
         path = Path(skill.path).as_posix()
         documents.append(
@@ -40,7 +40,7 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
                 kind="skill",
                 logical_name=skill.name,
                 path=path,
-                content=_render_skill_block(skill, content),
+                content=render_skill_block(skill),
                 skill_type=skill.skill_type,
             )
         )
@@ -49,4 +49,5 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
 
 __all__ = [
     "compose_skill_prompt_documents",
+    "render_skill_block",
 ]

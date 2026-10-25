@@ -495,7 +495,10 @@ def _spawn_create(
         Parameter(
             name="--approval",
             group=ADVANCED_PARAMS,
-            help="Approval mode: default, confirm, auto, never. Overrides agent profile.",
+            help=(
+                "Approval mode: default, confirm, auto (approve routine calls such as "
+                "edits), never (no prompts). Overrides agent profile."
+            ),
         ),
     ] = None,
     autocompact: Annotated[
@@ -546,7 +549,10 @@ def _spawn_create(
         Parameter(
             name="--network-allow",
             group=ADVANCED_PARAMS,
-            help="Add a host to the shell network allow set (repeatable).",
+            help=(
+                "Add a host to the shell network allow set (repeatable); dropped unless "
+                "the network mode is allowlist."
+            ),
             negative_iterable=(),
         ),
     ] = (),

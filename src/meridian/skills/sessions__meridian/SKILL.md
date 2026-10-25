@@ -6,7 +6,10 @@ description: When decisions or context must be recovered from past sessions.
 # Session Mining
 
 Design decisions, rejected alternatives, and discovered constraints often live in
-conversation instead of code. Mine only the gaps after skimming current artifacts.
+conversation instead of code. Compaction makes them expensive to recover later, so mine
+before the next implementation or documentation step starts. Skip mining when your
+brief already carries the rationale; otherwise skim current artifacts and mine only
+the gaps.
 
 ## Start at the Root
 
@@ -19,7 +22,11 @@ meridian session log cNNN --tail 20
 ```
 
 Long sessions are split into segments at each compaction; `meridian session log -h`
-covers windows, segments, and full content.
+covers windows, segments, and full content. Keep the `--segment N` that `Open:` and
+`Next:` lines print: a position without it counts inside the current segment, which
+changes at each compaction. Use `--global` only for one flat read across
+segments. A segment starts with its setup slot (entry 0), then the opening brief or
+compaction summary; read both with `--segment N --from 0 --limit 2`.
 
 Search when you know the term or decision:
 

@@ -2,7 +2,9 @@
 
 These skills ship with the binary whose behavior they explain. Unlike prompt-package
 skills, they should name the real Meridian commands and the flags needed to act; keep
-that syntax aligned with the command help.
+that syntax aligned with the command help. When trimming, cut flag syntax that only
+restates `-h`, and keep the judgment: what to try first, which fix fits which symptom,
+why, and what to tell the human.
 
 Every `SKILL.md` requires `name` and a trigger-shaped `description` beginning with
 "When". Optional `mode: primary` limits its trigger line to profiles whose declared

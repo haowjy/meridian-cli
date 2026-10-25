@@ -547,9 +547,10 @@ Neither list is filtered by `model-invocable`. A loaded skill is composed in ful
 whatever its value; `model-invocable` only decides whether the harness's own
 skill list shows it, and that list is not how loaded skills arrive. Don't add an
 invocability check on this path. The skill block header (`# Skill: /<name>`,
-`_render_skill_block()` in `prompt_context.py`) tells the agent the skill is
+`render_skill_block()` in `prompt_context.py`) tells the agent the skill is
 already loaded, because agents otherwise look for it in the harness list, miss
-it, and skip it.
+it, and skip it. `meridian skills <name>` renders bundled skills through the same
+function, so reading one is indistinguishable from activating it.
 
 `SkillContent.path` is the bundle's `source_path` (the base `SKILL.md`, even when
 a variant body was selected); a reconstructed primary-root path is only the
