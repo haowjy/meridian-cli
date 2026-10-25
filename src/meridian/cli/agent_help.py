@@ -13,7 +13,7 @@ import sys
 import textwrap
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, get_args
 
 from attrs import evolve
 from cyclopts.help.formatters.plain import PlainFormatter
@@ -38,8 +38,66 @@ if TYPE_CHECKING:
 _ADVANCED_PARAM_GROUP_NAME = ADVANCED_PARAMS.name
 
 
+def _negative_names_are_meaningful(entry: HelpEntry) -> bool:
+    """Return whether a negative form changes the parameter's default behavior."""
+
+    if entry.default == "True":
+        return True
+
+    hint_args = get_args(entry.type)
+    return (entry.required and entry.type is bool) or (
+        entry.default is None and bool in hint_args and type(None) in hint_args
+    )
+
+
+def _compact_parameter_entry(entry: HelpEntry) -> HelpEntry:
+    """Hide generated aliases without changing which forms Cyclopts accepts."""
+
+    positive_names = entry.positive_names
+    if any(name.startswith("--") for name in positive_names):
+        positive_names = tuple(name for name in positive_names if name.startswith("-"))
+
+    if _negative_names_are_meaningful(entry):
+        negative_names = entry.negative_names
+        negative_shorts = entry.negative_shorts
+    else:
+        negative_names = ()
+        negative_shorts = ()
+
+    return evolve(
+        entry,
+        positive_names=positive_names,
+        negative_names=negative_names,
+        negative_shorts=negative_shorts,
+    )
+
+
+def _compact_parameter_entries(entries: list[HelpEntry]) -> list[HelpEntry]:
+    compacted = [_compact_parameter_entry(entry) for entry in entries]
+    option_sets = [frozenset(entry.all_options) for entry in compacted]
+    visible: list[HelpEntry] = []
+    for index, entry in enumerate(compacted):
+        options = option_sets[index]
+        if options and any(
+            options < other for other_index, other in enumerate(option_sets) if other_index != index
+        ):
+            continue
+        visible.append(entry)
+    return visible
+
+
 class AlignedPlainFormatter(PlainFormatter):
     """Plain help formatter that keeps wrapped description lines aligned."""
+
+    def __call__(
+        self,
+        console: Console,
+        options: Any,
+        panel: HelpPanel,
+    ) -> None:
+        if panel.format == "parameter":
+            panel = evolve(panel, entries=_compact_parameter_entries(panel.entries))
+        super().__call__(console, options, panel)
 
     def _wrap_entry(self, left: str, desc: str, console: Console) -> str:
         left_part = f"{self.indent}{left}: "
@@ -128,7 +186,7 @@ class AlignedPlainFormatter(PlainFormatter):
             )
 
 
-_ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
+ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
 
 _HELP_SKIP_TOKENS = frozenset({"--help", "-h", "--advanced", "--mode"})
 
@@ -345,7 +403,7 @@ def print_curated_group_help(
         console = RichConsole(file=sys.stdout, force_terminal=False)
 
     help_format = executing_app.help_format or "plaintext"
-    formatter = _ALIGNED_PLAIN_FORMATTER
+    formatter = ALIGNED_PLAIN_FORMATTER
 
     if executing_app.usage is None:
         usage = format_usage(root_app, command_chain)
@@ -390,6 +448,7 @@ __all__ = [
     "AGENT_CORE_SUBCOMMANDS",
     "AGENT_HELP_SUPPLEMENTS",
     "AGENT_VISIBLE_SUBCOMMANDS",
+    "ALIGNED_PLAIN_FORMATTER",
     "AlignedPlainFormatter",
     "curated_group_help_target",
     "group_apps_for_help",

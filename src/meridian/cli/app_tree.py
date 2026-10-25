@@ -3,10 +3,8 @@
 from cyclopts import App
 
 from meridian import __version__
-from meridian.cli.agent_help import AlignedPlainFormatter
+from meridian.cli.agent_help import ALIGNED_PLAIN_FORMATTER
 from meridian.cli.command_groups import GROUPS, register_group_app
-
-_ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
 
 
 def _group_help(name: str) -> str:
@@ -19,7 +17,7 @@ def _group_app(name: str) -> App:
         name=name,
         help=_group_help(name),
         help_epilogue="",
-        help_formatter=_ALIGNED_PLAIN_FORMATTER,
+        help_formatter=ALIGNED_PLAIN_FORMATTER,
         help_format="plaintext",
     )
 
@@ -28,7 +26,7 @@ app = App(
     name="meridian",
     help="Multi-agent orchestration across Claude, Codex, and OpenCode.",
     version=__version__,
-    help_formatter="plain",
+    help_formatter=ALIGNED_PLAIN_FORMATTER,
     help_format="plaintext",
 )
 spawn_app = _group_app("spawn")
@@ -36,7 +34,7 @@ report_app = App(
     name="report",
     help="Report management commands.",
     help_epilogue="",
-    help_formatter=_ALIGNED_PLAIN_FORMATTER,
+    help_formatter=ALIGNED_PLAIN_FORMATTER,
     help_format="plaintext",
 )
 session_app = _group_app("session")
@@ -56,7 +54,7 @@ idle_app = App(
     name="idle",
     help=_group_help("idle"),
     help_epilogue="",
-    help_formatter=_ALIGNED_PLAIN_FORMATTER,
+    help_formatter=ALIGNED_PLAIN_FORMATTER,
     help_format="plaintext",
     show=False,
 )

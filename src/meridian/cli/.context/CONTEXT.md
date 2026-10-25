@@ -74,6 +74,11 @@ writing a project marker there. Plain `mars init` remains project authoring.
 Human vs agent mode selects a `HelpProfile` at app-build time from the
 command catalog — no runtime mutation of shared `App` objects.
 
+`AlignedPlainFormatter` also removes Cyclopts-generated display aliases that
+do not change a parameter's default behavior. This stays in the formatter so
+legacy generated forms remain parseable; setting `App.default_parameter`
+negation defaults would remove those forms from the parser too.
+
 ## Project Root Resolution
 
 `resolve_cli_project_root() -> Path` in `utils.py` selects `-C`, then
