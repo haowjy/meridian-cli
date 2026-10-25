@@ -19,5 +19,6 @@ keep its phase visible with `meridian work update NAME --status PHASE`.
 
 Handing work off for review is not finishing it: set a status such as `pr-open` and
 leave the item active until the change is accepted and cleaned up. Then
-`meridian work done NAME` closes, archives, and detaches it. Do that only when you own
-the whole lifecycle; use `meridian work clear` to detach from an item you do not own.
+`meridian work done NAME` archives it; if it warns that sessions are still attached,
+detach with `meridian work clear`. Archive only when you own the whole lifecycle; to leave
+an item you do not own, use `meridian work clear` alone.
