@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Bundled `prompt-authoring__meridian` skill (lead-only): writing agent profiles and
+  skills with only Meridian installed. The `.mars-src/` check/sync/dry-run loop, plus
+  resources on profiles (callers, injected guidance, per-harness permissions), skills
+  (load vs available vs attach, invocability, types), and models (backups,
+  `model-policies`, which harnesses `targets` permit).
+
 ## [0.14.5] - 2026-10-25
 
 ### Changed

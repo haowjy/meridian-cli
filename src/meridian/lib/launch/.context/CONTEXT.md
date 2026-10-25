@@ -330,8 +330,8 @@ Every prompt also has a short `# Meridian skills` block generated from the
 descriptions under `meridian.skills`. It is a trigger index, not loaded skill
 content: the agent reads a matching entry through the read-only `meridian skills`
 command. Bundled names use the `name__meridian` collision spelling. The
-`handoff__meridian`, `notify__meridian`, `work__meridian`, and
-`escalation__meridian` triggers carry `mode: primary`; `sessions__meridian` remains
+`handoff__meridian`, `notify__meridian`, `work__meridian`, `escalation__meridian`,
+and `prompt-authoring__meridian` triggers carry `mode: primary`; `sessions__meridian` remains
 visible to every profile. The gate follows the profile's declared mode even when a
 primary-mode profile is launched as a spawn, and comes from skill frontmatter rather
 than a hardcoded name set. Package skills remain on the Mars/harness path below.
