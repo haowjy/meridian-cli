@@ -849,6 +849,9 @@ def _reproject_context_env_at_bind(
     project_root: Path,
     task_dir: Path,
     bound_work_dir: Path | None,
+    spawn_id: str,
+    chat_id: str | None,
+    work_id: str | None,
     primary_prompt_is_synthetic: bool = False,
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
     """Re-render the typed context-env block and re-project prompt channels at bind."""
@@ -860,6 +863,9 @@ def _reproject_context_env_at_bind(
         project_root=project_root,
         task_dir=task_dir,
         active_work_dir=bound_work_dir,
+        spawn_id=spawn_id,
+        chat_id=chat_id,
+        work_id=work_id,
     )
     if not new_context.strip():
         return composed_prompt, prompt_payload, projected_content
@@ -1741,6 +1747,9 @@ def bind_launch_context(
         project_root=project_paths.project_root,
         task_dir=directory_context.logical_task_cwd,
         bound_work_dir=bound_active_work_dir,
+        spawn_id=bindings.spawn_id,
+        chat_id=bindings.chat_id or base_env.get("MERIDIAN_CHAT_ID"),
+        work_id=requested_work_id,
         primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
     )
     conversation_intent = resolved_request.session.conversation_intent

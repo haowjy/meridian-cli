@@ -12,19 +12,22 @@ from meridian.lib.launch.composition import (
 
 _GENERAL_CAPABILITIES = (
     "- Work item (tracked effort): `meridian work`.\n"
-    "- Past sessions and transcripts: `meridian session`.\n"
+    "- Past sessions/transcripts: `meridian session search` with a ref, `--work`, "
+    "`--workspace`, or `--global`; read with `meridian session log`.\n"
     "- Notify the human: `meridian notify`.\n"
-    "- Validate Markdown links / Mermaid diagrams: `meridian kg check` / "
-    "`meridian mermaid check`.\n"
-    "- Hand off to a new primary session: `meridian --mode human`.\n"
-    "- If a delegated agent lacks access: relaunch it with `meridian spawn --sandbox` / "
-    "`--network`; a sandboxed parent cannot widen its own access floor."
+    "- Validate Markdown links / inspect the link graph / validate Mermaid: "
+    "`meridian kg check` / `meridian kg graph` / `meridian mermaid check`.\n"
+    "- Hand off to a new primary: print, never run, a `meridian` command with concrete "
+    "`--work`, `--task-dir`, `--prompt-file`, and the shown chat ID as parent `--from`; "
+    "no variables.\n"
+    "- Delegated agent access: an unsandboxed parent may relaunch via "
+    "`meridian spawn --sandbox` / `--network`; a sandboxed parent cannot widen its floor."
 )
 
 _SPAWN_CAPABILITIES = (
-    "- Delegate to an `@agent`: `meridian spawn`; `--skills` attaches skills, `-f` "
-    "passes files/folders, `--from` carries a prior run/chat, `--task-dir` selects the "
-    "source checkout, and `-m` overrides the model.\n"
+    "- Delegate to an `@agent`: `meridian spawn`; attach skills `--skills`, pass files or a "
+    "folder `-f`, carry a prior run `--from`, choose its checkout `--task-dir`, or override "
+    "its model `-m`.\n"
     "- Agents you can use: `meridian spawn subagents`.\n"
     "- Live model catalog / model-specific prompting: `meridian mars models list` / "
     "`meridian mars models prompting`."
@@ -54,9 +57,11 @@ def _build_capabilities_prompt(*, spawn_capable: bool) -> str:
     lines = [
         "# Meridian capabilities",
         "",
-        "Run `meridian` commands as standalone shell calls (no `cd ... &&`, pipes, "
-        "`$()`, or `VAR=1`).",
-        "Every command below supports `-h` for details.",
+        "`meridian work path prompts/task.md` is a correct standalone call.",
+        "Restricted shells refuse `cd ... && meridian ...`, pipes, `$()`, `VAR=1`, and "
+        "`$VAR` expansion.",
+        "Every command has `-h`; if one is refused, tell your caller—do not work "
+        "around it.",
         "",
     ]
     if spawn_capable:
@@ -79,7 +84,8 @@ def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
   running and owed spawns by session; re-invoke to keep waiting. The wait
   itself can run in your native background execution to keep working
   while it blocks — it's the launch, not the wait, that must never be
-  background-wrapped. Un-waited background spawns are lost.
+  background-wrapped. Do not pipe or truncate its output. Un-waited
+  background spawns are lost.
 - Before a child closes, Meridian may ask it to confirm completion; follow the
   confirmation message's instructions."""
 

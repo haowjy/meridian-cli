@@ -316,12 +316,15 @@ task directory.
 
 **Directory capability guidance.** Every primary and spawn prompt has one
 `# Meridian capabilities` section. Its late-bound `context-env` composition block
-states the resolved work, source, KB, and extra context directories. The source
-line also warns that shell cwd may be `MERIDIAN_PROJECT_DIR` and directs source
-operations through `MERIDIAN_TASK_DIR`. `bind_launch_context()` rebuilds that block
-with the final `logical_task_cwd` and bound work directory, then asks the harness to
-re-project the composed prompt. Do not append a second task-directory instruction
-after projection; that recreates the duplicate guidance this block replaced.
+states the resolved work, source, KB, and extra context directories before their
+environment-variable labels, plus the bound spawn/chat identities. The source line
+states that shell cwd remains `MERIDIAN_PROJECT_DIR` and gives the absolute
+`MERIDIAN_TASK_DIR`; restricted shells need the resolved path because they refuse
+variable expansion and compound `cd` calls. `bind_launch_context()` rebuilds that
+block with the final logical task cwd, work directory/id, spawn ID, and available
+chat ID, then asks the harness to re-project the composed prompt. Do not append a
+second task-directory instruction after projection; that recreates the duplicate
+guidance this block replaced.
 
 Spawn-capable prompts also receive `# Prompting subagents`: durable briefing
 judgment that must remain in the prompt even though flag mechanics live in the

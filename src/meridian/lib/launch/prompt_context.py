@@ -58,14 +58,16 @@ def build_context_prompt(
     project_root: Path,
     task_dir: Path,
     active_work_dir: Path | None = None,
+    spawn_id: str | None = None,
+    chat_id: str | None = None,
+    work_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
 ) -> str:
     """Render late-bound directory capability lines for launch guidance.
 
-    Each source of launch state appears once: as the environment variable the
-    agent should use, its resolved value, the command that inspects it, and the
-    corresponding help command.
+    Each source of launch state appears once: resolved value first, its
+    environment-variable label, and the command that inspects it.
     """
 
     if resolved_context is None:
@@ -75,46 +77,66 @@ def build_context_prompt(
             context_config = load_context_config(project_root) or ContextConfig()
         resolved_context = resolve_context_paths(project_root, context_config)
 
-    work_value = (
-        f" ({active_work_dir.as_posix()})" if active_work_dir is not None else " (not active)"
+    lines: list[str] = []
+    if active_work_dir is None:
+        lines.append(
+            "- No active work directory (`$MERIDIAN_ACTIVE_WORK_DIR`); inspect with "
+            "`meridian work current`."
+        )
+    else:
+        work_item = f" for work item `{work_id}`" if (work_id or "").strip() else ""
+        lines.append(
+            f"- `{active_work_dir.as_posix()}` — work directory for scratch/artifacts "
+            f"(`$MERIDIAN_ACTIVE_WORK_DIR`{work_item}); `meridian work current`."
+        )
+    lines.append(
+        f"- `{task_dir.as_posix()}` — source checkout for reads/edits/git/builds/tests "
+        "(`$MERIDIAN_TASK_DIR`); shell cwd stays at "
+        f"`{project_root.as_posix()}` (`$MERIDIAN_PROJECT_DIR`), so use absolute paths; "
+        "inspect: `meridian task-dir`; set work item: `meridian work task-dir`; one spawn: "
+        "`meridian spawn --task-dir`."
     )
-    lines = [
-        "- Work directory (scratch/artifacts for this work): "
-        f"`$MERIDIAN_ACTIVE_WORK_DIR`{work_value}; locate it with "
-        "`meridian work current`.",
-        "- Source checkout (reads, edits, git, builds, tests): "
-        f"`$MERIDIAN_TASK_DIR` ({task_dir.as_posix()}); shell cwd may be "
-        "`$MERIDIAN_PROJECT_DIR`, so `cd \"$MERIDIAN_TASK_DIR\"` or use absolute paths; "
-        "inspect with `meridian task-dir`, and select it with `meridian spawn --task-dir` "
-        "or `meridian --mode human --task-dir`.",
-    ]
 
     if resolved_context.kb_root is None:
-        kb_value = " (unresolved)"
+        lines.append(
+            "- No resolved knowledge base (`$MERIDIAN_CONTEXT_KB_DIR`); inspect with "
+            "`meridian context kb`."
+        )
     else:
-        kb_value = f" ({resolved_context.kb_root.as_posix()})"
-    lines.append(
-        "- Knowledge base (KB; durable project knowledge): "
-        f"`$MERIDIAN_CONTEXT_KB_DIR`{kb_value}; locate it with `meridian context kb`."
-    )
+        lines.append(
+            f"- `{resolved_context.kb_root.as_posix()}` — durable knowledge base "
+            "(`$MERIDIAN_CONTEXT_KB_DIR`); `meridian context kb`."
+        )
+
+    run_id = (spawn_id or "").strip()
+    if run_id:
+        lines.append(
+            f"- `{run_id}` — your run ID (`$MERIDIAN_SPAWN_ID`), the ID your caller "
+            "holds; use it in names."
+        )
+    current_chat_id = (chat_id or "").strip()
+    if current_chat_id:
+        lines.append(
+            f"- `{current_chat_id}` — current chat ID (`$MERIDIAN_CHAT_ID`), parent for "
+            "handoff `--from`."
+        )
 
     other_context: list[str] = []
     if resolved_context.work_archive is not None:
         other_context.append(
-            "work archive "
-            f"`${context_env_key('work_archive')}` "
-            f"({resolved_context.work_archive.as_posix()})"
+            f"`{resolved_context.work_archive.as_posix()}` — work archive "
+            f"(`${context_env_key('work_archive')}`)"
         )
     for name in sorted(resolved_context.extra):
         path, _ = resolved_context.extra[name]
         other_context.append(
-            f"{name} `${context_env_key(name)}` ({path.as_posix()})"
+            f"`{path.as_posix()}` — {name} (`${context_env_key(name)}`)"
         )
     if other_context:
         lines.append(
-            "- Other resolved context directories: "
+            "- "
             + "; ".join(other_context)
-            + "; inspect with `meridian context`."
+            + "; `meridian context`."
         )
 
     return "\n".join(lines)

@@ -77,17 +77,19 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "confirmation message's instructions" in contract.content
     assert "reply is kept as the report" not in contract.content
     capabilities = next(block for block in blocks if block.name == "capabilities")
-    assert "standalone shell calls" in capabilities.content
+    assert "a correct standalone call" in capabilities.content
     assert "meridian spawn subagents" in capabilities.content
-    assert "`--skills` attaches skills" in capabilities.content
-    assert "`-f` passes files/folders" in capabilities.content
-    assert "`--from` carries a prior run/chat" in capabilities.content
-    assert "`--task-dir` selects the source checkout" in capabilities.content
-    assert "`-m` overrides the model" in capabilities.content
+    assert "attach skills `--skills`" in capabilities.content
+    assert "pass files or a folder `-f`" in capabilities.content
+    assert "carry a prior run `--from`" in capabilities.content
+    assert "choose its checkout `--task-dir`" in capabilities.content
+    assert "override its model `-m`" in capabilities.content
     assert "meridian mars models prompting" in capabilities.content
     assert "meridian notify" in capabilities.content
     assert "meridian mermaid check" in capabilities.content
-    assert "Every command below supports `-h`" in capabilities.content
+    assert "Every command has `-h`" in capabilities.content
+    assert "`meridian session search`" in capabilities.content
+    assert "`meridian kg graph`" in capabilities.content
     prompting = next(block for block in blocks if block.name == "spawn-prompting")
     assert "Every spawn starts with fresh context" in prompting.content
     assert "name your suspicions as risks to check" in prompting.content
