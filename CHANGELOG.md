@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-25
+
 ### Upgrade notes
 - Shell network policy now accepts `allowlist` plus additive `network-allow` and `network-deny` host sets. Current Mars bundles carry one network object instead of a scalar; durable snapshots written by older Meridian builds remain readable. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
 - Requires Mars >= 0.18.0 for portable network policy bundles with `provenance.network_source` and `{mode, allow, deny}`. Older Mars stops launches with `Install mars >= 0.18.0` instead of keeping harness network defaults. See [shell network policy defaults](docs/upgrading.md#shell-network-policy-defaults).
