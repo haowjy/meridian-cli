@@ -416,8 +416,8 @@ def root(
         Parameter(
             name="--approval",
             help=(
-                "Approval mode: default, confirm, auto (approve routine calls such as "
-                "edits), never (no prompts). Overrides agent profile."
+                "Approval mode: default, confirm, auto (approves without prompting; scope "
+                "varies by harness), never (no prompts). Overrides agent profile."
             ),
         ),
     ] = None,

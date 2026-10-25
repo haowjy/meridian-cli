@@ -53,8 +53,8 @@ def register_bootstrap_command(app: App) -> None:
             Parameter(
                 name="--approval",
                 help=(
-                    "Approval mode: default, confirm, auto (approve routine calls such as "
-                    "edits), never (no prompts)."
+                    "Approval mode: default, confirm, auto (approves without prompting; scope "
+                    "varies by harness), never (no prompts)."
                 ),
             ),
         ] = None,

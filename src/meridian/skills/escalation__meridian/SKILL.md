@@ -30,17 +30,18 @@ destination, path, or permission error it needs.
 
 The one-run controls are in `meridian spawn -h --advanced`.
 
-- **Can't bind a port or start a server:** an offline sandbox blocks local listeners.
+- **Can't bind a port or start a server:** a `deny` network blocks local listeners.
   Try `--network allowlist --network-allow localhost` before `--network allow`.
 - **Can't reach a URL:** use the profile's web tools when they fit; `--network` covers
-  shell commands only. Otherwise allow just that host. `--network-allow` hosts are
-  dropped unless the network mode is `allowlist`, so pass `--network allowlist` with
-  them.
-- **Tool call denied:** the approval mode is blocking it. Try `--approval auto` first:
-  it approves routine calls such as file edits and keeps the harness's checks on
-  riskier ones. Ask the human before `--approval never` (`--yolo`), which never
-  prompts, so every call the profile's tools allow runs. Neither widens the sandbox
-  or overrides a `tools` deny.
+  shell commands only. Otherwise allow just that host, within your own floor when
+  sandboxed. `--network-allow` hosts are dropped unless the network mode is
+  `allowlist`, so pass `--network allowlist` with them.
+- **Tool call denied:** the approval mode is blocking it. On Claude, try
+  `--approval auto` first: it approves file edits and keeps prompts for riskier calls.
+  On OpenCode and Cursor, `auto` approves every call the profile's tools allow, the
+  same as `--approval never` (`--yolo`), so ask the human before either there; ask
+  before `never` on any harness. `--dry-run` reports what the mode becomes for the
+  child's harness. Neither mode widens the sandbox or overrides a `tools` deny.
 - **Context too small:** switch to a larger-context model with `-m` rather than
   widening permissions; `meridian mars models list --live` confirms a model runs on
   this machine. Model routing is not a way around the caller's boundary.
