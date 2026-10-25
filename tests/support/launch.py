@@ -313,4 +313,4 @@ def assert_task_cwd_instruction(system_prompt: str, task_dir: Path | str) -> Non
     assert "shell cwd may be" in system_prompt
     assert "absolute paths" in system_prompt
     assert '`cd "$MERIDIAN_TASK_DIR"`' in system_prompt
-    assert "`--task-dir`" in system_prompt
+    assert "`meridian spawn --task-dir`" in system_prompt

@@ -34,14 +34,6 @@ Declared backups are automatic fallback candidates, not native fanout.
 ## Subagent
 - tech-lead
 - explorer"""
-FILTERED_INVENTORY = """\
-# Meridian Agents
-
-Declared backups are automatic fallback candidates, not native fanout.
-
-## Subagent
-- tech-lead
-- explorer"""
 
 
 def _profile(
@@ -71,12 +63,14 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         harness_guidance="Host network hint",
     )
 
-    assert [block.name for block in blocks[:3]] == [
+    assert [block.name for block in blocks] == [
         "inventory",
         "capabilities",
+        "spawn-prompting",
         "spawn-contract",
+        "harness-guidance",
     ]
-    assert blocks[0].content == FILTERED_INVENTORY
+    assert blocks[0].content == INVENTORY
     contract = next(block for block in blocks if block.name == "spawn-contract")
     assert contract.content.count(CONTRACT_MARKER) == 1
     assert "run_in_background" in contract.content
@@ -85,9 +79,20 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     capabilities = next(block for block in blocks if block.name == "capabilities")
     assert "standalone shell calls" in capabilities.content
     assert "meridian spawn subagents" in capabilities.content
+    assert "`--skills` attaches skills" in capabilities.content
+    assert "`-f` passes files/folders" in capabilities.content
+    assert "`--from` carries a prior run/chat" in capabilities.content
+    assert "`--task-dir` selects the source checkout" in capabilities.content
+    assert "`-m` overrides the model" in capabilities.content
     assert "meridian mars models prompting" in capabilities.content
     assert "meridian notify" in capabilities.content
     assert "meridian mermaid check" in capabilities.content
+    assert "Every command below supports `-h`" in capabilities.content
+    prompting = next(block for block in blocks if block.name == "spawn-prompting")
+    assert "Every spawn starts with fresh context" in prompting.content
+    assert "name your suspicions as risks to check" in prompting.content
+    assert "State what the spawn may edit" in prompting.content
+    assert "To get more depth, change the model, not the agent" in prompting.content
     hint = next(block for block in blocks if block.name == "harness-guidance")
     assert hint.content == "Host network hint"
 

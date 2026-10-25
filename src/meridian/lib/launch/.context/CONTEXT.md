@@ -276,11 +276,9 @@ harness [OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-pr
 
 Agent inventory is bundle-only. Mars renders harness-aware inventory in the
 launch-bundle `prompt_surface.inventory_prompt` field (Meridian spawn commands,
-native-agent sections, model metadata). Meridian passes that content through except
-for two exact producer tips now owned elsewhere: the command-substitution prompt-path
-recipe (which contradicts the standalone-shell rule) and the `--bg`/wait reminder
-(owned by the spawn contract). Unknown preface prose stays intact, including backup
-and native-fanout semantics. There is no Python fallback inventory renderer.
+native-agent sections, model metadata). Meridian passes that content through verbatim;
+producer guidance belongs to Mars rather than string-matched patches in the consumer.
+There is no Python fallback inventory renderer.
 
 `model_invocable` filtering happens in mars at inventory render time. Catalog
 scanning (`scan_agent_profiles()`, `load_agent_profile()`) stays neutral — CLI
@@ -324,6 +322,10 @@ operations through `MERIDIAN_TASK_DIR`. `bind_launch_context()` rebuilds that bl
 with the final `logical_task_cwd` and bound work directory, then asks the harness to
 re-project the composed prompt. Do not append a second task-directory instruction
 after projection; that recreates the duplicate guidance this block replaced.
+
+Spawn-capable prompts also receive `# Prompting subagents`: durable briefing
+judgment that must remain in the prompt even though flag mechanics live in the
+capability row and `meridian spawn -h`.
 
 Resolution priority in `resolve_task_cwd()`:
 1. explicit task-dir override

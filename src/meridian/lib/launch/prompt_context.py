@@ -81,12 +81,12 @@ def build_context_prompt(
     lines = [
         "- Work directory (scratch/artifacts for this work): "
         f"`$MERIDIAN_ACTIVE_WORK_DIR`{work_value}; locate it with "
-        "`meridian work current` (`meridian work -h`).",
+        "`meridian work current`.",
         "- Source checkout (reads, edits, git, builds, tests): "
         f"`$MERIDIAN_TASK_DIR` ({task_dir.as_posix()}); shell cwd may be "
         "`$MERIDIAN_PROJECT_DIR`, so `cd \"$MERIDIAN_TASK_DIR\"` or use absolute paths; "
-        "inspect with `meridian task-dir` (`meridian task-dir -h`) and set launches with "
-        "`--task-dir` (`meridian spawn -h`; primary: `meridian --mode human -h`).",
+        "inspect with `meridian task-dir`, and select it with `meridian spawn --task-dir` "
+        "or `meridian --mode human --task-dir`.",
     ]
 
     if resolved_context.kb_root is None:
@@ -95,8 +95,7 @@ def build_context_prompt(
         kb_value = f" ({resolved_context.kb_root.as_posix()})"
     lines.append(
         "- Knowledge base (KB; durable project knowledge): "
-        f"`$MERIDIAN_CONTEXT_KB_DIR`{kb_value}; locate it with `meridian context kb` "
-        "(`meridian context -h`)."
+        f"`$MERIDIAN_CONTEXT_KB_DIR`{kb_value}; locate it with `meridian context kb`."
     )
 
     other_context: list[str] = []
@@ -115,7 +114,7 @@ def build_context_prompt(
         lines.append(
             "- Other resolved context directories: "
             + "; ".join(other_context)
-            + "; inspect with `meridian context` (`meridian context -h`)."
+            + "; inspect with `meridian context`."
         )
 
     return "\n".join(lines)
