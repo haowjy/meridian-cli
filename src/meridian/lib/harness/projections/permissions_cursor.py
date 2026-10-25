@@ -6,6 +6,7 @@ unsupported.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -13,7 +14,9 @@ from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
+    UNENFORCED_NETWORK,
     ApprovalMode,
+    EffectivePolicy,
     EnforcementReport,
     PermissionPolicy,
     ReportLine,
@@ -41,6 +44,26 @@ _SANDBOX_VALUE: dict[SandboxMode, CursorSandbox | None] = {
     "workspace-write": "disabled",
     "danger-full-access": "disabled",
 }
+# What each mode really allows once mapped: ``enabled`` still permits workspace writes.
+_EFFECTIVE_SANDBOX: dict[SandboxMode, SandboxMode] = {
+    "default": "default",
+    "read-only": "workspace-write",
+    "workspace-write": "danger-full-access",
+    "danger-full-access": "danger-full-access",
+}
+
+
+def effective_cursor_policy(
+    policy: PermissionPolicy,
+    *,
+    native_config: Mapping[str, object],
+) -> EffectivePolicy:
+    """Return the sandbox Cursor's binary switch gives; its shell network is open."""
+
+    del native_config
+    return EffectivePolicy(
+        sandbox=_EFFECTIVE_SANDBOX[policy.sandbox], network=UNENFORCED_NETWORK
+    )
 
 
 @dataclass(frozen=True)
@@ -103,4 +126,5 @@ def compile_cursor_permissions(
 __all__ = [
     "CursorPermissions",
     "compile_cursor_permissions",
+    "effective_cursor_policy",
 ]

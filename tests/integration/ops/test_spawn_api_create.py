@@ -29,6 +29,7 @@ from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.safety.policy import (
+    EffectivePolicy,
     PermissionPolicy,
     SandboxMode,
     network_policy_to_wire,
@@ -387,8 +388,7 @@ def test_caller_boundary_records_effective_network_for_every_sandboxed_caller(
     assert parsed_effective is not None
     boundary = CallerBoundary.from_policy(
         PermissionPolicy(sandbox=sandbox),
-        effective_sandbox=sandbox,
-        effective_network=parsed_effective,
+        effective=EffectivePolicy(sandbox=sandbox, network=parsed_effective),
         pid_namespace=None,
     )
 
@@ -611,7 +611,7 @@ def test_spawn_create_caller_guardrail_allows_stronger_child_dry_run(
             "deny",
             "default",
             "failed",
-            "'opencode' does not enforce sandbox or network",
+            "Harness 'opencode' runs sandbox",
         ),
     ],
 )

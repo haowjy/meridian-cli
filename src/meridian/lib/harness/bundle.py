@@ -22,11 +22,10 @@ from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
 from meridian.lib.safety.policy import (
-    Allow,
+    UNENFORCED_POLICY,
+    EffectivePolicy,
     EnforcementReport,
-    NetworkPolicy,
     PermissionPolicy,
-    SandboxMode,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -39,18 +38,15 @@ class SubprocessProjector(Protocol[ProjectorSpecT]):
     def __call__(self, spec: ProjectorSpecT, *, base_command: tuple[str, ...]) -> list[str]: ...
 
 
-class EffectiveNetwork(Protocol):
-    """Project Meridian-owned policy inputs onto one harness's effective network."""
+class EffectivePolicyProjector(Protocol):
+    """Project Meridian-owned policy inputs onto what one harness actually enforces."""
 
     def __call__(
         self,
         policy: PermissionPolicy,
         *,
         native_config: Mapping[str, object],
-    ) -> NetworkPolicy: ...
-
-
-UNENFORCED_NETWORK = Allow()
+    ) -> EffectivePolicy: ...
 
 
 class ManagedPrimaryBackendProjector(Protocol[ProjectorSpecT]):
@@ -92,13 +88,9 @@ class HarnessProjectionPorts(Generic[SpecT]):
     # ``--dry-run`` and the projection manifest read it; the live projectors call the typed
     # compile (``permissions_<harness>.py``) directly for its native projection.
     permission_report: Callable[[SpecT], EnforcementReport]
-    # Reports and child-spawn guardrails share this pure, harness-owned policy fact.
-    # None means the harness has no shell-network enforcement and therefore leaves the
-    # shared ``UNENFORCED_NETWORK`` policy in effect.
-    effective_network: EffectiveNetwork | None = None
-    # Whether the harness confines its shell to the projected ``sandbox`` mode. A harness
-    # that does not runs every launch with full access, whatever the profile says.
-    enforces_sandbox: bool = False
+    # What the harness actually enforces, shared by network reports and the child-spawn
+    # guardrail. None means it confines neither shell nor network: ``UNENFORCED_POLICY``.
+    effective_policy: EffectivePolicyProjector | None = None
     # Resolves the spec's facts that depend on the launch environment or child cwd once at
     # bind, so every projection and the connection read one value.
     bind_spec: Callable[[SpecT, Mapping[str, str], Path], SpecT] | None = None
@@ -358,26 +350,18 @@ def bind_launch_spec(
     return cast("SpecT", bundle.projections.bind_spec(spec, env, child_cwd))
 
 
-def project_effective_network(
+def project_effective_policy(
     harness_id: HarnessId,
     policy: PermissionPolicy,
     *,
     native_config: Mapping[str, object],
-) -> NetworkPolicy:
-    """Project the network policy from only inputs Meridian owns."""
+) -> EffectivePolicy:
+    """Project the sandbox and network a launch really gets, from inputs Meridian owns."""
 
-    projector = get_harness_bundle(harness_id).projections.effective_network
+    projector = get_harness_bundle(harness_id).projections.effective_policy
     if projector is None:
-        return UNENFORCED_NETWORK
+        return UNENFORCED_POLICY
     return projector(policy, native_config=native_config)
-
-
-def project_effective_sandbox(harness_id: HarnessId, sandbox: SandboxMode) -> SandboxMode:
-    """Return the sandbox the harness actually applies for one resolved mode."""
-
-    if get_harness_bundle(harness_id).projections.enforces_sandbox:
-        return sandbox
-    return "danger-full-access"
 
 
 def materialize_launch_spec(
@@ -458,7 +442,6 @@ def project_managed_primary_preview(
 
 
 __all__ = [
-    "UNENFORCED_NETWORK",
     "HarnessBundle",
     "HarnessProjectionPorts",
     "ManagedPrimaryProjectionPorts",
@@ -470,8 +453,7 @@ __all__ = [
     "get_harness_bundle",
     "materialize_launch_spec",
     "post_to_primary",
-    "project_effective_network",
-    "project_effective_sandbox",
+    "project_effective_policy",
     "project_managed_primary_backend_command",
     "project_managed_primary_bootstrap",
     "project_subprocess_spec",

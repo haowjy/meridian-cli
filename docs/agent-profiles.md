@@ -555,11 +555,12 @@ them:
 - **Child-spawn CLI guardrail.** Every Meridian-launched harness receives its resolved
   sandbox, spawn capability, and Meridian-projected network in a launcher-owned boundary
   record. Only `read-only` and
-  `workspace-write` callers on Claude or Codex have a floor, because only there is the
-  sandbox real and the standalone spawn an escape from it. OpenCode, Pi, and Cursor enforce
-  neither sandbox nor network, so a caller there has no floor, and a child routed there
-  counts as `danger-full-access` and online: a sandboxed caller is refused it, and the
-  refusal names the harness. Pass `--harness claude` or `--harness codex` (or a model that
+  `workspace-write` callers have a floor, and both sides are compared by what their harness
+  actually enforces. OpenCode and Pi enforce neither sandbox nor network, so they count as
+  `danger-full-access` and online; Cursor's binary sandbox counts `read-only` as
+  `workspace-write` and `workspace-write` as `danger-full-access`, with open network. A
+  caller that counts as `danger-full-access` has no floor, and a child that a sandboxed caller
+  is refused because of its harness gets a refusal naming that harness. Pass `--harness claude` or `--harness codex` (or a model that
   routes there) to keep such a child. `spawn`, `spawn --continue`, and `spawn --fork` (including `--dry-run`)
   refuse a floored caller whose profile cannot spawn, a child whose resolved sandbox is
   weaker, or a child whose projected network is not contained by the caller's. An offline

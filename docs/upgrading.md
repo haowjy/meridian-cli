@@ -103,16 +103,20 @@ reserved and skipped in the following release.
 
 ## Child guardrail follows the harness
 
-The child-spawn guardrail compares the sandbox each harness actually enforces. Only Claude
-and Codex enforce `sandbox` and `network`; OpenCode, Pi, and Cursor run every launch with
-full filesystem and network access.
+The child-spawn guardrail compares the sandbox and network each harness actually enforces,
+on both the caller's and the child's side.
 
-- A caller on OpenCode, Pi, or Cursor no longer has a floor, whatever its profile's
-  `sandbox`: it can launch any child.
-- A child routed to OpenCode, Pi, or Cursor now counts as `danger-full-access` and online.
-  A `read-only` or `workspace-write` caller on Claude or Codex is refused it, with a message
-  naming the harness. This previously passed when the child's profile said `read-only`,
-  although nothing confined it.
+| Harness | `read-only` runs as | `workspace-write` runs as | Shell network |
+|---|---|---|---|
+| Claude, Codex | `read-only` | `workspace-write` | enforced |
+| Cursor | `workspace-write` (its sandbox still allows workspace writes) | `danger-full-access` | open |
+| OpenCode, Pi | `danger-full-access` | `danger-full-access` | open |
+
+- A caller whose harness runs it as `danger-full-access` (OpenCode, Pi, or a Cursor
+  `workspace-write` profile) has no floor: it can launch any child.
+- A child is compared by what its harness runs. A sandboxed caller is refused a `read-only`
+  explorer routed to Pi, with a message naming the harness. This previously passed,
+  although nothing confined the child.
 
 If a sandboxed caller's subagent routes to one of those harnesses by default, pass
 `--harness claude`/`--harness codex` or a model that routes there, or change the child
