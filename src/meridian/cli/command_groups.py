@@ -65,8 +65,8 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         summary='Work item dashboard and coordination.',
         long_help="Group related runs under a work item — a shared id that keeps spawns, sessions,\nand scratch artifacts together so you can find them later. This view lists active\nruns grouped by work item; unassigned spawns appear under '(no work)'.",
         agent_notes='Artifact placement: $MERIDIAN_ACTIVE_WORK_DIR for this item,\n$MERIDIAN_CONTEXT_KB_DIR for project-wide durable knowledge.\n\nAttach delegated runs with `meridian spawn ... --work WORK_ID` so spawns, sessions, and scratch artifacts stay grouped.',
-        agent_subcommands=('start', 'current', 'root', 'path', 'done', 'sessions', 'list', 'show', 'switch'),
-        agent_core_subcommands=('start', 'current', 'root', 'path', 'done', 'sessions', 'list', 'show', 'switch'),
+        agent_subcommands=('start', 'current', 'root', 'path', 'task-dir', 'update', 'done', 'sessions', 'list', 'show', 'switch', 'clear', 'rename', 'reopen', 'delete'),
+        agent_core_subcommands=('start', 'current', 'root', 'path', 'task-dir', 'update', 'done', 'sessions', 'list', 'show', 'switch', 'clear'),
     ),
     "config": GroupHelp(
         summary='Show resolved configuration and sources.',

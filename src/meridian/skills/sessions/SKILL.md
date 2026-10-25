@@ -18,12 +18,8 @@ shells. Begin with recent context:
 meridian session log cNNN --tail 20
 ```
 
-Bare `session log cNNN` reads five interaction entries from the current segment.
-`--from`, `--before`, and `--around` are segment-local ordinals; entry 0 is the segment
-setup. Select `--segment previous|current|N`, use `--full` for the selected segment,
-`--no-truncate` for complete content, and `--around N --context M` for a stable window.
-Use `--global` only for a flat cross-segment stream; it conflicts with `--segment` and
-requires an anchor flag.
+Long sessions are split into segments at each compaction; `meridian session log -h`
+covers windows, segments, and full content.
 
 Search when you know the term or decision:
 

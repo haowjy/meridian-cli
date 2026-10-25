@@ -354,7 +354,10 @@ def root(
         bool,
         Parameter(
             name="--yolo",
-            help="Skip all harness safety prompts and sandboxing.",
+            help=(
+                "Shorthand for --approval never: no tool-call approval prompts. "
+                "The sandbox is unchanged."
+            ),
         ),
     ] = False,
     autocompact: Annotated[

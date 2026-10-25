@@ -100,8 +100,8 @@ def build_capabilities_prompt(
         "Run each Meridian command as its own shell call, for example `meridian task-dir`.",
         "Restricted shells refuse `cd ... && meridian ...`, pipes, `$()`, `VAR=1`, and "
         "`$VAR` expansion.",
-        "Every command has `-h`; if one is refused, tell your caller—do not work "
-        "around it.",
+        "Every command has `-h`; if one is refused, tell your caller or the human—do "
+        "not work around it.",
         "",
     ]
     if spawn_capable:

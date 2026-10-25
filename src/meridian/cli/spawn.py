@@ -571,7 +571,10 @@ def _spawn_create(
         Parameter(
             name="--yolo",
             group=ADVANCED_PARAMS,
-            help="Skip all harness safety prompts and sandboxing.",
+            help=(
+                "Shorthand for --approval never: no tool-call approval prompts. "
+                "The sandbox is unchanged."
+            ),
         ),
     ] = False,
     continue_from: Annotated[

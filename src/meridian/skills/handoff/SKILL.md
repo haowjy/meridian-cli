@@ -9,7 +9,8 @@ Follow the transition brief already prepared for the next lead. The user starts 
 new primary session; print the launch command, but never run it.
 
 Choose the requested agent, or inspect available agents and ask if the choice is
-ambiguous. Show the work item's primary-session trail first:
+ambiguous. Show the user the work item's primary-session trail first, so they see
+which leads came before and where this handoff sits in the chain:
 
 ```bash
 meridian work sessions --primary
