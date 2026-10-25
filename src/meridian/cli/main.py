@@ -396,7 +396,10 @@ def root(
         tuple[str, ...],
         Parameter(
             name="--network-allow",
-            help="Add a host to the shell network allow set (repeatable).",
+            help=(
+                "Add a host to the shell network allow set (repeatable); dropped unless "
+                "the network mode is allowlist."
+            ),
             negative_iterable=(),
         ),
     ] = (),
@@ -412,7 +415,10 @@ def root(
         str | None,
         Parameter(
             name="--approval",
-            help="Approval mode: default, confirm, auto, never. Overrides agent profile.",
+            help=(
+                "Approval mode: default, confirm, auto (approves without prompting; scope "
+                "varies by harness), never (no prompts). Overrides agent profile."
+            ),
         ),
     ] = None,
     timeout: Annotated[

@@ -317,20 +317,24 @@ task directory.
 **Directory capability guidance.** Every primary and spawn prompt has one
 `# Meridian capabilities` section. Preparation leaves one typed placeholder;
 `bind_launch_context()` renders the whole block once, after the profile's spawn
-capability and the final control root, logical task cwd, work directory/id, spawn ID,
-chat ID, KB, and extra contexts are known. The source line names the actual control
-root as shell cwd and gives the absolute task directory; when they match it collapses
-to one shorter line. Restricted shells need the resolved paths because they refuse
-variable expansion and compound `cd` calls. Do not compose or append a second
-directory instruction before or after projection.
+capability and declared mode and the final control root, logical task cwd, work
+directory/id, spawn ID, chat ID, KB, and extra contexts are known. The notification
+row is present only for a `mode: primary` profile; delegation rows remain gated by
+spawn capability. The source line names the actual control root as shell cwd and gives
+the absolute task directory; when they match it collapses to one shorter line.
+Restricted shells need the resolved paths because they refuse variable expansion and
+compound `cd` calls. Do not compose or append a second directory instruction before
+or after projection.
 
 Every prompt also has a short `# Meridian skills` block generated from the
 descriptions under `meridian.skills`. It is a trigger index, not loaded skill
 content: the agent reads a matching entry through the read-only `meridian skills`
 command. Bundled names use the `name__meridian` collision spelling. The
-delegation-only `escalation__meridian` trigger remains spawn-gated; the other triggers
-are always present. That gate comes from each skill's `spawn-only` frontmatter, not a
-hardcoded name set. Package skills remain on the Mars/harness path below.
+`handoff__meridian`, `notify__meridian`, `work__meridian`, and
+`escalation__meridian` triggers carry `mode: primary`; `sessions__meridian` remains
+visible to every profile. The gate follows the profile's declared mode even when a
+primary-mode profile is launched as a spawn, and comes from skill frontmatter rather
+than a hardcoded name set. Package skills remain on the Mars/harness path below.
 
 Spawn-capable prompts also receive `# Prompting subagents`: durable briefing
 judgment that must remain in the prompt even though flag mechanics live in the
@@ -543,9 +547,10 @@ Neither list is filtered by `model-invocable`. A loaded skill is composed in ful
 whatever its value; `model-invocable` only decides whether the harness's own
 skill list shows it, and that list is not how loaded skills arrive. Don't add an
 invocability check on this path. The skill block header (`# Skill: /<name>`,
-`_render_skill_block()` in `prompt_context.py`) tells the agent the skill is
+`render_skill_block()` in `prompt_context.py`) tells the agent the skill is
 already loaded, because agents otherwise look for it in the harness list, miss
-it, and skip it.
+it, and skip it. `meridian skills <name>` renders bundled skills through the same
+function, so reading one is indistinguishable from activating it.
 
 `SkillContent.path` is the bundle's `source_path` (the base `SKILL.md`, even when
 a variant body was selected); a reconstructed primary-root path is only the

@@ -7,13 +7,18 @@ from typing import Annotated
 from cyclopts import App, Parameter
 
 from meridian.cli.invocation import current_output_sink, get_global_options
-from meridian.lib.bundled_skills import list_bundled_skills, read_bundled_skill
+from meridian.lib.bundled_skills import (
+    list_bundled_skills,
+    load_bundled_skill,
+    read_bundled_skill_resource,
+)
+from meridian.lib.launch.prompt_context import render_skill_block
 
 
 def cmd_skills(
     name: Annotated[
         str,
-        Parameter(help="Use 'list' to show skills, or give a skill name to print SKILL.md."),
+        Parameter(help="Use 'list' to show skills, or give a skill name to load it."),
     ],
     resource_path: Annotated[
         str | None,
@@ -40,7 +45,10 @@ def cmd_skills(
         return
 
     try:
-        content = read_bundled_skill(name, resource_path)
+        if resource_path is None:
+            content = render_skill_block(load_bundled_skill(name))
+        else:
+            content = read_bundled_skill_resource(name, resource_path)
     except ValueError as exc:
         sink.error(str(exc), exit_code=2)
         raise SystemExit(2) from None

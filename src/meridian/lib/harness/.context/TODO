@@ -9,3 +9,10 @@
   not Meridian's `HEADLESS_REJECT_REASON`, and an unavailable tool produces no attempted-call
   event to journal. Closing either gap requires an upstream custom-denial-reason/event seam
   or a Meridian hook that mediates calls instead of native policy; do not fabricate events.
+- `transcript.py`: a Claude compaction segment's setup slot (entry 0) holds the
+  `compact_boundary` event's literal `content` ("Conversation compacted"); the real
+  summary arrives next as a user event flagged `isCompactSummary` (not `isSynthetic`),
+  so it lands at entry 1. Segment 0's slot can also catch a hook's system notice
+  (seen: `meridian-idle: hooks.json changed`) instead of a prologue. Observed on
+  `c8788`. The bundled sessions skill reads `--from 0 --limit 2` around this;
+  narrow it to `--limit 1` once the summary fills the slot.

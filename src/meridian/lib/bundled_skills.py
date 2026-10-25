@@ -8,6 +8,9 @@ from importlib.resources import files
 from importlib.resources.abc import Traversable
 from pathlib import PurePosixPath
 
+from meridian.lib.catalog.agent import AgentMode
+from meridian.lib.core.domain import SkillContent
+
 
 @dataclass(frozen=True)
 class BundledSkill:
@@ -15,7 +18,7 @@ class BundledSkill:
 
     name: str
     description: str
-    spawn_only: bool = False
+    mode: AgentMode | None = None
 
 
 def _parse_skill_metadata(text: str, *, folder_name: str) -> BundledSkill:
@@ -25,16 +28,23 @@ def _parse_skill_metadata(text: str, *, folder_name: str) -> BundledSkill:
     metadata = dict(post.metadata)
     name = str(metadata.get("name", "")).strip()
     description = str(metadata.get("description", "")).strip()
-    spawn_only = metadata.get("spawn-only", False)
+    raw_mode = metadata.get("mode")
     if not name or not description:
         raise RuntimeError(f"bundled skill {folder_name!r} needs name and description")
     if name != folder_name:
         raise RuntimeError(
             f"bundled skill folder {folder_name!r} does not match frontmatter name {name!r}"
         )
-    if not isinstance(spawn_only, bool):
-        raise RuntimeError(f"bundled skill {folder_name!r} spawn-only must be a boolean")
-    return BundledSkill(name=name, description=description, spawn_only=spawn_only)
+    mode: AgentMode | None = None
+    if raw_mode == "primary":
+        mode = "primary"
+    elif raw_mode == "subagent":
+        mode = "subagent"
+    elif raw_mode is not None:
+        raise RuntimeError(
+            f"bundled skill {folder_name!r} mode must be 'primary' or 'subagent'"
+        )
+    return BundledSkill(name=name, description=description, mode=mode)
 
 
 def _skills_root() -> Traversable:
@@ -81,18 +91,34 @@ def _resource_parts(resource_path: str) -> tuple[str, ...]:
     return path.parts
 
 
-def read_bundled_skill(name: str, resource_path: str | None = None) -> str:
-    """Read a skill's ``SKILL.md`` or one resource beneath its folder."""
+def load_bundled_skill(name: str) -> SkillContent:
+    """Load a skill's body and the real path of its ``SKILL.md``."""
 
-    skill_dir = _skill_dir(name)
-    target = skill_dir.joinpath("SKILL.md")
-    if resource_path is not None:
-        target = skill_dir.joinpath(*_resource_parts(resource_path))
+    import frontmatter  # pyright: ignore[reportMissingTypeStubs]  # No stubs upstream.
+
+    skill_file = _skill_dir(name).joinpath("SKILL.md")
+    post = frontmatter.loads(skill_file.read_text(encoding="utf-8"))
+    return SkillContent(
+        name=name,
+        description=str(dict(post.metadata)["description"]).strip(),
+        content=post.content,
+        path=str(skill_file),
+    )
+
+
+def read_bundled_skill_resource(name: str, resource_path: str) -> str:
+    """Read one file beneath a skill's folder."""
+
+    target = _skill_dir(name).joinpath(*_resource_parts(resource_path))
     if not target.is_file():
-        requested = resource_path or "SKILL.md"
-        raise ValueError(f"resource not found for Meridian skill {name!r}: {requested}")
+        raise ValueError(f"resource not found for Meridian skill {name!r}: {resource_path}")
     return target.read_text(encoding="utf-8")
 
 
-__all__ = ["BundledSkill", "list_bundled_skills", "read_bundled_skill"]
+__all__ = [
+    "BundledSkill",
+    "list_bundled_skills",
+    "load_bundled_skill",
+    "read_bundled_skill_resource",
+]
 

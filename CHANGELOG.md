@@ -4,6 +4,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Lead-only bundled skill triggers and the notify capability now appear only for
+  profiles declaring `mode: primary`; subagent profiles retain session-mining guidance,
+  and the special-purpose `spawn-only` metadata is removed.
+- `meridian skills NAME` prints a skill the way a loaded skill appears in a prompt:
+  `# Skill:` header naming its installed folder, then the body without frontmatter.
+  Resource reads and `meridian skills list` are unchanged.
+- Bundled skills regain judgment lost when their flag syntax was trimmed: escalation's
+  narrowest fix per symptom (local listeners, URLs, denied tool calls, context
+  limits), notify's title, headline, uncertain-call, and fallback rules, handoff's
+  brief fallback, and session mining's timing and segment navigation.
+- `--approval` help says what `auto` and `never` do; `--network-allow` help says hosts
+  are dropped unless the network mode is `allowlist`.
+
 ## [0.14.4] - 2026-10-25
 
 ### Changed

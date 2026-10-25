@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.catalog.agent import AgentProfile, MeridianCapabilities
+from meridian.lib.catalog.agent import AgentMode, AgentProfile, MeridianCapabilities
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.harness.adapter import CLAUDE_SPAWN_USAGE_VARIANTS
@@ -39,13 +39,14 @@ Declared backups are automatic fallback candidates, not native fanout.
 
 def _profile(
     *,
+    mode: AgentMode = "primary",
     subagents: tuple[str, ...] = ("coder", "explorer"),
     capabilities: MeridianCapabilities | None = None,
 ) -> AgentProfile:
     return AgentProfile(
         name="tech-lead",
         description="Orchestrator",
-        mode="primary",
+        mode=mode,
         subagents=subagents,
         meridian_capabilities=capabilities,
         model_invocable=False,
@@ -81,6 +82,7 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert placeholder.content == ""
     capabilities = build_capabilities_prompt(
         spawn_capable=True,
+        profile_mode="primary",
         project_root=Path("/tmp/project"),
         control_root=Path("/tmp/project"),
         task_dir=Path("/tmp/checkout"),
@@ -103,6 +105,28 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     meridian_skills = next(block for block in blocks if block.name == "meridian-skills")
     assert "Read `meridian skills escalation__meridian`" in meridian_skills.content
     assert "Read `meridian skills handoff__meridian`" in meridian_skills.content
+    reviewer_blocks = build_guidance_blocks(
+        profile=_profile(mode="subagent"),
+        spawn_usage_contract="spawn contract",
+        bundle_inventory_prompt=INVENTORY,
+    )
+    reviewer_skills = next(
+        block for block in reviewer_blocks if block.name == "meridian-skills"
+    )
+    assert "meridian skills sessions__meridian" in reviewer_skills.content
+    assert "meridian skills escalation__meridian" not in reviewer_skills.content
+    assert "meridian skills handoff__meridian" not in reviewer_skills.content
+    assert "meridian skills notify__meridian" not in reviewer_skills.content
+    assert "meridian skills work__meridian" not in reviewer_skills.content
+    reviewer_capabilities = build_capabilities_prompt(
+        spawn_capable=True,
+        profile_mode="subagent",
+        project_root=Path("/tmp/project"),
+        control_root=Path("/tmp/project"),
+        task_dir=Path("/tmp/checkout"),
+    )
+    assert "meridian spawn subagents" in reviewer_capabilities
+    assert "meridian notify" not in reviewer_capabilities
     leaf_blocks = build_guidance_blocks(
         profile=None,
         spawn_usage_contract="",
@@ -111,6 +135,15 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     leaf_skills = next(block for block in leaf_blocks if block.name == "meridian-skills")
     assert "meridian skills sessions__meridian" in leaf_skills.content
     assert "meridian skills escalation__meridian" not in leaf_skills.content
+    leaf_capabilities = build_capabilities_prompt(
+        spawn_capable=False,
+        profile_mode="subagent",
+        project_root=Path("/tmp/project"),
+        control_root=Path("/tmp/project"),
+        task_dir=Path("/tmp/checkout"),
+    )
+    assert "meridian spawn subagents" not in leaf_capabilities
+    assert "meridian notify" not in leaf_capabilities
     prompting = next(block for block in blocks if block.name == "spawn-prompting")
     assert "Every spawn starts with fresh context" in prompting.content
     assert "name your suspicions as risks to check" in prompting.content

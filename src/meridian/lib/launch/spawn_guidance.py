@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.lib.bundled_skills import list_bundled_skills
-from meridian.lib.catalog.agent import AgentProfile
+from meridian.lib.catalog.agent import AgentMode, AgentProfile
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
@@ -19,14 +19,20 @@ from meridian.lib.launch.composition import (
     GuidancePhase,
 )
 
-_GENERAL_CAPABILITIES = (
-    "- Work item (tracked effort): `meridian work`.\n"
-    "- Past sessions/transcripts: `meridian session search` with a ref, `--work`, "
-    "`--workspace`, or `--global`; read with `meridian session log`.\n"
-    "- Notify the human: `meridian notify`.\n"
-    "- Validate Markdown links / inspect the link graph / validate Mermaid: "
-    "`meridian kg check` / `meridian kg graph` / `meridian mermaid check`.\n"
-    "- Project guidance graph: `meridian qi graph`."
+_GENERAL_CAPABILITIES: tuple[tuple[AgentMode | None, str], ...] = (
+    (None, "- Work item (tracked effort): `meridian work`."),
+    (
+        None,
+        "- Past sessions/transcripts: `meridian session search` with a ref, `--work`, "
+        "`--workspace`, or `--global`; read with `meridian session log`.",
+    ),
+    ("primary", "- Notify the human: `meridian notify`."),
+    (
+        None,
+        "- Validate Markdown links / inspect the link graph / validate Mermaid: "
+        "`meridian kg check` / `meridian kg graph` / `meridian mermaid check`.",
+    ),
+    (None, "- Project guidance graph: `meridian qi graph`."),
 )
 
 _SPAWN_CAPABILITIES = (
@@ -58,10 +64,10 @@ Agent defaults fit most work. Say why before overriding the model: do so only
 when the caller asks or the work needs more depth or a capability the defaults
 lack. To get more depth, change the model, not the agent."""
 
-def _build_meridian_skills_prompt(*, spawn_capable: bool) -> str:
+def _build_meridian_skills_prompt(*, profile_mode: AgentMode) -> str:
     lines = ["# Meridian skills", ""]
     for skill in list_bundled_skills():
-        if skill.spawn_only and not spawn_capable:
+        if skill.mode is not None and skill.mode != profile_mode:
             continue
         description = skill.description
         if description.startswith("When "):
@@ -75,6 +81,7 @@ def _build_meridian_skills_prompt(*, spawn_capable: bool) -> str:
 def build_capabilities_prompt(
     *,
     spawn_capable: bool,
+    profile_mode: AgentMode,
     project_root: Path,
     control_root: Path,
     task_dir: Path,
@@ -106,7 +113,11 @@ def build_capabilities_prompt(
     ]
     if spawn_capable:
         lines.append(_SPAWN_CAPABILITIES)
-    lines.append(_GENERAL_CAPABILITIES)
+    lines.extend(
+        capability
+        for required_mode, capability in _GENERAL_CAPABILITIES
+        if required_mode is None or required_mode == profile_mode
+    )
 
     if active_work_dir is None:
         lines.append(
@@ -220,12 +231,14 @@ def build_guidance_blocks(
     """Build all system-prompt guidance blocks.
 
     Spawn-gated (only when has_spawn_capability): inventory, spawn capabilities,
-    prompting judgment, and the spawn behavior contract. General capabilities
-    and context paths are always present. The empty capability block is filled at bind,
-    after its directory and run identity facts are known.
+    prompting judgment, and the spawn behavior contract. Profile-mode gates apply to
+    bundled skill triggers and individual general capabilities. Context paths are always
+    present. The empty capability block is filled at bind, after its directory and run
+    identity facts are known.
     """
     blocks: list[CompositionBlock] = []
     spawn_capable = has_spawn_capability(profile)
+    profile_mode: AgentMode = profile.mode if profile is not None else "subagent"
     if spawn_capable:
         inventory = (bundle_inventory_prompt or "").strip()
         if inventory:
@@ -235,7 +248,7 @@ def build_guidance_blocks(
             "meridian-skills",
             GuidancePhase.GUIDANCE,
             4,
-            _build_meridian_skills_prompt(spawn_capable=spawn_capable),
+            _build_meridian_skills_prompt(profile_mode=profile_mode),
         )
     )
     blocks.append(

@@ -50,7 +50,13 @@ def register_bootstrap_command(app: App) -> None:
         ] = False,
         approval: Annotated[
             str | None,
-            Parameter(name="--approval", help="Approval mode: default, confirm, auto, never."),
+            Parameter(
+                name="--approval",
+                help=(
+                    "Approval mode: default, confirm, auto (approves without prompting; scope "
+                    "varies by harness), never (no prompts)."
+                ),
+            ),
         ] = None,
         autocompact: Annotated[
             int | None,
@@ -79,7 +85,10 @@ def register_bootstrap_command(app: App) -> None:
             tuple[str, ...],
             Parameter(
                 name="--network-allow",
-                help="Add a host to the shell network allow set (repeatable).",
+                help=(
+                    "Add a host to the shell network allow set (repeatable); dropped "
+                    "unless the network mode is allowlist."
+                ),
                 negative_iterable=(),
             ),
         ] = (),

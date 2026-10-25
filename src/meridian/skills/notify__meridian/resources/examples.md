@@ -7,7 +7,7 @@ body. Email carries every attachment; a phone push carries one per message.
 
 - `meridian notify "Pick auth storage: sessions table or JWT" "Tradeoffs in decisions.md"`
 - `meridian notify "PR #412 ready for review" "Retry backoff; all checks green"`
-- `meridian notify "Blocked: staging DB refuses connections" "Since 14:10"`
+- `meridian notify "Blocked: staging DB refuses connections" "Since 14:10; nothing else to do until it's back"`
 - `meridian notify "Review the settings page" --attach screenshot.png --attach report.md`
 
 Weak titles such as "Update", "Done", or "FYI" make the human open the session just
@@ -22,8 +22,10 @@ that costs something while it waits, such as a broken deploy or runaway job.
 
 ## Uncertain Calls
 
-When continuing past a costly uncertain call, record it, then batch open calls at the
-next pause. Name what you chose, the main alternative, and where the record is:
+When you keep going past a costly uncertain call, tell the human before more work
+builds on it and reversing it gets expensive. Record the call with the work item's
+decisions, then batch open calls into one notice at the next pause. Name what you
+chose, the main alternative, and where the record is:
 
 `meridian notify --no-email "2 open calls in decisions.md" "Kept sync; split billing"`
 

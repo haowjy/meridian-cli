@@ -18,6 +18,7 @@ Read the output instead of treating exit 0 as delivery:
 - Exit 1 means every attempted route failed and none delivered.
 
 For either no-delivery outcome, do not loop or configure delivery yourself. Use the
-harness's notification tool if it has one; otherwise put the notice at the top of the
-record or your next message. Keep working on anything that does not await an answer,
-and report which warnings or errors occurred. Never put credentials in notices.
+harness's notification tool if it has one; otherwise write the notice in the record
+(the work item's decisions) and put it at the top of your next message. Keep working on
+anything that does not await an answer, and report which warnings or errors occurred.
+Leave credentials and tokens out of messages and reports.
