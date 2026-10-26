@@ -234,7 +234,7 @@ Runner-history pruning is explicit, never automatic; see
 | `meridian work update [SLUG] --status/--desc/--goal` | Update a work item (default: this session's active work item) |
 | `meridian work done [SLUG]` | Mark a work item done and archive its scratch directory (default: this session's active work item) |
 | `meridian work sessions [SLUG]` | List sessions attached to a work item (default: this session's active work item) |
-| `meridian work rename [SLUG] NEW\|NEW` | Rename a work item; one argument renames this session's active item, like `git branch -m NEW` |
+| `meridian work rename [OLD] NEW` | Rename a work item; one argument renames this session's active item, like `git branch -m NEW` |
 | `meridian work delete SLUG\|current` | Delete a work item (requires a name) |
 | `meridian work reopen SLUG\|current` | Reopen a done work item |
 

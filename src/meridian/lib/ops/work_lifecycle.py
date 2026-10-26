@@ -754,9 +754,12 @@ def work_task_dir_sync(
     resolved_task_dir = updated.task_dir or project_root.as_posix()
     # The task link is a projection of this setting, and every attached session
     # edits the item's checkout, so each one's link follows it.
-    for attached_chat_id in sorted(
+    attached_chat_ids = set(
         session_store.list_active_sessions_for_work_id(runtime_root, updated.name)
-    ):
+    )
+    if chat_id:
+        attached_chat_ids.add(chat_id)
+    for attached_chat_id in sorted(attached_chat_ids):
         refresh_primary_links(project_root, runtime_root, attached_chat_id)
     _emit_work_transition(
         "work.task_dir_updated",

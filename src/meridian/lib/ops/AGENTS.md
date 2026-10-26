@@ -91,7 +91,12 @@ operations through this module. Adding a new operation requires an entry here â€
 otherwise it is invisible to both surfaces.
 
 **Work item attachment is ops-layer responsibility.** `work_attachment.py:ensure_explicit_work_item()`
-handles `--work` resolution before the spawn row is created.
+handles `--work` resolution before the spawn row is created, and
+`resolve_active_work_id()` is the one read behind a "current" work item: a primary
+follows its conversation, a spawn its launch snapshot. Commands that act on an item
+take one when given, `current`, or nothing (`work done` without an argument), so no
+caller carries an ID a `work switch` can invalidate; `work start`/`rename` refuse
+`current` as a name the alias would shadow.
 `activate_work()` owns the user-visible choice made by `work start`, `work
 switch`, or a primary launch attaching `--work` / `--from`; it fires
 `work.activated` plus matching telemetry whether or not a session exists, and
