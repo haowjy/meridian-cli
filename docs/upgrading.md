@@ -2,11 +2,12 @@
 
 ## Mars 0.20.0 (schema v1)
 
-Meridian pins `mars-agents==0.20.0`, up from 0.18.4. That Mars reads and writes schema v1,
+Meridian pins `mars-agents==0.20.1`, up from 0.18.4. Mars 0.20 reads and writes schema v1,
 and it carries 0.19.0's changes too, which the old pin skipped. Mars documents the format
 ([schema v1](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/schema-v1.md),
 [migrating a package](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/migrating-to-schema-v1.md))
-and each change in its [0.20.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.0)
+and each change in its [0.20.1](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.1),
+[0.20.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.0)
 and [0.19.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.19.0) release notes.
 This section lists what a Meridian user does about them, grouped by what you are editing.
 
@@ -14,11 +15,9 @@ This section lists what a Meridian user does about them, grouped by what you are
 
 Run `meridian mars sync` once. Sync rewrites installed `.mars/` content as schema v1.
 
-- Until it runs, an installed profile that still has a key schema v1 removed fails its
-  launch with `invalid_config`: ``agent `<name>` has invalid frontmatter ...: approval value
-  `yolo` was removed`` or `` `autocompact` was removed ``. An installed skill with a removed
-  key (`type`, `allowed-tools`) only warns ``skill `<name>` has invalid frontmatter ... `type` was
-  removed`` and is left out of the bundle, so profiles that load it lose its guidance.
+- Until it runs, launches keep working: Mars upgrades installed pre-v1 profiles and skills in
+  memory the way sync would (`approval: yolo` reads as `never`; a skill's `type` as
+  `metadata.type`), and drops what schema v1 removed, such as a profile's `autocompact`.
 - A later `meridian mars sync --frozen` (CI, scripts) fails once with `frozen violation: lock
   file would change but --frozen is set`, because the rewrite changes the checksums of packages
   authored before schema v1. Run `meridian mars sync` and commit `mars.lock`.
@@ -75,7 +74,8 @@ In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the pack
   the file but written to no native file`` on every sync.
 
 A package you publish with `[package] schema = 1` is read strictly: a removed key fails sync with
-exit 2 and changes nothing. Package maintainers: see Mars's
+exit 2 and changes nothing. `mars migrate` also adds `requires-mars = ">=0.20.0"` to a package
+that declares no requirement. Package maintainers: see Mars's
 [migration guide](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/migrating-to-schema-v1.md).
 
 ### If you depend on packages
@@ -95,8 +95,8 @@ exit 2 and changes nothing. Package maintainers: see Mars's
 
 ### Policy that changes at launch
 
-- `max` is its own effort level above `xhigh`. Meridian accepts and passes it through; Codex
-  has no level above `xhigh`, so a Codex launch receives `xhigh`.
+- `max` is its own effort level above `xhigh`. Meridian passes it through: Claude receives
+  `--effort max` and Codex `model_reasoning_effort="max"`.
 - A matching `model-policies` rule's `override` now beats the profile's top-level value for
   `effort`, `sandbox`, `approval` and `network`; before, the top-level value won everywhere. A
   profile with `effort: max` and a `deepseek` rule at `high` ran at `xhigh` under Mars 0.18.4 and
