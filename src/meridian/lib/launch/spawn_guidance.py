@@ -87,6 +87,7 @@ def build_capabilities_prompt(
     task_dir: Path,
     work_id: str | None = None,
     work_dir: Path | None = None,
+    work_link: Path | None = None,
     chat_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
@@ -96,9 +97,10 @@ def build_capabilities_prompt(
     Only values shared by every launch of this conversation belong here: an exact
     continue recomposes the block from the launch snapshot, and a fresh launch of
     the same agent in the same work context must share the cached prefix. Per-launch
-    identity (run ID, and a spawn's ambient no-work-item scratch directory) goes in
-    the first user turn through :func:`build_launch_facts_prompt`; a primary's
-    per-chat work link stays here because it outlives the launch.
+    identity (run ID, a spawn's launching conversation, and the ambient
+    no-work-item scratch directory) goes in the first user turn through
+    :func:`build_launch_facts_prompt`; a primary's own chat ID and per-chat work
+    link stay here because they outlive the launch.
     """
 
     if resolved_context is None:
@@ -127,7 +129,17 @@ def build_capabilities_prompt(
     )
 
     resolved_work_id = (work_id or "").strip()
-    if resolved_work_id:
+    if work_link is not None:
+        # A primary's per-chat link outlives the launch and follows `work start`,
+        # `work switch` and `work rename`, so it replaces both the work-item ID and
+        # its scratch directory: either would go stale mid-conversation.
+        lines.append(
+            f"- `{work_link.as_posix()}` — work directory "
+            "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
+            "directory it resolves to: the link follows `work start`, `work switch`, "
+            "and `work rename`."
+        )
+    elif resolved_work_id:
         if work_dir is not None:
             lines.append(
                 f"- Active work item `{resolved_work_id}`; work directory "
@@ -139,15 +151,6 @@ def build_capabilities_prompt(
                 f"- Active work item `{resolved_work_id}`; its work directory is in "
                 "`$MERIDIAN_ACTIVE_WORK_DIR` (inspect: `meridian work current`)."
             )
-    elif work_dir is not None:
-        # A caller may name a directory that outlives the launch — a primary's
-        # per-chat work link — but never this launch's ambient spawn directory.
-        lines.append(
-            f"- `{work_dir.as_posix()}` — work directory "
-            "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
-            "directory it resolves to: the link follows `work start`, `work switch`, "
-            "and `work rename`."
-        )
     else:
         # The ambient scratch directory is per-launch, so it is named in the user turn
         # when the child receives one. Do not hard-code the env var's value: an exact
@@ -157,10 +160,20 @@ def build_capabilities_prompt(
             "work directory."
         )
 
+    if work_link is not None or resolved_work_id:
+        # The goal text never enters a prompt: it is per-conversation state that can be
+        # edited mid-conversation, and a primary with no task must start no turn. The
+        # command resolves the item itself, so the pointer carries no ID that could go
+        # stale after `work switch`.
+        lines.append("- Your work item's goal and status: run `meridian work show`.")
+
     resolved_chat_id = (chat_id or "").strip()
     if resolved_chat_id:
+        # Only a primary renders this: its chat is the conversation's own, so it
+        # survives resume. A spawn's launching chat is per-launch and lives in the
+        # `# Meridian run` block.
         lines.append(
-            f"- `{resolved_chat_id}` — the conversation that launched this run "
+            f"- `{resolved_chat_id}` — this conversation's chat "
             "(`$MERIDIAN_CHAT_ID`), parent for handoff `--from`."
         )
 
@@ -197,9 +210,8 @@ def build_capabilities_prompt(
         )
 
     lines.append(
-        "- Your run ID is in `$MERIDIAN_SPAWN_ID`; a launch with a first user turn also "
-        "gets it in that turn's `# Meridian run` block. If the shell refuses variables, "
-        "`meridian spawn list` lists run IDs."
+        "- Your run ID is in `$MERIDIAN_SPAWN_ID`; a launch with a first user turn "
+        "also gets it in that turn's `# Meridian run` block."
     )
 
     other_context: list[str] = []
@@ -222,16 +234,16 @@ def build_capabilities_prompt(
 def build_launch_facts_prompt(
     *,
     spawn_id: str | None = None,
+    chat_id: str | None = None,
     active_work_dir: Path | None = None,
 ) -> str:
     """Render per-launch identity for the first user turn.
 
     Only values that change between launches of the same conversation belong here:
-    the run ID and, for a spawn with no work item, the ambient scratch directory
-    that lives under this launch's spawn directory. A primary names its per-chat
-    work link in the system prompt instead. Keeping per-launch values out of the
-    system prompt lets every launch of the same agent and work context send
-    byte-identical system bytes, so the harness prompt cache survives.
+    the run ID, the conversation that launched this run, and, with no work item, the
+    ambient scratch directory that lives under this launch's spawn directory. Keeping
+    them out of the system prompt lets every launch of the same agent and work context
+    send byte-identical system bytes, so the harness prompt cache survives.
     """
 
     lines: list[str] = []
@@ -240,6 +252,12 @@ def build_launch_facts_prompt(
         lines.append(
             f"- `{run_id}` — your run ID (`$MERIDIAN_SPAWN_ID`), the ID your caller "
             "holds; use it in names."
+        )
+    launched_by = (chat_id or "").strip()
+    if launched_by:
+        lines.append(
+            f"- `{launched_by}` — the conversation that launched this run "
+            "(`$MERIDIAN_CHAT_ID`), parent for handoff `--from`."
         )
     if active_work_dir is not None:
         lines.append(

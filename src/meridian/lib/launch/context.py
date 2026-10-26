@@ -70,19 +70,16 @@ from meridian.lib.safety.policy import (
     PermissionPolicy,
     build_permission_policy,
 )
-from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
     resolve_ambient_work_dir,
     resolve_kb_dir,
-    resolve_project_paths,
     resolve_spawn_log_dir,
 )
 from meridian.lib.state.session_work_link import (
     refresh_session_work_link,
     session_work_link_path,
 )
-from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.streaming.control_socket import socket_directory
@@ -98,6 +95,7 @@ from .command import (
 from .composition import (
     ComposedLaunchContent,
     CompositionBlock,
+    GuidancePhase,
     ProjectedContent,
     build_inline_file_contributions,
     build_reference_routing,
@@ -122,7 +120,6 @@ from .prompt import (
     build_primary_preamble,
     build_report_instruction,
     build_spawn_preamble,
-    build_work_goal_instruction,
 )
 from .prompt_context import compose_skill_prompt_documents
 from .reference import (
@@ -857,6 +854,7 @@ def _reproject_capabilities_at_bind(
     task_dir: Path,
     work_id: str | None,
     work_dir: Path | None,
+    work_link: Path | None,
     chat_id: str | None,
     launch_facts: str,
     spawn_capable: bool,
@@ -886,6 +884,7 @@ def _reproject_capabilities_at_bind(
         task_dir=task_dir,
         work_id=work_id,
         work_dir=work_dir,
+        work_link=work_link,
         chat_id=chat_id,
     )
     refreshed_guidance = replace_capabilities_block(
@@ -1036,8 +1035,8 @@ class _SharedComposition:
 def _build_shared_composition(
     *,
     request: SpawnRequest,
-    project_paths: ProjectConfigPaths,
     policy: ResolvedLaunchPolicy,
+    is_primary: bool,
 ) -> _SharedComposition:
     spawn_usage_contract = build_spawn_usage_contract(
         policy.adapter.run_prompt_policy().spawn_usage_contract_variants
@@ -1054,24 +1053,25 @@ def _build_shared_composition(
             native_config=policy.execution_policy.native_config,
         ),
     )
-    resolved_work_id = (request.work_id_hint or "").strip()
-    work_goal: str | None = None
-    if resolved_work_id:
-        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
-        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
-        if work_item is not None:
-            work_goal = work_item.goal
-    # Task content, not identity: the work goal and the spawn's completion contract
-    # belong to the user turn so spawns with different goals share the cached prefix.
-    task_contract = build_goal_instruction(request.goal)
-    work_goal_instruction = build_work_goal_instruction(work_goal)
-    if task_contract and work_goal_instruction:
-        task_contract = f"{work_goal_instruction}\n\n{task_contract}"
-    elif work_goal_instruction:
-        task_contract = work_goal_instruction
+    goal_blocks: list[CompositionBlock] = []
+    # A spawn always has a user turn, so its completion contract travels with the
+    # task and spawns with different goals share the cached prefix. A primary may
+    # launch with no task at all, and goal text must never create a turn: it would
+    # submit itself as the conversation's first message, fresh and on every resume.
+    task_contract = ""
+    spawn_goal_instruction = build_goal_instruction(request.goal)
+    if spawn_goal_instruction:
+        if is_primary:
+            goal_blocks.append(
+                CompositionBlock(
+                    "goal-contract", GuidancePhase.GUIDANCE, 2, spawn_goal_instruction
+                )
+            )
+        else:
+            task_contract = spawn_goal_instruction
     return _SharedComposition(
         task_contract=task_contract,
-        guidance_blocks=guidance_blocks,
+        guidance_blocks=(*goal_blocks, *guidance_blocks),
     )
 
 
@@ -1081,7 +1081,6 @@ def _resolve_spawn_prepare_projection(
     project_paths: ProjectConfigPaths,
     policy: ResolvedLaunchPolicy,
     runtime: LaunchRuntime,
-    launch_mode: LaunchMode | None = None,
 ) -> PreparedLaunchContent:
     """Compose the spawn's semantic content from the request inputs and project it."""
 
@@ -1118,8 +1117,8 @@ def _resolve_spawn_prepare_projection(
 
     shared = _build_shared_composition(
         request=request,
-        project_paths=project_paths,
         policy=policy,
+        is_primary=False,
     )
 
     composed = ComposedLaunchContent(
@@ -1128,7 +1127,7 @@ def _resolve_spawn_prepare_projection(
         agent_profile_body=agent_profile_body,
         report_instruction=build_report_instruction(),
         guidance_blocks=shared.guidance_blocks,
-        launch_preamble=build_spawn_preamble(launch_mode),
+        launch_preamble=build_spawn_preamble(),
         passthrough_system_fragments=(),
         user_task_prompt=join_content_blocks(shared.task_contract, cleaned_user_prompt),
         reference_items=task_ctx.reference_items,
@@ -1161,8 +1160,8 @@ def _resolve_primary_projection(
 
     shared = _build_shared_composition(
         request=request,
-        project_paths=project_paths,
         policy=policy,
+        is_primary=True,
     )
 
     seed = harness.seed_session(
@@ -1236,14 +1235,12 @@ def _prepare_spawn_surface(
     project_paths: ProjectConfigPaths,
     policy: ResolvedLaunchPolicy,
     runtime: LaunchRuntime,
-    launch_mode: LaunchMode | None = None,
 ) -> tuple[PreparedLaunchContent, ResolvedContinuation]:
     content = _resolve_spawn_prepare_projection(
         request=request,
         project_paths=project_paths,
         policy=policy,
         runtime=runtime,
-        launch_mode=launch_mode,
     )
 
     return (
@@ -1307,7 +1304,6 @@ def prepare_launch_surface(
     request: SpawnRequest,
     runtime: LaunchRuntime,
     prepared_policy: PreparedPolicySurface,
-    launch_mode: LaunchMode | None = None,
 ) -> PreparedLaunchSurface:
     """Resolve the expensive, spawn-stable launch surface."""
     project_paths = prepared_policy.project_paths
@@ -1337,7 +1333,6 @@ def prepare_launch_surface(
             project_paths=project_paths,
             policy=policies,
             runtime=runtime,
-            launch_mode=launch_mode,
         )
         seed_harness_session_id = continuation.harness_session_id
     elif runtime.composition_surface == LaunchCompositionSurface.PRIMARY:
@@ -1798,33 +1793,32 @@ def bind_launch_context(
     effective_work_id = (
         child_context_env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip() or requested_work_id
     )
-    ambient_work_dir: Path | None = None
-    if bound_work_link is None and effective_work_id is None and not suppresses_ambient_work:
-        raw_ambient_work_dir = child_context_env.get("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
-        ambient_work_dir = Path(raw_ambient_work_dir) if raw_ambient_work_dir else None
     if bound_work_link is not None:
         # A primary's work lives on its chat row, so a launch-time ID would shadow
-        # every later `work switch`; the link is the one path its prompt names.
+        # every later `work switch`; the link is the one path its prompt and
+        # environment name.
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)
         child_context_env["MERIDIAN_ACTIVE_WORK_DIR"] = bound_work_link.as_posix()
-    launch_chat_id = (
-        (bindings.chat_id or "").strip()
-        or child_context_env.get("MERIDIAN_CHAT_ID", "").strip()
-        or None
-    )
-    # A primary's link and a work item's scratch directory are fixed for the
-    # conversation, so the capability block names them. An ambient no-work directory
-    # belongs to this launch's spawn directory and changes on every continue: it goes
-    # in the user turn instead.
-    stable_work_dir = (
-        bound_work_link
-        if bound_work_link is not None
-        else bound_work_target
-        if effective_work_id is not None
-        else None
-    )
+    # A primary's own chat is its conversation and survives resume, so the system
+    # prompt may name it. A spawn's chat is whichever conversation launched this run:
+    # it changes with the launcher, so it goes in the user turn with the launch facts.
+    primary_chat_id: str | None = None
+    launching_chat_id: str | None = None
+    if is_primary_launch:
+        primary_chat_id = (bindings.chat_id or "").strip() or None
+    else:
+        launching_chat_id = child_context_env.get("MERIDIAN_CHAT_ID", "").strip() or None
+    # A work item's scratch directory is fixed for the conversation, so the system
+    # prompt can name it. A no-work-item directory belongs to this launch's spawn
+    # directory and changes on every continue: it goes in the user turn instead.
+    stable_work_dir = bound_work_target if effective_work_id is not None else None
+    ambient_work_dir: Path | None = None
+    if effective_work_id is None and not suppresses_ambient_work and bound_work_link is None:
+        raw_ambient_work_dir = child_context_env.get("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
+        ambient_work_dir = Path(raw_ambient_work_dir) if raw_ambient_work_dir else None
     launch_facts = build_launch_facts_prompt(
         spawn_id=child_context_env.get("MERIDIAN_SPAWN_ID"),
+        chat_id=launching_chat_id,
         active_work_dir=ambient_work_dir,
     )
     refreshed_prompt, prompt_payload, projected_content = _reproject_capabilities_at_bind(
@@ -1836,9 +1830,10 @@ def bind_launch_context(
         project_root=project_paths.project_root,
         control_root=resolved_control_root,
         task_dir=directory_context.logical_task_cwd,
-        work_id=None if bound_work_link is not None else effective_work_id,
+        work_id=effective_work_id,
         work_dir=stable_work_dir,
-        chat_id=launch_chat_id,
+        work_link=bound_work_link,
+        chat_id=primary_chat_id,
         launch_facts=launch_facts,
         spawn_capable=prepared.has_spawn_capability,
         profile_mode=prepared.profile_mode,

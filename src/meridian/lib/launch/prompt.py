@@ -35,23 +35,20 @@ def build_goal_instruction(goal: str | None) -> str:
     )
 
 
-def build_spawn_preamble(launch_mode: str | None) -> str:
-    """Render launch-mode behavioral framing for spawned subagents."""
+def build_spawn_preamble() -> str:
+    """Render behavioral framing for spawned subagents.
 
-    if launch_mode == "background":
-        return (
-            "# Session Context\n\n"
-            "This is a **sub-agent session**. You are not talking to the user. "
-            "Your final output is a structured report consumed by your parent agent. "
-            "Work autonomously toward your objective. Only escalate if blocked."
-        )
-    if launch_mode == "foreground":
-        return (
-            "# Session Context\n\n"
-            "This is a **sub-agent session**. You are not talking to the user. "
-            "Your final output is a structured report consumed by your parent agent."
-        )
-    return ""
+    Foreground and background share one text: continuing a background spawn in the
+    foreground must not change the system prompt, and both are the same situation —
+    the caller is blocked on the report, so escalation means reporting back.
+    """
+
+    return (
+        "# Session Context\n\n"
+        "This is a **sub-agent session**. You are not talking to the user. "
+        "Your final output is a structured report consumed by your parent agent. "
+        "Work autonomously toward your objective. Only escalate if blocked."
+    )
 
 
 def build_primary_preamble() -> str:
@@ -61,18 +58,3 @@ def build_primary_preamble() -> str:
         "# Session Context\n\n"
         "This is a **primary session**. You are talking directly to the user."
     )
-
-
-def build_work_goal_instruction(work_goal: str | None) -> str:
-    if work_goal is None:
-        return ""
-    if work_goal == "" or work_goal != work_goal.strip():
-        raise ValueError("work goal must be normalized before prompt rendering")
-    escaped = html.escape(work_goal, quote=False)
-    return (
-        "# Goal of Your Work\n\n"
-        f"<work-goal>\n{escaped}\n</work-goal>\n\n"
-        "This is the overarching goal of the work item you are contributing to. "
-        "Your specific task may be narrower, but keep this broader goal in mind."
-    )
-

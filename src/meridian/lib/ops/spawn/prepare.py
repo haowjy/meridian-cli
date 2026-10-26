@@ -28,7 +28,6 @@ from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
-from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE
 from meridian.lib.state.user_paths import get_dry_run_preview_root
 
 from ..runtime import (
@@ -259,7 +258,6 @@ def build_create_payload(
             runtime=preview_runtime,
             harness_registry=harness_registry,
             dry_run=composition_dry_run or models_readonly,
-            launch_mode=(BACKGROUND_LAUNCH_MODE if payload.background else FOREGROUND_LAUNCH_MODE),
         )
         logger.debug(
             "spawn_launcher_phase",
