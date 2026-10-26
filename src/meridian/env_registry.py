@@ -259,6 +259,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_PATH", "Pi boundary observation path."),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE", "Pi boundary launch nonce."),
     _internal_handle("_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root."),
+    _internal_handle(
+        "_MERIDIAN_PI_OWED_PARENT_IDS",
+        "Resolved Pi result-delivery parent scope for the launch's spawn watcher.",
+    ),
     _internal_handle("_MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier."),
     _internal_handle("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS", "Resolved Pi child-wave timeout."),
     _internal_handle("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "Resolved Pi task-ping interval."),

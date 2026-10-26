@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Pi spawn-watch now delivers a crashed generation's children after `--continue` resumes
+  the chat, matching Claude. Core computes the parent scope and hands it to the
+  extension; the extension no longer owns only the newest generation's children and no
+  longer re-notifies a foreground child its launcher already waited for. One core rule
+  now says a child is owed only when it was launched in the background, shared by
+  `spawn collect`, the extension and the Pi drain, so a spawned Pi session that runs a
+  foreground child no longer waits out the delivery window and fails.
+
 ## [0.14.8] - 2026-10-26
 
 ### Changed

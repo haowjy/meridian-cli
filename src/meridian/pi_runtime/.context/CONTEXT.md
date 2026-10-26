@@ -250,7 +250,9 @@ remains in the Python idle core.
 
 Both projectors reject passthrough mode and extension-loading selectors.
 `MERIDIAN_SESSION_ROLE` gates role-specific behavior;
-`_MERIDIAN_PI_STATE_DIR` points extension disk state at the project runtime.
+`_MERIDIAN_PI_STATE_DIR` points extension disk state at the project runtime;
+`_MERIDIAN_PI_OWED_PARENT_IDS` carries a primary launch's result-delivery parent
+set and is blocked from children, so each session scopes its own obligations.
 
 ## Contracts
 
@@ -295,9 +297,14 @@ Extensions import the native `ExtensionAPI` from the Pi package root:
 `managed-bash` injects `_MERIDIAN_PI_BASH_ID=b-*` into every child process. If that
 process runs `meridian spawn` (directly, through `uv run meridian`, or through a wrapper),
 Meridian's spawn store persists the value as `originating_bash_id` on the child spawn
-record. The watcher scopes `/spawn` and notifications by canonical direct
-`parent_id`. A matching `originating_bash_id` transfers the launcher obligation
-to those children. Logs, remembered discovery, timers and origin sidecars do not
+record. The watcher scopes `/spawn` by canonical direct `parent_id` and delivers only a
+background `launch_mode` (`isBackgroundLaunch` mirrors core's `is_owed_child`): a
+launcher that waited for a foreground child already has that result. Which parents are
+direct is core's rule too (`lib/state/spawn_ownership.py`),
+handed to the launch as `_MERIDIAN_PI_OWED_PARENT_IDS` so a resumed primary delivers what
+its crashed generations launched instead of only its own children. A matching
+`originating_bash_id` on a background child transfers the launcher obligation
+to that child. Logs, remembered discovery, timers and origin sidecars do not
 establish authority, including during atomic publication races.
 
 ### Build Invariant

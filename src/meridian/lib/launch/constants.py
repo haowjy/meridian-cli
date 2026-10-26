@@ -45,6 +45,8 @@ BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         "_MERIDIAN_CALLER_BOUNDARY",
         # Pi permission policy is compiled afresh for each launch.
         "_MERIDIAN_PI_PERMISSION_POLICY",
+        # Each Pi launch derives its own delivery-parent scope from its caller.
+        "_MERIDIAN_PI_OWED_PARENT_IDS",
     }
 )
 
