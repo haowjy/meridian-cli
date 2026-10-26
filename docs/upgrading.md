@@ -1,5 +1,35 @@
 # Upgrade notes
 
+## Mars 0.20.0 (schema v1)
+
+Meridian pins `mars-agents==0.20.0`, which reads and writes Mars schema v1. Mars's
+release notes cover the format itself: [schema v1](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/schema-v1.md),
+[migrating a package](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md),
+and the [0.20.0 changelog](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.0).
+
+Run `meridian mars sync` once after installing. Sync rewrites installed `.mars/`
+content as schema v1, so its checksums change: a later
+`meridian mars sync --frozen` (CI, scripts) fails once with `lock file would
+change` until the new `mars.lock` is committed. Until that sync runs, installed
+copies of package skills authored before schema v1 do not load: each spawn warns
+`skill <name> has invalid frontmatter ... <key> was removed` and leaves the skill
+out of the bundle, so profiles that load it lose its guidance. Sync upgrades the
+installed copies; package repositories migrate their own files with `mars migrate`.
+
+Profile effort changes in two ways:
+
+- `max` is its own level above `xhigh`. Meridian accepts and passes it through;
+  Codex has no level above `xhigh`, so a Codex launch receives `xhigh`.
+- A matching `model-policies` rule's `override` now beats the profile's top-level
+  `effort`; before, the top-level value won everywhere. A profile with
+  `effort: max` and a `deepseek` rule at `high` ran at `xhigh` under Mars 0.18.4
+  and runs at `high` now, and one with a `sonnet` rule at `medium` runs at
+  `medium`. Delete a rule's `effort` override to keep the top-level level.
+
+Mars also gained `effort: none`. Meridian does not lower it per harness yet
+([#774](https://github.com/haowjy/meridian-cli/issues/774)) and rejects
+`--effort none`; leave it unset until that lands.
+
 ## Meridian-owned operational skills
 
 Guidance whose subject is Meridian itself now ships with the CLI instead of a
