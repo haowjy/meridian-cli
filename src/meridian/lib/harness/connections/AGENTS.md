@@ -39,12 +39,17 @@ Transports differ at the wire level:
   `session.execution.{succeeded,failed,interrupted}` (V1 uses `session.idle`/`session.error`).
   V2's `/api/event` stream is live-only: a terminal that lands between the
   pre-subscribe session GET and the SSE attach is re-polled on the liveness-timeout
-  path (`_reconcile_on_stall`, bounded by `_STALL_RECONCILE_LIMIT`) through the same
-  guarded helper, so the missed terminal is surfaced instead of a stall. That
-  one-turn policy remains the spawn default. A primary observer's stream lives
-  until the primary closes: quiet, EOF, and recoverable errors reconnect without
-  synthesizing terminal events into the interactive session. Spawn streams may
-  end at a reconciled terminal.
+  path (`_reconcile_on_stall`) through the same guarded helper, so the missed
+  terminal is surfaced instead of a stall. That one-turn policy remains the spawn
+  default. A stall first asks `_session_still_running()`, and a session that is still
+  executing is a long tool, not a stall; the probe semantics, the busy ceiling and the
+  answer that ends a stretch are in
+  [OpenCode: Version Dispatcher, V2 Transport, Storage](../.context/CONTEXT.md#opencode-version-dispatcher-v2-transport-storage).
+  A primary observer's stream lives until the primary closes: quiet, EOF, and
+  recoverable errors reconnect without synthesizing terminal events into the
+  interactive session. When the probe reports the turn ended (or cannot answer), that
+  reconnect triggers the idle sensor's post-reconnect resync, which recovers a terminal
+  the quiet stream missed. Spawn streams may end at a reconciled terminal.
   OpenCode's `permission.asked` (V1) / `permission.v2.asked` (V2) stream events are
   routed to the injected `ServerRequestHandler` as `HarnessRequest`s, not
   yielded raw; the handler runs in a bounded background task (a stalled reply must
@@ -75,8 +80,9 @@ turn-injection or managed-backend shims. Codex/OpenCode return a
 `ResidentBackendControl`; callers use `begin_followup_turn()` through that seam.
 
 **Managed backend liveness belongs to `BackendLivenessPolicy`.** Adapters feed it
-activity, active turns, active requests, backend pid, and birth time; callers consume
-its structured decisions instead of inventing per-adapter alive checks.
+activity, stall-probe answers (the busy-turn window), active turns, active requests,
+backend pid, and birth time; callers consume its structured decisions instead of
+inventing per-adapter alive checks.
 
 **Ownership-transfer guard: `reap_on_ownership_transfer_failure()`.** When external
 cancellation hits during adapter startup, dispatch, or manager registration, a

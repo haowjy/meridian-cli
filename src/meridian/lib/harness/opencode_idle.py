@@ -22,7 +22,11 @@ from meridian.lib.harness.idle_types import (
     IdleSensor,
     IdleSensorContext,
 )
-from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
+from meridian.lib.harness.opencode_backend import (
+    OpenCodeVersion,
+    resolve_opencode_version,
+    v2_session_running,
+)
 from meridian.lib.harness.opencode_running_work import RunningWork
 from meridian.lib.utils.json_shapes import json_object
 
@@ -389,14 +393,6 @@ def _v2_session_model(payload: object) -> tuple[str, str] | None:
     return provider, model_id
 
 
-def _v2_session_running(payload: object, session_id: str) -> bool:
-    response = json_object(payload)
-    active = json_object(response.get("data")) if response is not None else None
-    if active is None:
-        raise ValueError("active sessions listing has no data object")
-    return session_id in active
-
-
 def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
     response = json_object(payload)
     messages = response.get("data") if response is not None else None
@@ -519,7 +515,7 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         """Whether the server is running the primary's turn; None when it cannot say."""
 
         try:
-            return _v2_session_running(
+            return v2_session_running(
                 await self._get_json("/api/session/active"), self._ctx.harness_session_id
             )
         except _GET_ERRORS as exc:

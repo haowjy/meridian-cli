@@ -9,12 +9,16 @@ deterministically with an already-expired liveness stub: no SSE, no clock.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from typing import Any, cast
 
 import pytest
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.connections.liveness import LivenessDecision
+from meridian.lib.harness.connections.liveness import (
+    EventStreamLivenessTimeout,
+    LivenessDecision,
+)
 from meridian.lib.harness.connections.opencode_v2_http import (
     _RECONCILE_TIMEOUT_SECONDS,
     OpenCodeV2Connection,
@@ -36,6 +40,18 @@ class _ExpiredLiveness:
     def mark_activity_if_idle(self) -> None:
         return None
 
+    def record_probe(self, answer: bool | None) -> bool:
+        return answer is True
+
+    def silence_seconds(self) -> float:
+        return 120.0
+
+    async def wait_for_activity(self, awaitable: Awaitable[Any]) -> Any:
+        close = getattr(awaitable, "close", None)
+        if close is not None:
+            close()
+        raise EventStreamLivenessTimeout
+
 
 class _ReconcileProbeOpenCodeV2Connection(OpenCodeV2Connection):
     def __init__(self, get_responses: list[tuple[int, object, str]]) -> None:
@@ -47,6 +63,9 @@ class _ReconcileProbeOpenCodeV2Connection(OpenCodeV2Connection):
         self._get_responses = iter(get_responses)
         self.get_paths: list[str] = []
         self.get_timeouts: list[float | None] = []
+
+    async def _session_still_running(self) -> bool | None:
+        return False
 
     async def _get_json(
         self, path: str, *, timeout: float | None = None
@@ -69,6 +88,9 @@ class _TimingOutReconcileProbeOpenCodeV2Connection(OpenCodeV2Connection):
         self._initial_prompt_posted_at = _PROMPT_POSTED_AT
         self._liveness = cast("Any", _ExpiredLiveness())
         self.get_timeouts: list[float | None] = []
+
+    async def _session_still_running(self) -> bool | None:
+        return False
 
     async def _get_json(
         self, path: str, *, timeout: float | None = None
@@ -128,7 +150,8 @@ async def test_stall_repoll_without_terminal_fails_after_one_bounded_poll() -> N
 
     events = await _collect(connection)
 
-    assert events == []
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "is not running" in str(events[0].payload["message"])
     assert connection.get_paths == [_SESSION_PATH, _SESSION_PATH]
     assert connection.get_timeouts == [_RECONCILE_TIMEOUT_SECONDS, _RECONCILE_TIMEOUT_SECONDS]
     assert connection.state == "failed"
@@ -140,7 +163,8 @@ async def test_reconcile_timeout_returns_none_and_preserves_stall_failure() -> N
 
     events = await _collect(connection)
 
-    assert events == []
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "is not running" in str(events[0].payload["message"])
     assert connection.get_timeouts == [_RECONCILE_TIMEOUT_SECONDS, _RECONCILE_TIMEOUT_SECONDS]
     assert connection.state == "failed"
 
@@ -160,6 +184,7 @@ async def test_stall_repoll_rejects_stale_prior_turn_outcome() -> None:
 
     events = await _collect(connection)
 
-    assert events == []
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "is not running" in str(events[0].payload["message"])
     assert connection.get_paths == [_SESSION_PATH, _SESSION_PATH]
     assert connection.state == "failed"
