@@ -68,7 +68,7 @@ async function readObservationsFile(file: string, spawnId: string): Promise<Obse
  * an I/O failure (which carries an errno code) is still unknown. A later mirrored
  * record may replace the damaged copy.
  */
-async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFile> {
+export async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFile> {
   try { return await readObservationsFile(resolveLegacyObservedSpawnsPath(spawnId), spawnId); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== undefined) throw error;
@@ -76,17 +76,9 @@ async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFi
   }
 }
 
-/** legacy-observed-spawns (#719): Merge consumed ids and leases from both files. */
-export async function readSpawnObservations(spawnId = currentSpawnIdFromEnv()): Promise<ObservedSpawnsFile> {
-  const current = await readObservationsFile(resolveObservedSpawnsPath(spawnId), spawnId);
-  const legacy = await readLegacyObservations(spawnId);
-  const legacyLeases = Object.entries(legacy.wait_reservations ?? {}).map(([token, lease]) => [`legacy:${token}`, lease] as const);
-  return {
-    v: 1, spawn_id: spawnId,
-    updated_at_ms: Math.max(current.updated_at_ms, legacy.updated_at_ms),
-    observed_spawn_ids: [...current.observed_spawn_ids, ...legacy.observed_spawn_ids],
-    wait_reservations: { ...Object.fromEntries(legacyLeases), ...current.wait_reservations },
-  };
+/** A parent's current observations file (`spawns/<parent>/observed-spawns.json`). */
+export async function readCurrentObservations(spawnId = currentSpawnIdFromEnv()): Promise<ObservedSpawnsFile> {
+  return readObservationsFile(resolveObservedSpawnsPath(spawnId), spawnId);
 }
 
 export async function reservedSpawnIds(leases: Iterable<WaitReservation>): Promise<Set<string>> {

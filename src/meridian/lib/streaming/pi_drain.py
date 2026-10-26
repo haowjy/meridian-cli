@@ -326,6 +326,9 @@ class PiCompletionEvidence:
         self, private: PiPrivateWorkSnapshot
     ) -> tuple[DiagnosticBlocker, ...]:
         active_ids = {item.identity for item in self._refresh.assessment.blockers}
+        # `parent_id == self` is `owned_parent_ids` for a non-primary caller; the
+        # drain runs only for spawned sessions. A primary drain would have to own
+        # every generation of its chat, as the watcher's launch scope does.
         return tuple(
             DiagnosticBlocker(
                 source="profile",

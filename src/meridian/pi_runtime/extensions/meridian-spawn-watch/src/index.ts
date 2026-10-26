@@ -8,7 +8,7 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { readBashRecords } from "../../shared/bash_records";
 import { readPrivateJson, writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
-import { admitDelivery, admittedWorkIds, readDeliveryReceipts, readSpawnObservations, reservedSpawnIds, type WaitReservation } from "../../shared/delivery_receipts";
+import { admitDelivery, admittedWorkIds, readCurrentObservations, readDeliveryReceipts, readLegacyObservations, reservedSpawnIds, type WaitReservation } from "../../shared/delivery_receipts";
 import {
   currentSpawnIdFromEnv,
   owedParentIdsFromEnv,
@@ -49,8 +49,10 @@ type NotificationFrame = {
 type NotificationCandidate = { item: NotificationItem; mandatoryBytes: number };
 type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
 /** The consumption files one parent can hold, read independently. */
-type ConsumptionSource = "receipts" | "observations" | "cleared";
-const CONSUMPTION_SOURCES: readonly ConsumptionSource[] = ["receipts", "observations", "cleared"];
+type ConsumptionSource = "receipts" | "observations" | "legacy-observations" | "cleared";
+// The current and legacy observation files are separate sources, as in core's read_pi_consumption_state:
+// a damaged one must not drop the other's ids.
+const CONSUMPTION_SOURCES: readonly ConsumptionSource[] = ["receipts", "observations", "legacy-observations", "cleared"];
 const POLL_MS = 500;
 const FULL_RECONCILE_MS = 30_000;
 const MAX_REPORT_BYTES = 64 * 1024;
@@ -431,8 +433,10 @@ export class SpawnWatchRuntime {
       switch (source) {
         case "receipts":
           return { consumed: [...admittedWorkIds(await readDeliveryReceipts(parentId))], leases: [] };
-        case "observations": {
-          const observed = await readSpawnObservations(parentId);
+        case "observations":
+        case "legacy-observations": {
+          const observed = source === "observations"
+            ? await readCurrentObservations(parentId) : await readLegacyObservations(parentId);
           return { consumed: observed.observed_spawn_ids, leases: Object.values(observed.wait_reservations ?? {}) };
         }
         case "cleared":
