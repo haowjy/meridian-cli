@@ -5,11 +5,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Upgrade notes
-- Mars 0.20.0 (schema v1). Run `meridian mars sync` once after upgrading: it
-  rewrites installed `.mars/` content to schema v1. Until it runs, an installed
-  profile with a removed key (`approval: yolo`, `autocompact`) fails its launch and
-  package skills authored pre-v1 stop loading; afterwards a `--frozen` sync fails
-  once until `mars.lock` is committed again. See
+- Mars 0.20 (schema v1). Run `meridian mars sync` once after upgrading: it
+  rewrites installed `.mars/` content to schema v1 (launches read the old content
+  meanwhile); afterwards a `--frozen` sync fails once until `mars.lock` is
+  committed again. See
   [Mars 0.20.0](docs/upgrading.md#mars-0200-schema-v1).
 - `mars.toml` overlays that worked now fail every command: `[agents.X] approval =
   "yolo"` (write `never`), and `autocompact`, `autocompact_pct` or `harness` in a
@@ -31,7 +30,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   See [rolling back](docs/upgrading.md#rolling-back).
 
 ### Changed
-- Bump pinned `mars-agents` to `0.20.0`, which reads and writes Mars schema v1
+- Bump pinned `mars-agents` to `0.20.1`, which reads and writes Mars schema v1
   and adds `mars provide` for host-provided skills.
 - Meridian provides its bundled `*__meridian` skills to Mars before launches and
   package-resolving `meridian mars` commands. `meridian skills NAME` reads the
