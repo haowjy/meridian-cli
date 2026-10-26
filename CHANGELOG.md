@@ -4,6 +4,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Mars 0.20.0 (schema v1). Run `meridian mars sync` once after upgrading: it
+  rewrites installed `.mars/` content to schema v1, so a `--frozen` sync fails
+  until `mars.lock` is committed again, and package skills authored pre-v1 stop
+  loading until it runs. See [Mars 0.20.0](docs/upgrading.md#mars-0200-schema-v1).
+- Profile `effort` follows Mars's new precedence: `max` is its own level above
+  `xhigh`, and a matching `model-policies` override now beats the profile's
+  top-level `effort`. Profiles with both run at the override's level. See
+  [Mars 0.20.0](docs/upgrading.md#mars-0200-schema-v1).
+
+### Changed
+- Bump pinned `mars-agents` to `0.20.0`, which reads and writes Mars schema v1
+  and adds `mars provide` for host-provided skills.
+
 ## [0.14.11] - 2026-10-27
 
 ### Changed
