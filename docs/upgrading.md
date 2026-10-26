@@ -3,9 +3,10 @@
 ## Meridian-owned operational skills
 
 Guidance whose subject is Meridian itself now ships with the CLI instead of a
-prompt package. Every agent sees short triggers for `handoff__meridian`,
-`notify__meridian`, `sessions__meridian`, and `work__meridian`; spawn-capable
-agents also see `escalation__meridian`. The `name__meridian` suffix follows
+prompt package. Every agent sees a short trigger for `sessions__meridian`;
+profiles declaring `mode: primary` also see `escalation__meridian`,
+`handoff__meridian`, `notify__meridian`, `prompt-authoring__meridian`, and
+`work__meridian`. The `name__meridian` suffix follows
 Mars's `name__source` collision spelling, and every bundled skill uses it so a
 skill does not change names between profiles. The agent reads applicable guidance
 on demand with `meridian skills NAME`.
