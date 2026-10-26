@@ -51,7 +51,7 @@ def session_work_link_path(runtime_root: Path, chat_id: str) -> Path:
     return RuntimePaths.from_root_dir(runtime_root).sessions_dir / chat_id.strip() / _WORK_LINK_NAME
 
 
-def session_work_target(
+def _session_work_target(
     project_root: Path,
     runtime_root: Path,
     chat_id: str,
@@ -93,7 +93,7 @@ def refresh_session_work_link(
         return _publish_session_work_link(
             runtime_root,
             chat_id,
-            session_work_target(
+            _session_work_target(
                 project_root,
                 runtime_root,
                 chat_id,
@@ -146,5 +146,4 @@ def _sweep_staged_links(link: Path) -> None:
 __all__ = [
     "refresh_session_work_link",
     "session_work_link_path",
-    "session_work_target",
 ]

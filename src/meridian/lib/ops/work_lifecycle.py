@@ -149,16 +149,15 @@ def _detach_primary_sessions_from_work(
 
 def _archive_work_item(
     roots: ResolvedRoots,
-    work_id: str,
+    current: WorkItem,
     *,
     description: str | None = None,
 ) -> tuple[WorkItem, str | None]:
     """Archive the item, detach its primary sessions, and report what still holds it."""
 
-    _require_work_item(roots.project_state_dir, work_id)
     item = work_repository.archive_work_item(
         roots.project_state_dir,
-        work_id,
+        current.name,
         description=description,
     )
     _detach_primary_sessions_from_work(roots.project_root, roots.runtime_root, item.name)
@@ -487,7 +486,7 @@ def work_update_sync(
     if payload.status == "done":
         item, attachment_warning = _archive_work_item(
             roots,
-            payload.work_id,
+            current,
             description=payload.description,
         )
         return WorkUpdateOutput(
@@ -521,7 +520,8 @@ def work_done_sync(
 ) -> WorkUpdateOutput:
     nested_warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
-    item, attachment_warning = _archive_work_item(roots, payload.work_id)
+    current = _require_work_item(roots.project_state_dir, payload.work_id)
+    item, attachment_warning = _archive_work_item(roots, current)
     return WorkUpdateOutput(
         name=item.name,
         status=item.status,
