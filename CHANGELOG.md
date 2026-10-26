@@ -13,14 +13,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   command that answers it.
 
 ### Fixed
-- Fresh launches of the same agent no longer rewrite the system prompt. Per-launch
-  facts — run ID, chat ID, and the ambient work directory — now appear in the first
-  user turn instead of the system prompt, so two spawns share the harness prompt cache.
-- Exact `--continue` replays the system prompt the conversation started with on Pi and
-  OpenCode as well as Claude and Codex. Previously Pi and OpenCode received a
-  recomposed prompt with the available-skills block missing and a new run ID, so the
-  first continued turn was billed as uncached input for the whole conversation.
-  Launch snapshots from older builds have no recorded prompt and recompose as before.
+- Fresh launches of the same agent no longer rewrite the system prompt. The run ID,
+  the ambient no-work-item scratch directory, and the spawn goal contract now appear
+  in the first user turn instead of the system prompt, so two spawns share the harness
+  prompt cache even when their goals differ.
+- Exact `--continue` recomposes the system prompt from the launch snapshot instead of
+  the caller's current config, so it sends the same bytes as the conversation's first
+  launch on Pi and OpenCode as well as Claude and Codex. Launch snapshots now keep the
+  `# Available Skills` listing, so it survives a continue. A continue also applies a
+  new `--goal`, a foreground/background switch, or a primary/spawn surface change
+  instead of hiding it behind a replayed prompt.
 
 ## [0.14.7] - 2026-10-26
 

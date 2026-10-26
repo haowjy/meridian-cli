@@ -50,7 +50,6 @@ def test_compose_prompt_keeps_context_isolated_and_sanitized(tmp_path: Path) -> 
             supplemental_documents=compose_skill_prompt_documents((skill,)),
             agent_profile_body="",
             report_instruction=build_report_instruction(),
-            completion_contract="",
             passthrough_system_fragments=(),
             user_task_prompt=substitute_template_variables(
                 strip_stale_report_paths(user_prompt),
@@ -101,7 +100,6 @@ def test_compose_prompt_with_directory_renders_tree(tmp_path: Path) -> None:
             supplemental_documents=(),
             agent_profile_body="",
             report_instruction="",
-            completion_contract="",
             passthrough_system_fragments=(),
             user_task_prompt="Explore the directory",
             reference_items=loaded_refs,
@@ -149,7 +147,6 @@ def test_compose_prompt_mixed_files_and_directories(tmp_path: Path) -> None:
             supplemental_documents=(),
             agent_profile_body="",
             report_instruction="",
-            completion_contract="",
             passthrough_system_fragments=(),
             user_task_prompt="Check both",
             reference_items=loaded_refs,
@@ -199,7 +196,6 @@ def test_system_instruction_renders_reordered_blocks_and_skill_type_groups() -> 
             CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, "INVENTORY"),
             CompositionBlock("context-env", GuidancePhase.ENVIRONMENT, 0, "CONTEXT"),
         ),
-        completion_contract="GOAL",
         passthrough_system_fragments=("PASSTHROUGH",),
         user_task_prompt="USER",
         reference_items=(),
@@ -207,12 +203,12 @@ def test_system_instruction_renders_reordered_blocks_and_skill_type_groups() -> 
     )
 
     rendered = render_system_instruction_blocks(content)
-    # Composition order: profile, goal, skills sorted by type (principles first,
+    # Composition order: profile, skills sorted by type (principles first,
     # then guardrails, then reference/other), bootstrap, inventory, context,
-    # report, passthrough. No principle bookend at the end.
+    # report, passthrough. No principle bookend at the end. The completion
+    # contract is user-turn content, not a system block.
     expected_sequence = (
         "PROFILE",
-        "GOAL",
         "PRINCIPLE-A",
         "PRINCIPLE-B",
         "GUARDRAIL",
