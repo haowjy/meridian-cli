@@ -61,6 +61,11 @@ from meridian.lib.launch.launch_types import (
     summarize_composition_warnings,
 )
 from meridian.lib.launch.request import cross_harness_continue_error
+from meridian.lib.launch.session_links import (
+    refresh_session_links,
+    session_task_link_path,
+    session_work_link_path,
+)
 from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
@@ -75,10 +80,6 @@ from meridian.lib.state.paths import (
     resolve_ambient_work_dir,
     resolve_kb_dir,
     resolve_spawn_log_dir,
-)
-from meridian.lib.state.session_work_link import (
-    refresh_session_work_link,
-    session_work_link_path,
 )
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.state.work_scope import resolve_bound_work_scope
@@ -852,6 +853,7 @@ def _reproject_capabilities_at_bind(
     project_root: Path,
     control_root: Path,
     task_dir: Path,
+    task_link: Path | None,
     work_id: str | None,
     work_dir: Path | None,
     work_link: Path | None,
@@ -882,6 +884,7 @@ def _reproject_capabilities_at_bind(
         project_root=project_root,
         control_root=control_root,
         task_dir=task_dir,
+        task_link=task_link,
         work_id=work_id,
         work_dir=work_dir,
         work_link=work_link,
@@ -1739,19 +1742,24 @@ def bind_launch_context(
     suppresses_ambient_work = requested_work_id is None and _suppresses_ambient_work(
         resolved_request
     )
-    # A primary's environment and prompt name a per-chat link that work
-    # start/switch/rename repoint, so neither goes stale while the session runs.
-    # Children keep their launch-bound directory: a child inherits its parent's
-    # chat id, so a chat-keyed link would be shared with the parent it belongs to.
+    # A primary's environment and prompt name per-chat links that work and task-dir
+    # commands repoint, so neither goes stale while the session runs. Children keep
+    # their launch-bound directories: a child inherits its parent's chat id, so a
+    # chat-keyed link would be shared with the parent it belongs to.
     bound_work_link: Path | None = None
+    bound_task_link: Path | None = None
     if is_primary_launch and bindings.chat_id:
         bound_work_link = session_work_link_path(runtime_root, bindings.chat_id)
+        bound_task_link = session_task_link_path(runtime_root, bindings.chat_id)
         if not bindings.dry_run:
-            refresh_session_work_link(
+            refresh_session_links(
                 project_paths.project_root,
                 runtime_root,
                 bindings.chat_id,
                 ambient_spawn_id=bindings.spawn_id,
+                # A `--task-dir` on this launch names a directory no command
+                # would resolve; the session's link follows it from here on.
+                task_dir=directory_context.logical_task_cwd,
             )
     bound_work_target = (
         None
@@ -1829,10 +1837,11 @@ def bind_launch_context(
         harness=harness,
         project_root=project_paths.project_root,
         control_root=resolved_control_root,
-        task_dir=directory_context.logical_task_cwd,
+        task_dir=bound_task_link or directory_context.logical_task_cwd,
         work_id=effective_work_id,
         work_dir=stable_work_dir,
         work_link=bound_work_link,
+        task_link=bound_task_link,
         chat_id=primary_chat_id,
         launch_facts=launch_facts,
         spawn_capable=prepared.has_spawn_capability,
@@ -1894,7 +1903,9 @@ def bind_launch_context(
     # Override inherited task-dir with the child's resolved task-dir.
     # child_env_overrides() carries the parent's MERIDIAN_TASK_DIR;
     # bind resolves the child's logical_task_cwd and overwrites.
-    child_context_env["MERIDIAN_TASK_DIR"] = directory_context.logical_task_cwd.as_posix()
+    child_context_env["MERIDIAN_TASK_DIR"] = (
+        bound_task_link or directory_context.logical_task_cwd
+    ).as_posix()
     if harness.id == HarnessId.PI:
         child_context_env["_MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
     runtime_override_env = (

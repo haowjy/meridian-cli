@@ -10,7 +10,8 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read, runtime_context
+from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
+from meridian.lib.ops.work_attachment import resolve_work_id_argument
 from meridian.lib.ops.work_sessions import work_session_chat_ids
 from meridian.lib.state import session_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
@@ -405,27 +406,15 @@ class WorkSessionsOutput(BaseModel):
 def _resolve_work_id(
     *,
     payload_work_id: str,
+    project_root: Path,
     runtime_root: Path,
-    ctx: RuntimeContext | None,
     command: str,
 ) -> str:
-    normalized = payload_work_id.strip()
-    if normalized:
-        return normalized
-
-    resolved_ctx = runtime_context(ctx)
-    if resolved_ctx.work_id is not None and resolved_ctx.work_id.strip():
-        return resolved_ctx.work_id.strip()
-
-    chat_id = resolved_ctx.chat_id.strip()
-    if chat_id:
-        attached_work_id = session_store.get_session_active_work_id(runtime_root, chat_id)
-        if attached_work_id is not None and attached_work_id.strip():
-            return attached_work_id.strip()
-
-    raise ValueError(
-        f"No work item resolved. Pass one (`meridian work {command} <work_id>`) or run "
-        "from a session attached to a work item."
+    return resolve_work_id_argument(
+        payload_work_id,
+        usage=f"meridian work {command} <work_id>",
+        project_root=project_root,
+        runtime_root=runtime_root,
     )
 
 
@@ -565,6 +554,7 @@ def work_show_sync(
     payload: WorkShowInput,
     ctx: RuntimeContext | None = None,
 ) -> WorkShowOutput:
+    _ = ctx
     roots = resolve_roots_for_read(payload.project_root)
     if roots is None:
         requested = payload.work_id.strip()
@@ -577,8 +567,8 @@ def work_show_sync(
 
     resolved_work_id = _resolve_work_id(
         payload_work_id=payload.work_id,
+        project_root=project_root,
         runtime_root=runtime_state_root,
-        ctx=ctx,
         command="show",
     )
     item = work_store.get_work_item(project_state_dir, resolved_work_id)
@@ -630,6 +620,7 @@ def work_sessions_sync(
     payload: WorkSessionsInput,
     ctx: RuntimeContext | None = None,
 ) -> WorkSessionsOutput:
+    _ = ctx
     roots = resolve_roots_for_read(payload.project_root)
     if roots is None:
         resolved_work_id = payload.work_id.strip()
@@ -641,8 +632,8 @@ def work_sessions_sync(
     runtime_state_root = roots.runtime_root
     resolved_work_id = _resolve_work_id(
         payload_work_id=payload.work_id,
+        project_root=project_root,
         runtime_root=runtime_state_root,
-        ctx=ctx,
         command="sessions",
     )
 

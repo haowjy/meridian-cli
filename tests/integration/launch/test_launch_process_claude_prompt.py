@@ -29,6 +29,7 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
+from meridian.lib.launch.session_links import session_task_link_path
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.fixtures import write_agent
@@ -303,6 +304,7 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
         _ = command, output_log_path
         captured["cwd"] = cwd
         captured["task_env"] = dict(env).get("MERIDIAN_TASK_DIR")
+        captured["chat_env"] = dict(env).get("MERIDIAN_CHAT_ID")
         captured["project_env"] = dict(env).get("MERIDIAN_PROJECT_DIR")
         assert callable(on_child_started)
         on_child_started(ProcessIdentity(4445, 100.0, 4445))
@@ -316,8 +318,14 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
     )
 
     assert captured["cwd"] == project_root
-    assert captured["task_env"] == task_cwd.as_posix()
+    task_link = session_task_link_path(
+        Path(launch_context.runtime_root),
+        str(captured["chat_env"]),
+    )
+    assert captured["task_env"] == task_link.as_posix()
     assert captured["project_env"] == project_root.as_posix()
+    # The preview has no chat, so its prompt names the launch's own checkout; the
+    # run's environment names the per-chat link the session keeps using.
     assert_task_cwd_instruction(
         launch_context.binding.run_params.appended_system_prompt or "",
         task_cwd,

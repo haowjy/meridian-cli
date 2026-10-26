@@ -50,6 +50,11 @@ from meridian.lib.ops.work_lifecycle import (
     work_update_sync,
 )
 
+_CURRENT_ITEM_HELP = (
+    "Work item id. Defaults to the active work item attached to this session; "
+    "`current` names it explicitly."
+)
+
 
 def _runtime_chat_id() -> str:
     return RuntimeContext.from_environment().chat_id
@@ -162,8 +167,8 @@ def _work_update(
     emit: Emitter,
     work_id: Annotated[
         str,
-        Parameter(help="Work item id."),
-    ],
+        Parameter(help=_CURRENT_ITEM_HELP),
+    ] = "",
     status: Annotated[
         str | None,
         Parameter(name="--status", help="New work status label."),
@@ -193,8 +198,8 @@ def _work_done(
     emit: Emitter,
     work_id: Annotated[
         str,
-        Parameter(help="Work item id."),
-    ],
+        Parameter(help=_CURRENT_ITEM_HELP),
+    ] = "",
 ) -> None:
     emit(work_done_sync(WorkDoneInput(work_id=work_id)))
 
@@ -238,13 +243,21 @@ def _work_rename(
     emit: Emitter,
     work_id: Annotated[
         str,
-        Parameter(help="Current work item id."),
-    ],
+        Parameter(
+            help=(
+                "Current work item id, or the new name when it is the only argument. "
+                "Defaults to this session's current item."
+            )
+        ),
+    ] = "",
     new_name: Annotated[
         str,
-        Parameter(help="New name (slug) for the work item."),
-    ],
+        Parameter(help="New name (slug) for the work item when the first names the item."),
+    ] = "",
 ) -> None:
+    # One argument renames the session's current item, the way `git branch -m <new>`
+    # renames the checked-out branch; two name the item first.
+    work_id, new_name = (work_id, new_name) if new_name else ("", work_id)
     emit(
         work_rename_sync(
             WorkRenameInput(

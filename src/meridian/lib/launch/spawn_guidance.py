@@ -85,6 +85,7 @@ def build_capabilities_prompt(
     project_root: Path,
     control_root: Path,
     task_dir: Path,
+    task_link: Path | None = None,
     work_id: str | None = None,
     work_dir: Path | None = None,
     work_link: Path | None = None,
@@ -99,8 +100,8 @@ def build_capabilities_prompt(
     the same agent in the same work context must share the cached prefix. Per-launch
     identity (run ID, a spawn's launching conversation, and the ambient
     no-work-item scratch directory) goes in the first user turn through
-    :func:`build_launch_facts_prompt`; a primary's own chat ID and per-chat work
-    link stay here because they outlive the launch.
+    :func:`build_launch_facts_prompt`; a primary's own chat ID and per-chat
+    work and task links stay here because they outlive the launch.
     """
 
     if resolved_context is None:
@@ -185,7 +186,18 @@ def build_capabilities_prompt(
         if spawn_capable
         else ""
     )
-    if task_dir == control_root:
+    if task_link is not None:
+        # A primary's checkout is a per-chat link: every task-dir change repoints it,
+        # so the literal path is the one the session keeps using, and the directory
+        # it resolves to is not.
+        lines.append(
+            f"- `{task_link.as_posix()}` — source checkout (`$MERIDIAN_TASK_DIR`); shell "
+            f"cwd is `{control_path}` (`$MERIDIAN_PROJECT_DIR`), so use absolute paths. "
+            "Write this literal path, never the directory it resolves to: the link "
+            "follows `meridian task-dir` and a work switch; inspect: `meridian "
+            f"task-dir`{spawn_suffix}."
+        )
+    elif task_dir == control_root:
         lines.append(
             f"- `{task_path}` — source checkout and shell cwd "
             "(`$MERIDIAN_TASK_DIR`, `$MERIDIAN_PROJECT_DIR`); inspect: `meridian task-dir`"

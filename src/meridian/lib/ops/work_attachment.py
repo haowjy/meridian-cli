@@ -11,10 +11,11 @@ from uuid import uuid4
 import structlog
 
 from meridian.lib.core.lifecycle import get_hook_dispatcher
+from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.launch.session_links import link_owners, refresh_session_links
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state import session_store, spawn_store, work_repository, work_store
+from meridian.lib.state import session_store, work_repository, work_store
 from meridian.lib.state.paths import RuntimePaths, resolve_project_paths
-from meridian.lib.state.session_work_link import refresh_session_work_link
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry import emit_telemetry
 
@@ -80,13 +81,13 @@ def set_session_work_attachment(
     chat_id: str,
     work_id: str | None,
 ) -> None:
-    """Record a chat's work attachment and repoint the primary's stable work link.
+    """Record a chat's work attachment and repoint the primary's links.
 
     The single seam for a chat's work item changing. A live primary can move off
     its entry chat — Claude ``/clear`` and ``/resume`` rotate the conversation —
-    so every chat of that execution takes the new attachment, and the link stays
+    so every chat of that execution takes the new attachment, and the links stay
     on the entry chat, whose path the launch environment and system prompt name.
-    Spawn sessions record the attachment and keep their launch-bound directory.
+    Spawn sessions record the attachment and keep their launch-bound directories.
     Callers own the "does this chat exist" check.
     """
 
@@ -98,26 +99,26 @@ def set_session_work_attachment(
         # Read the owners under the same lock as the row writes: a chat observation
         # copies a source row to its new chat while holding this lock, so listing
         # outside it could miss the chat the primary just moved to.
-        owners = [
-            owner
-            for owner in spawn_store.list_live_primaries(runtime_root)
-            if owner.chat_id and owner.continue_chat_id == normalized
-        ]
+        owners = link_owners(runtime_root, normalized)
         for chat in dict.fromkeys(
-            (normalized, *(owner.chat_id for owner in owners if owner.chat_id))
+            (
+                normalized,
+                *(owner.entry_chat for owner in owners),
+                *(owner.current_chat for owner in owners),
+            )
         ):
             session_store.update_session_work_id(runtime_root, chat, work_id)
-        # The row is written before the link: the link is a projection of it, and
-        # both are under the sessions lock so a concurrent switch cannot interleave
-        # them. Only a primary owns a link, and only its entry chat's path is named.
+        # The rows are written before the links: the links are projections of them,
+        # and both are under the sessions lock so a concurrent switch cannot
+        # interleave them. Only a primary owns links, and only its entry chat's
+        # path is named.
         for owner in owners:
-            if owner.chat_id:
-                refresh_session_work_link(
-                    project_root,
-                    runtime_root,
-                    owner.chat_id,
-                    ambient_spawn_id=owner.id,
-                )
+            refresh_session_links(
+                project_root,
+                runtime_root,
+                owner.entry_chat,
+                ambient_spawn_id=owner.spawn_id,
+            )
 
 
 def activate_work(
@@ -152,6 +153,101 @@ def ensure_explicit_work_item(runtime_root: Path, work_id: str) -> str:
     return work_repository.ensure_work_item_metadata(runtime_root, work_id).name
 
 
+CURRENT_WORK_ID = "current"
+
+
+def resolve_active_work_id(
+    project_root: Path | None = None,
+    runtime_root: Path | None = None,
+) -> str | None:
+    """Return the work item this session acts on, if any.
+
+    The one read behind every "current item": a primary follows its conversation
+    (``/clear`` and ``/resume`` move it), a spawn uses its launch snapshot until its
+    session row carries an attachment. With neither root given, the process
+    environment supplies both.
+    """
+
+    resolved = ResolvedContext.from_environment(
+        explicit_project_root=project_root,
+        explicit_runtime_root=runtime_root,
+    )
+    return (resolved.work_id or "").strip() or None
+
+
+def resolve_work_id_argument(
+    work_id: str | None,
+    *,
+    usage: str,
+    project_root: Path | None = None,
+    runtime_root: Path | None = None,
+) -> str:
+    """Resolve an argument that names a work item: a literal ID, `current`, or none.
+
+    An empty argument means the session's current item too, so `work done` acts on
+    the item a `work switch` put in place — the work-item analog of git commands
+    reading `HEAD` — and no caller has to carry an ID that can go stale.
+    """
+
+    resolved = _resolve_work_reference(
+        work_id,
+        project_root=project_root,
+        runtime_root=runtime_root,
+    )
+    if resolved is None:
+        raise ValueError(
+            f"No current work item. Pass one (`{usage}`), or run from a session "
+            "attached to a work item."
+        )
+    return resolved
+
+
+def resolve_current_work_alias(
+    work_id: str | None,
+    *,
+    usage: str,
+    project_root: Path | None = None,
+    runtime_root: Path | None = None,
+) -> str | None:
+    """Resolve the `current` alias in an optional argument; an empty one stays empty.
+
+    A launch's `--work` is optional and may inherit, so an empty argument must not
+    become the session's item.
+    """
+
+    normalized = (work_id or "").strip()
+    if normalized != CURRENT_WORK_ID:
+        return normalized or None
+    return resolve_work_id_argument(
+        normalized,
+        usage=usage,
+        project_root=project_root,
+        runtime_root=runtime_root,
+    )
+
+
+def ensure_work_name_is_usable(name: str) -> None:
+    """Refuse the one name the `current` alias would shadow."""
+
+    if name == CURRENT_WORK_ID:
+        raise ValueError(
+            f"'{CURRENT_WORK_ID}' is reserved for the session's current work item. "
+            "Pick another name."
+        )
+
+
+def _resolve_work_reference(
+    work_id: str | None,
+    *,
+    project_root: Path | None,
+    runtime_root: Path | None,
+) -> str | None:
+    normalized = (work_id or "").strip()
+    if normalized and normalized != CURRENT_WORK_ID:
+        return normalized
+    return resolve_active_work_id(project_root, runtime_root)
+
+
 def materialize_launch_work_id(
     runtime_root: Path,
     *,
@@ -160,7 +256,9 @@ def materialize_launch_work_id(
 ) -> str | None:
     """Materialize explicit ``--work`` or inherited ``--from`` work onto disk."""
 
-    candidate = (explicit_work_id or "").strip() or (context_work_id or "").strip() or None
+    candidate = resolve_current_work_alias(
+        explicit_work_id, usage="meridian spawn --work <work_id>"
+    ) or (context_work_id or "").strip() or None
     if candidate is None:
         return None
     return ensure_explicit_work_item(runtime_root, candidate)
@@ -173,7 +271,9 @@ def preview_launch_work_id(
 ) -> str | None:
     """Normalize explicit or inherited work for dry-run without creating it."""
 
-    candidate = (explicit_work_id or "").strip() or (context_work_id or "").strip() or None
+    candidate = resolve_current_work_alias(
+        explicit_work_id, usage="meridian spawn --work <work_id>"
+    ) or (context_work_id or "").strip() or None
     if candidate is None:
         return None
     return slugify(candidate) or None

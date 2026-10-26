@@ -476,7 +476,10 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
         extension_id="meridian.work",
         command_id="done",
-        summary="Mark a work item as done and archive its scratch directory when present.",
+        summary=(
+            "Mark a work item as done and archive its scratch directory when present. "
+            "Defaults to the session's current work item."
+        ),
         handler="meridian.lib.ops.work_lifecycle:work_done",
         sync_handler="meridian.lib.ops.work_lifecycle:work_done_sync",
         input_type="meridian.lib.ops.work_lifecycle:WorkDoneInput",
@@ -528,7 +531,10 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
         extension_id="meridian.work",
         command_id="rename",
-        summary="Rename a work item. Updates the slug, directory, and all spawn associations.",
+        summary=(
+            "Rename a work item. Updates the slug, directory, and all spawn associations. "
+            "Defaults to the session's current work item."
+        ),
         handler="meridian.lib.ops.work_lifecycle:work_rename",
         sync_handler="meridian.lib.ops.work_lifecycle:work_rename_sync",
         input_type="meridian.lib.ops.work_lifecycle:WorkRenameInput",
@@ -596,7 +602,10 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
         extension_id="meridian.work",
         command_id="update",
-        summary="Update a work item's status and/or description.",
+        summary=(
+            "Update a work item's status and/or description. "
+            "Defaults to the session's current work item."
+        ),
         handler="meridian.lib.ops.work_lifecycle:work_update",
         sync_handler="meridian.lib.ops.work_lifecycle:work_update_sync",
         input_type="meridian.lib.ops.work_lifecycle:WorkUpdateInput",
