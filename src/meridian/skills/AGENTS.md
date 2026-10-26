@@ -8,8 +8,10 @@ why, and what to tell the human. Likewise, where a skill explains a Mars file fo
 link Mars's reference for the field schema and keep only what the schema doesn't show.
 
 Every `SKILL.md` requires `name` and a trigger-shaped `description` beginning with
-"When". Optional `mode: primary` limits its trigger line to profiles whose declared
-mode is `primary`; omit `mode` when every profile should see it.
+"When". Optional `metadata.mode: primary` limits its trigger line to profiles whose
+declared mode is `primary`; omit it when every profile should see it. It sits under
+`metadata:` because Mars warns on unknown top-level skill keys and `mars provide`
+forwards the warning; Meridian reads no top-level `mode`.
 Bundled skill folders and frontmatter names end in `__meridian`, matching Mars's
 `name__source` collision spelling. Bundled skills must not depend on package-specific
 agent or skill names: describe the role conditionally and state any load-bearing rule

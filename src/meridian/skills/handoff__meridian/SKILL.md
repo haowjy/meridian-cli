@@ -1,7 +1,8 @@
 ---
 name: handoff__meridian
 description: When a transition brief must launch a new interactive Meridian lead.
-mode: primary
+metadata:
+  mode: primary
 ---
 
 # Handoff Launch
