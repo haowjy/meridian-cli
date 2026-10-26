@@ -16,10 +16,10 @@ import type { EngineInterface, Register } from 'claude-code'
 // from before a crash or restart wait for the first turn the user starts. A main-loop `turn.start` aborts
 // the run wherever it is; aborting the collector's read loop kills the child.
 //
-// Consumption is acked only once the lead has the text. The ids of a delivery are claimed in memory
-// from the moment the collector returns, so a collector started meanwhile excludes them, and the ack
-// runs on the main-loop `turn.start` whose text carries the delivery's nonce. A dropped, queued or
-// never-started prompt is never acked.
+// Consumption is acked only once the lead has the text. Only one run exists at a time, so no collector
+// runs while a delivery is held; the ids are claimed in memory when the prompt is submitted, and every
+// collector started until the ack lands excludes them. The ack runs on the main-loop `turn.start` whose
+// text carries the delivery's nonce. A dropped, queued or never-started prompt is never acked.
 
 const COMMAND = 'meridian-spawn-watch'
 /** The idle signal is a main-loop turn ending; a queued prompt starts its turn within this, so it costs no process. */
@@ -41,7 +41,7 @@ type Run = { ctl: AbortController; phase: Phase }
 
 /**
  * Ids handed to the lead and not yet recorded as consumed.
- *   pending   the collector returned them; the prompt is held or being submitted
+ *   pending   the prompt is being submitted
  *   queued    the prompt was accepted but no turn carrying the nonce has started
  *   acking    that turn started; the ack is running
  *   unacked   the ack failed; the ids stay excluded for the life of this module copy, because releasing them
@@ -58,8 +58,6 @@ type State = {
   claims: Map<string, Claim>
   /** When the box was last touched (`prompt.edit` or `prompt.change`), as `$.clock.now()` answered it. Kept as the pending answer so the hooks never wait on it. */
   lastChange: Promise<number>
-  /** Serialises acks so they reach core in turn order. */
-  queue: Promise<unknown>
   /** The last collector verdict, for `/meridian-spawn-watch`. Empty answers stay out of the log. */
   last: string
   log: string[]
@@ -71,7 +69,6 @@ function newState(): State {
     run: undefined,
     claims: new Map(),
     lastChange: Promise.resolve(Number.NEGATIVE_INFINITY),
-    queue: Promise.resolve(),
     last: 'no collect yet',
     log: [],
   }
@@ -100,12 +97,6 @@ function note($: EngineInterface, s: State, line: string): void {
   } catch {
     // the log is a convenience; a store that refuses it is not the lead's problem
   }
-}
-
-function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
-  const run = s.queue.then(task).catch(() => undefined)
-  s.queue = run
-  return run
 }
 
 function claimedIds(s: State): Set<string> {
@@ -197,18 +188,19 @@ function newNonce(): string {
 }
 
 async function deliver($: EngineInterface, s: State, run: Run, reply: Extract<Reply, { kind: 'delivery' }>): Promise<void> {
-  const nonce = newNonce()
-  const claim: Claim = { ids: reply.ids, phase: 'pending' }
-  s.claims.set(nonce, claim)
   try {
     run.phase = 'holding'
     await holdForUser($, s, run)
+    // A turn can start during the hold's last awaits; submit is the one step that cannot be undone.
+    run.ctl.signal.throwIfAborted()
   } catch (err) {
-    s.claims.delete(nonce) // nothing was submitted, so nothing is owed to the lead's context
     note($, s, `held delivery of ${reply.ids.join(',')} released: ${run.ctl.signal.aborted ? 'a turn started' : describeError(err)}`)
     throw err
   }
   // From here the prompt is out of our hands: a main-loop turn.start aborts the run but cannot unsubmit it.
+  const nonce = newNonce()
+  const claim: Claim = { ids: reply.ids, phase: 'pending' }
+  s.claims.set(nonce, claim)
   run.phase = 'submitting'
   try {
     const result = await $.prompt.submit({ text: `[meridian-spawn-watch delivery ${nonce}]\n\n${reply.text}` })
@@ -274,7 +266,7 @@ function mainTurnStarted($: EngineInterface, s: State, text: string): void {
   for (const [nonce, claim] of s.claims) {
     if (claim.phase === 'acking' || claim.phase === 'unacked' || !text.includes(nonce)) continue
     claim.phase = 'acking'
-    void enqueue(s, () => ackTask($, s, nonce, claim))
+    void ackTask($, s, nonce, claim) // acks are idempotent set unions in core, so their order does not matter
   }
 }
 

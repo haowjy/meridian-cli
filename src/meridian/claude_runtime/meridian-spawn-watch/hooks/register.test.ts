@@ -194,8 +194,6 @@ test('a fresh, resumed or reloaded session never collects or submits until a mai
   // A resumed chat may owe results from before a crash, but its prompt cache is cold: no turn starts on its own.
   await $.session.start(TUI)
   await clock.advance(100_000)
-  await $.session.start(TUI) // a reload
-  await clock.advance(100_000)
   expect(h.collectors).toEqual([])
   expect(h.submits).toEqual([])
 

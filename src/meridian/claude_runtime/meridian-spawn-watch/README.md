@@ -63,15 +63,17 @@ child again until a normal wait or `spawn ack` consumes it; its rendering is unc
 
 Delivery consumption is recorded only once the lead's conversation has the text.
 
-1. The collector returns a `delivery`. The mod **claims** its ids in memory;
-   any collector started before the ack gets them as `--exclude`.
+1. The collector returns a `delivery`.
 2. The mod **holds** while the prompt box has a draft, or was touched less than
-   10 s ago (checked every second), then calls `$.prompt.submit` with the text
+   10 s ago (checked every second). A main-loop `turn.start` at any point up to
+   the submit ends the hold.
+3. The mod **claims** the ids in memory, so any collector started before the
+   ack gets them as `--exclude`, and calls `$.prompt.submit` with the text
    under a `[meridian-spawn-watch delivery <nonce>]` line.
-3. `submit` resolves when the turn starts, when the prompt is queued behind a
+4. `submit` resolves when the turn starts, when the prompt is queued behind a
    running turn, or with `{ drop }`. On `drop` the claim is released and
    nothing is acked.
-4. The **ack** runs on the main-loop `turn.start` whose text contains that
+5. The **ack** runs on the main-loop `turn.start` whose text contains that
    nonce, and nothing else. The claim is released when the ack succeeds.
 
 | Situation | Outcome |
@@ -82,6 +84,7 @@ Delivery consumption is recorded only once the lead's conversation has the text.
 | Ack fails (lock, disk, retired row) | Logged. The ids **stay excluded** until the mod reloads: releasing them would redeliver the same results at every idle. After a restart they are delivered once more. |
 | Mod reload | The engine kills a running collector. The new copy gets `session.start` and starts with clean state; the next turn's end delivers what is owed. |
 | Claude dies | `collect` exits when its parent changes. Nothing was consumed, so the resumed chat delivers after the user's first turn ends, never before it. |
+| A peer, scheduled or Stop-hook turn runs before the user's first prompt | Its end begins a run like any main-loop turn's. The cache is warm by then, so the delivery costs no cold re-read. |
 | `/clear` | The engine fires `session.end` and no `session.start`: the run ends, and nothing starts another until a turn ends. |
 
 The 10 s rule has two sources because the engine splits them: typing and
@@ -111,8 +114,7 @@ list is the only config gate: the mod itself asks nothing of Meridian at
 
 ## Shared code with meridian-idle
 
-The gate, the serialised CLI queue and the store log are duplicated from
-`meridian-idle`. Claude plugins cannot share a module: the loader refuses an
+The store log and a few small helpers are duplicated from `meridian-idle`. Claude plugins cannot share a module: the loader refuses an
 import that leaves the plugin folder (`cannot import "../../shared/x.ts": it is
 outside the plugin's folder`), and a symlink to a sibling directory is not
 followed either. Each plugin must hold all of its own source.
