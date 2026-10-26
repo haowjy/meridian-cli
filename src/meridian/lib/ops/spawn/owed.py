@@ -23,11 +23,11 @@ from meridian.lib.harness.pi_private_state import (
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read, runtime_context
 from meridian.lib.state import history_index
 from meridian.lib.state.history_index import HistoryIndexBusy
-from meridian.lib.state.session_identity import spawn_owner_chat_id
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_observations import leased_ids
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
+from meridian.lib.state.spawn_ownership import is_live_chat_primary, owned_parent_ids
 from meridian.lib.state.spawn_status import read_derived
 
 from .models import render_delivery
@@ -144,40 +144,26 @@ def discover_owed_scope(
 ) -> OwedSpawnScope:
     """Discover one caller's fixed set of potentially owed background children.
 
-    A primary owns direct children across every primary generation of its chat. A
-    nested caller owns only its own direct children. Authority revalidation and
-    live lease subtraction happen in :func:`read_owed_snapshot`.
+    A primary owns direct children across every primary generation of its chat; a
+    nested caller owns only its own direct children (see
+    :func:`meridian.lib.state.spawn_ownership.owned_parent_ids`). Authority
+    revalidation and live lease subtraction happen in :func:`read_owed_snapshot`.
     """
 
-    index = history_index.HistoryIndex(runtime_root)
     current = read_derived(runtime_root, caller_spawn_id)
-    current_is_primary = (
-        current is not None
-        and current.record_mode == "live"
-        and current.kind == "primary"
-        and spawn_owner_chat_id(current) == chat_id
-    )
-    if require_primary and not current_is_primary:
+    if require_primary and not is_live_chat_primary(current, chat_id=chat_id):
         raise ValueError("Spawn collection caller is not this chat's primary")
-    if current is None or current.record_mode != "live":
+    parent_ids = owned_parent_ids(
+        runtime_root,
+        current,
+        chat_id=chat_id,
+        caller_spawn_id=caller_spawn_id,
+        deadline=deadline,
+    )
+    if not parent_ids:
         return OwedSpawnScope(parent_ids=(), candidate_ids=())
 
-    if current.kind == "primary":
-        if not current_is_primary:
-            return OwedSpawnScope(parent_ids=(), candidate_ids=())
-        primary_rows = index.spawns(
-            owner_chat_id=chat_id,
-            kind="primary",
-            oldest_first=True,
-            deadline=deadline,
-        )
-        parent_ids = tuple(
-            dict.fromkeys((*[row.id for row in primary_rows], caller_spawn_id))
-        )
-    else:
-        parent_ids = (caller_spawn_id,)
-
-    children = index.spawns(
+    children = history_index.HistoryIndex(runtime_root).spawns(
         parent_id=set(parent_ids),
         oldest_first=True,
         deadline=deadline,

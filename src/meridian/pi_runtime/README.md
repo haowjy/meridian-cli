@@ -68,8 +68,10 @@ Use a cheap model and distinguish live smoke from automated fixture coverage.
 - **`/ps`** lists managed Bash tasks; `/ps:logs`, `/ps:kill`, `/ps:clear`, and
   `/ps:b` (alias `/ps:background`) inspect/control them. Waiting is available
   through `bash_manage(action='wait', bash_id='b-…')`, not a `/ps` wait command.
-- **`/spawn`** lists canonical direct child spawns; `/spawn:show`, `/spawn:log`,
-  `/spawn:cancel`, and `/spawn:clear` inspect/control them.
+- **`/spawn`** lists canonical direct child spawns this session owes;
+  `/spawn:show`, `/spawn:log`, `/spawn:cancel`, and `/spawn:clear`
+  inspect/control them. A resumed primary's list includes what its chat's earlier
+  generations launched, because those results are still owed to this session.
 - **`/spawn:wait <p-id>`** waits through the same store as `meridian spawn wait`
   (30-minute subprocess cap; CLI checkpoints can return earlier).
 - Tracked background Bash sends an advisory one-shot ping after

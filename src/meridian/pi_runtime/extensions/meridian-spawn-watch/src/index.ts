@@ -8,16 +8,17 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { readBashRecords } from "../../shared/bash_records";
 import { readPrivateJson, writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
-import { admitDelivery, admittedWorkIds, readDeliveryReceipts, readSpawnObservations, reservedSpawnIds } from "../../shared/delivery_receipts";
+import { admitDelivery, admittedWorkIds, readDeliveryReceipts, readSpawnObservations, reservedSpawnIds, type WaitReservation } from "../../shared/delivery_receipts";
 import {
   currentSpawnIdFromEnv,
+  owedParentIdsFromEnv,
   resolveBashRecordsPath,
   resolveClearedSpawnsPath,
   resolvePiBashDir,
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
-import { isTerminalBashStatus, isTrackedBackground, parseSpawnStateFile } from "../../shared/schemas";
+import { isBackgroundLaunch, isTerminalBashStatus, isTrackedBackground, parseSpawnStateFile } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
 import { bashOutcome } from "../../shared/task_outcome";
 import {
@@ -57,6 +58,8 @@ const NOTIFICATION_SEPARATOR = "\n\n";
 /** Launch-scoped owner: durable rows are obligations; queue claims are only mechanics. */
 export class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
+  /** Parents whose direct children this session delivers (core's owed scope). */
+  private readonly parentIds = owedParentIdsFromEnv(this.currentSpawnId);
   private readonly spawnsDir = resolveSpawnsDir();
   private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
   private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
@@ -226,17 +229,14 @@ export class SpawnWatchRuntime {
   }
 
   private async collectEligible(states: SpawnStateFile[]): Promise<NotificationItem[]> {
-    const [bash, receipts, observed, cleared] = await Promise.all([
-      this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
-      readSpawnObservations(this.currentSpawnId), this.readCleared(),
-    ]);
-    const consumed = admittedWorkIds(receipts);
-    for (const id of [...observed.observed_spawn_ids, ...cleared]) consumed.add(id);
-    const reserved = await reservedSpawnIds(observed);
+    // Only a background child is owed back; a launcher that waited saw its result.
+    const owedStates = states.filter(isBackgroundLaunch);
+    const [bash, consumption] = await Promise.all([this.readBash(), this.readConsumption(owedStates)]);
+    const { consumed, reserved } = consumption;
     const claimed = this.claimedWorkIds();
-    const correlated = new Set(states.map((row) => row.originating_bash_id).filter((id): id is string => !!id));
+    const correlated = new Set(owedStates.map((row) => row.originating_bash_id).filter((id): id is string => !!id));
     const eligible: NotificationItem[] = [];
-    for (const row of states) {
+    for (const row of owedStates) {
       if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id) && !claimed.has(row.id)) {
         eligible.push({
           id: row.id, kind: "spawn", status: row.status,
@@ -376,11 +376,41 @@ export class SpawnWatchRuntime {
     return readBashRecords(this.currentSpawnId, this.bashRecordsPath);
   }
 
-  private async readCleared(): Promise<Set<string>> {
-    const value = await readPrivateJson(this.clearedPath);
+  /**
+   * Union the consumption sources of every parent generation this session owns,
+   * matching core's discovery. Writes stay on the current spawn: its receipts,
+   * its cleared file, its fault file. Parents with no candidate row are not read,
+   * so an idle tick costs the same as before the scope widened.
+   */
+  private async readConsumption(
+    states: SpawnStateFile[],
+  ): Promise<{ consumed: Set<string>; reserved: Set<string> }> {
+    // Any generation may have consumed a child of another (p2 delivers p1's child, then crashes), so spawn rows
+    // need every owned parent's sources, as core's owed_consumed_ids reads them. Bash records are this spawn's own.
+    const parents = states.length ? this.parentIds : new Set([this.currentSpawnId]);
+    const sources = await Promise.all([...parents].sort().map(async (parentId) => Promise.all([
+      readDeliveryReceipts(parentId),
+      readSpawnObservations(parentId),
+      this.readCleared(parentId),
+    ])));
+    const consumed = new Set<string>();
+    const leases: WaitReservation[] = [];
+    for (const [receipts, observed, cleared] of sources) {
+      for (const id of admittedWorkIds(receipts)) consumed.add(id);
+      for (const id of observed.observed_spawn_ids) consumed.add(id);
+      for (const id of cleared) consumed.add(id);
+      leases.push(...Object.values(observed.wait_reservations ?? {}));
+    }
+    return { consumed, reserved: await reservedSpawnIds(leases) };
+  }
+
+  private async readCleared(spawnId = this.currentSpawnId): Promise<Set<string>> {
+    const value = await readPrivateJson(
+      spawnId === this.currentSpawnId ? this.clearedPath : resolveClearedSpawnsPath(spawnId),
+    );
     if (value === undefined) return new Set();
     const file = value as ClearedSpawnsFile;
-    if (file.v !== 1 || file.spawn_id !== this.currentSpawnId || !Array.isArray(file.cleared_spawn_ids)
+    if (file.v !== 1 || file.spawn_id !== spawnId || !Array.isArray(file.cleared_spawn_ids)
       || !Number.isFinite(file.updated_at_ms)
       || !file.cleared_spawn_ids.every((id) => typeof id === "string")) throw Error("invalid cleared spawn evidence");
     return new Set(file.cleared_spawn_ids);
@@ -401,7 +431,10 @@ export class SpawnWatchRuntime {
           const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
           if (value === undefined) continue;
           const state = this.parseOwnedChild(name, value);
-          if (state) { candidates.add(name); rows.push(state); }
+          if (state) {
+            rows.push(state);
+            if (isBackgroundLaunch(state)) candidates.add(name);
+          }
         }
       }
       if (mayRead() && this.discoveryRevision === revision) {
@@ -431,14 +464,14 @@ export class SpawnWatchRuntime {
   }
 
   private parseOwnedChild(name: string, value: unknown): SpawnStateFile | undefined {
-    // A definitively foreign row cannot affect this parent's obligations.
+    // A definitively foreign row cannot affect this session's obligations.
     // Unknown membership and malformed own-child evidence still fail closed.
     if (value && typeof value === "object" && "id" in value && value.id === name
         && "parent_id" in value && (value.parent_id === null || typeof value.parent_id === "string")
-        && value.parent_id !== this.currentSpawnId) return undefined;
+        && (value.parent_id === null || !this.parentIds.has(value.parent_id))) return undefined;
     const state = parseSpawnStateFile(value);
     if (!state || state.id !== name) throw Error(`invalid spawn state: ${name}`);
-    return state.parent_id === this.currentSpawnId ? state : undefined;
+    return state.parent_id && this.parentIds.has(state.parent_id) ? state : undefined;
   }
 
   private logWarning(error: unknown): void {

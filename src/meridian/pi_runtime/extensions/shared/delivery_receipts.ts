@@ -23,6 +23,8 @@ const ObservedSchema = Type.Object({
     expires_at_epoch: Type.Number(), spawn_ids: Type.Array(Type.String()),
   }))),
 });
+
+export type WaitReservation = NonNullable<ObservedSpawnsFile["wait_reservations"]>[string];
 const receiptQueues = new Map<string, Promise<void>>();
 
 export async function readDeliveryReceipts(spawnId = currentSpawnIdFromEnv(), file = resolveDeliveryReceiptsPath(spawnId)): Promise<DeliveryReceiptsFile> {
@@ -87,9 +89,9 @@ export async function readSpawnObservations(spawnId = currentSpawnIdFromEnv()): 
   };
 }
 
-export async function reservedSpawnIds(observed: ObservedSpawnsFile): Promise<Set<string>> {
+export async function reservedSpawnIds(leases: Iterable<WaitReservation>): Promise<Set<string>> {
   const result = new Set<string>();
-  for (const lease of Object.values(observed.wait_reservations ?? {})) {
+  for (const lease of leases) {
     if (lease.expires_at_epoch <= Date.now() / 1000) continue;
     try {
       const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(lease.owner_pid)],
