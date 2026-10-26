@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.7] - 2026-10-26
+
 ### Fixed
 - Claude and Pi spawn-watch no longer start a turn when a session starts, resumes or
   reloads. Results owed from before a crash or restart now arrive after the user's first
