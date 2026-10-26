@@ -29,9 +29,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   session started by an older build resolves the same way. `work done` no longer
   warns about sessions it just detached.
 - Fresh launches of the same agent no longer rewrite the system prompt. The run ID,
-  the ambient no-work-item scratch directory, and the spawn goal contract now appear
-  in the first user turn instead of the system prompt, so two spawns share the harness
-  prompt cache even when their goals differ.
+  a spawn's ambient no-work-item scratch directory, and the spawn goal contract now
+  appear in the first user turn instead of the system prompt, so two spawns share the
+  harness prompt cache even when their goals differ.
 - Exact `--continue` recomposes the system prompt from the launch snapshot instead of
   the caller's current config, so it sends the same bytes as the conversation's first
   launch on Pi and OpenCode as well as Claude and Codex. Launch snapshots now keep the
