@@ -30,7 +30,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   name, `current` is accepted wherever a work id is (`work show`, `sessions`,
   `delete`, `switch`, `reopen`, `spawn --work`), and `work rename NEW` renames the
   current item while `work rename ID NEW` still names one. `current` is reserved at
-  `work start`/`rename` so the alias cannot shadow a real item.
+  `work start`/`rename`, so a pre-existing item with that name is no longer
+  addressable.
 - A work item's goal is no longer copied into a prompt. The capability guidance points
   at `meridian work show` instead, which now defaults to the session's active work
   item, so the goal text never goes stale and a goal edit never rewrites the cached

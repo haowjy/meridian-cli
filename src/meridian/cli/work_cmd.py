@@ -135,9 +135,7 @@ def _work_show(
     emit: Emitter,
     work_id: Annotated[
         str,
-        Parameter(
-            help=("Work item id. Defaults to the active work item attached to this session.")
-        ),
+        Parameter(help=_CURRENT_ITEM_HELP),
     ] = "",
 ) -> None:
     emit(work_show_sync(WorkShowInput(work_id=work_id)))
@@ -147,9 +145,7 @@ def _work_sessions(
     emit: Emitter,
     work_id: Annotated[
         str,
-        Parameter(
-            help=("Work item id. Defaults to the active work item attached to this session.")
-        ),
+        Parameter(help=_CURRENT_ITEM_HELP),
     ] = "",
     all: Annotated[
         bool,
