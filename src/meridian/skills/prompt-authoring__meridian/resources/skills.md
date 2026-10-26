@@ -47,7 +47,8 @@ so a body can tell the agent to follow `/NAME` even when the harness's list omit
 
 ## Types
 
-`type:` places a loaded skill and prints a line above its group:
+`metadata.type` places a loaded skill and prints a line above its group (a top-level
+`type:` is a removed key in schema v1):
 
 | `type` | Line printed | Use for |
 |---|---|---|
@@ -63,8 +64,8 @@ for the skill.
 
 ## Other Behavior
 
-- `tools` pre-approves tools while the skill runs. Its grants never restrict anything,
-  and only Claude and Pi apply them.
+- A skill carries no tool policy: schema v1 removed `tools`, `allowed-tools` and
+  `disallowed-tools` from skills, so restrict tools in the profile.
 - `variants/HARNESS/SKILL.md` replaces the body on one harness; frontmatter always
   comes from the base file. Model-level variant folders are ignored.
 - A project skill with a package skill's name replaces it, and sync warns that it
