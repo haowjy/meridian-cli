@@ -1450,6 +1450,7 @@ def prepare_launch_surface(
                 loaded_skills=resolved_skills.loaded_skills,
                 bundle_inventory_prompt=policies.bundle_inventory_prompt,
                 profile=profile,
+                skill_delivery=policies.skill_delivery,
             )
         }
     )

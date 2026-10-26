@@ -187,7 +187,7 @@ class ResolvedLaunchPolicy:
     bundle_available_skills: tuple[AvailableSkillEntry, ...] = ()
     """Available skill entries from bundle (on-demand, not loaded at launch)."""
     skill_delivery: SkillDeliveryMode = "inline"
-    """How loaded skills reach the prompt. A rendering choice, never persisted."""
+    """How loaded skills reach the prompt; snapshotted so an exact continue keeps it."""
 
 
 ResolvedPolicies = ResolvedLaunchPolicy
@@ -651,7 +651,7 @@ def _resolve_policy_from_snapshot(
         warnings=(),
         alias_catalog=replayed.alias_catalog,
         bundle_inventory_prompt=snapshot.bundle_inventory_prompt,
-        skill_delivery=surface.config.experimental.skill_delivery,
+        skill_delivery=snapshot.skill_delivery,
     )
 
 

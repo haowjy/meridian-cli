@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.core.domain import SkillContent
+from meridian.lib.core.domain import SkillContent, SkillDeliveryMode
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.tools import ToolRule, ToolsField
 
@@ -43,6 +43,8 @@ class LaunchPolicySnapshot(BaseModel):
     field_provenance: dict[str, str] = Field(default_factory=dict)
     selection_report: dict[str, object] | None = None
     bundle_inventory_prompt: str | None = None
+    # A snapshot an older build wrote has no mode; those launches delivered inline.
+    skill_delivery: SkillDeliveryMode = "inline"
 
 
 __all__ = ["LaunchPolicySnapshot"]

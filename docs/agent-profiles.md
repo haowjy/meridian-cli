@@ -309,8 +309,8 @@ skill (`/solo-dev`) even though the skill won't appear in the harness's skill
 list.
 
 That is the default (`experimental.skill_delivery = "inline"`). The experimental
-`named` mode instead delivers one paragraph naming each loaded skill and the path
-to its `SKILL.md`. See
+`named` mode instead delivers the same type groups and headers with one line per
+skill naming `/name` and the path to its `SKILL.md`. See
 [experimental skill delivery](configuration.md#experimental-skill-delivery).
 
 **Package bundle interface.** Package skill content comes from the Mars

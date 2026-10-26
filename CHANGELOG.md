@@ -7,8 +7,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Experimental `[experimental] skill_delivery` setting (`inline` default, `named`) and
   `MERIDIAN_EXPERIMENTAL_SKILL_DELIVERY` to compare how loaded skills reach agents.
-  `named` replaces each loaded skill's inlined text with one paragraph naming it and
-  the path to its `SKILL.md`. See
+  `named` keeps inline mode's type groups and headers but replaces each skill body with
+  a line naming the skill and the path to its `SKILL.md`; a skill with a harness variant
+  is named by its base `SKILL.md`. The mode is recorded in the launch-policy snapshot,
+  so an exact `--continue` keeps it. See
   [experimental skill delivery](docs/configuration.md#experimental-skill-delivery).
 
 ### Changed

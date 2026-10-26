@@ -10,8 +10,10 @@ See spec S-1 for category definitions.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import IntEnum
+from itertools import groupby
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -346,37 +348,71 @@ def _loaded_skill_type_header(skill_type: str) -> str:
     return f"## {label}"
 
 
-def _render_loaded_skill_blocks(documents: tuple[PromptDocument, ...]) -> str:
-    """Render loaded skill bodies grouped by type under their group headers."""
-    blocks: list[str] = []
-    current_type: str | None = None
-    for document in documents:
-        if not document.content.strip():
+_NAMED_SKILLS_INSTRUCTION = (
+    "Load these skills before starting, unless they are already in your context:"
+)
+
+
+def _render_loaded_skills_by_type(
+    documents: tuple[PromptDocument, ...],
+    render_document: Callable[[PromptDocument], str],
+    *,
+    document_separator: str = "\n\n",
+) -> str:
+    """Render skills grouped by type, each document's block under its group header.
+
+    The per-document renderer decides what a skill contributes (its full body or
+    a pointer to its file); an empty result skips that document.
+    """
+    groups: list[str] = []
+    for skill_type, grouped_documents in groupby(
+        documents, key=lambda document: document.skill_type
+    ):
+        entries = [
+            entry
+            for entry in (
+                render_document(document).strip() for document in grouped_documents
+            )
+            if entry
+        ]
+        if not entries:
             continue
-        if document.skill_type != current_type:
-            current_type = document.skill_type
-            header = _loaded_skill_type_header(current_type)
-            if header:
-                blocks.append(header)
-        blocks.append(document.content.strip())
-    return join_content_blocks(*blocks)
+        groups.append(
+            join_content_blocks(
+                _loaded_skill_type_header(skill_type),
+                document_separator.join(entries),
+            )
+        )
+    return join_content_blocks(*groups)
 
 
-def _render_named_skills_paragraph(documents: tuple[PromptDocument, ...]) -> str:
-    """Name loaded skills and their file for an agent that reads them on demand.
+def _render_skill_body(document: PromptDocument) -> str:
+    return document.content
+
+
+def _render_skill_pointer(document: PromptDocument) -> str:
+    """Name a loaded skill and its file for an agent that reads it on demand.
 
     The harness's own skill list omits non-model-invocable skills, so the
     `SKILL.md` path is what keeps every named skill reachable.
     """
-    if not documents:
-        return ""
-    named = ", ".join(
-        f"/{document.logical_name} (`{document.path}`)" for document in documents
+    return f"/{document.logical_name} (`{document.path}`)"
+
+
+def _render_loaded_skill_blocks(
+    documents: tuple[PromptDocument, ...],
+    skill_delivery: SkillDeliveryMode,
+) -> str:
+    """Render loaded skills in the configured delivery mode, grouped by type."""
+    named = skill_delivery == "named"
+    grouped = _render_loaded_skills_by_type(
+        documents,
+        _render_skill_pointer if named else _render_skill_body,
+        document_separator="\n" if named else "\n\n",
     )
-    return (
-        "Load these skills before starting, unless they are already in your "
-        f"context: {named}."
-    )
+    if not (named and grouped):
+        return grouped
+    return join_content_blocks(_NAMED_SKILLS_INSTRUCTION, grouped)
 
 
 def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, ...]) -> str:
@@ -445,12 +481,11 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     ordered_blocks: list[str] = []
     for field_name in SYSTEM_INSTRUCTION_BLOCK_ORDER:
         if field_name == "supplemental_documents":
-            # Auto-loaded skills: full content in inline mode, one naming line in
-            # named mode; either way grouped after the profile and before bootstrap.
-            skill_block = (
-                _render_named_skills_paragraph(ordered_skill_documents)
-                if content.skill_delivery == "named"
-                else _render_loaded_skill_blocks(ordered_skill_documents)
+            # Auto-loaded skills: full content in inline mode, file pointers in
+            # named mode; either way grouped by type after the profile and before
+            # bootstrap.
+            skill_block = _render_loaded_skill_blocks(
+                ordered_skill_documents, content.skill_delivery
             )
             if skill_block:
                 ordered_blocks.append(skill_block)

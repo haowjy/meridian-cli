@@ -44,6 +44,9 @@ the skill: open with the situation that calls for it ("Use when ...", "Load when
 
 A loaded skill is headed `# Skill: /NAME` with a line saying its text is already loaded,
 so a body can tell the agent to follow `/NAME` even when the harness's list omits it.
+Under the experimental `experimental.skill_delivery = "named"` setting, Meridian instead
+gives one line per loaded skill naming `/NAME` and the path to its `SKILL.md`, under the
+same type headers.
 
 ## Types
 

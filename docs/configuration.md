@@ -163,8 +163,12 @@ fallback with no new features and push-only idle.
 reach the prompt:
 
 - `inline` (default) — each skill's full text, after the profile body.
-- `named` — one paragraph naming every loaded skill with the path to its
-  `SKILL.md`, so the agent reads what it needs from disk.
+- `named` — the same type groups and headers, but one line per skill naming
+  `/name` and the path to its `SKILL.md`, so the agent reads the text from disk.
+  Skills with a `variants/<harness>/SKILL.md` are the exception: inline mode
+  delivers the variant body, but Mars reports only the base file, so named mode
+  points the agent at the base `SKILL.md`; avoid comparing the modes on such a
+  skill.
 
 The `# Available Skills` listing is the same in both modes. Set it per run with
 `MERIDIAN_EXPERIMENTAL_SKILL_DELIVERY=named` to compare token use and cost
@@ -175,8 +179,10 @@ without editing config, or in `meridian.toml`:
 skill_delivery = "named"
 ```
 
-`--continue` reuses the loaded skills recorded at its source launch but renders
-them in the mode configured for the new launch.
+`--continue` reuses the loaded skills recorded at its source launch and replays
+that launch's mode, even if the environment variable is unset; a snapshot written
+before the mode was recorded replays as `inline`. A fork is a new launch and uses
+the current setting.
 
 ## Ignoring direnv during harness launches
 
