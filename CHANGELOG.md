@@ -13,16 +13,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   command that answers it.
 
 ### Fixed
-- Fresh launches of the same agent no longer rewrite the system prompt. The run ID,
-  the ambient no-work-item scratch directory, and the spawn goal contract now appear
-  in the first user turn instead of the system prompt, so two spawns share the harness
-  prompt cache even when their goals differ.
+- Fresh launches of the same agent no longer rewrite the system prompt. A spawn's run
+  ID, its launching chat, its ambient no-work-item scratch directory, and its goal
+  contract now appear in the first user turn, so two spawns share the harness prompt
+  cache even when their goals differ. A primary keeps its goal, its own chat ID, and
+  the work goal in the system prompt, so a bare primary still starts no turn of its own
+  and Codex primaries keep the goal.
 - Exact `--continue` recomposes the system prompt from the launch snapshot instead of
   the caller's current config, so it sends the same bytes as the conversation's first
   launch on Pi and OpenCode as well as Claude and Codex. Launch snapshots now keep the
   `# Available Skills` listing, so it survives a continue. A continue also applies a
-  new `--goal`, a foreground/background switch, or a primary/spawn surface change
-  instead of hiding it behind a replayed prompt.
+  new `--goal`, a work-goal edit, or a primary/spawn surface change instead of hiding
+  it behind a replayed prompt. Foreground and background spawns share one preamble, so
+  continuing in the other mode does not rewrite the prompt either.
 - `spawn --fork` keeps the source's task directory instead of falling back to the
   control checkout, so a forked agent edits the same worktree its source did.
 
