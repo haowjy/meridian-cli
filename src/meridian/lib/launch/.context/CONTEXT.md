@@ -565,10 +565,19 @@ the current filesystem.
 
 Loaded skills reach the agent one way on every harness, primary and spawn:
 `compose_skill_prompt_documents()` turns them into supplemental documents in
-`_build_spawn_composed_launch_content()` and `_resolve_primary_projection()`, and
+`_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()`, and
 harness projection places them in the system prompt after the agent profile.
 Bind-time re-projection rebuilds from the same composed content, so the skills
 survive it without special handling.
+
+`ComposedLaunchContent.skill_delivery` chooses how that one channel renders them.
+`inline` (the default) writes each body under its type header. `named`, the
+experimental `[experimental] skill_delivery` setting, writes one paragraph naming
+every loaded skill with the path to its `SKILL.md` — the file-read fallback is
+what keeps a `model-invocable: false` skill reachable, since no harness's skill
+tool lists it. `# Available Skills` is unchanged in both modes. Delivery is a
+rendering choice, so `ResolvedLaunchPolicy` resolves it from config on every prepare
+including a snapshot replay; nothing about the mode is persisted.
 
 Don't add a second channel keyed on a harness capability. A native skill list
 shows only model-invocable skills, so a loaded skill that isn't model-invocable

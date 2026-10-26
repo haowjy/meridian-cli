@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from meridian.lib.launch.reference import ReferenceItem
 
+from meridian.lib.core.domain import SkillDeliveryMode
 from meridian.lib.launch.reference import (
     measure_rendered_reference_block_bytes,
     render_reference_blocks,
@@ -188,6 +189,9 @@ class ComposedLaunchContent:
     guidance_blocks: tuple[CompositionBlock, ...] = ()
     """Ordered guidance (inventory, capabilities, prompting, rules, context paths)."""
 
+    skill_delivery: SkillDeliveryMode = "inline"
+    """Whether loaded skills render their full text or a line naming their files."""
+
 
 def composed_content_for_bind_refresh(
     composed: ComposedLaunchContent,
@@ -342,6 +346,39 @@ def _loaded_skill_type_header(skill_type: str) -> str:
     return f"## {label}"
 
 
+def _render_loaded_skill_blocks(documents: tuple[PromptDocument, ...]) -> str:
+    """Render loaded skill bodies grouped by type under their group headers."""
+    blocks: list[str] = []
+    current_type: str | None = None
+    for document in documents:
+        if not document.content.strip():
+            continue
+        if document.skill_type != current_type:
+            current_type = document.skill_type
+            header = _loaded_skill_type_header(current_type)
+            if header:
+                blocks.append(header)
+        blocks.append(document.content.strip())
+    return join_content_blocks(*blocks)
+
+
+def _render_named_skills_paragraph(documents: tuple[PromptDocument, ...]) -> str:
+    """Name loaded skills and their file for an agent that reads them on demand.
+
+    The harness's own skill list omits non-model-invocable skills, so the
+    `SKILL.md` path is what keeps every named skill reachable.
+    """
+    if not documents:
+        return ""
+    named = ", ".join(
+        f"/{document.logical_name} (`{document.path}`)" for document in documents
+    )
+    return (
+        "Load these skills before starting, unless they are already in your "
+        f"context: {named}."
+    )
+
+
 def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, ...]) -> str:
     """Render the available skills listing with bundle-provided descriptions."""
     if not available_skills:
@@ -386,7 +423,8 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
 
     Order: agent_profile_body, completion_contract, auto-loaded skills
     (grouped by type: principles first, then guardrails, then others,
-    then bootstrap), available skills listing,
+    then bootstrap; in named mode one line naming their files instead of
+    their bodies), available skills listing,
     guidance_blocks (sorted by phase then priority), report_instruction,
     then passthrough fragments.
     """
@@ -407,17 +445,15 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     ordered_blocks: list[str] = []
     for field_name in SYSTEM_INSTRUCTION_BLOCK_ORDER:
         if field_name == "supplemental_documents":
-            # Auto-loaded skills: full content, grouped by type with headers.
-            if ordered_skill_documents:
-                current_type: str | None = None
-                for doc in ordered_skill_documents:
-                    if doc.content.strip():
-                        if doc.skill_type != current_type:
-                            current_type = doc.skill_type
-                            header = _loaded_skill_type_header(current_type)
-                            if header:
-                                ordered_blocks.append(header)
-                        ordered_blocks.append(doc.content.strip())
+            # Auto-loaded skills: full content in inline mode, one naming line in
+            # named mode; either way grouped after the profile and before bootstrap.
+            skill_block = (
+                _render_named_skills_paragraph(ordered_skill_documents)
+                if content.skill_delivery == "named"
+                else _render_loaded_skill_blocks(ordered_skill_documents)
+            )
+            if skill_block:
+                ordered_blocks.append(skill_block)
             # Bootstrap documents after skills
             ordered_blocks.extend(document.content for document in bootstrap_documents)
             continue

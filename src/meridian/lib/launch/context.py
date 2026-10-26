@@ -1110,6 +1110,7 @@ def _resolve_spawn_prepare_projection(
         user_task_prompt=cleaned_user_prompt,
         reference_items=task_ctx.reference_items,
         prior_output=task_ctx.prior_output,
+        skill_delivery=policy.skill_delivery,
     )
 
     projected = harness.project_content(composed)
@@ -1186,6 +1187,7 @@ def _resolve_primary_projection(
         user_task_prompt=request.prompt,
         reference_items=task_ctx.reference_items,
         prior_output=task_ctx.prior_output,
+        skill_delivery=policy.skill_delivery,
     )
 
     projected = harness.project_content(composed)

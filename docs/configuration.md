@@ -122,6 +122,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `spawn.min_wait_yield_seconds` | float | Minimum yield interval for `spawn wait` (seconds) |
 | `primary.autocompact` | int | Context-token compaction threshold for the primary session (minimum 1000) |
 | `primary.autocompact_pct` | int | Context-window percentage for primary-session compaction (1–100) |
+| `experimental.skill_delivery` | `inline` \| `named` | How loaded skills reach the prompt (default `inline`; experimental) |
 
 One machine-wide key is intentionally not exposed through project-scoped
 `config set/get/reset`:
@@ -155,6 +156,27 @@ verification. See the [Pi extension guide](../src/meridian/pi_runtime/README.md)
 OpenCode 2.x is the supported target. `harness.opencode.version = "auto"` (the
 default) probes `opencode --version`; a 1.x install still works as a frozen
 fallback with no new features and push-only idle.
+
+### Experimental skill delivery
+
+`experimental.skill_delivery` chooses how the skills an agent profile `load`s
+reach the prompt:
+
+- `inline` (default) — each skill's full text, after the profile body.
+- `named` — one paragraph naming every loaded skill with the path to its
+  `SKILL.md`, so the agent reads what it needs from disk.
+
+The `# Available Skills` listing is the same in both modes. Set it per run with
+`MERIDIAN_EXPERIMENTAL_SKILL_DELIVERY=named` to compare token use and cost
+without editing config, or in `meridian.toml`:
+
+```toml
+[experimental]
+skill_delivery = "named"
+```
+
+`--continue` reuses the loaded skills recorded at its source launch but renders
+them in the mode configured for the new launch.
 
 ## Ignoring direnv during harness launches
 

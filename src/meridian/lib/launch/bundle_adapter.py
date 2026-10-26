@@ -27,6 +27,7 @@ from meridian.lib.catalog.mars_roots import (
     resolve_mars_executable,
     resolve_mars_roots,
 )
+from meridian.lib.core.domain import SkillDeliveryMode
 from meridian.lib.core.route_report import RouteDecisionReport
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
@@ -761,6 +762,7 @@ def bundle_to_resolved_policy(
     alias_catalog: dict[str, AliasEntry] | None,
     harness_registry: HarnessRegistry,
     terminal_surface_mode: TerminalSurfaceMode,
+    skill_delivery: SkillDeliveryMode,
     provenance_overrides: dict[str, str] | None = None,
 ) -> ResolvedLaunchPolicy:
     """Map bundle facts + local composition context to ResolvedLaunchPolicy."""
@@ -831,6 +833,7 @@ def bundle_to_resolved_policy(
         alias_catalog=alias_catalog,
         bundle_inventory_prompt=bundle.prompt_surface_inventory_prompt or None,
         bundle_available_skills=bundle.skills_available,
+        skill_delivery=skill_delivery,
     )
 
 

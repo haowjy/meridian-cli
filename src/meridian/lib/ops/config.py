@@ -376,6 +376,12 @@ def _scaffold_template() -> str:
             "# Days to retain spawn artifacts and session data (-1 = keep forever).",
             f"# retention_days = {defaults['state.retention_days']}",
             "",
+            "# -- Experimental -----------------------------------------------------------",
+            "[experimental]",
+            "# How loaded skills reach the prompt: \"inline\" (full text) or \"named\"",
+            "# (one line naming each skill and its SKILL.md path).",
+            '# skill_delivery = "inline"',
+            "",
         ),
         *(
             descriptor.scaffold_lines

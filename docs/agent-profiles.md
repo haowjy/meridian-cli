@@ -308,6 +308,11 @@ already loaded and where its resource files are. An agent body can name a loaded
 skill (`/solo-dev`) even though the skill won't appear in the harness's skill
 list.
 
+That is the default (`experimental.skill_delivery = "inline"`). The experimental
+`named` mode instead delivers one paragraph naming each loaded skill and the path
+to its `SKILL.md`. See
+[experimental skill delivery](configuration.md#experimental-skill-delivery).
+
 **Package bundle interface.** Package skill content comes from the Mars
 launch-bundle JSON, not from Meridian reading `.mars/skills/` on disk. Mars owns
 the `.mars/` directory schema, skill variant selection, and compilation:

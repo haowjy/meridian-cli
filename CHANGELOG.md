@@ -4,6 +4,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Experimental `[experimental] skill_delivery` setting (`inline` default, `named`) and
+  `MERIDIAN_EXPERIMENTAL_SKILL_DELIVERY` to compare how loaded skills reach agents.
+  `named` replaces each loaded skill's inlined text with one paragraph naming it and
+  the path to its `SKILL.md`. See
+  [experimental skill delivery](docs/configuration.md#experimental-skill-delivery).
+
+### Changed
+- `mars-agents` 0.19.0 (from 0.18.4). The launch-bundle JSON Meridian reads is
+  unchanged; the new native-agent skill line stays in Mars's synced agent files, which
+  Meridian does not read.
+
 ## [0.14.7] - 2026-10-26
 
 ### Fixed
