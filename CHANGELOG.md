@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Claude spawn-watch no longer starts a turn when a session starts, resumes or reloads.
+  Results owed from before a crash or restart now arrive after the user's first turn
+  ends, while the prompt cache is warm, instead of in an unasked-for cold-cache turn.
+
 ## [0.14.6] - 2026-10-25
 
 ### Added
