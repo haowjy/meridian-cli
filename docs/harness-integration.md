@@ -145,6 +145,40 @@ sessions load only session-boundary.
   Core decides what is owed (`lib/ops/spawn/owed.py`); the mod's README covers
   its delivery rules.
 
+### Primary message delivery and Claude's inbound gate
+
+`meridian spawn message <primary>` posts to the messaging socket that
+meridian-session-boundary recorded at SessionStart, which is Claude Code's
+cross-session peer lane. Claude decides delivery, not Meridian, and the command
+can only report that the message was posted.
+
+Claude's `crossSessionInbound` setting picks the policy:
+
+| Value | Behavior |
+|---|---|
+| `accept` | Deliver straight to the session's queue. |
+| `hold` | Park messages for review. |
+| `refuse` | Turn peer messages away; a reply that needs a route fails. |
+
+With the setting absent, Claude runs a permission-mode parity check. A message
+that does not attest the sender's mode — Meridian never attests one, because an
+agent could then use `spawn message` to steer a bypassed session past review —
+is held for approval when the receiving session bypasses prompts. That includes
+`permissions.defaultMode: "auto"`. The hold appears as "Held peer message …
+not delivered to Claude (1 held)" and releases only when the person approves or
+the message expires; a headless host has no approval surface, so it expires.
+
+To stop the approval prompt, set `"crossSessionInbound": "accept"` in
+`~/.claude/settings.json` (or `/config` → "Messages from your other sessions").
+It applies to every peer message that session receives, not only Meridian's, so
+a session that bypasses prompts will act on another session's message without
+review. `"refuse"` is the opposite: no peer message is delivered, including
+`spawn message`. A repository or managed settings file can tighten the value
+but cannot loosen it.
+
+Messages to spawned sessions are unaffected: they use Meridian's own control
+socket, with no Claude gate in the path.
+
 ## Pi: installed runtime and four extensions
 
 Meridian resolves `MERIDIAN_PI_BINARY`, otherwise `pi` on `PATH`, and probes
@@ -172,7 +206,9 @@ Both roles load the stable bundles listed below where enabled; `meridian-idle` l
   `disable_managed_bash` is false: `bash`/`bash_manage`, `/ps*`, task records,
   process-group ownership, and reload/recovery.
 - **meridian-spawn-watch**, when `harness.pi.spawn_watch.enabled` is true:
-  canonical direct-child observation, `/spawn*`, and tool-boundary or idle result delivery.
+  canonical direct-child observation, `/spawn*`, and tool-boundary or idle result
+  delivery. Idle delivery opens only after the lead's own turn ends, so a
+  resumed or reloaded lead is never handed an automatic turn before the user acts.
 - **session-boundary**, always: bounded native lifecycle evidence, correlated by
   launch nonce and Pi PID. Only a final readable `session_shutdown(reason=quit)`
   verifies exit identity; a switch, reload, stale context, or corrupt record does

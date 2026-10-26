@@ -1176,6 +1176,15 @@ warning on stderr, and becomes an error in the next minor release. Remove it
 from scripts, including `meridian spawn files <id> | xargs git add`; stage
 changes with `git add` directly.
 
+## Spawn message rename
+
+`meridian spawn inject` is now `meridian spawn message`. Scripts using the old
+spelling keep working: it warns on stderr and runs the same command until the
+next minor release. Each message also opens with a `[Meridian]` line naming the
+sending spawn and chat and, when the sender can receive one, the
+`meridian spawn message <id>` command that answers it. Anything that parses the
+delivered text sees that line first; the text you sent follows a blank line.
+
 ## Behavior changes you'll notice
 
 - `meridian session log` reads the native transcript. A `pN` view names its

@@ -33,6 +33,8 @@ type Host = {
   box: string
   /** `$.process.spawn` itself fails (meridian not on PATH). */
   spawnFails: boolean
+  /** While set, `$.prompt.read()` has not answered yet; the test releases it. */
+  readGate: Promise<void> | undefined
 }
 
 function host(): Host {
@@ -49,6 +51,7 @@ function host(): Host {
     duringSubmit: undefined,
     box: '',
     spawnFails: false,
+    readGate: undefined,
   }
 }
 
@@ -87,7 +90,10 @@ function install(on: On, h: Host, options: { store?: boolean } = {}) {
     await h.duringSubmit?.(e.text)
     return h.submitDrop === undefined ? { text: e.text } : { drop: h.submitDrop }
   })
-  on('prompt.read', () => ({ value: { text: h.box, cursor: h.box.length } }))
+  on('prompt.read', async () => {
+    await h.readGate
+    return { value: { text: h.box, cursor: h.box.length } }
+  })
   on('prompt.edit', (_$, e) => ({ text: e.text, cursor: e.cursor }))
   on('prompt.change', (_$, e) => ({ text: e.text }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
@@ -187,51 +193,23 @@ test('print mode keeps the mod inert', async ($, on) => {
   expect(h.acks).toEqual([])
 })
 
-test('a session that starts idle (fresh, resumed, reloaded) collects 2 s after session.start and delivers what is owed, with no turn', async ($, on) => {
+test('a fresh, resumed or reloaded session never collects or submits until a main-loop turn ends', async ($, on) => {
   const h = host()
   const clock = install(on, h)
 
-  await $.session.start(TUI) // returns at once: the run is not part of the hook
-  await clock.advance(IDLE_DELAY - 1)
-  expect(h.collectors).toHaveLength(0)
+  // A resumed chat may owe results from before a crash, but its prompt cache is cold: no turn starts on its own.
+  await $.session.start(TUI)
+  await clock.advance(100_000)
+  expect(h.collectors).toEqual([])
+  expect(h.submits).toEqual([])
 
-  const started = nextCollector(h)
-  void clock.advance(1)
-  expect((await started).argv).toEqual(['meridian', 'spawn', 'collect'])
-
-  last(h.collectors).finish(delivery(['p12']))
+  // The user's first turn ends: the owed results arrive while the cache is warm.
+  await $.turn.start({ text: 'first prompt', turnId: 'u1' })
+  const collector = await idle($, clock, h)
+  collector.finish(delivery(['p12']))
   await clock.settle()
   expect(h.submits).toHaveLength(1)
-  const sent = last(h.submits)
-  expect(sent).toContain('p12 finished: ok')
-  expect(h.acks).toEqual([])
-
-  await $.turn.start({ text: sent, turnId: 'd1' })
-  await clock.settle()
-  expect(h.acks).toEqual([['p12']])
-})
-
-test('the first prompt ends the run session.start began, whether it is waiting or collecting', async ($, on) => {
-  const h = host()
-  const clock = install(on, h)
-
-  await $.session.start(TUI)
-  await clock.advance(IDLE_DELAY - 500)
-  await $.turn.start({ text: 'first prompt', turnId: 'u1' })
-  await clock.advance(60_000)
-  expect(h.collectors).toHaveLength(0)
-
-  // session.start again (a reload) while the first run's work is done: a new run replaces whatever was in flight.
-  const started = nextCollector(h)
-  await $.session.start(TUI)
-  void clock.advance(IDLE_DELAY)
-  const running = await started
-  await $.turn.start({ text: 'second prompt', turnId: 'u2' })
-  expect(running.killed).toBe(true)
-
-  running.finish(delivery(['p12']))
-  await clock.advance(60_000)
-  expect(h.submits).toEqual([])
+  expect(last(h.submits)).toContain('p12 finished: ok')
 })
 
 test('the collector starts 2 s after a main-loop answer and an empty verdict does nothing', async ($, on) => {
@@ -558,22 +536,44 @@ test('/meridian-spawn-watch reports state without counting as a turn', async ($,
   const clock = install(on, h)
 
   await $.session.start(TUI)
-  expect((await statusCommand($)).text).toContain('idle run: delay')
-
-  // Asking did not end the run session.start began: its collector still starts.
-  const started = nextCollector(h)
-  void clock.advance(IDLE_DELAY)
-  const first = await started
-  expect((await statusCommand($)).text).toContain('idle run: collecting')
-  expect(first.killed).toBe(false)
-  first.finish(EMPTY)
-  await clock.settle()
-  expect((await statusCommand($)).text).toContain('idle run: none')
-
   const collector = await idle($, clock, h)
+  await statusCommand($)
+  expect(collector.killed).toBe(false) // asking is not a turn: the run it reports goes on
+
   collector.finish(delivery(['p12', 'p13']))
   await clock.settle()
-  const status = (await statusCommand($)).text
-  expect(status).toContain('last collect: delivery p12,p13')
-  expect(status).toContain('(queued)')
+  expect((await statusCommand($)).text).toContain('p12,p13 (submitted)')
+})
+
+test('a turn that starts during the last read of the hold still stops the submit', async ($, on) => {
+  const h = host()
+  const clock = install(on, h)
+  let release: () => void = () => undefined
+
+  await $.session.start(TUI)
+  const collector = await idle($, clock, h)
+  h.readGate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  collector.finish(delivery(['p12']))
+  await clock.settle() // the hold is now waiting on prompt.read
+
+  // A phone or peer turn starts while the read is in flight, with the box untouched.
+  await $.turn.start({ text: 'from the phone', turnId: 'u1' })
+  release()
+  await clock.advance(60_000)
+  expect(h.submits).toEqual([])
+})
+
+test('/clear during a hold submits nothing until a turn ends', async ($, on) => {
+  const h = host()
+  const clock = install(on, h)
+
+  await $.session.start(TUI)
+  h.box = 'draft'
+  await deliverOnce($, clock, h, ['p12'])
+  await $.session.end({ reason: 'clear', sessionId: 'sess-1', resume: { id: 'sess-1' } }) // no session.start follows a /clear
+  h.box = ''
+  await clock.advance(60_000)
+  expect(h.submits).toEqual([])
 })

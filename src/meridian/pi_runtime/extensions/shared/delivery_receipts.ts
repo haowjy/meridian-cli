@@ -23,6 +23,8 @@ const ObservedSchema = Type.Object({
     expires_at_epoch: Type.Number(), spawn_ids: Type.Array(Type.String()),
   }))),
 });
+
+export type WaitReservation = NonNullable<ObservedSpawnsFile["wait_reservations"]>[string];
 const receiptQueues = new Map<string, Promise<void>>();
 
 export async function readDeliveryReceipts(spawnId = currentSpawnIdFromEnv(), file = resolveDeliveryReceiptsPath(spawnId)): Promise<DeliveryReceiptsFile> {
@@ -66,7 +68,7 @@ async function readObservationsFile(file: string, spawnId: string): Promise<Obse
  * an I/O failure (which carries an errno code) is still unknown. A later mirrored
  * record may replace the damaged copy.
  */
-async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFile> {
+export async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFile> {
   try { return await readObservationsFile(resolveLegacyObservedSpawnsPath(spawnId), spawnId); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== undefined) throw error;
@@ -74,22 +76,14 @@ async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFi
   }
 }
 
-/** legacy-observed-spawns (#719): Merge consumed ids and leases from both files. */
-export async function readSpawnObservations(spawnId = currentSpawnIdFromEnv()): Promise<ObservedSpawnsFile> {
-  const current = await readObservationsFile(resolveObservedSpawnsPath(spawnId), spawnId);
-  const legacy = await readLegacyObservations(spawnId);
-  const legacyLeases = Object.entries(legacy.wait_reservations ?? {}).map(([token, lease]) => [`legacy:${token}`, lease] as const);
-  return {
-    v: 1, spawn_id: spawnId,
-    updated_at_ms: Math.max(current.updated_at_ms, legacy.updated_at_ms),
-    observed_spawn_ids: [...current.observed_spawn_ids, ...legacy.observed_spawn_ids],
-    wait_reservations: { ...Object.fromEntries(legacyLeases), ...current.wait_reservations },
-  };
+/** A parent's current observations file (`spawns/<parent>/observed-spawns.json`). */
+export async function readCurrentObservations(spawnId = currentSpawnIdFromEnv()): Promise<ObservedSpawnsFile> {
+  return readObservationsFile(resolveObservedSpawnsPath(spawnId), spawnId);
 }
 
-export async function reservedSpawnIds(observed: ObservedSpawnsFile): Promise<Set<string>> {
+export async function reservedSpawnIds(leases: Iterable<WaitReservation>): Promise<Set<string>> {
   const result = new Set<string>();
-  for (const lease of Object.values(observed.wait_reservations ?? {})) {
+  for (const lease of leases) {
     if (lease.expires_at_epoch <= Date.now() / 1000) continue;
     try {
       const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(lease.owner_pid)],

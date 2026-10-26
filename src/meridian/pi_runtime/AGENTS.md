@@ -18,7 +18,10 @@ explicit detach/manual recovery. Detach releases quiescence, not process
 ownership; normal shutdown still cleans up owned groups. Publish terminal only
 after group exit and queued output, and supervise every async task callback.
 `meridian-spawn-watch` owns child-spawn observation and result notifications.
-Keep that mechanism/policy boundary intact.
+Keep that mechanism/policy boundary intact. It arms idle delivery only at a
+main-loop `agent_end`; a session start (startup, resume, reload, `new`, fork)
+starts its watchers but delivers nothing until a turn ends, so a resumed lead
+never pays a cold prompt cache for a status ping.
 `session-boundary` owns bounded native lifecycle observations; only a final
 shutdown/quit qualifies the run exit, never the entry or last-seen session.
 Its v2 record is nonce/PID-correlated and bounded. A shutdown with an invalidated
@@ -52,8 +55,13 @@ fatal launch error.
   human-facing show/wait/cancel commands pass `--no-observe` so model delivery stays
   owed. A damaged source is skipped and diagnosed
   independently, never treated as a reason for no-arg wait to fail.
-- Scope children by canonical `parent_id`; transfer launcher work through the
-  row's `originating_bash_id`. Logs and origin sidecars are not authority.
+- Scope children by canonical `parent_id` and deliver only a background `launch_mode`
+  (core's `is_owed_child`, mirrored as `isBackgroundLaunch`); transfer launcher work
+  through a background row's `originating_bash_id`. The parent set is
+  core's, passed at launch as `_MERIDIAN_PI_OWED_PARENT_IDS` for a primary (every
+  primary generation of its chat) and absent for a spawned or nested session (its own
+  children only); never re-derive generations here. Logs and origin sidecars are not
+  authority.
 - `sendMessage()` returns void; receipt authority is exact native custom-message
   admission. Keep automatic publication finite and bounded, preserve exact batch
   membership, and leave excluded or changing work owed. Candidate IDs and queued

@@ -562,7 +562,7 @@ them:
   sockets. The launcher pre-creates this project's lifetime lock, which child commands open
   read-only; the shared `.locks` directory is not writable from the sandbox. Codex's
   `read-only` sandbox can only read the projected roots. Claude `read-only` and every
-  `workspace-write` launch can write Meridian runtime state, so `spawn inject` and `cancel`
+  `workspace-write` launch can write Meridian runtime state, so `spawn message` and `cancel`
   do not claim a separate delegation boundary.
 - **Meridian commands.** Meridian adds completion and read-command grants to every launch;
   a profile that can spawn also gets the `meridian spawn ...` launch commands. Completion

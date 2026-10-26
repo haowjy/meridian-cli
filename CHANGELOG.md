@@ -14,6 +14,34 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reason as a warning before falling back. Help and invalid skill requests do not
   invoke the provider.
 
+### Fixed
+- Pi spawn-watch now delivers a crashed generation's children after `--continue` resumes
+  the chat, matching Claude. Core computes the parent scope and hands it to the
+  extension; the extension no longer owns only the newest generation's children and no
+  longer re-notifies a foreground child its launcher already waited for. One core rule
+  now says a child is owed only when it was launched in the background, shared by
+  `spawn collect`, the extension and the Pi drain, so a spawned Pi session that runs a
+  foreground child no longer waits out the delivery window and fails.
+
+## [0.14.8] - 2026-10-26
+
+### Changed
+- `meridian spawn inject` is renamed `meridian spawn message`; the old spelling
+  still runs and warns for one release. See
+  [spawn message rename](docs/upgrading.md#spawn-message-rename).
+- An injected message opens with a `[Meridian]` line naming the sending spawn and
+  chat, and, when the sender can receive one, the `meridian spawn message <id>`
+  command that answers it.
+
+## [0.14.7] - 2026-10-26
+
+### Fixed
+- Claude and Pi spawn-watch no longer start a turn when a session starts, resumes or
+  reloads. Results owed from before a crash or restart now arrive after the user's first
+  turn ends, while the prompt cache is warm, instead of in an unasked-for cold-cache turn.
+- Claude spawn-watch no longer submits a delivery after a turn (phone, peer, or Enter on
+  a stale draft) started during its hold.
+
 ## [0.14.6] - 2026-10-25
 
 ### Added

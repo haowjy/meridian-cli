@@ -767,13 +767,130 @@ describe('durable result delivery', () => {
     await eventually(() => next.notices.length === 1);
     expect(next.notices[0]!.details.work_ids).toEqual(['b1']);
   });
+  it('delivers nothing at session start, then the first turn end delivers what is owed', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'owed before the resume');
+    // A resumed session is idle with a cold prompt cache: an automatic turn here
+    // would re-bill the whole context for a status ping.
+    const h = host();
+    extension(h.pi);
+    h.handlers.get('session_start')!({ reason: 'resume' }, { isIdle: () => h.idle });
+    await pause(800);
+    expect(h.notices).toHaveLength(0);
+
+    h.handlers.get('agent_end')!({}, { isIdle: () => h.idle });
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.content).toContain('owed before the resume');
+    expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
+  });
+
+  it('delivers a crashed generation\'s owed child after the resume', async () => {
+    const root = await setup();
+    // Core hands an interactive primary every primary generation of its chat.
+    process.env._MERIDIAN_PI_OWED_PARENT_IDS = 'p-parent,p-crashed';
+    await child(root, 'p1', null, { parent_id: 'p-crashed' });
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'result from the crashed generation');
+    const h = host();
+    extension(h.pi);
+    h.handlers.get('session_start')!({ reason: 'resume' }, { isIdle: () => h.idle });
+    await pause(800);
+    expect(h.notices).toHaveLength(0);
+
+    h.handlers.get('agent_end')!({}, { isIdle: () => h.idle });
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.content).toContain('result from the crashed generation');
+
+    // Admission stays on the current spawn; core unions its generations.
+    await h.handlers.get('message_start')!({ message: { role: 'custom', ...h.notices[0] } });
+    const receipt = JSON.parse(await readFile(
+      path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json'), 'utf8',
+    ));
+    expect(Object.values(receipt.messages)).toEqual([['p1']]);
+  });
+
+  it('does not redeliver a prior generation\'s child any generation consumed', async () => {
+    const root = await setup();
+    process.env._MERIDIAN_PI_OWED_PARENT_IDS = 'p-crashed,p-middle,p-parent';
+    await child(root, 'p1', null, { parent_id: 'p-crashed' });
+    await child(root, 'p2', null, { parent_id: 'p-crashed' });
+    await child(root, 'p3', null, { parent_id: 'p-crashed' });
+    await child(root, 'p4', null, { parent_id: 'p-crashed' });
+    await writeJsonAtomic(path.join(root, 'pi-bash', 'p-crashed', 'delivery-receipts.json'), {
+      v: 1, spawn_id: 'p-crashed', messages: { 'd-receipt': ['p1'] },
+    });
+    // A middle generation delivered p4 and crashed too: neither the child's parent nor the current spawn holds it.
+    await writeJsonAtomic(path.join(root, 'pi-bash', 'p-middle', 'delivery-receipts.json'), {
+      v: 1, spawn_id: 'p-middle', messages: { 'd-middle': ['p4'] },
+    });
+    await writeJsonAtomic(path.join(root, 'spawns', 'p-crashed', 'observed-spawns.json'), {
+      v: 1, spawn_id: 'p-crashed', updated_at_ms: Date.now(), observed_spawn_ids: ['p2'],
+    });
+    const h = host();
+    const runtime = owner(h);
+
+    await runtime.deliverAtBoundary(new AbortController().signal);
+
+    expect(h.notices[0]!.details.work_ids).toEqual(['p3']);
+  });
+
+  it('keeps the widened scope across a reload', async () => {
+    const root = await setup();
+    process.env._MERIDIAN_PI_OWED_PARENT_IDS = 'p-parent,p-crashed';
+    await child(root, 'p1', null, { parent_id: 'p-crashed' });
+    const first = host(false);
+    extension(first.pi);
+    first.handlers.get('session_start')!({ reason: 'startup' }, { isIdle: () => false });
+    first.handlers.get('session_shutdown')!({ reason: 'reload' });
+
+    const next = host(false);
+    extension(next.pi);
+    next.handlers.get('session_start')!({ reason: 'reload' }, { isIdle: () => false });
+    await next.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [{}] }, {
+      isIdle: () => false,
+      signal: new AbortController().signal,
+    });
+
+    expect(next.notices[0]!.details.work_ids).toEqual(['p1']);
+  });
+
+  it('leaves a child its launcher waited for to the launcher result', async () => {
+    const root = await setup();
+    await child(root, 'p1', null, { launch_mode: 'foreground' });
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'shown synchronously');
+    const h = host();
+    const runtime = owner(h);
+
+    await pause(800);
+
+    // The launcher already has this result; /spawn still lists the child.
+    expect(h.notices).toHaveLength(0);
+    expect((await runtime.rows()).map(row => row.id)).toEqual(['p1']);
+  });
+
+  it('keeps the launching Bash result when its foreground child is not owed', async () => {
+    const root = await setup();
+    await child(root, 'p1', 'b1', { launch_mode: 'foreground' });
+    await bash(root, record('b1'));
+    const h = host();
+
+    await owner(h).deliverAtBoundary(new AbortController().signal);
+
+    expect(h.notices[0]!.details.work_ids).toEqual(['b1']);
+    expect(h.notices[0]!.content).toContain('Background bash b1');
+  });
+
   it('stops using the old idle capability between reload shutdown and rebind', async () => {
     await setup();
     const h = host();
     extension(h.pi);
     const idle = vi.fn(() => true);
     h.handlers.get('session_start')!({}, { isIdle: idle });
+    h.handlers.get('agent_end')!({}, { isIdle: idle });
     await pause(100);
+    expect(idle).toHaveBeenCalled();
     h.handlers.get('session_shutdown')!({ reason: 'reload' });
 
     // Native Pi invalidates this context before awaiting resource reload. Return
@@ -789,7 +906,10 @@ describe('durable result delivery', () => {
     await bash(root, record('b1'));
     const first = host();
     extension(first.pi);
-    first.handlers.get('session_start')!({}, {
+    first.handlers.get('session_start')!({ reason: 'startup' }, {
+      isIdle: () => first.idle
+    });
+    first.handlers.get('agent_end')!({}, {
       isIdle: () => first.idle
     });
     await eventually(() => first.notices.length === 1);
@@ -798,7 +918,7 @@ describe('durable result delivery', () => {
     });
     const next = host(false);
     extension(next.pi);
-    next.handlers.get('session_start')!({}, {
+    next.handlers.get('session_start')!({ reason: 'reload' }, {
       isIdle: () => next.idle
     });
     await pause(800);

@@ -44,7 +44,9 @@ selected `state.json` files with derived status before answering liveness. Recur
 archived ancestors as edges so active descendants beneath them remain visible.
 `owed.py` separately owns the shared wait/collect definition of finished unconsumed,
 unleased background children, including Pi delivery receipts and explicit dismissals as
-consumption. `owed.py` owns caller-scoped observation: normal wait/ack, a cancel reported
+consumption. The parent set itself lives in `lib/state/spawn_ownership.py`, because a Pi
+launch hands the same set to its spawn-watch extension; `owed.py` adds candidate
+selection, consumption, and exclusion on top. `owed.py` owns caller-scoped observation: normal wait/ack, a cancel reported
 as `cancelled`, and non-empty terminal report bodies returned by show, status, or
 report-show operations with `observe=True`. No-arg wait resolves at most the oldest 32 already-finished members once,
 minus the active target IDs, leases them without putting them through the poll loop, and

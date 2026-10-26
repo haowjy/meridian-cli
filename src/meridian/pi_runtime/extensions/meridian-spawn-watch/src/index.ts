@@ -8,16 +8,17 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { readBashRecords } from "../../shared/bash_records";
 import { readPrivateJson, writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
-import { admitDelivery, admittedWorkIds, readDeliveryReceipts, readSpawnObservations, reservedSpawnIds } from "../../shared/delivery_receipts";
+import { admitDelivery, admittedWorkIds, readCurrentObservations, readDeliveryReceipts, readLegacyObservations, reservedSpawnIds, type WaitReservation } from "../../shared/delivery_receipts";
 import {
   currentSpawnIdFromEnv,
+  owedParentIdsFromEnv,
   resolveBashRecordsPath,
   resolveClearedSpawnsPath,
   resolvePiBashDir,
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
-import { isTerminalBashStatus, isTrackedBackground, parseSpawnStateFile } from "../../shared/schemas";
+import { isBackgroundLaunch, isTerminalBashStatus, isTrackedBackground, parseSpawnStateFile } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
 import { bashOutcome } from "../../shared/task_outcome";
 import {
@@ -47,6 +48,11 @@ type NotificationFrame = {
 };
 type NotificationCandidate = { item: NotificationItem; mandatoryBytes: number };
 type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
+/** The consumption files one parent can hold, read independently. */
+type ConsumptionSource = "receipts" | "observations" | "legacy-observations" | "cleared";
+// The current and legacy observation files are separate sources, as in core's read_pi_consumption_state:
+// a damaged one must not drop the other's ids.
+const CONSUMPTION_SOURCES: readonly ConsumptionSource[] = ["receipts", "observations", "legacy-observations", "cleared"];
 const POLL_MS = 500;
 const FULL_RECONCILE_MS = 30_000;
 const MAX_REPORT_BYTES = 64 * 1024;
@@ -57,6 +63,8 @@ const NOTIFICATION_SEPARATOR = "\n\n";
 /** Launch-scoped owner: durable rows are obligations; queue claims are only mechanics. */
 export class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
+  /** Parents whose direct children this session delivers (core's owed scope). */
+  private readonly parentIds = owedParentIdsFromEnv(this.currentSpawnId);
   private readonly spawnsDir = resolveSpawnsDir();
   private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
   private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
@@ -65,6 +73,8 @@ export class SpawnWatchRuntime {
   private readonly spawnDir = path.join(this.spawnsDir, this.currentSpawnId);
   private readonly queued = new Map<string, string[]>();
   private candidateChildIds = new Set<string>();
+  /** Damaged consumption sources already reported, so a skip logs once. */
+  private readonly skippedSources = new Set<string>();
   private watchers: FSWatcher[] = [];
   private polling: NodeJS.Timeout | null = null;
   private reconciliation: NodeJS.Timeout | null = null;
@@ -162,17 +172,21 @@ export class SpawnWatchRuntime {
   }
 
   async rows(): Promise<SpawnStateFile[]> {
-    const cleared = await this.readCleared();
+    const cleared = await this.readClearedUnion();
     return (await this.discoverChildStates()).rows.filter((row) => row.terminal === null || !cleared.has(row.id));
   }
 
   async clearFinished(): Promise<number> {
-    const cleared = await this.readCleared();
-    const terminal = (await this.discoverChildStates()).rows.filter((row) => row.terminal !== null && !cleared.has(row.id));
-    for (const row of terminal) cleared.add(row.id);
-    if (terminal.length) await writeJsonAtomic(this.clearedPath, {
-      v: 1, spawn_id: this.currentSpawnId, updated_at_ms: Date.now(), cleared_spawn_ids: [...cleared].sort(),
-    });
+    // Hide whatever any owned parent already cleared; only this spawn's file is written.
+    const hidden = await this.readClearedUnion();
+    const terminal = (await this.discoverChildStates()).rows.filter((row) => row.terminal !== null && !hidden.has(row.id));
+    if (terminal.length) {
+      const cleared = await this.readCleared();
+      for (const row of terminal) cleared.add(row.id);
+      await writeJsonAtomic(this.clearedPath, {
+        v: 1, spawn_id: this.currentSpawnId, updated_at_ms: Date.now(), cleared_spawn_ids: [...cleared].sort(),
+      });
+    }
     this.requestIdleDelivery();
     return terminal.length;
   }
@@ -226,17 +240,26 @@ export class SpawnWatchRuntime {
   }
 
   private async collectEligible(states: SpawnStateFile[]): Promise<NotificationItem[]> {
-    const [bash, receipts, observed, cleared] = await Promise.all([
-      this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
-      readSpawnObservations(this.currentSpawnId), this.readCleared(),
-    ]);
-    const consumed = admittedWorkIds(receipts);
-    for (const id of [...observed.observed_spawn_ids, ...cleared]) consumed.add(id);
-    const reserved = await reservedSpawnIds(observed);
+    // Only a background child is owed back; a launcher that waited saw its result.
+    // Mirrors core's `spawn_ownership.is_owed_child`.
+    const owedStates = states.filter(isBackgroundLaunch);
     const claimed = this.claimedWorkIds();
-    const correlated = new Set(states.map((row) => row.originating_bash_id).filter((id): id is string => !!id));
+    // This spawn's own sources are always read: Bash records belong to it, and they
+    // decide whether any child still needs the wider union.
+    const [bash, own] = await Promise.all([this.readBash(), this.readConsumption([this.currentSpawnId])]);
+    const undecided = owedStates.some((row) => row.terminal !== null
+      && !own.consumed.has(row.id) && !own.reserved.has(row.id) && !claimed.has(row.id));
+    // Every owned generation's consumption only decides a terminal candidate this
+    // spawn's own sources leave open, so an idle tick stays proportional to what
+    // is owed rather than to the chat's whole history.
+    const { consumed, reserved } = undecided && this.parentIds.size > 1
+      ? await this.readConsumption(this.parentIds) : own;
+    const correlated = new Set(owedStates.map((row) => row.originating_bash_id).filter((id): id is string => !!id));
     const eligible: NotificationItem[] = [];
-    for (const row of states) {
+    for (const row of owedStates) {
+      // Consumption only grows, so a consumed terminal row can never become owed
+      // again and need not be reread on every idle tick.
+      if (row.terminal !== null && consumed.has(row.id)) this.candidateChildIds.delete(row.id);
       if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id) && !claimed.has(row.id)) {
         eligible.push({
           id: row.id, kind: "spawn", status: row.status,
@@ -376,11 +399,77 @@ export class SpawnWatchRuntime {
     return readBashRecords(this.currentSpawnId, this.bashRecordsPath);
   }
 
-  private async readCleared(): Promise<Set<string>> {
-    const value = await readPrivateJson(this.clearedPath);
+  /**
+   * Union the consumption sources of the given parents, as core's
+   * `owed_consumed_ids` does. Writes stay on the current spawn: its receipts, its
+   * cleared file, its fault file.
+   */
+  private async readConsumption(
+    parents: Iterable<string>,
+  ): Promise<{ consumed: Set<string>; reserved: Set<string> }> {
+    const targets = [...new Set(parents)].sort();
+    const sources = await Promise.all(targets.flatMap((parentId) =>
+      CONSUMPTION_SOURCES.map((source) => this.readConsumptionSource(parentId, source))));
+    const consumed = new Set<string>();
+    const leases: WaitReservation[] = [];
+    for (const result of sources) {
+      if (!result) continue;
+      for (const id of result.consumed) consumed.add(id);
+      leases.push(...result.leases);
+    }
+    return { consumed, reserved: await reservedSpawnIds(leases) };
+  }
+
+  /**
+   * Read one source for one parent. A damaged file from an older generation is
+   * logged once and skipped, as core's `owed_consumed_ids` skips each source; this
+   * spawn's own files stay fail-closed so unknown evidence cannot publish.
+   */
+  private async readConsumptionSource(
+    parentId: string,
+    source: ConsumptionSource,
+  ): Promise<{ consumed: readonly string[]; leases: readonly WaitReservation[] } | undefined> {
+    try {
+      switch (source) {
+        case "receipts":
+          return { consumed: [...admittedWorkIds(await readDeliveryReceipts(parentId))], leases: [] };
+        case "observations":
+        case "legacy-observations": {
+          const observed = source === "observations"
+            ? await readCurrentObservations(parentId) : await readLegacyObservations(parentId);
+          return { consumed: observed.observed_spawn_ids, leases: Object.values(observed.wait_reservations ?? {}) };
+        }
+        case "cleared":
+          return { consumed: [...await this.readCleared(parentId)], leases: [] };
+      }
+    } catch (error) {
+      if (parentId === this.currentSpawnId) throw error;
+      const key = `${parentId}:${source}`;
+      if (!this.skippedSources.has(key)) {
+        this.skippedSources.add(key);
+        this.logWarning(`skipping ${source} for ${parentId}: ${String(error)}`);
+      }
+      return undefined;
+    }
+  }
+
+  /** Cleared IDs across every owned parent, as `/spawn` hides them. */
+  private async readClearedUnion(): Promise<Set<string>> {
+    const cleared = new Set<string>();
+    for (const parentId of [...this.parentIds].sort()) {
+      const source = await this.readConsumptionSource(parentId, "cleared");
+      for (const id of source?.consumed ?? []) cleared.add(id);
+    }
+    return cleared;
+  }
+
+  private async readCleared(spawnId = this.currentSpawnId): Promise<Set<string>> {
+    const value = await readPrivateJson(
+      spawnId === this.currentSpawnId ? this.clearedPath : resolveClearedSpawnsPath(spawnId),
+    );
     if (value === undefined) return new Set();
     const file = value as ClearedSpawnsFile;
-    if (file.v !== 1 || file.spawn_id !== this.currentSpawnId || !Array.isArray(file.cleared_spawn_ids)
+    if (file.v !== 1 || file.spawn_id !== spawnId || !Array.isArray(file.cleared_spawn_ids)
       || !Number.isFinite(file.updated_at_ms)
       || !file.cleared_spawn_ids.every((id) => typeof id === "string")) throw Error("invalid cleared spawn evidence");
     return new Set(file.cleared_spawn_ids);
@@ -401,7 +490,10 @@ export class SpawnWatchRuntime {
           const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
           if (value === undefined) continue;
           const state = this.parseOwnedChild(name, value);
-          if (state) { candidates.add(name); rows.push(state); }
+          if (state) {
+            rows.push(state);
+            if (isBackgroundLaunch(state)) candidates.add(name);
+          }
         }
       }
       if (mayRead() && this.discoveryRevision === revision) {
@@ -431,14 +523,14 @@ export class SpawnWatchRuntime {
   }
 
   private parseOwnedChild(name: string, value: unknown): SpawnStateFile | undefined {
-    // A definitively foreign row cannot affect this parent's obligations.
+    // A definitively foreign row cannot affect this session's obligations.
     // Unknown membership and malformed own-child evidence still fail closed.
     if (value && typeof value === "object" && "id" in value && value.id === name
         && "parent_id" in value && (value.parent_id === null || typeof value.parent_id === "string")
-        && value.parent_id !== this.currentSpawnId) return undefined;
+        && (value.parent_id === null || !this.parentIds.has(value.parent_id))) return undefined;
     const state = parseSpawnStateFile(value);
     if (!state || state.id !== name) throw Error(`invalid spawn state: ${name}`);
-    return state.parent_id === this.currentSpawnId ? state : undefined;
+    return state.parent_id && this.parentIds.has(state.parent_id) ? state : undefined;
   }
 
   private logWarning(error: unknown): void {
@@ -607,7 +699,11 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   const runtime = owners.get(ownerPath) ?? new SpawnWatchRuntime(pi);
   owners.set(ownerPath, runtime);
   runtime.rebind(pi);
-  pi.on?.("session_start", (_event, ctx) => { runtime.observeIdle(() => ctx.isIdle()); runtime.start(); });
+  // A session start never makes delivery possible: a resumed or reloaded lead's
+  // prompt cache is cold, so a turn the user did not ask for re-bills the whole
+  // context for a status ping. Watchers and polling may run; only the first
+  // `agent_end` opens an idle stretch.
+  pi.on?.("session_start", () => runtime.start());
   pi.on?.("agent_start", (_event, ctx) => runtime.observeActive(() => ctx.isIdle()));
   pi.on?.("agent_end", (_event, ctx) => runtime.observeIdle(() => ctx.isIdle()));
   pi.on?.("turn_end", async (event, ctx) => {

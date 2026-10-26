@@ -11,17 +11,18 @@ import type { EngineInterface, Register } from 'claude-code'
 // `/meridian-spawn-watch` prints them on request.
 //
 // One idle stretch is one `Run`: a 2 s delay, the collector, a hold while the user types, the submit.
-// A stretch begins when a main-loop turn ends, and when the session starts: a resumed, fresh or reloaded
-// session is idle with no turn to end, and results may already be owed. A main-loop `turn.start` aborts
+// A stretch begins only when a main-loop turn ends, never at session start: a resumed chat's prompt cache is
+// cold, so a turn the user did not ask for would re-bill the whole context for a status ping. Results owed
+// from before a crash or restart wait for the first turn the user starts. A main-loop `turn.start` aborts
 // the run wherever it is; aborting the collector's read loop kills the child.
 //
-// Consumption is acked only once the lead has the text. The ids of a delivery are claimed in memory
-// from the moment the collector returns, so a collector started meanwhile excludes them, and the ack
-// runs on the main-loop `turn.start` whose text carries the delivery's nonce. A dropped, queued or
-// never-started prompt is never acked.
+// Consumption is acked only once the lead has the text. Only one run exists at a time, so no collector
+// runs while a delivery is held; the ids are claimed in memory when the prompt is submitted, and every
+// collector started until the ack lands excludes them. The ack runs on the main-loop `turn.start` whose
+// text carries the delivery's nonce. A dropped, queued or never-started prompt is never acked.
 
 const COMMAND = 'meridian-spawn-watch'
-/** The idle signal is a turn ending or the session starting; a queued prompt starts its turn within this, so it costs no process. */
+/** The idle signal is a main-loop turn ending; a queued prompt starts its turn within this, so it costs no process. */
 const IDLE_DELAY_MS = 2_000
 /** The prompt box must be empty and untouched this long before a delivery starts a turn under the user. */
 const QUIET_MS = 10_000
@@ -40,13 +41,12 @@ type Run = { ctl: AbortController; phase: Phase }
 
 /**
  * Ids handed to the lead and not yet recorded as consumed.
- *   pending   the collector returned them; the prompt is held or being submitted
- *   queued    the prompt was accepted but no turn carrying the nonce has started
+ *   submitted the prompt went to `$.prompt.submit`; no turn carrying the nonce has started
  *   acking    that turn started; the ack is running
  *   unacked   the ack failed; the ids stay excluded for the life of this module copy, because releasing them
  *             would redeliver the same results at every idle
  */
-type Claim = { ids: string[]; phase: 'pending' | 'queued' | 'acking' | 'unacked' }
+type Claim = { ids: string[]; phase: 'submitted' | 'acking' | 'unacked' }
 
 type Reply = { kind: 'empty' } | { kind: 'delivery'; ids: string[]; text: string }
 
@@ -57,8 +57,6 @@ type State = {
   claims: Map<string, Claim>
   /** When the box was last touched (`prompt.edit` or `prompt.change`), as `$.clock.now()` answered it. Kept as the pending answer so the hooks never wait on it. */
   lastChange: Promise<number>
-  /** Serialises acks so they reach core in turn order. */
-  queue: Promise<unknown>
   /** The last collector verdict, for `/meridian-spawn-watch`. Empty answers stay out of the log. */
   last: string
   log: string[]
@@ -70,7 +68,6 @@ function newState(): State {
     run: undefined,
     claims: new Map(),
     lastChange: Promise.resolve(Number.NEGATIVE_INFINITY),
-    queue: Promise.resolve(),
     last: 'no collect yet',
     log: [],
   }
@@ -99,12 +96,6 @@ function note($: EngineInterface, s: State, line: string): void {
   } catch {
     // the log is a convenience; a store that refuses it is not the lead's problem
   }
-}
-
-function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
-  const run = s.queue.then(task).catch(() => undefined)
-  s.queue = run
-  return run
 }
 
 function claimedIds(s: State): Set<string> {
@@ -196,18 +187,19 @@ function newNonce(): string {
 }
 
 async function deliver($: EngineInterface, s: State, run: Run, reply: Extract<Reply, { kind: 'delivery' }>): Promise<void> {
-  const nonce = newNonce()
-  const claim: Claim = { ids: reply.ids, phase: 'pending' }
-  s.claims.set(nonce, claim)
   try {
     run.phase = 'holding'
     await holdForUser($, s, run)
+    // A turn can start during the hold's last awaits; submit is the one step that cannot be undone.
+    run.ctl.signal.throwIfAborted()
   } catch (err) {
-    s.claims.delete(nonce) // nothing was submitted, so nothing is owed to the lead's context
     note($, s, `held delivery of ${reply.ids.join(',')} released: ${run.ctl.signal.aborted ? 'a turn started' : describeError(err)}`)
     throw err
   }
   // From here the prompt is out of our hands: a main-loop turn.start aborts the run but cannot unsubmit it.
+  const nonce = newNonce()
+  const claim: Claim = { ids: reply.ids, phase: 'submitted' }
+  s.claims.set(nonce, claim)
   run.phase = 'submitting'
   try {
     const result = await $.prompt.submit({ text: `[meridian-spawn-watch delivery ${nonce}]\n\n${reply.text}` })
@@ -216,11 +208,9 @@ async function deliver($: EngineInterface, s: State, run: Run, reply: Extract<Re
       note($, s, `delivery of ${reply.ids.join(',')} dropped: ${result.drop}`)
       return
     }
-    // submit can resolve after the turn started and the ack began; only a still-pending claim is merely queued
-    if (claim.phase === 'pending') claim.phase = 'queued'
     note($, s, `submitted ${reply.ids.join(',')}`)
   } catch (err) {
-    if (claim.phase === 'pending') s.claims.delete(nonce)
+    if (claim.phase === 'submitted') s.claims.delete(nonce)
     throw err
   }
 }
@@ -228,8 +218,9 @@ async function deliver($: EngineInterface, s: State, run: Run, reply: Extract<Re
 async function idleRun($: EngineInterface, s: State, run: Run): Promise<void> {
   try {
     await $.clock.sleep(IDLE_DELAY_MS, { signal: run.ctl.signal })
-    // A queued prompt would have started its turn by now. A claim still waiting for one was dropped (Esc, a cleared queue).
-    for (const [nonce, claim] of s.claims) if (claim.phase === 'queued') s.claims.delete(nonce)
+    // A submitted prompt has entered by now (`submit` resolves once it starts its turn or queues behind a running one),
+    // and a queued one would have started its turn. A claim still waiting for one was dropped (Esc, a cleared queue).
+    for (const [nonce, claim] of s.claims) if (claim.phase === 'submitted') s.claims.delete(nonce)
     run.phase = 'collecting'
     const reply = await collect($, s, run)
     if (reply === undefined) return
@@ -273,7 +264,7 @@ function mainTurnStarted($: EngineInterface, s: State, text: string): void {
   for (const [nonce, claim] of s.claims) {
     if (claim.phase === 'acking' || claim.phase === 'unacked' || !text.includes(nonce)) continue
     claim.phase = 'acking'
-    void enqueue(s, () => ackTask($, s, nonce, claim))
+    void ackTask($, s, nonce, claim) // acks are idempotent set unions in core, so their order does not matter
   }
 }
 
@@ -314,13 +305,10 @@ export const register: Register = on => {
     try {
       if (e.isInteractive === false || e.surface === null) s.inert = true
       else {
-        // Off the startup path; a reload is a fresh module copy and registers again.
+        // Off the startup path; a reload is a fresh module copy and registers again. No idle run starts here.
         $.command
           .register({ name: COMMAND, description: 'Show Meridian spawn-watch state' })
           .catch(err => note($, s, `command registration failed: ${describeError(err)}`))
-        // The session is idle until its first prompt: a resumed chat may owe results from before. `startRun` does
-        // not wait, so session.start stays unblocked; the first main-loop turn.start aborts the run.
-        startRun($, s)
       }
     } catch (err) {
       note($, s, `session.start error: ${describeError(err)}`)

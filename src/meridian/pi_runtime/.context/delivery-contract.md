@@ -15,21 +15,35 @@ one launch-scoped notification owner, and one Python public-event observer.
 | `delivery-receipts.json` | spawn watcher | `{v:1,spawn_id,messages:{delivery_id:work_ids[]}}`; exact native custom-message admission, never `sendMessage()` return. |
 | `delivery-observations.json` | Python | `{v:1,spawn_id,observed_message_ids:[]}`; exact public admission event observed after marking the parent active. |
 | `observed-spawns.json` (in `spawns/<parent>/`) | CLI `spawn wait`, `spawn ack`, observed terminal report-body show/status/report-show, and observed `spawn cancel` results reported as `cancelled` | v1 parent, durable `observed_spawn_ids`, diagnostic `waiting_spawn_ids`, `wait_reservations` keyed by caller with `owner_pid`, `owner_birth_epoch`, `expires_at_epoch`, `spawn_ids`. Only live matching process leases suppress temporarily. Writers always update the current location under the parent's published-spawn lock. `legacy-observed-spawns (#719)`: when `pi-bash/<parent>/` exists, writers mirror the same update to its old file under the old lock; every reader unions that copy's consumed IDs and leases because an older `spawn wait` may still write it. A damaged legacy copy counts as absent and may be replaced by a later mirror; a damaged current file is unknown, as for the other files. Shared beyond Pi: Python's model of the same schema is `lib/state/spawn_observations.py`, and Claude's `spawn collect` reads this file for every primary spawn of a chat, so a schema change updates the extension and that module in the same change. |
-| `cleared-spawns.json` | spawn watcher UI | v1 parent, finite `updated_at_ms`, `cleared_spawn_ids`; explicit dismissal. |
+| `cleared-spawns.json` | spawn watcher UI | v1 parent, finite `updated_at_ms`, `cleared_spawn_ids`; explicit dismissal. Reads union every owned parent's file; only the current spawn's file is written. |
 | `delivery-fault.json` | spawn watcher | `{v:1,spawn_id,operation:"scan"|"admission"|null,error:string|null}`; bounded delivery diagnostics independent of execution records. |
 
-The watcher derives children from canonical direct `parent_id` rows; an
-`originating_bash_id` on those rows transfers the launcher's obligation to its
-child. Logs, timers, origin sidecars, and remembered scans cannot supply child
-authority. A disposable candidate-ID set scopes frequent idle reads, but each row
-is reparsed and must still have the exact parent. Directories without state are
+The watcher treats canonical direct `parent_id` rows as this session's children and
+delivers only those launched with `launch_mode: "background"`: a launcher that waited for
+a foreground child already has its result, so only the launching Bash record can still
+owe one. That rule is core's `state.spawn_ownership.is_owed_child`, which the extension
+mirrors as `isBackgroundLaunch`; change the two together. An `originating_bash_id` on a
+background delivered row transfers the launcher's obligation
+to its child. Which parents count as direct is core's rule, not a second copy: a live
+primary owns the direct children of every primary generation of its chat, so a
+`--continue` resume delivers what the crashed generation launched, while a nested or
+spawned session owns only its own children. Meridian computes that parent set at launch
+and passes it in `_MERIDIAN_PI_OWED_PARENT_IDS`; the variable is absent outside a
+Meridian launch, where the watcher scopes itself to the current spawn. Logs, timers,
+origin sidecars, and remembered scans cannot supply child authority. A disposable
+candidate-ID set scopes frequent idle reads, but each row is reparsed and must still have
+an exact parent in that set. A terminal candidate leaves that set once it is consumed,
+and the all-generation consumption sources are read only while a terminal candidate is
+still undecided under the current spawn's own sources, so an idle tick stays proportional
+to what is still owed rather than to the chat's history. Directories without state are
 not idle-poll candidates; periodic discovery covers their delayed publication.
 Before sending a bare Bash result, discovery runs after observing its terminal
 state: cached absence cannot prove there is no canonical child owning that
 launcher's obligation. That specific scan's committed revision must remain current
 through synchronous claim/send; superseded Bash members stay owed without
 withholding independently revalidated spawn members. Successful tool boundaries do a
-fresh full discovery; startup/rebind requests the same discovery once idle. The
+fresh full discovery; the idle path requests the same discovery once a main-loop
+`agent_end` has opened an idle stretch. The
 nonrecursive root watcher accelerates idle discovery, and a 30-second full
 reconciliation recovers missed events or delayed state rows.
 If an ordinary 500 ms idle poll already owns the single flight at reconciliation,
@@ -117,7 +131,12 @@ not open a publication window or force continuation. Every shutdown stops watche
 timers before Pi invalidates the old context. Hot reload retains the launch-scoped
 owner and queued claims, then rebinds and restarts it at fresh session startup. A cold
 restart has no old native queue: unreceipted terminal results retry, receipts and
-explicit consumption stay consumed. A receipt without its Python public-event
+explicit consumption stay consumed. Neither a reload nor a restart delivers on its
+own: a session start (`startup`, `resume`, `reload`, `new`, `fork`) starts the
+watchers but opens no idle stretch, because a resumed lead's prompt cache is cold
+and an automatic turn before the user acts would re-bill the whole context for a
+status ping. Results owed from before it stay owed until the next main-loop
+`agent_end`. A receipt without its Python public-event
 observation blocks completion and fails with a bounded diagnostic; never invent
 the missing acknowledgement or delete the receipt to force readiness. Native
 session admission and disk writes cannot guarantee atomic exactly-once delivery
@@ -132,7 +151,15 @@ One Python reader in `lib/harness/pi_private_state.py` supplies both CLI owed-re
 discovery and this watcher with the same consumption set: admitted work IDs from
 `delivery-receipts.json`, CLI wait/ack/cancel/show/status/report-show observations from the current and legacy
 `observed-spawns.json`, and explicit dismissals from `cleared-spawns.json`. It reads
-each source once per parent and skips a damaged source independently. The watcher
-retains that failure in its evidence ledger; wait/collect report the skip and may repeat
-one header rather than fail or retry forever. With readable state, no-argument
-`spawn wait` and `spawn collect` do not replay a result already delivered or cleared.
+each source once per parent and skips a damaged source independently. Both union that
+set over every parent in the scope, so work consumed under a crashed generation stays
+consumed after the resume. A damaged source is never empty evidence, but the two sides
+fail differently: core's `owed_consumed_ids` warns once and skips it for any parent, while
+the watcher fails closed on a damaged source under the current spawn (a scan fault, so
+nothing publishes) and logs once and skips one under another generation, so a crashed
+generation's damaged file cannot silence delivery. The watcher writes only under the
+current spawn — its receipts, cleared ids, faults, and Bash records — and retains a
+skipped source in its evidence ledger; wait/collect report the skip and may repeat one
+header rather than fail or retry forever. With readable
+state, no-argument `spawn wait` and `spawn collect` do not replay a result already
+delivered or cleared.

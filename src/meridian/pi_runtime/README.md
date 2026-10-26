@@ -68,15 +68,21 @@ Use a cheap model and distinguish live smoke from automated fixture coverage.
 - **`/ps`** lists managed Bash tasks; `/ps:logs`, `/ps:kill`, `/ps:clear`, and
   `/ps:b` (alias `/ps:background`) inspect/control them. Waiting is available
   through `bash_manage(action='wait', bash_id='b-…')`, not a `/ps` wait command.
-- **`/spawn`** lists canonical direct child spawns; `/spawn:show`, `/spawn:log`,
-  `/spawn:cancel`, and `/spawn:clear` inspect/control them.
+- **`/spawn`** lists the canonical direct children of the parents this session owns,
+  including foreground children and results already delivered; `/spawn:clear` hides
+  finished ones. `/spawn:show`, `/spawn:log`, and `/spawn:cancel` inspect/control a
+  child. A resumed primary owns every primary generation of its chat, so its list
+  includes what earlier generations launched.
 - **`/spawn:wait <p-id>`** waits through the same store as `meridian spawn wait`
   (30-minute subprocess cap; CLI checkpoints can return earlier).
 - Tracked background Bash sends an advisory one-shot ping after
   `_MERIDIAN_PI_TASK_PING_INTERVAL_MS`. Log activity rearms it unless
   `_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY=false`.
 
-`/reload` preserves live shell ownership and queued result-delivery claims.
+`/reload` preserves live shell ownership and queued result-delivery claims, but
+like a cold restart it delivers nothing until the lead's next turn ends: a
+resumed session's prompt cache is cold. Results owed from before it stay owed
+and arrive after the next main-loop `agent_end`.
 A cold process restart preserves records but cannot recover process handles:
 formerly running Bash rows show `ownership_lost`. Inspect those processes manually
 or explicitly detach the row to release tracking. Persisted PIDs never authorize

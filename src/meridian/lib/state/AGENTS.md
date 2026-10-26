@@ -289,6 +289,11 @@ model lookups rather than scanning observations once per row.
   with the legacy `pi-bash/` one. Normal wait/ack writers block for that lock;
   best-effort shown-result observations wait up to one second and preserve their
   output when the lock or filesystem is unavailable.
+- `spawn_ownership.py` — the one rule for which parents a delivery caller owns: a live
+  primary owns every primary generation of its chat, anyone else owns only itself. Also
+  owns `is_owed_child` (a child is owed only when `launch_mode == "background"`), which
+  the Pi spawn-watch extension mirrors as `isBackgroundLaunch`. `spawn collect`, the Pi
+  launch's spawn-watch scope, and the Pi drain all read it here.
 - `reaper.py` — root-only repair that claims dead launches, persists their projected
   outcome through the application service, then cleans claimed process scopes.
 

@@ -259,7 +259,7 @@ values to force-kill any surviving process tree.
 Inject flows through the control socket:
 
 ```
-meridian spawn inject <id> --message "..."
+meridian spawn message <id> --message "..."
   → fixed per-user POSIX directory / hashed control socket
   → ControlSocketServer._handle_client()
   → SpawnManager.inject()
