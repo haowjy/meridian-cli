@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.cli import spawn_inject
+from meridian.cli import spawn_message
 from meridian.lib.harness.claude_boundary import claude_boundary_journal_path
 from meridian.lib.state import spawn_store
 
@@ -35,20 +35,20 @@ async def test_non_claude_primary_without_route_fails_immediately(
         worker_pid=12345,
     )
     monkeypatch.setattr(
-        spawn_inject,
+        spawn_message,
         "resolve_runtime_root_and_config",
         lambda _root: (tmp_path, object()),
     )
-    monkeypatch.setattr(spawn_inject, "resolve_runtime_root", lambda _root: tmp_path)
+    monkeypatch.setattr(spawn_message, "resolve_runtime_root", lambda _root: tmp_path)
 
     with pytest.raises(SystemExit):
         await asyncio.wait_for(
-            spawn_inject.inject_message("p1", "hello"),
+            spawn_message.send_message("p1", "hello"),
             timeout=1,
         )
 
     assert capsys.readouterr().err == (
-        "Error: codex primaries have no inject route yet (see #498)\n"
+        "Error: codex primaries have no message route yet (see #498)\n"
     )
 
 
@@ -103,23 +103,44 @@ async def test_claude_primary_posts_to_published_inbox(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        spawn_inject,
+        spawn_message,
         "resolve_runtime_root_and_config",
         lambda _root: (tmp_path, object()),
     )
-    monkeypatch.setattr(spawn_inject, "resolve_runtime_root", lambda _root: tmp_path)
+    monkeypatch.setattr(spawn_message, "resolve_runtime_root", lambda _root: tmp_path)
+
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p2",
+        chat_id="c1",
+        model="test-model",
+        agent="test-agent",
+        harness="claude",
+        prompt="child",
+    )
 
     try:
-        await spawn_inject.inject_message("p1", "Reply exactly ACK")
+        await spawn_message.send_message(
+            "p1", "Reply exactly ACK", sender_spawn_id="p2"
+        )
     finally:
         server.close()
         receiver.join(timeout=2)
 
     assert not receiver.is_alive()
+    framed = (
+        '[Meridian] Message from spawn p2 (chat c1). To answer, run '
+        '`meridian spawn message p2 --message "..."`.\n\nReply exactly ACK'
+    )
     assert received == [
-        b'{"type":"user","message":{"role":"user","content":"Reply exactly ACK"}}\n'
+        json.dumps(
+            {"type": "user", "message": {"role": "user", "content": framed}},
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
     ]
     assert capsys.readouterr().out == (
         "Message posted to primary p1's Claude inbox\n"
-        "Claude may hold it for approval when that session bypasses permission prompts.\n"
+        "Claude may hold it for approval when that session bypasses permission prompts; "
+        'set crossSessionInbound to "accept" in Claude settings to skip the prompt.\n'
     )

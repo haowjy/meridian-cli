@@ -27,17 +27,24 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `meridian spawn cancel ID` | Cancel a running spawn |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
-| `meridian spawn inject ID --message "text"` | Post a message to a running streaming spawn or supported primary inbox |
+| `meridian spawn message ID --message "text"` | Post a message to a running streaming spawn or supported primary inbox |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children ID` | List direct child spawns |
 
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
-`spawn inject` uses the control endpoint for spawned sessions. For a live Claude
+`spawn message` uses the control endpoint for spawned sessions. For a live Claude
 primary, it posts to Claude Code's session inbox; the command confirms only that
-the message was posted, not delivered. Claude may hold the message for human
-approval when that session bypasses permission prompts. Other primary harnesses
-fail immediately because they do not yet expose an inject route
+the message was posted, not delivered. Claude holds the message for human approval
+when that session bypasses permission prompts and `crossSessionInbound` is not
+`accept`; to skip the prompt, set `"crossSessionInbound": "accept"` in
+`~/.claude/settings.json`. This applies to every peer message, not only
+Meridian's; [Claude's inbound gate](harness-integration.md#primary-message-delivery-and-claudes-inbound-gate)
+covers the values and the trade-off. Each injected
+message opens with a `[Meridian]` line naming the sending spawn and, when the
+sender can receive one, the `meridian spawn message <id>` command that answers
+it. Other primary harnesses
+fail immediately because they do not yet expose a message route
 ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
 
 Common `spawn` flags:

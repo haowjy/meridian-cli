@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.cli import spawn_inject as spawn_inject_module
+from meridian.cli import spawn_message as spawn_message_module
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent, StopResult
@@ -206,12 +206,12 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         start_connection=_delayed_background_start,
     )
     monkeypatch.setattr(
-        spawn_inject_module,
+        spawn_message_module,
         "resolve_runtime_root_and_config",
         lambda _root: (project_root, object()),
     )
     monkeypatch.setattr(
-        spawn_inject_module,
+        spawn_message_module,
         "resolve_runtime_root",
         lambda _root: control_root,
     )
@@ -234,7 +234,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
 
     try:
         await asyncio.wait_for(
-            spawn_inject_module.inject_message(str(spawn_id), "SECOND"),
+            spawn_message_module.send_message(str(spawn_id), "SECOND"),
             timeout=10.0,
         )
         await asyncio.wait_for(launch_task, timeout=5.0)
@@ -246,7 +246,10 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert "Message delivered" in capsys.readouterr().out
-        assert received_messages == ["SECOND"]
+        assert received_messages == [
+            "[Meridian] Message with no sender identity; it has no reply "
+            "address.\n\nSECOND"
+        ]
     finally:
         if not launch_task.done():
             launch_task.cancel()
