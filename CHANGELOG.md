@@ -6,16 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.14.10] - 2026-10-26
 
-## [0.14.9] - 2026-10-26
-
 ### Fixed
-- Pi spawn-watch now delivers a crashed generation's children after `--continue` resumes
-  the chat, matching Claude. Core computes the parent scope and hands it to the
-  extension; the extension no longer owns only the newest generation's children and no
-  longer re-notifies a foreground child its launcher already waited for. One core rule
-  now says a child is owed only when it was launched in the background, shared by
-  `spawn collect`, the extension and the Pi drain, so a spawned Pi session that runs a
-  foreground child no longer waits out the delivery window and fails.
 - OpenCode spawns no longer fail after 120 s of stream silence while a long shell
   tool is still running: on a liveness timeout the connection asks the server
   whether the session is still executing (`GET /api/session/active` on 2.x,
@@ -29,6 +20,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   long the stream was actually silent, instead of the generic
   `connection_closed_without_terminal_event`, and a stall that lands during
   teardown no longer marks a cancelled spawn failed.
+
+## [0.14.9] - 2026-10-26
+
+### Fixed
+- Pi spawn-watch now delivers a crashed generation's children after `--continue` resumes
+  the chat, matching Claude. Core computes the parent scope and hands it to the
+  extension; the extension no longer owns only the newest generation's children and no
+  longer re-notifies a foreground child its launcher already waited for. One core rule
+  now says a child is owed only when it was launched in the background, shared by
+  `spawn collect`, the extension and the Pi drain, so a spawned Pi session that runs a
+  foreground child no longer waits out the delivery window and fails.
 
 ## [0.14.8] - 2026-10-26
 
