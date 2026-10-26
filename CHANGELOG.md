@@ -23,6 +23,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `# Available Skills` listing, so it survives a continue. A continue also applies a
   new `--goal`, a foreground/background switch, or a primary/spawn surface change
   instead of hiding it behind a replayed prompt.
+- `spawn --fork` keeps the source's task directory instead of falling back to the
+  control checkout, so a forked agent edits the same worktree its source did.
 
 ## [0.14.7] - 2026-10-26
 
