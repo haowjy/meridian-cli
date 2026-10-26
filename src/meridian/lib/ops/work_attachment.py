@@ -14,10 +14,7 @@ from meridian.lib.core.lifecycle import get_hook_dispatcher
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.paths import RuntimePaths, resolve_project_paths
-from meridian.lib.state.session_work_link import (
-    publish_session_work_link,
-    session_work_target,
-)
+from meridian.lib.state.session_work_link import refresh_session_work_link
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry import emit_telemetry
 
@@ -97,25 +94,27 @@ def set_session_work_attachment(
     if not normalized or not session_store.session_exists(runtime_root, normalized):
         return
     owners = [
-        row
-        for row in spawn_store.list_live_primaries(runtime_root)
-        if row.chat_id and row.continue_chat_id == normalized
+        owner
+        for owner in spawn_store.list_live_primaries(runtime_root)
+        if owner.chat_id and owner.continue_chat_id == normalized
     ]
-    entry_chats = [row.chat_id for row in owners if row.chat_id]
     paths = RuntimePaths.from_root_dir(runtime_root)
     with lock_file(paths.sessions_flock):
-        for chat in dict.fromkeys((normalized, *entry_chats)):
+        for chat in dict.fromkeys(
+            (normalized, *(owner.chat_id for owner in owners if owner.chat_id))
+        ):
             session_store.update_session_work_id(runtime_root, chat, work_id)
-        if not owners:
-            return
-        target = session_work_target(
-            project_root,
-            runtime_root,
-            normalized,
-            ambient_spawn_id=owners[0].id,
-        )
-        for entry_chat in entry_chats:
-            publish_session_work_link(runtime_root, entry_chat, target)
+        # The row is written before the link: the link is a projection of it, and
+        # both are under the sessions lock so a concurrent switch cannot interleave
+        # them. Only a primary owns a link, and only its entry chat's path is named.
+        for owner in owners:
+            if owner.chat_id:
+                refresh_session_work_link(
+                    project_root,
+                    runtime_root,
+                    owner.chat_id,
+                    ambient_spawn_id=owner.id,
+                )
 
 
 def activate_work(

@@ -2,19 +2,20 @@
 
 The link is a projection of a primary chat's work attachment, never authority:
 the session row and the work item decide the target, and every primary launch
-rebuilds the link before naming it. Its path never changes, so
+and work command repoints it. Its path never changes, so
 ``MERIDIAN_ACTIVE_WORK_DIR`` and the system prompt can name it and stay correct
 across ``work start``/``switch``/``rename``, including a Claude ``/clear`` that
 moves the conversation to a new chat.
 
 The link belongs to a primary execution's *entry* chat, the one its session scope
-locks, so it survives ``--continue`` of that chat. ``work done``/``delete`` detach
-the chat and point the link at the primary spawn's ambient directory, so the
-stable path stays writable with no active item.
+locks, so it survives ``--continue`` of that chat. A work command on any chat of
+the execution repoints that one link. ``work done``/``delete`` detach the chats
+and point the link at the primary spawn's ambient directory, so the stable path
+stays writable with no active item.
 
 Nothing removes the link: it is a rebuildable projection, and a session that ends
 leaves it pointing at a valid directory that the next launch of the chat
-repoints.
+repoints. Only removing the chat or the runtime root removes it.
 """
 
 from __future__ import annotations
@@ -27,6 +28,8 @@ from uuid import uuid4
 
 import structlog
 
+from meridian.lib.platform.locking import lock_file
+from meridian.lib.state import session_store
 from meridian.lib.state.paths import (
     RuntimePaths,
     resolve_ambient_work_dir,
@@ -62,8 +65,6 @@ def session_work_target(
     the chat. The ambient directory is created so the link never dangles.
     """
 
-    from meridian.lib.state import session_store
-
     record = session_store.chat_record(runtime_root, chat_id)
     work_id = (record.active_work_id if record is not None else None) or ""
     if work_id.strip():
@@ -73,7 +74,35 @@ def session_work_target(
     return target
 
 
-def publish_session_work_link(runtime_root: Path, chat_id: str, target: Path) -> Path:
+def refresh_session_work_link(
+    project_root: Path,
+    runtime_root: Path,
+    chat_id: str,
+    *,
+    ambient_spawn_id: str,
+) -> Path:
+    """Point a chat's link at its current attachment.
+
+    Reading the attachment and swapping the link under the sessions lock keeps a
+    concurrent work command from leaving the link on the item it just replaced.
+    Callers that already hold the lock (a work command writing the row first) get
+    it reentrantly.
+    """
+
+    with lock_file(RuntimePaths.from_root_dir(runtime_root).sessions_flock):
+        return _publish_session_work_link(
+            runtime_root,
+            chat_id,
+            session_work_target(
+                project_root,
+                runtime_root,
+                chat_id,
+                ambient_spawn_id=ambient_spawn_id,
+            ),
+        )
+
+
+def _publish_session_work_link(runtime_root: Path, chat_id: str, target: Path) -> Path:
     """Point a chat's work link at *target*.
 
     Atomic swap: build the new link under a temporary name in the same directory,
@@ -115,7 +144,7 @@ def _sweep_staged_links(link: Path) -> None:
 
 
 __all__ = [
-    "publish_session_work_link",
+    "refresh_session_work_link",
     "session_work_link_path",
     "session_work_target",
 ]

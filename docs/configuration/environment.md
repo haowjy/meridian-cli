@@ -51,8 +51,8 @@ overrides — not `-C`, which retargets the entire project/control root.
 | `MERIDIAN_TASK_DIR` | Inherited source-edit directory; set/clear via `meridian task-dir` |
 | `MERIDIAN_CONFIG` | User config overlay path |
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/`) |
-| `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
-| `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory. Primary sessions get a stable per-session symlink that follows `work start`/`switch`/`rename` and returns to the ambient spawn scope after `work done`/`delete`; spawns get the launch-bound work-item or ambient spawn scope (`spawns/p<N>/work`) |
+| `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists; a primary session reads the item from its chat's session row instead of this variable |
+| `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory. Primary sessions get a stable per-chat symlink that follows `work start`/`switch`/`rename`, survives a Claude `/clear` or `/resume` and the session exiting, and returns to the ambient spawn scope after `work done`/`delete`; spawns get the launch-bound work-item or ambient spawn scope (`spawns/p<N>/work`) |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
 | `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |

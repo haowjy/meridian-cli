@@ -23,6 +23,7 @@ from meridian.lib.artifact.store import (
     save_serves,
     serves_lock_path,
 )
+from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.terminate import terminate_tree_sync
@@ -305,8 +306,6 @@ def _active_work_id() -> str | None:
     ``work switch`` after launch moves it, and the row is what ``work current``
     answers with.
     """
-
-    from meridian.lib.core.resolved_context import ResolvedContext
 
     return ResolvedContext.from_environment().work_id or None
 

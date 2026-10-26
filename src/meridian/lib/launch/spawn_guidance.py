@@ -86,15 +86,18 @@ def build_capabilities_prompt(
     control_root: Path,
     task_dir: Path,
     work_id: str | None = None,
+    work_dir: Path | None = None,
+    chat_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
 ) -> str:
     """Render the stable capability and directory guidance block.
 
-    Only values shared by every launch of this agent in this work context belong
-    here. Per-launch identity (run ID, chat ID, ambient work directory) goes in
-    the user turn through :func:`build_launch_facts_prompt`: one changed byte in
-    the system prompt invalidates the harness prompt cache for the conversation.
+    Only values shared by every launch of this conversation belong here: an exact
+    continue recomposes the block from the launch snapshot, and a fresh launch of
+    the same agent in the same work context must share the cached prefix. Per-launch
+    identity (run ID, the ambient no-work-item scratch directory) goes in the first
+    user turn through :func:`build_launch_facts_prompt`.
     """
 
     if resolved_context is None:
@@ -124,14 +127,40 @@ def build_capabilities_prompt(
 
     resolved_work_id = (work_id or "").strip()
     if resolved_work_id:
+        if work_dir is not None:
+            lines.append(
+                f"- Active work item `{resolved_work_id}`; work directory "
+                f"`{work_dir.as_posix()}` (`$MERIDIAN_ACTIVE_WORK_DIR`); inspect: "
+                "`meridian work current`."
+            )
+        else:
+            lines.append(
+                f"- Active work item `{resolved_work_id}`; its work directory is in "
+                "`$MERIDIAN_ACTIVE_WORK_DIR` (inspect: `meridian work current`)."
+            )
+    elif work_dir is not None:
+        # A caller may name a directory that outlives the launch — a primary's
+        # per-chat work link — but never this launch's ambient spawn directory.
         lines.append(
-            f"- Active work item `{resolved_work_id}`; its scratch directory is in "
-            "`$MERIDIAN_ACTIVE_WORK_DIR` (inspect: `meridian work current`)."
+            f"- `{work_dir.as_posix()}` — work directory "
+            "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
+            "directory it resolves to: the link follows `work start`, `work switch`, "
+            "and `work rename`."
         )
     else:
+        # The ambient scratch directory is per-launch, so it is named in the user turn
+        # when the child receives one. Do not hard-code the env var's value: an exact
+        # continue with no source work suppresses it.
         lines.append(
-            "- No active work item; this spawn's scratch directory is in "
-            "`$MERIDIAN_ACTIVE_WORK_DIR` (inspect: `meridian work current`)."
+            "- No active work item; inspect: `meridian work current` for this run's "
+            "work directory."
+        )
+
+    resolved_chat_id = (chat_id or "").strip()
+    if resolved_chat_id:
+        lines.append(
+            f"- `{resolved_chat_id}` — the conversation that launched this run "
+            "(`$MERIDIAN_CHAT_ID`), parent for handoff `--from`."
         )
 
     task_path = task_dir.as_posix()
@@ -167,9 +196,9 @@ def build_capabilities_prompt(
         )
 
     lines.append(
-        "- Your run ID, root conversation ID, and actual work directory are in "
-        "`$MERIDIAN_SPAWN_ID`, `$MERIDIAN_CHAT_ID`, and `$MERIDIAN_ACTIVE_WORK_DIR`; "
-        "read them with `printenv NAME` when a command needs them."
+        "- Your run ID is in `$MERIDIAN_SPAWN_ID`; a launch with a first user turn also "
+        "gets it in that turn's `# Meridian run` block. If the shell refuses variables, "
+        "`meridian spawn list` lists run IDs."
     )
 
     other_context: list[str] = []
@@ -192,14 +221,15 @@ def build_capabilities_prompt(
 def build_launch_facts_prompt(
     *,
     spawn_id: str | None = None,
-    chat_id: str | None = None,
     active_work_dir: Path | None = None,
 ) -> str:
-    """Render per-launch identity facts for the user turn.
+    """Render per-launch identity for the first user turn.
 
-    These values change on a fresh launch or an exact continue. Keeping them out
-    of the system prompt lets every launch of the same agent and work context
-    send byte-identical system bytes, so the harness prompt cache survives.
+    Only values that change between launches of the same conversation belong here:
+    the run ID and, with no work item, the ambient scratch directory that lives
+    under this launch's spawn directory. Keeping them out of the system prompt lets
+    every launch of the same agent and work context send byte-identical system
+    bytes, so the harness prompt cache survives.
     """
 
     lines: list[str] = []
@@ -209,42 +239,14 @@ def build_launch_facts_prompt(
             f"- `{run_id}` — your run ID (`$MERIDIAN_SPAWN_ID`), the ID your caller "
             "holds; use it in names."
         )
-    current_chat_id = (chat_id or "").strip()
-    if current_chat_id:
-        lines.append(
-            f"- `{current_chat_id}` — root conversation ID (`$MERIDIAN_CHAT_ID`), parent "
-            "for handoff `--from`."
-        )
     if active_work_dir is not None:
         lines.append(
-            f"- `{active_work_dir.as_posix()}` — work directory for scratch/artifacts "
+            f"- `{active_work_dir.as_posix()}` — scratch directory for this run "
             "(`$MERIDIAN_ACTIVE_WORK_DIR`); inspect: `meridian work current`."
         )
     if not lines:
         return ""
     return "\n".join(("# Meridian run", "", *lines))
-
-
-def build_work_link_tail(link: Path) -> str:
-    """Render the primary's stable work path as the system prompt's last block.
-
-    A primary may launch with no first user turn (a bare ``meridian``), and its
-    tools match literal paths, so the env var alone does not get the path to the
-    agent. The link goes last so everything before it still caches across launches
-    of the chat. The item name is left out: it changes as often as ``work current``
-    can be asked, and a pinned prompt would keep the launch-time one.
-    """
-
-    return "\n".join(
-        (
-            "# Meridian work",
-            "",
-            f"Scratch and artifacts go under `{link.as_posix()}` "
-            "(also `$MERIDIAN_ACTIVE_WORK_DIR`). Write that literal path, never the "
-            "directory it resolves to: the link follows `work start`, `work switch`, "
-            "and `work rename`, and `meridian work current` names the active item.",
-        )
-    )
 
 
 def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
@@ -338,6 +340,5 @@ __all__ = [
     "build_guidance_blocks",
     "build_launch_facts_prompt",
     "build_spawn_usage_contract",
-    "build_work_link_tail",
     "has_spawn_capability",
 ]

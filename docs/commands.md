@@ -222,7 +222,7 @@ Runner-history pruning is explicit, never automatic; see
 | Command | Description |
 | ------- | ----------- |
 | `meridian work` | Dashboard — active work items and spawns |
-| `meridian work current` | Print the active work scope directory (a primary session's stable work link, otherwise the named work item or ambient spawn scope) |
+| `meridian work current` | Print the active work scope directory (a primary session's attached work item, otherwise its launch-bound or ambient spawn scope) |
 | `meridian work path RELPATH` | Materialize a path under the active scope and print its absolute path (creates parent dirs) |
 | `meridian work root` | Print the configured work root (context tree for named work items) |
 | `meridian work start LABEL` | Create a work item if missing, or switch to it |
