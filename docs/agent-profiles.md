@@ -179,9 +179,12 @@ Fallback only activates when:
 - the head candidate's harness is unavailable, **and**
 - the user did not explicitly set a model with `-m` / `MERIDIAN_MODEL`
 
-Legacy `fallback-order` and `fanout` are rejected. Order `model-policies`
-rules directly and add `no-fallback: true` for rules that should never be
-considered for fallback.
+Profile `fallback-order` and `fanout` are gone in schema v1: sync drops them
+from pre-v1 content, and a `schema = 1` package fails on them. Order
+`model-policies` rules directly and add `no-fallback: true` for rules that
+should never be considered for fallback; name fan-out agents in
+[`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing). See
+[upgrading](upgrading.md#if-you-write-profiles-or-skills).
 
 ## Compaction by harness
 
