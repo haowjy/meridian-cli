@@ -212,14 +212,15 @@ Variable content in the system prompt also destroys prompt-cache locality.
 See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) for the full rationale.
 
 **Don't put per-launch values in the system prompt.** Per-launch values stay out;
-per-conversation values may stay in. The run ID, the ambient no-work-item scratch
-directory, and the spawn goal contract go in the first user turn
-(`build_launch_facts_prompt()` and `_SharedComposition.task_contract`). The chat ID,
-a work item's directory, and a primary's stable per-chat work link stay in the
-capability block. An exact continue recomposes the system prompt from the launch snapshot
-(profile, loaded and available skills, inventory, execution policy, tools); identical
-inputs produce identical bytes, so a fresh launch shares the cached prefix with its
-siblings and a continue keeps the conversation's. Only a real identity change — a new
+per-conversation values may stay in. The run ID, a spawn's ambient no-work-item
+scratch directory, and the spawn goal contract go in the first user turn
+(`build_launch_facts_prompt()` and `_SharedComposition.task_contract`). A primary's
+ambient directory is named by its capability-block link instead. The chat ID, a work
+item's directory, and that link stay in the capability block. An exact continue
+recomposes the system prompt from the launch snapshot (profile, loaded and available
+skills, inventory, execution policy, tools); identical inputs produce identical
+bytes, so a fresh launch shares the cached prefix with its siblings and a continue
+keeps the conversation's. Only a real identity change — a new
 goal, launch mode, surface, or config — may change them.
 
 ## Depth

@@ -93,13 +93,16 @@ def set_session_work_attachment(
     normalized = chat_id.strip()
     if not normalized or not session_store.session_exists(runtime_root, normalized):
         return
-    owners = [
-        owner
-        for owner in spawn_store.list_live_primaries(runtime_root)
-        if owner.chat_id and owner.continue_chat_id == normalized
-    ]
     paths = RuntimePaths.from_root_dir(runtime_root)
     with lock_file(paths.sessions_flock):
+        # Read the owners under the same lock as the row writes: a chat observation
+        # copies a source row to its new chat while holding this lock, so listing
+        # outside it could miss the chat the primary just moved to.
+        owners = [
+            owner
+            for owner in spawn_store.list_live_primaries(runtime_root)
+            if owner.chat_id and owner.continue_chat_id == normalized
+        ]
         for chat in dict.fromkeys(
             (normalized, *(owner.chat_id for owner in owners if owner.chat_id))
         ):

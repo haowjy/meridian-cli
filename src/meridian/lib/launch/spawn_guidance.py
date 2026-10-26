@@ -96,8 +96,9 @@ def build_capabilities_prompt(
     Only values shared by every launch of this conversation belong here: an exact
     continue recomposes the block from the launch snapshot, and a fresh launch of
     the same agent in the same work context must share the cached prefix. Per-launch
-    identity (run ID, the ambient no-work-item scratch directory) goes in the first
-    user turn through :func:`build_launch_facts_prompt`.
+    identity (run ID, and a spawn's ambient no-work-item scratch directory) goes in
+    the first user turn through :func:`build_launch_facts_prompt`; a primary's
+    per-chat work link stays here because it outlives the launch.
     """
 
     if resolved_context is None:
@@ -226,10 +227,11 @@ def build_launch_facts_prompt(
     """Render per-launch identity for the first user turn.
 
     Only values that change between launches of the same conversation belong here:
-    the run ID and, with no work item, the ambient scratch directory that lives
-    under this launch's spawn directory. Keeping them out of the system prompt lets
-    every launch of the same agent and work context send byte-identical system
-    bytes, so the harness prompt cache survives.
+    the run ID and, for a spawn with no work item, the ambient scratch directory
+    that lives under this launch's spawn directory. A primary names its per-chat
+    work link in the system prompt instead. Keeping per-launch values out of the
+    system prompt lets every launch of the same agent and work context send
+    byte-identical system bytes, so the harness prompt cache survives.
     """
 
     lines: list[str] = []
