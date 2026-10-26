@@ -85,18 +85,6 @@ def resolve_bound_work_scope(
     return WorkScope(kind="ambient_spawn", identifier=child_spawn_id, root=root)
 
 
-def names_no_directory(path: Path) -> bool:
-    """Whether *path* is a link whose target is gone.
-
-    The session work link is the one bound directory that can outlive its
-    target: an older build's ``work done``/``delete`` or an external removal can
-    leave it dangling. It is a dead work-item scope only while an ID still names
-    it; an ambient scope's directory is simply not created yet.
-    """
-
-    return path.is_symlink() and not path.exists()
-
-
 def resolve_work_scope_from_parts(
     *,
     project_root: Path | None,
@@ -114,8 +102,6 @@ def resolve_work_scope_from_parts(
     """
 
     if bound_work_dir is not None:
-        if work_id and names_no_directory(bound_work_dir):
-            return None
         if work_id:
             return WorkScope(kind="work_item", identifier=work_id, root=bound_work_dir)
         if spawn_id is not None:
@@ -151,7 +137,6 @@ __all__ = [
     "SCOPE_PROMPTS_DIRNAME",
     "WorkScope",
     "WorkScopeKind",
-    "names_no_directory",
     "resolve_bound_work_scope",
     "resolve_work_scope_from_parts",
 ]

@@ -81,6 +81,7 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.session_work_link import (
     publish_session_work_link,
     session_work_link_path,
+    session_work_target,
 )
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
@@ -149,6 +150,7 @@ from .spawn_guidance import (
     build_guidance_blocks,
     build_launch_facts_prompt,
     build_spawn_usage_contract,
+    build_work_link_tail,
     has_spawn_capability,
 )
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
@@ -856,6 +858,7 @@ def _reproject_capabilities_at_bind(
     control_root: Path,
     task_dir: Path,
     bound_work_dir: Path | None,
+    work_link: Path | None,
     spawn_id: str,
     chat_id: str | None,
     work_id: str | None,
@@ -869,14 +872,19 @@ def _reproject_capabilities_at_bind(
     ``saved_system_prompt`` is the exact prompt an exact continue must replay. It is
     applied after re-projection so bind-time capabilities cannot change the cached
     system bytes.
+
+    ``work_link`` is a primary's stable work link. It is named in the last block of
+    the system prompt rather than the user turn: a bare primary launch has no first
+    user turn, its tools match literal paths, and everything before the tail stays
+    byte-identical across launches of the chat.
     """
 
     launch_facts = build_launch_facts_prompt(
         spawn_id=spawn_id,
         chat_id=chat_id,
         active_work_dir=bound_work_dir,
-        work_id=work_id,
     )
+    work_link_tail = build_work_link_tail(work_link) if work_link is not None else ""
     if composed_content is None or not has_capabilities_block(composed_content.guidance_blocks):
         existing_user_turn = (prompt_payload.user_turn_content or "").strip()
         user_turn = existing_user_turn
@@ -884,11 +892,25 @@ def _reproject_capabilities_at_bind(
         if launch_facts and existing_user_turn:
             user_turn = join_content_blocks(existing_user_turn, launch_facts)
             updated_payload = replace(updated_payload, user_turn_content=user_turn)
+        updated_projected = projected_content
+        if work_link_tail:
+            if updated_projected is not None:
+                updated_projected = replace(
+                    updated_projected,
+                    system_prompt=join_content_blocks(
+                        updated_projected.system_prompt, work_link_tail
+                    ),
+                )
+            updated_payload = replace(
+                updated_payload,
+                appended_system_prompt=join_content_blocks(
+                    updated_payload.appended_system_prompt or "", work_link_tail
+                ),
+            )
         if saved_system_prompt is not None:
             updated_payload = replace(
                 updated_payload, appended_system_prompt=saved_system_prompt
             )
-        updated_projected = projected_content
         if updated_projected is not None and saved_system_prompt is not None:
             updated_projected = replace(
                 updated_projected, system_prompt=saved_system_prompt
@@ -915,6 +937,11 @@ def _reproject_capabilities_at_bind(
             user_turn_content=join_content_blocks(
                 updated_projected.user_turn_content, launch_facts
             ),
+        )
+    if work_link_tail:
+        updated_projected = replace(
+            updated_projected,
+            system_prompt=join_content_blocks(updated_projected.system_prompt, work_link_tail),
         )
     if saved_system_prompt is not None:
         updated_projected = replace(updated_projected, system_prompt=saved_system_prompt)
@@ -1760,22 +1787,34 @@ def bind_launch_context(
     suppresses_ambient_work = requested_work_id is None and _suppresses_ambient_work(
         resolved_request
     )
-    bound_work_target = _resolve_bound_active_work_dir(
-        project_root=project_paths.project_root,
-        requested_work_id=requested_work_id,
-        child_spawn_id=bindings.spawn_id,
-        runtime_root=runtime_root,
-    )
-    # A primary's prompt and MERIDIAN_ACTIVE_WORK_DIR name a per-chat link that work
-    # start/switch/rename repoint, so neither goes stale while the session runs.
-    # Children keep their launch-bound directory: a child inherits its parent's chat
-    # id, so a chat-keyed link would be shared with the parent it belongs to.
+    # A primary's environment and prompt name a per-chat link that work
+    # start/switch/rename repoint, so neither goes stale while the session
+    # runs. Children keep their launch-bound directory: a child inherits its
+    # parent's chat id, so a chat-keyed link would be shared with the parent.
     bound_work_link: Path | None = None
-    if is_primary_launch and bindings.chat_id and bound_work_target is not None:
+    if is_primary_launch and bindings.chat_id:
         bound_work_link = session_work_link_path(runtime_root, bindings.chat_id)
         if not bindings.dry_run:
-            publish_session_work_link(runtime_root, bindings.chat_id, bound_work_target)
-    bound_active_work_dir = bound_work_link or bound_work_target
+            publish_session_work_link(
+                runtime_root,
+                bindings.chat_id,
+                session_work_target(
+                    project_paths.project_root,
+                    runtime_root,
+                    bindings.chat_id,
+                    ambient_spawn_id=bindings.spawn_id,
+                ),
+            )
+    bound_work_target = (
+        None
+        if bound_work_link is not None
+        else _resolve_bound_active_work_dir(
+            project_root=project_paths.project_root,
+            requested_work_id=requested_work_id,
+            child_spawn_id=bindings.spawn_id,
+            runtime_root=runtime_root,
+        )
+    )
 
     launch_snapshot = resolved_request.launch_policy_snapshot
     saved_system_prompt = (
@@ -1793,7 +1832,8 @@ def bind_launch_context(
         project_root=project_paths.project_root,
         control_root=resolved_control_root,
         task_dir=directory_context.logical_task_cwd,
-        bound_work_dir=bound_active_work_dir,
+        bound_work_dir=bound_work_target,
+        work_link=bound_work_link,
         spawn_id=bindings.spawn_id,
         chat_id=bindings.chat_id or base_env.get("MERIDIAN_CHAT_ID"),
         work_id=requested_work_id,
@@ -1883,7 +1923,10 @@ def bind_launch_context(
     if suppresses_ambient_work:
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_DIR", None)
-    elif bound_work_link is not None:
+    if bound_work_link is not None:
+        # A primary's work lives on its chat row, so a launch-time ID would shadow
+        # every later `work switch`; the link is the one path its prompt names.
+        child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)
         child_context_env["MERIDIAN_ACTIVE_WORK_DIR"] = bound_work_link.as_posix()
     effective_work_id = (
         child_context_env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip() or requested_work_id

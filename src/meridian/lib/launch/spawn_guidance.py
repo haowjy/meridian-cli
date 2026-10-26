@@ -194,7 +194,6 @@ def build_launch_facts_prompt(
     spawn_id: str | None = None,
     chat_id: str | None = None,
     active_work_dir: Path | None = None,
-    work_id: str | None = None,
 ) -> str:
     """Render per-launch identity facts for the user turn.
 
@@ -217,14 +216,35 @@ def build_launch_facts_prompt(
             "for handoff `--from`."
         )
     if active_work_dir is not None:
-        item = f" for work item `{work_id}`" if (work_id or "").strip() else ""
         lines.append(
             f"- `{active_work_dir.as_posix()}` — work directory for scratch/artifacts "
-            f"(`$MERIDIAN_ACTIVE_WORK_DIR`{item}); inspect: `meridian work current`."
+            "(`$MERIDIAN_ACTIVE_WORK_DIR`); inspect: `meridian work current`."
         )
     if not lines:
         return ""
     return "\n".join(("# Meridian run", "", *lines))
+
+
+def build_work_link_tail(link: Path) -> str:
+    """Render the primary's stable work path as the system prompt's last block.
+
+    A primary may launch with no first user turn (a bare ``meridian``), and its
+    tools match literal paths, so the env var alone does not get the path to the
+    agent. The link goes last so everything before it still caches across launches
+    of the chat. The item name is left out: it changes as often as ``work current``
+    can be asked, and a pinned prompt would keep the launch-time one.
+    """
+
+    return "\n".join(
+        (
+            "# Meridian work",
+            "",
+            f"Scratch and artifacts go under `{link.as_posix()}` "
+            "(also `$MERIDIAN_ACTIVE_WORK_DIR`). Write that literal path, never the "
+            "directory it resolves to: the link follows `work start`, `work switch`, "
+            "and `work rename`, and `meridian work current` names the active item.",
+        )
+    )
 
 
 def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
@@ -318,5 +338,6 @@ __all__ = [
     "build_guidance_blocks",
     "build_launch_facts_prompt",
     "build_spawn_usage_contract",
+    "build_work_link_tail",
     "has_spawn_capability",
 ]

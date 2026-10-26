@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import random
 import re
 import socket
@@ -299,6 +298,19 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
+def _active_work_id() -> str | None:
+    """Work item the serving session is in, from its chat's attachment.
+
+    A primary's work follows the session row, not the launch environment: a
+    ``work switch`` after launch moves it, and the row is what ``work current``
+    answers with.
+    """
+
+    from meridian.lib.core.resolved_context import ResolvedContext
+
+    return ResolvedContext.from_environment().work_id or None
+
+
 def wait_for_http_server(
     proc: subprocess.Popen[Any], port: int, *, timeout: float = 2.0
 ) -> bool:
@@ -398,7 +410,7 @@ def start_serve(
             slug=resolved_slug,
             local_port=local_port,
             dir=str(directory),
-            work_id=os.getenv("MERIDIAN_ACTIVE_WORK_ID") or None,
+            work_id=_active_work_id(),
             created=created,
             ttl_seconds=ttl_seconds,
             funnel=funnel,

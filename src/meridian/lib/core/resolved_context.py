@@ -19,12 +19,20 @@ from meridian.lib.core.depth import (
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import spawn_store
-from meridian.lib.state.session_work_link import session_work_link_path
-from meridian.lib.state.work_scope import (
-    WorkScope,
-    names_no_directory,
-    resolve_work_scope_from_parts,
-)
+from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
+
+
+@dataclass(frozen=True)
+class SpawnChat:
+    """A spawn execution's conversation, as far as work resolution needs it.
+
+    ``current_chat_id`` is the pointer the launcher published after an owned
+    observation; the entry chat is not an observation, so it stays ``None`` until
+    the conversation actually moves.
+    """
+
+    current_chat_id: str | None
+    is_primary: bool
 
 
 class ContextBackend(Protocol):
@@ -34,8 +42,8 @@ class ContextBackend(Protocol):
         """Look up the active work ID for a session."""
         ...
 
-    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
-        """Resolve a launch snapshot to its current observed conversation."""
+    def get_spawn_chat(self, runtime_root: Path, spawn_id: SpawnId) -> SpawnChat | None:
+        """Resolve a launch snapshot to its spawn's conversation pointer."""
         ...
 
 
@@ -48,9 +56,25 @@ class LocalFilesystemBackend:
         records = HistoryIndex(runtime_root).sessions(chat_ids={chat_id})
         return records[0].active_work_id if records else None
 
-    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+    def get_spawn_chat(self, runtime_root: Path, spawn_id: SpawnId) -> SpawnChat | None:
         row = spawn_store.get_spawn(runtime_root, spawn_id)
-        return row.continue_chat_id if row is not None and row.current_chat_id else None
+        if row is None:
+            return None
+        return SpawnChat(
+            current_chat_id=row.continue_chat_id if row.current_chat_id else None,
+            is_primary=row.kind == "primary",
+        )
+
+
+def _spawn_chat(
+    env: Mapping[str, str],
+    runtime_root: Path,
+    backend: ContextBackend | None = None,
+) -> SpawnChat | None:
+    spawn_id = env.get("MERIDIAN_SPAWN_ID", "").strip()
+    if not spawn_id:
+        return None
+    return (backend or LocalFilesystemBackend()).get_spawn_chat(runtime_root, SpawnId(spawn_id))
 
 
 def follow_current_chat(
@@ -60,18 +84,14 @@ def follow_current_chat(
 ) -> str | None:
     """The spawn's current conversation, once it has moved off the launch snapshot.
 
-    ``MERIDIAN_CHAT_ID`` (and with it ``MERIDIAN_ACTIVE_WORK_ID``) is fixed at
-    launch, and a spawned process inherits its parent's. Once the launcher has
-    admitted an owned native observation, the spawn's durable current pointer names
-    the conversation, and its work comes from that conversation's session.
+    ``MERIDIAN_CHAT_ID`` is fixed at launch, and a spawned process inherits its
+    parent's. Once the launcher has admitted an owned native observation, the
+    spawn's durable current pointer names the conversation, and its work comes
+    from that conversation's session.
     """
 
-    spawn_id = env.get("MERIDIAN_SPAWN_ID", "").strip()
-    if not spawn_id:
-        return None
-    return (backend or LocalFilesystemBackend()).get_current_chat_id(
-        runtime_root, SpawnId(spawn_id)
-    )
+    chat = _spawn_chat(env, runtime_root, backend)
+    return chat.current_chat_id if chat is not None else None
 
 
 @dataclass(frozen=True)
@@ -155,48 +175,18 @@ class ResolvedContext:
         else:
             runtime_root = None
 
-        # MERIDIAN_CHAT_ID is a launch snapshot. Once the launcher has admitted
-        # an owned native observation, ambient commands follow the spawn's
-        # durable current pointer and resolve work from that chat. Explicit chat
-        # and work arguments retain their normal precedence.
+        # MERIDIAN_CHAT_ID and MERIDIAN_ACTIVE_WORK_ID are a launch snapshot. A
+        # primary's work lives on its chat's session row — the process outlives a
+        # chat rotation (Claude /clear, /resume) and every work command writes that
+        # row — so no launch-time ID may shadow it. A spawn's snapshot goes stale
+        # once the launcher publishes a new current chat. Explicit chat and work
+        # arguments retain their normal precedence.
         if not explicit_chat_id_raw and runtime_root is not None:
-            current_chat_id = follow_current_chat(os.environ, runtime_root, backend_impl)
-            if current_chat_id and current_chat_id != chat_id_raw:
-                # The launch snapshot named a different conversation (a spawn whose
-                # chat moved), so its work keys are stale. A primary's current chat
-                # is its launch chat; keeping its work keys preserves the session
-                # work link it was launched with.
-                chat_id_raw = current_chat_id
+            spawn_chat = _spawn_chat(os.environ, runtime_root, backend_impl)
+            if spawn_chat is not None and (spawn_chat.is_primary or spawn_chat.current_chat_id):
+                chat_id_raw = spawn_chat.current_chat_id or chat_id_raw
                 work_id_raw = ""
                 work_dir_raw = ""
-
-        session_work_link = (
-            session_work_link_path(runtime_root, chat_id_raw)
-            if runtime_root is not None and chat_id_raw
-            else None
-        )
-        candidate_work_dir = (
-            Path(work_dir_raw).expanduser()
-            if work_dir_raw and not explicit_work_id_raw
-            else None
-        )
-        is_session_link = (
-            candidate_work_dir is not None
-            and session_work_link is not None
-            and candidate_work_dir == session_work_link
-        )
-        # The session row is authority only when the launch snapshot has no work
-        # ID, or when its directory is the session link that work commands repoint.
-        session_work_id = (
-            backend_impl.get_session_active_work_id(runtime_root, chat_id_raw)
-            if (
-                not explicit_work_id_raw
-                and (not work_id_raw or is_session_link)
-                and runtime_root is not None
-                and chat_id_raw
-            )
-            else None
-        )
 
         # Authoritative work-ID precedence:
         # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.
@@ -208,9 +198,11 @@ class ResolvedContext:
         elif work_id_raw:
             work_id = work_id_raw
             work_id_source = "env"
-        elif session_work_id:
-            work_id = session_work_id
-            work_id_source = "session"
+        elif runtime_root is not None and chat_id_raw:
+            session_work_id = backend_impl.get_session_active_work_id(runtime_root, chat_id_raw)
+            if session_work_id:
+                work_id = session_work_id
+                work_id_source = "session"
 
         project_paths = (
             state_paths.resolve_project_paths_from_context(
@@ -224,23 +216,15 @@ class ResolvedContext:
         bound_work_dir: Path | None = None
         project_work_dir = project_paths.work_dir if project_paths is not None else None
 
-        if candidate_work_dir is not None:
-            if is_session_link:
-                # This is the session's stable link, so the session attachment is
-                # authority: the launch snapshot's work ID went stale as soon as a
-                # work command ran. A missing link means the session ended (or a
-                # work command removed it); do not resurrect its old item.
-                work_id = session_work_id
-                work_id_source = "session" if session_work_id else "none"
-                if candidate_work_dir.is_symlink():
-                    bound_work_dir = candidate_work_dir
-                else:
-                    work_id = None
-            elif work_id_source in ("none", "env"):
-                # Honor launch-bound dirs for ambient scopes and env-carried work IDs.
-                # Session-switched work IDs recompute canonical roots, so a stale
-                # ambient MERIDIAN_ACTIVE_WORK_DIR cannot shadow them.
-                bound_work_dir = candidate_work_dir
+        if (
+            work_dir_raw
+            and not explicit_work_id_raw
+            and work_id_source in ("none", "env")
+        ):
+            # Honor launch-bound dirs for ambient scopes and env-carried work IDs.
+            # Session-switched work IDs recompute canonical roots, so stale ambient
+            # MERIDIAN_ACTIVE_WORK_DIR from process launch must not shadow them.
+            bound_work_dir = Path(work_dir_raw).expanduser()
 
         work_scope = resolve_work_scope_from_parts(
             project_root=project_root,
@@ -250,15 +234,6 @@ class ResolvedContext:
             project_work_dir=project_work_dir,
             runtime_root=runtime_root,
         )
-        if (
-            work_scope is None
-            and bound_work_dir is not None
-            and names_no_directory(bound_work_dir)
-        ):
-            # The session work link outlived its item (archived or deleted). No work
-            # item is active any more, so neither children nor the prompt may inherit
-            # an ID whose directory is gone.
-            work_id = None
         work_dir = work_scope.root if work_scope is not None else None
 
         kb_dir = project_paths.kb_dir if project_paths is not None else None

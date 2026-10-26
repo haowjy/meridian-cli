@@ -12,6 +12,7 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.context import resolve_active_work_scope
 from meridian.lib.ops.runtime import (
+    ResolvedRoots,
     async_from_sync,
     resolve_chat_id,
     resolve_roots,
@@ -138,10 +139,39 @@ def _detach_primary_sessions_from_work(
 ) -> None:
     """Return attached primary sessions to their ambient work directory."""
 
-    for chat_id in session_store.list_active_sessions_for_work_id(runtime_root, work_id):
-        record = session_store.chat_record(runtime_root, chat_id)
-        if record is not None and record.kind == "primary":
+    for row in spawn_store.list_live_primaries(runtime_root):
+        chat_id = row.continue_chat_id
+        if not chat_id:
+            continue
+        if session_store.get_session_active_work_id(runtime_root, chat_id) == work_id:
             set_session_work_attachment(project_root, runtime_root, chat_id, None)
+
+
+def _archive_work_item(
+    roots: ResolvedRoots,
+    work_id: str,
+    *,
+    description: str | None = None,
+) -> tuple[WorkItem, str | None]:
+    """Archive the item, detach its primary sessions, and report what still holds it."""
+
+    _require_work_item(roots.project_state_dir, work_id)
+    item = work_repository.archive_work_item(
+        roots.project_state_dir,
+        work_id,
+        description=description,
+    )
+    _detach_primary_sessions_from_work(roots.project_root, roots.runtime_root, item.name)
+    publish_work_event(
+        "work.done",
+        project_root=roots.project_root,
+        runtime_root=roots.runtime_root,
+        work_id=item.name,
+        data={"status": item.status},
+    )
+    # Reported after detaching: a primary the archive just detached is no longer
+    # a reference, so naming it would contradict the session's new attachment.
+    return item, _active_work_attachment_warning(roots.runtime_root, item.name)
 
 
 def _emit_work_transition(
@@ -453,21 +483,12 @@ def work_update_sync(
         raise ValueError("Nothing to update. Pass --status, --description, and/or --goal.")
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
-    runtime_state_root = roots.runtime_root
     current = _require_work_item(project_state_dir, payload.work_id)
     if payload.status == "done":
-        attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
-        item = work_repository.archive_work_item(
-            project_state_dir,
+        item, attachment_warning = _archive_work_item(
+            roots,
             payload.work_id,
             description=payload.description,
-        )
-        publish_work_event(
-            "work.done",
-            project_root=roots.project_root,
-            runtime_root=runtime_state_root,
-            work_id=item.name,
-            data={"status": item.status},
         )
         return WorkUpdateOutput(
             name=item.name,
@@ -500,20 +521,7 @@ def work_done_sync(
 ) -> WorkUpdateOutput:
     nested_warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
-    project_state_dir = roots.project_state_dir
-    runtime_state_root = roots.runtime_root
-    attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
-    _require_work_item(project_state_dir, payload.work_id)
-
-    item = work_repository.archive_work_item(project_state_dir, payload.work_id)
-    _detach_primary_sessions_from_work(roots.project_root, runtime_state_root, item.name)
-    publish_work_event(
-        "work.done",
-        project_root=roots.project_root,
-        runtime_root=runtime_state_root,
-        work_id=item.name,
-        data={"status": item.status},
-    )
+    item, attachment_warning = _archive_work_item(roots, payload.work_id)
     return WorkUpdateOutput(
         name=item.name,
         status=item.status,

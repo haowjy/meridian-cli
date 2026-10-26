@@ -11,13 +11,13 @@ from uuid import uuid4
 import structlog
 
 from meridian.lib.core.lifecycle import get_hook_dispatcher
-from meridian.lib.state import session_store, work_repository, work_store
-from meridian.lib.state.paths import (
-    resolve_ambient_work_dir,
-    resolve_project_paths,
-    resolve_work_scratch_dir_for_project,
+from meridian.lib.platform.locking import lock_file
+from meridian.lib.state import session_store, spawn_store, work_repository, work_store
+from meridian.lib.state.paths import RuntimePaths, resolve_project_paths
+from meridian.lib.state.session_work_link import (
+    publish_session_work_link,
+    session_work_target,
 )
-from meridian.lib.state.session_work_link import publish_session_work_link
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry import emit_telemetry
 
@@ -83,38 +83,39 @@ def set_session_work_attachment(
     chat_id: str,
     work_id: str | None,
 ) -> None:
-    """Record a chat's work attachment and repoint a primary's stable work link.
+    """Record a chat's work attachment and repoint the primary's stable work link.
 
-    The single seam for a chat's work item changing: the event is authority, the
-    link is the projection that a primary's ``MERIDIAN_ACTIVE_WORK_DIR`` and
-    system prompt name. Spawn sessions record the attachment but keep their
-    launch-bound directory, so they get no link. Callers own the "does this chat
-    exist" check.
+    The single seam for a chat's work item changing. A live primary can move off
+    its entry chat — Claude ``/clear`` and ``/resume`` rotate the conversation —
+    so every chat of that execution takes the new attachment, and the link stays
+    on the entry chat, whose path the launch environment and system prompt name.
+    Spawn sessions record the attachment and keep their launch-bound directory.
+    Callers own the "does this chat exist" check.
     """
 
     normalized = chat_id.strip()
-    if not normalized:
+    if not normalized or not session_store.session_exists(runtime_root, normalized):
         return
-    record = session_store.chat_record(runtime_root, normalized)
-    session_store.update_session_work_id(runtime_root, normalized, work_id)
-    if record is None or record.kind != "primary":
-        # Only a primary session names its work link in the environment; a spawn's
-        # session row records the attachment for history but has no consumer.
-        return
-    if work_id is not None:
-        target: Path | None = resolve_work_scratch_dir_for_project(project_root, work_id)
-    elif record.spawn_id:
-        # No active item: the scope falls back to this primary spawn's ambient work
-        # directory, so the stable path stays writable instead of dangling.
-        target = resolve_ambient_work_dir(
+    owners = [
+        row
+        for row in spawn_store.list_live_primaries(runtime_root)
+        if row.chat_id and row.continue_chat_id == normalized
+    ]
+    entry_chats = [row.chat_id for row in owners if row.chat_id]
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    with lock_file(paths.sessions_flock):
+        for chat in dict.fromkeys((normalized, *entry_chats)):
+            session_store.update_session_work_id(runtime_root, chat, work_id)
+        if not owners:
+            return
+        target = session_work_target(
             project_root,
-            record.spawn_id,
-            runtime_root=runtime_root,
+            runtime_root,
+            normalized,
+            ambient_spawn_id=owners[0].id,
         )
-        target.mkdir(parents=True, exist_ok=True)
-    else:
-        target = None
-    publish_session_work_link(runtime_root, normalized, target)
+        for entry_chat in entry_chats:
+            publish_session_work_link(runtime_root, entry_chat, target)
 
 
 def activate_work(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.core.resolved_context import ResolvedContext, SpawnChat
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_read,
@@ -19,9 +19,9 @@ if TYPE_CHECKING:
 
 
 class _CurrentChatBackend:
-    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+    def get_spawn_chat(self, runtime_root: Path, spawn_id: SpawnId) -> SpawnChat | None:
         _ = runtime_root, spawn_id
-        return "c-current"
+        return SpawnChat(current_chat_id="c-current", is_primary=False)
 
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
         _ = runtime_root
