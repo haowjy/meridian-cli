@@ -12,3 +12,7 @@
 - Session browse: `DetailState` holds a row snapshot plus `model`; looking the row up in `browser.list`
   by chat_id would delete `DetailState.model` (not done: detail can open from lineage for a chat
   outside the listing).
+- `spawn message`: no test covers the "it has no reply route here" frame branch, the
+  bug review round 1 found (the frame advertised a reply to a primary with no inbox
+  route). A Codex-primary sender in `tests/integration/cli/test_spawn_message.py`
+  would pin it; the reachable branch is asserted there today.
