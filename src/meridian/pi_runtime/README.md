@@ -76,7 +76,10 @@ Use a cheap model and distinguish live smoke from automated fixture coverage.
   `_MERIDIAN_PI_TASK_PING_INTERVAL_MS`. Log activity rearms it unless
   `_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY=false`.
 
-`/reload` preserves live shell ownership and queued result-delivery claims.
+`/reload` preserves live shell ownership and queued result-delivery claims, but
+like a cold restart it delivers nothing until the lead's next turn ends: a
+resumed session's prompt cache is cold. Results owed from before it stay owed
+and arrive after the next main-loop `agent_end`.
 A cold process restart preserves records but cannot recover process handles:
 formerly running Bash rows show `ownership_lost`. Inspect those processes manually
 or explicitly detach the row to release tracking. Persisted PIDs never authorize

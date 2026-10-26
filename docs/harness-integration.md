@@ -172,7 +172,9 @@ Both roles load the stable bundles listed below where enabled; `meridian-idle` l
   `disable_managed_bash` is false: `bash`/`bash_manage`, `/ps*`, task records,
   process-group ownership, and reload/recovery.
 - **meridian-spawn-watch**, when `harness.pi.spawn_watch.enabled` is true:
-  canonical direct-child observation, `/spawn*`, and tool-boundary or idle result delivery.
+  canonical direct-child observation, `/spawn*`, and tool-boundary or idle result
+  delivery. Idle delivery opens only after the lead's own turn ends, so a
+  resumed or reloaded lead is never handed an automatic turn before the user acts.
 - **session-boundary**, always: bounded native lifecycle evidence, correlated by
   launch nonce and Pi PID. Only a final readable `session_shutdown(reason=quit)`
   verifies exit identity; a switch, reload, stale context, or corrupt record does

@@ -767,13 +767,34 @@ describe('durable result delivery', () => {
     await eventually(() => next.notices.length === 1);
     expect(next.notices[0]!.details.work_ids).toEqual(['b1']);
   });
+  it('delivers nothing at session start, then the first turn end delivers what is owed', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'owed before the resume');
+    // A resumed session is idle with a cold prompt cache: an automatic turn here
+    // would re-bill the whole context for a status ping.
+    const h = host();
+    extension(h.pi);
+    h.handlers.get('session_start')!({ reason: 'resume' }, { isIdle: () => h.idle });
+    await pause(800);
+    expect(h.notices).toHaveLength(0);
+
+    h.handlers.get('agent_end')!({}, { isIdle: () => h.idle });
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.content).toContain('owed before the resume');
+    expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
+  });
+
   it('stops using the old idle capability between reload shutdown and rebind', async () => {
     await setup();
     const h = host();
     extension(h.pi);
     const idle = vi.fn(() => true);
     h.handlers.get('session_start')!({}, { isIdle: idle });
+    h.handlers.get('agent_end')!({}, { isIdle: idle });
     await pause(100);
+    expect(idle).toHaveBeenCalled();
     h.handlers.get('session_shutdown')!({ reason: 'reload' });
 
     // Native Pi invalidates this context before awaiting resource reload. Return
@@ -789,7 +810,10 @@ describe('durable result delivery', () => {
     await bash(root, record('b1'));
     const first = host();
     extension(first.pi);
-    first.handlers.get('session_start')!({}, {
+    first.handlers.get('session_start')!({ reason: 'startup' }, {
+      isIdle: () => first.idle
+    });
+    first.handlers.get('agent_end')!({}, {
       isIdle: () => first.idle
     });
     await eventually(() => first.notices.length === 1);
@@ -798,7 +822,7 @@ describe('durable result delivery', () => {
     });
     const next = host(false);
     extension(next.pi);
-    next.handlers.get('session_start')!({}, {
+    next.handlers.get('session_start')!({ reason: 'reload' }, {
       isIdle: () => next.idle
     });
     await pause(800);
