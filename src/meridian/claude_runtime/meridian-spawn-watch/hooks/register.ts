@@ -41,13 +41,12 @@ type Run = { ctl: AbortController; phase: Phase }
 
 /**
  * Ids handed to the lead and not yet recorded as consumed.
- *   pending   the prompt is being submitted
- *   queued    the prompt was accepted but no turn carrying the nonce has started
+ *   submitted the prompt went to `$.prompt.submit`; no turn carrying the nonce has started
  *   acking    that turn started; the ack is running
  *   unacked   the ack failed; the ids stay excluded for the life of this module copy, because releasing them
  *             would redeliver the same results at every idle
  */
-type Claim = { ids: string[]; phase: 'pending' | 'queued' | 'acking' | 'unacked' }
+type Claim = { ids: string[]; phase: 'submitted' | 'acking' | 'unacked' }
 
 type Reply = { kind: 'empty' } | { kind: 'delivery'; ids: string[]; text: string }
 
@@ -199,7 +198,7 @@ async function deliver($: EngineInterface, s: State, run: Run, reply: Extract<Re
   }
   // From here the prompt is out of our hands: a main-loop turn.start aborts the run but cannot unsubmit it.
   const nonce = newNonce()
-  const claim: Claim = { ids: reply.ids, phase: 'pending' }
+  const claim: Claim = { ids: reply.ids, phase: 'submitted' }
   s.claims.set(nonce, claim)
   run.phase = 'submitting'
   try {
@@ -209,11 +208,9 @@ async function deliver($: EngineInterface, s: State, run: Run, reply: Extract<Re
       note($, s, `delivery of ${reply.ids.join(',')} dropped: ${result.drop}`)
       return
     }
-    // submit can resolve after the turn started and the ack began; only a still-pending claim is merely queued
-    if (claim.phase === 'pending') claim.phase = 'queued'
     note($, s, `submitted ${reply.ids.join(',')}`)
   } catch (err) {
-    if (claim.phase === 'pending') s.claims.delete(nonce)
+    if (claim.phase === 'submitted') s.claims.delete(nonce)
     throw err
   }
 }
@@ -221,8 +218,9 @@ async function deliver($: EngineInterface, s: State, run: Run, reply: Extract<Re
 async function idleRun($: EngineInterface, s: State, run: Run): Promise<void> {
   try {
     await $.clock.sleep(IDLE_DELAY_MS, { signal: run.ctl.signal })
-    // A queued prompt would have started its turn by now. A claim still waiting for one was dropped (Esc, a cleared queue).
-    for (const [nonce, claim] of s.claims) if (claim.phase === 'queued') s.claims.delete(nonce)
+    // A submitted prompt has entered by now (`submit` resolves once it starts its turn or queues behind a running one),
+    // and a queued one would have started its turn. A claim still waiting for one was dropped (Esc, a cleared queue).
+    for (const [nonce, claim] of s.claims) if (claim.phase === 'submitted') s.claims.delete(nonce)
     run.phase = 'collecting'
     const reply = await collect($, s, run)
     if (reply === undefined) return
