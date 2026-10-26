@@ -146,9 +146,12 @@ def build_capabilities_prompt(
             "inspect: `meridian work current`."
         )
     else:
+        # The ambient scratch directory is per-launch, so it is named in the user turn
+        # when the child receives one. Do not hard-code the env var's value: an exact
+        # continue with no source work suppresses it.
         lines.append(
-            "- No active work item; your scratch directory is in "
-            "`$MERIDIAN_ACTIVE_WORK_DIR` (inspect: `meridian work current`)."
+            "- No active work item; inspect: `meridian work current` for this run's "
+            "work directory."
         )
 
     resolved_chat_id = (chat_id or "").strip()

@@ -342,9 +342,12 @@ lands) a primary's per-chat work link. Per-launch values — the run ID, the amb
 no-work-item scratch directory, and the spawn goal contract — are rendered into the
 first user turn (`build_launch_facts_prompt()`; the goal is
 `_SharedComposition.task_contract`), because one changed byte in the system prompt
-invalidates the harness prompt cache for the whole conversation. The block names the
-env vars that carry the per-launch values and points at `meridian task-dir --json`
-for a shell that refuses variables. The notification
+invalidates the harness prompt cache for the whole conversation. With no work item
+the block names no directory at all: an exact continue suppresses the inherited
+ambient one, so the user-turn block carries it when the child has one, and
+`meridian work current` is the command route. The block names
+`$MERIDIAN_ACTIVE_WORK_DIR` only for a work item's stable directory, and points at
+`meridian spawn list` for a run ID when the shell refuses variables. The notification
 row is present only for a `mode: primary` profile; delegation rows remain gated by
 spawn capability. The source line names the actual control root as shell cwd and gives
 the absolute task directory; when they match it collapses to one shorter line.
