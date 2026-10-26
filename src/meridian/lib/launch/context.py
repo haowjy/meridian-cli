@@ -99,6 +99,7 @@ from .composition import (
     build_reference_routing,
     composed_content_for_bind_refresh,
     has_capabilities_block,
+    join_content_blocks,
     replace_capabilities_block,
 )
 from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
@@ -142,6 +143,7 @@ from .resolve import (
 from .spawn_guidance import (
     build_capabilities_prompt,
     build_guidance_blocks,
+    build_launch_facts_prompt,
     build_spawn_usage_contract,
     has_spawn_capability,
 )
@@ -856,11 +858,38 @@ def _reproject_capabilities_at_bind(
     spawn_capable: bool,
     profile_mode: AgentMode,
     primary_prompt_is_synthetic: bool = False,
+    saved_system_prompt: str | None = None,
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
-    """Render the capability block with bound paths and re-project prompt channels."""
+    """Render the capability block with bound paths and re-project prompt channels.
 
+    ``saved_system_prompt`` is the exact prompt an exact continue must replay. It is
+    applied after re-projection so bind-time capabilities cannot change the cached
+    system bytes.
+    """
+
+    launch_facts = build_launch_facts_prompt(
+        spawn_id=spawn_id,
+        chat_id=chat_id,
+        active_work_dir=bound_work_dir,
+        work_id=work_id,
+    )
     if composed_content is None or not has_capabilities_block(composed_content.guidance_blocks):
-        return composed_prompt, prompt_payload, projected_content
+        existing_user_turn = (prompt_payload.user_turn_content or "").strip()
+        user_turn = existing_user_turn
+        updated_payload = prompt_payload
+        if launch_facts and existing_user_turn:
+            user_turn = join_content_blocks(existing_user_turn, launch_facts)
+            updated_payload = replace(updated_payload, user_turn_content=user_turn)
+        if saved_system_prompt is not None:
+            updated_payload = replace(
+                updated_payload, appended_system_prompt=saved_system_prompt
+            )
+        updated_projected = projected_content
+        if updated_projected is not None and saved_system_prompt is not None:
+            updated_projected = replace(
+                updated_projected, system_prompt=saved_system_prompt
+            )
+        return (user_turn or composed_prompt), updated_payload, updated_projected
 
     capabilities = build_capabilities_prompt(
         spawn_capable=spawn_capable,
@@ -868,9 +897,6 @@ def _reproject_capabilities_at_bind(
         project_root=project_root,
         control_root=control_root,
         task_dir=task_dir,
-        active_work_dir=bound_work_dir,
-        spawn_id=spawn_id,
-        chat_id=chat_id,
         work_id=work_id,
     )
     refreshed_guidance = replace_capabilities_block(
@@ -879,6 +905,15 @@ def _reproject_capabilities_at_bind(
     )
     refreshed_content = replace(composed_content, guidance_blocks=refreshed_guidance)
     updated_projected = harness.project_content(refreshed_content)
+    if launch_facts and updated_projected.user_turn_content.strip():
+        updated_projected = replace(
+            updated_projected,
+            user_turn_content=join_content_blocks(
+                updated_projected.user_turn_content, launch_facts
+            ),
+        )
+    if saved_system_prompt is not None:
+        updated_projected = replace(updated_projected, system_prompt=saved_system_prompt)
     updated_payload = prepare_prompt_payload(
         adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
         projected_content=updated_projected,
@@ -1724,6 +1759,13 @@ def bind_launch_context(
         child_spawn_id=bindings.spawn_id,
         runtime_root=runtime_root,
     )
+    launch_snapshot = resolved_request.launch_policy_snapshot
+    saved_system_prompt = (
+        launch_snapshot.system_prompt
+        if launch_snapshot is not None
+        and is_exact_continue_session(resolved_request.session)
+        else None
+    )
     refreshed_prompt, prompt_payload, projected_content = _reproject_capabilities_at_bind(
         composed_prompt=resolved_request.prompt,
         prompt_payload=prompt_payload,
@@ -1740,7 +1782,20 @@ def bind_launch_context(
         spawn_capable=prepared.has_spawn_capability,
         profile_mode=prepared.profile_mode,
         primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
+        saved_system_prompt=saved_system_prompt,
     )
+    if launch_snapshot is not None:
+        final_system_prompt = (prompt_payload.appended_system_prompt or "").strip() or None
+        if launch_snapshot.system_prompt != final_system_prompt:
+            # Persist the exact bytes this launch sends so an exact continue can replay
+            # them without recomposing (and without depending on a prunable spawn dir).
+            resolved_request = resolved_request.model_copy(
+                update={
+                    "launch_policy_snapshot": launch_snapshot.model_copy(
+                        update={"system_prompt": final_system_prompt}
+                    )
+                }
+            )
     conversation_intent = resolved_request.session.conversation_intent
     model_override_explicit = (
         conversation_intent is None or conversation_intent.selection_source == "explicit_override"

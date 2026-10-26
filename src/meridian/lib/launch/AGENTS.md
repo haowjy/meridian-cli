@@ -211,6 +211,13 @@ implicit authority. Use `resolve_task_context_inputs()` to land it in the user t
 Variable content in the system prompt also destroys prompt-cache locality.
 See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) for the full rationale.
 
+**Don't put per-launch values in the system prompt.** Run ID, chat ID, and the
+ambient work directory go in the first user turn via `build_launch_facts_prompt()`.
+The system prompt must stay byte-identical across launches of the same agent and
+work context: an exact continue replays the recorded
+`LaunchPolicySnapshot.system_prompt` verbatim, and a fresh launch shares the cached
+prefix with its siblings.
+
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — spawn CWD three-directory model

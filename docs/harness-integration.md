@@ -128,6 +128,14 @@ caching when it is disabled. The main-conversation TTL variable requires
 Claude Code 2.1.242 or later. See
 [Claude Code's cache controls](https://code.claude.com/docs/en/prompt-caching#choose-the-ttl-yourself).
 
+Claude also records the system prompt itself. `--system-prompt-snapshot` defaults
+to `on`: Claude renders the prompt on the conversation's first request and reuses
+that record on every later request and resume, even when a later launch passes
+different text, until the conversation is compacted. Meridian still writes the
+recorded prompt and passes it, but Claude keeps its own copy. An agent-profile,
+skill, or launch-config edit therefore does not reach a continued Claude
+conversation until compaction; use a fork to apply it immediately.
+
 ## Claude: bundled mods
 
 Interactive Claude primaries load Meridian's Claude Code mods from
