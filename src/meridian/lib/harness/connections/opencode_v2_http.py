@@ -48,6 +48,7 @@ from meridian.lib.harness.connections.opencode_http import (
     permission_liveness_key,
     summarize_body,
 )
+from meridian.lib.harness.opencode_backend import v2_session_running
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_model,
     project_opencode_spec_to_session_payload,
@@ -70,6 +71,9 @@ _V2_OUTCOME_EVENTS: dict[str, str] = {
 }
 
 _RECONCILE_TIMEOUT_SECONDS = 5.0
+# The busy probe runs only on a liveness stall. Bound it like the reconcile GET
+# so a wedged server cannot hold the stall decision open.
+_BUSY_PROBE_TIMEOUT_SECONDS = 5.0
 
 
 def _v2_session_id(body: object | None) -> str | None:
@@ -578,6 +582,31 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         """
 
         return await self._reconcile_initial_terminal()
+
+    async def _session_still_running(self) -> bool | None:
+        """Ask the server whether this session's turn is still executing.
+
+        This is the same signal the idle sensor uses after a reconnect. ``None``
+        (no answer) keeps the ordinary stall handling: the stream may have missed
+        a terminal, so a spawned drain reconciles or fails rather than waiting.
+        """
+
+        session_id = self._session_id
+        if not session_id:
+            return None
+        try:
+            status, body, _ = await self._get_json(
+                "/api/session/active",
+                timeout=_BUSY_PROBE_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            return None
+        if status not in self._SUCCESS_STATUSES:
+            return None
+        try:
+            return v2_session_running(body, session_id)
+        except ValueError:
+            return None
 
     async def _cleanup_runtime(self) -> None:
         task = self._stdout_drain_task

@@ -22,6 +22,8 @@ from typing import Literal
 
 import structlog
 
+from meridian.lib.utils.json_shapes import json_object
+
 logger = structlog.get_logger(__name__)
 
 OpenCodeVersion = Literal["v1", "v2"]
@@ -105,6 +107,20 @@ def resolve_opencode_version(
     return resolved or DEFAULT_OPENCODE_VERSION
 
 
+def v2_session_running(payload: object, session_id: str) -> bool:
+    """Whether ``GET /api/session/active`` lists *session_id* as executing.
+
+    Shared by the idle sensor (after a reconnect) and the connection (on a
+    liveness stall), so both read the server's answer the same way.
+    """
+
+    response = json_object(payload)
+    active = json_object(response.get("data")) if response is not None else None
+    if active is None:
+        raise ValueError("active sessions listing has no data object")
+    return session_id in active
+
+
 def bound_opencode_version(version: OpenCodeVersion | None) -> OpenCodeVersion:
     """The version launch bind resolved onto the spec (``spec.opencode_version``).
 
@@ -130,4 +146,5 @@ __all__ = [
     "normalize_version_preference",
     "parse_opencode_version",
     "resolve_opencode_version",
+    "v2_session_running",
 ]

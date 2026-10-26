@@ -114,10 +114,17 @@ class BackendLivenessPolicy:
             while True:
                 decision = self.evaluate()
                 if decision in (LivenessDecision.BACKEND_DEAD, LivenessDecision.STREAM_STALLED):
+                    # Work that completed at the deadline is progress, not a
+                    # stalled stream: deliver it instead of discarding it.
                     task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
-                    raise EventStreamLivenessTimeout
+                    try:
+                        result = await task
+                    except asyncio.CancelledError:
+                        current = asyncio.current_task()
+                        if current is not None and current.cancelling():
+                            raise
+                        raise EventStreamLivenessTimeout from None
+                    return result
 
                 remaining = self._remaining_seconds()
                 if remaining is None:

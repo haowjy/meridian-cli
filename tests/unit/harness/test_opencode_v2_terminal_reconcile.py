@@ -48,6 +48,9 @@ class _ReconcileProbeOpenCodeV2Connection(OpenCodeV2Connection):
         self.get_paths: list[str] = []
         self.get_timeouts: list[float | None] = []
 
+    async def _session_still_running(self) -> bool | None:
+        return False
+
     async def _get_json(
         self, path: str, *, timeout: float | None = None
     ) -> tuple[int, object | None, str]:
@@ -69,6 +72,9 @@ class _TimingOutReconcileProbeOpenCodeV2Connection(OpenCodeV2Connection):
         self._initial_prompt_posted_at = _PROMPT_POSTED_AT
         self._liveness = cast("Any", _ExpiredLiveness())
         self.get_timeouts: list[float | None] = []
+
+    async def _session_still_running(self) -> bool | None:
+        return False
 
     async def _get_json(
         self, path: str, *, timeout: float | None = None
@@ -128,7 +134,8 @@ async def test_stall_repoll_without_terminal_fails_after_one_bounded_poll() -> N
 
     events = await _collect(connection)
 
-    assert events == []
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "is not running" in str(events[0].payload["message"])
     assert connection.get_paths == [_SESSION_PATH, _SESSION_PATH]
     assert connection.get_timeouts == [_RECONCILE_TIMEOUT_SECONDS, _RECONCILE_TIMEOUT_SECONDS]
     assert connection.state == "failed"
@@ -140,7 +147,8 @@ async def test_reconcile_timeout_returns_none_and_preserves_stall_failure() -> N
 
     events = await _collect(connection)
 
-    assert events == []
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "is not running" in str(events[0].payload["message"])
     assert connection.get_timeouts == [_RECONCILE_TIMEOUT_SECONDS, _RECONCILE_TIMEOUT_SECONDS]
     assert connection.state == "failed"
 
@@ -160,6 +168,7 @@ async def test_stall_repoll_rejects_stale_prior_turn_outcome() -> None:
 
     events = await _collect(connection)
 
-    assert events == []
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "is not running" in str(events[0].payload["message"])
     assert connection.get_paths == [_SESSION_PATH, _SESSION_PATH]
     assert connection.state == "failed"

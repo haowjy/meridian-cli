@@ -216,7 +216,7 @@ specific evidence already recorded.
 |---|---|
 | Claude | Non-zero subprocess exit at stdout EOF yields `meridian/error/connectionClosed` with the exit code and captured stderr excerpt when present, then the iterator ends. Stdout reader failure yields the same event with the read error. |
 | Codex | Unexpected WebSocket reader failure or liveness timeout queues `meridian/error/connectionClosed`, then queue EOF. A clean WebSocket close queues EOF without a terminal event. Startup process exit is raised before draining and includes exit code plus the captured stderr excerpt when present. |
-| OpenCode | A detected backend process exit yields `meridian/error/connectionClosed` with the exit code and captured stderr excerpt when present, then the SSE iterator ends. SSE liveness failure without a detected process exit currently ends without a terminal event. |
+| OpenCode | A detected backend process exit yields `meridian/error/connectionClosed` with the exit code and captured stderr excerpt when present, then the SSE iterator ends. An SSE liveness failure yields `meridian/error/connectionClosed` naming the cause (`OpenCode event stream stalled: …`) instead of ending silently; a stream whose session is still executing is not a failure and keeps reading. |
 | Cursor | Non-zero subprocess exit at stdout EOF yields `meridian/error/connectionClosed` with the exit code, then the iterator ends. Exit code zero is the success boundary and ends without a terminal event. |
 | Pi | Non-zero subprocess exit yields `meridian/error/connectionClosed` with the exit code and captured stderr when present, then the iterator ends. Pi completion remains subject to its quiescence profile rather than raw EOF. |
 
@@ -458,6 +458,19 @@ for resume model switch, and event-envelope normalization where
 `session.execution.{succeeded,failed,interrupted}` are terminal. Shared
 infrastructure (`connections/base.py`, `managed_backend.py`, liveness, resident
 backend) is version-independent and must not fork.
+
+A liveness timeout is not by itself a dead stream. When `BackendLivenessPolicy`
+reports `STREAM_STALLED`, the connection asks `_session_still_running()`: V2 reads
+`GET /api/session/active` through `v2_session_running()` in `opencode_backend.py`
+(shared with the idle sensor); V1 cannot answer. A session that is still executing
+is a long tool, not a stall: the connection restarts its liveness window and keeps
+reading the same SSE response without reconnecting. Heartbeats still do not count
+as activity. A spawned drain that hears "still running" for
+`_BUSY_STALL_LIMIT_SECONDS` (1800) without one semantic event fails with a named
+stall error; a primary observer has no ceiling, because the probe reports the
+turn's end and the reconnect that follows resyncs the idle sensor. Not running or
+no answer keeps the spawned path (bounded durable-outcome re-poll, then a named
+stall failure) and the observer's reconnect.
 
 Storage selection is by schema, never by the installed binary.
 `detect_opencode_db_schema()` treats `session_v2` presence as V2 and `session` as

@@ -41,10 +41,18 @@ Transports differ at the wire level:
   pre-subscribe session GET and the SSE attach is re-polled on the liveness-timeout
   path (`_reconcile_on_stall`, bounded by `_STALL_RECONCILE_LIMIT`) through the same
   guarded helper, so the missed terminal is surfaced instead of a stall. That
-  one-turn policy remains the spawn default. A primary observer's stream lives
-  until the primary closes: quiet, EOF, and recoverable errors reconnect without
-  synthesizing terminal events into the interactive session. Spawn streams may
-  end at a reconciled terminal.
+  one-turn policy remains the spawn default. Before that re-poll every stalled
+  stream asks `_session_still_running()` — V2 `GET /api/session/active`, shared with
+  the idle sensor; V1 cannot answer. A session that is still executing is not a
+  stall: the connection restarts its liveness window and keeps reading the same SSE
+  response without reconnecting, and heartbeats still do not count. A spawned drain
+  fails with a named `connectionClosed` after `_BUSY_STALL_LIMIT_SECONDS` (~30 min)
+  of consecutive busy silence; a primary observer has no such ceiling. A primary
+  observer's stream lives until the primary closes: quiet, EOF, and recoverable
+  errors reconnect without synthesizing terminal events into the interactive
+  session. When the probe reports the turn ended (or cannot answer), that reconnect
+  triggers the idle sensor's post-reconnect resync, which recovers a terminal the
+  quiet stream missed. Spawn streams may end at a reconciled terminal.
   OpenCode's `permission.asked` (V1) / `permission.v2.asked` (V2) stream events are
   routed to the injected `ServerRequestHandler` as `HarnessRequest`s, not
   yielded raw; the handler runs in a bounded background task (a stalled reply must

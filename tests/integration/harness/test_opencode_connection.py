@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import socket
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from typing import Any, cast
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections import liveness as opencode_liveness
 from meridian.lib.harness.connections import opencode_http
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
@@ -26,6 +28,7 @@ from meridian.lib.harness.connections.opencode_connection import (
     OpenCodeConnection as OpenCodeDispatcherConnection,
 )
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
+from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
@@ -133,12 +136,33 @@ class _SseResponse:
         *,
         block: bool = False,
         keepalive: bool = False,
+        content: _SseContent | None = None,
     ) -> None:
-        self.content = _SseContent(chunks, block=block, keepalive=keepalive)
+        self.content = content or _SseContent(chunks, block=block, keepalive=keepalive)
         self.closed = False
 
     def close(self) -> None:
         self.closed = True
+
+
+class _GatedTerminalSseContent(_SseContent):
+    """Stay silent until released, then deliver one terminal frame and EOF."""
+
+    def __init__(self, terminal: bytes) -> None:
+        super().__init__()
+        self._gate = asyncio.Event()
+        self._terminal = terminal
+        self._sent = False
+
+    def release(self) -> None:
+        self._gate.set()
+
+    async def read(self, _size: int) -> bytes:
+        await self._gate.wait()
+        if self._sent:
+            return b""
+        self._sent = True
+        return self._terminal
 
 
 class _ProcessDeathSseContent:
@@ -170,6 +194,8 @@ class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
         *,
         block_open: bool = False,
         request_handler: ServerRequestHandler | None = None,
+        session_running: list[bool | None] | None = None,
+        on_probe: Callable[[int], None] | None = None,
     ) -> None:
         super().__init__(request_handler)
         self._state = "connected"
@@ -177,7 +203,20 @@ class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
         self._process = FakeOpenCodeProcess()
         self._responses = iter(responses)
         self._block_open = block_open
+        self._session_running = list(session_running) if session_running is not None else None
+        self._on_probe = on_probe
+        self.probe_count = 0
         self.open_count = 0
+
+    async def _session_still_running(self) -> bool | None:
+        self.probe_count += 1
+        if self._on_probe is not None:
+            self._on_probe(self.probe_count)
+        if self._session_running is None:
+            return None
+        if len(self._session_running) > 1:
+            return self._session_running.pop(0)
+        return self._session_running[0]
 
     async def _open_event_stream(self) -> _SseResponse:
         self.open_count += 1
@@ -224,6 +263,41 @@ async def _collect_events_under_fake_clock(
     return await task
 
 
+def _keep_backend_alive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the policy see the fake process alive, so a timeout is a stream stall."""
+
+    monkeypatch.setattr(opencode_liveness, "is_process_alive", lambda *args, **kwargs: True)
+
+
+async def _first_event_after_probes(
+    determinism: AsyncDeterminism,
+    connection: _LivenessProbeOpenCodeConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    content: _GatedTerminalSseContent,
+    *,
+    probes: int,
+) -> RawHarnessEvent:
+    """Collect one event, releasing the gated terminal once the busy probe has run."""
+
+    determinism.install_on_running_loop(monkeypatch)
+    async with contextlib.aclosing(connection.events()) as events:
+        pending = asyncio.ensure_future(events.__anext__())
+        try:
+            for _ in range(1000):
+                if pending.done() or connection.probe_count >= probes:
+                    break
+                await determinism.sleep(0.01)
+            assert connection.probe_count >= probes, "busy probe never ran before failing"
+            assert not pending.done(), "stream should stay alive while the session runs"
+            content.release()
+            return await asyncio.wait_for(pending, timeout=5.0)
+        finally:
+            if not pending.done():
+                pending.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pending
+
+
 def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
     (tmp_path / "meridian.toml").write_text(
         '[project]\nid = "opencode-connection-test"\n', encoding="utf-8"
@@ -242,6 +316,7 @@ async def test_opencode_events_fail_after_liveness_timeout_without_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
     connection = _LivenessProbeOpenCodeConnection(responses=[_SseResponse() for _ in range(100)])
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.1)
@@ -254,7 +329,9 @@ async def test_opencode_events_fail_after_liveness_timeout_without_events(
         determinism, connection, monkeypatch, step=0.001
     )
 
-    assert events == []
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "no event for" in str(events[0].payload["message"])
+    assert "did not report the session state" in str(events[0].payload["message"])
     assert connection.open_count > 1
     assert connection.state == "failed"
 
@@ -304,7 +381,8 @@ async def test_opencode_events_fail_after_liveness_timeout_opening_stream(
 
     events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
 
-    assert events == []
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "backend process is no longer alive" in str(events[0].payload["message"])
     assert connection.open_count == 1
     assert connection.state == "failed"
 
@@ -314,13 +392,15 @@ async def test_opencode_events_fail_when_open_stream_stays_silent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
     connection = _LivenessProbeOpenCodeConnection(responses=[_SseResponse(block=True)])
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
 
     events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
 
-    assert events == []
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "did not report the session state" in str(events[0].payload["message"])
     assert connection.open_count == 1
     assert connection.state == "failed"
 
@@ -330,13 +410,16 @@ async def test_opencode_keepalive_chunks_do_not_refresh_liveness_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
     connection = _LivenessProbeOpenCodeConnection(responses=[_SseResponse(keepalive=True)])
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.03)
 
     events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
 
-    assert events == []
+    # Heartbeats keep the socket warm but never count as semantic activity, so
+    # the stall verdict still arrives on the first timeout window.
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
     assert connection.open_count == 1
     assert connection.state == "failed"
 
@@ -356,6 +439,7 @@ async def test_opencode_events_surface_activity_transition_events(
             _SseResponse(),
         ]
     )
+    _keep_backend_alive(monkeypatch)
     clock = FakeClock(start=0.0)
 
     def advancing_monotonic() -> float:
@@ -370,9 +454,164 @@ async def test_opencode_events_surface_activity_transition_events(
 
     events = [event async for event in connection.events()]
 
-    assert [event.event_type for event in events] == [event_type]
+    assert [event.event_type for event in events] == [
+        event_type,
+        "meridian/error/connectionClosed",
+    ]
     assert connection.open_count >= 1
     assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_opencode_spawned_stream_survives_stall_while_session_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
+    terminal = b'{"type":"session.execution.succeeded","sessionID":"sess-liveness"}\n'
+    content = _GatedTerminalSseContent(terminal)
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_SseResponse(content=content)],
+        session_running=[True],
+        # Deliver the terminal while the second probe is in flight: the frame
+        # must survive the cancelled read and be read from the same response.
+        on_probe=lambda count: content.release() if count == 2 else None,
+    )
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.05)
+
+    event = await _first_event_after_probes(
+        determinism, connection, monkeypatch, content, probes=2
+    )
+
+    assert event.event_type == "session.execution.succeeded"
+    assert connection.open_count == 1
+    assert connection.state == "connected"
+
+
+@pytest.mark.asyncio
+async def test_opencode_primary_observer_keeps_stream_while_session_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
+    terminal = b'{"type":"session.execution.succeeded","sessionID":"sess-liveness"}\n'
+    content = _GatedTerminalSseContent(terminal)
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_SseResponse(content=content)],
+        session_running=[True],
+        on_probe=lambda count: content.release() if count == 2 else None,
+    )
+    connection._primary_observer_mode = True
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.05)
+    # A primary has no silence ceiling: a long turn is healthy, and the probe
+    # reports its end so the observer can reconnect and resync then.
+    monkeypatch.setattr(OpenCodeConnection, "_BUSY_STALL_LIMIT_SECONDS", 0.0)
+
+    event = await _first_event_after_probes(
+        determinism, connection, monkeypatch, content, probes=2
+    )
+
+    assert event.event_type == "session.execution.succeeded"
+    assert connection.open_count == 1
+    assert connection.state == "connected"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    ((False, "the session is not running"), (None, "did not report the session state")),
+)
+async def test_opencode_stall_fails_with_named_error_when_session_not_running(
+    monkeypatch: pytest.MonkeyPatch,
+    answer: bool | None,
+    expected: str,
+) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_SseResponse(block=True)],
+        session_running=[answer],
+    )
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
+
+    events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
+
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    outcome = normalize_event(
+        events[0],
+        primary_event_scope=connection.primary_event_scope,
+    ).semantics.terminal
+    assert outcome is not None
+    assert outcome.status == "failed"
+    assert outcome.error.startswith("OpenCode event stream stalled")
+    assert expected in outcome.error
+    assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_opencode_spawned_stall_bound_fails_after_long_busy_silence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_SseResponse(block=True)],
+        session_running=[True],
+    )
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(OpenCodeConnection, "_BUSY_STALL_LIMIT_SECONDS", 0.05)
+
+    events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
+
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "while the session reported running" in str(events[0].payload["message"])
+    assert connection.probe_count >= 2
+    assert connection.state == "failed"
+
+
+class _ProbeV2Connection(OpenCodeV2Connection):
+    def __init__(
+        self,
+        response: tuple[int, object | None, str] | Exception,
+    ) -> None:
+        super().__init__()
+        self._state = "connected"
+        self._session_id = "ses_probe"
+        self._response = response
+        self.requested_paths: list[str] = []
+
+    async def _get_json(
+        self,
+        path: str,
+        *,
+        timeout: float | None = None,
+    ) -> tuple[int, object | None, str]:
+        _ = timeout
+        self.requested_paths.append(path)
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    (
+        ((200, {"data": {"ses_probe": {"type": "running"}}}, "application/json"), True),
+        ((200, {"data": {}}, "application/json"), False),
+        ((500, {"error": "boom"}, "application/json"), None),
+        ((200, {"unexpected": True}, "application/json"), None),
+        (TimeoutError("probe timed out"), None),
+    ),
+)
+async def test_opencode_v2_busy_probe_reads_active_sessions(
+    response: tuple[int, object | None, str] | Exception,
+    expected: bool | None,
+) -> None:
+    connection = _ProbeV2Connection(response)
+
+    assert await connection._session_still_running() is expected
+    assert connection.requested_paths == ["/api/session/active"]
 
 
 def test_opencode_health_fails_when_event_liveness_expires(
