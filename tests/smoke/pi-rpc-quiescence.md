@@ -156,7 +156,7 @@ direct children, not shell-command parsing.
 ```bash
 uv run meridian spawn --harness pi -m <pi-model> --bg \
   -p 'Run sleep 10 with bash, then reply FIRST.'
-uv run meridian spawn inject <p-id> 'Reply SECOND.'
+uv run meridian spawn message <p-id> 'Reply SECOND.'
 uv run meridian spawn wait <p-id>
 ```
 

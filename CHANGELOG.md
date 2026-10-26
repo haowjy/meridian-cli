@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `meridian spawn inject` is renamed `meridian spawn message`; the old spelling
+  still runs and warns for one release. See
+  [spawn message rename](docs/upgrading.md#spawn-message-rename).
+- An injected message opens with a `[Meridian]` line naming the sending spawn and
+  chat, and, when the sender can receive one, the `meridian spawn message <id>`
+  command that answers it.
+
 ## [0.14.7] - 2026-10-26
 
 ### Fixed

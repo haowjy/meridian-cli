@@ -289,6 +289,27 @@ The hidden runtime-only `spawn collect` and `spawn ack` commands default to JSON
 and stay out of help. Their shapes are a protocol with the Claude runtime mod, not
 human-facing spawn output.
 
+### Injected message frame
+
+`spawn message` (`cli/spawn_message.py`) posts text, not just a payload. It opens
+the message with a `[Meridian]` line naming the sender (`$MERIDIAN_SPAWN_ID`,
+read through `resolve_cli_observer_context(observe=True)` so a `-C` invocation
+claims no identity) and, when the sender's active record is a child spawn or a
+primary harness with an inbox port, the `meridian spawn message <id>` command
+that answers it. The chat id comes from the sender's own record, not
+`$MERIDIAN_CHAT_ID`, which names the root conversation. A session that receives
+an injection otherwise cannot tell which session sent it or where to reply.
+
+The frame is message text, built once in the CLI, so the control-socket and
+primary-inbox routes carry it identically and every harness renders it. Do not
+move it into a harness wire field: Claude's peer-message envelope carries
+`from`/`from-mode`, and Meridian forges neither (KB
+`decisions/primary-inject.md#d-claude-primary-inbox` — the same reason a
+bypass-mode primary holds the message for approval).
+
+`spawn inject` remains as a hidden deprecated alias for one release; it warns on
+stderr and calls the same handler.
+
 ### `--metadata` flag
 
 `_spawn_create` and `_spawn_wait` accept `--metadata`. In text mode it shows detailed inline accounting (model, harness, exit code, duration, cost, tokens, report path) while still including report body and transcript pointer.
