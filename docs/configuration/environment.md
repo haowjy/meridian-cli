@@ -52,10 +52,16 @@ overrides — not `-C`, which retargets the entire project/control root.
 | `MERIDIAN_CONFIG` | User config overlay path |
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/`) |
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
-| `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory: named work item scratch dir when attached, else the run's ambient spawn scope (`spawns/p<N>/work`) |
+| `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory. Primary sessions get a stable per-session symlink that follows `work start`/`switch`/`rename` and returns to the ambient spawn scope after `work done`/`delete`; spawns get the launch-bound work-item or ambient spawn scope (`spawns/p<N>/work`) |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
 | `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
+
+Primary sessions point `MERIDIAN_ACTIVE_WORK_DIR` at a stable symlink. Harnesses that
+match file-permission rules against literal paths (Claude Code) do not follow it: a
+profile's scoped `Edit` grant on the real work-item path does not authorize a write
+through the link. Grant the link's parent directory (`sessions/<chat>/`) or use an
+unscoped write; Meridian's own permission layer resolves the link.
 
 Internally, `_MERIDIAN_DEPTH` carries the current zero-based counter while the
 public `MERIDIAN_MAX_DEPTH` remains the user-configurable cap. Other internal

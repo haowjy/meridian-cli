@@ -215,7 +215,7 @@ Runner-history pruning is explicit, never automatic; see
 | Command | Description |
 | ------- | ----------- |
 | `meridian work` | Dashboard — active work items and spawns |
-| `meridian work current` | Print the active work scope directory (named work item or ambient spawn scope) |
+| `meridian work current` | Print the active work scope directory (a primary session's stable work link, otherwise the named work item or ambient spawn scope) |
 | `meridian work path RELPATH` | Materialize a path under the active scope and print its absolute path (creates parent dirs) |
 | `meridian work root` | Print the configured work root (context tree for named work items) |
 | `meridian work start LABEL` | Create a work item if missing, or switch to it |
@@ -226,6 +226,14 @@ Runner-history pruning is explicit, never automatic; see
 | `meridian work task-dir [PATH\|--clear]` | Show/set/clear active work-item task directory |
 | `meridian work done SLUG` | Mark a work item done and archive its scratch directory |
 | `meridian work sessions SLUG` | List sessions attached to a work item |
+
+Within a primary session, `MERIDIAN_ACTIVE_WORK_DIR` is a stable symlink
+(`sessions/<chat>/work` under the runtime root) that `work start`, `work switch`,
+and `work rename` repoint; with no active item it points at the session's ambient
+spawn work directory. Agents can write prompt files with that literal path and
+pass it to `--prompt-file` without resolving the work path again. The link
+follows the current item, so write a prompt after the final switch; a path saved
+before a switch still names the same link but reaches the new item.
 
 ## Hooks
 

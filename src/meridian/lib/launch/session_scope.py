@@ -35,6 +35,7 @@ from meridian.lib.state.session_store import (
     update_session_harness_id,
     update_session_launch_policy,
 )
+from meridian.lib.state.session_work_link import publish_session_work_link
 
 if TYPE_CHECKING:
     from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
@@ -230,6 +231,10 @@ def session_scope(
         finally:
             _reclaim_session_scopes(runtime_root, resolved_chat_id)
         if kind == "primary":
+            # The link outlives nothing: the chat's attachment survives, so the next
+            # launch of this chat rebuilds the link from it. A crash that skips this
+            # leaves an inert link that launch overwrites.
+            publish_session_work_link(runtime_root, resolved_chat_id, None)
             # Browse shows the last-used model; a mid-session switch is only visible in the
             # native history. Runs after reclamation and never waits on a lock: a missed
             # observation is fine, delayed shutdown is not.

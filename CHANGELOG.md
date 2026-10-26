@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Primary sessions export `MERIDIAN_ACTIVE_WORK_DIR` and print it in the system prompt
+  as a stable per-chat symlink (`sessions/<chat>/work` under the runtime root).
+  `work start`, `switch`, and `rename` repoint it atomically; `work done` and
+  `delete` detach the session and repoint it at the ambient spawn directory, so
+  `work current` no longer reports the archived path. Spawns keep their
+  launch-bound work directory.
+
 ## [0.14.7] - 2026-10-26
 
 ### Fixed

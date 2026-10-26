@@ -24,6 +24,8 @@ bare path
                                       unsupported versions warn and are skipped by
                                       reads; read-then-append decisions refuse them
                                       in scope)
+  sessions/<chat>/work              — stable symlink to the chat's active work directory;
+                                      a projection of the session attachment, never authority
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock

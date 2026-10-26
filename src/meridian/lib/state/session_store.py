@@ -80,6 +80,7 @@ from meridian.lib.state.session_fold import (
 from meridian.lib.state.session_fold import (
     project_session_event as project_session_event,
 )
+from meridian.lib.state.session_work_link import publish_session_work_link
 from meridian.lib.utils.json_shapes import (
     float_or_none,
     int_or_none,
@@ -1333,6 +1334,10 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
         for chat_id, lock_path, handle in stale:
             if chat_id in cleaned_id_set:
                 unlink_validated_lock(lock_path, handle)
+        for chat_id in cleaned_ids:
+            # A crashed primary never reached its session-scope cleanup, so its
+            # work link is left pointing at whatever the chat was attached to.
+            publish_session_work_link(runtime_root, chat_id, None)
 
     return StaleSessionCleanup(
         cleaned_ids=tuple(sorted(cleaned_ids, key=_session_sort_key)),

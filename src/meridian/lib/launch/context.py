@@ -78,6 +78,10 @@ from meridian.lib.state.paths import (
     resolve_project_paths,
     resolve_spawn_log_dir,
 )
+from meridian.lib.state.session_work_link import (
+    publish_session_work_link,
+    session_work_link_path,
+)
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.state.work_scope import resolve_bound_work_scope
@@ -1718,12 +1722,31 @@ def bind_launch_context(
         request_work_id_hint=resolved_request.work_id_hint,
         runtime_work_id=bindings.runtime_work_id,
     )
-    bound_active_work_dir = _resolve_bound_active_work_dir(
+    suppresses_ambient_work = requested_work_id is None and _suppresses_ambient_work(
+        resolved_request
+    )
+    bound_work_target = _resolve_bound_active_work_dir(
         project_root=project_paths.project_root,
         requested_work_id=requested_work_id,
         child_spawn_id=bindings.spawn_id,
         runtime_root=runtime_root,
     )
+    # A primary's prompt and MERIDIAN_ACTIVE_WORK_DIR name a per-chat link that work
+    # start/switch/rename repoint, so neither goes stale while the session runs. The
+    # ambient scope of an exact continue is suppressed outright, so it gets no link.
+    # Children keep their launch-bound directory: a child inherits its parent's chat
+    # id, so a chat-keyed link would be shared with the parent it belongs to.
+    bound_work_link: Path | None = None
+    if (
+        is_primary_launch
+        and bindings.chat_id
+        and bound_work_target is not None
+        and not suppresses_ambient_work
+    ):
+        bound_work_link = session_work_link_path(runtime_root, bindings.chat_id)
+        if not bindings.dry_run:
+            publish_session_work_link(runtime_root, bindings.chat_id, bound_work_target)
+    bound_active_work_dir = bound_work_link or bound_work_target
     refreshed_prompt, prompt_payload, projected_content = _reproject_capabilities_at_bind(
         composed_prompt=resolved_request.prompt,
         prompt_payload=prompt_payload,
@@ -1807,9 +1830,11 @@ def bind_launch_context(
         increment_depth=not is_primary_launch,
         additional_overrides=launch_env_overrides or None,
     )
-    if requested_work_id is None and _suppresses_ambient_work(resolved_request):
+    if suppresses_ambient_work:
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_DIR", None)
+    elif bound_work_link is not None:
+        child_context_env["MERIDIAN_ACTIVE_WORK_DIR"] = bound_work_link.as_posix()
     effective_work_id = (
         child_context_env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip() or requested_work_id
     )

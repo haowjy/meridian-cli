@@ -21,7 +21,8 @@ bare path
   sessions.jsonl                    — all session events, append-only
   sessions.jsonl.flock
   session-id-counter                — monotonic c1, c2, …
-  sessions/                         — per-session lock + lease files
+  sessions/                         — per-session lock + lease files, plus <chat>/work,
+                                      the stable link to the chat's active work dir
   spawn-id-counter                  — monotonic p1, p2, …
   locks/spawns/<id>.lock            — stable per-spawn mutation lock
   locks/process-scopes/<id>.lock    — stable process-scope projection lock

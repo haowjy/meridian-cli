@@ -12,7 +12,12 @@ import structlog
 
 from meridian.lib.core.lifecycle import get_hook_dispatcher
 from meridian.lib.state import session_store, work_repository, work_store
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import (
+    resolve_ambient_work_dir,
+    resolve_project_paths,
+    resolve_work_scratch_dir_for_project,
+)
+from meridian.lib.state.session_work_link import publish_session_work_link
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry import emit_telemetry
 
@@ -72,6 +77,46 @@ def publish_work_event(
     )
 
 
+def set_session_work_attachment(
+    project_root: Path,
+    runtime_root: Path,
+    chat_id: str,
+    work_id: str | None,
+) -> None:
+    """Record a chat's work attachment and repoint a primary's stable work link.
+
+    The single seam for a chat's work item changing: the event is authority, the
+    link is the projection that a primary's ``MERIDIAN_ACTIVE_WORK_DIR`` and
+    system prompt name. Spawn sessions record the attachment but keep their
+    launch-bound directory, so they get no link. Callers own the "does this chat
+    exist" check.
+    """
+
+    normalized = chat_id.strip()
+    if not normalized:
+        return
+    record = session_store.chat_record(runtime_root, normalized)
+    session_store.update_session_work_id(runtime_root, normalized, work_id)
+    if record is None or record.kind != "primary":
+        # Only a primary session names its work link in the environment; a spawn's
+        # session row records the attachment for history but has no consumer.
+        return
+    if work_id is not None:
+        target: Path | None = resolve_work_scratch_dir_for_project(project_root, work_id)
+    elif record.spawn_id:
+        # No active item: the scope falls back to this primary spawn's ambient work
+        # directory, so the stable path stays writable instead of dangling.
+        target = resolve_ambient_work_dir(
+            project_root,
+            record.spawn_id,
+            runtime_root=runtime_root,
+        )
+        target.mkdir(parents=True, exist_ok=True)
+    else:
+        target = None
+    publish_session_work_link(runtime_root, normalized, target)
+
+
 def activate_work(
     project_root: Path,
     chat_id: str,
@@ -88,7 +133,7 @@ def activate_work(
     normalized = chat_id.strip()
     attached = session_store.session_exists(runtime_root, normalized)
     if attached:
-        session_store.update_session_work_id(runtime_root, normalized, work_id)
+        set_session_work_attachment(project_root, runtime_root, normalized, work_id)
     publish_work_event(
         "work.activated",
         project_root=project_root,

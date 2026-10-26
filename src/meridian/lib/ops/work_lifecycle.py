@@ -17,7 +17,11 @@ from meridian.lib.ops.runtime import (
     resolve_roots,
     runtime_context,
 )
-from meridian.lib.ops.work_attachment import activate_work, publish_work_event
+from meridian.lib.ops.work_attachment import (
+    activate_work,
+    publish_work_event,
+    set_session_work_attachment,
+)
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.spawn_status import overlay_derived
@@ -125,6 +129,19 @@ def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | N
     if not warnings:
         return None
     return "Work item marked done while still referenced by " + "; ".join(warnings) + "."
+
+
+def _detach_primary_sessions_from_work(
+    project_root: Path,
+    runtime_root: Path,
+    work_id: str,
+) -> None:
+    """Return attached primary sessions to their ambient work directory."""
+
+    for chat_id in session_store.list_active_sessions_for_work_id(runtime_root, work_id):
+        record = session_store.chat_record(runtime_root, chat_id)
+        if record is not None and record.kind == "primary":
+            set_session_work_attachment(project_root, runtime_root, chat_id, None)
 
 
 def _emit_work_transition(
@@ -489,6 +506,7 @@ def work_done_sync(
     _require_work_item(project_state_dir, payload.work_id)
 
     item = work_repository.archive_work_item(project_state_dir, payload.work_id)
+    _detach_primary_sessions_from_work(roots.project_root, runtime_state_root, item.name)
     publish_work_event(
         "work.done",
         project_root=roots.project_root,
@@ -508,12 +526,13 @@ def work_delete_sync(
     ctx: RuntimeContext | None = None,
 ) -> WorkDeleteOutput:
     nested_warning = _work_warning(ctx)
-    project_state_dir = resolve_roots(payload.project_root).project_state_dir
+    roots = resolve_roots(payload.project_root)
     item, had_artifacts = work_repository.delete_work_item(
-        project_state_dir,
+        roots.project_state_dir,
         payload.work_id,
         force=payload.force,
     )
+    _detach_primary_sessions_from_work(roots.project_root, roots.runtime_root, item.name)
     _emit_work_transition(
         "work.deleted",
         work_id=item.name,
@@ -608,9 +627,24 @@ def work_rename_sync(
             spawn_store.update_spawn(runtime_state_root, spawn.id, work_id=item.name)
 
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
-    current_work_id = session_store.get_session_active_work_id(runtime_state_root, chat_id)
-    if current_work_id == old_name:
-        session_store.update_session_work_id(runtime_state_root, chat_id, item.name)
+    # Every session attached to the old name follows the item's directory, not just
+    # the caller: the stable work link would otherwise dangle after the rename.
+    attached_chat_ids = set(
+        session_store.list_active_sessions_for_work_id(runtime_state_root, old_name)
+    )
+    if (
+        chat_id
+        and session_store.session_exists(runtime_state_root, chat_id)
+        and session_store.get_session_active_work_id(runtime_state_root, chat_id) == old_name
+    ):
+        attached_chat_ids.add(chat_id)
+    for attached_chat_id in sorted(attached_chat_ids):
+        set_session_work_attachment(
+            roots.project_root,
+            runtime_state_root,
+            attached_chat_id,
+            item.name,
+        )
 
     _emit_work_transition(
         "work.renamed",
@@ -635,7 +669,7 @@ def work_clear_sync(
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
     updated = session_store.session_exists(runtime_root, chat_id)
     if updated:
-        session_store.update_session_work_id(runtime_root, chat_id, None)
+        set_session_work_attachment(roots.project_root, runtime_root, chat_id, None)
     message = "Cleared active work item." if updated else "No active session; nothing to clear."
     return WorkClearOutput(message=message, warning=warning)
 
