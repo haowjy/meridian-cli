@@ -9,8 +9,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   package-resolving `meridian mars` commands. `meridian skills NAME` reads the
   project `.mars/skills/` copy Mars recorded for this build, while older Mars
   versions, contention, pending sync recovery, missing or invalid provided copies,
-  and bare directories keep the wheel fallback. Help and invalid skill requests do
-  not invoke the provider.
+  and bare directories keep the wheel fallback. When Mars refuses the bundle (an
+  invalid skill, or a `provided.lock` from a newer Mars), Meridian prints Mars's
+  reason as a warning before falling back. Help and invalid skill requests do not
+  invoke the provider.
 
 ## [0.14.6] - 2026-10-25
 

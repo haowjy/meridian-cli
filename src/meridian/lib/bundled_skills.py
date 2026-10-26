@@ -140,6 +140,14 @@ def provide_bundled_skills(
     except (OSError, subprocess.TimeoutExpired):
         return WHEEL
     if result.returncode != 0:
+        # A Mars that refused the bundle (an invalid skill, a newer provided.lock) says why in a
+        # JSON error on stdout; a Mars without `provide` prints only usage text, so stays quiet.
+        message = _mars_error_message(result.stdout)
+        if message is not None:
+            print(
+                f"warning: mars provide failed, using Meridian's built-in skills: {message}",
+                file=sys.stderr if stderr is None else stderr,
+            )
         return WHEEL
 
     try:
@@ -174,6 +182,20 @@ def provide_bundled_skills(
         skills_dir=primary_root / ".mars" / "skills",
         provided=provided,
     )
+
+
+def _mars_error_message(stdout: str) -> str | None:
+    try:
+        payload = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = cast("dict[str, object]", payload).get("error")
+    if not isinstance(error, dict):
+        return None
+    message = cast("dict[str, object]", error).get("message")
+    return message if isinstance(message, str) and message.strip() else None
 
 
 def _skill_dir(name: str, source: BundledSkillSource) -> Traversable:
