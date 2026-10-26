@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import time
+
+import pytest
 
 from meridian.lib.harness.connections import liveness as liveness_module
 from meridian.lib.harness.connections.liveness import (
@@ -10,9 +13,6 @@ from meridian.lib.harness.connections.liveness import (
     LivenessDecision,
 )
 from tests.support.fakes import FakeClock
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def _policy(
@@ -158,3 +158,62 @@ def test_evaluate_awaiting_done_does_not_suppress_backend_dead(
 
     assert policy.evaluate() == LivenessDecision.BACKEND_DEAD
     assert policy.healthy is False
+
+
+async def test_wait_for_activity_returns_read_completed_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Data that arrived at the deadline is progress, not a stalled stream."""
+
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    clock.advance(11.0)
+    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
+
+    read = asyncio.get_running_loop().create_future()
+    read.set_result(b"chunk")
+
+    assert await policy.wait_for_activity(read) == b"chunk"
+
+
+async def test_wait_for_activity_propagates_outer_cancel_during_inner_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An outer cancel is not turned into a liveness timeout.
+
+    After the deadline the policy cancels the read and awaits it. Codex and
+    OpenCode both rely on an outer cancel (shutdown) landing in that window as
+    ``CancelledError``; reporting ``EventStreamLivenessTimeout`` there would look
+    like a stream stall.
+    """
+
+    # Real time: the read must already be running when the deadline cancels it,
+    # and a completed-at-the-deadline read is covered above.
+    policy = BackendLivenessPolicy(
+        timeout_seconds=lambda: 0.05,
+        now=time.monotonic,
+        backend_pid=lambda: 4242,
+        backend_birth_time=lambda: 0.0,
+    )
+    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
+    policy.mark_activity()
+
+    cleanup_started = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def slow_read() -> bytes:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cleanup_started.set()
+            await cleanup_finished.wait()
+            raise
+
+    waiter = asyncio.ensure_future(policy.wait_for_activity(slow_read()))
+    await asyncio.wait_for(cleanup_started.wait(), timeout=5.0)
+    waiter.cancel()
+    cleanup_finished.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiter

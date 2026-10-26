@@ -61,6 +61,7 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
+from meridian.lib.harness.opencode_backend import v1_session_running
 from meridian.lib.harness.projections.project_opencode_config import opencode_model_parts
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
@@ -165,6 +166,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         "/event",
     )
     _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/session/{session_id}/abort",)
+    # Asked only on a liveness stall, to tell a long tool from a dead stream.
+    _SESSION_RUNNING_PROBE_PATH: ClassVar[str] = "/session/status"
     _PATH_RETRY_STATUSES: ClassVar[frozenset[int]] = frozenset((404, 405))
     _PAYLOAD_RETRY_STATUSES: ClassVar[frozenset[int]] = frozenset((400, 415, 422))
     _SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204))
@@ -176,6 +179,10 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     # gives up here. About 15 liveness windows; long enough for any real tool,
     # short enough that a wedged server does not pin a spawn forever.
     _BUSY_STALL_LIMIT_SECONDS: ClassVar[float] = 1800.0
+    # The session-running probe is a local HTTP GET on the stall path. Bound it
+    # like the reconcile GET so a wedged server cannot hold the stall decision
+    # open; no answer is a valid probe answer (``None``).
+    _BUSY_PROBE_TIMEOUT_SECONDS: ClassVar[float] = 5.0
     # Re-polls allowed on the liveness-timeout path before a stall is declared
     # terminal. One is enough to cover the prompt-before-subscribe gap; the cap
     # keeps recovery bounded if the timeout path is ever revisited.
@@ -726,21 +733,47 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     async def _session_still_running(self) -> bool | None:
         """Whether the backend is still executing this session's turn.
 
-        Asked only when the stream passes the liveness timeout. ``None`` means the
-        version cannot answer (1.x has no active-session listing), which keeps the
-        ordinary stall handling; V2 asks ``GET /api/session/active``.
+        Asked only when the stream passes the liveness timeout. V1 answers from
+        ``GET /session/status``; V2 overrides the path and the parser because its
+        ``/api/session/active`` listing has a different shape. ``None`` means no
+        usable answer (transport error, rejected status, malformed body), which
+        keeps the ordinary stall handling: the stream may have missed a terminal.
         """
 
-        return None
+        session_id = self._session_id
+        if not session_id:
+            return None
+        try:
+            status, body, _ = await self._get_json(
+                self._SESSION_RUNNING_PROBE_PATH,
+                timeout=self._BUSY_PROBE_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            return None
+        if status not in self._SUCCESS_STATUSES:
+            return None
+        try:
+            return self._session_running_from_status(body, session_id)
+        except ValueError:
+            return None
 
-    def _stall_failure_event(self, detail: str) -> RawHarnessEvent:
+    def _session_running_from_status(self, payload: object, session_id: str) -> bool:
+        """Read one session's running state from the version's status payload."""
+
+        return v1_session_running(payload, session_id)
+
+    def _stall_failure_event(self, detail: str) -> RawHarnessEvent | None:
         """Fail the connection with a terminal that names the stall.
 
         A bare return would surface as the drain's generic
         ``connection_closed_without_terminal_event``; the cause is already known
-        here, so report it the way ``_process_exit_event()`` reports an exit.
+        here, so report it the way ``_process_exit_event()`` reports an exit. A
+        stall that lands while a cancel moves the connection out of ``connected``
+        is teardown, not a failure: both return no event.
         """
 
+        if self._state in {"stopping", "stopped"}:
+            return None
         self._set_failed()
         message = f"OpenCode event stream stalled: {detail}"
         return RawHarnessEvent(
@@ -763,7 +796,11 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 return
 
         stall_reconciles_remaining = self._STALL_RECONCILE_LIMIT
-        busy_stall_since: float | None = None
+        # The busy bound counts real silence, so it measures from the last
+        # semantic event, never from the first probe that reports the session
+        # running: "30 min without an event" must mean exactly that.
+        last_activity_at = time.monotonic()
+        session_running = False
 
         async def _reconcile_before_stall() -> RawHarnessEvent | None:
             """Re-poll the durable outcome before declaring the stream stalled."""
@@ -777,7 +814,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         async def _handle_stall() -> tuple[RawHarnessEvent | None, _StallAction]:
             """Resolve a liveness stall into an event and a stream action."""
 
-            nonlocal busy_stall_since
+            nonlocal session_running
             if self._process_exited():
                 return self._process_exit_event(), _StallAction.STOP
             if self._liveness.evaluate() is LivenessDecision.BACKEND_DEAD:
@@ -792,31 +829,31 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             if self._process_exited():
                 return self._process_exit_event(), _StallAction.STOP
 
-            if running is True:
-                now = time.monotonic()
-                if busy_stall_since is None:
-                    busy_stall_since = now
-                elapsed = now - busy_stall_since
+            if running is not None:
+                session_running = running
+            silence = time.monotonic() - last_activity_at
+            # One unanswered probe does not end a busy stretch: a CPU-saturated
+            # backend can push the bounded probe past its timeout while the tool
+            # it is running goes on to deliver its terminal. Only a definitive
+            # "not running" ends the stretch; the silence bound still applies.
+            if session_running:
                 # The probe calls a long primary turn healthy, and reports its end,
                 # so only a spawned drain needs a ceiling on the silence.
-                if (
-                    not self._primary_observer_mode
-                    and elapsed >= self._BUSY_STALL_LIMIT_SECONDS
-                ):
+                if not self._primary_observer_mode and silence >= self._BUSY_STALL_LIMIT_SECONDS:
                     logger.warning(
                         "OpenCode stream carried no event for %.0fs while the session "
                         "reported running; failing the spawn",
-                        elapsed,
+                        silence,
                     )
                     return (
                         self._stall_failure_event(
-                            f"no event for {elapsed:.0f}s while the session reported running"
+                            f"no event for {silence:.0f}s while the session reported running"
                         ),
                         _StallAction.STOP,
                     )
                 logger.debug(
                     "OpenCode event stream quiet for %.1fs; session still running",
-                    self._LIVENESS_TIMEOUT_SECONDS,
+                    silence,
                 )
                 self._liveness.mark_activity()
                 return None, _StallAction.KEEP_READING
@@ -827,7 +864,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 # stream missed. The stream itself is not a failure.
                 logger.debug(
                     "OpenCode event stream quiet for %.1fs; reconnecting persistent observer",
-                    self._LIVENESS_TIMEOUT_SECONDS,
+                    silence,
                 )
                 self._liveness.mark_activity()
                 return None, _StallAction.RECONNECT
@@ -837,8 +874,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 self._liveness.mark_activity()
                 return reconciled, _StallAction.STOP
             logger.warning(
-                "OpenCode event stream liveness timeout after %.1fs without events",
-                self._LIVENESS_TIMEOUT_SECONDS,
+                "OpenCode event stream liveness timeout after %.0fs without events",
+                silence,
             )
             detail = (
                 "the session is not running"
@@ -846,9 +883,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 else "the server did not report the session state"
             )
             return (
-                self._stall_failure_event(
-                    f"no event for {self._LIVENESS_TIMEOUT_SECONDS:.0f}s and {detail}"
-                ),
+                self._stall_failure_event(f"no event for {silence:.0f}s and {detail}"),
                 _StallAction.STOP,
             )
 
@@ -934,7 +969,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     if self._queue_waiter is not None and self._queue_waiter.done():
                         injected = self._queue_waiter.result()
                         self._queue_waiter = None
-                        busy_stall_since = None
+                        last_activity_at = time.monotonic()
                         self._liveness.mark_activity()
                         yield injected
                         continue
@@ -945,7 +980,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     # liveness semantics; the queue is only an extra wake source.
                     injected = self._pop_injected_event()
                     if injected is not None:
-                        busy_stall_since = None
+                        last_activity_at = time.monotonic()
                         self._liveness.mark_activity()
                         yield injected
                         continue
@@ -964,7 +999,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         if self._queue_waiter in done:
                             injected = self._queue_waiter.result()
                             self._queue_waiter = None
-                            busy_stall_since = None
+                            last_activity_at = time.monotonic()
                             self._liveness.mark_activity()
                             yield injected
                         if pending_read not in done:
@@ -1013,7 +1048,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         )
                         if event is None:
                             continue
-                        busy_stall_since = None
+                        last_activity_at = time.monotonic()
                         self._liveness.mark_activity()
                         if await self._dispatch_inbound_event(event):
                             continue
@@ -1029,7 +1064,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 if buffer.strip():
                     event = self._event_from_json_line(buffer.strip(), raw_text=buffer.strip())
                     if event is not None:
-                        busy_stall_since = None
+                        last_activity_at = time.monotonic()
                         self._liveness.mark_activity()
                         if not await self._dispatch_inbound_event(event):
                             yield event
@@ -1038,7 +1073,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     sse_data_lines=sse_data_lines,
                 )
                 if final_sse_event is not None:
-                    busy_stall_since = None
+                    last_activity_at = time.monotonic()
                     self._liveness.mark_activity()
                     if not await self._dispatch_inbound_event(final_sse_event):
                         yield final_sse_event

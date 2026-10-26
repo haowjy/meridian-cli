@@ -107,6 +107,27 @@ def resolve_opencode_version(
     return resolved or DEFAULT_OPENCODE_VERSION
 
 
+def v1_session_running(payload: object, session_id: str) -> bool:
+    """Whether ``GET /session/status`` reports *session_id* as executing.
+
+    The listing maps every session the server knows to its ``SessionStatus``.
+    ``busy`` is a turn in progress and ``retry`` is a provider backoff that turn
+    is waiting out; a session the map omits is idle. Asked by the connection on a
+    liveness stall, so a long tool is not mistaken for a dead stream.
+    """
+
+    statuses = json_object(payload)
+    if statuses is None:
+        raise ValueError("session status listing is not an object")
+    entry = statuses.get(session_id)
+    if entry is None:
+        return False
+    status = json_object(entry)
+    if status is None:
+        raise ValueError("session status entry is not an object")
+    return status.get("type") in ("busy", "retry")
+
+
 def v2_session_running(payload: object, session_id: str) -> bool:
     """Whether ``GET /api/session/active`` lists *session_id* as executing.
 
@@ -146,5 +167,6 @@ __all__ = [
     "normalize_version_preference",
     "parse_opencode_version",
     "resolve_opencode_version",
+    "v1_session_running",
     "v2_session_running",
 ]

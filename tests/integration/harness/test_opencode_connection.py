@@ -165,6 +165,26 @@ class _GatedTerminalSseContent(_SseContent):
         return self._terminal
 
 
+class _SplitFrameSseContent(_SseContent):
+    """A frame cut in half by a stall: head, silence, tail, EOF."""
+
+    def __init__(self, head: bytes, tail: bytes) -> None:
+        super().__init__()
+        self._parts = [head, tail]
+        self._gate = asyncio.Event()
+
+    def release(self) -> None:
+        self._gate.set()
+
+    async def read(self, _size: int) -> bytes:
+        if not self._parts:
+            return b""
+        if len(self._parts) == 1:
+            # The gate is opened by the probe that runs during the stall.
+            await self._gate.wait()
+        return self._parts.pop(0)
+
+
 class _ProcessDeathSseContent:
     def __init__(self, process: FakeOpenCodeProcess, return_code: int) -> None:
         self._process = process
@@ -209,14 +229,19 @@ class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
         self.open_count = 0
 
     async def _session_still_running(self) -> bool | None:
-        self.probe_count += 1
-        if self._on_probe is not None:
-            self._on_probe(self.probe_count)
+        self._note_probe()
         if self._session_running is None:
             return None
         if len(self._session_running) > 1:
             return self._session_running.pop(0)
         return self._session_running[0]
+
+    def _note_probe(self) -> None:
+        """Count one probe, letting the test release a gated frame from inside it."""
+
+        self.probe_count += 1
+        if self._on_probe is not None:
+            self._on_probe(self.probe_count)
 
     async def _open_event_stream(self) -> _SseResponse:
         self.open_count += 1
@@ -233,6 +258,36 @@ class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
 
 async def _no_sleep(_delay: float) -> None:
     return None
+
+
+class _StatusProbeOpenCodeConnection(_LivenessProbeOpenCodeConnection):
+    """Keep the real V1 status probe; only the transport GET is canned."""
+
+    def __init__(
+        self,
+        responses: list[_SseResponse | _ProcessDeathSseResponse | Exception],
+        *,
+        status_body: object,
+        on_probe: Callable[[int], None] | None = None,
+    ) -> None:
+        super().__init__(responses, on_probe=on_probe)
+        self._status_body = status_body
+        self.requested_paths: list[str] = []
+        self.probe_timeouts: list[float | None] = []
+
+    async def _session_still_running(self) -> bool | None:
+        self._note_probe()
+        return await OpenCodeConnection._session_still_running(self)
+
+    async def _get_json(
+        self,
+        path: str,
+        *,
+        timeout: float | None = None,
+    ) -> tuple[int, object | None, str]:
+        self.requested_paths.append(path)
+        self.probe_timeouts.append(timeout)
+        return 200, self._status_body, "application/json"
 
 
 async def _collect_opencode_events(connection: OpenCodeConnection) -> list[RawHarnessEvent]:
@@ -479,9 +534,7 @@ async def test_opencode_spawned_stream_survives_stall_while_session_runs(
     )
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.05)
 
-    event = await _first_event_after_probes(
-        determinism, connection, monkeypatch, content, probes=2
-    )
+    event = await _first_event_after_probes(determinism, connection, monkeypatch, content, probes=2)
 
     assert event.event_type == "session.execution.succeeded"
     assert connection.open_count == 1
@@ -507,9 +560,7 @@ async def test_opencode_primary_observer_keeps_stream_while_session_runs(
     # reports its end so the observer can reconnect and resync then.
     monkeypatch.setattr(OpenCodeConnection, "_BUSY_STALL_LIMIT_SECONDS", 0.0)
 
-    event = await _first_event_after_probes(
-        determinism, connection, monkeypatch, content, probes=2
-    )
+    event = await _first_event_after_probes(determinism, connection, monkeypatch, content, probes=2)
 
     assert event.event_type == "session.execution.succeeded"
     assert connection.open_count == 1
@@ -559,13 +610,127 @@ async def test_opencode_spawned_stall_bound_fails_after_long_busy_silence(
         session_running=[True],
     )
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr(OpenCodeConnection, "_BUSY_STALL_LIMIT_SECONDS", 0.05)
+    monkeypatch.setattr(OpenCodeConnection, "_BUSY_STALL_LIMIT_SECONDS", 0.02)
 
-    events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
+    # Fine steps: the bound counts from the stream's first silent moment, so the
+    # driver must not burn the whole budget before the first probe runs.
+    events = await _collect_events_under_fake_clock(
+        determinism, connection, monkeypatch, step=0.0005
+    )
 
     assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
     assert "while the session reported running" in str(events[0].payload["message"])
     assert connection.probe_count >= 2
+    assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_opencode_spawned_stream_survives_one_unanswered_busy_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
+    terminal = b'{"type":"session.execution.succeeded","sessionID":"sess-liveness"}\n'
+    content = _GatedTerminalSseContent(terminal)
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_SseResponse(content=content)],
+        # A CPU-saturated backend can miss one bounded probe while its tool runs.
+        session_running=[True, True, None, True],
+        on_probe=lambda count: content.release() if count == 4 else None,
+    )
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.05)
+
+    event = await _first_event_after_probes(determinism, connection, monkeypatch, content, probes=4)
+
+    assert event.event_type == "session.execution.succeeded"
+    assert connection.probe_count == 4
+    assert connection.open_count == 1
+    assert connection.state == "connected"
+
+
+@pytest.mark.asyncio
+async def test_opencode_split_frame_survives_busy_stall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
+    content = _SplitFrameSseContent(
+        head=b'event: message\ndata: {"type":"session.idle",',
+        tail=b'"sessionID":"sess-liveness"}\n\n',
+    )
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_SseResponse(content=content)],
+        session_running=[True],
+        on_probe=lambda count: content.release() if count == 2 else None,
+    )
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.05)
+
+    event = await _first_event_after_probes(determinism, connection, monkeypatch, content, probes=2)
+
+    assert event.event_type == "session.idle"
+    assert event.payload["sessionID"] == "sess-liveness"
+    assert connection.open_count == 1
+    assert connection.state == "connected"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_body",
+    (
+        {"sess-liveness": {"type": "busy"}},
+        # A provider backoff is a turn waiting to continue, not an idle session.
+        {"sess-liveness": {"type": "retry", "attempt": 1, "message": "slow", "next": 1}},
+    ),
+)
+async def test_opencode_v1_busy_probe_keeps_spawned_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    status_body: dict[str, object],
+) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
+    terminal = b'{"type":"session.execution.succeeded","sessionID":"sess-liveness"}\n'
+    content = _GatedTerminalSseContent(terminal)
+    connection = _StatusProbeOpenCodeConnection(
+        [_SseResponse(content=content)],
+        status_body=status_body,
+        on_probe=lambda count: content.release() if count == 2 else None,
+    )
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.05)
+
+    event = await _first_event_after_probes(determinism, connection, monkeypatch, content, probes=2)
+
+    assert event.event_type == "session.execution.succeeded"
+    assert connection.open_count == 1
+    assert connection.requested_paths == ["/session/status"] * 2
+    assert connection.probe_timeouts == [OpenCodeConnection._BUSY_PROBE_TIMEOUT_SECONDS] * 2
+    assert connection.state == "connected"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_body",
+    (
+        {"sess-liveness": {"type": "idle"}},
+        {"ses_other": {"type": "busy"}},
+    ),
+)
+async def test_opencode_v1_status_says_the_spawned_session_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+    status_body: dict[str, object],
+) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
+    connection = _StatusProbeOpenCodeConnection(
+        [_SseResponse(block=True)],
+        status_body=status_body,
+    )
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
+
+    events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
+
+    assert [event.event_type for event in events] == ["meridian/error/connectionClosed"]
+    assert "the session is not running" in str(events[0].payload["message"])
+    assert connection.requested_paths == ["/session/status"]
     assert connection.state == "failed"
 
 
@@ -648,8 +813,7 @@ async def test_opencode_start_resets_expired_liveness(
 
     await connection.start(
         _build_connection_config(tmp_path),
-        ResolvedLaunchSpec(
-        ),
+        ResolvedLaunchSpec(),
     )
 
     assert connection.health() is True
@@ -670,8 +834,7 @@ async def test_opencode_start_primary_observer_mode_controls_initial_prompt_post
 ) -> None:
     connection = _StartProbeOpenCodeConnection()
     config = _build_connection_config(tmp_path)
-    spec = ResolvedLaunchSpec(
-    )
+    spec = ResolvedLaunchSpec()
 
     if use_start_observer:
         await connection.start_observer(config, spec)
@@ -701,8 +864,7 @@ async def test_opencode_readiness_gate_retries_transient_timeout_before_session_
 
     await connection.start(
         _build_connection_config(tmp_path),
-        ResolvedLaunchSpec(
-        ),
+        ResolvedLaunchSpec(),
     )
 
     assert connection.state == "connected"
@@ -724,8 +886,7 @@ async def test_opencode_launch_process_passes_child_env_to_managed_backend(
 ) -> None:
     connection = OpenCodeConnection()
     config = _build_connection_config(tmp_path)
-    spec = ResolvedLaunchSpec(
-    )
+    spec = ResolvedLaunchSpec()
     fake_process = FakeOpenCodeProcess()
     captured: dict[str, object] = {}
     resolve_spawn_log_dir(
@@ -828,8 +989,7 @@ async def test_opencode_startup_exit_surfaces_stderr_and_xdg_hint(
     with pytest.raises(RuntimeError) as exc_info:
         await connection.start(
             config,
-            ResolvedLaunchSpec(
-            ),
+            ResolvedLaunchSpec(),
         )
 
     message = str(exc_info.value)
@@ -869,8 +1029,7 @@ async def test_opencode_startup_exit_with_claimed_port_is_retryable(
         with pytest.raises(PortBindError):
             await connection.start(
                 config,
-                ResolvedLaunchSpec(
-                ),
+                ResolvedLaunchSpec(),
             )
     finally:
         competing_socket.close()
@@ -900,8 +1059,7 @@ async def test_stop_waits_for_inflight_backend_publication(tmp_path, monkeypatch
         connection._process = process
 
     monkeypatch.setattr(connection, "_launch_process", launch)
-    spec = ResolvedLaunchSpec(
-    )
+    spec = ResolvedLaunchSpec()
     start = asyncio.create_task(connection.start(_build_connection_config(tmp_path), spec))
     stop = None
     try:
