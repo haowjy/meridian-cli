@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.8] - 2026-10-26
+
 ### Changed
 - `meridian spawn inject` is renamed `meridian spawn message`; the old spelling
   still runs and warns for one release. See
