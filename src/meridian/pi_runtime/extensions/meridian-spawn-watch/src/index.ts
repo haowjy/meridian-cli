@@ -607,7 +607,11 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   const runtime = owners.get(ownerPath) ?? new SpawnWatchRuntime(pi);
   owners.set(ownerPath, runtime);
   runtime.rebind(pi);
-  pi.on?.("session_start", (_event, ctx) => { runtime.observeIdle(() => ctx.isIdle()); runtime.start(); });
+  // A session start never makes delivery possible: a resumed or reloaded lead's
+  // prompt cache is cold, so a turn the user did not ask for re-bills the whole
+  // context for a status ping. Watchers and polling may run; only the first
+  // `agent_end` opens an idle stretch.
+  pi.on?.("session_start", () => runtime.start());
   pi.on?.("agent_start", (_event, ctx) => runtime.observeActive(() => ctx.isIdle()));
   pi.on?.("agent_end", (_event, ctx) => runtime.observeIdle(() => ctx.isIdle()));
   pi.on?.("turn_end", async (event, ctx) => {

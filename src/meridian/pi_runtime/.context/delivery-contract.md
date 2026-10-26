@@ -29,7 +29,8 @@ state: cached absence cannot prove there is no canonical child owning that
 launcher's obligation. That specific scan's committed revision must remain current
 through synchronous claim/send; superseded Bash members stay owed without
 withholding independently revalidated spawn members. Successful tool boundaries do a
-fresh full discovery; startup/rebind requests the same discovery once idle. The
+fresh full discovery; the idle path requests the same discovery once a main-loop
+`agent_end` has opened an idle stretch. The
 nonrecursive root watcher accelerates idle discovery, and a 30-second full
 reconciliation recovers missed events or delayed state rows.
 If an ordinary 500 ms idle poll already owns the single flight at reconciliation,
@@ -117,7 +118,12 @@ not open a publication window or force continuation. Every shutdown stops watche
 timers before Pi invalidates the old context. Hot reload retains the launch-scoped
 owner and queued claims, then rebinds and restarts it at fresh session startup. A cold
 restart has no old native queue: unreceipted terminal results retry, receipts and
-explicit consumption stay consumed. A receipt without its Python public-event
+explicit consumption stay consumed. Neither a reload nor a restart delivers on its
+own: a session start (`startup`, `resume`, `reload`, `new`, `fork`) starts the
+watchers but opens no idle stretch, because a resumed lead's prompt cache is cold
+and an automatic turn before the user acts would re-bill the whole context for a
+status ping. Results owed from before it stay owed until the next main-loop
+`agent_end`. A receipt without its Python public-event
 observation blocks completion and fails with a bounded diagnostic; never invent
 the missing acknowledgement or delete the receipt to force readiness. Native
 session admission and disk writes cannot guarantee atomic exactly-once delivery

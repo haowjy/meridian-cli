@@ -18,7 +18,10 @@ explicit detach/manual recovery. Detach releases quiescence, not process
 ownership; normal shutdown still cleans up owned groups. Publish terminal only
 after group exit and queued output, and supervise every async task callback.
 `meridian-spawn-watch` owns child-spawn observation and result notifications.
-Keep that mechanism/policy boundary intact.
+Keep that mechanism/policy boundary intact. It arms idle delivery only at a
+main-loop `agent_end`; a session start (startup, resume, reload, `new`, fork)
+starts its watchers but delivers nothing until a turn ends, so a resumed lead
+never pays a cold prompt cache for a status ping.
 `session-boundary` owns bounded native lifecycle observations; only a final
 shutdown/quit qualifies the run exit, never the entry or last-seen session.
 Its v2 record is nonce/PID-correlated and bounded. A shutdown with an invalidated

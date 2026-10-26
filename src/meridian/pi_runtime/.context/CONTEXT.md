@@ -189,7 +189,11 @@ than separate delivery machinery. Automatic child notices read `report.md`
 directly instead of invoking the general `spawn wait` CLI. Candidate IDs reduce
 ordinary idle work but never become authority; canonical state and parent-local
 evidence remain authoritative at publication. Two nonrecursive watchers and the
-existing timers wake the owner; active runs do no polling I/O.
+existing timers wake the owner; active runs do no polling I/O. Idle delivery is
+armed only by a main-loop `agent_end`, never by a session start: a resumed or
+reloaded lead's prompt cache is cold, so a turn nobody asked for re-bills the
+whole context for a status ping. Watchers and polling may start at `session_start`;
+they publish nothing until a turn ends.
 
 See the canonical [delivery contract](delivery-contract.md) for discovery and
 publication sequencing, fixed report/member/message bounds, subtract-only
