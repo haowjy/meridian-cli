@@ -128,6 +128,14 @@ caching when it is disabled. The main-conversation TTL variable requires
 Claude Code 2.1.242 or later. See
 [Claude Code's cache controls](https://code.claude.com/docs/en/prompt-caching#choose-the-ttl-yourself).
 
+Claude also records the system prompt itself. `--system-prompt-snapshot` defaults
+to `on`: Claude renders the prompt on the conversation's first request and reuses
+that record on every later request and resume, even when a later launch passes
+different text, until the conversation is compacted. Meridian still writes the
+recorded prompt and passes it, but Claude keeps its own copy. An agent-profile,
+skill, or launch-config edit therefore does not reach a continued Claude
+conversation until compaction; use a fork to apply it immediately.
+
 ## Claude: bundled mods
 
 Interactive Claude primaries load Meridian's Claude Code mods from
@@ -144,6 +152,40 @@ sessions load only session-boundary.
   results as a new turn, and runs `meridian spawn ack` once that turn starts.
   Core decides what is owed (`lib/ops/spawn/owed.py`); the mod's README covers
   its delivery rules.
+
+### Primary message delivery and Claude's inbound gate
+
+`meridian spawn message <primary>` posts to the messaging socket that
+meridian-session-boundary recorded at SessionStart, which is Claude Code's
+cross-session peer lane. Claude decides delivery, not Meridian, and the command
+can only report that the message was posted.
+
+Claude's `crossSessionInbound` setting picks the policy:
+
+| Value | Behavior |
+|---|---|
+| `accept` | Deliver straight to the session's queue. |
+| `hold` | Park messages for review. |
+| `refuse` | Turn peer messages away; a reply that needs a route fails. |
+
+With the setting absent, Claude runs a permission-mode parity check. A message
+that does not attest the sender's mode — Meridian never attests one, because an
+agent could then use `spawn message` to steer a bypassed session past review —
+is held for approval when the receiving session bypasses prompts. That includes
+`permissions.defaultMode: "auto"`. The hold appears as "Held peer message …
+not delivered to Claude (1 held)" and releases only when the person approves or
+the message expires; a headless host has no approval surface, so it expires.
+
+To stop the approval prompt, set `"crossSessionInbound": "accept"` in
+`~/.claude/settings.json` (or `/config` → "Messages from your other sessions").
+It applies to every peer message that session receives, not only Meridian's, so
+a session that bypasses prompts will act on another session's message without
+review. `"refuse"` is the opposite: no peer message is delivered, including
+`spawn message`. A repository or managed settings file can tighten the value
+but cannot loosen it.
+
+Messages to spawned sessions are unaffected: they use Meridian's own control
+socket, with no Claude gate in the path.
 
 ## Pi: installed runtime and four extensions
 

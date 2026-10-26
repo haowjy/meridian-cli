@@ -12,6 +12,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `work current` no longer reports the archived path. Spawns keep their
   launch-bound work directory.
 
+### Changed
+- `meridian spawn inject` is renamed `meridian spawn message`; the old spelling
+  still runs and warns for one release. See
+  [spawn message rename](docs/upgrading.md#spawn-message-rename).
+- An injected message opens with a `[Meridian]` line naming the sending spawn and
+  chat, and, when the sender can receive one, the `meridian spawn message <id>`
+  command that answers it.
+
+### Fixed
+- Fresh launches of the same agent no longer rewrite the system prompt. Per-launch
+  facts — run ID, chat ID, and the ambient work directory — now appear in the first
+  user turn instead of the system prompt, so two spawns share the harness prompt cache.
+- Exact `--continue` replays the system prompt the conversation started with on Pi and
+  OpenCode as well as Claude and Codex. Previously Pi and OpenCode received a
+  recomposed prompt with the available-skills block missing and a new run ID, so the
+  first continued turn was billed as uncached input for the whole conversation.
+  Launch snapshots from older builds have no recorded prompt and recompose as before.
+
 ## [0.14.7] - 2026-10-26
 
 ### Fixed

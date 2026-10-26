@@ -87,5 +87,6 @@ def post_primary_message(
 
     return (
         f"Message posted to primary {spawn_id}'s Claude inbox\n"
-        "Claude may hold it for approval when that session bypasses permission prompts."
+        "Claude may hold it for approval when that session bypasses permission prompts; "
+        'set crossSessionInbound to "accept" in Claude settings to skip the prompt.'
     )

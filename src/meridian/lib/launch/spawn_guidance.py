@@ -85,14 +85,17 @@ def build_capabilities_prompt(
     project_root: Path,
     control_root: Path,
     task_dir: Path,
-    active_work_dir: Path | None = None,
-    spawn_id: str | None = None,
-    chat_id: str | None = None,
     work_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
 ) -> str:
-    """Render the single late-bound capability and directory guidance block."""
+    """Render the stable capability and directory guidance block.
+
+    Only values shared by every launch of this agent in this work context belong
+    here. Per-launch identity (run ID, chat ID, ambient work directory) goes in
+    the user turn through :func:`build_launch_facts_prompt`: one changed byte in
+    the system prompt invalidates the harness prompt cache for the conversation.
+    """
 
     if resolved_context is None:
         if context_config is None:
@@ -119,16 +122,16 @@ def build_capabilities_prompt(
         if required_mode is None or required_mode == profile_mode
     )
 
-    if active_work_dir is None:
+    resolved_work_id = (work_id or "").strip()
+    if resolved_work_id:
         lines.append(
-            "- No active work directory (`$MERIDIAN_ACTIVE_WORK_DIR`); inspect: "
-            "`meridian work current`."
+            f"- Active work item `{resolved_work_id}`; its scratch directory is in "
+            "`$MERIDIAN_ACTIVE_WORK_DIR` (inspect: `meridian work current`)."
         )
     else:
-        item = f" for work item `{work_id}`" if (work_id or "").strip() else ""
         lines.append(
-            f"- `{active_work_dir.as_posix()}` — work directory for scratch/artifacts "
-            f"(`$MERIDIAN_ACTIVE_WORK_DIR`{item}); inspect: `meridian work current`."
+            "- No active work item; this spawn's scratch directory is in "
+            "`$MERIDIAN_ACTIVE_WORK_DIR` (inspect: `meridian work current`)."
         )
 
     task_path = task_dir.as_posix()
@@ -163,18 +166,11 @@ def build_capabilities_prompt(
             "(`$MERIDIAN_CONTEXT_KB_DIR`); inspect: `meridian context kb`."
         )
 
-    run_id = (spawn_id or "").strip()
-    if run_id:
-        lines.append(
-            f"- `{run_id}` — your run ID (`$MERIDIAN_SPAWN_ID`), the ID your caller "
-            "holds; use it in names."
-        )
-    current_chat_id = (chat_id or "").strip()
-    if current_chat_id:
-        lines.append(
-            f"- `{current_chat_id}` — root conversation ID (`$MERIDIAN_CHAT_ID`), parent "
-            "for handoff `--from`."
-        )
+    lines.append(
+        "- Your run ID, root conversation ID, and actual work directory are in "
+        "`$MERIDIAN_SPAWN_ID`, `$MERIDIAN_CHAT_ID`, and `$MERIDIAN_ACTIVE_WORK_DIR`; "
+        "read them with `printenv NAME` when a command needs them."
+    )
 
     other_context: list[str] = []
     if resolved_context.work_archive is not None:
@@ -191,6 +187,44 @@ def build_capabilities_prompt(
         lines.append("- " + "; ".join(other_context) + "; inspect: `meridian context`.")
 
     return "\n".join(lines)
+
+
+def build_launch_facts_prompt(
+    *,
+    spawn_id: str | None = None,
+    chat_id: str | None = None,
+    active_work_dir: Path | None = None,
+    work_id: str | None = None,
+) -> str:
+    """Render per-launch identity facts for the user turn.
+
+    These values change on a fresh launch or an exact continue. Keeping them out
+    of the system prompt lets every launch of the same agent and work context
+    send byte-identical system bytes, so the harness prompt cache survives.
+    """
+
+    lines: list[str] = []
+    run_id = (spawn_id or "").strip()
+    if run_id:
+        lines.append(
+            f"- `{run_id}` — your run ID (`$MERIDIAN_SPAWN_ID`), the ID your caller "
+            "holds; use it in names."
+        )
+    current_chat_id = (chat_id or "").strip()
+    if current_chat_id:
+        lines.append(
+            f"- `{current_chat_id}` — root conversation ID (`$MERIDIAN_CHAT_ID`), parent "
+            "for handoff `--from`."
+        )
+    if active_work_dir is not None:
+        item = f" for work item `{work_id}`" if (work_id or "").strip() else ""
+        lines.append(
+            f"- `{active_work_dir.as_posix()}` — work directory for scratch/artifacts "
+            f"(`$MERIDIAN_ACTIVE_WORK_DIR`{item}); inspect: `meridian work current`."
+        )
+    if not lines:
+        return ""
+    return "\n".join(("# Meridian run", "", *lines))
 
 
 def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
@@ -282,6 +316,7 @@ def build_guidance_blocks(
 __all__ = [
     "build_capabilities_prompt",
     "build_guidance_blocks",
+    "build_launch_facts_prompt",
     "build_spawn_usage_contract",
     "has_spawn_capability",
 ]

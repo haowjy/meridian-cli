@@ -119,6 +119,22 @@ permits an explicit model override with a cache/cost warning; it still rejects a
 skills, execution-policy, passthrough, env, work and task-dir mutations. Agent opt-out is
 also a mutation.
 
+Exact continue also replays the exact system prompt bytes the source launch sent.
+`bind_launch_context()` stores the rendered prompt in
+`LaunchPolicySnapshot.system_prompt`; replay applies that string after bind-time
+capability re-projection, so a new run ID or capability block cannot change it. Pi and
+OpenCode now match Claude and Codex, whose harnesses already ignore a changed prompt on
+resume. The snapshot carries the prompt, so replay does not depend on the source spawn's
+`system-prompt.md`, which retention may delete. A snapshot written by an older build has
+no `system_prompt` and recomposes as before.
+
+Claude is the exception in mechanism, not outcome: its `--system-prompt-snapshot`
+default is `on`, so the CLI records the prompt on the conversation's first request and
+reuses that record on every later request and resume, even when a later launch passes
+different text, until the conversation is compacted. Meridian still writes and passes
+the recorded prompt file; Claude discards it. Editing an agent profile or launch config
+therefore does not reach a continued Claude conversation until it compacts.
+
 Primary and spawn accepted-running callbacks append selection intent through
 `SessionAttempt`. Its captured generation/startup attempt also binds native-ID
 observations. A recording failure is a coordination error, not a reason to replay
@@ -318,7 +334,13 @@ task directory.
 `# Meridian capabilities` section. Preparation leaves one typed placeholder;
 `bind_launch_context()` renders the whole block once, after the profile's spawn
 capability and declared mode and the final control root, logical task cwd, work
-directory/id, spawn ID, chat ID, KB, and extra contexts are known. The notification
+item, KB, and extra contexts are known. The block carries only values shared by
+every launch of this agent in this work context. Per-launch values — run ID, chat
+ID, and the ambient work directory — are rendered into the first user turn
+(`build_launch_facts_prompt()`), because one changed byte in the system prompt
+invalidates the harness prompt cache for the whole conversation. The block names
+the env vars that carry those values; the user turn carries their actual values.
+The notification
 row is present only for a `mode: primary` profile; delegation rows remain gated by
 spawn capability. The source line names the actual control root as shell cwd and gives
 the absolute task directory; when they match it collapses to one shorter line.
@@ -568,7 +590,9 @@ Loaded skills reach the agent one way on every harness, primary and spawn:
 `_build_spawn_composed_launch_content()` and `_resolve_primary_projection()`, and
 harness projection places them in the system prompt after the agent profile.
 Bind-time re-projection rebuilds from the same composed content, so the skills
-survive it without special handling.
+survive it without special handling. On exact continue the replayed
+`LaunchPolicySnapshot.system_prompt` is applied after that re-projection, so
+neither the skills nor the capability block can change the cached system bytes.
 
 Don't add a second channel keyed on a harness capability. A native skill list
 shows only model-invocable skills, so a loaded skill that isn't model-invocable

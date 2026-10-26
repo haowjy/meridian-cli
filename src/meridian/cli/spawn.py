@@ -16,7 +16,7 @@ from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.help_tiers import ADVANCED_PARAMS
 from meridian.cli.invocation import Emitter, current_output_sink, emit, get_global_options
-from meridian.cli.spawn_inject import inject_message
+from meridian.cli.spawn_message import send_message
 from meridian.cli.utils import (
     parse_csv_list,
     resolve_cli_observer_context,
@@ -1350,10 +1350,10 @@ def _spawn_rearm(
         raise SystemExit(1)
 
 
-def _spawn_inject(
+def _spawn_message(
     spawn_id: Annotated[
         str,
-        Parameter(help="Spawn ID to inject into."),
+        Parameter(help="Spawn ID to message."),
     ],
     message: Annotated[
         str,
@@ -1362,12 +1362,32 @@ def _spawn_inject(
         ),
     ] = "",
 ) -> None:
+    observer = resolve_cli_observer_context(observe=True)
     asyncio.run(
-        inject_message(
+        send_message(
             spawn_id,
             message,
+            sender_spawn_id=str(observer.spawn_id) if observer.spawn_id else None,
         )
     )
+
+
+def _spawn_inject_deprecated(
+    spawn_id: Annotated[
+        str,
+        Parameter(help="Spawn ID to inject into."),
+    ],
+    message: Annotated[
+        str,
+        Parameter(help=("Real user direction to forward mid-run.")),
+    ] = "",
+) -> None:
+    print(
+        "warning: `meridian spawn inject` is deprecated and will be removed in the "
+        "next minor release; use `meridian spawn message`.",
+        file=sys.stderr,
+    )
+    _spawn_message(spawn_id, message)
 
 
 def _spawn_log_removed(
@@ -1470,12 +1490,19 @@ def register_spawn_commands(app: App) -> None:
     )
     registered.add("spawn.ack")
     app.command(
-        _spawn_inject,
-        name="inject",
+        _spawn_message,
+        name="message",
         help=(
             "Forward real user direction to a running spawn; self-generated "
             "nudges waste its attention."
         ),
+    )
+    registered.add("spawn.message")
+    app.command(
+        _spawn_inject_deprecated,
+        name="inject",
+        help="Deprecated: use `meridian spawn message`.",
+        show=False,
     )
     registered.add("spawn.inject")
     app.command(

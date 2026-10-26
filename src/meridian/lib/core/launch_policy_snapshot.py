@@ -43,6 +43,10 @@ class LaunchPolicySnapshot(BaseModel):
     field_provenance: dict[str, str] = Field(default_factory=dict)
     selection_report: dict[str, object] | None = None
     bundle_inventory_prompt: str | None = None
+    # The exact system prompt bytes this conversation's first launch sent. An exact
+    # continue replays them instead of recomposing, so the harness prompt cache holds.
+    # None on snapshots an older build wrote.
+    system_prompt: str | None = None
 
 
 __all__ = ["LaunchPolicySnapshot"]

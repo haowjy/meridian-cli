@@ -245,6 +245,15 @@ async def _prepare_execution_handoff(
             plan_overrides=run_env_overrides,
         )
         launch_context = materialize_launch_context(launch_context)
+        persisted_launch_policy_snapshot = launch_context.resolved_request.launch_policy_snapshot
+        if persisted_launch_policy_snapshot is not None:
+            # The start row predates bind; record the rendered system prompt on it so a
+            # later exact continue replays the same bytes without the source spawn dir.
+            spawn_store.update_spawn(
+                runtime_root,
+                spawn.spawn_id,
+                launch_policy_snapshot=persisted_launch_policy_snapshot,
+            )
         try:
             _write_params_json(
                 project_paths,

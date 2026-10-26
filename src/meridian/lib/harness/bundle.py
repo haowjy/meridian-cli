@@ -268,6 +268,26 @@ def get_harness_bundle(harness_id: HarnessId) -> HarnessBundle[Any]:
         raise KeyError(f"unknown harness: {harness_id}") from exc
 
 
+def primary_inbox(record: SpawnRecord) -> PrimaryInbox | None:
+    """Return this primary's inbox port, or None when its harness has none."""
+
+    try:
+        harness_id = HarnessId(record.harness or "")
+    except ValueError:
+        return None
+
+    from meridian.lib.harness import ensure_bootstrap
+
+    ensure_bootstrap()
+    return get_harness_bundle(harness_id).primary_inbox
+
+
+def primary_accepts_messages(record: SpawnRecord) -> bool:
+    """True when this primary's harness exposes a route that posts to it."""
+
+    return primary_inbox(record) is not None
+
+
 def post_to_primary(
     record: SpawnRecord,
     *,
@@ -276,23 +296,12 @@ def post_to_primary(
 ) -> str:
     """Dispatch one primary inbox post through its harness bundle."""
 
-    harness_name = record.harness or "unknown"
-    try:
-        harness_id = HarnessId(harness_name)
-    except ValueError as exc:
+    inbox = primary_inbox(record)
+    if inbox is None:
         raise PrimaryInboxError(
-            f"{harness_name} primaries have no inject route yet (see #498)"
-        ) from exc
-
-    from meridian.lib.harness import ensure_bootstrap
-
-    ensure_bootstrap()
-    primary_inbox = get_harness_bundle(harness_id).primary_inbox
-    if primary_inbox is None:
-        raise PrimaryInboxError(
-            f"{harness_name} primaries have no inject route yet (see #498)"
+            f"{record.harness or 'unknown'} primaries have no message route yet (see #498)"
         )
-    return primary_inbox(runtime_root=runtime_root, record=record, message=message)
+    return inbox(runtime_root=runtime_root, record=record, message=message)
 
 
 def get_bundle_registry() -> Mapping[HarnessId, HarnessBundle[Any]]:

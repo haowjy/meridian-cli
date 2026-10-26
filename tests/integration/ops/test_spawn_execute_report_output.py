@@ -308,7 +308,8 @@ def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
     assert params["bound_work_id"] is None
     assert params["bound_work_dir"] == bound_work_dir
     assert params["bound_task_dir"] == (tmp_path / "repo").as_posix()
-    assert bound_work_dir in params["appended_system_prompt"]
+    assert bound_work_dir in (params["user_turn_content"] or "")
+    assert bound_work_dir not in (params["appended_system_prompt"] or "")
 
 
 def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
