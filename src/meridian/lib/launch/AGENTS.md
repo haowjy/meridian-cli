@@ -216,8 +216,9 @@ per-conversation values may stay in. A spawn's run ID, its launching chat, and i
 ambient no-work-item scratch directory go in the first user turn
 (`build_launch_facts_prompt()`), as does its `--goal` contract
 (`_SharedComposition.task_contract`) — a spawn always has a user turn. A primary's own
-chat ID, a work item's directory, and a stable per-chat work link stay in the capability
-block. A primary's `--goal` is a guidance block too: goal text must never create a user
+chat ID and two stable per-chat links — the work directory and the source checkout
+(`session_links.py`) — stay in the capability block; a spawn keeps concrete
+directories because a child inherits its parent's chat id. A primary's `--goal` is a guidance block too: goal text must never create a user
 turn, or a bare primary submits the goal as its first message, fresh and on every
 resume. The work item's own goal is a pointer instead — `meridian work show` resolves
 the current item, so neither the text nor an ID that could go stale enters the prompt.

@@ -229,18 +229,37 @@ Runner-history pruning is explicit, never automatic; see
 | `meridian work start LABEL --task-dir PATH` | Create/switch and set task directory for source edits |
 | `meridian work list` | List all work items |
 | `meridian work show [SLUG]` | Show one work item, its directory, and attached spawns (default: this session's active work item) |
-| `meridian work switch SLUG` | Set active work item |
+| `meridian work switch SLUG\|current` | Set active work item |
 | `meridian work task-dir [PATH\|--clear]` | Show/set/clear active work-item task directory |
-| `meridian work done SLUG` | Mark a work item done and archive its scratch directory |
-| `meridian work sessions SLUG` | List sessions attached to a work item |
+| `meridian work update [SLUG] --status/--desc/--goal` | Update a work item (default: this session's active work item) |
+| `meridian work done [SLUG]` | Mark a work item done and archive its scratch directory (default: this session's active work item) |
+| `meridian work sessions [SLUG]` | List sessions attached to a work item (default: this session's active work item) |
+| `meridian work rename [SLUG] NEW\|NEW` | Rename a work item; one argument renames this session's active item, like `git branch -m NEW` |
+| `meridian work delete SLUG\|current` | Delete a work item (requires a name) |
+| `meridian work reopen SLUG\|current` | Reopen a done work item |
 
-Within a primary session, `MERIDIAN_ACTIVE_WORK_DIR` is a stable symlink
-(`sessions/<chat>/work` under the runtime root) that `work start`, `work switch`,
-and `work rename` repoint; with no active item it points at the session's ambient
-spawn work directory. Agents can write prompt files with that literal path and
-pass it to `--prompt-file` without resolving the work path again. The link
-follows the current item, so write a prompt after the final switch; a path saved
-before a switch still names the same link but reaches the new item.
+Commands that act on a work item default to the one this session is attached to,
+and `current` names it anywhere a work id is accepted (`work show`, `sessions`,
+`done`, `update`, `rename`, `delete`, `switch`, `reopen`, `spawn --work`), so no
+script has to carry an id that a `work switch` can invalidate. `current` is
+reserved: `work start`/`rename` refuse it as a name.
+
+Within a primary session, two stable symlinks under the runtime root keep moving
+targets out of the prompt and environment:
+
+- `sessions/<chat>/work` (`MERIDIAN_ACTIVE_WORK_DIR`) is the work directory.
+  `work start`, `work switch`, and `work rename` repoint it; with no active item
+  it points at the session's ambient spawn work directory. Agents can write
+  prompt files with that literal path and pass it to `--prompt-file` without
+  resolving the work path again. The link follows the current item, so write a
+  prompt after the final switch; a path saved before a switch still names the
+  same link but reaches the new item.
+- `sessions/<chat>/task` (`MERIDIAN_TASK_DIR`) is the source checkout. It follows
+  `meridian task-dir`, `meridian work task-dir`, and a switch to an item with its
+  own checkout, so the same literal path keeps reaching the current one. A
+  spawn-scope `task-dir` outranks an item's checkout, as it does at launch.
+
+Spawns keep concrete launch-bound directories; only a primary names these links.
 
 ## Hooks
 

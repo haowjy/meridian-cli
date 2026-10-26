@@ -14,8 +14,23 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the session and repoint the link at the ambient spawn directory, so `work current`
   no longer reports the archived path. Spawns keep their launch-bound work
   directory.
+- Primary sessions also name a stable per-chat checkout link (`sessions/<chat>/task`)
+  in `MERIDIAN_TASK_DIR` and in the system prompt, built and owned the same way.
+  `task-dir`, `work task-dir`, and a switch to an item with its own checkout repoint
+  it atomically, it survives `/clear`, `/resume`, and the session exiting, and its
+  literal path is what the prompt says to write. A spawn-scope task dir still
+  outranks an item's checkout, as at launch. Spawns keep their launch-bound
+  directories. A permission rule scoped to the real checkout path does not cover
+  the link: grant `sessions/<chat>/` instead (see
+  [environment](docs/configuration/environment.md#core)).
 
 ### Changed
+- Commands that act on a work item default to the session's current item, the way
+  git commands read `HEAD`: `work done`, `work update`, and `work rename` accept no
+  name, `current` is accepted wherever a work id is (`work show`, `sessions`,
+  `delete`, `switch`, `reopen`, `spawn --work`), and `work rename NEW` renames the
+  current item while `work rename ID NEW` still names one. `current` is reserved at
+  `work start`/`rename` so the alias cannot shadow a real item.
 - A work item's goal is no longer copied into a prompt. The capability guidance points
   at `meridian work show` instead, which now defaults to the session's active work
   item, so the goal text never goes stale and a goal edit never rewrites the cached

@@ -1540,7 +1540,7 @@ def bind_launch_context(
 ) -> LaunchContext:
     """Cheap materialization: env, cwd, spec, argv, permissions."""
 
-    _ = (harness_registry, bindings.chat_id)
+    _ = harness_registry
 
     resolved_config_root = Path(runtime.resolved_config_root).expanduser().resolve()
     resolved_control_root = Path(runtime.resolved_control_root).expanduser().resolve()

@@ -256,9 +256,7 @@ def materialize_launch_work_id(
 ) -> str | None:
     """Materialize explicit ``--work`` or inherited ``--from`` work onto disk."""
 
-    candidate = resolve_current_work_alias(
-        explicit_work_id, usage="meridian spawn --work <work_id>"
-    ) or (context_work_id or "").strip() or None
+    candidate = (explicit_work_id or "").strip() or (context_work_id or "").strip() or None
     if candidate is None:
         return None
     return ensure_explicit_work_item(runtime_root, candidate)
@@ -271,9 +269,7 @@ def preview_launch_work_id(
 ) -> str | None:
     """Normalize explicit or inherited work for dry-run without creating it."""
 
-    candidate = resolve_current_work_alias(
-        explicit_work_id, usage="meridian spawn --work <work_id>"
-    ) or (context_work_id or "").strip() or None
+    candidate = (explicit_work_id or "").strip() or (context_work_id or "").strip() or None
     if candidate is None:
         return None
     return slugify(candidate) or None

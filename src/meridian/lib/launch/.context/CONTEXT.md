@@ -338,14 +338,21 @@ task directory.
 `bind_launch_context()` renders the whole block once, after the profile's spawn
 capability and declared mode and the final control root, logical task cwd, work
 item, chat and KB are known. The block carries per-conversation values only: a
-primary's own chat ID, a work item's scratch directory, and a primary's per-chat
-work link (the `work_link` parameter that `feat/768-session-work-link` fills; it
-takes precedence over the work-item rows, and renders a literal path with no item ID
-because the ID goes stale after `work switch`). Per-launch values — the run ID, a
-spawn's launching chat, the ambient no-work-item scratch directory, and a spawn's
-goal contract — are rendered into the first user turn (`build_launch_facts_prompt()`;
-the goal is `_SharedComposition.task_contract`), because one changed byte in the
-system prompt invalidates the harness prompt cache for the whole conversation.
+primary's own chat ID and its two per-chat links — the work directory
+(`work_link`, which outranks the work-item rows and renders a literal path with no
+item ID, because the ID goes stale after `work switch`) and the source checkout
+(`task_link`, which replaces the concrete directory line and says to write the
+literal path, because `task-dir`, `work task-dir`, and a switch repoint it). Both
+links are projections, not authority: `launch/session_links.py` reads the chat row,
+the spawn scope and the work item under the sessions lock and swaps one symlink per
+link, and the launch env names the same paths (`MERIDIAN_ACTIVE_WORK_DIR`,
+`MERIDIAN_TASK_DIR`). A spawn keeps concrete directories: it inherits its parent's
+chat id, so a chat-keyed link would be shared with the parent. Per-launch values —
+the run ID, a spawn's launching chat, the ambient no-work-item scratch directory,
+and a spawn's goal contract — are rendered into the first user turn
+(`build_launch_facts_prompt()`; the goal is `_SharedComposition.task_contract`),
+because one changed byte in the system prompt invalidates the harness prompt cache
+for the whole conversation.
 A primary's `--goal` is a guidance block instead: it holds for the whole conversation,
 and goal text must never create a user turn. A primary that launches bare would
 otherwise submit the goal as its first message, fresh and on every resume, and a Codex
@@ -356,12 +363,14 @@ itself, so the prompt holds no goal that could be edited mid-conversation and no
 that could go stale. With no work item the block names no directory at all: an exact
 continue suppresses the inherited ambient one, so the user-turn block carries it when
 the child has one, and `meridian work current` is the command route. The block names
-`$MERIDIAN_ACTIVE_WORK_DIR` only for a work item's stable directory. Its run-ID row
+`$MERIDIAN_ACTIVE_WORK_DIR` and `$MERIDIAN_TASK_DIR` for the links it names. Its run-ID row
 names `$MERIDIAN_SPAWN_ID` and no command: `meridian spawn list` lists runs without
 saying which one is the caller's. The notification
 row is present only for a `mode: primary` profile; delegation rows remain gated by
 spawn capability. The source line names the actual control root as shell cwd and gives
-the absolute task directory; when they match it collapses to one shorter line.
+the absolute task directory; when they match it collapses to one shorter line, and a
+primary's checkout is always the second form because its link never equals the
+control root.
 Restricted shells need the resolved paths because they refuse variable expansion and
 compound `cd` calls. Do not compose or append a second directory instruction before
 or after projection.

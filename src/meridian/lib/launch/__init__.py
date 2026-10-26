@@ -46,7 +46,11 @@ if TYPE_CHECKING:
 
 
 def _explicit_work_id_for_launch(request: LaunchRequest) -> str | None:
-    return (request.work_id or "").strip() or None
+    """Resolve a primary's ``--work``; ``current`` names the session's item."""
+
+    from meridian.lib.ops.work_attachment import resolve_current_work_alias
+
+    return resolve_current_work_alias(request.work_id, usage="meridian --work <work_id>")
 
 
 def _resolve_work_id_for_launch(

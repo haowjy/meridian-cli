@@ -26,6 +26,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.ops.spawn.context_ref import resolve_context_ref
+from meridian.lib.ops.work_attachment import resolve_current_work_alias
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.user_paths import get_dry_run_preview_root
@@ -127,7 +128,11 @@ def build_create_payload(
                 runtime_root=runtime_root,
             )
         )
-        explicit_work_id = payload.work.strip() or None
+        # `--work current` names the session's item; any other value passes through,
+        # including a new name this spawn creates.
+        explicit_work_id = resolve_current_work_alias(
+            payload.work, usage="meridian spawn --work <work_id>"
+        )
         inherit_ambient_work = not _is_exact_continue(payload)
         ambient_work_id = (
             (resolved_context.work_id or "").strip() or None if inherit_ambient_work else None

@@ -26,6 +26,9 @@ bare path
                                       in scope)
   sessions/<chat>/work              — stable symlink to the chat's active work directory;
                                       a projection of the session attachment, never authority
+  sessions/<chat>/task              — stable symlink to the chat's source checkout; a
+                                      projection of its spawn scope and work item
+                                      (`launch/session_links.py` publishes both)
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
