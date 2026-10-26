@@ -77,7 +77,10 @@ export function isTrackedBackground(record: BashRecord): boolean {
   return record.is_background && record.is_tracked;
 }
 
-/** A launched child is owed back only when its launcher did not wait for it. */
+/**
+ * A launched child is owed back only when its launcher did not wait for it.
+ * Mirrors core's `state.spawn_ownership.is_owed_child`; keep the two in step.
+ */
 export function isBackgroundLaunch(row: SpawnStateFile): boolean {
   return row.launch_mode === "background";
 }

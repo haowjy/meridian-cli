@@ -298,12 +298,13 @@ Extensions import the native `ExtensionAPI` from the Pi package root:
 process runs `meridian spawn` (directly, through `uv run meridian`, or through a wrapper),
 Meridian's spawn store persists the value as `originating_bash_id` on the child spawn
 record. The watcher scopes `/spawn` by canonical direct `parent_id` and delivers only a
-background `launch_mode`: a launcher that waited for a foreground child already has that
-result. Which parents are direct is core's rule (`lib/state/spawn_ownership.py`),
+background `launch_mode` (`isBackgroundLaunch` mirrors core's `is_owed_child`): a
+launcher that waited for a foreground child already has that result. Which parents are
+direct is core's rule too (`lib/state/spawn_ownership.py`),
 handed to the launch as `_MERIDIAN_PI_OWED_PARENT_IDS` so a resumed primary delivers what
 its crashed generations launched instead of only its own children. A matching
-`originating_bash_id` transfers the launcher obligation
-to those children. Logs, remembered discovery, timers and origin sidecars do not
+`originating_bash_id` on a background child transfers the launcher obligation
+to that child. Logs, remembered discovery, timers and origin sidecars do not
 establish authority, including during atomic publication races.
 
 ### Build Invariant

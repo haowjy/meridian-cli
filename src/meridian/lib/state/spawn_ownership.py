@@ -1,7 +1,8 @@
 """Which parents' direct children one delivery caller may own.
 
-Both result surfaces share this rule: ``spawn collect`` decides what the CLI may
-deliver, and a Pi launch hands the same parent set to its spawn-watch extension.
+Both result surfaces share these rules: ``spawn collect`` decides what the CLI may
+deliver, and a Pi launch hands the same parent set to its spawn-watch extension,
+which mirrors :func:`is_owed_child` as ``isBackgroundLaunch``.
 """
 
 from __future__ import annotations
@@ -10,7 +11,17 @@ from pathlib import Path
 
 from meridian.lib.state import history_index
 from meridian.lib.state.session_identity import spawn_owner_chat_id
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, SpawnRecord
+
+
+def is_owed_child(row: SpawnRecord) -> bool:
+    """Return whether one direct child's result is still owed to its launcher.
+
+    A launcher that waited for a foreground child already saw that result, so only
+    a background child outlives the call that started it.
+    """
+
+    return row.launch_mode == BACKGROUND_LAUNCH_MODE
 
 
 def is_live_chat_primary(row: SpawnRecord | None, *, chat_id: str) -> bool:
@@ -54,4 +65,4 @@ def owned_parent_ids(
     return tuple(dict.fromkeys((*(row.id for row in generations), caller_spawn_id)))
 
 
-__all__ = ["is_live_chat_primary", "owned_parent_ids"]
+__all__ = ["is_live_chat_primary", "is_owed_child", "owned_parent_ids"]

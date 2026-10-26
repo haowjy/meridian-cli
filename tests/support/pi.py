@@ -24,6 +24,7 @@ from meridian.lib.harness.connections.pi_rpc import pi_subprocess_exit_error
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
+from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.streaming import pi_completion_profile as profile_module
 from meridian.lib.streaming import pi_drain as drain_module
@@ -323,8 +324,16 @@ class PiDrainScenario:
         parent_id: str | None,
         status: SpawnStatus = "running",
         harness: HarnessId = HarnessId.CODEX,
+        launch_mode: LaunchMode | None = None,
     ) -> None:
-        start_row(self.runtime_root, spawn_id, harness, parent_id, status=status)
+        start_row(
+            self.runtime_root,
+            spawn_id,
+            harness,
+            parent_id,
+            status=status,
+            launch_mode=launch_mode,
+        )
 
     def running_bash(self, *, running: bool = True) -> None:
         write_pi_bash_record(self.runtime_root, self.spawn_id, running=running)
@@ -407,6 +416,7 @@ def start_row(
     parent_id: str | None,
     *,
     status: SpawnStatus = "running",
+    launch_mode: LaunchMode | None = None,
 ) -> None:
     spawn_store.start_spawn(
         runtime_root,
@@ -418,6 +428,7 @@ def start_row(
         harness=harness.value,
         prompt="hello",
         status=status,
+        launch_mode=launch_mode,
     )
 
 

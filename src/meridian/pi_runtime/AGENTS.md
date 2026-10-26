@@ -55,8 +55,9 @@ fatal launch error.
   human-facing show/wait/cancel commands pass `--no-observe` so model delivery stays
   owed. A damaged source is skipped and diagnosed
   independently, never treated as a reason for no-arg wait to fail.
-- Scope children by canonical `parent_id` and deliver only a background `launch_mode`;
-  transfer launcher work through the row's `originating_bash_id`. The parent set is
+- Scope children by canonical `parent_id` and deliver only a background `launch_mode`
+  (core's `is_owed_child`, mirrored as `isBackgroundLaunch`); transfer launcher work
+  through a background row's `originating_bash_id`. The parent set is
   core's, passed at launch as `_MERIDIAN_PI_OWED_PARENT_IDS` for a primary (every
   primary generation of its chat) and absent for a spawned or nested session (its own
   children only); never re-derive generations here. Logs and origin sidecars are not

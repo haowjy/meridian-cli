@@ -27,7 +27,7 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_observations import leased_ids
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
-from meridian.lib.state.spawn_ownership import is_live_chat_primary, owned_parent_ids
+from meridian.lib.state.spawn_ownership import is_live_chat_primary, is_owed_child, owned_parent_ids
 from meridian.lib.state.spawn_status import read_derived
 
 from .models import render_delivery
@@ -173,7 +173,7 @@ def discover_owed_scope(
         dict.fromkeys(
             row.id
             for row in children
-            if row.launch_mode == "background"
+            if is_owed_child(row)
             and row.id not in consumed
             and row.id not in excluded
         )
@@ -210,7 +210,7 @@ def read_owed_snapshot(
             continue
         if row is None or row.record_mode != "live":
             continue
-        if row.parent_id not in scope.parent_ids or row.launch_mode != "background":
+        if row.parent_id not in scope.parent_ids or not is_owed_child(row):
             continue
         rows.append(row)
         if not is_terminal_spawn_status(row.status):

@@ -48,6 +48,9 @@ type NotificationFrame = {
 };
 type NotificationCandidate = { item: NotificationItem; mandatoryBytes: number };
 type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
+/** The consumption files one parent can hold, read independently. */
+type ConsumptionSource = "receipts" | "observations" | "cleared";
+const CONSUMPTION_SOURCES: readonly ConsumptionSource[] = ["receipts", "observations", "cleared"];
 const POLL_MS = 500;
 const FULL_RECONCILE_MS = 30_000;
 const MAX_REPORT_BYTES = 64 * 1024;
@@ -68,6 +71,8 @@ export class SpawnWatchRuntime {
   private readonly spawnDir = path.join(this.spawnsDir, this.currentSpawnId);
   private readonly queued = new Map<string, string[]>();
   private candidateChildIds = new Set<string>();
+  /** Damaged consumption sources already reported, so a skip logs once. */
+  private readonly skippedSources = new Set<string>();
   private watchers: FSWatcher[] = [];
   private polling: NodeJS.Timeout | null = null;
   private reconciliation: NodeJS.Timeout | null = null;
@@ -165,17 +170,21 @@ export class SpawnWatchRuntime {
   }
 
   async rows(): Promise<SpawnStateFile[]> {
-    const cleared = await this.readCleared();
+    const cleared = await this.readClearedUnion();
     return (await this.discoverChildStates()).rows.filter((row) => row.terminal === null || !cleared.has(row.id));
   }
 
   async clearFinished(): Promise<number> {
-    const cleared = await this.readCleared();
-    const terminal = (await this.discoverChildStates()).rows.filter((row) => row.terminal !== null && !cleared.has(row.id));
-    for (const row of terminal) cleared.add(row.id);
-    if (terminal.length) await writeJsonAtomic(this.clearedPath, {
-      v: 1, spawn_id: this.currentSpawnId, updated_at_ms: Date.now(), cleared_spawn_ids: [...cleared].sort(),
-    });
+    // Hide whatever any owned parent already cleared; only this spawn's file is written.
+    const hidden = await this.readClearedUnion();
+    const terminal = (await this.discoverChildStates()).rows.filter((row) => row.terminal !== null && !hidden.has(row.id));
+    if (terminal.length) {
+      const cleared = await this.readCleared();
+      for (const row of terminal) cleared.add(row.id);
+      await writeJsonAtomic(this.clearedPath, {
+        v: 1, spawn_id: this.currentSpawnId, updated_at_ms: Date.now(), cleared_spawn_ids: [...cleared].sort(),
+      });
+    }
     this.requestIdleDelivery();
     return terminal.length;
   }
@@ -230,13 +239,25 @@ export class SpawnWatchRuntime {
 
   private async collectEligible(states: SpawnStateFile[]): Promise<NotificationItem[]> {
     // Only a background child is owed back; a launcher that waited saw its result.
+    // Mirrors core's `spawn_ownership.is_owed_child`.
     const owedStates = states.filter(isBackgroundLaunch);
-    const [bash, consumption] = await Promise.all([this.readBash(), this.readConsumption(owedStates)]);
-    const { consumed, reserved } = consumption;
     const claimed = this.claimedWorkIds();
+    // This spawn's own sources are always read: Bash records belong to it, and they
+    // decide whether any child still needs the wider union.
+    const [bash, own] = await Promise.all([this.readBash(), this.readConsumption([this.currentSpawnId])]);
+    const undecided = owedStates.some((row) => row.terminal !== null
+      && !own.consumed.has(row.id) && !own.reserved.has(row.id) && !claimed.has(row.id));
+    // Every owned generation's consumption only decides a terminal candidate this
+    // spawn's own sources leave open, so an idle tick stays proportional to what
+    // is owed rather than to the chat's whole history.
+    const { consumed, reserved } = undecided && this.parentIds.size > 1
+      ? await this.readConsumption(this.parentIds) : own;
     const correlated = new Set(owedStates.map((row) => row.originating_bash_id).filter((id): id is string => !!id));
     const eligible: NotificationItem[] = [];
     for (const row of owedStates) {
+      // Consumption only grows, so a consumed terminal row can never become owed
+      // again and need not be reread on every idle tick.
+      if (row.terminal !== null && consumed.has(row.id)) this.candidateChildIds.delete(row.id);
       if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id) && !claimed.has(row.id)) {
         eligible.push({
           id: row.id, kind: "spawn", status: row.status,
@@ -377,31 +398,65 @@ export class SpawnWatchRuntime {
   }
 
   /**
-   * Union the consumption sources of every parent generation this session owns,
-   * matching core's discovery. Writes stay on the current spawn: its receipts,
-   * its cleared file, its fault file. Parents with no candidate row are not read,
-   * so an idle tick costs the same as before the scope widened.
+   * Union the consumption sources of the given parents, as core's
+   * `owed_consumed_ids` does. Writes stay on the current spawn: its receipts, its
+   * cleared file, its fault file.
    */
   private async readConsumption(
-    states: SpawnStateFile[],
+    parents: Iterable<string>,
   ): Promise<{ consumed: Set<string>; reserved: Set<string> }> {
-    // Any generation may have consumed a child of another (p2 delivers p1's child, then crashes), so spawn rows
-    // need every owned parent's sources, as core's owed_consumed_ids reads them. Bash records are this spawn's own.
-    const parents = states.length ? this.parentIds : new Set([this.currentSpawnId]);
-    const sources = await Promise.all([...parents].sort().map(async (parentId) => Promise.all([
-      readDeliveryReceipts(parentId),
-      readSpawnObservations(parentId),
-      this.readCleared(parentId),
-    ])));
+    const targets = [...new Set(parents)].sort();
+    const sources = await Promise.all(targets.flatMap((parentId) =>
+      CONSUMPTION_SOURCES.map((source) => this.readConsumptionSource(parentId, source))));
     const consumed = new Set<string>();
     const leases: WaitReservation[] = [];
-    for (const [receipts, observed, cleared] of sources) {
-      for (const id of admittedWorkIds(receipts)) consumed.add(id);
-      for (const id of observed.observed_spawn_ids) consumed.add(id);
-      for (const id of cleared) consumed.add(id);
-      leases.push(...Object.values(observed.wait_reservations ?? {}));
+    for (const result of sources) {
+      if (!result) continue;
+      for (const id of result.consumed) consumed.add(id);
+      leases.push(...result.leases);
     }
     return { consumed, reserved: await reservedSpawnIds(leases) };
+  }
+
+  /**
+   * Read one source for one parent. A damaged file from an older generation is
+   * logged once and skipped, as core's `owed_consumed_ids` skips each source; this
+   * spawn's own files stay fail-closed so unknown evidence cannot publish.
+   */
+  private async readConsumptionSource(
+    parentId: string,
+    source: ConsumptionSource,
+  ): Promise<{ consumed: readonly string[]; leases: readonly WaitReservation[] } | undefined> {
+    try {
+      switch (source) {
+        case "receipts":
+          return { consumed: [...admittedWorkIds(await readDeliveryReceipts(parentId))], leases: [] };
+        case "observations": {
+          const observed = await readSpawnObservations(parentId);
+          return { consumed: observed.observed_spawn_ids, leases: Object.values(observed.wait_reservations ?? {}) };
+        }
+        case "cleared":
+          return { consumed: [...await this.readCleared(parentId)], leases: [] };
+      }
+    } catch (error) {
+      if (parentId === this.currentSpawnId) throw error;
+      const key = `${parentId}:${source}`;
+      if (!this.skippedSources.has(key)) {
+        this.skippedSources.add(key);
+        this.logWarning(`skipping ${source} for ${parentId}: ${String(error)}`);
+      }
+      return undefined;
+    }
+  }
+
+  /** Cleared IDs across every owned parent, as `/spawn` hides them. */
+  private async readClearedUnion(): Promise<Set<string>> {
+    const cleared = new Set<string>();
+    for (const parentId of [...this.parentIds].sort()) {
+      const source = await this.readConsumptionSource(parentId, "cleared");
+      for (const id of source?.consumed ?? []) cleared.add(id);
+    }
+    return cleared;
   }
 
   private async readCleared(spawnId = this.currentSpawnId): Promise<Set<string>> {

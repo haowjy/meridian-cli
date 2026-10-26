@@ -321,6 +321,7 @@ async def test_pi_undelivered_child_result_suppresses_done_nudge_for_private_wor
         harness=HarnessId.PI.value,
         prompt="child",
         status="running",
+        launch_mode="background",
     )
     # The child has finished, but the parent hasn't consumed its result yet.
     spawn_store.finalize_spawn(tmp_path, child_id, "succeeded", 0, origin="runner")

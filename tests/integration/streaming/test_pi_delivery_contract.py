@@ -14,6 +14,7 @@ from meridian.lib.harness.pi_private_state import BashEvidenceFile
 from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.drain_policy import DrainAction
+from tests.support.async_determinism import wait_until
 from tests.support.history import warm_history_index
 from tests.support.pi import PiDrainScenario, pi_event, write_json
 
@@ -94,7 +95,7 @@ async def test_done_cannot_skip_owed_result_or_notice_response(
     started.row("p1", parent_id=None)
     work_id = "p2" if work_kind == "child" else "b1"
     if work_kind == "child":
-        started.row("p2", parent_id="p1")
+        started.row("p2", parent_id="p1", launch_mode="background")
         spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
     try:
         await started.terminal()
@@ -225,7 +226,7 @@ async def test_child_result_is_owed_without_origin_log_or_bash_record(
     from meridian.lib.state import spawn_store
 
     started = await scenario(tmp_path, monkeypatch)
-    started.row("p2", parent_id="p1")
+    started.row("p2", parent_id="p1", launch_mode="background")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
     try:
         await started.terminal()
@@ -240,6 +241,32 @@ async def test_child_result_is_owed_without_origin_log_or_bash_record(
                 "wait_reservations": {},
             },
         )
+        outcome = await settle(started)
+        assert outcome is not None and outcome.status == "succeeded"
+    finally:
+        await started.stop()
+
+
+@pytest.mark.asyncio
+async def test_foreground_child_result_is_not_owed_by_the_drain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.state import spawn_store
+
+    started = await scenario(tmp_path, monkeypatch)
+    # A launcher that waited for a foreground child already saw its result; the
+    # watcher never delivers one, so a drain that waited here would burn the whole
+    # delivery window and then fail.
+    started.row("p2", parent_id="p1", launch_mode="foreground")
+    spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+    try:
+        await started.terminal()
+        refresh = started.coordinator._evidence._refresh
+        refresh.request()
+        await wait_until(lambda: any(row.id == "p2" for row in refresh.records))
+        evidence = started.coordinator._evidence
+        assert evidence._pending_result_blockers(evidence._private_work_snapshot()) == ()
         outcome = await settle(started)
         assert outcome is not None and outcome.status == "succeeded"
     finally:
