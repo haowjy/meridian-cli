@@ -76,8 +76,10 @@ unset). Mars then materializes only qualifying agents for that harness;
 `.mars/agents/` remains the canonical Meridian spawn source.
 `agent_emission = "always"` is broader and emits all native agent copies.
 
-`include_fanout` (default `false`) controls whether fan-out agents — sub-delegates
-listed in an agent profile's `fanout` field — are materialized as native copies.
+`include_fanout` (default `false`) controls whether fan-out agents — agents that qualify
+for a harness only through their `model-policies` rules, not their own `harness:` or
+`model:` — are materialized as native copies. The profile `fanout` key is gone from
+schema v1; `[settings.meridian.fanout]` below names them instead.
 When `include_fanout = false`, fan-out agents are skipped even if they qualify for
 the selected harness.
 
@@ -162,7 +164,7 @@ approval = "auto"
 
 [[agents.tech-lead.model-policies]]
 match = { model-glob = "gpt*" }
-override = { effort = "medium", autocompact_pct = 40 }
+override = { effort = "medium", sandbox = "workspace-write" }
 
 [[agents.tech-lead.model-policies]]
 match = { alias = "codex" }
@@ -176,7 +178,12 @@ unsupported and fail with migration guidance.
 
 Scalar fields: `model`, `harness`, `effort`, `approval` (`default`, `confirm`, `auto`,
 `never`), `sandbox` (`default`, `read-only`, `workspace-write`, `danger-full-access`),
-`network` (`allow`, `deny`), `autocompact`, `autocompact_pct`.
+`network` (`allow`, `deny`, `allowlist`). Mars checks `effort`, `approval`, `sandbox` and
+`network` when it loads `mars.toml`, so a bad value (for example `approval = "yolo"`) fails
+every `meridian mars` command and launch. Compaction is not an overlay field: set
+`autocompact` and `autocompact_pct` on `[models.<alias>]`
+([upgrade note](../upgrading.md#if-you-write-marstoml-overlays)). A `model-policies` override
+sets only `effort`, `sandbox`, `approval` and `network`.
 
 **`timeout` is not supported in agent overlays.** Timeout continues to resolve
 through CLI/env/profile/Meridian-config paths.
