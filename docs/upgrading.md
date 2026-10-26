@@ -56,6 +56,8 @@ Pre-v1 content in `.mars-src/` is upgraded in memory on every sync, with one war
 ``authored `.mars-src` content uses the pre-v1 format (N files to upgrade); run `mars migrate` ``.
 `meridian mars migrate` rewrites the files once and names each key it deletes
 (`meridian mars migrate --check` lists the changes and exits 1 if there are any).
+In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the package's own
+`agents/` and `skills/` and leaves `.mars-src/` alone; edit those files by hand.
 
 - **Renamed or converted, behaviour kept:** `disallowed-tools` becomes `deny` entries in
   `tools`; a `tools` list becomes a map; `model_invocable` and `network_allow` take their
