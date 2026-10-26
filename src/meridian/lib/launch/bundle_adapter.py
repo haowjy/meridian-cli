@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from meridian.lib.bundled_skills import (
     SYNC_PENDING_MESSAGE,
     provide_bundled_skills,
+    report_provide_refusal,
 )
 from meridian.lib.catalog.mars_roots import (
     MarsRoots,
@@ -718,6 +719,7 @@ def request_and_resolve(
         harness_registry=harness_registry,
         mars_executable=command[0],
     )
+    report_provide_refusal(bundled_source)
     if not request.no_refresh_models:
         return bundle
     return replace(

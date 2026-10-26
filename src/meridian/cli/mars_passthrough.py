@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TextIO
 
 from meridian import __version__
-from meridian.lib.bundled_skills import provide_bundled_skills
+from meridian.lib.bundled_skills import WHEEL, provide_bundled_skills, report_provide_refusal
 from meridian.lib.catalog.mars_roots import (
     ensure_user_mars_root,
     mars_fallback_args,
@@ -194,8 +194,9 @@ def execute_mars_passthrough(
             print(f"error: {exc}", file=stderr_stream)
             raise SystemExit(1) from None
 
+    bundled_source = WHEEL
     if request.provide_root is not None:
-        provide_bundled_skills(
+        bundled_source = provide_bundled_skills(
             request.provide_root,
             executable=request.command[0],
             run=run,
@@ -218,21 +219,24 @@ def execute_mars_passthrough(
                 text=True,
                 **run_kwargs,
             )
-            return MarsPassthroughResult(
+            outcome = MarsPassthroughResult(
                 request=request,
                 returncode=result.returncode,
                 stdout_text=result.stdout or "",
                 stderr_text=result.stderr or "",
             )
-
-        result = run(list(request.command), check=False, **run_kwargs)
-        return MarsPassthroughResult(request=request, returncode=result.returncode)
+        else:
+            result = run(list(request.command), check=False, **run_kwargs)
+            outcome = MarsPassthroughResult(request=request, returncode=result.returncode)
     except FileNotFoundError:
         print(
             "error: Failed to execute 'mars'. Install meridian with dependencies and retry.",
             file=stderr_stream,
         )
         raise SystemExit(1) from None
+    if outcome.returncode == 0:
+        report_provide_refusal(bundled_source, stderr=stderr_stream)
+    return outcome
 
 
 def run_mars_passthrough(

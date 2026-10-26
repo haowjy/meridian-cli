@@ -30,9 +30,15 @@ class BundledSkill:
 
 @dataclass(frozen=True)
 class WheelSkillSource:
-    """Read bundled skills from the installed wheel."""
+    """Read bundled skills from the installed wheel.
+
+    ``refusal`` is Mars's reason for refusing the bundle. Mars reports a broken ``mars.toml`` the
+    same way, so the caller's own command usually fails with the same message; each caller prints
+    it with ``report_provide_refusal`` only once that command has succeeded.
+    """
 
     sync_pending: bool = False
+    refusal: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,7 +121,11 @@ def provide_bundled_skills(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     stderr: TextIO | None = None,
 ) -> BundledSkillSource:
-    """Ask Mars to install this build's bundled skills into ``primary_root``."""
+    """Ask Mars to install this build's bundled skills into ``primary_root``.
+
+    Falls back to the wheel when Mars cannot provide them. Mars's warnings print here;
+    a refusal is returned on the source instead (``report_provide_refusal``).
+    """
 
     if executable is None:
         return WHEEL
@@ -142,13 +152,7 @@ def provide_bundled_skills(
     if result.returncode != 0:
         # A Mars that refused the bundle (an invalid skill, a newer provided.lock) says why in a
         # JSON error on stdout; a Mars without `provide` prints only usage text, so stays quiet.
-        message = _mars_error_message(result.stdout)
-        if message is not None:
-            print(
-                f"warning: mars provide failed, using Meridian's built-in skills: {message}",
-                file=sys.stderr if stderr is None else stderr,
-            )
-        return WHEEL
+        return WheelSkillSource(refusal=_mars_error_message(result.stdout))
 
     try:
         payload_obj = json.loads(result.stdout)
@@ -182,6 +186,16 @@ def provide_bundled_skills(
         skills_dir=primary_root / ".mars" / "skills",
         provided=provided,
     )
+
+
+def report_provide_refusal(source: BundledSkillSource, *, stderr: TextIO | None = None) -> None:
+    """Warn that Mars refused the bundle and Meridian fell back to its built-in skills."""
+
+    if isinstance(source, WheelSkillSource) and source.refusal is not None:
+        print(
+            f"warning: mars provide failed, using Meridian's built-in skills: {source.refusal}",
+            file=sys.stderr if stderr is None else stderr,
+        )
 
 
 def _mars_error_message(stdout: str) -> str | None:
@@ -272,5 +286,6 @@ __all__ = [
     "load_bundled_skill",
     "provide_bundled_skills",
     "read_bundled_skill_resource",
+    "report_provide_refusal",
 ]
 

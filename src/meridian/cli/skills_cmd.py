@@ -16,6 +16,7 @@ from meridian.lib.bundled_skills import (
     load_bundled_skill,
     provide_bundled_skills,
     read_bundled_skill_resource,
+    report_provide_refusal,
 )
 from meridian.lib.catalog.mars_roots import resolve_mars_executable, resolve_mars_roots
 from meridian.lib.launch.prompt_context import render_skill_block
@@ -65,6 +66,7 @@ def cmd_skills(
         )
         if source.sync_pending:
             print(SYNC_PENDING_MESSAGE, file=sys.stderr)
+        report_provide_refusal(source)
 
     try:
         if resource_path is None:
