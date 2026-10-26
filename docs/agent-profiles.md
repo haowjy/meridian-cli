@@ -253,7 +253,7 @@ trigger only when needed with
 loaded skill gets, naming its installed folder; `meridian skills list` shows the same
 catalog, with structured entries under `--json`. These binary-owned skills may name
 the concrete Meridian commands and flags they explain. Bundled skill frontmatter may
-set `mode: primary`; its trigger then appears only when the agent profile declares
+set `metadata.mode: primary`; its trigger then appears only when the agent profile declares
 `mode: primary`, even when that profile is launched as a spawn. Handoff, notification,
 work-item, privilege-escalation, and prompt-authoring guidance use this lead-only gate,
 while session mining remains visible to every profile. The capabilities block likewise
