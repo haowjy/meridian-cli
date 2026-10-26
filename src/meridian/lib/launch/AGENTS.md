@@ -215,16 +215,18 @@ See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) f
 per-conversation values may stay in. A spawn's run ID, its launching chat, and its
 ambient no-work-item scratch directory go in the first user turn
 (`build_launch_facts_prompt()`), as does its `--goal` contract
-(`_SharedComposition.task_contract`) — a spawn always has a user turn. The work goal,
-a primary's own chat ID, a work item's directory, and a stable per-chat work link stay
-in the capability block. A primary's `--goal` is a guidance block too: goal text must
-never create a user turn, or a bare primary submits the goal as its first message,
-fresh and on every resume. An exact continue recomposes the system prompt from the
-launch snapshot (profile, loaded and available skills, inventory, execution policy,
-tools); identical inputs produce identical bytes, so a fresh launch shares the cached
-prefix with its siblings and a continue keeps the conversation's. Only a real identity
-change — a new goal, surface, work goal, or config — may change them. Foreground and
-background spawns share one preamble for the same reason.
+(`_SharedComposition.task_contract`) — a spawn always has a user turn. A primary's own
+chat ID, a work item's directory, and a stable per-chat work link stay in the capability
+block. A primary's `--goal` is a guidance block too: goal text must never create a user
+turn, or a bare primary submits the goal as its first message, fresh and on every
+resume. The work item's own goal is a pointer instead — `meridian work show` resolves
+the current item, so neither the text nor an ID that could go stale enters the prompt.
+An exact continue recomposes the system prompt from the launch snapshot (profile,
+loaded and available skills, inventory, execution policy, tools); identical inputs
+produce identical bytes, so a fresh launch shares the cached prefix with its siblings
+and a continue keeps the conversation's. Only a real identity change — a new goal,
+surface, or config — may change them. Foreground and background spawns share one
+preamble for the same reason.
 
 ## Depth
 

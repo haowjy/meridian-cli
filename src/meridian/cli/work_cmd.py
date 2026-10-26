@@ -130,8 +130,10 @@ def _work_show(
     emit: Emitter,
     work_id: Annotated[
         str,
-        Parameter(help="Work item id."),
-    ],
+        Parameter(
+            help=("Work item id. Defaults to the active work item attached to this session.")
+        ),
+    ] = "",
 ) -> None:
     emit(work_show_sync(WorkShowInput(work_id=work_id)))
 

@@ -540,7 +540,10 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
         extension_id="meridian.work",
         command_id="show",
-        summary="Show one work item, its directory, and associated spawns.",
+        summary=(
+            "Show one work item, its directory, and associated spawns. "
+            "Defaults to the active work item attached to this session."
+        ),
         handler="meridian.lib.ops.work_dashboard:work_show",
         sync_handler="meridian.lib.ops.work_dashboard:work_show_sync",
         input_type="meridian.lib.ops.work_dashboard:WorkShowInput",

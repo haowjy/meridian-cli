@@ -70,12 +70,10 @@ from meridian.lib.safety.policy import (
     PermissionPolicy,
     build_permission_policy,
 )
-from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
     resolve_ambient_work_dir,
     resolve_kb_dir,
-    resolve_project_paths,
     resolve_spawn_log_dir,
 )
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
@@ -118,7 +116,6 @@ from .prompt import (
     build_primary_preamble,
     build_report_instruction,
     build_spawn_preamble,
-    build_work_goal_instruction,
 )
 from .prompt_context import compose_skill_prompt_documents
 from .reference import (
@@ -1034,7 +1031,6 @@ class _SharedComposition:
 def _build_shared_composition(
     *,
     request: SpawnRequest,
-    project_paths: ProjectConfigPaths,
     policy: ResolvedLaunchPolicy,
     is_primary: bool,
 ) -> _SharedComposition:
@@ -1053,22 +1049,7 @@ def _build_shared_composition(
             native_config=policy.execution_policy.native_config,
         ),
     )
-    resolved_work_id = (request.work_id_hint or "").strip()
-    work_goal: str | None = None
-    if resolved_work_id:
-        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
-        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
-        if work_item is not None:
-            work_goal = work_item.goal
     goal_blocks: list[CompositionBlock] = []
-    # The work goal is per-conversation: every run in the work item shares it, and
-    # editing it is a real identity change. It stays in the system prompt for both
-    # surfaces so a primary with no task of its own still receives it.
-    work_goal_instruction = build_work_goal_instruction(work_goal)
-    if work_goal_instruction:
-        goal_blocks.append(
-            CompositionBlock("work-goal", GuidancePhase.GUIDANCE, 1, work_goal_instruction)
-        )
     # A spawn always has a user turn, so its completion contract travels with the
     # task and spawns with different goals share the cached prefix. A primary may
     # launch with no task at all, and goal text must never create a turn: it would
@@ -1132,7 +1113,6 @@ def _resolve_spawn_prepare_projection(
 
     shared = _build_shared_composition(
         request=request,
-        project_paths=project_paths,
         policy=policy,
         is_primary=False,
     )
@@ -1176,7 +1156,6 @@ def _resolve_primary_projection(
 
     shared = _build_shared_composition(
         request=request,
-        project_paths=project_paths,
         policy=policy,
         is_primary=True,
     )

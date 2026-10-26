@@ -282,7 +282,7 @@ class WorkListOutput(BaseModel):
 class WorkShowInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    work_id: str
+    work_id: str = ""
     project_root: str | None = None
 
 
@@ -407,6 +407,7 @@ def _resolve_work_id(
     payload_work_id: str,
     runtime_root: Path,
     ctx: RuntimeContext | None,
+    command: str,
 ) -> str:
     normalized = payload_work_id.strip()
     if normalized:
@@ -423,8 +424,8 @@ def _resolve_work_id(
             return attached_work_id.strip()
 
     raise ValueError(
-        "No work item resolved. Pass `meridian work sessions <work_id>`, "
-        "Use `--work-id` or run from a session attached to a work item."
+        f"No work item resolved. Pass one (`meridian work {command} <work_id>`) or run "
+        "from a session attached to a work item."
     )
 
 
@@ -564,17 +565,25 @@ def work_show_sync(
     payload: WorkShowInput,
     ctx: RuntimeContext | None = None,
 ) -> WorkShowOutput:
-    _ = ctx
     roots = resolve_roots_for_read(payload.project_root)
     if roots is None:
-        raise ValueError(f"Work item '{payload.work_id}' not found")
+        requested = payload.work_id.strip()
+        if not requested:
+            raise ValueError("Work ID is required.")
+        raise ValueError(f"Work item '{requested}' not found")
     project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
 
-    item = work_store.get_work_item(project_state_dir, payload.work_id)
+    resolved_work_id = _resolve_work_id(
+        payload_work_id=payload.work_id,
+        runtime_root=runtime_state_root,
+        ctx=ctx,
+        command="show",
+    )
+    item = work_store.get_work_item(project_state_dir, resolved_work_id)
     if item is None:
-        raise ValueError(f"Work item '{payload.work_id}' not found")
+        raise ValueError(f"Work item '{resolved_work_id}' not found")
 
     active_session_work_ids = _active_session_work_ids(runtime_state_root)
     associated_spawns = [
@@ -634,6 +643,7 @@ def work_sessions_sync(
         payload_work_id=payload.work_id,
         runtime_root=runtime_state_root,
         ctx=ctx,
+        command="sessions",
     )
 
     item = work_store.get_work_item(project_state_dir, resolved_work_id)

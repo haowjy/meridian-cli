@@ -124,10 +124,10 @@ The system prompt is not stored separately: an exact continue recomposes it from
 snapshot through the same prepare pipeline. Because every per-launch value lives in the
 user turn, identical snapshot inputs produce identical bytes, which is what keeps Pi's
 and OpenCode's prompt cache warm. A real identity change on continue — a new goal, a
-primary-vs-spawn surface change, a `work update --goal` — correctly changes the prompt
-instead of being hidden by a replay. Foreground and background spawns share one
-preamble, so continuing in the other mode is not an identity change. A snapshot an
-older build wrote lacks the available-skills field and recomposes without that listing.
+primary-vs-spawn surface change — correctly changes the prompt instead of being hidden
+by a replay. Foreground and background spawns share one preamble, so continuing in the
+other mode is not an identity change. A snapshot an older build wrote lacks the
+available-skills field and recomposes without that listing.
 
 Claude is the exception in mechanism, not outcome: its `--system-prompt-snapshot`
 default is `on`, so the CLI records the prompt on the conversation's first request and
@@ -346,13 +346,16 @@ spawn's launching chat, the ambient no-work-item scratch directory, and a spawn'
 goal contract — are rendered into the first user turn (`build_launch_facts_prompt()`;
 the goal is `_SharedComposition.task_contract`), because one changed byte in the
 system prompt invalidates the harness prompt cache for the whole conversation.
-The work goal and a primary's `--goal` are guidance blocks instead: they hold for the
-whole conversation, and goal text must never create a user turn. A primary that
-launches bare would otherwise submit the goal as its first message, fresh and on every
-resume, and a Codex primary would lose it entirely because its user turn is synthetic.
-With no work item the block names no directory at all: an exact continue suppresses the
-inherited ambient one, so the user-turn block carries it when the child has one, and
-`meridian work current` is the command route. The block names
+A primary's `--goal` is a guidance block instead: it holds for the whole conversation,
+and goal text must never create a user turn. A primary that launches bare would
+otherwise submit the goal as its first message, fresh and on every resume, and a Codex
+primary would lose it entirely because its user turn is synthetic. The work item's own
+goal is neither text nor user turn: the block carries a pointer, "run
+`meridian work show`", and that command resolves the session's current work item
+itself, so the prompt holds no goal that could be edited mid-conversation and no ID
+that could go stale. With no work item the block names no directory at all: an exact
+continue suppresses the inherited ambient one, so the user-turn block carries it when
+the child has one, and `meridian work current` is the command route. The block names
 `$MERIDIAN_ACTIVE_WORK_DIR` only for a work item's stable directory. Its run-ID row
 names `$MERIDIAN_SPAWN_ID` and no command: `meridian spawn list` lists runs without
 saying which one is the caller's. The notification

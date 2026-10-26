@@ -160,6 +160,13 @@ def build_capabilities_prompt(
             "work directory."
         )
 
+    if work_link is not None or resolved_work_id:
+        # The goal text never enters a prompt: it is per-conversation state that can be
+        # edited mid-conversation, and a primary with no task must start no turn. The
+        # command resolves the item itself, so the pointer carries no ID that could go
+        # stale after `work switch`.
+        lines.append("- Your work item's goal and status: run `meridian work show`.")
+
     resolved_chat_id = (chat_id or "").strip()
     if resolved_chat_id:
         # Only a primary renders this: its chat is the conversation's own, so it

@@ -228,7 +228,7 @@ Runner-history pruning is explicit, never automatic; see
 | `meridian work start LABEL` | Create a work item if missing, or switch to it |
 | `meridian work start LABEL --task-dir PATH` | Create/switch and set task directory for source edits |
 | `meridian work list` | List all work items |
-| `meridian work show SLUG` | Show one work item, its directory, and attached spawns |
+| `meridian work show [SLUG]` | Show one work item, its directory, and attached spawns (default: this session's active work item) |
 | `meridian work switch SLUG` | Set active work item |
 | `meridian work task-dir [PATH\|--clear]` | Show/set/clear active work-item task directory |
 | `meridian work done SLUG` | Mark a work item done and archive its scratch directory |
