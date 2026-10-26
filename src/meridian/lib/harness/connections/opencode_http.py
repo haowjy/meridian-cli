@@ -832,9 +832,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 else "the session reported running"
             )
             logger.warning(
-                "OpenCode stream carried no event for %.0fs while the session "
-                "reported running; failing the spawn",
+                "OpenCode stream carried no event for %.0fs while %s; failing the spawn",
                 silence,
+                detail,
             )
             message = f"no event for {silence:.0f}s while {detail}"
         else:

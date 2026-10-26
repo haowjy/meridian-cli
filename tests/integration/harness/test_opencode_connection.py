@@ -678,6 +678,36 @@ async def test_opencode_spawned_stall_bound_fails_after_long_busy_silence(
 
 
 @pytest.mark.asyncio
+async def test_opencode_spawned_stall_bound_reconciles_before_failing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A terminal the quiet stream missed is recovered at the ceiling, not lost."""
+
+    determinism = _install_opencode_determinism(monkeypatch)
+    _keep_backend_alive(monkeypatch)
+    terminal = RawHarnessEvent(
+        event_type="session.idle",
+        payload={"type": "session.idle", "sessionID": "sess-liveness"},
+        harness_id=HarnessId.OPENCODE.value,
+    )
+    connection = _ReconcilingLivenessProbeOpenCodeConnection(
+        responses=[_SseResponse(block=True)],
+        reconciled=terminal,
+        session_running=[True],
+    )
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(OpenCodeConnection, "_BUSY_STALL_LIMIT_SECONDS", 0.02)
+
+    events = await _collect_events_under_fake_clock(
+        determinism, connection, monkeypatch, step=0.0005
+    )
+
+    assert [event.event_type for event in events] == ["session.idle"]
+    assert connection.reconcile_count == 1
+    assert connection.state == "connected"
+
+
+@pytest.mark.asyncio
 async def test_opencode_spawned_stream_survives_one_unanswered_busy_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

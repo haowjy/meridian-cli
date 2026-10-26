@@ -240,7 +240,12 @@ def test_record_probe_none_carries_a_running_verdict_once() -> None:
     clock.advance(11.0)
     assert policy.record_probe(True) is True
 
+    clock.advance(8.0)
     assert policy.record_probe(None) is True
+    # The carried miss restarts the window: 8s later it is still inside it, which
+    # it would not be had the window run on from the vouching probe (16s > 10s).
+    clock.advance(8.0)
+    assert policy.evaluate() == LivenessDecision.CONTINUE
     assert policy.record_probe(None) is False
 
 
