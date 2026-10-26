@@ -110,10 +110,13 @@ def resolve_opencode_version(
 def v1_session_running(payload: object, session_id: str) -> bool:
     """Whether ``GET /session/status`` reports *session_id* as executing.
 
-    The listing maps every session the server knows to its ``SessionStatus``.
+    The listing maps every session the server knows to its ``SessionStatus``:
     ``busy`` is a turn in progress and ``retry`` is a provider backoff that turn
-    is waiting out; a session the map omits is idle. Asked by the connection on a
-    liveness stall, so a long tool is not mistaken for a dead stream.
+    is waiting out. A missing or ``null`` entry is an idle session. Anything else
+    -- a non-string type, or a type this client does not know -- raises
+    ``ValueError``, because guessing would turn a protocol change into "the turn
+    ended" and end a live stream. Asked by the connection on a liveness stall,
+    so a long tool is not mistaken for a dead stream.
     """
 
     statuses = json_object(payload)
@@ -125,7 +128,14 @@ def v1_session_running(payload: object, session_id: str) -> bool:
     status = json_object(entry)
     if status is None:
         raise ValueError("session status entry is not an object")
-    return status.get("type") in ("busy", "retry")
+    status_type = status.get("type")
+    if not isinstance(status_type, str):
+        raise ValueError("session status entry has no string type")
+    if status_type == "idle":
+        return False
+    if status_type in ("busy", "retry"):
+        return True
+    raise ValueError(f"unknown session status type: {status_type}")
 
 
 def v2_session_running(payload: object, session_id: str) -> bool:

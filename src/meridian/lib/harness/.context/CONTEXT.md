@@ -465,16 +465,21 @@ reports `STREAM_STALLED`, the connection asks `_session_still_running()`: V1 rea
 `GET /api/session/active` through `v2_session_running()`, both in
 `opencode_backend.py` (V2's is shared with the idle sensor). A session that is
 still executing (V1 `busy`/`retry`, V2 present in the active listing) is a long
-tool, not a stall: the connection restarts its liveness window and keeps reading
-the same SSE response without reconnecting. Heartbeats still do not count as
-activity, and an unanswered probe inside that stretch does not end it. A spawned
-drain that hears "still running" without one semantic event for
-`_BUSY_STALL_LIMIT_SECONDS` (1800, measured from the last event) fails with a
-named stall error; a primary observer has no ceiling, because the probe reports
-the turn's end and the reconnect that follows resyncs the idle sensor. Not running
-keeps the spawned path (bounded durable-outcome re-poll, then a named stall
-failure) and the observer's reconnect; an unanswered probe outside a running
-stretch keeps the same path.
+tool, not a stall: `record_probe()` restarts the policy's liveness window and the
+connection keeps reading the same SSE response without reconnecting. Heartbeats
+still do not count as activity, and the busy-stretch state lives only in the
+policy, so a verdict cannot outlive the events that ended it: a real event
+(`mark_activity()`) starts a new stretch. One unanswered probe inside a stretch
+the server called running carries that verdict; the second in a row does not, so
+an endpoint that keeps failing cannot pin a stream open. A spawned drain that
+hears "still running" without one semantic event for
+`_BUSY_STALL_LIMIT_SECONDS` (1800, measured from the last event) reconciles once
+more and then fails with a named stall error, worded "last reported running" when
+the latest answer was the unanswered miss; a primary observer has no ceiling,
+because the probe reports the turn's end and the reconnect that follows resyncs
+the idle sensor. Not running keeps the spawned path (one durable-outcome re-poll,
+then a named stall failure) and the observer's reconnect; an unanswered probe
+outside a running stretch keeps the same path.
 
 Storage selection is by schema, never by the installed binary.
 `detect_opencode_db_schema()` treats `session_v2` presence as V2 and `session` as
@@ -718,8 +723,8 @@ Tracked, non-blocking:
   to in-place resume with a warning. `project_opencode_subprocess.py` still projects
   `--fork` for a hypothetical routed subprocess transport — harmless but dead today.
 - **Fast-failure terminals are reconciliation-sourced.** A terminal landing between the
-  prompt POST and the `/api/event` attach is recovered by the bounded stall re-poll
-  (`_STALL_RECONCILE_LIMIT`), not by a live frame; the reconcile GET is bounded by
+  prompt POST and the `/api/event` attach is recovered by the one-shot stall re-poll
+  (`_reconcile_on_stall`), not by a live frame; the reconcile GET is bounded by
   `_RECONCILE_TIMEOUT_SECONDS`.
 - **Nested-glob specificity (low).** The broad-first order only ranks `resource == "*"`
   before scoped resources; among patterns it preserves order, so `edit(a*) allow` +

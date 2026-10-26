@@ -217,3 +217,75 @@ async def test_wait_for_activity_propagates_outer_cancel_during_inner_cancel(
 
     with pytest.raises(asyncio.CancelledError):
         await waiter
+
+
+def test_record_probe_restarts_the_window_without_counting_activity() -> None:
+    """A busy verdict keeps the stream open but is not a semantic event."""
+
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    clock.advance(11.0)
+
+    assert policy.record_probe(True) is True
+    assert policy.evaluate() == LivenessDecision.CONTINUE
+    # The busy bound still measures the real silence, not the probe.
+    assert policy.silence_seconds() == pytest.approx(11.0)
+
+
+def test_record_probe_none_carries_a_running_verdict_once() -> None:
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    clock.advance(11.0)
+    assert policy.record_probe(True) is True
+
+    assert policy.record_probe(None) is True
+    assert policy.record_probe(None) is False
+
+
+def test_record_probe_none_outside_a_running_stretch_is_not_running() -> None:
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    clock.advance(11.0)
+
+    assert policy.record_probe(None) is False
+
+
+def test_mark_activity_ends_the_running_verdict_it_objected_to() -> None:
+    """The bug class: a stale verdict must not outlive the event that ends it."""
+
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    clock.advance(11.0)
+    assert policy.record_probe(True) is True
+
+    policy.mark_activity()
+    clock.advance(11.0)
+
+    assert policy.record_probe(None) is False
+    assert policy.silence_seconds() == pytest.approx(11.0)
+
+
+def test_record_probe_false_clears_the_repeated_miss_budget() -> None:
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    assert policy.record_probe(True) is True
+    assert policy.record_probe(None) is True
+
+    assert policy.record_probe(False) is False
+    assert policy.record_probe(None) is False
+
+
+def test_record_probe_true_after_a_carried_miss_restores_the_budget() -> None:
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+
+    assert policy.record_probe(True) is True
+    assert policy.record_probe(None) is True
+    assert policy.record_probe(True) is True
+    assert policy.record_probe(None) is True

@@ -9,12 +9,16 @@ deterministically with an already-expired liveness stub: no SSE, no clock.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from typing import Any, cast
 
 import pytest
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.connections.liveness import LivenessDecision
+from meridian.lib.harness.connections.liveness import (
+    EventStreamLivenessTimeout,
+    LivenessDecision,
+)
 from meridian.lib.harness.connections.opencode_v2_http import (
     _RECONCILE_TIMEOUT_SECONDS,
     OpenCodeV2Connection,
@@ -35,6 +39,18 @@ class _ExpiredLiveness:
 
     def mark_activity_if_idle(self) -> None:
         return None
+
+    def record_probe(self, answer: bool | None) -> bool:
+        return answer is True
+
+    def silence_seconds(self) -> float:
+        return 120.0
+
+    async def wait_for_activity(self, awaitable: Awaitable[Any]) -> Any:
+        close = getattr(awaitable, "close", None)
+        if close is not None:
+            close()
+        raise EventStreamLivenessTimeout
 
 
 class _ReconcileProbeOpenCodeV2Connection(OpenCodeV2Connection):
