@@ -9,6 +9,7 @@ from meridian.lib.harness.opencode_backend import (
     normalize_version_preference,
     parse_opencode_version,
     resolve_opencode_version,
+    v1_session_running,
 )
 
 
@@ -66,3 +67,40 @@ def test_config_version_defaults_to_auto() -> None:
 def test_config_version_rejects_unknown_value() -> None:
     with pytest.raises(ValueError, match=r"harness\.opencode\.version"):
         OpenCodeHarnessProfileConfig(version="v3")
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        # Absent and null both mean the server is not working on this session.
+        ({}, False),
+        ({"ses_1": None}, False),
+        ({"ses_1": {"type": "idle"}}, False),
+        ({"ses_1": {"type": "busy"}}, True),
+        # A provider backoff is a turn waiting to continue, not an idle session.
+        ({"ses_1": {"type": "retry", "attempt": 1, "message": "slow", "next": 1}}, True),
+        ({"ses_2": {"type": "busy"}}, False),
+    ],
+)
+def test_v1_session_running_reads_the_session_status(
+    payload: object,
+    expected: bool,
+) -> None:
+    assert v1_session_running(payload, "ses_1") is expected
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"ses_1": "busy"},
+        {"ses_1": {}},
+        {"ses_1": {"type": 1}},
+        {"ses_1": {"type": "paused"}},
+    ],
+)
+def test_v1_session_running_refuses_an_answer_it_cannot_read(payload: object) -> None:
+    """An unreadable status is no answer, not "the turn ended"."""
+
+    with pytest.raises(ValueError):
+        v1_session_running(payload, "ses_1")

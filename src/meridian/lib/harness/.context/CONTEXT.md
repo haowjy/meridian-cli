@@ -216,7 +216,7 @@ specific evidence already recorded.
 |---|---|
 | Claude | Non-zero subprocess exit at stdout EOF yields `meridian/error/connectionClosed` with the exit code and captured stderr excerpt when present, then the iterator ends. Stdout reader failure yields the same event with the read error. |
 | Codex | Unexpected WebSocket reader failure or liveness timeout queues `meridian/error/connectionClosed`, then queue EOF. A clean WebSocket close queues EOF without a terminal event. Startup process exit is raised before draining and includes exit code plus the captured stderr excerpt when present. |
-| OpenCode | A detected backend process exit yields `meridian/error/connectionClosed` with the exit code and captured stderr excerpt when present, then the SSE iterator ends. SSE liveness failure without a detected process exit currently ends without a terminal event. |
+| OpenCode | A detected backend process exit yields `meridian/error/connectionClosed` with the exit code and captured stderr excerpt when present, then the SSE iterator ends. An SSE liveness failure yields `meridian/error/connectionClosed` naming the cause (`OpenCode event stream stalled: …`) instead of ending silently; a stream whose session is still executing is not a failure and keeps reading. |
 | Cursor | Non-zero subprocess exit at stdout EOF yields `meridian/error/connectionClosed` with the exit code, then the iterator ends. Exit code zero is the success boundary and ends without a terminal event. |
 | Pi | Non-zero subprocess exit yields `meridian/error/connectionClosed` with the exit code and captured stderr when present, then the iterator ends. Pi completion remains subject to its quiescence profile rather than raw EOF. |
 
@@ -458,6 +458,28 @@ for resume model switch, and event-envelope normalization where
 `session.execution.{succeeded,failed,interrupted}` are terminal. Shared
 infrastructure (`connections/base.py`, `managed_backend.py`, liveness, resident
 backend) is version-independent and must not fork.
+
+A liveness timeout is not by itself a dead stream. When `BackendLivenessPolicy`
+reports `STREAM_STALLED`, the connection asks `_session_still_running()`: V1 reads
+`GET /session/status` through `v1_session_running()` and V2 reads
+`GET /api/session/active` through `v2_session_running()`, both in
+`opencode_backend.py` (V2's is shared with the idle sensor). A session that is
+still executing (V1 `busy`/`retry`, V2 present in the active listing) is a long
+tool, not a stall: `record_probe()` restarts the policy's liveness window and the
+connection keeps reading the same SSE response without reconnecting. Heartbeats
+still do not count as activity, and the busy-stretch state lives only in the
+policy, so a verdict cannot outlive the events that ended it: a real event
+(`mark_activity()`) starts a new stretch. One unanswered probe inside a stretch
+the server called running carries that verdict; the second in a row does not, so
+an endpoint that keeps failing cannot pin a stream open. A spawned drain that
+hears "still running" without one semantic event for
+`_BUSY_STALL_LIMIT_SECONDS` (1800, measured from the last event) reconciles once
+more and then fails with a named stall error, worded "last reported running" when
+the latest answer was the unanswered miss; a primary observer has no ceiling,
+because the probe reports the turn's end and the reconnect that follows resyncs
+the idle sensor. Not running keeps the spawned path (one durable-outcome re-poll,
+then a named stall failure) and the observer's reconnect; an unanswered probe
+outside a running stretch keeps the same path.
 
 Storage selection is by schema, never by the installed binary.
 `detect_opencode_db_schema()` treats `session_v2` presence as V2 and `session` as
@@ -701,8 +723,8 @@ Tracked, non-blocking:
   to in-place resume with a warning. `project_opencode_subprocess.py` still projects
   `--fork` for a hypothetical routed subprocess transport — harmless but dead today.
 - **Fast-failure terminals are reconciliation-sourced.** A terminal landing between the
-  prompt POST and the `/api/event` attach is recovered by the bounded stall re-poll
-  (`_STALL_RECONCILE_LIMIT`), not by a live frame; the reconcile GET is bounded by
+  prompt POST and the `/api/event` attach is recovered by the one-shot stall re-poll
+  (`_reconcile_on_stall`), not by a live frame; the reconcile GET is bounded by
   `_RECONCILE_TIMEOUT_SECONDS`.
 - **Nested-glob specificity (low).** The broad-first order only ranks `resource == "*"`
   before scoped resources; among patterns it preserves order, so `edit(a*) allow` +

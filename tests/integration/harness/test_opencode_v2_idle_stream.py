@@ -55,6 +55,10 @@ class _StreamProbeConnection(OpenCodeV2Connection):
         self._responses = iter(responses)
         self.open_count = 0
 
+    async def _session_still_running(self) -> bool | None:
+        # This observer's turn has ended: the quiet stream reconnects.
+        return False
+
     async def _open_event_stream(self) -> _QueuedResponse:
         self.open_count += 1
         try:

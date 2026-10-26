@@ -14,6 +14,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   now says a child is owed only when it was launched in the background, shared by
   `spawn collect`, the extension and the Pi drain, so a spawned Pi session that runs a
   foreground child no longer waits out the delivery window and fails.
+- OpenCode spawns no longer fail after 120 s of stream silence while a long shell
+  tool is still running: on a liveness timeout the connection asks the server
+  whether the session is still executing (`GET /api/session/active` on 2.x,
+  `GET /session/status` on 1.x) and keeps reading the same stream while it does (a
+  primary observer keeps its stream too, without a reconnect). One probe the
+  backend is too busy to answer carries that verdict and two in a row end it; a
+  real event always ends it, so a drain reconciles instead of waiting out the
+  ceiling and an observer reconnects. The 30-minute ceiling counts from the last
+  event, never from the first probe or the last answered one. A genuinely
+  stalled stream now fails with a named `connectionClosed` error, reporting how
+  long the stream was actually silent, instead of the generic
+  `connection_closed_without_terminal_event`, and a stall that lands during
+  teardown no longer marks a cancelled spawn failed.
 
 ## [0.14.8] - 2026-10-26
 
