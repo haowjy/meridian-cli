@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.9] - 2026-10-26
+
 ### Fixed
 - Pi spawn-watch now delivers a crashed generation's children after `--continue` resumes
   the chat, matching Claude. Core computes the parent scope and hands it to the
