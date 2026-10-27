@@ -7,7 +7,10 @@ nightly schedule.
 
 - PRs get a non-blocking release-label warning.
 - `pr-body.yml` validates the PR body's `## Changelog` section on open, edit,
-  synchronize and reopen, and fails the PR when it is missing or malformed.
+  synchronize, reopen and ready-for-review, and fails the PR when it is missing
+  or malformed. Drafts are skipped (the integration PR opens as a draft). The
+  job also dry-runs the release renderer against the checkout, so an
+  `[Unreleased]` entry or duplicate version fails before merge.
 - Routine CI and the local pre-push hook run the same `scripts/preflight.sh fast`
   gate over default pytest paths, lint and typecheck; its 60-second budget is a
   warning target and never fails or stops the gate.
@@ -21,15 +24,17 @@ nightly schedule.
 ## Auto-Release
 
 `release-on-merge.yml` runs on every push to `main` (including merged PR commits),
-but it only creates a release when the pushed commit is associated with a PR
-that has a `release:*` label.
+and creates a release commit/tag for the triggering merge unless that PR is
+`release:skip` or has no associated PR.
 
 - `release:patch` or `release:stable` creates the next stable patch release.
+- `release:minor` / `release:major` creates the next stable minor/major release.
 - `release:rc` creates the next RC release (`vX.Y.Z-rc.N`).
-- `release:skip` skips release.
+- `release:skip` skips the release commit for this merge; its notes ship with the
+  next release.
 - Any other `release:*` label defaults to RC release (safe default) and logs a notice.
 - If labels conflict (for example `release:stable` + `release:rc`, or stable + unknown `release:*`), RC wins as the safe default.
-- Missing `release:*` label skips release.
+- Missing `release:*` label defaults to RC release.
 - Direct pushes to `main` skip release because there is no PR label to inspect.
 - `release:skip` in the pushed head commit message also skips release.
 - The workflow queries associated PRs via GitHub API and fails immediately if that API call fails.
@@ -43,11 +48,14 @@ When release is enabled, the workflow:
 
 1. Runs `scripts/preflight.sh full`.
 2. Bumps `src/meridian/__init__.py` (`X.Y.Z` stable, `X.Y.ZrcN` for RC).
-3. Renders the selected merged PR body's `## Changelog` section into `CHANGELOG.md`
-   under `## [X.Y.Z] - YYYY-MM-DD` (or the RC heading).
-4. Commits `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`.
-5. Creates and pushes `vX.Y.Z` or `vX.Y.Z-rc.N`.
-6. Lets the tag push trigger `release.yml`.
+3. Collects the `## Changelog` section of every merged PR since the last release
+   commit (including `release:skip` merges), skipping direct pushes; above 50
+   commits it fails instead of dropping entries.
+4. Renders those sections together into `CHANGELOG.md` under
+   `## [X.Y.Z] - YYYY-MM-DD` (or the RC heading).
+5. Commits `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`.
+6. Creates and pushes `vX.Y.Z` or `vX.Y.Z-rc.N`.
+7. Lets the tag push trigger `release.yml`.
 
 `release-on-merge.yml` only creates release commits/tags. `release.yml` is the
 only publish workflow identity, for both auto-release tags and manual backfill
@@ -69,9 +77,10 @@ Manual tags must point at a valid release commit (stable or RC):
 - The tagged commit is reachable from the default branch.
 
 Use `scripts/manually-release.sh` for stable manual/backfill release commits. It
-takes `--notes-file PATH` (the same `### ...` blocks or `None. <reason>` line a
-PR body uses; `-` reads stdin), runs the shared preflight, validates the notes,
-updates the version and changelog, creates the release commit, and tags the result.
+takes `--notes-file PATH` (a PR-body-style notes file with the `## Changelog`
+heading, the `### ...` blocks, or one `None. <reason>` line; `-` reads stdin),
+validates the notes, dry-runs the render, runs the shared preflight, updates the
+version and changelog, creates the release commit, and tags the result.
 
 `scripts/manually-release.sh` does **not** create RC release commits. Manual RC
 backfill requires a pre-existing valid RC release commit and an RC tag push

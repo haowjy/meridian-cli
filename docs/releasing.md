@@ -1,15 +1,18 @@
 # Releasing
 
-meridian-cli releases are automatic from normal PR merges to `main` when the PR
-has a `release:*` label.
+meridian-cli releases are automatic from normal PR merges to `main`. The PR's
+`release:*` label picks the kind; no label defaults to a prerelease (RC).
 
 ## What you do
 
 1. Create/select your code directory (for example `git worktree add ../meridian-cli.worktrees/my-feature -b my-feature`), then start the work item with `meridian work start "my-feature" --task-dir ../meridian-cli.worktrees/my-feature` (or run `meridian work task-dir ../meridian-cli.worktrees/my-feature` after `work start`)
 2. Open a PR using the PR template
 3. Write the changelog entry in the PR body's `## Changelog` section (the
-   template's first section). CI validates it on every edit; the release job
-   renders it. Do not edit `CHANGELOG.md` — no PR does.
+   template's first section). The section needs the `## Changelog` heading plus
+   the `### ...` blocks; a bare block list is not a notes file. Check it with
+   `python3 scripts/changelog-notes.py validate --notes-file pr-body.md`. CI
+   validates it whenever the body or branch changes and dry-runs the release
+   renderer; the release job renders it. Do not edit `CHANGELOG.md` — no PR does.
 4. Set one release label. The bump tracks breakage, not size: a change that
    does not break existing behaviour is a patch, however much it adds.
    - `release:rc` for the default safe prerelease path
@@ -17,7 +20,8 @@ has a `release:*` label.
      normal label for features and fixes that break nothing)
    - `release:minor` / `release:major` for a release that breaks existing
      behaviour, config, or on-disk state
-   - `release:skip` for no release
+   - `release:skip` for no release commit from this merge; its `## Changelog`
+     notes ship with the next release
 5. Merge the PR to `main`
 
 A merged PR with no `release:*` label defaults to a prerelease (RC). Direct pushes
@@ -37,7 +41,8 @@ feature), users should get one breaking release, not one per PR.
    label, the combined changelog and upgrade notes, and the whole-change review.
 2. Point each part's PR at the integration branch, not `main`. Merging into it releases
    nothing, so those PRs need no release label. Copy their changelog sections into the
-   integration PR's `## Changelog`: only the PR merged to `main` is rendered.
+   integration PR's `## Changelog`: only commits on `main`'s first-parent history reach
+   the renderer, so part PRs merged into the integration branch never render on their own.
 3. When the last part lands and the combined change passes the full gate, mark the
    integration PR ready, merge it, and CI releases everything once.
 
@@ -52,7 +57,8 @@ that older builds ignore is still a patch; `release:minor` is for state changes 
 older build cannot read:
 
 - a `### Upgrade notes` block in the PR body's `## Changelog` section: what users must
-  do or will notice, one line each, linking the guide;
+  do or will notice, one line each, ending in an absolute link to the guide (the same
+  text becomes a GitHub Release body, where relative links do not resolve);
 - a section in [upgrading.md](upgrading.md) for that version: what changed and why,
   steps before and after installing, one-time imports and repairs and their output,
   data the harness or Meridian no longer keeps, and whether rollback works. Probe
@@ -93,32 +99,44 @@ Use these rules when changing a stored format, config key, hook name, or CLI fla
 
 ## What CI does
 
-On pull requests, `.github/workflows/pr-body.yml` validates the `## Changelog`
-section whenever the body changes and fails the PR when it is missing or
-malformed.
+On ready-for-review pull requests, `.github/workflows/pr-body.yml` validates the
+`## Changelog` section whenever the body or branch changes and fails when it is
+missing or malformed. Drafts are skipped; the integration PR is opened as a
+draft, so it is validated when marked ready. The job also dry-runs the release
+renderer against the checked-out tree, which fails before merge when
+`CHANGELOG.md` has content under `## [Unreleased]` or a duplicate version
+heading.
 
 On push to `main`, `.github/workflows/release-on-merge.yml`:
 
 - Reads the selected merged PR label for the pushed commit
 - Defaults unknown `release:*` labels to RC
-- Skips only when `release:skip` is present or the commit has no associated PR; a merged PR with no `release:*` label defaults to RC
+- Skips the release when the triggering PR is `release:skip` or its commit has no associated PR; a merged PR with no `release:*` label defaults to RC. A `release:skip` merge's notes are not lost: they ship with the next release.
 - Computes the next stable (patch/minor/major) or next RC from git tags
+- Collects the `## Changelog` section of every merged PR since the last release
+  commit, including `release:skip` merges, and skips direct pushes; the walk is
+  capped at 50 commits and fails above that rather than dropping entries
 - Updates `src/meridian/__init__.py`
-- Renders the selected merged PR body's `## Changelog` section into `CHANGELOG.md` as `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
+- Renders those sections together into `CHANGELOG.md` as `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
 - Creates commit `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`
 - Creates and pushes tag `vX.Y.Z` or `vX.Y.Z-rc.N`
 - Lets the tag push trigger `.github/workflows/release.yml` for PyPI publish
 
-If the `## Changelog` section is missing or malformed, the release fails before
-committing: edit the merged PR body and re-run the workflow. If the failure is
-content under `## [Unreleased]` (an old branch's entry), move that text into the
-merged PR body and remove it from `CHANGELOG.md` first. Re-runs stay idempotent
-through the `Release-Trigger` guard and the script's duplicate-version check.
+If a `## Changelog` section is missing or malformed, the release fails before
+committing: the error names the PR, so edit that merged PR body and re-run the
+failed job. If the failure is content under `## [Unreleased]` (an old branch's
+entry), move that text into the merged PR body, remove it from `CHANGELOG.md`
+with a direct push to `main` (direct pushes release nothing), then re-run the
+failed job. Re-running the failed job stays idempotent through the
+`Release-Trigger` guard and the script's duplicate-version check.
 
 `release.yml` is the only PyPI trusted publishing workflow identity. Manual or
 backfill `v*` tag pushes use the same workflow and provenance checks. It also
 creates the GitHub Release for the tag, using the released `## [X.Y.Z]` section
-as the release body; re-running edits the existing release.
+as the release body. Re-running the failed job skips artifacts PyPI already has
+(`skip-existing`) and edits the existing release; tags cut before PR-body
+changelogs have no `scripts/changelog-notes.py`, so their GitHub Release step is
+skipped with a notice.
 
 The release workflow ignores its own `release: v...` commit so the auto-commit
 does not recursively release again.
@@ -140,11 +158,13 @@ scripts/manually-release.sh patch --notes-file notes.md --push   # bump, commit,
 scripts/manually-release.sh patch --notes-file notes.md          # same but skip the push
 ```
 
-The script validates `--notes-file` (the same `### ...` blocks or one
-`None. <reason>` line a PR body uses), runs full preflight, bumps `__version__`,
-renders the notes into `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, commits
-`release: vX.Y.Z`, creates the annotated tag, and optionally pushes.
-`--notes-file -` reads standard input.
+The notes file must contain the `## Changelog` heading plus the blocks (or one
+`None. <reason>` line), the same shape a PR body carries. The script validates
+it, renders a dry run first to catch a stale `## [Unreleased]` or duplicate
+version, runs full preflight, bumps `__version__`, renders the notes into
+`CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, commits `release: vX.Y.Z`,
+creates the annotated tag, and optionally pushes. `--notes-file -` reads
+standard input.
 
 **`push.followTags=true` gotcha:** the repo has `push.followTags=true`, so a plain
 `git push origin HEAD:main` also attempts to push any local `v*` tag, which the

@@ -32,7 +32,7 @@ jobs:
           if [[ "${has_release_label}" == true ]]; then
             echo "::notice::Release label detected on this PR."
           else
-            echo "::warning::No release:* label set. Merge to main will skip auto-release."
+            echo "::warning::No release:* label set. Merge to main defaults to a prerelease (RC)."
           fi
 
   fast-gate:
