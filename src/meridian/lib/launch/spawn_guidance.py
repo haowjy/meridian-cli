@@ -87,6 +87,7 @@ def build_capabilities_prompt(
     task_dir: Path,
     task_link: Path | None = None,
     work_link: Path | None = None,
+    paths_in_user_turn: bool = False,
     chat_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
@@ -104,6 +105,9 @@ def build_capabilities_prompt(
     The work directory has one line, and a surface either places it here or in the
     user turn: an item's ID and its scratch path are per-conversation state that a
     ``work switch`` or ``work done`` invalidates, so the link is the only path named.
+    ``paths_in_user_turn`` says the user turn names them instead, which a spawn does
+    because its link paths belong to its own chat; a primary cannot, because a
+    ``--continue`` replays no user turn.
     """
 
     if resolved_context is None:
@@ -167,15 +171,24 @@ def build_capabilities_prompt(
         else ""
     )
     if task_link is not None:
-        # A primary's checkout is a per-chat link: every task-dir change repoints it,
-        # so the literal path is the one the session keeps using, and the directory
-        # it resolves to is not.
+        # A per-chat link: every task-dir change repoints it, so the literal path is
+        # the one the session keeps using, and the directory it resolves to is not.
         lines.append(
             f"- `{task_link.as_posix()}` — source checkout (`$MERIDIAN_TASK_DIR`); shell "
             f"cwd is `{control_path}` (`$MERIDIAN_PROJECT_DIR`), so use absolute paths. "
             "Write this literal path, never the directory it resolves to: the link "
             "follows `meridian task-dir` and a work switch; inspect: `meridian "
             f"task-dir`{spawn_suffix}."
+        )
+    elif paths_in_user_turn:
+        # The user turn names the link; naming the directory it resolves to here would
+        # be a second answer to "where do I work".
+        lines.append(
+            f"- Shell cwd is `{control_path}` (`$MERIDIAN_PROJECT_DIR`); your work "
+            "directory and source checkout are the links `$MERIDIAN_ACTIVE_WORK_DIR` and "
+            "`$MERIDIAN_TASK_DIR`, which this run's `# Meridian run` block names. Write "
+            "those literal paths, never the directories they resolve to; inspect: "
+            f"`meridian task-dir`{spawn_suffix}."
         )
     elif task_dir == control_root:
         lines.append(
@@ -202,8 +215,9 @@ def build_capabilities_prompt(
         )
 
     lines.append(
-        "- Your run ID is in `$MERIDIAN_SPAWN_ID`; a launch with a first user turn "
-        "also gets it in that turn's `# Meridian run` block."
+        "- Your run ID is in `$MERIDIAN_SPAWN_ID`; `meridian task-dir --json` prints "
+        "it as `spawn_id`, and a launch with a first user turn also gets it in that "
+        "turn's `# Meridian run` block."
     )
 
     other_context: list[str] = []

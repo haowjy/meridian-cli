@@ -35,7 +35,7 @@ uv run meridian spawn -a reviewer --harness codex -m "$DRY_RUN_MODEL" \
 
 - [ ] Exit 0; `status == "dry-run"`; `composed_prompt` contains `Write hello world`
 - [ ] `model` present; `terminal_surface_mode == "pty_mediated"`
-- [ ] `goal == "ship phase 3"`; `goal_contract_preview` includes `# Spawn Goal` and the goal
+- [ ] `goal == "ship phase 3"`; `goal_contract_preview` includes `# Goal` and the goal
 
 ## Pi RPC/native projection and runtime guidance
 
