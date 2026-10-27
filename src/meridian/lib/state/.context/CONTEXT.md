@@ -302,13 +302,19 @@ The location is the state. `work done` moves `<work root>/<slug>` to
 is done by location, whatever its `__status.json` still says, so a crash between the
 rename and the metadata write reads correctly and `meridian doctor` normalizes the
 file. Reopen writes the reopened status before its move, so an interrupted reopen
-leaves the item archived and running the command again repairs it.
+leaves the item archived and running the command again repairs it. The one state the
+location cannot explain — an active directory whose status says `done` — is repaired
+in place by `work reopen` (and so by `work switch`), instead of refusing as already
+active forever.
 
 A running spawn is not a reason to defer: its work directory is a per-chat link
 (`launch/session_links.py`), so the directory moves under it and the next write lands
 at the new location. The command that moves an item repoints the links of every
 attached execution for the same reason (`ops/work_attachment.follow_work_item`), and
-a primary attached to an item that becomes done is detached instead.
+a primary attached to an item that becomes done is detached instead. That helper holds
+the sessions lock across both the move and the repoint — sessions before work-store,
+never the reverse, and nothing takes them in the other order — so no link can be
+published against the directory the move just vacated.
 
 `move_work_dir` refuses when both locations exist, naming both, and never deletes
 either copy. Only `work delete --force` removes a directory.

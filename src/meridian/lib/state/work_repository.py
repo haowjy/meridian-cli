@@ -365,7 +365,9 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
 
     The one implementation behind ``work reopen``, ``work start`` on a done item and
     ``work switch`` to one. The move refuses when both locations exist, naming both,
-    so neither copy is ever deleted to make room.
+    so neither copy is ever deleted to make room. A done status inside ``work/`` —
+    nothing moved, only the status disagrees — is repaired in place, so the state
+    converges instead of refusing as already active forever.
     """
 
     status = _validate_active_status(status)
@@ -387,7 +389,11 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
         if archived_dir is None:
             if active_dir is None:
                 raise ValueError(f"Work item '{work_id}' not found")
-            raise ValueError(f"Work item '{work_id}' is already active.")
+            current = load_work_item_from_dir(active_dir, archived=False)
+            if current.status != "done":
+                raise ValueError(f"Work item '{work_id}' is already active.")
+            repaired = reopened_item(current)
+            return _MutationResult(repaired, (active_dir, repaired))
 
         current = load_work_item_from_dir(archived_dir, archived=True)
         reopened = reopened_item(current)
