@@ -47,7 +47,7 @@ def test_compose_prompt_keeps_context_isolated_and_sanitized(tmp_path: Path) -> 
 
     composed = project_inline_content(
         ComposedLaunchContent(
-            supplemental_documents=compose_skill_prompt_documents((skill,)),
+            supplemental_documents=compose_skill_prompt_documents((skill,), "inline"),
             agent_profile_body="",
             report_instruction=build_report_instruction(),
             passthrough_system_fragments=(),

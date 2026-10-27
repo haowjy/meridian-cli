@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from meridian.lib.core.domain import SkillContent
+from meridian.lib.core.domain import SkillContent, SkillDeliveryMode
 from meridian.lib.launch.composition import PromptDocument
 
 
@@ -25,9 +25,19 @@ def render_skill_block(skill: SkillContent) -> str:
     )
 
 
-def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[PromptDocument, ...]:
-    """Format loaded skills as typed supplemental prompt documents."""
+def compose_skill_prompt_documents(
+    skills: Sequence[SkillContent], skill_delivery: SkillDeliveryMode
+) -> tuple[PromptDocument, ...]:
+    """Format loaded skills as typed supplemental prompt documents.
 
+    Named delivery turns each document into one line naming the skill's
+    `SKILL.md`, so the renderer groups and heads the skills the same way in both
+    modes. The line asks for the read now, not "before use": principle and
+    guardrail skills have no moment of use, and an agent told to wait would never
+    read them, which would make the experiment measure dropped text.
+    """
+
+    named = skill_delivery == "named"
     documents: list[PromptDocument] = []
     for skill in skills:
         if not skill.content.strip():
@@ -38,7 +48,11 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
                 kind="skill",
                 logical_name=skill.name,
                 path=path,
-                content=render_skill_block(skill),
+                content=(
+                    f"Read `{path}` now: `/{skill.name}` is loaded for this run."
+                    if named
+                    else render_skill_block(skill)
+                ),
                 skill_type=skill.skill_type,
             )
         )

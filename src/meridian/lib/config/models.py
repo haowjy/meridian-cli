@@ -19,6 +19,7 @@ from meridian.lib.config.model_base import (
     normalize_string_sequence,
 )
 from meridian.lib.config.schema import ConfigOptionMeta, ValueKind, config_field
+from meridian.lib.core.domain import SkillDeliveryMode
 from meridian.lib.core.overrides import (
     ApprovalValue,
     AutocompactPctValue,
@@ -505,6 +506,22 @@ def _timeout_field(name: str, kind: ValueKind) -> ConfigOptionMeta:
     )
 
 
+class ExperimentalConfig(ConfigModel):
+    """Opt-in behavior switches, kept default-stable until an experiment settles."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
+
+    skill_delivery: Annotated[
+        SkillDeliveryMode,
+        config_field(
+            "experimental.skill_delivery",
+            value_kind="str",
+            file_aliases=(file_alias("experimental", "skill_delivery"),),
+            env_vars=("MERIDIAN_EXPERIMENTAL_SKILL_DELIVERY",),
+        ),
+    ] = "inline"
+
+
 class MeridianConfig(ConfigModel):
     """Resolved operational configuration for meridian."""
 
@@ -608,6 +625,7 @@ class MeridianConfig(ConfigModel):
     work: WorkConfig = Field(default_factory=WorkConfig)
     env: dict[str, str] = Field(default_factory=dict)
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
+    experimental: ExperimentalConfig = Field(default_factory=ExperimentalConfig)
 
     @field_validator("deny_headless_harnesses", mode="before")
     @classmethod

@@ -71,7 +71,9 @@ the body can't assume the caller's context.
 
 A skill the profile loads is in the prompt in full under `# Skill: /NAME`, even when the
 harness's skill list omits it (`model-invocable: false`), so the body can tell the agent
-to follow `/NAME`.
+to follow `/NAME`. Under the experimental `experimental.skill_delivery = "named"` setting,
+Meridian instead gives one line per loaded skill naming `/NAME` and the path to its
+`SKILL.md`, under the same type headers.
 
 ## Permissions
 

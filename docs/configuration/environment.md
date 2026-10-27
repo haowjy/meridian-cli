@@ -101,6 +101,8 @@ These override spawn-level runtime policy. They sit above project config but bel
 - `MERIDIAN_KILL_GRACE_MINUTES`
 - `MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES`
 - `MERIDIAN_WAIT_TIMEOUT_MINUTES`
+- `MERIDIAN_EXPERIMENTAL_SKILL_DELIVERY` — `inline` (default) or `named`; see
+  [experimental skill delivery](../configuration.md#experimental-skill-delivery)
 - `MERIDIAN_RESIDENT_REARM_BUDGET`
 - `MERIDIAN_HARNESS_MODEL_CLAUDE`
 - `MERIDIAN_HARNESS_MODEL_CODEX`

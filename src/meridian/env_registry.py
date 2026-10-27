@@ -108,6 +108,9 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_DEBUG", "Debug telemetry output toggle."),
     _public_config("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS", "Default wait yield interval."),
     _public_config("MERIDIAN_EFFORT", "Harness reasoning effort override."),
+    _public_config(
+        "MERIDIAN_EXPERIMENTAL_SKILL_DELIVERY", "Loaded-skill delivery experiment mode."
+    ),
     _public_config("MERIDIAN_FORMAT", "CLI output format override."),
     _public_config("MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES", "Guardrail execution timeout."),
     _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_CLAUDE", "Claude idle behavior toggle."),

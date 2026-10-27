@@ -106,6 +106,10 @@ class Spawn(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+SkillDeliveryMode = Literal["inline", "named"]
+"""How a launch delivers its loaded skills: full text, or a line naming them."""
+
+
 class SkillContent(BaseModel):
     """Loaded skill body."""
 

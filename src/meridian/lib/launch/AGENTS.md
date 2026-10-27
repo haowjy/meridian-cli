@@ -22,12 +22,13 @@ as provided read from `.mars/skills/`; all others read from the wheel. Provided
 skills never enter harness-native skill directories.
 
 Wheel metadata builds the `# Meridian skills` trigger block. A skill already loaded
-by the Mars launch bundle has no trigger line, preventing a loaded body and a pointer
-to a different copy from coexisting. Otherwise, optional `metadata.mode` frontmatter gates
-the trigger on the resolved profile's declared mode, independent of whether the
-launch is a primary session or a spawn. The notify capability line uses the same
-mode gate. `meridian skills NAME` renders the selected copy under the same activation
-header injected skills get (`render_skill_block()`).
+by the Mars launch bundle has no trigger line, in either delivery mode: it is read
+from the bundle's copy, so a trigger could only point at a different copy. Otherwise,
+optional `metadata.mode` frontmatter gates the trigger on the resolved profile's
+declared mode, independent of whether the launch is a primary session or a spawn. The
+notify capability line uses the same mode gate. `meridian skills NAME` renders the
+selected copy under the same activation header injected skills get
+(`render_skill_block()`).
 
 The `bundle_adapter.py` module docstring inventories bundle fields Meridian deliberately does
 not read. `tools.rules` is the permission contract; `tools.mcp` is a flat list of permission

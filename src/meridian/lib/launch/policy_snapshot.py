@@ -9,7 +9,7 @@ from typing import Protocol
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.core.domain import AvailableSkillEntry, SkillContent
+from meridian.lib.core.domain import AvailableSkillEntry, SkillContent, SkillDeliveryMode
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
@@ -135,6 +135,7 @@ def build_launch_policy_snapshot(
     available_skills: tuple[AvailableSkillEntry, ...] = (),
     bundle_inventory_prompt: str | None = None,
     profile: AgentProfile | None = None,
+    skill_delivery: SkillDeliveryMode,
 ) -> LaunchPolicySnapshot:
     """Build a durable launch-policy snapshot from a resolved request."""
 
@@ -171,6 +172,7 @@ def build_launch_policy_snapshot(
         matched_policy_rule=request.matched_policy_rule,
         selection_report=request.selection_report,
         bundle_inventory_prompt=(bundle_inventory_prompt or "").strip() or None,
+        skill_delivery=skill_delivery,
     )
 
 

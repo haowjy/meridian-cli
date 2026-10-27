@@ -1054,7 +1054,9 @@ def _resolve_spawn_prepare_projection(
         resolved_template_variables,
     )
 
-    supplemental_documents = compose_skill_prompt_documents(resolved_skills.loaded_skills)
+    supplemental_documents = compose_skill_prompt_documents(
+        resolved_skills.loaded_skills, policy.skill_delivery
+    )
 
     agent_profile_body = ""
     if (
@@ -1132,7 +1134,7 @@ def _resolve_primary_projection(
     )
 
     supplemental_documents = (
-        *compose_skill_prompt_documents(resolved_skills.loaded_skills),
+        *compose_skill_prompt_documents(resolved_skills.loaded_skills, policy.skill_delivery),
         *request.supplemental_prompt_documents,
     )
     agent_profile_body = ""
@@ -1420,6 +1422,7 @@ def prepare_launch_surface(
                 available_skills=policies.bundle_available_skills,
                 bundle_inventory_prompt=policies.bundle_inventory_prompt,
                 profile=profile,
+                skill_delivery=policies.skill_delivery,
             )
         }
     )

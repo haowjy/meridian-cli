@@ -237,6 +237,7 @@ def test_snapshot_preserves_profile_and_raw_inventory() -> None:
         ),
         bundle_inventory_prompt=INVENTORY,
         profile=profile,
+        skill_delivery="inline",
     )
     reconstructed = _snapshot_profile(
         snapshot=snapshot,

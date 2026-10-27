@@ -632,12 +632,26 @@ the current filesystem.
 
 Loaded skills reach the agent one way on every harness, primary and spawn:
 `compose_skill_prompt_documents()` turns them into supplemental documents in
-`_build_spawn_composed_launch_content()` and `_resolve_primary_projection()`, and
+`_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()`, and
 harness projection places them in the system prompt after the agent profile.
 Bind-time re-projection rebuilds from the same composed content, so the skills
 survive it without special handling. An exact continue takes them from the launch
 snapshot, including the on-demand `available_skills` listing (whose bodies the
 snapshot never stores), so the recomposed system prompt matches the conversation's.
+
+`skill_delivery` on the launch policy chooses what each document holds. `inline`
+(the default) writes the skill's body, headed with its name and directory. `named`,
+the experimental `[experimental] skill_delivery` setting, writes one line naming the
+file to read and the skill's `/name` instead — the file-read fallback is what keeps
+a `model-invocable: false` skill reachable, since no harness's skill tool lists it.
+The renderer never sees the mode: it groups documents by type and heads each group
+in both modes, so named delivery keeps the same headers and can only differ inside a
+skill's block. `# Available Skills` is unchanged in both modes. The mode is part of
+the persisted launch-policy snapshot, so an exact continue renders as its source
+launch did even when config or the environment changed; a snapshot written before
+the field existed replays as `inline`. Named mode points at the base `SKILL.md`, so
+on a harness with a `variants/<harness>/SKILL.md` it names the base file rather
+than the variant body Mars delivered.
 
 Don't add a second channel keyed on a harness capability. A native skill list
 shows only model-invocable skills, so a loaded skill that isn't model-invocable
