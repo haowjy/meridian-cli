@@ -178,18 +178,9 @@ No `release:*` label defaults to a prerelease (RC). Unknown `release:*` labels a
 
 ## Post-Merge Automation
 
-After merge to `main`, CI (`.github/workflows/release-on-merge.yml`) will:
-
-1. Read the PR release label
-2. Skip the release commit only when this PR is `release:skip` or has no
-   associated PR (no label defaults to RC); a `release:skip` PR's notes still
-   ship with the next release
-3. Compute the next stable or RC version from existing `v*` tags
-4. Update `src/meridian/__init__.py` and render the `## Changelog` sections of
-   every merged PR since the last release (including `release:skip` merges) into
-   `CHANGELOG.md` under the new version heading
-5. Commit `release: vX.Y.Z` (or `release: vX.Y.Z-rc.N`), create/push the matching tag
-6. Let the tag push run `.github/workflows/release.yml`, which publishes to PyPI
+CI releases per your label after merge; see
+[what CI does](https://github.com/haowjy/meridian-cli/blob/main/docs/releasing.md#what-ci-does)
+for the steps.
 
 ## Cleanup
 

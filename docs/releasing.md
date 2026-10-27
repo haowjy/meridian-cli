@@ -21,7 +21,7 @@ meridian-cli releases are automatic from normal PR merges to `main`. The PR's
    - `release:minor` / `release:major` for a release that breaks existing
      behaviour, config, or on-disk state
    - `release:skip` for no release commit from this merge; its `## Changelog`
-     notes ship with the next release
+     notes are collected by the next release, automatic or manual
 5. Merge the PR to `main`
 
 A merged PR with no `release:*` label defaults to a prerelease (RC). Direct pushes
@@ -102,20 +102,21 @@ Use these rules when changing a stored format, config key, hook name, or CLI fla
 On ready-for-review pull requests, `.github/workflows/pr-body.yml` validates the
 `## Changelog` section whenever the body or branch changes and fails when it is
 missing or malformed. Drafts are skipped; the integration PR is opened as a
-draft, so it is validated when marked ready. The job also dry-runs the release
-renderer against the checked-out tree, which fails before merge when the body's
-`## Changelog` section is invalid or `CHANGELOG.md` has content under
-`## [Unreleased]`.
+draft, so it is validated when marked ready. The same step compares the branch's
+`CHANGELOG.md` with the base branch's copy and fails when the PR adds content
+under `## [Unreleased]` or a release heading (`## [X]`, including a second
+`## [Unreleased]`); a typo fix inside a released section passes. `CHANGELOG.md`
+belongs to the release job, so no PR needs to touch it.
 
 On push to `main`, `.github/workflows/release-on-merge.yml`:
 
 - Reads the selected merged PR label for the pushed commit
 - Defaults unknown `release:*` labels to RC
-- Skips the release when the triggering PR is `release:skip` or its commit has no associated PR; a merged PR with no `release:*` label defaults to RC. A `release:skip` merge's notes are not lost: they ship with the next release.
+- Skips the release when the triggering PR is `release:skip` or its commit has no associated PR; a merged PR with no `release:*` label defaults to RC. A `release:skip` merge's notes are not lost: the next release, automatic or manual, collects them.
 - Computes the next stable (patch/minor/major) or next RC from git tags
 - Collects the `## Changelog` section of every merged PR since the last release
   commit, including `release:skip` merges, deduplicated by PR number (a rebase
-  merge owns several commits), and skips direct pushes; the walk is capped at 50
+  merge owns several commits), and skips direct pushes; the walk is capped at 200
   commits and fails above that rather than dropping entries
 - Updates `src/meridian/__init__.py`
 - Renders those sections together into `CHANGELOG.md` as `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
@@ -130,6 +131,14 @@ entry), move that text into the merged PR body, remove it from `CHANGELOG.md`
 with a direct push to `main` (direct pushes release nothing), then re-run the
 failed job. Re-running the failed job stays idempotent through the
 `Release-Trigger` guard and the script's duplicate-version check.
+
+A range above the 200-commit cap fails in the collect step. An intermediate
+auto-release re-enters the same range, so cut it with a manual release that
+carries the notes itself instead:
+
+```bash
+scripts/manually-release.sh patch --no-collect --notes-file notes.md --push
+```
 
 `release.yml` is the only PyPI trusted publishing workflow identity. Manual or
 backfill `v*` tag pushes use the same workflow and provenance checks. It also
@@ -165,14 +174,17 @@ heading plus the blocks (or one `None. <reason>` line), the same shape a PR body
 carries. `--notes-file -` reads standard input.
 
 Pass `--no-collect` to release from `--notes-file` alone, for a direct-push-only
-range or an offline machine. Collection needs an authenticated `gh`; when it
-fails the script stops and names `--no-collect` rather than releasing without
-those notes.
+range or an offline machine. Nothing is collected then, so the notes file must
+carry every merged PR's section since the last release, including `release:skip`
+merges. Collection needs an authenticated `gh`; when it fails the script stops
+and names `--no-collect` rather than releasing without those notes.
 
 The dry run comes first: it refuses a stale `## [Unreleased]` or a duplicate
-version before full preflight runs. Then the script bumps `__version__`,
-renders the notes into `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, commits
-`release: vX.Y.Z`, creates the annotated tag, and optionally pushes.
+version before anything is written. The script then bumps `__version__` and
+proves the bump landed (a reformatted version line stops it with a clean tree),
+runs the full gate, renders the notes into `CHANGELOG.md` under
+`## [X.Y.Z] - YYYY-MM-DD`, commits `release: vX.Y.Z`, creates the annotated tag,
+and optionally pushes.
 
 `scripts/manually-release.sh tag-current` recreates the tag when a release
 commit exists without one.

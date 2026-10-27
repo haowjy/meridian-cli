@@ -18,6 +18,7 @@ import re
 import stat
 import sys
 import tempfile
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -52,6 +53,9 @@ _PLACEHOLDER_RE = re.compile(
 )
 _PLACEHOLDER_ONLY_RE = re.compile(r"<[^<>\n]+>|TODO|TBD", re.IGNORECASE)
 _NONE_RE = re.compile(r"^None\.\s+\S")
+_UNRELEASED_CONTENT_MESSAGE = (
+    "content under '## [Unreleased]'; entries belong in the PR body's '## Changelog' section"
+)
 
 
 class ChangelogError(RuntimeError):
@@ -445,6 +449,39 @@ def _render_section(notes: Notes, version: str, date: str) -> list[str]:
     return block
 
 
+def _visible_lines(text: str, path: str) -> tuple[list[str], list[str]]:
+    """Split `text` into its raw and scan views, refusing an unterminated block."""
+    lines = text.splitlines()
+    visible, _clean, issue = _scan(lines)
+    if issue is not None:
+        line, message = issue
+        raise ChangelogError(f"{path}:{line}: {message}")
+    return lines, visible
+
+
+def _release_headings(visible: Sequence[str]) -> list[tuple[int, str]]:
+    """Every `## [X]` heading's line number and label, in file order."""
+    return [
+        (index + 1, match.group(1))
+        for index, line in enumerate(visible)
+        if (match := _RELEASE_HEADING_RE.match(line)) is not None
+    ]
+
+
+def _unreleased_block(
+    lines: Sequence[str], visible: Sequence[str], path: str
+) -> tuple[int, list[int]]:
+    """Index of the `## [Unreleased]` anchor plus the lines that carry content."""
+    unreleased = next(
+        (index for index, line in enumerate(visible) if _UNRELEASED_RE.match(line)),
+        None,
+    )
+    if unreleased is None:
+        raise ChangelogError(f"{path} has no '## [Unreleased]' anchor")
+    end = _block_end(visible, unreleased)
+    return unreleased, [index for index in range(unreleased + 1, end) if lines[index].strip()]
+
+
 def render_changelog(
     changelog: str,
     changelog_path: str,
@@ -453,25 +490,13 @@ def render_changelog(
     date: str,
 ) -> str:
     """Insert the rendered notes under `## [Unreleased]`, refusing stale state."""
-    lines = changelog.splitlines()
-    visible, _clean, issue = _scan(lines)
-    if issue is not None:
-        line, message = issue
-        raise ChangelogError(f"{changelog_path}:{line}: {message}")
-    unreleased = next(
-        (index for index, line in enumerate(visible) if _UNRELEASED_RE.match(line)),
-        None,
-    )
-    if unreleased is None:
-        raise ChangelogError(f"{changelog_path} has no '## [Unreleased]' anchor")
-
+    lines, visible = _visible_lines(changelog, changelog_path)
+    unreleased, content = _unreleased_block(lines, visible, changelog_path)
+    if content:
+        raise ChangelogError(
+            _error(changelog_path, content[0] + 1, _UNRELEASED_CONTENT_MESSAGE)
+        )
     end = _block_end(visible, unreleased)
-    for index in range(unreleased + 1, end):
-        if lines[index].strip():
-            raise ChangelogError(
-                f"{changelog_path}:{index + 1}: content under '## [Unreleased]'; "
-                "entries belong in the PR body's '## Changelog' section"
-            )
 
     for index, line in enumerate(visible):
         match = _RELEASE_HEADING_RE.match(line)
@@ -566,9 +591,58 @@ def _report(errors: Sequence[str]) -> int:
     return 1
 
 
-def _run_validate(notes_paths: Sequence[str]) -> int:
+def _changelog_errors(changelog_path: str, base_changelog_path: str | None) -> list[str]:
+    """Check a PR's changelog: no new `[Unreleased]` content, no new release heading.
+
+    With a base file, only this branch's own edits count. Content and headings
+    the base already carries are main's, and failing every open branch for them
+    would block all PRs after a release or an old-style entry.
+    """
+    head_lines, head_visible = _visible_lines(_read_text(changelog_path), changelog_path)
+    head_content = _unreleased_block(head_lines, head_visible, changelog_path)[1]
+    errors: list[str] = []
+    if base_changelog_path is None:
+        if head_content:
+            errors.append(
+                _error(changelog_path, head_content[0] + 1, _UNRELEASED_CONTENT_MESSAGE)
+            )
+        return errors
+
+    base_text = _read_text(base_changelog_path)
+    base_lines, base_visible = _visible_lines(base_text, base_changelog_path)
+    base_content = _unreleased_block(base_lines, base_visible, base_changelog_path)[1]
+    if head_content and not base_content:
+        errors.append(
+            _error(changelog_path, head_content[0] + 1, _UNRELEASED_CONTENT_MESSAGE)
+        )
+
+    base_counts = Counter(label for _line, label in _release_headings(base_visible))
+    seen: Counter[str] = Counter()
+    for line, label in _release_headings(head_visible):
+        seen[label] += 1
+        if seen[label] > base_counts[label]:
+            errors.append(
+                _error(
+                    changelog_path,
+                    line,
+                    f"this PR adds '## [{label}]'; changelog entries belong in the "
+                    "PR body's '## Changelog' section",
+                )
+            )
+    return errors
+
+
+def _run_validate(
+    notes_paths: Sequence[str],
+    changelog_path: str | None,
+    base_changelog_path: str | None,
+) -> int:
+    if base_changelog_path is not None and changelog_path is None:
+        raise ChangelogError("--base-changelog needs --changelog (the file to compare it with)")
     parsed = _read_all_notes((), notes_paths)
-    errors = _all_errors(parsed)
+    errors = list(_all_errors(parsed))
+    if changelog_path is not None:
+        errors.extend(_changelog_errors(changelog_path, base_changelog_path))
     if errors:
         return _report(errors)
     notes = merge_notes([notes for notes, _errors in parsed])
@@ -578,6 +652,8 @@ def _run_validate(notes_paths: Sequence[str]) -> int:
         else ", ".join(section.name for section in notes.sections)
     )
     print(f"changelog notes valid: {summary}")
+    if changelog_path is not None:
+        print(f"changelog file valid: {changelog_path}")
     return 0
 
 
@@ -612,11 +688,7 @@ def _run_render(
 
 def _run_extract(version: str, changelog_path: str) -> int:
     _validate_version(version)
-    lines = _read_text(changelog_path).splitlines()
-    visible, _clean, issue = _scan(lines)
-    if issue is not None:
-        line, message = issue
-        raise ChangelogError(f"{changelog_path}:{line}: {message}")
+    lines, visible = _visible_lines(_read_text(changelog_path), changelog_path)
     start = next(
         (
             index
@@ -653,6 +725,15 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         dest="notes_files",
         required=True,
         help="PR body or notes file; repeat for several PRs, or '-' for standard input.",
+    )
+    validate.add_argument(
+        "--changelog",
+        help="Also refuse content under '## [Unreleased]' in this changelog file.",
+    )
+    validate.add_argument(
+        "--base-changelog",
+        help="With --changelog, also refuse a release heading this branch adds "
+        "(compared with the base branch's copy of the file).",
     )
 
     render = commands.add_parser(
@@ -702,7 +783,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     try:
         if args.command == "validate":
-            return _run_validate(args.notes_files)
+            return _run_validate(args.notes_files, args.changelog, args.base_changelog)
         if args.command == "render":
             return _run_render(
                 notes_json_paths=args.notes_json,

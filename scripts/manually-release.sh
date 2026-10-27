@@ -38,7 +38,13 @@ validate_version() {
 }
 
 read_version() {
-  grep -oP '(?<=__version__ = ")[^"]+' "$ROOT_DIR/src/meridian/__init__.py"
+  local file="$ROOT_DIR/src/meridian/__init__.py"
+  local pattern='(?<=__version__ = ")[^"]+'
+  local version
+  if ! version="$(grep -oP "${pattern}" "${file}")"; then
+    die "cannot read __version__ from ${file}: no line matches the pattern ${pattern}"
+  fi
+  printf '%s\n' "${version}"
 }
 
 next_version() {
@@ -67,8 +73,15 @@ render() {
 
 write_version() {
   local version="$1"
-  sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${version}\"/" \
-    "$ROOT_DIR/src/meridian/__init__.py"
+  local file="$ROOT_DIR/src/meridian/__init__.py"
+  local expected="__version__ = \"${version}\""
+  sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${version}\"/" "${file}"
+  # The sed is anchored, so a reformatted line (`__version__ = "0.1.0"  # x`)
+  # leaves it unmatched; the commit and tag would go out and release.yml's
+  # provenance check would fail after the fact, with a released section and a
+  # tag already on main. Prove the bump before committing anything.
+  grep -Fq "${expected}" "${file}" \
+    || die "version bump did not land: ${file} has no '${expected}' line; reformat the version line to exactly '__version__ = \"X.Y.Z\"'"
 }
 
 validate_current_release() {
@@ -192,10 +205,10 @@ main() {
   [[ ${#notes_args[@]} -gt 0 ]] || die "no notes: pass --notes-file PATH, or drop --no-collect so merged PRs are collected"
 
   render "${notes_args[@]}" --version "$version" --date "$today" --dry-run >/dev/null
+  write_version "$version"
   scripts/preflight.sh full
 
   render "${notes_args[@]}" --version "$version" --date "$today"
-  write_version "$version"
   git add src/meridian/__init__.py CHANGELOG.md
   git commit -m "release: v$version"
   create_tag "$tag"

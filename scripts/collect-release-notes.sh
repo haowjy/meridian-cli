@@ -12,15 +12,21 @@ first-parent commits since the last "release: v" commit, oldest first.
 A rebase-merged PR owns several first-parent commits; entries are deduplicated
 by PR number, so its notes appear once. The trigger commit's PR is appended when
 the walk does not already carry it, which is what a stable promotion after an RC
-needs. A commit with no merged PR is a direct push and is skipped. More than 50
-commits fails instead of dropping notes.
+needs. A commit with no merged PR targeting main is skipped with a notice naming
+why. More than 200 commits fails instead of dropping notes: the walk spends one
+API call per commit, so the cap bounds the release job's run time. An
+intermediate auto-release re-enters the same range, so the escape is a manual
+release that carries its notes itself:
+
+  scripts/manually-release.sh patch --no-collect --notes-file PATH
 
 Needs an authenticated `gh` (GH_TOKEN in CI). Both the release workflow and
 scripts/manually-release.sh call this, so the walk exists once.
 USAGE
 }
 
-CAP=50
+# Bounds the walk's cost: one `gh` API call per commit in the range.
+CAP=200
 
 die() {
   printf 'error: %s\n' "$*" >&2
@@ -75,21 +81,24 @@ walk_commits=()
 while IFS=$'\t' read -r commit_hash commit_subject; do
   [[ -n "${commit_hash}" ]] || continue
   if [[ "${commit_subject}" == "release: v"* ]]; then
+    printf 'skipped %s: release commit, excluded\n' "${commit_hash}"
     continue
   fi
   walk_commits+=("${commit_hash}")
 done < <(git log --first-parent --reverse --format=$'%H\t%s' "${walk_range}")
 
 if (( ${#walk_commits[@]} > CAP )); then
-  die "${#walk_commits[@]} commits since the last release (${last_release:-repository start}) exceed the ${CAP}-commit cap; the walk fails rather than drop notes. If the range is legitimate, raise CAP in scripts/collect-release-notes.sh."
+  die "${#walk_commits[@]} commits since the last release (${last_release:-repository start}) exceed the ${CAP}-commit cap; the walk fails rather than drop notes. The cap bounds the walk's one API call per commit. Cut the range with a manual release that carries the notes itself: scripts/manually-release.sh patch --no-collect --notes-file PATH"
 fi
 
-# Set `resolved` to the selected PR as {"number": N, "body": "..."}. Return 1
-# for a direct push, so the caller can skip it without an API error.
+# Set `resolved` to the selected PR as {"number": N, "body": "..."} and
+# `skip_reason` to why a commit has no PR to render. Return 1 so the caller can
+# skip the commit without an API error.
 resolved=""
+skip_reason=""
 resolve_pr() {
   local commit_sha="$1"
-  local prs_json candidates candidate_count
+  local prs_json candidates candidate_count other_bases
 
   if ! prs_json="$(gh api -H "Accept: application/vnd.github+json" \
     "repos/{owner}/{repo}/commits/${commit_sha}/pulls" 2>&1)"; then
@@ -108,6 +117,12 @@ resolve_pr() {
     die "commit ${commit_sha} resolves to ${candidate_count} merged PRs targeting main; refusing to guess: $(jq -r 'map(.number | tostring) | join(", ")' <<<"${candidates}")"
   fi
   if [[ "${candidate_count}" -eq 0 ]]; then
+    other_bases="$(jq -r '[ .[] | select(.merged_at != null) | .base.ref ] | unique | join(", ")' <<<"${prs_json}")"
+    if [[ -n "${other_bases}" ]]; then
+      skip_reason="its merged PR targets ${other_bases}, not main"
+    else
+      skip_reason="no merged PR (direct push)"
+    fi
     return 1
   fi
   if ! resolved="$(jq -c '.[0] | {number, body: (.body // "")}' <<<"${candidates}")"; then
@@ -137,6 +152,8 @@ for (( index = 0; index < ${#walk_commits[@]}; index++ )); do
   commit_sha="${walk_commits[index]}"
   if resolve_pr "${commit_sha}"; then
     append_pr "${resolved}" "from commit ${commit_sha}"
+  else
+    printf 'skipped %s: %s\n' "${commit_sha}" "${skip_reason}"
   fi
 done
 
@@ -147,7 +164,7 @@ if [[ -n "${trigger_sha}" ]]; then
   if resolve_pr "${trigger_sha}"; then
     append_pr "${resolved}" "from trigger commit ${trigger_sha}"
   else
-    printf 'trigger commit %s has no merged PR; nothing to append\n' "${trigger_sha}"
+    printf 'trigger commit %s: %s; nothing to append\n' "${trigger_sha}" "${skip_reason}"
   fi
 fi
 

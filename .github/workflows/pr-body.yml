@@ -18,15 +18,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # The gate reads CHANGELOG.md as the base branch has it, which needs
+          # history deeper than the merge commit.
+          fetch-depth: 0
 
       - name: Check the changelog section
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           body_file="${RUNNER_TEMP}/pr-body.md"
+          base_file="${RUNNER_TEMP}/base-changelog.md"
           printf '%s' "${PR_BODY}" > "${body_file}"
-          python3 scripts/changelog-notes.py render \
+          git show "${BASE_SHA}:CHANGELOG.md" > "${base_file}"
+          python3 scripts/changelog-notes.py validate \
             --notes-file "${body_file}" \
-            --version 0.0.0 \
-            --date "$(date -u +%Y-%m-%d)" \
-            --dry-run >/dev/null
+            --changelog CHANGELOG.md \
+            --base-changelog "${base_file}"
