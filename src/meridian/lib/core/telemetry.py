@@ -63,22 +63,6 @@ class LifecycleEvent:
 
 
 @dataclass(frozen=True)
-class SpawnFailure:
-    """Structured terminal diagnostic written alongside failed lifecycle state."""
-
-    spawn_id: str
-    ts: datetime
-    exit_code: int | None
-    reason: str
-    category: SpawnFailureCategory = SpawnFailureCategory.UNKNOWN_FAILURE
-    status: str | None = None
-    origin: str | None = None
-    correlation: dict[str, str] = field(default_factory=dict[str, str])
-    traceback: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
-
-
-@dataclass(frozen=True)
 class StartupPhaseSignal:
     """Typed startup phase signal from adapter.
 
@@ -235,7 +219,6 @@ __all__ = [
     "LifecycleObserver",
     "LifecycleObserverTier",
     "SpawnEventCounter",
-    "SpawnFailure",
     "SpawnFailureCategory",
     "StartupPhase",
     "StartupPhaseEmitter",

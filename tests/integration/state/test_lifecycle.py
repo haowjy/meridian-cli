@@ -90,30 +90,7 @@ def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:
     assert generate_event_id("p1", "spawn.created", 0) == expected
 
 
-def test_failure_sentinel_write_failure_does_not_block_finalize(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    service = _make_service(tmp_path)
-    spawn_id = _start_spawn(service)
-
-    def fail_write_text(*_args: object, **_kwargs: object) -> int:
-        raise OSError("sentinel blocked")
-
-    monkeypatch.setattr(
-        "meridian.lib.state.failure_sentinel.atomic_write_text", fail_write_text
-    )
-
-    outcome = service.finalize(spawn_id, "failed", 1, origin="launcher")
-
-    record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert isinstance(outcome, Applied)
-
-    assert record is not None
-    assert record.status == "failed"
-
-
-def test_authoritative_non_failed_finalize_removes_stale_failure_sentinel(
+def test_authoritative_finalize_overrides_reconciler_failure(
     tmp_path: Path,
 ) -> None:
     reconciler = _make_service(tmp_path)
@@ -121,8 +98,6 @@ def test_authoritative_non_failed_finalize_removes_stale_failure_sentinel(
     spawn_id = _start_spawn(reconciler)
 
     reconciler.finalize(spawn_id, "failed", 7, origin="reconciler", error="orphan")
-    sentinel_path = RuntimePaths.from_root_dir(tmp_path).spawns_dir / spawn_id / "failure.json"
-    assert sentinel_path.exists()
 
     outcome = authoritative.finalize(spawn_id, "succeeded", 0, origin="runner")
 
@@ -134,7 +109,6 @@ def test_authoritative_non_failed_finalize_removes_stale_failure_sentinel(
     assert record.status == "succeeded"
     assert record.terminal is not None
     assert record.terminal.origin == "runner"
-    assert not sentinel_path.exists()
 
 
 def test_bootstrap_from_disk_loads_owner_record_for_write_through(

@@ -17,12 +17,11 @@ from meridian.lib.harness.control_action import ControlActionCoordinator, Contro
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.process.runner import _write_native_primary_metadata
 from meridian.lib.launch.streaming_runner import _append_runner_lifecycle_event
-from meridian.lib.state.failure_sentinel import write_failure_sentinel
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
-from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
+from meridian.lib.state.spawn_store import start_spawn
 
 
 def _start_test_spawn(
@@ -41,36 +40,6 @@ def _start_test_spawn(
         spawn_id=spawn_id,
         status=status,
     )
-
-
-def test_late_failure_sentinel_does_not_recreate_deleted_spawn(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_id = "p1"
-    spawn_dir = runtime_root / "spawns" / spawn_id
-    _start_test_spawn(runtime_root, spawn_id, status="running")
-    finalize_spawn(runtime_root, spawn_id, "failed", 1, origin="runner")
-
-    assert delete_published_spawn(
-        runtime_root,
-        spawn_id,
-        can_delete=lambda record: record is not None,
-    )
-
-    write_failure_sentinel(runtime_root, spawn_id, {"reason": "late"})
-
-    assert not spawn_dir.exists()
-
-
-def test_failure_sentinel_refuses_non_failed_spawn(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_id = "p1"
-    sentinel_path = runtime_root / "spawns" / spawn_id / "failure.json"
-    _start_test_spawn(runtime_root, spawn_id, status="running")
-    finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
-
-    write_failure_sentinel(runtime_root, spawn_id, {"reason": "stale"})
-
-    assert not sentinel_path.exists()
 
 
 def test_late_spawn_signal_does_not_recreate_deleted_spawn(tmp_path: Path) -> None:
