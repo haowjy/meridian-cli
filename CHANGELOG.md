@@ -6,7 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Meridian provides its bundled `*__meridian` skills to Mars before launches and
-  package-resolving `meridian mars` commands. `meridian skills NAME` reads the
+  package-resolving `meridian mars` commands, once its Mars has `mars provide`
+  (Mars 0.20; the bundled Mars 0.18.4 does not, so its built-in copies stay in use). `meridian skills NAME` reads the
   project `.mars/skills/` copy Mars recorded for this build, while older Mars
   versions, contention, pending sync recovery, missing or invalid provided copies,
   and bare directories keep the wheel fallback. When Mars refuses the bundle (an

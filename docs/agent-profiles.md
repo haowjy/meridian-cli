@@ -244,8 +244,9 @@ literal root key and is flattened like any other key; Meridian does not unwrap i
 
 ## Skills and Skill Variants
 
-Meridian's own operating guidance ships with the binary and is provided into the
-resolved Mars root before launch. Every launch receives a compact `# Meridian
+Meridian's own operating guidance ships with the binary. When the Mars Meridian
+runs has `mars provide` (Mars 0.20 or later), it is provided into the resolved Mars
+root before launch; with an older Mars, Meridian reads its built-in copies. Every launch receives a compact `# Meridian
 skills` trigger list generated from the binary's bundled descriptions, except for
 a skill Mars loaded with non-blank content into the prompt. The agent reads a
 trigger only when needed with
@@ -264,9 +265,11 @@ shows `meridian notify` only to primary-mode profiles. Bundled skills are named
 without a prompt package. The
 `name__meridian` suffix follows Mars's `name__source` collision spelling and stays
 stable across profiles instead of appearing only when a package skill collides.
-Bundled skills version with the CLI. A profile that needs one on every turn may put
-its suffixed name in `skills.load` (or receive it through `--skills`); its full body
-then follows the same loaded-skill path described below and its trigger is omitted.
+Bundled skills version with the CLI. Where Mars has provided them, a profile that
+needs one on every turn may put its suffixed name in `skills.load` (or receive it
+through `--skills`); its full body then follows the same loaded-skill path described
+below and its trigger is omitted. With a Mars older than 0.20 the name is a missing
+skill.
 They do not belong in `skills.available`, because Mars deliberately does not project
 provided skills into harness-native skill directories.
 
