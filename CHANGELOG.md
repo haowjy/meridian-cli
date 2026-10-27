@@ -6,6 +6,12 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-10-27
+
+### Fixed
+- Spawn create telemetry owner and `meridian spawn subagents` now take the caller's identity from the runtime context the command passes, not from a separate read of `MERIDIAN_SPAWN_ID`.
+- A primary session's first turn no longer claims its spawn ID is "the ID your caller holds". Primaries get no run-ID line, and their chat line is now the naming handle; spawns are unchanged.
+
 ## [0.16.2] - 2026-10-27
 
 ### Fixed
