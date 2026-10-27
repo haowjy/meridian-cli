@@ -209,6 +209,8 @@ def refresh_session_links(
     command would otherwise resolve.
     """
 
+    # The one lock every row write and link swap takes: a concurrent `work switch`
+    # cannot leave a link on the attachment it just replaced.
     with lock_file(RuntimePaths.from_root_dir(runtime_root).sessions_flock):
         work_link = _publish_session_link(
             runtime_root,

@@ -139,16 +139,18 @@ def follow_work_item(
     live; it takes part when its row still names the item.
     """
 
-    owners = list(work_owners(runtime_root, work_id))
-    caller = _attached_caller(runtime_root, chat_id, work_id)
-    if caller is not None and all(
-        caller.chat not in (owner.chat, owner.link_chat) for owner in owners
-    ):
-        owners.append(caller)
-    if not owners:
-        return
     target_work_id = None if detach == "all" else rename_to or work_id
     with lock_file(RuntimePaths.from_root_dir(runtime_root).sessions_flock):
+        # Owners are read under the same lock as the row writes, as everywhere else: a
+        # concurrent switch cannot name an execution whose row this pass then misses.
+        owners = list(work_owners(runtime_root, work_id))
+        caller = _attached_caller(runtime_root, chat_id, work_id)
+        if caller is not None and all(
+            caller.chat not in (owner.chat, owner.link_chat) for owner in owners
+        ):
+            owners.append(caller)
+        if not owners:
+            return
         for owner in owners:
             if detach == "all" or (detach == "primary" and owner.kind == "primary"):
                 attachment = None
