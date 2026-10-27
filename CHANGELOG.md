@@ -6,6 +6,110 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-27
+
+### Upgrade notes
+- Every live session, primary or spawned, now reaches its work directory and source checkout through per-chat links under `sessions/<chat>/`; work moves happen at once, and `work done` follows the directory into the archive. See [per-chat work and checkout links](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#per-chat-work-and-checkout-links).
+- A launch's `--task-dir`, a launch from a directory outside the project, and a pin its launcher passed on are now recorded on the execution, so later work commands keep that checkout; a checkout an execution only followed from its item or the project root is not pinned. See [per-chat work and checkout links](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#per-chat-work-and-checkout-links).
+
+### Added
+- Every live session — primary or spawned agent — names a stable per-chat work
+  symlink (`sessions/<chat>/work` under the runtime root) in
+  `MERIDIAN_ACTIVE_WORK_DIR`. `work start`, `switch`, `rename` repoint it atomically,
+  `work done` follows the item into the archive, and `work delete` returns it to the
+  ambient spawn directory. It belongs to the execution's own chat, so it survives a
+  Claude `/clear` or `/resume` that moves the conversation, and the next launch of the
+  chat rebuilds it. A primary names its link in the system prompt; a spawn names it in
+  its `# Meridian run` user turn, so sibling spawns share one cached system prompt.
+- Every live session also names a stable per-chat checkout link
+  (`sessions/<chat>/task`) in `MERIDIAN_TASK_DIR`, built and owned the same way.
+  `task-dir`, `work task-dir`, and a switch to an item with its own checkout repoint
+  it atomically, it survives `/clear`, `/resume`, and the session exiting, and its
+  literal path is what the prompt says to write. A spawn-scope task dir still
+  outranks an item's checkout, as at launch. A permission rule scoped to the real
+  checkout path does not cover the link: grant `sessions/<chat>/` instead (see
+  [environment](https://github.com/haowjy/meridian-cli/blob/main/docs/configuration/environment.md#core)).
+
+### Changed
+- `work done` moves an item's directory to the archive immediately and writes no
+  session state: every attached execution keeps its attachment, and its link follows
+  the directory, so a spawn still running keeps writing through the same literal path
+  and its writes land in the archive. A primary attached to the item keeps it. There
+  is no "done but still in work/" state, no deferred move, and no startup sweep.
+  `work reopen`, and `work start`/`work switch` of a done item, move it back the same
+  way. A move never deletes either copy: when both locations exist it refuses, naming
+  both paths, and leaves them alone. `work switch` to a done item now reopens it
+  instead of attaching to a directory that is no longer there.
+- A done item keeps its checkout: `meridian task-dir` names the item's `task_dir`
+  after `work done`, as the `task` link does, instead of falling back to the project
+  root.
+- `work rename` moves the live executions attached to the item onto the new name, and
+  running it again finishes a rename that stopped part way. Both names must be slugs;
+  an old name that was never renamed reports that the item is not found. A
+  chat that already ended keeps the name it ended on, so `--from` on it warns that the
+  item no longer exists and creates nothing; pass `--work` to name one. Only an
+  explicit `--work` creates a work item: `--from` and an inherited ambient item no
+  longer bring a renamed or deleted one back.
+- A spawned agent's `work switch`, `work start`, `work clear` and `work task-dir` act
+  on its own chat. They previously acted on the chat that launched the spawn whenever
+  the harness published no chat observation (Codex, OpenCode), moving the parent
+  primary's work attachment and links under it.
+- `work current` and `work path` resolve an item's directory where it actually is, so
+  after `work done` they name the archive instead of a path that no longer exists.
+- A primary's `--goal` is recorded on its run and inherited by `--continue`, as a
+  spawn's already was. The goal block's heading is surface-neutral (`# Goal`).
+- `--from <entry chat>` after a Claude `/clear` continues the live conversation rather
+  than the transcript that ended at the rotation.
+- Commands that act on a work item default to the session's current item, the way
+  git commands read `HEAD`: `work done`, `work update`, and `work rename` accept no
+  name, `current` is accepted wherever a work id is (`work show`, `sessions`,
+  `delete`, `switch`, `reopen`, `spawn --work`), and `work rename NEW` renames the
+  current item while `work rename ID NEW` still names one. `current` is reserved at
+  `work start`/`rename`, so a pre-existing item with that name is no longer
+  addressable.
+- A work item's goal is no longer copied into a prompt. The capability guidance points
+  at `meridian work show` instead, which now defaults to the session's active work
+  item, so the goal text never goes stale and a goal edit never rewrites the cached
+  prompt.
+
+### Fixed
+- An execution's work attachment and chat now come from its own session row, not a
+  launch-time `MERIDIAN_ACTIVE_WORK_ID`/`MERIDIAN_CHAT_ID`, so a `work switch` after
+  launch wins and a session started by an older build resolves the same way. The
+  launch env speaks only for an unmanaged shell.
+- A launch's `--task-dir`, a launch from outside the project, and a pin its launcher
+  passed on are recorded on the execution before its links are published, so
+  `work done`, `work rename`, `work switch` and `meridian task-dir` keep that
+  checkout instead of resetting the task link to the project root. A child of an
+  execution that only followed its item or the project root inherits no pin, so it
+  follows `work task-dir` and `work switch`. `meridian task-dir clear` removes the pin
+  and returns the execution to the item's checkout.
+- `meridian doctor` reports repaired work-item links as `item_links`, and leaves a
+  stopped rename's forwarded link alone while the renamed item exists.
+- A notification label built from another execution's environment resolves that
+  execution's chat and work item through its own session row instead of the chat the
+  environment names.
+- `work reopen`, and `work switch` to the item, repairs an item whose status says done
+  while its directory is still in `work/` instead of refusing as already active.
+- After `work delete`, the live sessions attached to the item return to their ambient
+  spawn directory instead of keeping a path to a directory that is gone. A refused
+  delete writes nothing.
+- Fresh launches of the same agent no longer rewrite the system prompt. A spawn's run
+  ID, its launching chat, its ambient no-work-item scratch directory, and its goal
+  contract now appear in the first user turn, so two spawns share the harness prompt
+  cache even when their goals differ. A primary keeps its goal and its own chat ID in
+  the system prompt, so a bare primary still starts no turn of its own and Codex
+  primaries keep the goal.
+- Exact `--continue` recomposes the system prompt from the launch snapshot instead of
+  the caller's current config, so it sends the same bytes as the conversation's first
+  launch on Pi and OpenCode as well as Claude and Codex. Launch snapshots now keep the
+  `# Available Skills` listing, so it survives a continue. A continue also applies a
+  new `--goal` or a primary/spawn surface change instead of hiding it behind a replayed
+  prompt. Foreground and background spawns share one preamble, so continuing in the
+  other mode does not rewrite the prompt either.
+- `spawn --fork` keeps the source's task directory instead of falling back to the
+  control checkout, so a forked agent edits the same worktree its source did.
+
 ## [0.15.0] - 2026-10-27
 
 ### Upgrade notes
