@@ -26,3 +26,17 @@ jobs:
           body_file="${RUNNER_TEMP}/pr-body.md"
           printf '%s' "${PR_BODY}" > "${body_file}"
           python3 scripts/changelog-notes.py validate --notes-file "${body_file}"
+
+      - name: Replay release refusals
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          body_file="${RUNNER_TEMP}/pr-body.md"
+          printf '%s' "${PR_BODY}" > "${body_file}"
+          if ! python3 scripts/changelog-notes.py render \
+            --notes-file "${body_file}" \
+            --version 0.0.0 \
+            --date "$(date -u +%Y-%m-%d)" >/dev/null; then
+            echo "::error::The release renderer refuses this tree: it has content under '## [Unreleased]' or a duplicate version heading. Move the [Unreleased] text into this PR's '## Changelog' section and drop the CHANGELOG.md change."
+            exit 1
+          fi
