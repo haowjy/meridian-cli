@@ -44,7 +44,9 @@ selected `state.json` files with derived status before answering liveness. Recur
 archived ancestors as edges so active descendants beneath them remain visible.
 `owed.py` separately owns the shared wait/collect definition of finished unconsumed,
 unleased background children, including Pi delivery receipts and explicit dismissals as
-consumption. `owed.py` owns caller-scoped observation: normal wait/ack, a cancel reported
+consumption. The parent set itself lives in `lib/state/spawn_ownership.py`, because a Pi
+launch hands the same set to its spawn-watch extension; `owed.py` adds candidate
+selection, consumption, and exclusion on top. `owed.py` owns caller-scoped observation: normal wait/ack, a cancel reported
 as `cancelled`, and non-empty terminal report bodies returned by show, status, or
 report-show operations with `observe=True`. No-arg wait resolves at most the oldest 32 already-finished members once,
 minus the active target IDs, leases them without putting them through the poll loop, and
@@ -85,6 +87,16 @@ chat, subtracts durable observations before authority reads, skips live explicit
 leases, and consumes nothing. If a result was already terminal it returns the terminal
 subset immediately; otherwise it waits for the owed set to finish. Hidden `spawn ack`
 records the delivered IDs only after the harness admits their message.
+
+## Caller-Default Spawn ID
+
+`spawn done`, `spawn rearm`, and `spawn children` default to the caller's own spawn
+when no id is given. The CLI passes `RuntimeContext.from_environment()` and the
+operation resolves the id via `_resolve_caller_spawn_id()` — explicit value, then
+`runtime_context(ctx).spawn_id` — raising "Spawn ID is required. Pass spawn_id or set
+MERIDIAN_SPAWN_ID." when both are empty. `spawn stats` without an id keeps its
+different, older meaning: every spawn. `spawn message` stays explicit; messaging
+yourself has no use.
 
 ## Stored vs Derived Status
 

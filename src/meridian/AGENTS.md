@@ -69,7 +69,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/telemetry/` | Process telemetry routing, sinks, lifecycle correlation, and retention |
 | `lib/mermaid/` | Mermaid syntax validation and style checks |
 | `lib/kg/` | KB document-graph analysis (links, conflicts, flags) |
-| `skills/` | Read-only Meridian-owned guidance bundled in the wheel and loaded on demand with `meridian skills` |
+| `skills/` | Meridian-owned guidance bundled in the wheel, provided into project `.mars/skills/`, and loaded on demand with `meridian skills` |
 | `lib/bootstrap/` | Startup preparation stages |
 | `lib/markdown/` | Markdown parsing utilities |
 | `lib/utils/` | Dependency-free shared utility helpers |
@@ -78,6 +78,8 @@ Bundled Meridian skills under `skills/<name>__meridian/` follow `skills/AGENTS.m
 Required frontmatter is the suffixed `name` and a trigger-shaped `description`
 beginning with “When”; optional `mode: primary` gates a trigger on the profile's
 declared mode, and optional on-demand files stay beneath `resources/`.
+They remain in the wheel as the compatibility fallback; Mars-provided copies are
+never projected into harness-native skill directories.
 
 ## Entry Points
 

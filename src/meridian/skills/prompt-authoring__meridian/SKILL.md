@@ -1,7 +1,8 @@
 ---
 name: prompt-authoring__meridian
 description: When writing or reviewing agent profiles or skills for Meridian.
-mode: primary
+metadata:
+  mode: primary
 ---
 
 # Prompt Authoring

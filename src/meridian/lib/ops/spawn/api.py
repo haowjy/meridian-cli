@@ -769,19 +769,17 @@ def spawn_children_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnListOutput:
-    _ = (ctx, sink)
+    _ = sink
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
     )
+    caller_ref = _resolve_caller_spawn_id(payload.spawn_id, ctx)
     if runtime_root is None:
         return SpawnListOutput(spawns=(), text_view="children")
-    normalized_ref = payload.spawn_id.strip()
-    if not normalized_ref:
-        raise ValueError("spawn_id is required")
     spawn_id = resolve_spawn_reference(
         project_root,
-        normalized_ref,
+        caller_ref,
         runtime_root=runtime_root,
     )
 
@@ -1230,6 +1228,17 @@ def _row_in_cancel_scope(
     return spawn_matches_owner_chat(row, caller_chat_id or "")
 
 
+def _resolve_caller_spawn_id(spawn_id: str | None, ctx: RuntimeContext | None) -> str:
+    """Resolve an explicit spawn id, else the caller's own spawn, else fail."""
+
+    candidate = (spawn_id or "").strip()
+    if not candidate:
+        candidate = str(runtime_context(ctx).spawn_id or "").strip()
+    if not candidate:
+        raise ValueError("Spawn ID is required. Pass spawn_id or set MERIDIAN_SPAWN_ID.")
+    return candidate
+
+
 def _resolve_signal_spawn_id(
     *,
     project_root: Path,
@@ -1237,11 +1246,7 @@ def _resolve_signal_spawn_id(
     spawn_id: str | None,
     ctx: RuntimeContext | None,
 ) -> str:
-    candidate = (spawn_id or "").strip()
-    if not candidate:
-        candidate = str(runtime_context(ctx).spawn_id or "").strip()
-    if not candidate:
-        raise ValueError("Spawn ID is required. Pass spawn_id or set MERIDIAN_SPAWN_ID.")
+    candidate = _resolve_caller_spawn_id(spawn_id, ctx)
     resolved_spawn_id = resolve_spawn_reference(
         project_root,
         candidate,

@@ -102,8 +102,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
     # Public configuration inputs.
     _public_config("MERIDIAN_AGENT", "Default agent selection."),
     _public_config("MERIDIAN_APPROVAL", "Harness approval policy override."),
-    _public_config("MERIDIAN_AUTOCOMPACT", "Automatic context compaction toggle."),
-    _public_config("MERIDIAN_AUTOCOMPACT_PCT", "Automatic compaction threshold."),
+    _public_config("MERIDIAN_AUTOCOMPACT", "Token count that triggers automatic compaction."),
+    _public_config("MERIDIAN_AUTOCOMPACT_PCT", "Context fill percent that triggers compaction."),
     _public_config("MERIDIAN_CONFIG", "Explicit Meridian configuration file."),
     _public_config("MERIDIAN_DEBUG", "Debug telemetry output toggle."),
     _public_config("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS", "Default wait yield interval."),
@@ -262,6 +262,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_PATH", "Pi boundary observation path."),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE", "Pi boundary launch nonce."),
     _internal_handle("_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root."),
+    _internal_handle(
+        "_MERIDIAN_PI_OWED_PARENT_IDS",
+        "Resolved Pi result-delivery parent scope for the launch's spawn watcher.",
+    ),
     _internal_handle("_MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier."),
     _internal_handle("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS", "Resolved Pi child-wave timeout."),
     _internal_handle("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "Resolved Pi task-ping interval."),

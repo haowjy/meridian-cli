@@ -60,9 +60,12 @@ Read `docs/releasing.md` before releasing or opening a PR.
 
 The pre-push hook runs the fast gate, so push after the last review fix, not before.
 
-Docs never state release status ("unreleased", "next release"): `CHANGELOG.md`
-`[Unreleased]` owns that, and a release stamps the version. Title upgrade notes
-in `docs/upgrading.md` by topic; the changelog entry that links to them dates them.
+Docs never state release status ("unreleased", "next release"): the release
+commit stamps the version into `CHANGELOG.md`, and `[Unreleased]` is only an
+empty anchor. Changelog entries go in the PR body's `## Changelog` section; the
+release job renders them, so never edit `CHANGELOG.md` in a PR. Title upgrade
+notes in `docs/upgrading.md` by topic; the changelog entry that links to them
+dates them.
 
 Docs-only changes (`docs/`, `AGENTS.md`, `.context/`) need no PR: push them straight to
 `main`. A direct push to `main` releases nothing.

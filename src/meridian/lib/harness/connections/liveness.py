@@ -41,19 +41,61 @@ class BackendLivenessPolicy:
         self._now = now
         self._backend_pid = backend_pid
         self._backend_birth_time = backend_birth_time
+        # Two clocks, one owner. ``_last_activity_time`` is the last semantic
+        # event, and is what a busy bound measures. ``_window_start`` is where
+        # the stall timeout measures from; a probe that vouches for ongoing work
+        # restarts it without counting as stream activity.
         self._last_activity_time: float | None = None
+        self._window_start: float | None = None
+        self._busy_vouched = False
+        self._unanswered_probes = 0
         self._active_turns: set[str] = set()
         self._active_requests: set[str] = set()
         self._awaiting_done = False
 
     def reset(self) -> None:
         self._last_activity_time = None
+        self._window_start = None
+        self._busy_vouched = False
+        self._unanswered_probes = 0
         self._active_turns.clear()
         self._active_requests.clear()
         self._awaiting_done = False
 
     def mark_activity(self) -> None:
         self._last_activity_time = self._now()
+        self._window_start = self._last_activity_time
+        self._busy_vouched = False
+        self._unanswered_probes = 0
+
+    def record_probe(self, answer: bool | None) -> bool:
+        """Fold one stall probe into the busy window; report whether the turn runs.
+
+        ``None`` is no usable answer, which a CPU-saturated backend produces by
+        pushing the bounded probe past its timeout. Inside a stretch the server
+        reported running, one such miss does not end it: the tool being run can
+        still deliver its terminal. Two in a row do, so an endpoint that keeps
+        failing cannot hold a stream open forever.
+        """
+
+        if answer is not None:
+            self._busy_vouched = answer
+            self._unanswered_probes = 0
+            if answer:
+                self._window_start = self._now()
+            return answer
+        if self._busy_vouched and self._unanswered_probes == 0:
+            self._unanswered_probes = 1
+            self._window_start = self._now()
+            return True
+        return False
+
+    def silence_seconds(self) -> float:
+        """Seconds since the last semantic event, never since the last probe."""
+
+        if self._last_activity_time is None:
+            return 0.0
+        return self._now() - self._last_activity_time
 
     def mark_activity_if_idle(self) -> None:
         if self._last_activity_time is None:
@@ -114,10 +156,17 @@ class BackendLivenessPolicy:
             while True:
                 decision = self.evaluate()
                 if decision in (LivenessDecision.BACKEND_DEAD, LivenessDecision.STREAM_STALLED):
+                    # Work that completed at the deadline is progress, not a
+                    # stalled stream: deliver it instead of discarding it.
                     task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
-                    raise EventStreamLivenessTimeout
+                    try:
+                        result = await task
+                    except asyncio.CancelledError:
+                        current = asyncio.current_task()
+                        if current is not None and current.cancelling():
+                            raise
+                        raise EventStreamLivenessTimeout from None
+                    return result
 
                 remaining = self._remaining_seconds()
                 if remaining is None:
@@ -146,10 +195,10 @@ class BackendLivenessPolicy:
         return remaining is not None and remaining <= 0
 
     def _remaining_seconds(self) -> float | None:
-        last_activity_time = self._last_activity_time
-        if last_activity_time is None:
+        window_start = self._window_start
+        if window_start is None:
             return None
-        return self._timeout_seconds() - (self._now() - last_activity_time)
+        return self._timeout_seconds() - (self._now() - window_start)
 
 
 __all__ = ["BackendLivenessPolicy", "EventStreamLivenessTimeout", "LivenessDecision"]

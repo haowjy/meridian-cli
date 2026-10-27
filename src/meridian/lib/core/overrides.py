@@ -38,7 +38,8 @@ EXECUTION_POLICY_FIELDS: tuple[ExecutionPolicyField, ...] = (
 )
 _EXECUTION_POLICY_FIELD_SET = frozenset(EXECUTION_POLICY_FIELDS)
 
-KNOWN_EFFORT_VALUES = frozenset({"low", "medium", "high", "max", "xhigh"})
+# ``none`` is reasoning off; each harness lowers it in its own projection.
+KNOWN_EFFORT_VALUES = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
 
 
 def _validate_autocompact_value(v: object) -> object:

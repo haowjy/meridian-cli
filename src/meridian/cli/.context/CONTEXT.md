@@ -28,7 +28,9 @@ never queries the extension registry for routing answers.
 | `SERVICE_RUNTIME` | `streaming serve` | runtime-write | segment |
 
 Read-only classes (`READ_ROOTLESS`, `READ_PROJECT`, `READ_RUNTIME`, `TRIVIAL`) install no
-telemetry, spawn no writer thread, create no UUID, and make no filesystem mutations.
+telemetry, spawn no writer thread, and create no UUID. The `skills NAME` command is the
+one external-state exception: in an existing Mars project it lets Mars refresh
+Meridian's provided copy under `.mars/`, without preparing Meridian runtime state.
 
 ## Lazy Import Strategy
 
@@ -58,8 +60,10 @@ implementations they do not need.
 `skills` is one root command with positional dispatch rather than a Cyclopts
 sub-app: `list` occupies the same positional slot as a skill name, so both
 `meridian skills list` and `meridian skills NAME [RESOURCE-PATH]` stay valid.
-Bundled names end in `__meridian` to share Mars's `name__source` collision rule. The
-command reads only package data and therefore uses `READ_ROOTLESS`.
+Bundled names end in `__meridian` to share Mars's `name__source` collision rule.
+`list` reads only package data; a named read provides into an already existing
+project Mars root and otherwise uses the wheel. Neither path initializes the user
+Mars root, so the command remains `READ_ROOTLESS`.
 
 ## Mars passthrough roots
 

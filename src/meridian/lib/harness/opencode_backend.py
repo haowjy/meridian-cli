@@ -22,6 +22,8 @@ from typing import Literal
 
 import structlog
 
+from meridian.lib.utils.json_shapes import json_object
+
 logger = structlog.get_logger(__name__)
 
 OpenCodeVersion = Literal["v1", "v2"]
@@ -105,6 +107,51 @@ def resolve_opencode_version(
     return resolved or DEFAULT_OPENCODE_VERSION
 
 
+def v1_session_running(payload: object, session_id: str) -> bool:
+    """Whether ``GET /session/status`` reports *session_id* as executing.
+
+    The listing maps every session the server knows to its ``SessionStatus``:
+    ``busy`` is a turn in progress and ``retry`` is a provider backoff that turn
+    is waiting out. A missing or ``null`` entry is an idle session. Anything else
+    -- a non-string type, or a type this client does not know -- raises
+    ``ValueError``, because guessing would turn a protocol change into "the turn
+    ended" and end a live stream. Asked by the connection on a liveness stall,
+    so a long tool is not mistaken for a dead stream.
+    """
+
+    statuses = json_object(payload)
+    if statuses is None:
+        raise ValueError("session status listing is not an object")
+    entry = statuses.get(session_id)
+    if entry is None:
+        return False
+    status = json_object(entry)
+    if status is None:
+        raise ValueError("session status entry is not an object")
+    status_type = status.get("type")
+    if not isinstance(status_type, str):
+        raise ValueError("session status entry has no string type")
+    if status_type == "idle":
+        return False
+    if status_type in ("busy", "retry"):
+        return True
+    raise ValueError(f"unknown session status type: {status_type}")
+
+
+def v2_session_running(payload: object, session_id: str) -> bool:
+    """Whether ``GET /api/session/active`` lists *session_id* as executing.
+
+    Shared by the idle sensor (after a reconnect) and the connection (on a
+    liveness stall), so both read the server's answer the same way.
+    """
+
+    response = json_object(payload)
+    active = json_object(response.get("data")) if response is not None else None
+    if active is None:
+        raise ValueError("active sessions listing has no data object")
+    return session_id in active
+
+
 def bound_opencode_version(version: OpenCodeVersion | None) -> OpenCodeVersion:
     """The version launch bind resolved onto the spec (``spec.opencode_version``).
 
@@ -130,4 +177,6 @@ __all__ = [
     "normalize_version_preference",
     "parse_opencode_version",
     "resolve_opencode_version",
+    "v1_session_running",
+    "v2_session_running",
 ]

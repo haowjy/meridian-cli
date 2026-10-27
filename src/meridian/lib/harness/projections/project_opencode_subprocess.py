@@ -9,6 +9,7 @@ from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
+from meridian.lib.harness.projections.effort import project_opencode_variant_args
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -139,17 +140,10 @@ def project_opencode_spec_to_cli_args(
     if model_arg is not None:
         command.extend(("--model", model_arg))
 
-    normalized_effort = (spec.effort or "").strip()
-    if normalized_effort:
-        if spec.interactive:
-            # The bare ``opencode`` TUI command does not accept ``--variant``;
-            # only legacy ``opencode run`` does. The projection report exposes this gap.
-            logger.debug(
-                "OpenCode TUI does not support --variant; ignoring effort=%s",
-                normalized_effort,
-            )
-        elif spec.opencode_version == "v1":
-            command.extend(("--variant", normalized_effort))
+    # The bare ``opencode`` TUI command and V2 do not accept ``--variant``; only legacy
+    # ``opencode run`` does. The projection report exposes this gap.
+    variant_args = project_opencode_variant_args(spec)
+    command.extend(variant_args)
 
     agent_arg = None if v2_tui else spec.agent_name
     if agent_arg is not None:
@@ -166,11 +160,7 @@ def project_opencode_spec_to_cli_args(
     )
     _log_collision_if_needed(
         managed_flag="--variant",
-        has_managed_value=(
-            bool(normalized_effort)
-            and not spec.interactive
-            and spec.opencode_version == "v1"
-        ),
+        has_managed_value=bool(variant_args),
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(

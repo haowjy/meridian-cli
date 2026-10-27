@@ -14,6 +14,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.state.spawn_ownership import is_owed_child
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -309,10 +310,15 @@ class PiCompletionEvidence:
         return reconciled_descendants
 
     def _private_work_snapshot(self) -> PiPrivateWorkSnapshot:
+        # Only a background child takes over its launcher's obligation. A
+        # foreground child's launcher still owes that Bash result, so its record
+        # must not look covered here.
         origins = frozenset(
             row.originating_bash_id
             for row in self._refresh.records
-            if row.parent_id == str(self.spawn_id) and row.originating_bash_id
+            if row.parent_id == str(self.spawn_id)
+            and row.originating_bash_id
+            and is_owed_child(row)
         )
         return self.quiescence_tracker.private_work_snapshot(correlated_bash_ids=origins)
 
@@ -320,6 +326,9 @@ class PiCompletionEvidence:
         self, private: PiPrivateWorkSnapshot
     ) -> tuple[DiagnosticBlocker, ...]:
         active_ids = {item.identity for item in self._refresh.assessment.blockers}
+        # `parent_id == self` is `owned_parent_ids` for a non-primary caller; the
+        # drain runs only for spawned sessions. A primary drain would have to own
+        # every generation of its chat, as the watcher's launch scope does.
         return tuple(
             DiagnosticBlocker(
                 source="profile",
@@ -330,6 +339,7 @@ class PiCompletionEvidence:
             )
             for row in self._refresh.records
             if row.parent_id == str(self.spawn_id)
+            and is_owed_child(row)
             and row.id not in active_ids
             and row.id not in private.consumed_work_ids
         )
