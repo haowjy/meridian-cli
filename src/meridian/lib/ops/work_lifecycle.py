@@ -547,18 +547,20 @@ def work_delete_sync(
             runtime_root=roots.runtime_root,
         ),
     )
-    # Detach and repoint before the directory goes: a link is a projection, and a
-    # projection of a deleted path cannot be repaired until the next launch.
+    # Delete first: it refuses when artifacts exist without --force, and a refused
+    # delete must not leave every attached execution detached from an item that is
+    # still there. The owners come from the session rows, so they are still found
+    # afterwards, and their links are repointed in the same pass.
+    item, had_artifacts = work_repository.delete_work_item(
+        roots.project_state_dir,
+        item.name,
+        force=payload.force,
+    )
     follow_work_item(
         roots.project_root,
         roots.runtime_root,
         item.name,
         detach="all",
-    )
-    item, had_artifacts = work_repository.delete_work_item(
-        roots.project_state_dir,
-        item.name,
-        force=payload.force,
     )
     _emit_work_transition(
         "work.deleted",
