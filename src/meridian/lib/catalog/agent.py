@@ -62,6 +62,18 @@ def _split_markdown_frontmatter(markdown: str) -> tuple[dict[str, object], str]:
     return dict(post.metadata), post.content
 
 
+def _meridian_overrides(frontmatter: dict[str, object]) -> dict[object, object]:
+    """Return the `harness-overrides.meridian` block; Meridian owns it, Mars only keeps it."""
+
+    overrides = frontmatter.get("harness-overrides")
+    if not isinstance(overrides, dict):
+        return {}
+    meridian = cast("dict[object, object]", overrides).get("meridian")
+    if not isinstance(meridian, dict):
+        return {}
+    return cast("dict[object, object]", meridian)
+
+
 def _parse_meridian_capabilities(value: object) -> MeridianCapabilities | None:
     if value is None:
         return None
@@ -87,7 +99,8 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     description_value = frontmatter.get("description")
     mode_value = frontmatter.get("mode")
     model_invocable_value = frontmatter.get("model-invocable")
-    resident_rearm_budget_value = frontmatter.get("resident-rearm-budget")
+    meridian_overrides = _meridian_overrides(frontmatter)
+    resident_rearm_budget_value = meridian_overrides.get("resident-rearm-budget")
 
     profile_name = str(name_value).strip() if name_value is not None else path.stem
     model_invocable = (
@@ -103,7 +116,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         mode=cast("AgentMode", mode),
         subagents=_normalize_string_list(frontmatter.get("subagents")),
         meridian_capabilities=_parse_meridian_capabilities(
-            frontmatter.get("meridian-capabilities")
+            meridian_overrides.get("capabilities")
         ),
         model_invocable=model_invocable,
         resident_rearm_budget=(
