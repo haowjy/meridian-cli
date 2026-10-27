@@ -41,8 +41,10 @@ Per-harness mapping:
 - **Claude native-agent boundary**: unless `[harness.claude]
   allow_builtin_agents = true`, Meridian injects scoped built-in-agent denies through
   `compile_claude_permissions()`. Generic `Agent` is gated by Mars
-  `[settings.meridian.agent_copy]`: allowed only when
-  `harnesses = ["claude"]` and `.claude` is a target. Passthrough `--allowedTools` is
+  `[settings.meridian.agent_copy]`: allowed when
+  `harnesses = ["claude"]` and `.claude` is a target. Also retained when
+  `allow_builtin_agents = true`: Claude cannot deny generic `Agent` without disabling
+  built-ins, so that part of the platform rule is reported partial. Passthrough `--allowedTools` is
   merged in that compile; profile allowlists and platform denies stay authoritative. The
   `agent` platform deny also names `SendMessage` and `ListAgents`, which reach other agents
   and local Claude sessions outside Meridian.

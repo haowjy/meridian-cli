@@ -33,10 +33,11 @@ capability the API lacks, extend the API.
 - **Don't mix composition surfaces.** Three driving adapters (primary CLI, spawn
   subprocess, streaming-serve) each enter `launch/` at a defined point. A fourth path
   that ignores finalization ownership orphans spawns.
-- **Keep the logging split.** Catalog/config warnings use stdlib
-  `logging.getLogger(__name__)` so `capture_library_diagnostics()`
-  (`lib/diagnostics.py`) can collect them at launch boundaries; ops/launch/harness use
-  `structlog`, which bypasses that capture and writes to stderr.
+- **Pick the logger by where the message should go.** Inside
+  `capture_library_diagnostics()` (launch boundaries, `lib/diagnostics.py`), stdlib
+  `logging` records from `meridian.lib.*` below ERROR are collected as launch diagnostics
+  and kept off stderr; structlog always reaches stderr. Use stdlib for warnings that should
+  become launch diagnostics (catalog/config, idle sidecar), structlog for operator-visible logs.
 
 ## Typing
 

@@ -42,7 +42,7 @@ none, Pi `{done}`, plain none. The hold coordinator derives and exposes its set 
 connection capability; the factory copies it into the plan and sets the Pi/plain sets
 directly. `SpawnManager.start_spawn` writes the plan's set once to
 `spawns/<id>/accepted-signals.json` before the drain starts, and the CLI refuses a
-signal the file doesn't list. Don't move it onto the spawn row (see `.context/CONTEXT.md`).
+signal the file doesn't list. Don't move it onto the spawn row (see [`CONTEXT.md`](CONTEXT.md)).
 `DrainPolicy` governs terminal event behavior:
 
 | Policy | On terminal event | Action |
@@ -83,6 +83,7 @@ session drains that keep the harness alive across turns.
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
 - `control_socket.py` — per-spawn inject endpoint
+- `signal_canceller.py` — shared cancel pipeline for CLI and app-managed spawns
 - `types.py` — `InjectResult`, `ControlMessage`
 
 Codex/OpenCode and Pi completion use the shared reconciled transitive spawn-tree assessment as

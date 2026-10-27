@@ -53,8 +53,7 @@ normalized event before delivery. Connection-local state receives the refined
 semantics. `SpawnManager._run_event_hooks` then sees the original raw frame (including
 Pi `agent_end`), while subscribers receive its raw envelope carrying the refined
 semantics. The coordinator's `note_event_delivered` receives the raw frame. A hook
-error is logged and does not block delivery. Meridian persists no runner event
-stream. Terminal classification follows successful delivery. See [.context/CONTEXT.md](.context/CONTEXT.md).
+error is logged and does not block delivery. Terminal classification follows successful delivery. See [.context/CONTEXT.md](.context/CONTEXT.md).
 
 `SpawnManager` is the integration point for everything that touches a live spawn:
 starting, stopping, injecting messages, and subscribing to events.
@@ -80,7 +79,7 @@ awaited dispatches. Never append directly after an async boundary.
 classification, but `stop_spawn()` must still publish the finalized lifecycle row,
 resolve completion, and start that spawn's cleanup when a bounded drain is cancelled.
 
-**Drain loop ordering is fixed** (diagram above). Hooks see each delivered frame before any subscriber. Meridian persists no runner event stream; don't reintroduce one.
+**Drain loop ordering is fixed** (diagram above). Hooks see each delivered frame before any subscriber. Don't reintroduce a persisted runner event stream.
 
 **Capture `subprocess_pid` and `scope_snapshot` before `connection.stop()`.** Both
 are cleared inside `stop()`. The safety pass that force-kills surviving processes

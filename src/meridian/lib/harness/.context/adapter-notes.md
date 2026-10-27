@@ -64,28 +64,14 @@ until the primary closes; spawn streams may end at a reconciled terminal.
 
 ## Per-harness commands and boundaries
 
-Per-harness commands:
-- Claude subprocess: `claude -p --output-format stream-json --verbose -`
-- Claude connection: stdin/stdout NDJSON (not WebSocket despite `claude_ws.py` name)
-- **Claude native-agent boundary**: Mars's launch bundle owns the native names for the
-  platform's ordinary `agent`/`task` deny rules. Built-in agent types are also denied with
-  scoped `--disallowedTools` entries unless
-  `[harness.claude] allow_builtin_agents = true`. Generic `Agent` is retained when Mars
-  effective config uses copied agents (`[settings.meridian.agent_copy] harnesses =
-  ["claude"]` with `.claude` as a target). It is also retained when built-ins are allowed:
-  Claude cannot deny generic `Agent` without disabling them, so that part of the platform
-  rule is reported as partial. Parent/passthrough
-  allowed-tool tails are merged by the permission compile; profile allowlists and
-  platform denies stay authoritative.
-- Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
+Per-harness commands and the Claude native-agent boundary are listed in
+[`CONTEXT.md`](CONTEXT.md).
+
 - **Codex constrained-launch execpolicy:** real-launch materialization atomically maintains only
   `$CODEX_HOME/rules/meridian.rules` for spawn-capable `read-only` and `workspace-write`
   launches. Its
   `meridian spawn` allow applies to every Codex session using that home. A write failure is
   reported but does not block launch.
-- OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
-- Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
-- Pi subprocess/connection: `pi --mode rpc` (JSON-RPC stdio; Pi has no subprocess-only path — the RPC mode is the connection)
 
 ## Environment defaults, spawn-owned journals, Pi usage
 

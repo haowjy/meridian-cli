@@ -71,7 +71,9 @@ an awaited startup boundary, artifact opens and guarded scope registration fail 
 - `resident_backend.py` — resident-backend control seam; its presence, not the harness id,
   selects the resident drain coordinator. `liveness.py` — `BackendLivenessPolicy`.
 - `managed_backend.py` / `managed_stdio.py` — child launch via `LaunchGate`, durable
-  `spawn_owned` scope registration, termination escalation. (`managed_backend.py`
+  `spawn_owned` scope registration, termination escalation. Both adopt the blocked child,
+  persist its scope, and only then release exec; the scope handle owns the exit watcher
+  and disarms the guardian after reaping. (`managed_backend.py`
   placement is accepted naming debt ahead of #424.)
 - `pi_rpc_stream.py` — bounded Pi byte framing; reception owns ACKs independently of the consumer.
 - `__init__.py` — `get_connection_class(harness_id, transport_id)`.

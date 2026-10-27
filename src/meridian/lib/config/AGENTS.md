@@ -9,14 +9,12 @@ Precedence, low to high: defaults < user (`~/.meridian/config.toml`) < project
 
 ## Rules
 
-- **Use stdlib `logging.getLogger(__name__)`, not structlog**, here and in `lib/catalog/`:
-  `capture_library_diagnostics()` captures stdlib warnings during spawn; structlog leaks to
-  stderr.
 - **The models are the only validation path.** Every config shape is a Pydantic model rooted
   at `MeridianConfig`; field types and validators carry the constraints. Unknown-key
   warnings come from one `extra="allow"` pass (`model_extra`); never walk annotations
   separately and never add a hand-written normalizer for a shape a model declares. Report
   failures through `errors.py` so messages name the key and file.
+  `config_silences_extras` is the only warning-policy `ClassVar`.
 - **No implicit Pydantic settings sources** (no `pydantic-settings`) or ambient loader state.
   Hook rows are carried unvalidated; `lib/hooks/config.py` is their one validation and
   runtime-loading boundary.

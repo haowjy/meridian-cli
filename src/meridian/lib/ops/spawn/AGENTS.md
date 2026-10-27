@@ -6,10 +6,9 @@ env (`launch/`). Contracts, wait scoping, delivery, wire shapes: `.context/CONTE
 
 ## Rules
 
-- **Resolve before persist.** `api.py` composes the resolved launch policy and creates
-  no spawn row; runtime materialization waits until the resolved request's sandbox
-  passes the caller guardrail. Creation, continuation, and fork share that sequence;
-  top-level and nested callers use the same path.
+- **Resolve before persist** (rule in [../AGENTS.md](../AGENTS.md)): in `api.py`,
+  runtime materialization waits until the resolved request's sandbox passes the caller
+  guardrail; creation, continuation, fork, top-level and nested callers share that path.
 - **Foreground and background converge at `launch_prepared_spawn()`**, which owns
   pre-run failure finalization (writes `launch_failure`, then re-raises; safe because
   `complete_spawn()` is idempotent).

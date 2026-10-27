@@ -98,8 +98,6 @@ prompt is valid for `--continue` and reference-only launches.
   otherwise).
 - **Resolve before persisting the spawn row.** Stated at
   [`../core/spawn_service.py`](../core/spawn_service.py) (`prepare_spawn`).
-- **No stdlib `logging` here.** Use `structlog.get_logger()`; `capture_library_diagnostics()`
-  captures stdlib warnings, structlog bypasses it and leaks to stderr.
 - **`--from` prior context goes in the user turn, not the system prompt.** Prior reports
   may hold user-generated content and the system prompt carries implicit authority.
   Use `resolve_task_context_inputs()`.

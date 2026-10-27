@@ -33,7 +33,8 @@ negative priority → declaration order.
   built-in that needs it checks `context.runtime_root` once in `execute`.
 - **`meridian hooks list/check/run` resolve the project from cwd, never an inherited
   `MERIDIAN_PROJECT_DIR`** (`ignore_env=True` in `cli/hooks_commands.py`): a spawn's
-  environment must not make `hooks run` act on another project's config.
+  environment must not make `hooks run` act on another project's config. Notification
+  emission does follow the session's project; inside a spawn the two can differ by design.
 - `interval.py` takes a non-reentrant `lock_file`; lock rules in
   [../state/AGENTS.md](../state/AGENTS.md).
 
