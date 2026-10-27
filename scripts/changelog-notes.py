@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime
+import json
 import os
 import re
 import stat
@@ -19,6 +20,7 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import cast
 
 _SECTION_ORDER = (
     "Upgrade notes",
@@ -30,29 +32,6 @@ _SECTION_ORDER = (
     "Security",
 )
 _SECTION_LIST = ", ".join(_SECTION_ORDER)
-# The PR template's own `##` sections. One may open with a bullet (`## Why`
-# sometimes does); that bullet is not changelog text dropped by a stray heading.
-_PROSE_SECTION_HEADINGS = frozenset(
-    {
-        "Why",
-        "Core design decisions",
-        "Goal",
-        "Work Item",
-        "Summary",
-        "Diff",
-        "Before / After",
-        "Code Changes",
-        "State / Schema Changes",
-        "Testing",
-        "Verification",
-        "Deferred",
-        "Knowledge Updates",
-        "Spawn Trace",
-        "Release Label Guide",
-        "Post-Merge Automation",
-        "Cleanup",
-    }
-)
 _CHANGELOG_PATH = "CHANGELOG.md"
 _VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+-]*$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -62,7 +41,7 @@ _TOP_HEADING_RE = re.compile(r"^#{1,2}\s+")
 _RELEASE_HEADING_RE = re.compile(r"^##\s+\[([^\]]+)\]")
 _UNRELEASED_RE = re.compile(r"^##\s+\[Unreleased\]\s*$")
 _FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
-_INLINE_CODE_RE = re.compile(r"(`+).*?\1")
+_BACKTICKS_RE = re.compile(r"`+")
 # A multi-word angle-bracket token is template prose; a single-word `<id>` or
 # `<path>` is a metavariable. Requiring non-space at both inner edges keeps
 # comparison prose such as `a < b and c > d` out.
@@ -73,7 +52,6 @@ _PLACEHOLDER_RE = re.compile(
 )
 _PLACEHOLDER_ONLY_RE = re.compile(r"<[^<>\n]+>|TODO|TBD", re.IGNORECASE)
 _NONE_RE = re.compile(r"^None\.\s+\S")
-_PR_NOTES_RE = re.compile(r"(?:^|/)notes-\d+-pr(\d+)\.md$")
 
 
 class ChangelogError(RuntimeError):
@@ -90,20 +68,34 @@ class Section:
 class Notes:
     sections: tuple[Section, ...]
     none_line: str | None
-    errors: tuple[str, ...]
-
-    @property
-    def valid(self) -> bool:
-        return not self.errors
 
 
-@dataclass(frozen=True)
-class ScanIssue:
-    line: int
-    message: str
+def _mask_inline(line: str) -> str:
+    """Replace inline code spans with inert same-length text.
+
+    A span is opened and closed by backtick runs of equal length, as in
+    CommonMark, so a longer run such as ``` in prose does not swallow the
+    `` `<!--` `` after it.
+    """
+    masked = list(line)
+    runs = [(match.start(), len(match.group(0))) for match in _BACKTICKS_RE.finditer(line)]
+    index = 0
+    while index < len(runs):
+        start, length = runs[index]
+        close = next(
+            (later for later in range(index + 1, len(runs)) if runs[later][1] == length),
+            None,
+        )
+        if close is None:
+            index += 1
+            continue
+        for position in range(start, runs[close][0] + length):
+            masked[position] = "x"
+        index = close + 1
+    return "".join(masked)
 
 
-def _scan(lines: Sequence[str]) -> tuple[list[str], list[str], ScanIssue | None]:
+def _scan(lines: Sequence[str]) -> tuple[list[str], list[str], tuple[int, str] | None]:
     """Return (visible, clean) line views plus an unterminated-block issue.
 
     `visible` blanks fenced code blocks, inline code spans, and HTML comments,
@@ -132,7 +124,7 @@ def _scan(lines: Sequence[str]) -> tuple[list[str], list[str], ScanIssue | None]
             continue
 
         if in_comment:
-            end = line.find("-->")
+            end = _mask_inline(line).find("-->")
             if end == -1:
                 visible.append("")
                 clean.append("")
@@ -149,26 +141,28 @@ def _scan(lines: Sequence[str]) -> tuple[list[str], list[str], ScanIssue | None]
                 continue
             prose = line
 
-        while True:
-            start = prose.find("<!--")
-            if start == -1:
-                break
-            end = prose.find("-->", start + 4)
+        # Inline code is masked before the comment scan, so a `<!--` inside a
+        # code span is an example rather than an opener; `clean` keeps the code.
+        masked = _mask_inline(prose)
+        while (start := masked.find("<!--")) != -1:
+            end = masked.find("-->", start + 4)
             if end == -1:
                 prose = prose[:start]
+                masked = masked[:start]
                 in_comment = True
                 comment_line = number
                 break
             prose = prose[:start] + prose[end + 3 :]
+            masked = masked[:start] + masked[end + 3 :]
 
-        visible.append(_INLINE_CODE_RE.sub(lambda match: "x" * len(match.group(0)), prose.rstrip()))
+        visible.append(masked.rstrip())
         clean.append(prose.rstrip())
 
-    issue: ScanIssue | None = None
+    issue: tuple[int, str] | None = None
     if fence is not None:
-        issue = ScanIssue(fence_line, "unclosed fenced code block; add a closing fence")
+        issue = (fence_line, "unclosed fenced code block; add a closing fence")
     elif in_comment:
-        issue = ScanIssue(comment_line, "unclosed HTML comment; add '-->'")
+        issue = (comment_line, "unclosed HTML comment; add '-->'")
     return visible, clean, issue
 
 
@@ -178,23 +172,27 @@ def _error(source: str, line: int | None, message: str) -> str:
     return f"{source}:{line}: {message}"
 
 
-def _notes_source(path: str) -> str:
-    if path == "-":
-        return "stdin"
-    match = _PR_NOTES_RE.search(path)
-    if match is not None:
-        return f"{path} (PR #{match.group(1)})"
-    return path
+def _block_end(visible: Sequence[str], start: int) -> int:
+    """Index of the next '#' or '##' heading after `start`, or the line count."""
+    return next(
+        (
+            index
+            for index in range(start + 1, len(visible))
+            if _TOP_HEADING_RE.match(visible[index])
+        ),
+        len(visible),
+    )
 
 
-def parse_notes(text: str, source: str = "PR body") -> Notes:
+def parse_notes(text: str, source: str = "PR body") -> tuple[Notes, tuple[str, ...]]:
     """Parse the `## Changelog` section of a notes file, collecting every error."""
     lines = text.splitlines()
     visible, clean, issue = _scan(lines)
     errors: list[str] = []
     if issue is not None:
-        errors.append(_error(source, issue.line, issue.message))
-        return Notes(sections=(), none_line=None, errors=tuple(errors))
+        line, message = issue
+        errors.append(_error(source, line, message))
+        return Notes(sections=(), none_line=None), tuple(errors)
 
     heading_lines = [
         index for index, line in enumerate(visible) if _CHANGELOG_HEADING_RE.match(line)
@@ -208,7 +206,7 @@ def parse_notes(text: str, source: str = "PR body") -> Notes:
                 "'## Changelog' (an unclosed '<!--' also hides everything after it)",
             )
         )
-        return Notes(sections=(), none_line=None, errors=tuple(errors))
+        return Notes(sections=(), none_line=None), tuple(errors)
     if len(heading_lines) > 1:
         for duplicate in heading_lines[1:]:
             errors.append(
@@ -216,72 +214,27 @@ def parse_notes(text: str, source: str = "PR body") -> Notes:
             )
 
     start = heading_lines[0]
-    end = next(
-        (
-            index
-            for index in range(start + 1, len(lines))
-            if _TOP_HEADING_RE.match(visible[index])
-        ),
-        len(lines),
-    )
+    end = _block_end(visible, start)
     content = range(start + 1, end)
 
-    if end < len(lines):
-        boundary = visible[end].strip()
-        block_end = next(
-            (
-                index
-                for index in range(end + 1, len(lines))
-                if _TOP_HEADING_RE.match(visible[index])
-            ),
-            len(lines),
-        )
-        for index in range(end + 1, block_end):
-            heading = _ANY_HEADING_RE.match(visible[index].strip())
-            if (
-                heading is not None
-                and len(heading.group(1)) == 3
-                and heading.group(2).strip() in _SECTION_ORDER
-            ):
-                errors.append(
-                    _error(
-                        source,
-                        index + 1,
-                        f"'### {heading.group(2).strip()}' after {boundary!r} is dropped: "
-                        "a '##' heading ends the '## Changelog' section; put it under "
-                        "'## Changelog'",
-                    )
-                )
-                break
-        boundary_heading = _ANY_HEADING_RE.match(boundary)
-        prose_section = (
-            boundary_heading is not None
-            and boundary_heading.group(2).strip() in _PROSE_SECTION_HEADINGS
-        )
-        dropped_bullet = next(
-            (
-                index
-                for index in range(end + 1, block_end)
-                if visible[index].strip().startswith("- ")
-            ),
-            None,
-        )
-        if not prose_section and dropped_bullet is not None:
+    # A section-name heading anywhere but the section itself is a block that
+    # fell out: the author wrote it after another `##` heading, or a level-1/2
+    # heading ended the section early. No PR-template knowledge is needed.
+    for index, line in enumerate(visible):
+        if start < index < end:
+            continue
+        heading = _ANY_HEADING_RE.match(line.strip())
+        if heading is not None and heading.group(2).strip() in _SECTION_ORDER:
             errors.append(
                 _error(
                     source,
-                    dropped_bullet + 1,
-                    f"bullet after {boundary!r} is dropped: a '##' heading ends the "
-                    "'## Changelog' section; move it under '## Changelog'",
+                    index + 1,
+                    f"{line.strip()!r} is outside '## Changelog'; put the changelog "
+                    "blocks under the '## Changelog' heading (a '#' or '##' heading "
+                    "ends the section)",
                 )
             )
-
-    for index in content:
-        match = _PLACEHOLDER_RE.search(visible[index])
-        if match is not None:
-            errors.append(
-                _error(source, index + 1, f"leftover placeholder {match.group(0)!r}")
-            )
+            break
 
     first = next((index for index in content if visible[index].strip()), None)
     if first is None:
@@ -293,10 +246,27 @@ def parse_notes(text: str, source: str = "PR body") -> Notes:
                 "blocks under it (a '#' or '##' heading ends the section)",
             )
         )
-        return Notes(sections=(), none_line=None, errors=tuple(errors))
+        return Notes(sections=(), none_line=None), tuple(errors)
 
     first_text = visible[first].strip()
-    if first_text.startswith("None."):
+    none_line_only = first_text.startswith("None.")
+    for index in content:
+        text = visible[index].strip()
+        if not text or (none_line_only and index == first):
+            continue
+        candidate = text[2:].strip() if text.startswith("- ") else text
+        if _PLACEHOLDER_ONLY_RE.fullmatch(candidate):
+            errors.append(
+                _error(source, index + 1, f"placeholder {candidate!r}; write what changed")
+            )
+            continue
+        match = _PLACEHOLDER_RE.search(text)
+        if match is not None:
+            errors.append(
+                _error(source, index + 1, f"leftover placeholder {match.group(0)!r}")
+            )
+
+    if none_line_only:
         none_line = clean[first].strip()
         if not _NONE_RE.match(none_line):
             errors.append(
@@ -318,7 +288,7 @@ def parse_notes(text: str, source: str = "PR body") -> Notes:
                         "'None. <reason>' must be the only content under '## Changelog'",
                     )
                 )
-        return Notes(sections=(), none_line=none_line, errors=tuple(errors))
+        return Notes(sections=(), none_line=none_line), tuple(errors)
 
     sections: list[Section] = []
     seen: set[str] = set()
@@ -328,26 +298,11 @@ def parse_notes(text: str, source: str = "PR body") -> Notes:
     started = False
     has_bullet = False
     unknown_section = False
-    bullet_parts: list[str] = []
-    bullet_line: int | None = None
-
-    def finish_bullet() -> None:
-        nonlocal bullet_parts, bullet_line
-        if bullet_line is None:
-            return
-        text = " ".join(part for part in bullet_parts if part).strip()
-        if _PLACEHOLDER_ONLY_RE.fullmatch(text):
-            errors.append(
-                _error(source, bullet_line, f"placeholder bullet {text!r}; write what changed")
-            )
-        bullet_parts = []
-        bullet_line = None
 
     def finish() -> None:
         nonlocal name, name_line, body, started, has_bullet
         if name is None:
             return
-        finish_bullet()
         while body and not body[0].strip():
             body.pop(0)
         while body and not body[-1].strip():
@@ -407,13 +362,6 @@ def parse_notes(text: str, source: str = "PR body") -> Notes:
             )
             continue
 
-        if stripped.startswith("- "):
-            finish_bullet()
-            bullet_line = index + 1
-            bullet_parts.append(stripped[2:].strip())
-        elif bullet_line is not None:
-            bullet_parts.append(stripped)
-
         body.append(clean[index])
         if not started:
             started = True
@@ -426,14 +374,14 @@ def parse_notes(text: str, source: str = "PR body") -> Notes:
 
     finish()
 
-    return Notes(sections=tuple(sections), none_line=None, errors=tuple(errors))
+    return Notes(sections=tuple(sections), none_line=None), tuple(errors)
 
 
 def merge_notes(notes_files: Sequence[Notes]) -> Notes:
     """Merge sections across files in file order, then canonical section order.
 
     A `None. <reason>` file contributes nothing when any file has sections. When
-    none does, the last file's line wins (the triggering PR's, last in the walk).
+    none does, the last file's line wins (the walk appends the trigger last).
     """
     merged: dict[str, list[str]] = {}
     none_line: str | None = None
@@ -451,9 +399,8 @@ def merge_notes(notes_files: Sequence[Notes]) -> Notes:
                 if name in merged
             ),
             none_line=None,
-            errors=(),
         )
-    return Notes(sections=(), none_line=none_line, errors=())
+    return Notes(sections=(), none_line=none_line)
 
 
 def _read_text(path: str) -> str:
@@ -484,13 +431,13 @@ def _validate_date(value: str) -> None:
 
 
 def _render_section(notes: Notes, version: str, date: str) -> list[str]:
+    """Render notes whose sections `merge_notes` already put in canonical order."""
     block = [f"## [{version}] - {date}", ""]
     if notes.none_line is not None:
         block.append(notes.none_line)
         return block
 
-    ordered = sorted(notes.sections, key=lambda section: _SECTION_ORDER.index(section.name))
-    for position, section in enumerate(ordered):
+    for position, section in enumerate(notes.sections):
         if position:
             block.append("")
         block.append(f"### {section.name}")
@@ -509,7 +456,8 @@ def render_changelog(
     lines = changelog.splitlines()
     visible, _clean, issue = _scan(lines)
     if issue is not None:
-        raise ChangelogError(f"{changelog_path}:{issue.line}: {issue.message}")
+        line, message = issue
+        raise ChangelogError(f"{changelog_path}:{line}: {message}")
     unreleased = next(
         (index for index, line in enumerate(visible) if _UNRELEASED_RE.match(line)),
         None,
@@ -517,14 +465,7 @@ def render_changelog(
     if unreleased is None:
         raise ChangelogError(f"{changelog_path} has no '## [Unreleased]' anchor")
 
-    end = next(
-        (
-            index
-            for index in range(unreleased + 1, len(lines))
-            if _TOP_HEADING_RE.match(visible[index])
-        ),
-        len(lines),
-    )
+    end = _block_end(visible, unreleased)
     for index in range(unreleased + 1, end):
         if lines[index].strip():
             raise ChangelogError(
@@ -537,7 +478,8 @@ def render_changelog(
         if match is not None and match.group(1) == version:
             raise ChangelogError(
                 f"{changelog_path}:{index + 1}: '## [{version}]' already exists; "
-                "refusing to render the same release twice"
+                "refusing to render the same release twice. If the release commit "
+                "exists without its tag, run scripts/manually-release.sh tag-current."
             )
 
     rendered = [
@@ -570,12 +512,52 @@ def _write_atomic(path: str, content: str) -> None:
         raise
 
 
-def _read_notes(path: str) -> Notes:
-    return parse_notes(_read_text(path), source=_notes_source(path))
+def _read_notes(path: str) -> tuple[Notes, tuple[str, ...]]:
+    return parse_notes(_read_text(path), source="stdin" if path == "-" else path)
 
 
-def _read_all_notes(paths: Sequence[str]) -> list[Notes]:
-    return [_read_notes(path) for path in paths]
+def _read_notes_json(path: str) -> list[tuple[Notes, tuple[str, ...]]]:
+    """Read the collector's `[{"number": N, "body": "..."}]` into parsed notes."""
+    try:
+        raw = cast("object", json.loads(_read_text(path)))
+    except json.JSONDecodeError as exc:
+        raise ChangelogError(f"{path}: invalid notes JSON: {exc}") from exc
+    if not isinstance(raw, list):
+        raise ChangelogError(
+            f'{path}: expected a JSON array of {{"number": N, "body": "..."}} entries'
+        )
+    entries = cast("list[object]", raw)
+    parsed: list[tuple[Notes, tuple[str, ...]]] = []
+    for position, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ChangelogError(
+                f"{path}: entry {position} needs an integer 'number' and a string 'body'"
+            )
+        fields = cast("dict[str, object]", entry)
+        number = fields.get("number")
+        body = fields.get("body")
+        if not isinstance(number, int) or not isinstance(body, str):
+            raise ChangelogError(
+                f"{path}: entry {position} needs an integer 'number' and a string 'body'"
+            )
+        parsed.append(parse_notes(body, source=f"PR #{number}"))
+    return parsed
+
+
+def _read_all_notes(
+    notes_json_paths: Sequence[str], notes_paths: Sequence[str]
+) -> list[tuple[Notes, tuple[str, ...]]]:
+    """Read collected bodies first, then extra files, both in argument order."""
+    parsed: list[tuple[Notes, tuple[str, ...]]] = []
+    for path in notes_json_paths:
+        parsed.extend(_read_notes_json(path))
+    for path in notes_paths:
+        parsed.append(_read_notes(path))
+    return parsed
+
+
+def _all_errors(parsed: Sequence[tuple[Notes, tuple[str, ...]]]) -> tuple[str, ...]:
+    return tuple(error for _notes, errors in parsed for error in errors)
 
 
 def _report(errors: Sequence[str]) -> int:
@@ -585,11 +567,11 @@ def _report(errors: Sequence[str]) -> int:
 
 
 def _run_validate(notes_paths: Sequence[str]) -> int:
-    notes_files = _read_all_notes(notes_paths)
-    errors = tuple(error for notes in notes_files for error in notes.errors)
+    parsed = _read_all_notes((), notes_paths)
+    errors = _all_errors(parsed)
     if errors:
         return _report(errors)
-    notes = merge_notes(notes_files)
+    notes = merge_notes([notes for notes, _errors in parsed])
     summary = (
         notes.none_line
         if notes.none_line is not None
@@ -600,6 +582,7 @@ def _run_validate(notes_paths: Sequence[str]) -> int:
 
 
 def _run_render(
+    notes_json_paths: Sequence[str],
     notes_paths: Sequence[str],
     version: str,
     date: str,
@@ -608,11 +591,13 @@ def _run_render(
 ) -> int:
     _validate_version(version)
     _validate_date(date)
-    notes_files = _read_all_notes(notes_paths)
-    errors = tuple(error for notes in notes_files for error in notes.errors)
+    if not notes_json_paths and not notes_paths:
+        raise ChangelogError("render needs at least one --notes-json or --notes-file")
+    parsed = _read_all_notes(notes_json_paths, notes_paths)
+    errors = _all_errors(parsed)
     if errors:
         return _report(errors)
-    notes = merge_notes(notes_files)
+    notes = merge_notes([notes for notes, _errors in parsed])
 
     rendered = render_changelog(
         _read_text(changelog_path), changelog_path, notes, version, date
@@ -630,7 +615,8 @@ def _run_extract(version: str, changelog_path: str) -> int:
     lines = _read_text(changelog_path).splitlines()
     visible, _clean, issue = _scan(lines)
     if issue is not None:
-        raise ChangelogError(f"{changelog_path}:{issue.line}: {issue.message}")
+        line, message = issue
+        raise ChangelogError(f"{changelog_path}:{line}: {message}")
     start = next(
         (
             index
@@ -642,14 +628,7 @@ def _run_extract(version: str, changelog_path: str) -> int:
     )
     if start is None:
         raise ChangelogError(f"{changelog_path} has no '## [{version}]' section")
-    end = next(
-        (
-            index
-            for index in range(start + 1, len(lines))
-            if _TOP_HEADING_RE.match(visible[index])
-        ),
-        len(lines),
-    )
+    end = _block_end(visible, start)
     body = list(lines[start + 1 : end])
     while body and not body[0].strip():
         body.pop(0)
@@ -680,11 +659,19 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "render", help="Render validated notes into CHANGELOG.md under the new version."
     )
     render.add_argument(
+        "--notes-json",
+        action="append",
+        dest="notes_json",
+        default=[],
+        help="JSON array of {number, body} from collect-release-notes.sh; repeatable.",
+    )
+    render.add_argument(
         "--notes-file",
         action="append",
         dest="notes_files",
-        required=True,
-        help="PR body or notes file; repeat for several PRs, or '-' for standard input.",
+        default=[],
+        help="Extra notes file or PR body rendered after the collected ones; "
+        "repeat for several, or '-' for standard input.",
     )
     render.add_argument("--version", required=True, help="Release version, for example 0.14.11.")
     render.add_argument("--date", required=True, help="Release date, YYYY-MM-DD.")
@@ -718,6 +705,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_validate(args.notes_files)
         if args.command == "render":
             return _run_render(
+                notes_json_paths=args.notes_json,
                 notes_paths=args.notes_files,
                 version=args.version,
                 date=args.date,

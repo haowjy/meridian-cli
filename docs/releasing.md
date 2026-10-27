@@ -103,9 +103,9 @@ On ready-for-review pull requests, `.github/workflows/pr-body.yml` validates the
 `## Changelog` section whenever the body or branch changes and fails when it is
 missing or malformed. Drafts are skipped; the integration PR is opened as a
 draft, so it is validated when marked ready. The job also dry-runs the release
-renderer against the checked-out tree, which fails before merge when
-`CHANGELOG.md` has content under `## [Unreleased]` or a duplicate version
-heading.
+renderer against the checked-out tree, which fails before merge when the body's
+`## Changelog` section is invalid or `CHANGELOG.md` has content under
+`## [Unreleased]`.
 
 On push to `main`, `.github/workflows/release-on-merge.yml`:
 
@@ -114,8 +114,9 @@ On push to `main`, `.github/workflows/release-on-merge.yml`:
 - Skips the release when the triggering PR is `release:skip` or its commit has no associated PR; a merged PR with no `release:*` label defaults to RC. A `release:skip` merge's notes are not lost: they ship with the next release.
 - Computes the next stable (patch/minor/major) or next RC from git tags
 - Collects the `## Changelog` section of every merged PR since the last release
-  commit, including `release:skip` merges, and skips direct pushes; the walk is
-  capped at 50 commits and fails above that rather than dropping entries
+  commit, including `release:skip` merges, deduplicated by PR number (a rebase
+  merge owns several commits), and skips direct pushes; the walk is capped at 50
+  commits and fails above that rather than dropping entries
 - Updates `src/meridian/__init__.py`
 - Renders those sections together into `CHANGELOG.md` as `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
 - Creates commit `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`
@@ -134,9 +135,7 @@ failed job. Re-running the failed job stays idempotent through the
 backfill `v*` tag pushes use the same workflow and provenance checks. It also
 creates the GitHub Release for the tag, using the released `## [X.Y.Z]` section
 as the release body. Re-running the failed job skips artifacts PyPI already has
-(`skip-existing`) and edits the existing release; tags cut before PR-body
-changelogs have no `scripts/changelog-notes.py`, so their GitHub Release step is
-skipped with a notice.
+(`skip-existing`) and edits the existing release.
 
 The release workflow ignores its own `release: v...` commit so the auto-commit
 does not recursively release again.
@@ -158,13 +157,25 @@ scripts/manually-release.sh patch --notes-file notes.md --push   # bump, commit,
 scripts/manually-release.sh patch --notes-file notes.md          # same but skip the push
 ```
 
-The notes file must contain the `## Changelog` heading plus the blocks (or one
-`None. <reason>` line), the same shape a PR body carries. The script validates
-it, renders a dry run first to catch a stale `## [Unreleased]` or duplicate
-version, runs full preflight, bumps `__version__`, renders the notes into
-`CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, commits `release: vX.Y.Z`,
-creates the annotated tag, and optionally pushes. `--notes-file -` reads
-standard input.
+Like the release workflow, the script collects the `## Changelog` sections of
+merged PRs since the last `release: v` commit, so a `release:skip` merge or a
+failed release run does not lose its notes. `--notes-file` is optional and adds
+its contents after the collected ones; it must contain the `## Changelog`
+heading plus the blocks (or one `None. <reason>` line), the same shape a PR body
+carries. `--notes-file -` reads standard input.
+
+Pass `--no-collect` to release from `--notes-file` alone, for a direct-push-only
+range or an offline machine. Collection needs an authenticated `gh`; when it
+fails the script stops and names `--no-collect` rather than releasing without
+those notes.
+
+The dry run comes first: it refuses a stale `## [Unreleased]` or a duplicate
+version before full preflight runs. Then the script bumps `__version__`,
+renders the notes into `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, commits
+`release: vX.Y.Z`, creates the annotated tag, and optionally pushes.
+
+`scripts/manually-release.sh tag-current` recreates the tag when a release
+commit exists without one.
 
 **`push.followTags=true` gotcha:** the repo has `push.followTags=true`, so a plain
 `git push origin HEAD:main` also attempts to push any local `v*` tag, which the
