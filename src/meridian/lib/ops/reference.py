@@ -37,6 +37,7 @@ class ResolvedSessionReference:
     source_skills: tuple[str, ...]
     source_work_id: str | None
     tracked: bool
+    source_goal: str | None = None
     source_history_id: UUID | None = None
     source_spawn_id: str | None = None
     source_control_root: str | None = None
@@ -135,6 +136,7 @@ def _build_tracked_reference(
     source_execution_cwd: str | None = None,
     source_native_store: str | None = None,
     source_launch_policy_snapshot: LaunchPolicySnapshot | None = None,
+    source_goal: str | None = None,
 ) -> ResolvedSessionReference:
     return ResolvedSessionReference(
         harness_session_id=harness_session_id,
@@ -150,6 +152,7 @@ def _build_tracked_reference(
         source_execution_cwd=source_execution_cwd,
         source_native_store=source_native_store,
         source_launch_policy_snapshot=source_launch_policy_snapshot,
+        source_goal=source_goal,
         tracked=True,
     )
 
@@ -206,6 +209,7 @@ def _resolve_spawn_reference(
         source_execution_cwd=source_execution_cwd,
         source_native_store=bound_session.native_store if bound_session else None,
         source_launch_policy_snapshot=row.launch_policy_snapshot,
+        source_goal=row.goal,
     )
 
 
@@ -217,15 +221,19 @@ def _reference_from_session(
 ) -> ResolvedSessionReference:
     if session.record_mode == "historical":
         raise ValueError("Historical sessions are inert; read or export the transcript instead.")
+    linked = (
+        spawn_store.get_spawn(runtime_root, session.spawn_id)
+        if session.spawn_id is not None
+        else None
+    )
     source_history_id = session.history_id
-    if source_history_id is None and session.spawn_id:
-        linked = spawn_store.get_spawn(runtime_root, session.spawn_id)
-        if (
-            linked is not None
-            and linked.chat_id == session.chat_id
-            and (linked.session_instance_id in {None, session.session_instance_id})
-        ):
-            source_history_id = linked.history_id
+    if (
+        source_history_id is None
+        and linked is not None
+        and linked.chat_id == session.chat_id
+        and (linked.session_instance_id in {None, session.session_instance_id})
+    ):
+        source_history_id = linked.history_id
     stored_harness = _normalize_optional(session.harness)
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
@@ -250,6 +258,7 @@ def _reference_from_session(
             runtime_root,
             session,
         ),
+        source_goal=linked.goal if linked is not None else None,
     )
 
 

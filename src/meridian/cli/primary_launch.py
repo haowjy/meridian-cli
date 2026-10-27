@@ -239,6 +239,9 @@ def run_primary_launch(
     requested_skills: tuple[str, ...] = skills
     requested_work_id = work.strip() or None
     launch_task_dir = normalized_task_dir
+    # A continued conversation keeps the goal it launched with, the way a continued
+    # spawn does: `--goal` overrides, its absence inherits.
+    source_goal: str | None = None
     if resume_target is not None:
         if skills:
             raise ValueError("Cannot combine --continue with --skills.")
@@ -297,6 +300,7 @@ def run_primary_launch(
         requested_agent = continue_contract.agent
         agent_opt_out = continue_contract.agent_opt_out
         requested_skills = continue_contract.skills
+        source_goal = resolved_continue.source_goal
         session_mode = SessionMode.RESUME
     elif selected_fork_target is not None:
         resolved_fork = resolve_session_target(
@@ -349,6 +353,7 @@ def run_primary_launch(
             requested_agent = resolved_fork.source_agent
         if requested_work_id is None and resolved_fork.source_work_id is not None:
             requested_work_id = resolved_fork.source_work_id
+        source_goal = resolved_fork.source_goal
 
     # Same resolver as the prompt context, so the persisted identity is the one the writer read.
     # (the bare-`--from` sentinel is already resolved to a spawn id in ``resolved_context_from``)
@@ -356,7 +361,7 @@ def run_primary_launch(
         resolve_context_ref(project_root, ref) for ref in fork_resolution.resolved_context_from
     )
     context_source = context_sources[0] if context_sources else None
-    resolved_goal = normalize_goal(goal)
+    resolved_goal = normalize_goal(goal) or normalize_goal(source_goal)
 
     launch_result = launch_primary(
         project_root=project_root,

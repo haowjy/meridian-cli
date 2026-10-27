@@ -16,7 +16,12 @@ def build_report_instruction() -> str:
 
 
 def build_goal_instruction(goal: str | None) -> str:
-    """Render the deterministic spawn-goal completion contract block."""
+    """Render the deterministic goal completion contract block.
+
+    One text for both surfaces: a primary launch with a goal and a spawn with a goal
+    hold the same contract, and each composer places the block itself — a spawn in
+    its task turn, a primary in its system prompt.
+    """
 
     if goal is None:
         return ""
@@ -24,8 +29,8 @@ def build_goal_instruction(goal: str | None) -> str:
         raise ValueError("goal must be normalized before prompt rendering")
     escaped_goal = html.escape(goal, quote=False)
     return (
-        "# Spawn Goal\n\n"
-        "You have a completion contract for this spawn:\n\n"
+        "# Goal\n\n"
+        "You have a completion contract for this run:\n\n"
         f"<goal>\n{escaped_goal}\n</goal>\n\n"
         "Work until the goal is complete. If the goal is impossible, unsafe, "
         "blocked by missing information or permissions, or disproportionate "
