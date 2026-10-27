@@ -198,10 +198,11 @@ ordered `model-policies` list. Matching uses first-match-wins by list order.
 Duplicate matches are valid; the earlier rule in the combined list wins.
 
 `approval`, `sandbox`, and `network` overlays take effect, with the per-harness limits in
-[Permissions by harness](../agent-profiles.md#permissions-by-harness). Tool policy
-comes from the profile only: a `[agents.<name>.tools]` table in an overlay does not
-change what Meridian launches with, and a list-valued `tools` key under
-`[agents.<name>]` is a parse error.
+[Permissions by harness](../agent-profiles.md#permissions-by-harness). A
+`[agents.<name>.tools]` table merges into the profile's tool policy: plain `allowed` and
+`disallowed` lists add to it, and `{ replace = [...] }` clears that action's lower rules.
+The merged rules reach both native agent files and the launch bundle, so Meridian launches
+with them. A list-valued `tools` key under `[agents.<name>]` is a parse error.
 
 ### Three-state model-policy semantics
 

@@ -498,7 +498,8 @@ wins over `PATH`. It never falls back to a harness network default.
 The same harness limits apply when `approval` or `sandbox` comes from a CLI flag,
 environment variable, [Mars agent overlay](configuration/mars.md#agent-runtime-overlays),
 or [Meridian config](configuration.md). `network` can also come from a Mars agent overlay
-or model policy. `tools` comes from the profile.
+or model policy. `tools` comes from the profile, plus any `[agents.<name>.tools]` overlay;
+Mars merges them into the rules the launch bundle carries.
 
 ### Capability names
 
