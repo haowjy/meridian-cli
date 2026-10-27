@@ -29,9 +29,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `xhigh` on grok, `high` on deepseek and astra), `reviewer` (`medium` to `high` on
   grok, deepseek and luna), `explorer` (`medium` to `low` on deepseek and sonnet)
   and the creative-writing agents that set an effort (`low` on deepseek). Only
-  effort moves; no packaged rule changes approval, sandbox or network. `max` is its
-  own effort level, and Pi receives it as `--thinking max` where it received `xhigh`.
-  See [launch policy](docs/upgrading.md#policy-that-changes-at-launch).
+  effort moves; no packaged rule changes approval, sandbox or network. See
+  [launch policy](docs/upgrading.md#policy-that-changes-at-launch).
+- `effort: max` now runs at `max`. Mars 0.18.4 capped it to `xhigh` on every harness, so profiles
+  and overlays that said `max` ran at `xhigh`; Mars 0.20 passes it through (Claude
+  `--effort max`, Codex `max`, Pi `--thinking max`). They now run higher. Set `xhigh` to keep
+  the old behaviour. See [launch policy](docs/upgrading.md#policy-that-changes-at-launch).
 - Rollback to the previous Meridian (Mars 0.18.4) works after one `meridian mars sync`.
   See [rolling back](docs/upgrading.md#rolling-back).
 
