@@ -244,9 +244,11 @@ literal root key and is flattened like any other key; Meridian does not unwrap i
 
 ## Skills and Skill Variants
 
-Meridian's own operating guidance ships with the binary. When the Mars Meridian
-runs has `mars provide` (Mars 0.20 or later), it is provided into the resolved Mars
-root before launch; with an older Mars, Meridian reads its built-in copies. Every launch receives a compact `# Meridian
+Meridian's own operating guidance ships with the binary. Before a launch, Meridian asks
+its Mars to install it into the resolved Mars root with `mars provide`, under
+`.mars/skills/`. Where Mars cannot (a Mars older than 0.20, a held lock, an interrupted
+sync, or a refused bundle), Meridian reads its built-in copies. Every
+launch receives a compact `# Meridian
 skills` trigger list generated from the binary's bundled descriptions, except for
 a skill Mars loaded with non-blank content into the prompt. The agent reads a
 trigger only when needed with

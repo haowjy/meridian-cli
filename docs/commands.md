@@ -519,10 +519,10 @@ See [agent-profiles.md](agent-profiles.md) for the agent profile format includin
 `meridian skills list` shows the operational skills shipped with Meridian and does
 not create or update `.mars/`. `meridian skills NAME [RESOURCE-PATH]` reads one.
 In a project with `mars.toml`, the named read first asks Mars to install the current
-bundle under `.mars/skills/` (`mars provide`, Mars 0.20 or later; an older Mars leaves
-the wheel copy in use); it reads only names Mars reports as provided and falls
-back to the wheel when Mars cannot provide them or their installed `SKILL.md` is
-missing or invalid. Unknown names are rejected before asking Mars to provide. In a
+bundle under `.mars/skills/` (`mars provide`); it reads only names Mars reports as
+provided and falls back to the wheel when Mars cannot provide them (a Mars older than
+0.20 has no `mars provide`; a held lock; an interrupted sync, which `meridian mars sync`
+recovers; a bundle Mars refuses) or their installed `SKILL.md` is missing or invalid. Unknown names are rejected before asking Mars to provide. In a
 bare directory it reads the wheel without initializing the user Mars root.
 
 The rendered skill body is the same from either source. Its `Files:` line names the
