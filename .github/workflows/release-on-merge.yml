@@ -553,6 +553,14 @@ jobs:
           fi
 
           sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${PYTHON_VERSION}\"/" src/meridian/__init__.py
+          # The sed is anchored, so a reformatted line leaves it unmatched and the
+          # release commit and tag would go out with the old version; release.yml's
+          # provenance check then fails after the fact, leaving a released section
+          # and a tag on main. Prove the bump before committing anything.
+          if ! grep -Fq "__version__ = \"${PYTHON_VERSION}\"" src/meridian/__init__.py; then
+            echo "::error::Version bump did not land: src/meridian/__init__.py has no '__version__ = \"${PYTHON_VERSION}\"' line; reformat the version line to exactly '__version__ = \"X.Y.Z\"'."
+            exit 1
+          fi
 
       - name: Commit release changes
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
