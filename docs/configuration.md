@@ -164,7 +164,8 @@ reach the prompt:
 
 - `inline` (default) — each skill's full text, after the profile body.
 - `named` — the same type groups and headers, but one line per skill naming
-  `/name` and the path to its `SKILL.md`, so the agent reads the text from disk.
+  `/name` and the path to its `SKILL.md`, telling the agent to read it now, so
+  the text comes from disk instead of the prompt.
   Skills with a `variants/<harness>/SKILL.md` are the exception: inline mode
   delivers the variant body, but Mars reports only the base file, so named mode
   points the agent at the base `SKILL.md`; avoid comparing the modes on such a
@@ -183,6 +184,11 @@ skill_delivery = "named"
 that launch's mode, even if the environment variable is unset; a snapshot written
 before the mode was recorded replays as `inline`. A fork is a new launch and uses
 the current setting.
+
+The pointer paths are absolute. Run the comparison in a project with its own
+`mars.toml`: skills that come from the user Mars root (`~/.meridian/mars`) sit
+outside the directories a harness is granted, and a strict permission mode may
+refuse to read them.
 
 ## Ignoring direnv during harness launches
 

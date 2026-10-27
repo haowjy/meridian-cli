@@ -331,7 +331,8 @@ won't load it.
 An exact `--continue` recomposes the system prompt from the launch snapshot, so it
 sends the same profile, skills, and capability guidance the conversation started
 with; edits apply on the next fresh launch, not mid-conversation. `--fork` keeps that
-identity too; `--fork-fresh` is the branching form that picks up edits.
+identity too, except the experimental skill delivery mode, which every fork takes
+from the current setting; `--fork-fresh` is the branching form that picks up edits.
 Claude is stricter still: its default `--system-prompt-snapshot on` keeps the prompt
 it recorded until the conversation compacts, even if Meridian passes different text.
 

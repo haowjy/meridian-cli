@@ -25,23 +25,16 @@ def render_skill_block(skill: SkillContent) -> str:
     )
 
 
-def _named_skill_pointer(skill: SkillContent) -> str:
-    """One line naming a loaded skill and the file that holds its body.
-
-    The harness's own skill list omits non-model-invocable skills, so the
-    `SKILL.md` path is what keeps a named skill reachable.
-    """
-
-    return f"Read `{Path(skill.path).as_posix()}` before using `/{skill.name}`."
-
-
 def compose_skill_prompt_documents(
     skills: Sequence[SkillContent], skill_delivery: SkillDeliveryMode
 ) -> tuple[PromptDocument, ...]:
     """Format loaded skills as typed supplemental prompt documents.
 
-    Named delivery turns each document into a pointer line, so the renderer groups
-    and heads the skills the same way in both modes.
+    Named delivery turns each document into one line naming the skill's
+    `SKILL.md`, so the renderer groups and heads the skills the same way in both
+    modes. The line asks for the read now, not "before use": principle and
+    guardrail skills have no moment of use, and an agent told to wait would never
+    read them, which would make the experiment measure dropped text.
     """
 
     named = skill_delivery == "named"
@@ -55,7 +48,11 @@ def compose_skill_prompt_documents(
                 kind="skill",
                 logical_name=skill.name,
                 path=path,
-                content=_named_skill_pointer(skill) if named else render_skill_block(skill),
+                content=(
+                    f"Read `{path}` now: `/{skill.name}` is loaded for this run."
+                    if named
+                    else render_skill_block(skill)
+                ),
                 skill_type=skill.skill_type,
             )
         )
