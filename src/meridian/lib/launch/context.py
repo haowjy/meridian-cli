@@ -352,7 +352,6 @@ class PreparedPolicySurface:
     project_paths: ProjectConfigPaths
     runtime_root: Path
     resolved_policy: ResolvedLaunchPolicy
-    active_work_dir: Path | None
 
 
 @dataclass(frozen=True)
@@ -784,21 +783,6 @@ def _suppresses_ambient_work(request: SpawnRequest) -> bool:
     return is_exact_continue_session(request.session)
 
 
-def _resolve_active_work_dir(
-    *,
-    project_paths: ProjectConfigPaths,
-    runtime_root: Path,
-    explicit_work_id: str | None,
-) -> Path | None:
-    context_config = load_context_config(project_paths.project_root) or ContextConfig()
-    return ResolvedContext.from_environment(
-        explicit_work_id=explicit_work_id,
-        explicit_project_root=project_paths.project_root,
-        explicit_runtime_root=runtime_root,
-        context_config=context_config,
-    ).work_dir
-
-
 def build_child_runtime_env_overrides(
     *,
     project_paths: ProjectConfigPaths,
@@ -837,6 +821,7 @@ def _reproject_capabilities_at_bind(
     task_dir: Path,
     task_link: Path | None,
     work_link: Path | None,
+    paths_in_user_turn: bool,
     chat_id: str | None,
     launch_facts: str,
     spawn_capable: bool,
@@ -866,6 +851,7 @@ def _reproject_capabilities_at_bind(
         task_dir=task_dir,
         task_link=task_link,
         work_link=work_link,
+        paths_in_user_turn=paths_in_user_turn,
         chat_id=chat_id,
     )
     refreshed_guidance = replace_capabilities_block(
@@ -936,8 +922,6 @@ def compile_prepared_policy_surface(
     project_root: Path,
     harness_registry: HarnessRegistry,
     catalog: CatalogSession,
-    active_work_dir: Path | None = None,
-    explicit_work_id: str | None = None,
     dry_run: bool = False,
 ) -> PreparedPolicySurface:
     """Compile the shared launch policy boundary before projector work."""
@@ -991,40 +975,23 @@ def compile_prepared_policy_surface(
         )
     )
 
-    runtime_root = Path(runtime.runtime_root).expanduser().resolve()
-    if active_work_dir is None:
-        active_work_dir = _resolve_active_work_dir(
-            project_paths=project_paths,
-            runtime_root=runtime_root,
-            explicit_work_id=explicit_work_id,
-        )
-
     return PreparedPolicySurface(
         project_paths=project_paths,
-        runtime_root=runtime_root,
+        runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
         resolved_policy=resolved_policy,
-        active_work_dir=active_work_dir,
     )
-
-
-@dataclass(frozen=True)
-class _SharedComposition:
-    task_contract: str
-    guidance_blocks: tuple[CompositionBlock, ...]
 
 
 def _build_shared_composition(
     *,
-    request: SpawnRequest,
     policy: ResolvedLaunchPolicy,
-    is_primary: bool,
-) -> _SharedComposition:
+) -> tuple[CompositionBlock, ...]:
     spawn_usage_contract = build_spawn_usage_contract(
         policy.adapter.run_prompt_policy().spawn_usage_contract_variants
     )
     network = policy.execution_policy.network
     assert network is not None
-    guidance_blocks = build_guidance_blocks(
+    return build_guidance_blocks(
         profile=policy.profile,
         spawn_usage_contract=spawn_usage_contract,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
@@ -1034,26 +1001,15 @@ def _build_shared_composition(
             native_config=policy.execution_policy.native_config,
         ),
     )
-    goal_blocks: list[CompositionBlock] = []
-    # A spawn always has a user turn, so its completion contract travels with the
-    # task and spawns with different goals share the cached prefix. A primary may
-    # launch with no task at all, and goal text must never create a turn: it would
-    # submit itself as the conversation's first message, fresh and on every resume.
-    task_contract = ""
-    spawn_goal_instruction = build_goal_instruction(request.goal)
-    if spawn_goal_instruction:
-        if is_primary:
-            goal_blocks.append(
-                CompositionBlock(
-                    "goal-contract", GuidancePhase.GUIDANCE, 2, spawn_goal_instruction
-                )
-            )
-        else:
-            task_contract = spawn_goal_instruction
-    return _SharedComposition(
-        task_contract=task_contract,
-        guidance_blocks=(*goal_blocks, *guidance_blocks),
-    )
+
+
+def _goal_block(request: SpawnRequest) -> CompositionBlock | None:
+    """The completion contract as a system-prompt block, for a surface that needs one."""
+
+    instruction = build_goal_instruction(request.goal)
+    if not instruction:
+        return None
+    return CompositionBlock("goal-contract", GuidancePhase.GUIDANCE, 2, instruction)
 
 
 def _resolve_spawn_prepare_projection(
@@ -1096,21 +1052,19 @@ def _resolve_spawn_prepare_projection(
         )
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
-    shared = _build_shared_composition(
-        request=request,
-        policy=policy,
-        is_primary=False,
-    )
+    # A spawn always has a user turn, so its completion contract travels with the
+    # task and spawns with different goals share the cached prefix.
+    task_contract = build_goal_instruction(request.goal)
 
     composed = ComposedLaunchContent(
         supplemental_documents=supplemental_documents,
         available_skills=policy.bundle_available_skills,
         agent_profile_body=agent_profile_body,
         report_instruction=build_report_instruction(),
-        guidance_blocks=shared.guidance_blocks,
+        guidance_blocks=_build_shared_composition(policy=policy),
         launch_preamble=build_spawn_preamble(),
         passthrough_system_fragments=(),
-        user_task_prompt=join_content_blocks(shared.task_contract, cleaned_user_prompt),
+        user_task_prompt=join_content_blocks(task_contract, cleaned_user_prompt),
         reference_items=task_ctx.reference_items,
         prior_output=task_ctx.prior_output,
     )
@@ -1139,10 +1093,13 @@ def _resolve_primary_projection(
     resolved_skills = policy.resolved_skills
     session_mode = ((request.session.primary_session_mode or "fresh").strip().lower()) or "fresh"
 
-    shared = _build_shared_composition(
-        request=request,
-        policy=policy,
-        is_primary=True,
+    # A primary may launch with no task at all, and goal text must never create a
+    # turn: it would submit itself as the conversation's first message, fresh and on
+    # every resume. So the primary's goal is a block of its system prompt.
+    goal_block = _goal_block(request)
+    shared_blocks = _build_shared_composition(policy=policy)
+    guidance_blocks = (
+        (goal_block, *shared_blocks) if goal_block is not None else shared_blocks
     )
 
     seed = harness.seed_session(
@@ -1182,10 +1139,10 @@ def _resolve_primary_projection(
         available_skills=policy.bundle_available_skills,
         agent_profile_body=agent_profile_body,
         report_instruction="",
-        guidance_blocks=shared.guidance_blocks,
+        guidance_blocks=guidance_blocks,
         launch_preamble=build_primary_preamble(),
         passthrough_system_fragments=passthrough_system_fragments,
-        user_task_prompt=join_content_blocks(shared.task_contract, request.prompt),
+        user_task_prompt=request.prompt,
         reference_items=task_ctx.reference_items,
         prior_output=task_ctx.prior_output,
     )
@@ -1804,6 +1761,7 @@ def bind_launch_context(
         task_dir=directory_context.logical_task_cwd,
         work_link=bound_work_link if is_primary_launch else None,
         task_link=bound_task_link if is_primary_launch else None,
+        paths_in_user_turn=bool(link_chat) and not is_primary_launch,
         chat_id=primary_chat_id,
         launch_facts=launch_facts,
         spawn_capable=prepared.has_spawn_capability,

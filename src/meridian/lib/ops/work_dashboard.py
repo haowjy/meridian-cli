@@ -403,21 +403,6 @@ class WorkSessionsOutput(BaseModel):
         return "\n".join(lines)
 
 
-def _resolve_work_id(
-    *,
-    payload_work_id: str,
-    project_root: Path,
-    runtime_root: Path,
-    command: str,
-) -> str:
-    return resolve_work_id_argument(
-        payload_work_id,
-        usage=f"meridian work {command} <work_id>",
-        project_root=project_root,
-        runtime_root=runtime_root,
-    )
-
-
 def _work_sessions_for_work_id(
     project_root: Path,
     runtime_root: Path,
@@ -565,11 +550,11 @@ def work_show_sync(
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
 
-    resolved_work_id = _resolve_work_id(
-        payload_work_id=payload.work_id,
+    resolved_work_id = resolve_work_id_argument(
+        payload.work_id,
+        usage="meridian work show <work_id>",
         project_root=project_root,
         runtime_root=runtime_state_root,
-        command="show",
     )
     item = work_store.get_work_item(project_state_dir, resolved_work_id)
     if item is None:
@@ -630,11 +615,11 @@ def work_sessions_sync(
     project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
-    resolved_work_id = _resolve_work_id(
-        payload_work_id=payload.work_id,
+    resolved_work_id = resolve_work_id_argument(
+        payload.work_id,
+        usage="meridian work sessions <work_id>",
         project_root=project_root,
         runtime_root=runtime_state_root,
-        command="sessions",
     )
 
     item = work_store.get_work_item(project_state_dir, resolved_work_id)

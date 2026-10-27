@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
-from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir_for_project
+from meridian.lib.state.paths import resolve_project_paths
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
@@ -175,19 +175,6 @@ def launch_primary(
 
     runtime = runtime.model_copy(update=launch_resolution.runtime_updates)
     effective_work_id = resolved_work_id or launch_resolution.effective_work_id
-    configured_work_dir = resolved_project_paths.work_dir
-    if effective_work_id is None:
-        active_work_dir = runtime_context.work_dir if inherit_ambient_work else None
-    elif request.dry_run and configured_work_dir is None:
-        active_work_dir = None
-    elif request.dry_run:
-        assert configured_work_dir is not None
-        active_work_dir = configured_work_dir / effective_work_id
-    else:
-        active_work_dir = resolve_work_scratch_dir_for_project(
-            resolved_project_root,
-            effective_work_id,
-        )
     request_updates = dict(launch_resolution.request_updates)
     request_updates["work_id_hint"] = effective_work_id
     spawn_request = build_primary_spawn_request(request=request)
@@ -209,8 +196,6 @@ def launch_primary(
         project_root=resolved_project_root,
         harness_registry=harness_registry,
         catalog=CatalogSession(resolved_project_root),
-        active_work_dir=active_work_dir,
-        explicit_work_id=effective_work_id,
         dry_run=request.dry_run,
     )
     prepared = prepare_launch_surface(
