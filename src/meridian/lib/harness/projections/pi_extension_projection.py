@@ -45,13 +45,6 @@ class PiExtensionLaunchProfile:
     interactive: bool
     session_boundary_enabled: bool = True
 
-    def bundle_enabled(self) -> bool:
-        """Whether any Meridian Pi extension bundle should load."""
-
-        return (self.background_tasks_enabled or self.spawn_watch_enabled
-                or self.session_boundary_enabled)
-
-
 def resolve_pi_managed_bash_entrypoint() -> tuple[str, ...]:
     """Resolve the Meridian managed-bash Pi extension entrypoint."""
 

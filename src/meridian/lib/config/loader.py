@@ -70,10 +70,6 @@ class LoadedConfig(BaseModel):
     dynamic: DynamicConfigSections
     sources: tuple[ConfigValueSource, ...] = ()
 
-    def source_for(self, path: tuple[str, ...]) -> ConfigValueSource | None:
-        return next((entry for entry in self.sources if entry.path == path), None)
-
-
 @dataclass(frozen=True)
 class _NormalizedConfigLayer:
     values: dict[str, object]
@@ -492,8 +488,3 @@ def resolve_opencode_version_for_launch(
             pass
     return str(load_config(project_root).harness.opencode.version)
 
-
-def resolve_pi_disable_managed_bash() -> bool:
-    """Resolve whether Meridian should skip Pi's managed bash extension."""
-
-    return resolve_pi_harness_profile().disable_managed_bash

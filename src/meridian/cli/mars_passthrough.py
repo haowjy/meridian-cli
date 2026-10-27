@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -117,23 +116,6 @@ def _is_mars_mutation(args: Sequence[str]) -> bool:
             or commands[:2] in _MUTATING_COMMAND_PAIRS
         )
     )
-
-
-def decode_json_values(raw_stdout: str) -> list[object] | None:
-    decoder = json.JSONDecoder()
-    parsed_values: list[object] = []
-    index = 0
-    while index < len(raw_stdout):
-        while index < len(raw_stdout) and raw_stdout[index].isspace():
-            index += 1
-        if index >= len(raw_stdout):
-            return parsed_values
-        try:
-            parsed, index = decoder.raw_decode(raw_stdout, index)
-        except json.JSONDecodeError:
-            return None
-        parsed_values.append(parsed)
-    return parsed_values
 
 
 def parse_mars_passthrough(

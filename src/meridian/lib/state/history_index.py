@@ -1312,15 +1312,6 @@ class HistoryIndex:
                 db = stack.enter_context(_connect(self.path, timeout=_remaining(deadline)))
             yield db
 
-    def selected_archive_digest(self, history_id: str) -> str | None:
-        with self.query() as db:
-            row = db.execute(
-                select(ARCHIVE_HEADS.c.portable_digest).where(
-                    ARCHIVE_HEADS.c.history_id == history_id
-                )
-            ).first()
-            return row[0] if row else None
-
     def snapshots(self, *, destination: Path | None = None) -> tuple[HistorySnapshot, ...]:
         from meridian.lib.state.retention_archive import ArchiveReceipt, archive_display_path
 

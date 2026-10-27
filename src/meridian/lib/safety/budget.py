@@ -1,19 +1,10 @@
 """Budget configuration and incremental cost tracking."""
 
-import json
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TokenUsage
-
-COST_KEYS: tuple[str, ...] = (
-    "total_cost_usd",
-    "cost_usd",
-    "cost",
-    "total_cost",
-    "totalCostUsd",
-)
 
 
 class Budget(BaseModel):
@@ -59,14 +50,6 @@ class LiveBudgetTracker(BaseModel):
             self.run_cost_usd = cost_usd
         return self.check()
 
-    def observe_json_line(self, raw_line: bytes) -> BudgetBreach | None:
-        """Parse one JSONL output line and update tracker if a cost field is present."""
-
-        cost = extract_cost_usd_from_json_line(raw_line)
-        if cost is None:
-            return None
-        return self.observe_cost(cost)
-
     def check(self) -> BudgetBreach | None:
         """Evaluate per-run and per-space limits."""
 
@@ -85,22 +68,3 @@ class LiveBudgetTracker(BaseModel):
                 )
         return None
 
-
-def extract_cost_usd_from_json_line(raw_line: bytes) -> float | None:
-    """Extract the first recognized cost field from one JSON line payload."""
-
-    # Import lazily to avoid package init cycles:
-    # safety -> budget -> harness._common -> harness.adapter -> safety.policy.
-    from meridian.lib.harness.common import coerce_optional_float, iter_nested_dicts
-
-    try:
-        payload_obj = json.loads(raw_line.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-
-    for payload in iter_nested_dicts(payload_obj):
-        for key in COST_KEYS:
-            value = coerce_optional_float(payload.get(key))
-            if value is not None:
-                return value
-    return None

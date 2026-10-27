@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -31,8 +29,6 @@ from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.telemetry import (
     LifecycleObserver,
     LifecycleObserverTier,
-    SpawnFailure,
-    SpawnFailureCategory,
     register_observer,
 )
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -59,7 +55,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
-from meridian.lib.state.paths import RuntimePaths, resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import (
     APP_LAUNCH_MODE,
     LaunchMode,
@@ -357,38 +353,6 @@ class SpawnApplicationService:
     def is_terminal(self, status: str) -> bool:
         """Check if status is terminal."""
         return is_terminal_spawn_status(status)
-
-    def require_not_terminal(self, record: SpawnRecord) -> None:
-        """Raise if spawn is already terminal."""
-        if self.is_terminal(record.status):
-            raise ValueError(f"Spawn is already {record.status}")
-
-    def require_not_finalizing(self, record: SpawnRecord) -> None:
-        """Raise if spawn is currently finalizing."""
-        if record.status == "finalizing":
-            raise ValueError("Spawn is finalizing")
-
-    def get_spawn_failure(self, spawn_id: SpawnId) -> SpawnFailure | None:
-        """Read the failure sentinel for a spawn, if it exists."""
-        record = self.get_spawn(spawn_id)
-        if record is None or record.status != "failed":
-            return None
-        sentinel_path = (
-            RuntimePaths.from_root_dir(self._runtime_root).spawns_dir
-            / str(spawn_id)
-            / "failure.json"
-        )
-        if not sentinel_path.exists():
-            return None
-        try:
-            data = json.loads(sentinel_path.read_text(encoding="utf-8"))
-            data["ts"] = datetime.fromisoformat(data["ts"])
-            category = data.get("category")
-            if isinstance(category, str):
-                data["category"] = SpawnFailureCategory(category)
-            return SpawnFailure(**data)
-        except Exception:
-            return None
 
     # ---- Spawn Preparation (SEAM-1, SEAM-2, SEAM-3) ----
 

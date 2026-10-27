@@ -27,7 +27,6 @@ if TYPE_CHECKING:
         ResolvedPolicies,
         SurfacePolicyInput,
         resolve_launch_policy,
-        resolve_policies,
     )
     from meridian.lib.launch.process import ProcessOutcome, run_harness_process
     from meridian.lib.launch.resolve import (
@@ -283,7 +282,6 @@ def __getattr__(name: str) -> Any:
         "materialize_harness": (".materialize", "materialize_harness"),
         "resolve_harness": (".resolve", "resolve_harness"),
         "resolve_launch_policy": (".policies", "resolve_launch_policy"),
-        "resolve_policies": (".policies", "resolve_policies"),
         "run_harness_process": (".process", "run_harness_process"),
     }
     try:
@@ -324,6 +322,5 @@ __all__ = [
     "prepare_launch_surface",
     "resolve_harness",
     "resolve_launch_policy",
-    "resolve_policies",
     "run_harness_process",
 ]

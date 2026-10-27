@@ -167,19 +167,6 @@ def prepare_for_runtime_write(
     )
 
 
-def build_spawn_entrypoint(
-    prepared: RuntimeReadContext | RuntimeWriteContext,
-    *,
-    lifecycle: SpawnLifecycleService | None = None,
-) -> SpawnEntryPoint:
-    """Build the minimal shared carrier for spawn entrypoints."""
-
-    return SpawnEntryPoint(
-        context=_application_context_from_runtime(prepared),
-        services=ApplicationServices(lifecycle=lifecycle),
-    )
-
-
 def build_spawn_application_service(
     prepared: RuntimeWriteContext,
     *,

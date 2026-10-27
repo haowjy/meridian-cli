@@ -23,7 +23,7 @@ which, and the context-object hierarchy: `.context/CONTEXT.md`.
   `prepare_for_project_write(arg_derived_root)` themselves after parsing; all others
   receive a pre-prepared context.
 - **Build services through the factories**: `build_spawn_application_service(runtime_write_ctx)`,
-  `build_spawn_entrypoint()`, `build_extension_entrypoint()`; don't instantiate
+  `build_extension_entrypoint()`; don't instantiate
   `SpawnApplicationService` or the entrypoint carriers by hand.
 
 KB: `architecture/startup-pipeline.md`.

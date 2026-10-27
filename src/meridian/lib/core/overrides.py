@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
     from meridian.lib.catalog.model_aliases import AliasEntry
     from meridian.lib.config.models import MeridianConfig
-    from meridian.lib.ops.spawn.models import SpawnCreateInput
 
 _AUTOCOMPACT_TOKEN_MIN = 1000
 _AUTOCOMPACT_PCT_MIN = 1
@@ -364,22 +363,6 @@ class RuntimeOverrides(BaseModel):
         if config is None:
             return cls()
         return cls(resident_rearm_budget=config.resident_rearm_budget)
-
-    @classmethod
-    def from_spawn_input(cls, payload: SpawnCreateInput) -> RuntimeOverrides:
-        return cls(
-            model=_normalize_optional_string(payload.model),
-            harness=_normalize_optional_string(payload.harness),
-            agent=_normalize_optional_string(payload.agent),
-            effort=_normalize_optional_string(payload.effort),
-            sandbox=_normalize_optional_string(payload.sandbox),
-            approval=_normalize_optional_string(payload.approval),
-            autocompact=payload.autocompact,
-            autocompact_pct=payload.autocompact_pct,
-            timeout=payload.timeout,
-            resident_rearm_budget=payload.resident_rearm_budget,
-        )
-
 
 def resolve(*layers: RuntimeOverrides) -> RuntimeOverrides:
     """Merge layers with first-non-none precedence."""

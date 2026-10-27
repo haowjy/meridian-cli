@@ -109,10 +109,6 @@ class CompletionCoordinator:
             or self._assessment.disposition == "unknown"
         )
 
-    @property
-    def cleanup_report(self) -> CleanupReport | None:
-        return self._cleanup_report
-
     def note_activity_transition(self, transition: str | None) -> None:
         if transition == "turn_active":
             self._active_turn = True

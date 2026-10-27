@@ -17,7 +17,7 @@ from meridian.lib.state.project_identity import (
     resolve_project_identity,
     state_id,
 )
-from meridian.lib.state.user_paths import get_user_home, project_lifetime_lock_path
+from meridian.lib.state.user_paths import project_lifetime_lock_path
 
 
 def normalize_path_for_write(path: str | None) -> str | None:
@@ -331,13 +331,6 @@ def resolve_project_runtime_root_for_write(project_root: Path) -> Path:
     if authority.runtime_root is None:
         raise ValueError("Runtime write authority did not resolve a runtime root.")
     return authority.runtime_root
-
-
-def resolve_cache_dir(project_root: Path) -> Path:
-    """Return runtime cache directory for a repository root."""
-
-    runtime_root = resolve_project_runtime_root_or_none(project_root)
-    return runtime_root / "cache" if runtime_root is not None else get_user_home() / "cache"
 
 
 def resolve_kb_dir(project_root: Path) -> Path | None:

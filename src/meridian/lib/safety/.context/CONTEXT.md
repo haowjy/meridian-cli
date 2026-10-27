@@ -5,11 +5,8 @@ except through lazy imports that break circular dependency cycles.
 
 ## Budget Enforcement (`budget.py`)
 
-`LiveBudgetTracker` is a mutable streaming tracker. Feed it one raw stdout line at
-a time via `observe_json_line(raw_line)`.
-
-**Cost field priority:** extracts the first recognized field in order:
-`total_cost_usd`, `cost_usd`, `cost`, `total_cost`, `totalCostUsd`.
+`LiveBudgetTracker` is a mutable streaming tracker. Feed it extracted usage via
+`observe_usage()` / `observe_cost()`.
 
 **Monotonic update invariant:** `run_cost_usd` only increases. Harnesses emit
 running totals, not deltas. If a new value is less than the current tracked value,
@@ -17,10 +14,6 @@ it is ignored. A harness that emits deltas instead of totals will under-count.
 
 **Breach check:** returns `BudgetBreach` on first violation. Caller is responsible
 for terminating the harness — the tracker does not stop it.
-
-**Lazy import:** `extract_cost_usd_from_json_line` imports `harness.common` lazily
-to break a circular dependency: `safety.budget` → `harness.common` → `harness.adapter`
-→ `launch.launch_types` → `safety.policy`. Do not hoist this import to the module level.
 
 ## Post-Run Guardrails (`guardrails.py`)
 
@@ -153,8 +146,4 @@ durable `ResolvedExecutionPolicy` uses only a resolved network or `None`.
 
 ## Circular Import Constraints
 
-The dependency graph must remain:
-- `budget.py` → `harness.common` (lazy only)
-
 Do not add direct top-level imports between these modules and `harness.*` or `launch.*`.
-The lazy import in `extract_cost_usd_from_json_line` is load-bearing.

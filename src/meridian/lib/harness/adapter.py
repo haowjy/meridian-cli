@@ -21,7 +21,6 @@ from typing import (
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.harness_models import PiHarnessProfileConfig
-from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
@@ -218,18 +217,6 @@ class StreamEvent(BaseModel):
     raw_line: str
     text: str | None = None
     metadata: dict[str, object] = Field(default_factory=_empty_metadata)
-
-
-class SpawnResult(BaseModel):
-    """Result payload for one completed execution."""
-
-    model_config = ConfigDict(frozen=True)
-
-    status: str
-    output: str
-    usage: TokenUsage = Field(default_factory=TokenUsage)
-    harness_session_id: str | None = None
-    raw_response: dict[str, object] | None = None
 
 
 def _empty_prelaunch_metadata() -> dict[str, str]:

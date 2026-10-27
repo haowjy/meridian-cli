@@ -104,10 +104,6 @@ class ExtensionInvocationContextBuilder:
         self._work_id = work_id
         return self
 
-    def with_work_path(self, path: Path | None) -> ExtensionInvocationContextBuilder:
-        self._work_path = path
-        return self
-
     def with_spawn_id(self, spawn_id: str | None) -> ExtensionInvocationContextBuilder:
         self._spawn_id = spawn_id
         return self
@@ -172,27 +168,6 @@ class ExtensionCommandServices:
         if self.authority is not None:
             return self.authority.runtime_root
         return self.runtime_root
-
-    def require_project_root(self) -> Path:
-        """Return project root or raise if authority is unavailable."""
-
-        project_root = self.resolved_project_root()
-        if project_root is None:
-            raise ValueError("project_root not available")
-        return project_root
-
-    def require_runtime_root(self) -> Path:
-        """Return runtime root or raise if authority is unavailable."""
-
-        runtime_root = self.resolved_runtime_root()
-        if runtime_root is None:
-            raise ValueError("runtime_root not available")
-        return runtime_root
-
-    def build_spawn_service(self) -> SpawnApplicationService:
-        """Build spawn service from shared application/service authority."""
-
-        return self.shared.spawn_service_factory(self._resolved_spawn_entrypoint())
 
     def _resolved_spawn_entrypoint(self) -> ExtensionEntryPoint:
         """Return entrypoint with roots materialized from shared authority."""

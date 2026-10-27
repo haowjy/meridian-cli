@@ -175,27 +175,6 @@ class PermissionBroker(ServerRequestHandler):
         for transition in transitions:
             await self._dispatch_transition(transition)
 
-    async def replay_for_consumer(
-        self,
-        *,
-        consumer_id: str,
-        sink: PermissionTransitionSink,
-    ) -> int:
-        async with self._lock:
-            cursor = self._consumer_cursors.get(consumer_id, -1)
-            transitions = [
-                transition
-                for transition in self._journal.list_transitions()
-                if transition.seq > cursor
-            ]
-
-        delivered = 0
-        for transition in transitions:
-            await sink(transition)
-            delivered += 1
-            await self._advance_cursor(consumer_id=consumer_id, seq=transition.seq)
-        return delivered
-
     def get_request(self, request_id: str) -> PermissionRequestRecord | None:
         return self._journal.get_request(request_id)
 

@@ -1,8 +1,6 @@
 """Input/schema helpers shared by typed app surfaces."""
 
-import inspect
 import types
-from collections.abc import Mapping
 from typing import Any, TypeGuard, TypeVar, Union, cast, get_args, get_origin
 
 from pydantic import BaseModel
@@ -56,35 +54,6 @@ def schema_from_type(payload_type: type[Any]) -> dict[str, object]:
     if _is_pydantic_model_type(payload_type):
         return cast("dict[str, object]", payload_type.model_json_schema())
     return {"type": "object", "properties": {}, "additionalProperties": False}
-
-
-def coerce_input_payload(payload_type: type[PayloadT], raw_input: object) -> PayloadT:
-    """Coerce untyped input dictionaries into typed Pydantic payloads."""
-
-    if not _is_pydantic_model_type(payload_type):
-        return payload_type()
-
-    if raw_input is None:
-        data: dict[str, object] = {}
-    elif isinstance(raw_input, Mapping):
-        data = {str(key): item for key, item in cast("Mapping[object, object]", raw_input).items()}
-    else:
-        raise TypeError(f"Tool input must be an object, got {type(raw_input).__name__}")
-
-    return cast("PayloadT", payload_type.model_validate(data))
-
-
-def signature_from_model(payload_type: type[object]) -> inspect.Signature:
-    """Build a callable signature matching Pydantic model fields for FastMCP schemas."""
-
-    if _is_pydantic_model_type(payload_type):
-        signature = inspect.signature(payload_type)
-        return inspect.Signature(
-            parameters=list(signature.parameters.values()),
-            return_annotation=inspect.Signature.empty,
-        )
-
-    return inspect.Signature(parameters=[])
 
 
 def _is_pydantic_model_type(payload_type: object) -> TypeGuard[type[BaseModel]]:

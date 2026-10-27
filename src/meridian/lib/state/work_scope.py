@@ -32,10 +32,6 @@ class WorkScope:
         return self.kind == "work_item"
 
     @property
-    def is_ephemeral(self) -> bool:
-        return self.kind == "ambient_spawn"
-
-    @property
     def excluded_top_level_names(self) -> frozenset[str]:
         """Top-level scope entries that never count as user artifacts."""
 

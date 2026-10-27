@@ -671,12 +671,6 @@ class SpawnLifecycleService:
     def _owns_record(self, spawn_id: str) -> bool:
         return self._record is not None and self._record.id == str(spawn_id)
 
-    def _read_owner_record_from_disk(self, spawn_id: str) -> SpawnRecord | None:
-        from meridian.lib.state.paths import RuntimePaths
-        from meridian.lib.state.spawn.repository import read_state
-
-        return read_state(RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, spawn_id)
-
     def _reconcile_failure_sentinel(
         self,
         record: SpawnRecord,

@@ -85,8 +85,3 @@ def parse_csv_list(
         )
     return tuple(parts)
 
-
-def missing_fork_session_error(source_ref: str) -> str:
-    """Return a consistent missing-session error for fork/continue flows."""
-
-    return f"{source_ref} has no verified native session; cannot continue/fork."

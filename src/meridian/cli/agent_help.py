@@ -125,67 +125,6 @@ class AlignedPlainFormatter(PlainFormatter):
             break_on_hyphens=False,
         )
 
-    def _format_parameter_entry(
-        self,
-        options: tuple[str, ...],
-        desc: str,
-        console: Console,
-        entry: HelpEntry,
-    ) -> None:
-        if not options:
-            return
-
-        desc_parts: list[str] = []
-        if desc:
-            desc_parts.append(desc)
-        if entry.choices:
-            desc_parts.append(f"[choices: {', '.join(entry.choices)}]")
-        if entry.env_var:
-            desc_parts.append(f"[env var: {', '.join(entry.env_var)}]")
-        if entry.default is not None:
-            desc_parts.append(f"[default: {entry.default}]")
-        if entry.required:
-            desc_parts.append("[required]")
-
-        options_str = ", ".join(options)
-        left = options_str if options_str else ""
-        wrapped = self._wrap_entry(left, " ".join(desc_parts), console)
-        console.print(wrapped, highlight=False, markup=False)
-
-    def _format_command_entry(
-        self,
-        names: tuple[str, ...],
-        shorts: tuple[str, ...],
-        desc: str,
-        console: Console,
-    ) -> None:
-        if names:
-            for index, name in enumerate(names):
-                if index == 0:
-                    parts = [name]
-                    if shorts:
-                        parts.append(", " + " ".join(shorts))
-                    entry_name = "".join(parts)
-                    console.print(
-                        self._wrap_entry(entry_name, desc, console),
-                        highlight=False,
-                        markup=False,
-                    )
-                else:
-                    console.print(
-                        textwrap.indent(name, self.indent),
-                        highlight=False,
-                        markup=False,
-                    )
-        elif shorts:
-            shorts_str = " ".join(shorts)
-            console.print(
-                self._wrap_entry(shorts_str, desc, console),
-                highlight=False,
-                markup=False,
-            )
-
-
 ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
 
 _HELP_SKIP_TOKENS = frozenset({"--help", "-h", "--advanced", "--mode"})
