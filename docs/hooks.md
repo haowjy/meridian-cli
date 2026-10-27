@@ -7,7 +7,7 @@ Hooks let you run commands or builtins automatically when Meridian events fire â
 | Command | Description |
 | ------- | ----------- |
 | `meridian hooks list` | Show all registered hooks and their resolved configuration |
-| `meridian hooks check` | Validate hook config, list migration warnings, and exit non-zero on errors |
+| `meridian hooks check` | Validate hook config and exit non-zero on errors |
 | `meridian hooks run NAME` | Execute a hook manually, bypassing interval throttling |
 | `meridian hooks run NAME --event EVENT` | Execute with a specific event context |
 

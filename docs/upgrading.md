@@ -35,15 +35,12 @@ including `meridian spawn files <id> | xargs git add`; stage changes with `git a
 option error. It had no effect. Use `--status archived`, or Status: Archived in the
 picker.
 
-## Codex `network_access` native config reserved
+## Codex `network_access` native config removed
 
-`harness-overrides.codex.sandbox_workspace_write.network_access` is a Meridian-owned
-key, like `writable_roots`. Meridian skips it and `--dry-run` reports
-`[unsupported] native_config: sandbox_workspace_write.network_access = ... -> skipped
-because Meridian owns this Codex config key; use the profile `network` field`. The
-profile `network` field decides the projected value; a profile that relied on the
-native value to differ from it now gets the `network` behavior. Replace the override
-with `network:` in the profile (see [agent profiles](agent-profiles.md)).
+`harness-overrides.codex.sandbox_workspace_write.network_access` is a Meridian-owned key.
+A Codex launch whose profile sets it now fails with a config error naming the `network`
+field; it no longer launches with the value ignored. Replace the override with `network:` in
+the profile (see [agent profiles](agent-profiles.md)).
 
 ## Per-chat work and checkout links
 
@@ -362,8 +359,8 @@ its bundled Mars over a separate executable on `PATH`.
 
 Replace Codex `harness-overrides.codex.sandbox_workspace_write.network_access` with the
 portable profile field. A well-formed boolean native value was deprecated in this release.
-It is now reserved and skipped; see
-[Codex `network_access` native config reserved](#codex-network_access-native-config-reserved).
+Launch now fails with a config error; see
+[Codex `network_access` native config removed](#codex-network_access-native-config-removed).
 
 ## Child guardrail follows the harness
 

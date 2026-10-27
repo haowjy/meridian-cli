@@ -39,7 +39,6 @@ CODEX_RESERVED_NATIVE_CONFIG_KEYS: frozenset[str] = frozenset(
         CODEX_CONFIG_SANDBOX_MODE_KEY,
         CODEX_CONFIG_APPROVAL_POLICY_KEY,
         CODEX_CONFIG_WRITABLE_ROOTS_KEY,
-        CODEX_CONFIG_NETWORK_ACCESS_KEY,
         CODEX_CONFIG_NOTIFY_KEY,
         CODEX_CONFIG_WEB_SEARCH_KEY,
         CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY,
@@ -159,6 +158,18 @@ def _reserved_codex_key(key: str) -> bool:
     )
 
 
+def reject_removed_codex_native_config(config: NativeConfig) -> None:
+    """Fail launch on Codex native keys whose deprecation window has closed."""
+
+    for segments, _value in flatten_native_config(config):
+        if ".".join(segments) == CODEX_CONFIG_NETWORK_ACCESS_KEY:
+            raise ValueError(
+                f"`harness-overrides.codex.{CODEX_CONFIG_NETWORK_ACCESS_KEY}` was "
+                "removed; use the profile `network` field. See docs/upgrading.md"
+                "#codex-network_access-native-config-removed."
+            )
+
+
 def project_codex_native_config(
     config: NativeConfig,
 ) -> tuple[tuple[str, ...], EnforcementReport]:
@@ -204,12 +215,7 @@ def project_codex_native_config(
                 ReportLine(
                     element,
                     "unsupported",
-                    (
-                        "skipped because Meridian owns this Codex config key; "
-                        "use the profile `network` field"
-                        if key == CODEX_CONFIG_NETWORK_ACCESS_KEY
-                        else "skipped because Meridian owns this Codex config key"
-                    ),
+                    "skipped because Meridian owns this Codex config key",
                 )
             )
             continue
@@ -257,5 +263,6 @@ __all__ = [
     "codex_toml_literal",
     "flatten_native_config",
     "project_codex_native_config",
+    "reject_removed_codex_native_config",
     "unsupported_native_config_report",
 ]

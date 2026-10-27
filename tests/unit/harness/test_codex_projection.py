@@ -254,25 +254,15 @@ def test_codex_read_only_reports_only_authored_allow_as_unsupported() -> None:
     assert _effective_network(authored) == "deny"
 
 
-def test_codex_native_network_access_is_reserved_and_points_to_network() -> None:
-    from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
-
-    spec = _spec(interactive=False).model_copy(
-        update={
-            "permission_policy": PermissionPolicy(sandbox="workspace-write", network="deny"),
-            "native_config": {"sandbox_workspace_write": {"network_access": True}},
-        }
+def test_codex_native_network_access_is_rejected_with_pointer_to_network() -> None:
+    from meridian.lib.harness.projections.native_config import (
+        reject_removed_codex_native_config,
     )
 
-    _, report = compile_codex_permissions(spec)
-    subprocess = project_codex_spec_to_cli_args(spec, base_command=("codex", "exec"))
-
-    native_line = next(line for line in report if line.element.startswith("native_config:"))
-    assert native_line.status == "unsupported"
-    assert "use the profile `network` field" in native_line.note
-    assert subprocess.count("sandbox_workspace_write.network_access=false") == 1
-    assert "sandbox_workspace_write.network_access=true" not in subprocess
-    assert _effective_network(spec) == "deny"
+    with pytest.raises(ValueError, match=r"use the profile `network` field"):
+        reject_removed_codex_native_config(
+            {"sandbox_workspace_write": {"network_access": True}}
+        )
 
 
 def test_spawn_capability_requires_the_canonical_spawn_command() -> None:

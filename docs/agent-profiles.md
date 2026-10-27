@@ -229,12 +229,12 @@ in Codex's config, including providers and MCP server commands. Installing a pac
 carries harness overrides is therefore installing code you trust. Blocks in already-installed
 packages that older Meridian builds left inert now take effect. Codex flattens nested mappings
 to dotted config keys and emits TOML-compatible scalar, array, and inline-table values as
-`-c` overrides. Network access is not one of them: use the profile's `network` field.
+`-c` overrides. Network access is not one of them: a profile that sets
+`sandbox_workspace_write.network_access` fails to launch; use the profile's `network` field.
 
 Meridian-owned Codex settings win: native entries that collide with its model, effort,
 sandbox, approval, network, writable-root, tool-switch, agent, feature, or notification config are
-skipped. That includes `sandbox_workspace_write.network_access`: the profile `network`
-field is its only owner, and the dry-run report says so. Meridian does not synthesize Codex MCP config,
+skipped. Meridian does not synthesize Codex MCP config,
 so `mcp_servers.*` entries pass through like other native config. A key segment containing
 `.`, `=`, whitespace, or quotes cannot be addressed by Codex's `-c` syntax and is reported
 as unsupported and ignored. `--dry-run` shows each applied or skipped key, for example

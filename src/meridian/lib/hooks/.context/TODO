@@ -1,6 +1,0 @@
-# Required follow-up
-
-- `HookConfigLoad.warnings`, `HookRegistry.get_warnings()` and the `warnings` fields
-  that carry them (`ops/hooks.py`, `cli/hooks_commands.py`, `core/lifecycle.py`,
-  `notify/emit.py`) are always empty now that hook-name deprecations are errors.
-  Delete the plumbing when the next hook warning source is not imminent.

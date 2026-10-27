@@ -169,7 +169,7 @@ def emit(
         notification=notification,
     )
     loaded_hooks = load_hooks_config_report(project_root)
-    fallback_warnings = list(loaded_hooks.warnings)
+    fallback_warnings: list[str] = []
     if loaded_hooks.errors:
         fallback_warnings.append(
             "dropped invalid hook rows: " + "; ".join(loaded_hooks.errors)

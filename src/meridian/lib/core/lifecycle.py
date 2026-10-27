@@ -70,7 +70,6 @@ if TYPE_CHECKING:
     from meridian.plugin_api.types import SpawnKind
 
 logger = structlog.get_logger(__name__)
-_logged_hook_config_warnings: set[tuple[str, int, str]] = set()
 
 
 def _pid_created_at_epoch(pid: int | None) -> float | None:
@@ -941,13 +940,6 @@ def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatche
         from meridian.lib.hooks.registry import HookRegistry
 
         loaded_hooks = load_hooks_config_report(project_root)
-        project_key = str(project_root.resolve())
-        for index, warning in enumerate(loaded_hooks.warnings):
-            warning_key = (project_key, index, warning)
-            if warning_key in _logged_hook_config_warnings:
-                continue
-            _logged_hook_config_warnings.add(warning_key)
-            logger.warning(warning)
         if loaded_hooks.errors:
             logger.warning(
                 "Dropped invalid hook rows; continuing with valid lifecycle hooks.",
