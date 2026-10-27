@@ -54,6 +54,9 @@ session-initiation handling: `.context/CONTEXT.md`.
   stays: it is the recursion guard. Commands aimed at another project may read results,
   never consume them; `spawn ack` is refused when no spawn identity remains. Same-project
   `-C` keeps attribution and may observe (`resolve_cli_observer_context`).
+  An unreadable inherited `MERIDIAN_PROJECT_DIR` counts as another project. `-C` is also
+  the caller's cwd (`os.chdir` in `_main_impl`, restored in `main()`), like `git -C`, so the
+  `ambient-cwd` task-cwd tier never sees the shell's directory.
 - **Fork/from/continue conflicts live in `validate_fork_mode()`** (`argv_normalization.py`),
   consumed by `spawn.py` and `primary_launch.py` via `ForkModeResolution`. The
   `--fork` + model/agent/skills identity lock is CLI policy, not an ops invariant.
