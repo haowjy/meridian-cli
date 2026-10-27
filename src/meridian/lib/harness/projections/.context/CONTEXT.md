@@ -28,7 +28,13 @@ that Meridian's Codex projections write themselves. Meridian writes no Codex MCP
 so `mcp_servers.*` passes through. `compaction.py` owns the semantic
 `autocompact` / `autocompact_pct` projection and report: Claude gets its token flag and
 percentage environment variable, Codex gets config overrides, and the other harnesses
-report both fields unsupported.
+report both fields unsupported. `effort.py` owns the effort spellings that are not a
+plain pass-through, and the report lines for what a harness leaves unapplied: Claude's
+`--effort` (none for `none`: current Claude models cannot turn thinking off, and `MAX_THINKING_TOKENS=0` was checked live and still thought), OpenCode's V1-only
+`--variant` (none for `none`), and Pi's one `--thinking` map (`none` is `off`, `max` stays
+`max`; Pi clamps to the model). Codex's two projectors write the level unchanged as
+`model_reasoning_effort`, `none` included. Cursor's effort is Mars's: it folds the level
+into `harness_model`.
 
 One warning-release exception is tracked in [TODO](TODO): a native
 `sandbox_workspace_write.network_access` leaf is deprecated. The Codex permission compile

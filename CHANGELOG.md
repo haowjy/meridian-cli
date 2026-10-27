@@ -6,6 +6,61 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+### Upgrade notes
+- Mars 0.20.2 (schema v1). Run `meridian mars sync` once after upgrading: it
+  rewrites installed `.mars/` content to schema v1 (launches read the old content
+  meanwhile). A `--frozen` sync fails until that sync has run and `mars.lock` is
+  committed again. See [Mars 0.20.0](docs/upgrading.md#mars-0200-schema-v1).
+- `mars.toml` overlays that worked now fail every command: `[agents.X] approval =
+  "yolo"` (write `never`), and `autocompact`, `autocompact_pct` or `harness` in a
+  `model-policies` override. Mars reads compaction only from `[models.<alias>]` now;
+  profile and overlay `autocompact` / `autocompact_pct` are dropped. See
+  [overlays](docs/upgrading.md#if-you-write-marstoml-overlays).
+- Profiles and skills in `.mars-src/`: run `meridian mars migrate`. It renames what
+  has a schema v1 spelling and deletes what does not (profile `autocompact`,
+  `fanout`, a skill's `allowed-tools`). See
+  [profiles and skills](docs/upgrading.md#if-you-write-profiles-or-skills).
+- Dependencies: a marketplace with several plugins needs `plugin = "<name>"`, and a
+  symlink that leaves its package now fails sync. See
+  [packages](docs/upgrading.md#if-you-depend-on-packages).
+- Effort rules now apply. A `model-policies` rule in a profile now beats the
+  profile's top-level `effort`, `sandbox`, `approval` and `network`; under Mars 0.19
+  and earlier the top-level value won, which was a bug. Packaged profiles whose
+  per-model effort rules start applying include `coder` (`max` to `high` on
+  deepseek and luna, `medium` on sonnet, opus and sol), `tech-lead` (`medium` to
+  `xhigh` on grok, `high` on deepseek and astra), `reviewer` (`medium` to `high` on
+  grok, deepseek and luna), `explorer` (`medium` to `low` on deepseek and sonnet)
+  and the creative-writing agents that set an effort (`low` on deepseek). Only
+  effort moves; no packaged rule changes approval, sandbox or network. See
+  [launch policy](docs/upgrading.md#policy-that-changes-at-launch).
+- `effort: max` now runs at `max`. Mars 0.18.4 capped it to `xhigh` on every harness, so profiles
+  and overlays that said `max` ran at `xhigh`; Mars 0.20 passes it through (Claude
+  `--effort max`, Codex `max`, Pi `--thinking max`). They now run higher. Set `xhigh` to keep
+  the old behaviour. See [launch policy](docs/upgrading.md#policy-that-changes-at-launch).
+- Rollback to the previous Meridian (Mars 0.18.4) works after one `meridian mars sync`.
+  See [rolling back](docs/upgrading.md#rolling-back).
+
+### Changed
+- Effort `none` (reasoning off) works from `--effort`, `MERIDIAN_EFFORT`, `[primary] effort`,
+  a profile or an overlay, and `--effort` help lists it. It used to fail the launch
+  with `expected one of [...]`. Each harness lowers it: Claude and OpenCode pass no flag
+  (`--dry-run` reports Claude's omission), Codex passes `model_reasoning_effort="none"`
+  (some models reject it), Pi passes `--thinking off`. Pi passes `max` as `--thinking max`
+  instead of capping it at `xhigh`, and `low` as `--thinking low` instead of `minimal`. See
+  [Effort by harness](docs/agent-profiles.md#effort-by-harness)
+  ([#774](https://github.com/haowjy/meridian-cli/issues/774)).
+- Bump pinned `mars-agents` to `0.20.2`, which reads and writes Mars schema v1
+  and adds `mars provide` for host-provided skills. 0.20.2 also fixes two 0.20.0
+  regressions: `meridian mars check <path>` works again, and a dependency without
+  a `mars.toml` whose `skills/` holds a stray file syncs again.
+- Provided skills take effect. Meridian's bundled `*__meridian` skills are installed
+  under `.mars/skills/` by `mars provide` before launches and package-resolving
+  `meridian mars` commands, and `meridian skills NAME` reads that copy. The wheel
+  copy still serves a Mars without `mars provide`, a held lock, an interrupted sync,
+  a refused bundle, a missing or invalid provided copy, and a bare directory. The
+  bundled skills declare their lead-only gate as `metadata: {mode: primary}`, because
+  schema v1 warns on an unknown top-level key on every `mars provide`.
+
 ## [0.14.12] - 2026-10-27
 
 ### Changed

@@ -289,17 +289,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
-        effort = run.effort
-        normalized_effort = None
-        if effort is not None:
-            normalized_value = str(effort).strip()
-            normalized_effort = {
-                "low": "low",
-                "medium": "medium",
-                "high": "high",
-                "xhigh": "xhigh",
-                "max": "max",
-            }.get(normalized_value, normalized_value)
+        normalized_effort = None if run.effort is None else str(run.effort).strip()
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
 
         # prompt_file_path is owned by bind_launch_context, which sets it to

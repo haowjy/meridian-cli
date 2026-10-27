@@ -512,17 +512,17 @@ deny_headless_harnesses = ["claude"]
 That blocks spawn routes after model/profile resolution selects Claude, while
 leaving primary Claude launches available.
 
-See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `no-fallback`, and `mode`. Legacy `fanout` and `fallback-order` are rejected; use `model-policies` list order + `no-fallback: true`.
+See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `no-fallback`, and `mode`. Profile `fanout` and `fallback-order` are gone in schema v1 (dropped from pre-v1 content, an error in `schema = 1` packages); use `model-policies` list order + `no-fallback: true`, and [`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing) for fan-out agents.
 
 ### Bundled Meridian skills
 
 `meridian skills list` shows the operational skills shipped with Meridian and does
 not create or update `.mars/`. `meridian skills NAME [RESOURCE-PATH]` reads one.
 In a project with `mars.toml`, the named read first asks Mars to install the current
-bundle under `.mars/skills/` (`mars provide`, Mars 0.20 or later; an older Mars leaves
-the wheel copy in use); it reads only names Mars reports as provided and falls
-back to the wheel when Mars cannot provide them or their installed `SKILL.md` is
-missing or invalid. Unknown names are rejected before asking Mars to provide. In a
+bundle under `.mars/skills/` (`mars provide`); it reads only names Mars reports as
+provided and falls back to the wheel when Mars cannot provide them (a Mars older than
+0.20 has no `mars provide`; a held lock; an interrupted sync, which `meridian mars sync`
+recovers; a bundle Mars refuses) or their installed `SKILL.md` is missing or invalid. Unknown names are rejected before asking Mars to provide. In a
 bare directory it reads the wheel without initializing the user Mars root.
 
 The rendered skill body is the same from either source. Its `Files:` line names the

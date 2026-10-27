@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
 from meridian.lib.harness.projections.compaction import compaction_report
+from meridian.lib.harness.projections.effort import effort_report
 from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
@@ -476,19 +477,7 @@ def compile_opencode_permissions(
         lines.append(_headless_default_line(default))
 
     lines.extend(unsupported_native_config_report(spec.native_config, harness="OpenCode"))
-    normalized_effort = (spec.effort or "").strip()
-    if normalized_effort:
-        mode = "TUI" if spec.interactive else "streaming"
-        note = f"not applied for OpenCode {mode}"
-        if not spec.interactive and spec.opencode_version == "v1":
-            note = f"{note}; the V1 run fallback still receives --variant"
-        lines.append(
-            ReportLine(
-                f"effort: {normalized_effort}",
-                "unsupported",
-                note,
-            )
-        )
+    lines.extend(effort_report(spec, harness="OpenCode"))
     lines.extend(compaction_report(spec, harness="OpenCode"))
     return tuple(ordered), complete_report(policy, lines, harness="OpenCode")
 

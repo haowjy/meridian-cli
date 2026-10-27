@@ -522,7 +522,7 @@ def _spawn_create(
         Parameter(
             name="--effort",
             group=ADVANCED_PARAMS,
-            help="Effort level: low, medium, high, xhigh, max. Overrides agent profile.",
+            help="Effort level: none, low, medium, high, xhigh, max. Overrides agent profile.",
         ),
     ] = None,
     sandbox: Annotated[
