@@ -1,178 +1,36 @@
 # ops/spawn/ — Spawn Policy Layer
 
-The policy half of spawn creation and execution. Surfaces `spawn_create`, `spawn_list`,
-`spawn_cancel`, `spawn_wait`, `spawn_fork`, `spawn_continue` to CLI and MCP.
-Does not compose argv or env — that's `launch/`. Owns: depth checks, work attachment,
-input validation, and routing to foreground vs background execution.
+Policy half of spawn creation and execution for `spawn_create`, `spawn_list`,
+`spawn_cancel`, `spawn_wait`, `spawn_fork`, `spawn_continue`. Does not compose argv or
+env (`launch/`). Contracts, wait scoping, delivery, wire shapes: `.context/CONTEXT.md`.
 
-## Execution Paths
+## Rules
 
-Both paths converge at `launch_prepared_spawn()`:
-
-Before either path, `api.py` composes the resolved launch policy and creates no spawn
-row. Spawn creation always defers runtime materialization until the resolved request's
-sandbox passes the caller guardrail; top-level and nested callers use the same path.
-
-**Foreground:** `execute_spawn_blocking()` → creates spawn row → calls
-`launch_prepared_spawn()` via `asyncio.run()` → `execute_with_streaming()`.
-
-**Background:** `execute_spawn_background()` → creates spawn row → persists
-`BackgroundWorkerLaunchRequest` to disk → detaches subprocess. Worker calls
-`_execute_existing_spawn()` → `launch_prepared_spawn()`.
-
-`launch_prepared_spawn()` owns pre-run failure finalization. If it throws, it writes
-`launch_failure` before re-raising. This is safe because `complete_spawn()` is idempotent.
-
-## Depth Guard
-
-`api.py` checks `max_depth_reached()` before every spawn execution. A spawn chain
-that exceeds the depth limit returns `depth_exceeded_output()` instead of creating
-a new spawn. `_MERIDIAN_DEPTH` is an env var that increments with each spawn level;
-nested processes also read it to skip reaping side effects.
-
-## Wait Behavior
-
-`spawn_wait` has two modes:
-- With spawn IDs: waits for specific spawns.
-- Without args (no-arg form): a primary waits for active descendants plus finished
-  background children still owed across its chat's primary generations; a nested spawn
-  waits for its active transitive subtree plus its own owed direct background children.
-
-No-arg candidate membership is scoped in the history index: owner-filtered SQL for a
-primary, recursive subtree SQL for a nested spawn. Discovery then re-reads only those
-selected `state.json` files with derived status before answering liveness. Recursive traversal keeps
-archived ancestors as edges so active descendants beneath them remain visible.
-`owed.py` separately owns the shared wait/collect definition of finished unconsumed,
-unleased background children, including Pi delivery receipts and explicit dismissals as
-consumption. The parent set itself lives in `lib/state/spawn_ownership.py`, because a Pi
-launch hands the same set to its spawn-watch extension; `owed.py` adds candidate
-selection, consumption, and exclusion on top. `owed.py` owns caller-scoped observation: normal wait/ack, a cancel reported
-as `cancelled`, and non-empty terminal report bodies returned by show, status, or
-report-show operations with `observe=True`. No-arg wait resolves at most the oldest 32 already-finished members once,
-minus the active target IDs, leases them without putting them through the poll loop, and
-renders their details with `models.py`'s shared header-only renderer. Active targets remain
-uncapped and keep report output. Owed rows are separate from `spawns` in structured output
-and do not affect fail-fast, waited-run aggregates, or the command's exit status. The
-existing `finally` consumes the owed IDs beside terminal active details.
-`--no-observe` includes owed children with the same rendering but neither leases nor
-consumes them, so they remain eligible for a later normal wait or delivery.
-Every no-arg return after successful initial discovery runs that same discovery once
-more and appends children that appeared while the wait ran. An initial
-discovery-pending checkpoint has no baseline and skips the trailer. This
-`since_started_spawns` trailer is advisory: it is not leased, consumed, counted, or
-included in fail-fast and exit decisions.
-
-`--fail-fast` exits as soon as any spawn reaches `failed` or `timed_out`, reporting
-which spawns failed and which are still pending. `cancelled` does not trigger
-fail-fast (cancellation keeps existing aggregate-exit behavior).
-
-Checkpoint polling respects the depth-appropriate yield interval (read from
-`_MERIDIAN_HARNESS` env — the calling orchestrator's own checkpoint interval).
-No-arg discovery always lets an absent history index finish its separate, sticky
-cold-build budget first. Its deadline then bounds one catch-up attempt; if the index
-is still busy, wait yields an explicit discovery-pending checkpoint instead of
-claiming the session has no pending spawns.
-
-Result fetchers that do not consume a parent's completion notification must use
-`observe=False` (`--no-observe` on the CLI). Show, status, report-show, cancel, and
-cancel-all operations default false so internal readers and UI/MCP callers stay pure;
-the CLI opts in (cancel-all has no observation toggle). Normal waits observe by default;
-formatting a notification is not delivery. CLI invocations that use `-C` supply no
-observer spawn ID, so show, status, report-show, cancel, cancel-all, and wait stay pure;
-ack is refused before it reaches the operation.
-
-Hidden `spawn collect` is the idle-runtime counterpart, not another wait mode. It
-discovers background direct children of every primary generation in the caller's
-chat, subtracts durable observations before authority reads, skips live explicit-wait
-leases, and consumes nothing. If a result was already terminal it returns the terminal
-subset immediately; otherwise it waits for the owed set to finish. Hidden `spawn ack`
-records the delivered IDs only after the harness admits their message.
-
-## Caller-Default Spawn ID
-
-`spawn done`, `spawn rearm`, and `spawn children` default to the caller's own spawn
-when no id is given. The CLI passes `RuntimeContext.from_environment()` and the
-operation resolves the id via `_resolve_caller_spawn_id()` — explicit value, then
-`runtime_context(ctx).spawn_id` — raising "Spawn ID is required. Pass spawn_id or set
-MERIDIAN_SPAWN_ID." when both are empty. `spawn stats` without an id keeps its
-different, older meaning: every spawn. `spawn message` stays explicit; messaging
-yourself has no use.
-
-## Stored vs Derived Status
-
-Use `read_derived()` / `overlay_derived()` for liveness, display, wait, and idle.
-Selection for cancel convergence, archive, and destruction uses stored status;
-cancel targets remain stored-active until `finalize_dead_launch()` persists the
-outcome. Overlay-first selection skips dead launches that still need convergence.
-
-## The Exception to SPEC_ONLY
-
-`prepare.py` uses `LaunchArgvIntent.REQUIRED`. This is the only execution path
-that needs real argv — it populates `cli_command` for dry-run display. All actual
-execution paths use `SPEC_ONLY`. Do not set `REQUIRED` on execution paths.
-
-## Fork/Continue Cross-Harness Guard
-
-Fork and continue operations check that the target spawn's harness matches the
-current harness context. Cross-harness fork/continue is not supported — the guard
-raises before any state is created.
-
-`spawn_continue` does not assemble replay policy itself. It resolves the source
-spawn/session, allows explicit model overrides but rejects other launch-identity,
-policy, work, and task-dir mutations, then
-delegates exact-continue normalization to `launch/continue_replay.py`'s
-`ContinueReplayContract`. Exact continue passes its verified source chat into the
-spawn session scope; fresh and fork launches allocate separate chats. Agent opt-out is treated as a launch-identity mutation,
-not as a harmless absence.
-
-Native-ID continuation resolves the harness namespace before reading the session's
-recorded spawn ID, checking that row's exact chat and harness. Never use an owner's
-newest spawn as a substitute. Keep the supplied native ID, even when the chat has a
-newer identity. Missing retained spawn metadata cannot be reconstructed by
-`--harness`; that flag disambiguates ownership, not missing history.
-
-The captured `SessionAttempt` follows the session generation into streaming
-execution. Native-ID callbacks and accepted-running model-selection writes use
-that same capture. Recording failure is a coordination error, not a reason to
-replay the model turn.
-
-## Key Entry Points
-
-- `api.py` — all spawn operations (sync and async variants).
-- `models.py` — `SpawnCreateInput`, `SpawnDetailOutput`, `SpawnWaitInput`, etc.
-- `execute.py` — re-exporter for public entry points (`execute_spawn_blocking`,
-  `execute_spawn_background`) and depth guard helpers. Implementation split across:
-  `execute_init.py` (spawn record init), `execute_bg.py` (background worker),
-  `execute_runner.py` (blocking path), `execute_session.py` (session management).
-  Import from `execute.py` only — do not import `execute_*` modules from outside `ops/spawn/`.
-- `prepare.py` — `build_create_payload()` → `SpawnCreateArtifacts` (compose once; dry-run bind for `cli_command`).
-- `query.py` — `resolve_spawn_reference()` and spawn-record reads.
-- `context_ref.py` — `resolve_context_ref()` turns a `--from` ref (spawn or chat) into a
-  `ContextRef`. `prepare.py` calls it once per spawn; launch only renders the result.
-  A spawn's `--from` stays in `context_refs` and is not copied onto
-  `SessionRequest.context_from_*`: lineage covers primary sessions only, so no edge
-  is persisted for a spawn and its prior context reaches the child only as rendered
-  context blocks (see `cli/.context/CONTEXT.md`, session browse).
-- `failure_policy.py` — depth guard, depth limit helpers.
-
-## Anti-Patterns
-
-**Don't bypass launch preparation before creating a row.** Creation, continuation, and
-fork share the preparation sequence. An inherited child-spawn guardrail must pass before
-any runtime materialization.
-
-**Don't set `LaunchArgvIntent.REQUIRED` on execution paths.** Only `prepare.py` gets
-a real argv — execution paths use `SPEC_ONLY`.
-
-## Depth
-
-→ [.context/CONTEXT.md](../.context/CONTEXT.md) — wait checkpoint behavior, no-arg
-   wait scoping, background worker trust model, SEAM-1/2/3 contracts.
-
-## Related
-
-- [../.context/CONTEXT.md](../.context/CONTEXT.md) — ops/ policy layer overview;
-  SpawnApplicationService layer diagram; execution path ownership.
-- [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — launch mechanism
-  this drives; [exact continue replay contract](../../launch/.context/CONTEXT.md#exact-continue-replay)
-  (`ContinueReplayContract`).
+- **Resolve before persist** (rule in [../AGENTS.md](../AGENTS.md)): in `api.py`,
+  runtime materialization waits until the resolved request's sandbox passes the caller
+  guardrail; creation, continuation, fork, top-level and nested callers share that path.
+- **Foreground and background converge at `launch_prepared_spawn()`**, which owns
+  pre-run failure finalization (writes `launch_failure`, then re-raises; safe because
+  `complete_spawn()` is idempotent).
+- **Depth guard is ops-layer.** `max_depth_reached()` runs before any spawn execution
+  and returns `depth_exceeded_output()` with no row; `launch/` does not enforce depth.
+- **Import execution entry points from `execute.py` only**, never `execute_*` from
+  outside `ops/spawn/`.
+- **`prepare.py` is the only user of `LaunchArgvIntent.REQUIRED`** (dry-run
+  `cli_command`). Execution paths use `SPEC_ONLY`.
+- **Observation is opt-in for pure readers.** Result fetchers that don't consume a
+  parent's completion notification use `observe=False` (`--no-observe`). Show, status,
+  report-show, cancel, and cancel-all default false so internal, UI, and MCP callers stay
+  pure; the CLI opts in. Normal waits observe by default; formatting a notification is
+  not delivery. `-C` invocations supply no observer spawn ID, and `ack` is refused.
+- **Choose status by intent**: `read_derived()`/`overlay_derived()` for liveness,
+  display, wait, idle; stored status for cancel convergence, archive, destruction.
+- **No cross-harness fork/continue**; the guard raises before any state is created.
+  `spawn_continue` does not assemble replay policy: it delegates to
+  `launch/continue_replay.py` (`ContinueReplayContract`,
+  [contract](../../launch/.context/CONTEXT.md#exact-continue-replay)), allows only model
+  overrides, and treats agent opt-out as a launch-identity mutation. Native-ID
+  continuation never substitutes an owner's newest spawn.
+- **`spawn_wait` no-arg owed rows** (`owed.py`) are separate from `spawns` in output and
+  never affect fail-fast, aggregates, or exit status; `--fail-fast` triggers on `failed`
+  or `timed_out`, not `cancelled`.

@@ -1,80 +1,29 @@
 # lib/bootstrap/ — Bootstrap Facade
 
-Prepares project and runtime state before command handlers run. Enforces a strict `resolve_*` / `ensure_*` split: read-only command paths never mutate the filesystem.
+Prepares project and runtime state before command handlers run, through four entry
+points: `prepare_for_project_read()`, `prepare_for_runtime_read()`,
+`prepare_for_project_write()`, `prepare_for_runtime_write()`. Which startup class calls
+which, and the context-object hierarchy: `.context/CONTEXT.md`.
 
-## Mental Model
+## Rules
 
-Four entry points, one per invocation class tier. Pick based on what the command needs — not based on what's convenient:
+- **`resolve_*` is pure; `ensure_*` may mint identity and create state.** Read paths call
+  only `resolve_*`; calling `ensure_*` from a read path silently creates identity,
+  directories, or config. Pick the lowest tier the command needs.
+- **Runtime-write preparation recovers incomplete spawn publication** by removing
+  abandoned `spawns/.staging/*` under the spawn allocation/publication lock; read
+  preparation never runs this GC.
+- **One authority per context.** Each `prepare_for_*` resolves a `RuntimeAuthoritySnapshot`
+  once and passes it to `load_config(..., authority=authority)`; config resolved without
+  it re-derives paths and can diverge from a frozen or custom snapshot.
+- **Two-tier identity on first write**: a marked project mints its committed ID; a
+  marker-less path materializes path-derived state under the user home. Runtime writes
+  never create `meridian.toml`.
+- **`RootSource.ARGV` commands** (`meridian init [path]`) call
+  `prepare_for_project_write(arg_derived_root)` themselves after parsing; all others
+  receive a pre-prepared context.
+- **Build services through the factories**: `build_spawn_application_service(runtime_write_ctx)`,
+  `build_spawn_entrypoint()`, `build_extension_entrypoint()`; don't instantiate
+  `SpawnApplicationService` or the entrypoint carriers by hand.
 
-| Startup class | Call |
-|---|---|
-| `READ_PROJECT` | `prepare_for_project_read()` |
-| `READ_RUNTIME` | `prepare_for_runtime_read()` |
-| `WRITE_PROJECT` | `prepare_for_project_write()` |
-| `WRITE_RUNTIME`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
-| `PRIMARY_LAUNCH` | `prepare_for_runtime_write()` |
-
-Each function returns a typed context object (`ProjectReadContext`, `RuntimeReadContext`, `ProjectWriteContext`, `RuntimeWriteContext`). These carry the prepared state downstream to command handlers without exposing bootstrap internals.
-
-## The `resolve_*` / `ensure_*` Split
-
-This is the central invariant. Violating it causes read-only command paths to silently create identity, directories, or config side effects.
-
-- **`resolve_*`**: pure — no filesystem mutations. Returns `None` if state doesn't exist.
-- **`ensure_*`**: may mint committed identity or create ad-hoc user state and directories. Call only on write paths.
-
-`prepare_for_project_read()` and `prepare_for_runtime_read()` call only `resolve_*`. The `prepare_for_*_write()` functions call `ensure_*`.
-
-Runtime-write preparation also recovers incomplete spawn publication by removing
-abandoned `spawns/.staging/*` entries under the spawn allocation/publication lock.
-Read-only preparation never runs this GC.
-
-## Key Rules
-
-- **Don't instantiate `SpawnApplicationService` directly.** Use `build_spawn_application_service(runtime_write_ctx)`. It's the correct factory.
-- **Post-parse bootstrap exception**: commands with `root_source = RootSource.ARGV` (e.g. `meridian init [path]`) call `prepare_for_project_write(arg_derived_root)` themselves after argument parsing. All other commands receive a pre-prepared context.
-- **One authority per context.** Each `prepare_for_*` resolves a `RuntimeAuthoritySnapshot` once and passes it to `load_config(..., authority=authority)`. Config resolved without it re-derives paths and can diverge from a frozen or custom snapshot.
-- **Two-tier identity on first write:** a marked project mints its committed ID;
-  a marker-less path materializes path-derived state under the user home. Runtime
-  writes never create `meridian.toml`; read preparation creates nothing.
-- **Entrypoint carriers** (`SpawnEntryPoint`, `ExtensionEntryPoint`) carry `ApplicationContext + ApplicationServices` downstream. Use `build_spawn_entrypoint()`, `build_extension_entrypoint()` — don't assemble them manually.
-
-## Context Hierarchy
-
-```
-ProjectReadContext
-  ├── authority: RuntimeAuthoritySnapshot
-  ├── project_root: Path
-  ├── layout: ProjectLayoutSnapshot
-  ├── config: MeridianConfig | None
-  └── notice: str | None              ← human-facing first-materialization notice
-
-RuntimeReadContext(ProjectReadContext)
-  └── runtime_root: Path | None   ← None for unminted or unmaterialized identity
-
-ProjectWriteContext(ProjectReadContext)
-  └── project_dirs_ensured: bool = True
-
-RuntimeWriteContext(RuntimeReadContext)
-  ├── project_dirs_ensured: bool = True
-  └── runtime_dirs_ensured: bool = True
-```
-
-## Entry Points
-
-- `services.py` — the four `prepare_for_*()` functions and entrypoint builders
-- `project_state.py` — `ProjectLayoutSnapshot`, `resolve_layout()`, `ensure_project_dirs()`
-- `runtime_state.py` — `ensure_runtime_root()`, `ensure_runtime_dirs()`
-
-## Anti-Patterns
-
-- Don't call `ensure_*` helpers from read-only bootstrap paths — it silently creates state that confuses idempotency checks.
-- Don't pick a higher bootstrap tier than needed — `prepare_for_runtime_write()` in a read-only command wastes work and risks side effects.
-
-## Related
-
-- `../cli/startup/` — invocation classifier that determines which bootstrap call to make
-- `../lib/ops/runtime.py` — `RuntimeAuthoritySnapshot`
-
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — resolve/ensure split detail, context hierarchy, entrypoint shapes, post-parse bootstrap pattern
-→ KB: `$MERIDIAN_CONTEXT_KB_DIR/architecture/startup-pipeline.md` (see `meridian context kb`)
+KB: `architecture/startup-pipeline.md`.

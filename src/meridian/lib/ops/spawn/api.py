@@ -359,8 +359,7 @@ def _prepare_spawn_create(
 ) -> SpawnCreatePreparation:
     register_debug_trace_observer()
     resolved_context = runtime_context(ctx)
-    spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
-    logical_owner = spawn_env_id if spawn_env_id else "cli"
+    logical_owner = str(resolved_context.spawn_id or "") or "cli"
     authority = inspect_runtime_authority_for_read(payload.project_root)
     planning_authority = plan_runtime_authority_for_write(authority.project_root)
     resolved_root = authority.project_root
@@ -513,7 +512,7 @@ def _materialize_spawn_runtime(
         raise RuntimeError("Prepared runtime context is missing runtime root.")
     setup_telemetry(
         runtime_root=runtime_root,
-        logical_owner=os.environ.get("MERIDIAN_SPAWN_ID") or "cli",
+        logical_owner=str(preparation.resolved_context.spawn_id or "") or "cli",
     )
     register_spawn_telemetry_observer()
     runtime = OperationRuntime(
@@ -1085,12 +1084,12 @@ def spawn_subagents_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnSubagentsOutput:
-    _ = (ctx, sink)
+    _ = sink
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
     )
-    spawn_id = (os.environ.get("MERIDIAN_SPAWN_ID") or "").strip() or None
+    spawn_id = str(runtime_context(ctx).spawn_id or "").strip() or None
     agent: str | None = None
     if spawn_id is not None and runtime_root is not None:
         row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)

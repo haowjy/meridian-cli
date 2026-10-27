@@ -1,6 +1,6 @@
 - `.github/workflows/meridian-ci.yml`: Run `claude plugin test` for changes under
   `src/meridian/claude_runtime/` when CI provides the Claude binary; until then,
-  keep it as the required local gate documented in `tests/AGENTS.md` (G2 X1).
+  keep it as the required local gate documented in `tests/AGENTS.md` .
 - Full-suite timing assumptions under host load (work: exit-identity-reporting):
   `integration/cli/test_sparse_json_contracts.py::test_work_show_json_contract`
   exceeded its five-second child timeout; on a separate two-worker run,

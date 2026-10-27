@@ -347,3 +347,39 @@ subpath imports break under Pi's extension loader.
 - [../../lib/harness/projections/.context/CONTEXT.md](../../lib/harness/projections/.context/CONTEXT.md) — extension entrypoint projection
 - [../../lib/harness/connections/.context/CONTEXT.md](../../lib/harness/connections/.context/CONTEXT.md) — Pi RPC JSON-RPC transport
 - [../../lib/streaming/.context/CONTEXT.md](../../lib/streaming/.context/CONTEXT.md) — Pi drain/quiescence policy consumes disk-backed state
+
+## Per-extension rules (from AGENTS.md)
+
+`managed-bash` owns shell-task execution and task records.
+Its launch-scoped owner survives extension reload; reload rebinds hooks and does
+not terminate live tasks. Cold recovery preserves records but never signals a
+persisted PID: prior running rows remain tracked with `ownership_lost` until
+explicit detach/manual recovery. Detach releases quiescence, not process
+ownership; normal shutdown still cleans up owned groups. Publish terminal only
+after group exit and queued output, and supervise every async task callback.
+`meridian-spawn-watch` owns child-spawn observation and result notifications.
+Keep that mechanism/policy boundary intact. It arms idle delivery only at a
+main-loop `agent_end`; a session start (startup, resume, reload, `new`, fork)
+starts its watchers but delivers nothing until a turn ends, so a resumed lead
+never pays a cold prompt cache for a status ping.
+`session-boundary` owns bounded native lifecycle observations; only a final
+shutdown/quit qualifies the run exit, never the entry or last-seen session.
+Its v2 record is nonce/PID-correlated and bounded. A shutdown with an invalidated
+Pi context clears quit and stays unresolved. The stale-context exception depends
+on Pi's exact error-text prefix; a changed prefix poisons the record fail-closed.
+See README for that dependency.
+`meridian-idle` is primary-only. It translates native idle/input events into
+`meridian idle` commands; the Python core owns every policy, notification, and
+persistence decision. At `agent_end` it reads valid tracked background
+managed-bash rows that are still running and forwards a bounded task snapshot
+to `idle arm`; an over-cap command becomes `other`, and it never classifies
+Meridian commands itself.
+`meridian-permissions` owns launch-local scoped tool rules and `ask`; it has no
+disk authority. Keep it separate from managed-bash so disabling managed Bash
+does not disable policy or register shell-task tools and `/ps*` commands. Keep the
+simple-command grammar deliberately small. When the policy says `bash_fail_closed`,
+unsupported shell syntax must be refused; otherwise (an open shell with scoped denies) it
+runs unchecked, and the Python report says so. Canonicalize scoped paths before
+matching, including existing symlink prefixes. A present but unusable policy must
+throw during extension load — Pi treats an explicit extension load error as a
+fatal launch error.
