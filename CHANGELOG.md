@@ -25,6 +25,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   [environment](docs/configuration/environment.md#core)).
 
 ### Changed
+- `work done` no longer moves an item's directory out from under a running spawn. It
+  marks the item done at once (`work show`/`work list` say so), names the spawns that
+  hold the move, and the last one to finish moves it; a launch or `meridian doctor`
+  finishes a move a crash left behind. `work reopen`, and `work start`/`work switch` of
+  a done item, move it back the same way. A move never deletes either copy: when both
+  exist it merges them if the source only adds files, and otherwise refuses naming both
+  paths. `work switch` to a done item now reopens it instead of attaching to a
+  directory that is no longer there.
 - Commands that act on a work item default to the session's current item, the way
   git commands read `HEAD`: `work done`, `work update`, and `work rename` accept no
   name, `current` is accepted wherever a work id is (`work show`, `sessions`,

@@ -1129,6 +1129,8 @@ class SpawnApplicationService:
             for scope in scopes:
                 if scope.owner_policy == "spawn_owned":
                     mark_scope_released(self._runtime_root, spawn_id, scope.release_id)
+            if self.is_terminal(outcome.after.status):
+                self._settle_deferred_work_archive(outcome.after)
         return CompleteSpawnOutcome(
             wrote=isinstance(outcome, Applied),
             transitioned=(
@@ -1147,6 +1149,38 @@ class SpawnApplicationService:
             ),
             spawn_id=spawn_id,
         )
+
+    def _settle_deferred_work_archive(self, record: SpawnRecord) -> None:
+        """Finish a ``work done`` move this spawn was holding back.
+
+        A done item's directory waits while any non-terminal spawn is still attached,
+        so the last one to finish is the trigger. Best-effort: the terminal write is
+        authoritative and already committed, and the next launch or doctor run sweeps
+        whatever this fails to settle.
+        """
+
+        work_id = (record.work_id or "").strip()
+        control_root = (record.control_root or "").strip()
+        if not work_id or not control_root:
+            return
+        try:
+            from meridian.lib.state.paths import resolve_project_paths
+            from meridian.lib.state.work_repository import settle_pending_archive
+
+            project_state_dir = resolve_project_paths(Path(control_root)).root_dir
+            settled = settle_pending_archive(project_state_dir, work_id)
+            if settled is not None:
+                logger.info(
+                    "Archived a done work item after its last spawn finished.",
+                    work_id=work_id,
+                )
+        except Exception:
+            logger.warning(
+                "Could not finish a deferred work archive move.",
+                work_id=work_id,
+                spawn_id=str(record.id),
+                exc_info=True,
+            )
 
     # ---- Metadata Updates (SEAM-6) ----
 

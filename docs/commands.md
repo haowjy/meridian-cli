@@ -244,6 +244,19 @@ and `current` names it anywhere a work id is accepted (`work show`, `sessions`,
 script has to carry an id that a `work switch` can invalidate. `current` is
 reserved: `work start`/`rename` refuse it as a name.
 
+`work done` marks the item done at once but moves its directory to the archive only
+when no live spawn is still attached: a spawn's work directory is launch-bound, so
+moving it under the spawn would leave a ghost the spawn recreates on its next write.
+`work show` and `work list` report the item as done meanwhile, and the command names
+the spawns that hold the move. The last one to finish moves the directory; a launch
+or `meridian doctor` finishes any move a crash left behind. `work reopen` reverses it
+under the same rules, and `work start` or `work switch` of a done item reopens it
+rather than attaching to a directory that is not there.
+
+A move never deletes either copy. If a directory exists in both places — a spawn that
+outlived the move, or an interrupted operation — the two are merged when the source
+only adds files, and refused with both paths named when a shared file differs.
+
 Within a primary session, two stable symlinks under the runtime root keep moving
 targets out of the prompt and environment:
 

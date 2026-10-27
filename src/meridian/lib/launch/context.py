@@ -79,9 +79,11 @@ from meridian.lib.state.paths import (
     load_context_config,
     resolve_ambient_work_dir,
     resolve_kb_dir,
+    resolve_project_paths,
     resolve_spawn_log_dir,
 )
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
+from meridian.lib.state.work_repository import settle_pending_moves
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
@@ -1742,6 +1744,10 @@ def bind_launch_context(
     suppresses_ambient_work = requested_work_id is None and _suppresses_ambient_work(
         resolved_request
     )
+    # Startup sweep: finish any `work done` move a crash or a just-finished spawn
+    # left deferred, before this launch resolves directories against the work store.
+    if not bindings.dry_run:
+        settle_pending_moves(resolve_project_paths(project_paths.project_root).root_dir)
     # A primary's environment and prompt name per-chat links that work and task-dir
     # commands repoint, so neither goes stale while the session runs. Children keep
     # their launch-bound directories: a child inherits its parent's chat id, so a

@@ -184,6 +184,8 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     archived_dir = Path(dispatched[-1].work_dir or "")
     assert dispatched[-1].event_name == "work.done"
     assert archived_dir.is_dir()
+    # Switching to a done item reopens it, so the activation names the active
+    # directory the item moved back to rather than the archived one.
     work_switch_sync(
         WorkSwitchInput(
             work_id=renamed.new_name,
@@ -192,8 +194,10 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         )
     )
     assert dispatched[-1].event_name == "work.activated"
-    assert Path(dispatched[-1].work_dir or "") == archived_dir
-    assert Path(dispatched[-1].work_dir or "").is_dir()
+    activated_dir = Path(dispatched[-1].work_dir or "")
+    assert activated_dir.parent.name == "work"
+    assert activated_dir.is_dir()
+    assert not archived_dir.exists()
     reopened = work_start_sync(
         WorkStartInput(
             label=renamed.new_name,

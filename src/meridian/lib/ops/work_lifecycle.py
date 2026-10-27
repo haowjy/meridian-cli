@@ -8,7 +8,6 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.session_links import refresh_primary_links
 from meridian.lib.ops.context import resolve_active_work_scope
@@ -28,7 +27,7 @@ from meridian.lib.ops.work_attachment import (
 )
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
-from meridian.lib.state.spawn_status import overlay_derived
+from meridian.lib.state.work_repository import pending_archive_blockers
 from meridian.lib.state.work_scope import WorkScope
 from meridian.lib.state.work_state import WorkItem, slugify
 from meridian.lib.telemetry import emit_telemetry
@@ -134,24 +133,17 @@ def _leave_scope_warning(
     return format_leave_scope_warning(outgoing_scope, new_target)
 
 
-def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | None:
-    attached_session_ids = session_store.list_active_sessions_for_work_id(runtime_root, work_id)
-    active_spawn_ids = [
-        spawn.id
-        for spawn in overlay_derived(
-            runtime_root,
-            spawn_store.list_spawns(runtime_root, work_id=work_id).records,
-        )
-        if spawn.kind != "primary" and is_active_spawn_status(spawn.status)
-    ]
-    warnings: list[str] = []
-    if attached_session_ids:
-        warnings.append(f"session(s): {', '.join(attached_session_ids)}")
-    if active_spawn_ids:
-        warnings.append(f"active spawn(s): {', '.join(active_spawn_ids)}")
-    if not warnings:
+def _pending_archive_warning(runtime_root: Path, item: WorkItem) -> str | None:
+    """Name the spawns that hold a done item's directory where it is."""
+
+    blockers = pending_archive_blockers(runtime_root, item.name)
+    if not blockers:
         return None
-    return "Work item marked done while still referenced by " + "; ".join(warnings) + "."
+    noun = "spawn" if len(blockers) == 1 else "spawns"
+    return (
+        f"Work item '{item.name}' is done. Its directory moves to the archive when "
+        f"these active {noun} finish: {', '.join(blockers)}."
+    )
 
 
 def _detach_primary_sessions_from_work(
@@ -190,9 +182,9 @@ def _archive_work_item(
         work_id=item.name,
         data={"status": item.status},
     )
-    # Reported after detaching: a primary the archive just detached is no longer
-    # a reference, so naming it would contradict the session's new attachment.
-    return item, _active_work_attachment_warning(roots.runtime_root, item.name)
+    # Computed after detaching: a primary the archive just detached no longer holds
+    # the directory, so only live spawns can defer the move.
+    return item, _pending_archive_warning(roots.runtime_root, item)
 
 
 def _emit_work_transition(
@@ -433,7 +425,7 @@ def work_start_sync(
             # Treat `work start <name>` on an archived item as an implicit reopen —
             # the user's intent is "I want to work on this" regardless of prior state.
             item = work_repository.reopen_work_item(project_state_dir, existing.name)
-            reattach_warning = f"Work item '{item.name}' was archived; reopened automatically."
+            reattach_warning = f"Work item '{item.name}' was done; reopened automatically."
         else:
             item = existing
             reattach_warning = (
@@ -584,10 +576,14 @@ def work_reopen_sync(
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
-    item = work_repository.reopen_work_item(
-        project_state_dir,
-        _resolve_work_item(roots, payload.work_id, command="reopen").name,
-    )
+    current = _resolve_work_item(roots, payload.work_id, command="reopen")
+    item = work_repository.reopen_work_item(project_state_dir, current.name)
+    # The directory is back under work/, so a primary attached to the item names a
+    # live path again.
+    for attached_chat_id in sorted(
+        session_store.list_active_sessions_for_work_id(roots.runtime_root, item.name)
+    ):
+        refresh_primary_links(roots.project_root, roots.runtime_root, attached_chat_id)
     _emit_work_transition(
         "work.reopened",
         work_id=item.name,
@@ -609,6 +605,12 @@ def work_switch_sync(
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     item = _resolve_work_item(roots, payload.work_id, command="switch")
+    reopen_warning: str | None = None
+    if item.status == "done":
+        # Attaching to an archived item would name a directory that is not there;
+        # switching to a done item means working on it again.
+        item = work_repository.reopen_work_item(project_state_dir, item.name)
+        reopen_warning = f"Work item '{item.name}' was done; reopened it."
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
     leave_warning = _leave_scope_warning(
         project_root=roots.project_root,
@@ -632,7 +634,7 @@ def work_switch_sync(
     return WorkSwitchOutput(
         work_id=item.name,
         message=message,
-        warning=_merge_warnings(warning, leave_warning),
+        warning=_merge_warnings(warning, reopen_warning, leave_warning),
     )
 
 

@@ -424,6 +424,10 @@ def _doctor_local(
         repaired.append("stale_session_locks")
     lock_gc = gc_orphaned_locks(runtime_root)
 
+    # Deferred archive moves keep the item done in work/ until its spawns finish;
+    # finish them before repair normalizes metadata to the location it reads.
+    if work_repository.settle_pending_moves(project_state_dir):
+        repaired.append("deferred_work_archive")
     active_work_items, _ = work_store.list_work_items(project_state_dir)
     archived_work_items, _ = work_store.list_archived_work_items(
         project_state_dir,

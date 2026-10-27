@@ -343,17 +343,20 @@ def load_work_item_from_dir(
                 except ValidationError as exc:
                     _warn_work_state_validation_failure(str(metadata_path), str(exc))
                     stored = fallback
-    if archived:
-        projected_status = "done"
-    else:
-        projected_status = default_status if stored.status == "done" else stored.status
+    # An archived directory is done by location; a "done" status in the active
+    # directory is a deferred archive move, so the item is done and its directory
+    # follows once no live spawn still holds the old path.
+    projected_status = "done" if archived else stored.status
+    archived_at = None
+    if projected_status == "done":
+        archived_at = stored.archived_at or (fallback.archived_at if archived else None)
     return WorkItem(
         name=work_dir.name,
         description=stored.description,
         goal=stored.goal,
         status=projected_status,
         created_at=stored.created_at,
-        archived_at=(stored.archived_at or fallback.archived_at) if archived else None,
+        archived_at=archived_at,
         task_dir=stored.task_dir,
         worktree=stored.worktree,
         stored_state_extras=dict(stored.model_extra or {}),

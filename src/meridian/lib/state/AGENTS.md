@@ -277,6 +277,9 @@ model lookups rather than scanning observations once per row.
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
+  `work_repository.move_work_dir()` is the one active↔archive move (merge additions or
+  refuse, never delete a copy); `settle_pending_moves()` is the startup sweep for a
+  deferred `work done`.
 - `session_store.py` — Session event I/O, lease ownership, and the canonical
   `session_exists()` predicate (a chat record exists; a harness ID is not required).
 - `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars,

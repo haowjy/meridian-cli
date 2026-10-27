@@ -294,6 +294,29 @@ writers deliberately omit `v` until the next format change. A newer version gets
 a separate compatibility marker displayed as `requires-newer-meridian`, while the
 single mutation seam validates every active and archived copy before touching disk.
 
+### Work Item Directory Moves
+
+The status file records the intended location and the directory follows. `work done`
+writes `done` first, then moves `<work root>/<slug>` to `<archive>/<slug>` — but only
+when no non-terminal spawn is still attached. A spawn's work directory is launch-bound,
+so moving it under a running spawn would leave a ghost directory the spawn recreates on
+its next write. The item reads as done while its directory is still in `work/`;
+`settle_pending_archive()` finishes the move when the last attached spawn reaches a
+terminal state (the terminal seam in `core/spawn_service`), and
+`settle_pending_moves()` is the crash-only startup sweep run by every launch bind and
+`meridian doctor`. Reopen is the same rule in reverse: the active status is written and
+the archived directory moves back, and a done item that never moved only needs its
+status rewritten. `work start` and `work switch` of a done item go through that reopen.
+
+One move core (`move_work_dir`) serves both directions. Both copies can exist — a spawn
+that outlived a move, or a crash — so it merges the source into the destination when
+every shared path is identical (the source only adds files) and refuses otherwise,
+naming both paths, without deleting either. `__status.json` is excluded from the
+comparison because the caller writes the authoritative state at the destination after
+the move. The intent write runs as `before_move`, after the conflict check, so a refused
+move leaves the source's metadata untouched. A directory with no `__status.json` beside
+an archived copy is a ghost, not an item: single-item reads resolve the archived copy.
+
 ### WorktreeMetadata
 
 `WorktreeMetadata` in `work_state.py` preserves path, branch, repository, name,
