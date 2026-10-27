@@ -10,3 +10,7 @@
   Keep one command registration/read path; do not add a parallel fast CLI loader.
 - Remove `session browse --include-archives` (deprecated, no effect: `/` searches what
   the Status view shows) in the minor release after the one that deprecated it.
+- Remove the deprecated `meridian spawn inject` alias (`_spawn_inject_deprecated`
+  in `spawn.py`) and its `("spawn", "inject")` catalog descriptor in the minor
+  release after the one that deprecated it. It runs the same handler as
+  `spawn message` and only warns, so removal breaks no behavior of its own.

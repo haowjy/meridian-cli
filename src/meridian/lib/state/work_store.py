@@ -95,16 +95,28 @@ def get_active_work_item(
 
 
 def work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
-    """Return current active/archive work directory if present, otherwise active path."""
+    """Return current active/archive work directory if present, otherwise active path.
+
+    Location is authoritative: `work done` moves the directory, so a reader that
+    assumed the active path would name a directory that is no longer there. An
+    unconfigured archive root simply has nothing to find.
+    """
 
     paths = project_paths_for_work_store(runtime_root)
-    active_dir, archived_dir = locate_work_dirs(paths, work_id)
-    warn_both_locations(work_id, active_dir, archived_dir)
-    if active_dir is not None:
+    active_dir = active_work_dir(paths, work_id)
+    archived_dir = (
+        archived_work_dir(paths, work_id) if paths.work_archive_dir is not None else None
+    )
+    warn_both_locations(
+        work_id,
+        active_dir if active_dir.is_dir() else None,
+        archived_dir if archived_dir is not None and archived_dir.is_dir() else None,
+    )
+    if active_dir.is_dir():
         return active_dir
-    if archived_dir is not None:
+    if archived_dir is not None and archived_dir.is_dir():
         return archived_dir
-    return active_work_dir(paths, work_id)
+    return active_dir
 
 
 def list_work_items(runtime_root: Path) -> tuple[list[WorkItem], list[str]]:

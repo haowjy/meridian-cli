@@ -1,5 +1,27 @@
 # Upgrade notes
 
+## Per-chat work and checkout links
+
+Each live session, primary or spawned, now reaches its work directory and source
+checkout through two symlinks under the runtime root: `sessions/<chat>/work`
+(`MERIDIAN_ACTIVE_WORK_DIR`) and `sessions/<chat>/task` (`MERIDIAN_TASK_DIR`). Both
+follow the commands that move their target, and both survive a Claude `/clear` or
+`/resume`. A spawned agent's links belong to its own chat, so its environment no
+longer names the parent's directory; a primary names its links in the system prompt
+and a spawn names them in its `# Meridian run` user turn.
+
+`work done` now moves an item's directory to the archive at once, and the links of
+every session attached to it follow. A running spawn keeps writing through its link
+and its writes land in the archive; a primary attached to the item is returned to its
+ambient directory. There is no deferred move and no startup sweep, so `work done` no
+longer reports spawns that hold the directory.
+
+A spawn launched by an older build and still running across the upgrade holds the old
+concrete path, so it may recreate that directory after `work done` moves the item. A
+later `work done` or `work reopen` refuses when both locations exist and names both;
+reconcile them by hand. If a permission rule pins the real work-item or checkout path,
+grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
+
 ## Meridian-owned operational skills
 
 Guidance whose subject is Meridian itself now ships with the CLI instead of a
@@ -1175,6 +1197,15 @@ always returned an empty result. It still prints that empty result, with a
 warning on stderr, and becomes an error in the next minor release. Remove it
 from scripts, including `meridian spawn files <id> | xargs git add`; stage
 changes with `git add` directly.
+
+## Spawn message rename
+
+`meridian spawn inject` is now `meridian spawn message`. Scripts using the old
+spelling keep working: it warns on stderr and runs the same command until the
+next minor release. Each message also opens with a `[Meridian]` line naming the
+sending spawn and chat and, when the sender can receive one, the
+`meridian spawn message <id>` command that answers it. Anything that parses the
+delivered text sees that line first; the text you sent follows a blank line.
 
 ## Behavior changes you'll notice
 

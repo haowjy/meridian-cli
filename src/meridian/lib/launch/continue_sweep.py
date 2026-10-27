@@ -93,10 +93,10 @@ def _live_owner_error(spawn_id: str, owner_id: str) -> ValueError:
     if owner_id != spawn_id:
         return ValueError(
             f"{spawn_id} was continued as {owner_id}, which is still running; "
-            f"use spawn inject {owner_id}, --fork {owner_id}, or spawn cancel {owner_id}"
+            f"use spawn message {owner_id}, --fork {owner_id}, or spawn cancel {owner_id}"
         )
     return ValueError(
-        f"{spawn_id} is still running; use spawn inject {spawn_id} or --fork {spawn_id}"
+        f"{spawn_id} is still running; use spawn message {spawn_id} or --fork {spawn_id}"
     )
 
 

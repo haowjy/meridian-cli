@@ -91,7 +91,13 @@ operations through this module. Adding a new operation requires an entry here �
 otherwise it is invisible to both surfaces.
 
 **Work item attachment is ops-layer responsibility.** `work_attachment.py:ensure_explicit_work_item()`
-handles `--work` resolution before the spawn row is created.
+handles `--work` resolution before the spawn row is created, and
+`resolve_active_work_id()` is the one read behind a "current" work item: every
+execution follows its own chat's row, and the launch env only speaks for an unmanaged
+shell. Commands that act on an item
+take one when given, `current`, or nothing (`work done` without an argument), so no
+caller carries an ID a `work switch` can invalidate; `work start`/`rename` refuse
+`current` as a name the alias would shadow.
 `activate_work()` owns the user-visible choice made by `work start`, `work
 switch`, or a primary launch attaching `--work` / `--from`; it fires
 `work.activated` plus matching telemetry whether or not a session exists, and
@@ -100,8 +106,12 @@ record, even before a harness session ID is known. `publish_work_event()` owns
 hook context, active/archive work-directory resolution, and paired telemetry
 for every published work event. Incidental attachment maintenance (child
 inheritance, rename, and clear) writes through `session_store` without
-publishing an activation. Primary launch uses the same activation operation as
-the launch runner's default rather than a separate store-write seam.
+publishing an activation. `follow_work_item()` is the one seam for "every execution
+attached to this item follows it" — `work done`, `rename`, `reopen` and `task-dir`
+move the directory and then repoint the rows and links of the live sessions attached
+to it, in one scan of the live session records. Primary launch uses the same
+activation operation as the launch runner's default rather than a separate
+store-write seam.
 
 **Use `structlog.get_logger()`.** Never use stdlib `logging` in ops/ — the logging
 split matters for `capture_library_diagnostics()` at the launch boundary.

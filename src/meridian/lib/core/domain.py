@@ -124,3 +124,14 @@ class SkillContent(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         return f"{self.name}: {self.description}\n\n{self.content}"
+
+
+class AvailableSkillEntry(BaseModel):
+    """Lightweight entry for an on-demand skill (name and trigger, no body)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    skill_type: str = "reference"
+    description: str = ""
+    source_path: str | None = None

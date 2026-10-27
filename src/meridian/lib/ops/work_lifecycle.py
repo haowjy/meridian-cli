@@ -8,19 +8,26 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.context import resolve_active_work_scope
 from meridian.lib.ops.runtime import (
+    ResolvedRoots,
     async_from_sync,
     resolve_chat_id,
     resolve_roots,
     runtime_context,
 )
-from meridian.lib.ops.work_attachment import activate_work, publish_work_event
+from meridian.lib.ops.work_attachment import (
+    activate_work,
+    ensure_work_name_is_usable,
+    follow_work_item,
+    publish_work_event,
+    resolve_active_work_id,
+    resolve_work_id_argument,
+    set_session_work_attachment,
+)
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
-from meridian.lib.state.spawn_status import overlay_derived
 from meridian.lib.state.work_scope import WorkScope
 from meridian.lib.state.work_state import WorkItem, slugify
 from meridian.lib.telemetry import emit_telemetry
@@ -46,6 +53,25 @@ def _require_work_item(project_state_dir: Path, work_id: str) -> WorkItem:
     if item is None:
         raise ValueError(f"Work item '{work_id}' not found")
     return item
+
+
+def _resolve_work_item(
+    roots: ResolvedRoots,
+    work_id: str | None,
+    *,
+    command: str,
+) -> WorkItem:
+    """Resolve a command's work argument, defaulting to the session's current item."""
+
+    return _require_work_item(
+        roots.project_state_dir,
+        resolve_work_id_argument(
+            work_id,
+            usage=f"meridian work {command} <work_id>",
+            project_root=roots.project_root,
+            runtime_root=roots.runtime_root,
+        ),
+    )
 
 
 def _work_warning(ctx: RuntimeContext | None) -> str | None:
@@ -107,24 +133,46 @@ def _leave_scope_warning(
     return format_leave_scope_warning(outgoing_scope, new_target)
 
 
-def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | None:
-    attached_session_ids = session_store.list_active_sessions_for_work_id(runtime_root, work_id)
-    active_spawn_ids = [
-        spawn.id
-        for spawn in overlay_derived(
-            runtime_root,
-            spawn_store.list_spawns(runtime_root, work_id=work_id).records,
-        )
-        if spawn.kind != "primary" and is_active_spawn_status(spawn.status)
-    ]
-    warnings: list[str] = []
-    if attached_session_ids:
-        warnings.append(f"session(s): {', '.join(attached_session_ids)}")
-    if active_spawn_ids:
-        warnings.append(f"active spawn(s): {', '.join(active_spawn_ids)}")
-    if not warnings:
-        return None
-    return "Work item marked done while still referenced by " + "; ".join(warnings) + "."
+def _archive_work_item(
+    roots: ResolvedRoots,
+    current: WorkItem,
+    *,
+    description: str | None = None,
+) -> WorkItem:
+    """Archive the item, move its directory, and repoint every attached execution.
+
+    The move is immediate: a child working in the item writes through its per-chat
+    link, which follows the directory into the archive. A primary is returned to
+    its ambient directory, because a done item is no longer its to edit.
+    """
+
+    item = work_repository.archive_work_item(
+        roots.project_state_dir,
+        current.name,
+        description=description,
+    )
+    follow_work_item(
+        roots.project_root,
+        roots.runtime_root,
+        item.name,
+        detach="primary",
+    )
+    publish_work_event(
+        "work.done",
+        project_root=roots.project_root,
+        runtime_root=roots.runtime_root,
+        work_id=item.name,
+        data={"status": item.status},
+    )
+    return item
+
+
+def _reopen_work_item(roots: ResolvedRoots, current: WorkItem) -> WorkItem:
+    """Reopen an item and move its directory back for every attached execution."""
+
+    item = work_repository.reopen_work_item(roots.project_state_dir, current.name)
+    follow_work_item(roots.project_root, roots.runtime_root, item.name)
+    return item
 
 
 def _emit_work_transition(
@@ -174,7 +222,7 @@ class WorkStartOutput(BaseModel):
 class WorkUpdateInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    work_id: str
+    work_id: str = ""
     status: str | None = None
     description: str | None = None
     goal: str | None = None
@@ -198,7 +246,7 @@ class WorkUpdateOutput(BaseModel):
 class WorkDoneInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    work_id: str
+    work_id: str = ""
     project_root: str | None = None
 
 
@@ -276,7 +324,7 @@ class WorkReopenOutput(BaseModel):
 class WorkRenameInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    work_id: str
+    work_id: str = ""
     new_name: str
     chat_id: str = ""
     project_root: str | None = None
@@ -347,6 +395,7 @@ def work_start_sync(
     normalized_work_id = slugify(payload.label)
     if not normalized_work_id:
         raise ValueError("Work item label must contain at least one letter or number.")
+    ensure_work_name_is_usable(normalized_work_id)
     slug_warning: str | None = None
     if normalized_work_id != payload.label.strip():
         slug_warning = f"Normalized '{payload.label.strip()}' to '{normalized_work_id}'."
@@ -363,8 +412,8 @@ def work_start_sync(
         if existing.status == "done":
             # Treat `work start <name>` on an archived item as an implicit reopen —
             # the user's intent is "I want to work on this" regardless of prior state.
-            item = work_repository.reopen_work_item(project_state_dir, existing.name)
-            reattach_warning = f"Work item '{item.name}' was archived; reopened automatically."
+            item = _reopen_work_item(roots, existing)
+            reattach_warning = f"Work item '{item.name}' was done; reopened automatically."
         else:
             item = existing
             reattach_warning = (
@@ -436,35 +485,26 @@ def work_update_sync(
         raise ValueError("Nothing to update. Pass --status, --description, and/or --goal.")
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
-    runtime_state_root = roots.runtime_root
-    current = _require_work_item(project_state_dir, payload.work_id)
+    current = _resolve_work_item(roots, payload.work_id, command="update")
     if payload.status == "done":
-        attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
-        item = work_repository.archive_work_item(
-            project_state_dir,
-            payload.work_id,
+        item = _archive_work_item(
+            roots,
+            current,
             description=payload.description,
-        )
-        publish_work_event(
-            "work.done",
-            project_root=roots.project_root,
-            runtime_root=runtime_state_root,
-            work_id=item.name,
-            data={"status": item.status},
         )
         return WorkUpdateOutput(
             name=item.name,
             status=item.status,
-            warning=_merge_warnings(warning, attachment_warning),
+            warning=warning,
         )
     if current.status == "done" and payload.status is not None:
         raise ValueError(
-            f"Work item '{payload.work_id}' is done. "
-            f"Use `meridian work reopen {payload.work_id}` first."
+            f"Work item '{current.name}' is done. "
+            f"Use `meridian work reopen {current.name}` first."
         )
     item = work_repository.update_work_item(
         project_state_dir,
-        payload.work_id,
+        current.name,
         status=payload.status,
         description=payload.description,
         goal=payload.goal,
@@ -483,23 +523,12 @@ def work_done_sync(
 ) -> WorkUpdateOutput:
     nested_warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
-    project_state_dir = roots.project_state_dir
-    runtime_state_root = roots.runtime_root
-    attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
-    _require_work_item(project_state_dir, payload.work_id)
-
-    item = work_repository.archive_work_item(project_state_dir, payload.work_id)
-    publish_work_event(
-        "work.done",
-        project_root=roots.project_root,
-        runtime_root=runtime_state_root,
-        work_id=item.name,
-        data={"status": item.status},
-    )
+    current = _resolve_work_item(roots, payload.work_id, command="done")
+    item = _archive_work_item(roots, current)
     return WorkUpdateOutput(
         name=item.name,
         status=item.status,
-        warning=_merge_warnings(nested_warning, attachment_warning),
+        warning=nested_warning,
     )
 
 
@@ -508,11 +537,30 @@ def work_delete_sync(
     ctx: RuntimeContext | None = None,
 ) -> WorkDeleteOutput:
     nested_warning = _work_warning(ctx)
-    project_state_dir = resolve_roots(payload.project_root).project_state_dir
+    roots = resolve_roots(payload.project_root)
+    item = _require_work_item(
+        roots.project_state_dir,
+        resolve_work_id_argument(
+            payload.work_id,
+            usage="meridian work delete <work_id>",
+            project_root=roots.project_root,
+            runtime_root=roots.runtime_root,
+        ),
+    )
+    # Delete first: it refuses when artifacts exist without --force, and a refused
+    # delete must not leave every attached execution detached from an item that is
+    # still there. The owners come from the session rows, so they are still found
+    # afterwards, and their links are repointed in the same pass.
     item, had_artifacts = work_repository.delete_work_item(
-        project_state_dir,
-        payload.work_id,
+        roots.project_state_dir,
+        item.name,
         force=payload.force,
+    )
+    follow_work_item(
+        roots.project_root,
+        roots.runtime_root,
+        item.name,
+        detach="all",
     )
     _emit_work_transition(
         "work.deleted",
@@ -533,8 +581,8 @@ def work_reopen_sync(
 ) -> WorkReopenOutput:
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
-    project_state_dir = roots.project_state_dir
-    item = work_repository.reopen_work_item(project_state_dir, payload.work_id)
+    current = _resolve_work_item(roots, payload.work_id, command="reopen")
+    item = _reopen_work_item(roots, current)
     _emit_work_transition(
         "work.reopened",
         work_id=item.name,
@@ -555,7 +603,13 @@ def work_switch_sync(
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
-    item = _require_work_item(project_state_dir, payload.work_id)
+    item = _resolve_work_item(roots, payload.work_id, command="switch")
+    reopen_warning: str | None = None
+    if item.status == "done":
+        # Attaching to an archived item would name a directory that is not there;
+        # switching to a done item means working on it again.
+        item = _reopen_work_item(roots, item)
+        reopen_warning = f"Work item '{item.name}' was done; reopened it."
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
     leave_warning = _leave_scope_warning(
         project_root=roots.project_root,
@@ -579,7 +633,7 @@ def work_switch_sync(
     return WorkSwitchOutput(
         work_id=item.name,
         message=message,
-        warning=_merge_warnings(warning, leave_warning),
+        warning=_merge_warnings(warning, reopen_warning, leave_warning),
     )
 
 
@@ -591,8 +645,7 @@ def work_rename_sync(
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
-    old_name = payload.work_id
-    _require_work_item(project_state_dir, old_name)
+    old_name = _resolve_work_item(roots, payload.work_id, command="rename").name
 
     new_slug = slugify(payload.new_name)
     if not new_slug or new_slug != payload.new_name:
@@ -600,6 +653,7 @@ def work_rename_sync(
             f"Invalid work item name '{payload.new_name}'. "
             f"Use a slug (lowercase, hyphens, no spaces) — e.g. '{new_slug or 'my-feature'}'."
         )
+    ensure_work_name_is_usable(new_slug)
 
     item = work_repository.rename_work_item(project_state_dir, old_name, new_slug)
 
@@ -607,10 +661,15 @@ def work_rename_sync(
         if spawn.kind == "child":
             spawn_store.update_spawn(runtime_state_root, spawn.id, work_id=item.name)
 
-    chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
-    current_work_id = session_store.get_session_active_work_id(runtime_state_root, chat_id)
-    if current_work_id == old_name:
-        session_store.update_session_work_id(runtime_state_root, chat_id, item.name)
+    # Every execution attached to the old name follows the item's directory and its
+    # new name, not just the caller.
+    follow_work_item(
+        roots.project_root,
+        runtime_state_root,
+        old_name,
+        rename_to=item.name,
+        chat_id=resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx)),
+    )
 
     _emit_work_transition(
         "work.renamed",
@@ -635,7 +694,7 @@ def work_clear_sync(
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
     updated = session_store.session_exists(runtime_root, chat_id)
     if updated:
-        session_store.update_session_work_id(runtime_root, chat_id, None)
+        set_session_work_attachment(roots.project_root, runtime_root, chat_id, None)
     message = "Cleared active work item." if updated else "No active session; nothing to clear."
     return WorkClearOutput(message=message, warning=warning)
 
@@ -651,13 +710,18 @@ def work_task_dir_sync(
     project_root = roots.project_root
     runtime_root = roots.runtime_root
     project_state_dir = roots.project_state_dir
-    chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
-    active_work_id = session_store.get_session_active_work_id(runtime_root, chat_id)
+    # An explicitly named chat is an argument like any other and outranks this
+    # process's own conversation; callers that pass nothing get the usual resolver.
+    active_work_id = resolve_active_work_id(
+        project_root,
+        runtime_root,
+        chat_id=(payload.chat_id or "").strip() or None,
+    )
 
     if payload.task_dir is None and not payload.clear:
         if not active_work_id:
             return WorkTaskDirOutput(task_dir=project_root.as_posix(), warning=warning)
-        item = work_store.get_active_work_item(project_state_dir, active_work_id)
+        item = work_store.get_work_item(project_state_dir, active_work_id)
         if item is None or item.task_dir is None:
             return WorkTaskDirOutput(task_dir=project_root.as_posix(), warning=warning)
         return WorkTaskDirOutput(task_dir=item.task_dir, warning=warning)
@@ -684,6 +748,14 @@ def work_task_dir_sync(
         )
 
     resolved_task_dir = updated.task_dir or project_root.as_posix()
+    # The task link is a projection of this setting, and every attached execution
+    # edits the item's checkout, so each one's link follows it.
+    follow_work_item(
+        project_root,
+        runtime_root,
+        updated.name,
+        chat_id=(payload.chat_id or "").strip(),
+    )
     _emit_work_transition(
         "work.task_dir_updated",
         work_id=updated.name,

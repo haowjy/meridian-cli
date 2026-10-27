@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from meridian.lib.launch.reference import ReferenceItem
 
-from meridian.lib.core.domain import SkillDeliveryMode
+from meridian.lib.core.domain import AvailableSkillEntry, SkillDeliveryMode
 from meridian.lib.launch.reference import (
     measure_rendered_reference_block_bytes,
     render_reference_blocks,
@@ -29,7 +29,6 @@ from meridian.lib.launch.reference import (
 SYSTEM_INSTRUCTION_BLOCK_ORDER: tuple[str, ...] = (
     "launch_preamble",
     "agent_profile_body",
-    "completion_contract",
     "supplemental_documents",
     "available_skills_listing",
     "guidance_blocks",
@@ -59,16 +58,6 @@ class CompositionBlock:
     phase: GuidancePhase
     priority: int = 0
     content: str = ""
-
-
-@dataclass(frozen=True)
-class AvailableSkillEntry:
-    """Lightweight entry for an on-demand skill."""
-
-    name: str
-    skill_type: str = "reference"
-    description: str = ""
-    source_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -178,9 +167,6 @@ class ComposedLaunchContent:
 
     prior_output: str
     """Sanitized prior-run output."""
-
-    completion_contract: str = ""
-    """Deterministic bounded completion contract text (spawn goal)."""
 
     launch_preamble: str = ""
     """Launch-mode-specific behavioral framing."""
@@ -457,7 +443,7 @@ def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, 
 def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     """Render SYSTEM_INSTRUCTION blocks in canonical order.
 
-    Order: agent_profile_body, completion_contract, auto-loaded skills
+    Order: agent_profile_body, auto-loaded skills
     (grouped by type: principles first, then guardrails, then others,
     then bootstrap; in named mode one line naming their files instead of
     their bodies), available skills listing,
@@ -562,7 +548,6 @@ __all__ = [
     "CAPABILITIES_BLOCK_NAME",
     "INLINE_BLOCK_ORDER",
     "SYSTEM_INSTRUCTION_BLOCK_ORDER",
-    "AvailableSkillEntry",
     "ComposedLaunchContent",
     "CompositionBlock",
     "GuidancePhase",

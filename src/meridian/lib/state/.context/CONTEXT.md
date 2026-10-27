@@ -21,7 +21,8 @@ bare path
   sessions.jsonl                    — all session events, append-only
   sessions.jsonl.flock
   session-id-counter                — monotonic c1, c2, …
-  sessions/                         — per-session lock + lease files
+  sessions/                         — per-session lock + lease files, plus <chat>/work,
+                                      the stable link to the chat's active work dir
   spawn-id-counter                  — monotonic p1, p2, …
   locks/spawns/<id>.lock            — stable per-spawn mutation lock
   locks/process-scopes/<id>.lock    — stable process-scope projection lock
@@ -292,6 +293,25 @@ Its reader treats absent `v` as v1 and preserves unknown fields with a warning;
 writers deliberately omit `v` until the next format change. A newer version gets
 a separate compatibility marker displayed as `requires-newer-meridian`, while the
 single mutation seam validates every active and archived copy before touching disk.
+
+### Work Item Directory Moves
+
+The location is the state. `work done` moves `<work root>/<slug>` to
+`<archive>/<slug>` and `work reopen` moves it back, each in one step; there is no
+"done but not yet moved" status and no sweep to finish one. A directory in the archive
+is done by location, whatever its `__status.json` still says, so a crash between the
+rename and the metadata write reads correctly and `meridian doctor` normalizes the
+file. Reopen writes the reopened status before its move, so an interrupted reopen
+leaves the item archived and running the command again repairs it.
+
+A running spawn is not a reason to defer: its work directory is a per-chat link
+(`launch/session_links.py`), so the directory moves under it and the next write lands
+at the new location. The command that moves an item repoints the links of every
+attached execution for the same reason (`ops/work_attachment.follow_work_item`), and
+a primary attached to an item that becomes done is detached instead.
+
+`move_work_dir` refuses when both locations exist, naming both, and never deletes
+either copy. Only `work delete --force` removes a directory.
 
 ### WorktreeMetadata
 

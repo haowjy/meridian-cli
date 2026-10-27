@@ -177,7 +177,7 @@ def test_build_create_payload_work_precedence_over_context_from(
     assert ambient.request.task_cwd_source == "ambient-work-authority-root"
 
 
-def test_background_spawn_prompt_includes_launch_preamble(
+def test_spawn_prompt_preamble_ignores_launch_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -201,14 +201,14 @@ def test_background_spawn_prompt_includes_launch_preamble(
         runtime=runtime,
     )
 
-    # Both background and foreground spawns are sub-agent sessions
+    # Both background and foreground spawns are sub-agent sessions, and continuing
+    # one in the other mode must keep the system prompt byte-identical.
     sub_agent_marker = "This is a **sub-agent session**. You are not talking to the user."
-    assert sub_agent_marker in _prompt_surface_text(background)
-    assert sub_agent_marker in _prompt_surface_text(foreground)
-    # Only background gets the autonomous work directive
     autonomous = "Work autonomously toward your objective. Only escalate if blocked."
-    assert autonomous in _prompt_surface_text(background)
-    assert autonomous not in _prompt_surface_text(foreground)
+    for surface in (_prompt_surface_text(background), _prompt_surface_text(foreground)):
+        assert sub_agent_marker in surface
+        assert autonomous in surface
+    assert _prompt_surface_text(background) == _prompt_surface_text(foreground)
 
 
 def test_build_create_payload_does_not_forward_meridian_primary_or_legacy_defaults_to_bundle(

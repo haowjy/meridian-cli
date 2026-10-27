@@ -18,7 +18,7 @@ from meridian.lib.core.depth import (
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
 
 
@@ -29,8 +29,8 @@ class ContextBackend(Protocol):
         """Look up the active work ID for a session."""
         ...
 
-    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
-        """Resolve a launch snapshot to its current observed conversation."""
+    def get_execution_chat(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+        """The conversation an execution acts on, from its own spawn row."""
         ...
 
 
@@ -38,33 +38,24 @@ class LocalFilesystemBackend:
     """Default context backend backed by local state modules."""
 
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
-        from meridian.lib.state.history_index import HistoryIndex
+        # The same row read every work command uses; a projection would be a second
+        # answer to "what is this chat's item" that could disagree with the writes.
+        return session_store.get_session_active_work_id(runtime_root, chat_id)
 
-        records = HistoryIndex(runtime_root).sessions(chat_ids={chat_id})
-        return records[0].active_work_id if records else None
-
-    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+    def get_execution_chat(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
         row = spawn_store.get_spawn(runtime_root, spawn_id)
-        return row.continue_chat_id if row is not None and row.current_chat_id else None
+        return ((row.continue_chat_id or "") if row is not None else "").strip() or None
 
 
-def follow_current_chat(
+def _execution_chat(
     env: Mapping[str, str],
     runtime_root: Path,
     backend: ContextBackend | None = None,
 ) -> str | None:
-    """The spawn's current conversation, once it has moved off the launch snapshot.
-
-    ``MERIDIAN_CHAT_ID`` (and with it ``MERIDIAN_ACTIVE_WORK_ID``) is fixed at
-    launch, and a spawned process inherits its parent's. Once the launcher has
-    admitted an owned native observation, the spawn's durable current pointer names
-    the conversation, and its work comes from that conversation's session.
-    """
-
     spawn_id = env.get("MERIDIAN_SPAWN_ID", "").strip()
     if not spawn_id:
         return None
-    return (backend or LocalFilesystemBackend()).get_current_chat_id(
+    return (backend or LocalFilesystemBackend()).get_execution_chat(
         runtime_root, SpawnId(spawn_id)
     )
 
@@ -150,19 +141,21 @@ class ResolvedContext:
         else:
             runtime_root = None
 
-        # MERIDIAN_CHAT_ID is a launch snapshot. Once the launcher has admitted
-        # an owned native observation, ambient commands follow the spawn's
-        # durable current pointer and resolve work from that chat. Explicit chat
-        # and work arguments retain their normal precedence.
+        # MERIDIAN_CHAT_ID and MERIDIAN_ACTIVE_WORK_ID are a launch snapshot, and a
+        # spawn inherits its parent's chat id: only the execution's own session row
+        # names the conversation it acts on. A primary's row follows a chat rotation
+        # (Claude /clear, /resume); a spawn's row is its own chat even though the env
+        # still names the conversation that launched it. With no row — an unmanaged
+        # shell — the env is all there is. Explicit arguments keep their precedence.
         if not explicit_chat_id_raw and runtime_root is not None:
-            current_chat_id = follow_current_chat(os.environ, runtime_root, backend_impl)
-            if current_chat_id:
-                chat_id_raw = current_chat_id
+            execution_chat = _execution_chat(os.environ, runtime_root, backend_impl)
+            if execution_chat is not None:
+                chat_id_raw = execution_chat
                 work_id_raw = ""
                 work_dir_raw = ""
 
-        # Authoritative work-ID precedence:
-        # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.
+        # Authoritative work-ID precedence: explicit override > the execution's own
+        # chat row > MERIDIAN_ACTIVE_WORK_ID (only outside a managed run).
         work_id: str | None = None
         work_id_source: Literal["explicit", "env", "session", "none"] = "none"
         if explicit_work_id_raw:
@@ -187,15 +180,19 @@ class ResolvedContext:
         )
 
         bound_work_dir: Path | None = None
-        project_work_dir = project_paths.work_dir if project_paths is not None else None
 
-        if (
+        if work_id and project_paths is not None and project_paths.work_dir is not None:
+            # The item's directory where it actually is: `work done` moves it to the
+            # archive, and a command that resolved the other location would name a
+            # path that no longer exists.
+            bound_work_dir = work_store.work_scratch_dir(project_paths.root_dir, work_id)
+        elif (
             work_dir_raw
             and not explicit_work_id_raw
             and work_id_source in ("none", "env")
         ):
             # Honor launch-bound dirs for ambient scopes and env-carried work IDs.
-            # Session-switched work IDs recompute canonical roots — stale ambient
+            # Session-switched work IDs recompute canonical roots, so stale ambient
             # MERIDIAN_ACTIVE_WORK_DIR from process launch must not shadow them.
             bound_work_dir = Path(work_dir_raw).expanduser()
 
@@ -204,7 +201,6 @@ class ResolvedContext:
             spawn_id=spawn_id,
             work_id=work_id,
             bound_work_dir=bound_work_dir,
-            project_work_dir=project_work_dir,
             runtime_root=runtime_root,
         )
         work_dir = work_scope.root if work_scope is not None else None

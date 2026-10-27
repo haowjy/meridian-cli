@@ -1,4 +1,4 @@
-"""CLI helper for injecting control messages into active streaming spawns."""
+"""CLI helper for sending user messages into active streaming spawns."""
 
 from __future__ import annotations
 
@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import Never, cast
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.harness.bundle import PrimaryInboxError, post_to_primary
+from meridian.lib.harness.bundle import (
+    PrimaryInboxError,
+    post_to_primary,
+    primary_accepts_messages,
+)
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
@@ -20,7 +24,7 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.control_socket import control_socket_path
 
-_INJECT_RESPONSE_TIMEOUT_SECONDS = 30.0
+_RESPONSE_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 
@@ -28,6 +32,52 @@ _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 def _fail(message: str) -> Never:
     print(f"Error: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def framed_message(
+    message: str,
+    *,
+    sender_spawn_id: str | None = None,
+    sender_chat_id: str | None = None,
+    can_reply: bool = False,
+) -> str:
+    """Open the message with its sender and, when it exists, a way to answer.
+
+    A session that receives a message otherwise cannot tell which session sent
+    it, or where to reply. The frame is text, not wire metadata: every harness's
+    delivery path carries it unchanged.
+    """
+
+    if sender_spawn_id is None:
+        provenance = "[Meridian] Message with no sender identity; it has no reply address."
+    else:
+        where = f"spawn {sender_spawn_id}"
+        if sender_chat_id:
+            where += f" (chat {sender_chat_id})"
+        if can_reply:
+            provenance = (
+                f"[Meridian] Message from {where}. To answer, run "
+                f'`meridian spawn message {sender_spawn_id} --message "..."`.'
+            )
+        else:
+            provenance = f"[Meridian] Message from {where}; it has no reply route here."
+    return f"{provenance}\n\n{message}"
+
+
+def _sender_record(runtime_root: Path, sender_spawn_id: str | None) -> SpawnRecord | None:
+    """Return the sender's own record, the source of its chat id and route."""
+
+    if sender_spawn_id is None:
+        return None
+    return read_derived(runtime_root, sender_spawn_id)
+
+
+def _can_receive_reply(sender: SpawnRecord | None) -> bool:
+    """True when a message sent back to the sender would reach a live route."""
+
+    if sender is None or not is_active_spawn_status(sender.status):
+        return False
+    return sender.kind != "primary" or primary_accepts_messages(sender)
 
 
 async def _send_and_receive(
@@ -39,15 +89,13 @@ async def _send_and_receive(
     try:
         writer.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
         await writer.drain()
-        return await asyncio.wait_for(
-            reader.readline(), timeout=_INJECT_RESPONSE_TIMEOUT_SECONDS
-        )
+        return await asyncio.wait_for(reader.readline(), timeout=_RESPONSE_TIMEOUT_SECONDS)
     finally:
         writer.close()
         await writer.wait_closed()
 
 
-def _inject_primary(runtime_root: Path, record: SpawnRecord, message: str) -> None:
+def _post_primary(runtime_root: Path, record: SpawnRecord, message: str) -> None:
     if not is_active_spawn_status(record.status):
         _fail(f"spawn not running: {record.id}")
     try:
@@ -57,11 +105,13 @@ def _inject_primary(runtime_root: Path, record: SpawnRecord, message: str) -> No
     print(confirmation)
 
 
-async def inject_message(
+async def send_message(
     spawn_id: str,
     message: str,
+    *,
+    sender_spawn_id: str | None = None,
 ) -> None:
-    """Send a control message to a running bidirectional spawn over a Unix socket."""
+    """Post a user message to a running spawn: its control endpoint or a primary inbox."""
 
     normalized_spawn_id = spawn_id.strip()
     if not normalized_spawn_id:
@@ -79,9 +129,17 @@ async def inject_message(
     if not normalized_message:
         _fail("message is required")
 
+    sender = _sender_record(runtime_root, sender_spawn_id)
+    framed = framed_message(
+        normalized_message,
+        sender_spawn_id=sender_spawn_id,
+        sender_chat_id=sender.chat_id if sender is not None else None,
+        can_reply=_can_receive_reply(sender),
+    )
+
     record = read_derived(runtime_root, normalized_spawn_id)
     if record is not None and record.kind == "primary":
-        _inject_primary(runtime_root, record, normalized_message)
+        _post_primary(runtime_root, record, framed)
         return
 
     discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
@@ -96,7 +154,7 @@ async def inject_message(
             _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
         await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
-    request: dict[str, str] = {"type": "user_message", "text": normalized_message}
+    request: dict[str, str] = {"type": "user_message", "text": framed}
 
     response_data = b""
     try:

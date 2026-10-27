@@ -11,7 +11,7 @@ from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.models import MeridianConfig
-from meridian.lib.core.domain import SkillContent, SkillDeliveryMode
+from meridian.lib.core.domain import AvailableSkillEntry, SkillContent, SkillDeliveryMode
 from meridian.lib.core.overrides import (
     EXECUTION_POLICY_FIELDS,
     ExecutionPolicyField,
@@ -36,7 +36,6 @@ from .compiler import (
     ProvenanceLevel,
     match_model_policy,
 )
-from .composition import AvailableSkillEntry
 from .launch_types import (
     CompositionWarning,
     ResolvedExecutionPolicy,
@@ -651,6 +650,7 @@ def _resolve_policy_from_snapshot(
         warnings=(),
         alias_catalog=replayed.alias_catalog,
         bundle_inventory_prompt=snapshot.bundle_inventory_prompt,
+        bundle_available_skills=replayed.available_skills,
         skill_delivery=snapshot.skill_delivery,
     )
 

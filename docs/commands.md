@@ -27,17 +27,24 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `meridian spawn cancel ID` | Cancel a running spawn |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
-| `meridian spawn inject ID --message "text"` | Post a message to a running streaming spawn or supported primary inbox |
+| `meridian spawn message ID --message "text"` | Post a message to a running streaming spawn or supported primary inbox |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children ID` | List direct child spawns |
 
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
-`spawn inject` uses the control endpoint for spawned sessions. For a live Claude
+`spawn message` uses the control endpoint for spawned sessions. For a live Claude
 primary, it posts to Claude Code's session inbox; the command confirms only that
-the message was posted, not delivered. Claude may hold the message for human
-approval when that session bypasses permission prompts. Other primary harnesses
-fail immediately because they do not yet expose an inject route
+the message was posted, not delivered. Claude holds the message for human approval
+when that session bypasses permission prompts and `crossSessionInbound` is not
+`accept`; to skip the prompt, set `"crossSessionInbound": "accept"` in
+`~/.claude/settings.json`. This applies to every peer message, not only
+Meridian's; [Claude's inbound gate](harness-integration.md#primary-message-delivery-and-claudes-inbound-gate)
+covers the values and the trade-off. Each injected
+message opens with a `[Meridian]` line naming the sending spawn and, when the
+sender can receive one, the `meridian spawn message <id>` command that answers
+it. Other primary harnesses
+fail immediately because they do not yet expose a message route
 ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
 
 Common `spawn` flags:
@@ -215,17 +222,59 @@ Runner-history pruning is explicit, never automatic; see
 | Command | Description |
 | ------- | ----------- |
 | `meridian work` | Dashboard — active work items and spawns |
-| `meridian work current` | Print the active work scope directory (named work item or ambient spawn scope) |
+| `meridian work current` | Print the active work scope directory (a primary session's attached work item, otherwise its launch-bound or ambient spawn scope) |
 | `meridian work path RELPATH` | Materialize a path under the active scope and print its absolute path (creates parent dirs) |
 | `meridian work root` | Print the configured work root (context tree for named work items) |
 | `meridian work start LABEL` | Create a work item if missing, or switch to it |
 | `meridian work start LABEL --task-dir PATH` | Create/switch and set task directory for source edits |
 | `meridian work list` | List all work items |
-| `meridian work show SLUG` | Show one work item, its directory, and attached spawns |
-| `meridian work switch SLUG` | Set active work item |
+| `meridian work show [SLUG]` | Show one work item, its directory, and attached spawns (default: this session's active work item) |
+| `meridian work switch SLUG\|current` | Set active work item |
 | `meridian work task-dir [PATH\|--clear]` | Show/set/clear active work-item task directory |
-| `meridian work done SLUG` | Mark a work item done and archive its scratch directory |
-| `meridian work sessions SLUG` | List sessions attached to a work item |
+| `meridian work update [SLUG] --status/--desc/--goal` | Update a work item (default: this session's active work item) |
+| `meridian work done [SLUG]` | Mark a work item done and archive its scratch directory (default: this session's active work item) |
+| `meridian work sessions [SLUG]` | List sessions attached to a work item (default: this session's active work item) |
+| `meridian work rename [OLD] NEW` | Rename a work item; one argument renames this session's active item, like `git branch -m NEW` |
+| `meridian work delete [SLUG\|current]` | Delete a work item (default: this session's active work item) |
+| `meridian work reopen SLUG\|current` | Reopen a done work item |
+
+Commands that act on a work item default to the one this session is attached to,
+and `current` names it anywhere a work id is accepted (`work show`, `sessions`,
+`done`, `update`, `rename`, `delete`, `switch`, `reopen`, `spawn --work`), so no
+script has to carry an id that a `work switch` can invalidate. `current` is
+reserved: `work start`/`rename` refuse it as a name.
+
+`work done` moves the item's directory to the archive immediately and repoints every
+attached execution's link at it, so a spawn that is still running keeps writing
+through the same literal path and its writes land in the archive. A primary attached
+to the item is returned to its ambient directory, because a done item is no longer
+its to edit. `work rename` moves the directory and every attached execution's
+attachment with it. `work reopen` moves the directory back, and `work start` or
+`work switch` of a done item reopens it.
+
+A move never deletes either copy. If a directory exists in both places — an
+interrupted operation, or a leftover — it is refused with both paths named, and
+nothing is moved or deleted.
+
+Every live execution, primary or spawn, has two stable symlinks under the runtime
+root that keep moving targets out of the prompt and environment:
+
+- `sessions/<chat>/work` (`MERIDIAN_ACTIVE_WORK_DIR`) is the work directory.
+  `work start`, `work switch`, and `work rename` repoint it, and `work done` follows
+  the item into the archive; with no active item it points at the execution's ambient
+  spawn work directory. Agents can write prompt files with that literal path and pass
+  it to `--prompt-file` without resolving the work path again. The link follows the
+  current item, so write a prompt after the final switch; a path saved before a switch
+  still names the same link but reaches the new item.
+- `sessions/<chat>/task` (`MERIDIAN_TASK_DIR`) is the source checkout. It follows
+  `meridian task-dir`, `meridian work task-dir`, and a switch to an item with its
+  own checkout, so the same literal path keeps reaching the current one. A
+  spawn-scope `task-dir` outranks an item's checkout, as it does at launch.
+
+The chat in the path is the execution's own: a primary's entry chat (the one its
+launch named, which survives a `/clear` rotation) and a spawn's own chat. A primary
+launch names its links in the system prompt; a spawn names them in its first user
+turn, so sibling spawns share one cached system prompt.
 
 ## Hooks
 

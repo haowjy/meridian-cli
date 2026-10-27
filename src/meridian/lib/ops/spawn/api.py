@@ -2358,7 +2358,9 @@ def _build_fork_create_input(
         skills=inherited_skills,
         desc=payload.desc,
         work=requested_work or (resolved_reference.source_work_id or ""),
-        task_dir=requested_task_dir,
+        # A fork keeps the source's checkout the way an exact continue does: without
+        # it the child silently edits the control root instead of the source's worktree.
+        task_dir=requested_task_dir or resolved_reference.source_execution_cwd,
         caller_cwd=payload.caller_cwd,
         goal=requested_goal,
         session=SessionRequest(

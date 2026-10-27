@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
 
+import structlog
+
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
@@ -33,6 +35,8 @@ from meridian.lib.state.work_state import (
     stored_state_from_item,
     warn_both_locations,
 )
+
+logger = structlog.get_logger(__name__)
 
 T = TypeVar("T")
 _StateWrite = tuple[Path, WorkItem]
@@ -85,6 +89,31 @@ def _normalize_task_dir_path(path: str) -> str:
         return Path(path).expanduser().as_posix()
 
 
+def _work_runtime_root(project_state_dir: Path) -> Path:
+    """Return the user runtime root that holds this work store's project spawns."""
+
+    if project_state_dir.name == ".meridian":
+        return resolve_project_runtime_root_for_write(project_state_dir.parent)
+    return project_state_dir
+
+
+def move_work_dir(source: Path, destination: Path) -> None:
+    """Move one work directory between the active and archived locations.
+
+    A directory in both places means a copy is half-removed, half-written, or left
+    by a build that has since been replaced; silently picking one loses whatever the
+    other holds. Refuse with both paths named.
+    """
+
+    if destination.exists() or destination.is_symlink():
+        raise ValueError(
+            f"Both {source.as_posix()} and {destination.as_posix()} exist. Nothing was "
+            "moved or deleted: reconcile the two directories and re-run."
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(destination)
+
+
 def write_state_locked(runtime_root: Path, work_id: str, mutation: _NamespaceMutation[T]) -> T:
     """Run one work mutation and its optional atomic state write under one lock.
 
@@ -94,11 +123,7 @@ def write_state_locked(runtime_root: Path, work_id: str, mutation: _NamespaceMut
     """
 
     paths = project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    lock_root = (
-        resolve_project_runtime_root_for_write(runtime_root.parent)
-        if runtime_root.name == ".meridian"
-        else runtime_root
-    )
+    lock_root = _work_runtime_root(runtime_root)
     with (
         warning_cache_scope(),
         lock_file(lock_root / "work-store.flock", reentrant=False),
@@ -299,15 +324,18 @@ def archive_work_item(
     *,
     description: str | None = None,
 ) -> WorkItem:
+    """Mark an item done and move its directory to the archive.
+
+    One move, never deferred: a running spawn writes through its per-chat link, so
+    the directory moving under it is transparent, and a link is what lets the move
+    happen without stranding a worker on a path that no longer exists.
+    """
+
     def archive(
         paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
     ) -> _MutationResult[WorkItem]:
-        if active_dir is not None and archived_dir is not None:
-            warn_both_locations(work_id, active_dir, archived_dir)
-            shutil.rmtree(archived_dir)
-            archived_dir = None
         if active_dir is None:
             if archived_dir is not None:
                 raise ValueError(f"Work item '{work_id}' is already archived.")
@@ -323,42 +351,52 @@ def archive_work_item(
             }
         )
         destination = archived_work_dir(paths, work_id)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        active_dir.rename(destination)
+        # Move first: an archived directory is done by location, so a crash before
+        # the status lands leaves a readable, repairable item rather than one marked
+        # done where it is still being edited.
+        move_work_dir(active_dir, destination)
         return _MutationResult(archived_item, (destination, archived_item))
 
     return write_state_locked(runtime_root, work_id, archive)
 
 
 def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") -> WorkItem:
+    """Move a done item's directory back to work/ and reopen it.
+
+    The one implementation behind ``work reopen``, ``work start`` on a done item and
+    ``work switch`` to one. The move refuses when both locations exist, naming both,
+    so neither copy is ever deleted to make room.
+    """
+
     status = _validate_active_status(status)
 
-    def reopen(
-        paths: ProjectPaths,
-        active_dir: Path | None,
-        archived_dir: Path | None,
-    ) -> _MutationResult[WorkItem]:
-        if active_dir is not None and archived_dir is not None:
-            warn_both_locations(work_id, active_dir, archived_dir)
-            shutil.rmtree(archived_dir)
-            return _MutationResult(load_work_item_from_dir(active_dir, archived=False))
-        if archived_dir is None:
-            if active_dir is not None:
-                raise ValueError(f"Work item '{work_id}' is already active.")
-            raise ValueError(f"Work item '{work_id}' not found")
-
-        current = load_work_item_from_dir(archived_dir, archived=True)
-        reopened = current.model_copy(
+    def reopened_item(current: WorkItem) -> WorkItem:
+        return current.model_copy(
             update={
                 "status": status,
                 "archived_at": None,
                 "worktree": current.worktree.model_copy(update={"pending": False}),
             }
         )
-        target = active_work_dir(paths, work_id)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        archived_dir.rename(target)
-        return _MutationResult(reopened, (target, reopened))
+
+    def reopen(
+        paths: ProjectPaths,
+        active_dir: Path | None,
+        archived_dir: Path | None,
+    ) -> _MutationResult[WorkItem]:
+        if archived_dir is None:
+            if active_dir is None:
+                raise ValueError(f"Work item '{work_id}' not found")
+            raise ValueError(f"Work item '{work_id}' is already active.")
+
+        current = load_work_item_from_dir(archived_dir, archived=True)
+        reopened = reopened_item(current)
+        destination = active_work_dir(paths, work_id)
+        # Status first here: an interrupted reopen then leaves the item archived and
+        # repair-able by re-running, never active and marked done.
+        _write_item(archived_dir, reopened)
+        move_work_dir(archived_dir, destination)
+        return _MutationResult(reopened, (destination, reopened))
 
     return write_state_locked(runtime_root, work_id, reopen)
 
@@ -372,9 +410,11 @@ def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> Wor
         archived_dir: Path | None,
     ) -> _MutationResult[WorkItem]:
         if active_dir is not None and archived_dir is not None:
-            warn_both_locations(old_work_id, active_dir, archived_dir)
-            shutil.rmtree(archived_dir)
-            archived_dir = None
+            raise ValueError(
+                f"Work item '{old_work_id}' exists in both {active_dir.as_posix()} and "
+                f"{archived_dir.as_posix()}. Nothing was renamed or deleted: reconcile "
+                "the two directories first."
+            )
         source = active_dir or archived_dir
         if source is None:
             raise ValueError(f"Work item '{old_work_id}' not found")

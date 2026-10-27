@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class _CurrentChatBackend:
-    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+    def get_execution_chat(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
         _ = runtime_root, spawn_id
         return "c-current"
 
@@ -153,7 +153,7 @@ def test_resolve_runtime_authority_honors_empty_override_over_project_state(
     assert authority.runtime_root_source == "env"
 
 
-def test_ambient_context_follows_spawn_current_chat_but_explicit_chat_does_not(
+def test_ambient_context_follows_the_execution_chat_but_explicit_chat_does_not(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:

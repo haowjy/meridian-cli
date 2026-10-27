@@ -318,7 +318,14 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_runtime(("spawn", "done"), "Confirm that a held child spawn is finished."),
     _write_runtime(("spawn", "rearm"), "Reject completion and open a new child window."),
     _write_runtime(
-        ("spawn", "inject"), "Inject a message into a spawn.", default_output_mode="text"
+        ("spawn", "message"),
+        "Send a message to a running spawn.",
+        default_output_mode="text",
+    ),
+    _write_runtime(
+        ("spawn", "inject"),
+        "Deprecated: use `spawn message`.",
+        default_output_mode="text",
     ),
     _read_runtime(
         ("spawn", "children"),

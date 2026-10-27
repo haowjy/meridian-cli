@@ -831,6 +831,9 @@ def run_harness_process(
                             execution_cwd=str(execution_cwd),
                             launch_mode=FOREGROUND_LAUNCH_MODE,
                             work_id=attached_work_id,
+                            # A primary's goal is its conversation's identity, so a
+                            # `--continue` inherits it from the row.
+                            goal=preview_request.goal,
                             runner_pid=os.getpid(),
                             status=SpawnStatus.QUEUED,
                         ),
