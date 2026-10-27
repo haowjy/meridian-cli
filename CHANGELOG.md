@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.11] - 2026-10-27
+
 ### Changed
 - Meridian provides its bundled `*__meridian` skills to Mars before launches and
   package-resolving `meridian mars` commands, once its Mars has `mars provide`
