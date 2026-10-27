@@ -59,6 +59,8 @@ def test_named_active_work_resolves_via_context_work_not_runtime_fallback(
     runtime_work_leak = runtime_root / "work" / work_id
     repo_work_leak.mkdir(parents=True)
     runtime_work_leak.mkdir(parents=True)
+    # An env name resolves only while the item exists under [context.work].
+    (context_work_root / work_id).mkdir()
 
     ctx = ResolvedContext.from_environment()
 

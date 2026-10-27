@@ -181,6 +181,7 @@ class ResolvedContext:
             work_id
             and work_id_source != "explicit"
             and project_paths is not None
+            and project_paths.work_dir is not None
             and not work_store.work_item_exists(project_paths.root_dir, work_id)
         ):
             warn_missing_work_item(work_id, chat_id=chat_id_raw)

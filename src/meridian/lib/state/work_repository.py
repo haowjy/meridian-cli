@@ -134,9 +134,13 @@ def _publish_item_links(
 
     The item's directory is wherever it is now (``work/`` or the archive); its
     checkout is its ``task_dir`` while that is a directory, else the project root. An
-    item that no longer exists leaves no links.
+    item that no longer exists leaves no links. The links directory is derived from
+    the name, and a name can come from a session row an older build or a hand edit
+    wrote: only a slug can name an item, and nothing else is joined onto a path here.
     """
 
+    if slugify(link_id) != link_id or slugify(item_id) != item_id:
+        return
     active_dir, archived_dir = locate_work_dirs(paths, item_id)
     work_dir = active_dir or archived_dir
     if work_dir is None:
@@ -201,13 +205,9 @@ def ensure_item_links(runtime_root: Path, work_id: str) -> None:
     """Publish an item's links now; drop them if the item no longer exists.
 
     Run before a chat links to the item, so no chat link names one that was never
-    created, and after a rename to drop the old name's forwarded links. The name may
-    come from a session row an older build or a hand edit wrote, and the links
-    directory is derived from it: only a slug can name an item.
+    created, and after a rename to drop the old name's forwarded links.
     """
 
-    if slugify(work_id) != work_id:
-        return
     write_state_locked(runtime_root, work_id, _republish_only)
 
 

@@ -204,8 +204,9 @@ def publish_chat_links(
     with session_store.session_writes(runtime_root):
         work_id = (session_store.get_session_active_work_id(runtime_root, chat_id) or "").strip()
         ambient_dir = resolve_ambient_work_dir(project_root, spawn_id, runtime_root=runtime_root)
-        # The ambient directory is created so a chat with no item never links to nothing.
-        ambient_dir.mkdir(parents=True, exist_ok=True)
+        if not work_id:
+            # A chat with no item never links to nothing.
+            ambient_dir.mkdir(parents=True, exist_ok=True)
         work_target, task_target = chat_link_targets(
             runtime_root,
             project_root,
