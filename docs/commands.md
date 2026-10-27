@@ -530,7 +530,7 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars add SOURCE` | Add an agent/skill package source |
 | `meridian mars sync` | Compile packages into `.mars/`; materialize configured harness targets |
 | `meridian mars link DIR` | Link compiled output into a harness tool directory |
-| `meridian mars list` | Show installed agents (grouped by mode) and skills |
+| `meridian mars list` | Show installed agents, skills, and bootstrap docs by name and description |
 | `meridian mars upgrade` | Fetch latest versions and sync |
 | `meridian mars doctor` | Check for drift and integrity issues |
 

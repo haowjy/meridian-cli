@@ -19,7 +19,7 @@ Change source packages or use Mars config overlays instead.
 To list installed profiles:
 
 ```bash
-meridian mars list        # grouped by mode (primary / subagent)
+meridian mars list        # installed agents and skills
 meridian mars list --json # machine-readable
 ```
 
@@ -66,7 +66,8 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 
 ## `mode`
 
-Controls how agents are grouped in `meridian mars list` and in the startup system prompt.
+Controls whether the agent is listed under `## Primary` or `## Subagent` in the
+startup system prompt's [agent inventory](#agent-inventory-in-the-system-prompt).
 Primary-mode profiles also receive the lead-only bundled skill triggers and the
 `meridian notify` capability, including when launched as a spawn; see
 [Skills](#skills-and-skill-variants).
@@ -74,18 +75,6 @@ Primary-mode profiles also receive the lead-only bundled skill triggers and the
 ```yaml
 mode: primary    # top-level orchestrators, primary sessions
 mode: subagent   # spawned workers (default)
-```
-
-`meridian mars list` output:
-
-```
-AGENTS
-- design-lead: Heavy design with research and adversarial review | Model: claude-opus-4-6
-- product-manager: Dev workflow entry point | Model: claude-opus-4-6
-
-## Subagent
-- coder: Implementation tasks | Model: gpt55 | Fan-out: gpt55, codex
-- reviewer: Adversarial review | Model: gpt-5.4 | Fan-out: gpt, opus
 ```
 
 ## `model-policies`
@@ -389,21 +378,29 @@ variants (`variants/<harness>/<model>/`) are not supported.
 
 See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md) for the skill authoring format.
 
-## Agent Listing
+## Agent inventory in the system prompt
 
-`meridian mars list` renders installed profiles grouped by `mode`:
+A spawn-capable agent (one with a non-empty `subagents:` list and no
+`harness-overrides.meridian.capabilities.spawn: false`) has Mars's `# Meridian Agents`
+inventory in its system prompt, grouped by `mode`:
 
 ```
-## Primary
-- my-orchestrator: Main orchestrator | Model: claude-opus-4-6
+# Meridian Agents
 
 ## Subagent
-- coder: Implementation tasks | Model: gpt55 | Fan-out: gpt55, codex
-- reviewer: Adversarial review | Model: gpt-5.4 | Fan-out: gpt, opus
+- `meridian spawn -a coder`: Implementation tasks | Model: gpt55 | Declared backups: gpt55, codex
+- `meridian spawn -a reviewer`: Adversarial review | Model: gpt-5.4
+
+## Primary
+- `meridian spawn -a design-lead`: Heavy design with research and adversarial review | Model: claude-opus-4-6
 ```
 
-Each line shows: name, description, default model, and fallback-chain aliases
-(deduplicated by resolved model ID).
+Each line gives the spawn command, the description, the default model, the declared
+backup models, and the model guide when the profile has one. Profiles with
+`model-invocable: false` are left out.
+
+`meridian mars list` is a separate catalog of installed agents, skills, and bootstrap
+docs, showing names and descriptions (`--json` for structured output).
 
 ## Harness Availability Fallback
 
