@@ -141,6 +141,16 @@ become process-level shell, web-search, and image-viewing switches. The web-sear
 also accepts the exact `web_search` capability. Scoped rules and `ask` have no switch and
 are reported unsupported. An unset sandbox is left unset, so Codex chooses its default.
 
+Further policy detail (moved from AGENTS.md): the policy answers the allowlist questions
+(`is_allowlist`, `allowed_tools`) and writes each per-capability allowlist into its rules
+as an unscoped deny, so no compile re-derives them. `EnforcementReport` (a tuple of
+`ReportLine`) is how each compile reports what it enforced. Each harness network projector
+returns native settings and the effective typed policy together. Guardrail containment is
+exact: a child that allows nothing is always contained; otherwise finite child allows are a
+subset of the caller and child denies a superset. Wildcards are canonical strings, not
+expanded. Harness-owned user-config diagnostics are warnings, not policy inputs. The
+durable `ResolvedExecutionPolicy` uses only a resolved network or `None`.
+
 ## Circular Import Constraints
 
 The dependency graph must remain:

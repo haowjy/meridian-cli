@@ -1,76 +1,24 @@
 # lib/safety/
 
-Three enforcement subsystems consumed by the launch layer: cost budget tracking,
-post-run guardrails, and tool permission resolution. Each is
-independent — no module imports another except through carefully managed lazy imports
-that prevent circular dependencies.
+Three independent enforcement subsystems the launch layer assembles; none drives the spawn:
+budget tracking (`budget.py`), post-run guardrails (`guardrails.py`), and the
+transport-neutral permission policy (`policy.py`) each harness compiles into its own flags.
 
-## Mental Model
+- **Budget updates are monotonic.** `LiveBudgetTracker` tracks running totals; a lower value
+  is ignored. A harness emitting deltas will under-count and breach detection fails silently.
+- **The tracker detects a breach but does not stop the spawn**: the caller must stop the
+  harness on `BudgetBreach`.
+- **Guardrails all run, even after a failure**; failures collect into `GuardrailResult`.
+- **Guardrail env sanitization is a security boundary**: every `MERIDIAN_SECRET_*` key is
+  stripped before any guardrail script runs, because repo scripts are untrusted.
+- **Don't hoist the lazy import in `budget.extract_cost_usd_from_json_line`**:
+  `safety.budget` → `harness.common` → `harness.adapter` → `launch.launch_types` →
+  `safety.policy` is a load-time cycle.
+- **`PermissionPolicy.network` is always resolved** (`Allow(deny)` or `Hosts(allow, deny)`,
+  empty Hosts meaning deny); `SandboxDerivedNetwork` exists only on the bundle result until
+  final sandbox precedence is applied. Nothing in `safety/` interprets harness-owned
+  user-config diagnostics.
 
-All three subsystems enforce constraints on what a spawn can do:
-
-- **Budget** — streaming cost enforcement; terminates if spend exceeds limit
-- **Guardrails** — post-run scripts that verify or audit after spawn completes
-- **Permissions** — the transport-neutral policy each harness compiles into its own flags
-
-The launch layer assembles these; none of them drives the spawn itself.
-
-## Key Rules
-
-**Budget updates are monotonic.** `LiveBudgetTracker` tracks running totals, not
-deltas. If a harness emits a value lower than the current tracked total, it's ignored.
-A harness that emits deltas instead of totals will under-count — breach detection
-will fail silently.
-
-**The tracker detects a breach but does not terminate the spawn.** The caller is
-responsible for stopping the harness on `BudgetBreach`. If you forget this, the
-spawn runs past the budget limit without stopping.
-
-**Guardrails always run regardless of earlier failures.** All scripts execute
-sequentially even if one fails; all failures are collected into `GuardrailResult`.
-
-**Guardrail env sanitization is a security boundary.** The child environment strips
-every key matching `MERIDIAN_SECRET_*` before passing env to any guardrail script.
-Repo scripts are untrusted. Do not weaken this.
-
-**Do not hoist the lazy import in `budget.py`.** `extract_cost_usd_from_json_line`
-imports `harness.common` lazily to break a circular dependency: `safety.budget` →
-`harness.common` → `harness.adapter` → `launch.launch_types` → `safety.policy`. Moving it to module
-level creates a circular import at load time.
-
-## Permission Policy
-
-`policy.py` builds one `PermissionPolicy` per launch: the tool and platform rules, sandbox,
-the defaulted typed network policy (`Allow(deny)` or `Hosts(allow, deny)`, with empty Hosts
-meaning deny), the explicit workspace roots a native read-only sandbox must protect, and
-approval. A bundle may carry `SandboxDerivedNetwork` until Meridian's final sandbox
-precedence is applied; the durable `ResolvedExecutionPolicy` uses only a resolved network
-or `None`, and `ResolvedLaunchSpec.permission_policy` always carries the resolved value.
-Harness-owned user-config diagnostics are warnings, not policy inputs; nothing in
-`safety/` knows their meaning.
-The tool rules are Mars's typed rules (`lib/tools.py`). The policy
-answers the allowlist questions (`is_allowlist`, `allowed_tools`) and writes each
-per-capability allowlist into its rules as an unscoped deny, so no compile re-derives them.
-`EnforcementReport` (a tuple of `ReportLine`) is the shape each compile reports what it
-enforced in. Each harness network projector returns native settings and the effective typed
-policy together. Guardrail containment is exact: a child that allows nothing is always
-contained; otherwise finite child allows are a subset of the caller and child denies are a
-superset. Wildcards are canonical strings, not expanded.
-
-## Entry Points
-
-- `budget.py` — `LiveBudgetTracker`, `Budget`, `BudgetBreach`
-- `guardrails.py` — `run_guardrails()`
-- `policy.py` — `PermissionPolicy`, `build_permission_policy()`, `complete_report()`
-
-## Depth
-
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — budget cost field ordering, guardrail
-command resolution by platform, permission policy,
-circular import dependency map
-
-## Related
-
-- `../launch/permissions.py` — bind-time platform rules (nested-agent and built-in-agent
-  denies, exact/prefix Meridian command grants)
-- `../harness/common.py` — provides `iter_nested_dicts` used by budget extraction
+[.context/CONTEXT.md](.context/CONTEXT.md) — cost field ordering, guardrail command
+resolution, permission policy, import map. Bind-time platform rules:
+`../launch/permissions.py`.

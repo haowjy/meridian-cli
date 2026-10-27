@@ -5,9 +5,31 @@
 Two files form one unit:
 
 - **`git_autosync.py`** — sync cycle orchestration, git subprocess calls, hook protocol (`execute` → `_sync` → `_result`)
-- **`autosync_store.py`** — artifact format ownership: conflict JSON schema, sync state JSON, AGENTS.md notice injection/removal. Stdlib-only, zero meridian imports.
+- **`autosync_store.py`** — artifact format ownership: conflict JSON schema, sync state JSON, AGENTS.md notice injection/removal. Imports only `meridian.lib.platform.locking` (the reentrant sync-root transaction lock).
 
 They are designed together for potential extraction into a standalone plugin package. If you refactor one, check the other for interface assumptions.
+
+## Reference
+
+### GitAutosync behavior
+
+`GIT_AUTOSYNC` is the canonical example of a built-in hook. Key behaviors:
+
+- **Commit-first**: local changes are committed before fetch/merge, so local work is never at risk from the incoming merge
+- **Merge strategy**: fetches `origin`, then runs `git merge origin/<branch>` — not `pull --rebase`. Local commits are preserved as-is; remote changes are merged in on top.
+- **Local-only mode**: when no remote is configured, stops after commit (skips fetch/merge/push)
+- **Conflict policy**: a merge conflict created by autosync is recorded through `autosync_store` and aborted. `"abort"` (default) and `"leave"` govern only a merge or rebase already in progress when the run starts: abort and continue, or leave it in place and skip.
+- **Conflict retries**: a later event retries the commit/fetch/merge workflow. If that merge conflicts while any unresolved conflict record exists for the sync root, it aborts and returns `skip_reason="conflict_detected"` without adding another record.
+- **Excluded file stashing**: files matching `exclude` patterns are stashed before merge and popped after, preventing dirty working-tree state from blocking the merge
+- **Divergence fallback**: `rev-list --left-right --count` is tried first; falls back to `git log --oneline` pair if that fails; returns `skip_reason="divergence_check_failed"` if both fail
+- **Default ignores**: `.git` and `**/.git` are written into `.git/info/exclude` on each run
+- **Always returns `HookResult`**: never raises. Failures emit `outcome="skipped"`, not exceptions — the dispatcher is fail-open for `observe` and `post` events
+
+
+### Notify built-in
+
+- `notify.py` — `NOTIFY`: delivers a notification event's `HookContext.notification` through `lib/notify`'s `send()` to the channels its row's `options.channels` names (unset: `send`'s defaults), with an optional `options.priority`. `HookResult.details["transports"]` names successful backends, partial delivery goes in `warning`, failure names each failed transport in `error`, and a route that delivered nothing is skipped (`disabled`). Unnamed `notify` rows are all named `notify` (`identity_options = ()`).
+
 
 ## Contracts
 

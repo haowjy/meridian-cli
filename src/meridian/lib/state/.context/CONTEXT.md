@@ -4,44 +4,67 @@
 
 ### Dual-Root Layout
 
-State splits across two roots:
+State splits across distinct roots; know which goes where before writing anything:
 
 ```
 meridian.toml
   [project] id                      — committed machine-managed project identity
 
 bare path
-  sha256(canonical path)            — ad-hoc identity; no file written there
+  sha256(canonical path)            — ad-hoc identity; no file is written there
 
 ~/.meridian/projects/.locks/<id>.lock
-                                    — launcher-created project-lifetime gate outside deletable
-                                      root; POSIX acquisition opens it read-only
+                                    — shared session-lifetime / exclusive deletion gate
+
 ~/.meridian/projects/<id>/          ← user runtime, never committed
-  origin.json                       — ad-hoc attribution/activity only
-  sessions.jsonl                    — all session events, append-only
-  sessions.jsonl.flock
-  session-id-counter                — monotonic c1, c2, …
-  sessions/                         — per-session lock + lease files, plus <chat>/work,
-                                      the stable link to the chat's active work dir
-  spawn-id-counter                  — monotonic p1, p2, …
-  locks/spawns/<id>.lock            — stable per-spawn mutation lock
-  locks/process-scopes/<id>.lock    — stable process-scope projection lock
-  locks/reaper-cleanup/<id>.lock    — stable reaper cleanup lock
+  origin.json                       — ad-hoc path attribution and activity only
+  sessions.jsonl                    — session events (append-only; absent v means v1,
+                                      unsupported versions warn and are skipped by
+                                      reads; read-then-append decisions refuse them
+                                      in scope)
+  sessions/<chat>/work              — stable symlink to the chat's work directory: the
+                                      item's `work-items/<id>/work` link, else the
+                                      execution's ambient directory; a projection of
+                                      the session row, never authority
+  sessions/<chat>/task              — stable symlink to the chat's source checkout: the
+                                      execution's pinned checkout, else the item's
+                                      `work-items/<id>/task` link, else the project
+                                      root (`launch/session_links.py` publishes both
+                                      for every live execution, primary or spawn)
+  work-items/<id>/work              — the item's directory, in `work/` or the archive
+  work-items/<id>/task              — the item's `task_dir` while it is a directory,
+                                      else the project root, whether the item is active
+                                      or done (`work_store.item_checkout()`, the one
+                                      rule); both written only by the work store,
+                                      inside its lock, and rebuildable
+  locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
+  locks/process-scopes/<spawn_id>.lock
+                                    — stable process-scope sidecar mutation lock
+  locks/reaper-cleanup/<spawn_id>.lock
+                                    — stable reaper cleanup lock
   locks/gc.lock                     — lock-GC pass serialization
-  spawns/
-    .staging/<unique>/              — complete unpublished spawn row
-    <id>/
-      state.json                    — authoritative spawn state (schema v3)
-      starting-prompt.md            — prompt body (written once)
-      history.jsonl                 — legacy runner stream; no longer written, removed by session archive prune
-      attempt-N/                    — legacy retry evidence; new runs do not create it
-      last-observed-event.json      — legacy checkpoint; no longer written, removed by session archive prune
-      runner-lifecycle.jsonl        — runner lifecycle breadcrumbs
-      process_scopes.json           — durable process identities
-      reaper_cleanup_claim.json     — pending finalize-first cleanup targets
-      report.md · stderr.log · params.json · tokens.json
-<context.work root>/<slug>/         ← context-resolved, not repo-local
-  __status.json                     — mutable per-work-item metadata
+  spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
+  spawns/<spawn_id>/
+    state.json                      — authoritative spawn state (schema v3)
+    launch.lock                     — runner-lifetime flock, acquired before publication
+    history.jsonl                   — legacy runner event stream (no longer written), never read
+    attempt-N/                      — legacy retry evidence; new runs do not create it
+    runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
+    process_scopes.json             — durable process identities + release markers
+    reaper_cleanup_claim.json       — pending finalize-first cleanup targets
+    permission_requests.jsonl       — requests the model made that nobody could approve
+                                      (`permission_journal.py`: one format for broker and
+                                      finalization writers; `spawn show` reads it)
+    report.md · stderr.log · params.json · tokens.json
+    observed-spawns.json            — this parent's consumed child IDs and explicit-wait
+                                      leases; shared by Pi and Claude delivery; goes with
+                                      the spawn, so pruning one forgets its consumption
+  pi-bash/<spawn_id>/observed-spawns.json
+                                    — legacy-observed-spawns (#719): read, never deleted,
+                                      and mirrored by record() when this Pi dir exists
+<context.work root>/<slug>/         ← context-resolved, NOT repo-local
+  __status.json                     — mutable per-work-item metadata; readers accept
+                                      absent v as v1, writers do not emit v yet
   prompts/ handoffs/ …              — work artifacts
 ```
 
@@ -117,27 +140,6 @@ protocol marker and commit only at their accepted-running boundary.
 
 ## Contracts
 
-### Locked Spawn Mutation
-
-Every mutation of a published spawn calls `write_state_locked()`. It acquires the
-stable per-spawn lock, re-reads `state.json`, applies a pure mutator, and writes the
-result atomically. Lifecycle-owned in-memory records are read hints, never write
-snapshots.
-
-### Atomic Write Contract
-
-All state files are written through `atomic.py`:
-
-- `atomic_write_text()` / `atomic_write_bytes()`: write to a same-directory temp
-  file, `os.fsync()`, then `os.replace()` (atomic rename). On POSIX also fsyncs
-  the parent directory. Either the old file or new file exists — never a partial
-  write.
-- `atomic_publish_dir()`: require a nonexistent destination, rename a complete
-  same-volume directory into place, then fsync the destination parent.
-- `append_text_line()`: opens in binary mode so JSONL newline encoding and byte
-  offsets remain stable. It is the raw primitive; durable appends go through
-  `jsonl.py` (below).
-
 ### JSON Sidecar Contract (`json_doc.py`)
 
 Small JSON sidecars (session leases, primary metadata, process scopes, cleanup
@@ -184,19 +186,6 @@ on next read.
 `spawns/.staging/<spawn-id>-<pid>-<random>/`, then publishes the complete row with one
 directory rename while holding `spawns_flock`. Runtime-write startup removes abandoned
 `.staging/*` entries under the same lock; it never garbage-collects published rows.
-
-### Read vs Write Root Resolvers
-
-`paths.py` provides two resolution functions. Use the right one:
-
-| Resolver | Creates UUID? | Use when |
-|---|---|---|
-| `resolve_project_runtime_root()` | No | Read paths (list, show, status) |
-| `resolve_project_runtime_root_or_none()` | No | Read paths where caller needs to know if uninitialized |
-| `resolve_project_runtime_root_for_write()` | Materializes/mints | Write paths (start spawn, record session) |
-
-Using `*_for_write()` on a read path mints a marked project's ID or materializes
-an ad-hoc user-state root. Either is an unexpected read side effect.
 
 ### Monotonic ID Generation
 
@@ -276,13 +265,6 @@ Thread-local reentrancy: a thread that already holds the lock can re-enter on th
 same path without deadlocking. Do not use `threading.Lock` or `fcntl` directly —
 the platform module handles both OS and thread-reentrancy.
 
-Per-spawn lock paths stay stable while their spawn exists. `lock_gc.py` may unlink an
-orphan only under a fresh, non-reentrant validated exclusive acquisition, and cleaned
-session locks use the same unlink-before-release primitive. No other release or delete
-path may unlink coordination locks. In particular, unlinking while a reentrant outer
-frame remains locked strands that frame on an orphaned inode and permits split-brain on
-a recreated path.
-
 `work_scope.py` resolves each work directory. `work_state.py` owns the work-item
 models, metadata codec, and shared directory-location primitives. `work_store.py`
 provides pure read projections; `work_repository.py` serializes all status and
@@ -332,13 +314,6 @@ then drops the old name's links, and `work rename` must be re-run from the new n
 The window is microseconds; closing it would mean publishing the forward link before
 the move.
 
-**The two stores' locks are never held at the same time.** The work store's lock
-(`work-store.flock`) and the session pair (`session_store.session_writes`: the history
-mutation gate shared, then `sessions.jsonl.flock`) are each taken alone; a command that
-changes both (rename, delete, switch) runs them as sequential steps, work store first.
-Holding both is what deadlocked `work done` against `session restore`, which takes the
-gate exclusively and then the sessions lock.
-
 `move_work_dir` refuses when both locations exist, naming both, and never deletes
 either copy. Only `work delete --force` removes a directory.
 
@@ -359,21 +334,9 @@ New features that need user-level storage (git clones, cache, custom data) go un
 `get_user_home()` from `user_paths.py`. Do not hardcode `~/.meridian/` or introduce
 new OS-specific home-directory branches.
 
-### Anti-Patterns
+### Atomic writes
 
-**Don't read `state.json` without `read_state()`** — raw JSON reads bypass Pydantic
-validation and miss the `SpawnRecord` reconstruction from `starting-prompt.md`.
-
-**Don't use `*_for_write()` on read paths** — it mints or materializes identity,
-triggering setup side effects in CI and bare directories.
-
-**Don't use `open()` for state file writes** — use `atomic_write_text()` or
-`append_text_line()`. Plain writes don't survive crashes.
-
-**Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
-spawn ID allocation, initial row publication, and abandoned-stage GC. Acquiring it for
-later individual mutations creates unnecessary contention. Use `write_state_locked()`
-(per-spawn `locks/spawns/<id>.lock`) for external writes.
+`atomic_write_text()` / `atomic_write_bytes()` write a same-directory temp file at runtime-state mode `0600`, fsync, then `os.replace()`; user-owned project files and work-item metadata use the preserve-mode writer in `lib/platform/atomic.py`. `atomic_publish_dir()` renames a complete same-volume stage to a nonexistent destination and fsyncs the parent. `append_text_line()` is binary so JSONL offsets stay stable. Enforced by `tests/contract/test_state_write_conformance.py`.
 
 ## Related KB
 
@@ -383,6 +346,214 @@ later individual mutations creates unnecessary contention. Use `write_state_lock
   per-spawn state, session state, work item storage, and read vs write resolution
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/spawn-finalization.md` — terminal write
   authority lattice, how finalization interacts with the reaper
+## Reference details
+
+### Work-item metadata and project identity
+
+`project_identity.py` is the only identity reader and writer. Its named minting
+seam atomically writes init scaffolds with their committed identity. A root
+containing `meridian.toml` or `mars.toml` has committed identity; a marker-less
+root gets a stable `adhoc.<slug>.<hash>` ID derived from its canonical path. Ad-hoc
+state is materialized only on writes, under `~/.meridian/projects/<id>/`, and
+nothing is written into the source directory. Committed projects can move without
+losing runtime history; moving an ad-hoc directory changes its identity. Project
+lifetime gates sit outside the deletable project root and are never unlinked.
+Real-launch materialization pre-creates the exact lock inode;
+launch bind only projects that path and remains write-free.
+
+Work items live under the `[context.work]` root (default
+`{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
+`work_state.py` — **never** the project repo. See `docs/configuration.md` for
+context-path resolution.
+
+Work metadata reads tolerate, preserve, and warn about unknown fields. A newer `v`
+gets a compatibility marker displayed as `requires-newer-meridian`; it never
+collides with the stored status, and mutations validate every located copy before
+touching disk. Malformed metadata still projects directory defaults, but always
+warns with the file path. Repeated reads warn once per file per command.
+
+
+### Spawn mutation seam
+
+Every update to a published spawn calls `write_state_locked()`. It acquires
+the shared history mutation gate, then `locks/spawns/<id>.lock`, re-reads current state, applies a pure mutator, and writes
+atomically. The lock identity is outside the artifact directory it protects and remains
+stable while the spawn exists. Orphaned identities are unlinked only through lock GC's
+validated-exclusive, unlink-before-release seam.
+
+Process-scope registration and release markers route through the locked sidecar
+mutation seam. When both locks are needed, acquire the spawn-state lock before the
+scope-sidecar lock. Registration is refused after the spawn becomes terminal or a
+cleanup claim exists, so a process scope cannot appear after cleanup targets are fixed.
+Any writer into a destructible `spawns/<id>/` directory that can outlive deletion must
+not recreate its owner. Parent-creating mutations take the spawn-state lock and refuse
+a missing published row through `published_artifact_lock()`; callback-only writers use
+`mutate_published_spawn_artifact()` on the same seam. Signals, scope, history,
+reaper diagnostics, failure sentinels, and harness journals all use it.
+The spawn repository and process-scope projection are persistence leaves with a
+one-way dependency: the projection may use repository reads and lock paths, while
+the repository never imports the projection. Cross-leaf operations belong in
+`spawn_aggregate.py`; in particular, published-spawn deletion owns the lock order
+above. Reaper claims consume one immutable projection snapshot containing
+both scopes and released IDs, read under a single projection-lock acquisition.
+
+
+### Launch ownership
+
+`launch_lock.py` owns the non-reentrant runner-lifetime flock. It is separate
+from mutation locks: the background worker inherits the same open-file
+description via `dup`/`pass_fds`, then immediately restores close-on-exec and
+records its own identity. Release closes descriptors; never use `LOCK_UN`,
+which would unlock the worker too. Harnesses never inherit this descriptor.
+`LaunchSlot` owns creation before ID allocation; `bind_staged()` returns a frozen
+`LaunchHandle` capability with a concrete ID and fd. Lifecycle/service creation
+requires a slot; only low-level `start_spawn` permits lockless test seeding.
+
+Explicit continue resolves the named spawn's current chat owner, takes that
+owner's lock before the named source lock, and sweeps their birth-verified scopes
+before creating another row. An exact-continue parent publishes the new row as
+the chat owner while its launch lock is still held; a background worker confirms
+that pointer after hand-off. Lockless legacy rows alone use
+`legacy_runner_alive()`'s 15-second pre-worker PID-less window and convert under
+the mutation lock. Lock-backed rows have no grace: a free lock derives terminal.
+This does not change v3 status authority.
+
+
+### History discovery and retention
+
+
+Machine-wide retention has disjoint owners: committed-root scanning rejects
+`adhoc.*`, while ad-hoc scanning accepts only that prefix. Ad-hoc activity is the
+latest tree mtime under `projects/<id>/` or `context/<id>/`, including
+`origin.json`, plus persisted spawn/session start and finish times. Pruning
+rechecks eligibility under the exclusive project-lifetime gate and removes
+`projects/<id>/` with `context/<id>/`.
+`state.adhoc_retention_days` is user-config/environment-only; cwd project config
+must never control a machine-wide scan.
+
+Use `history_index.py` for filtered discovery, not repeated broad authority scans.
+Keep lifecycle/control decisions on direct authoritative reads. All new indexed
+writers must publish dirty intent before file mutation; SQLite is never a writer
+dependency. Restored `record_mode="historical"` aggregates are inert and immutable;
+their reserved `historical-` generation prefix makes the append guard O(1).
+Per-operation session reads and all appends use the keyed seam in `session_store.py`;
+multi-chat reads use one `chats_rows` pass, never a loop over single-chat reads.
+Indexed queries build a missing projection, then make one catch-up attempt bounded
+by the caller deadline (two seconds by default). Contention raises
+`HistoryIndexBusy`; incomplete coverage is never a negative result. Every caller
+gives an absent projection a separate, sticky 15-second cold build before its
+ordinary read attempt. An exhausted cold build latches failure.
+Warm catch-up projects `sessions.jsonl` to the committed end even when its writer
+lock is busy; the lock gates marker acknowledgement, not the read. Spawn and archive
+catalog projection still require their source locks. Incremental session catch-up
+loads only the working sets for chats touched after its cursor.
+The index file and its sidecars (marker queue, GENERATION, catch-up/database/marker
+locks, init latch) are named by both `SCHEMA_VERSION` and the latest supported
+session event version; either change builds a new file from authority and never
+touches an older build's file. Unsupported session rows are skipped; the cursor
+stores their versions so every indexed read warns.
+Never migrate in place.
+See [history.md](history.md) before changing locks, projection,
+transcript retry behavior, ZIP retention, or restore.
+
+
+### Reconciliation: repair and cleanup
+
+
+Readers get status only from `spawn_status.py`: `read_derived()` for one spawn and
+`overlay_derived()` for rows from a scan or the index. For lock-backed rows, they hold
+the shared launch lock across the authority read. Lockless legacy rows use the bounded
+legacy liveness rule instead. Both may return an in-memory terminal status, never
+persist state or terminate processes, and are safe at any depth.
+
+Use derived status for liveness, display, wait, and idle questions. Selection for
+cancel/archive/destruction uses stored status until dead-launch finalization persists
+an outcome. `claim_dead_launch()` returns `Claimed`, `Settled`, `Live`, or `Lockless`;
+only `Claimed` authorizes `SpawnApplicationService.finalize_dead_launch()`, the sole
+writer of a dead lock-backed launch's outcome.
+
+`reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
+background repair and fails closed outside root depth. It delegates persistence to
+`finalize_dead_launch()`, which retains the claimed runner-lifetime `launch.lock`;
+lockless legacy rows are never finalized here. The repairer snapshots a cleanup claim,
+persists the derived outcome while retaining the launch lock, then terminates the
+claimed, birth-validated scopes. A separate stable
+cleanup lock prevents concurrent repairers from double-signalling; terminal rows
+retain failed claims for the next doctor pass. Startup candidate discovery streams
+authoritative spawn rows directly, selecting active rows and rows with a cleanup
+claim; it does not trust the disposable history index or retain a corpus-sized scan.
+Orphan primaries are captured only after the whole pass: the capture guard defers
+while any row bound to the same native session is active, and crashed `--continue`
+generations share one. Primary scope termination additionally requires positive
+runner-death evidence against the recorded birth, with the same one-second clock
+tolerance as the liveness check. Unknown identity and access errors never authorize
+primary scope termination, including replayed terminal claims; they do not block
+status finalization.
+Read-only projected status is not authorization to terminate a scope.
+
+
+### Native chat identity
+
+
+A chat keeps one `(harness, native_store, harness_session_id)` binding across
+starts and updates. `update_session_harness_id` atomically returns
+`BindOutcome` (`Bound`/`Same`/`Conflict`) from the one pure rule in
+`native_binding.bind`; callers mirror its accepted ID, not their candidate.
+`session_fold.py` owns event models and replay; `by_native_key(records)`
+inverts accepted chat records without discarding aliases or doing I/O. A later
+accepted start projects every earlier unstopped live generation of that chat as
+stopped at the new start time: ordinary starts hold the chat's exclusive lifetime
+lock, while observed-chat starts mint a new chat and immediately stop it.
+Historical multi-ID arrays are ignored on read.
+
+Fork and context-source ancestry belong to the chat, not its latest generation:
+accepted starts carry both parent identities and original creation time forward.
+Tmux targets belong to the generation and may be absent. HistoryIndex projects
+parent edges and native model observations from the journal; list consumers batch
+model lookups rather than scanning observations once per row.
+
+
+### Module map
+
+
+- `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
+- `paths.py` — `RuntimePaths`, read vs write root resolvers.
+- `spawn_store.py` — listing/query, creation, and mutation interface; scans return `SpawnScan`.
+- `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
+- `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
+  codec, pure reads, and the single locked mutation repository, respectively.
+  `work_repository.move_work_dir()` is the one active↔archive move: it refuses when
+  both copies exist and never deletes one. The location, not a status field, says
+  whether an item is active, so `work done` moves at once. `write_state_locked`
+  republishes the item's `work-items/<id>/{work,task}` links around every mutation, so
+  nothing else repoints anything when an item moves.
+- `session_store.py` — Session event I/O, lease ownership, and the canonical
+  `session_exists()` predicate (a chat record exists; a harness ID is not required).
+  `session_writes()` is the one session write epoch and `set_work_attachments()` the
+  one batched attachment write.
+- `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars,
+  and the `VersionedPrivateDoc` base for private coordination files.
+- `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC;
+  a version mismatch remains absent behaviorally but warns that another build wrote the file.
+- `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
+- `atomic.py` — atomic write primitives. All state writes use these.
+- `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.
+- `spawn_status.py` — lock-consistent status for every reader and
+  `claim_dead_launch()`'s typed writer-side claim.
+- `spawn_observations.py` — consumption records and birth-verified explicit-wait
+  leases across primary generations. Writes go through the parent's published-spawn
+  lock and never recreate a deleted spawn directory; readers union the current file
+  with the legacy `pi-bash/` one. Normal wait/ack writers block for that lock;
+  best-effort shown-result observations wait up to one second and preserve their
+  output when the lock or filesystem is unavailable.
+- `spawn_ownership.py` — the one rule for which parents a delivery caller owns: a live
+  primary owns every primary generation of its chat, anyone else owns only itself. Also
+  owns `is_owed_child` (a child is owed only when `launch_mode == "background"`), which
+  the Pi spawn-watch extension mirrors as `isBackgroundLaunch`. `spawn collect`, the Pi
+  launch's spawn-watch scope, and the Pi drain all read it here.
+- `reaper.py` — root-only repair that claims dead launches, persists their projected
+  outcome through the application service, then cleans claimed process scopes.
+
 ## Related .context/
 
 - [../../harness/.context/CONTEXT.md](../../harness/.context/CONTEXT.md) — `SpawnExtractor` contract and harness-owned native evidence

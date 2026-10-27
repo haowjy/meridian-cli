@@ -1,77 +1,30 @@
 # platform/process_scope/
 
-Process containment: ensures the entire subprocess tree Meridian starts is killed
-when a spawn ends, whether that's a clean completion, a cancel, or a Meridian crash.
-Single-PID kill is not enough — reparented children escape it.
-
-Three backends behind one API seam (`ScopedProcessHandle.terminate()`):
-
-The Windows backend is legacy, untested code retained behind the platform seam;
-do not extend it as product support.
+Process containment: the whole subprocess tree Meridian starts dies when a spawn ends,
+cancels, or Meridian crashes. Single-PID kill is not enough; reparented children escape it.
 
 | `containment` | Backend | Mechanism |
 |---|---|---|
-| `posix_pgid` | `posix.py` | `os.killpg()` — kills the entire process group |
-| `windows_job` | legacy Job Object | Handle-owned termination; snapshots use tree fallback |
-| `pid_tree_fallback` | `fallback.py` | psutil tree snapshot + SIGTERM → SIGKILL |
+| `posix_pgid` | `posix.py` | `os.killpg()` on the process group |
+| `windows_job` | legacy Job Object (untested; don't extend) | handle-owned termination |
+| `pid_tree_fallback` | `fallback.py` | psutil tree snapshot, SIGTERM → SIGKILL |
 
-## Key Rules
+## Rules
 
-**Use `ScopedProcessHandle.terminate()` from async launch callers.** It handles
-dispatch, exception safety, and logging. Do not call `posix.terminate_pgid()` or
-`windows_job.terminate_job()` directly from outside this package.
+- **Terminate through `ScopedProcessHandle.terminate()`**; never call
+  `posix.terminate_pgid()` or `windows_job.terminate_job()` from outside the package. It
+  must not raise: failures are logged (`process_scope.terminate_failed`) and returned as a
+  degraded `CleanupResult`. From hooks and synchronous teardown with no event loop use
+  `fallback.terminate_tree_sync()`.
+- **Capture `scope_snapshot` before `connection.stop()`**; `stop()` clears both it and
+  `subprocess_pid`, and without the snapshot the containment boundary is lost.
+- **Every adapter validates `root_created_at_epoch` before signalling.** A birth time more
+  than 1 second off means PID reuse: skip with `skip_reason="pid_reuse_detected"`. `0.0`
+  means unknown and skips the check.
+- **Prefer POSIX group kill**: the group reaches descendants reparented to PID 1; the psutil
+  fallback is degraded. Scope roots are launch shims, so the PGID is the cleanup handle.
+  `pgid_reachable` in reaper diagnostics is best-effort only (signal 0 counts zombies and
+  has no group birth-time guard).
 
-**Capture `scope_snapshot` before `connection.stop()`.** Both `subprocess_pid` and
-`scope_snapshot` are cleared inside `stop()`. The terminate call needs the pre-captured
-snapshot — if you call terminate after stop without a snapshot, the containment boundary
-is lost.
-
-**`terminate()` must not raise.** Exceptions are caught, logged with
-`process_scope.terminate_failed`, and returned as a degraded `CleanupResult`.
-Teardown paths must remain safe even when containment fails.
-
-**Every adapter validates `root_created_at_epoch` before sending any signal.** If the
-current process birth time differs from the recorded value by more than 1 second, the
-PID was reused — the kill is skipped with `skip_reason="pid_reuse_detected"`. A sentinel
-value of `0.0` means "unknown" — the check is skipped.
-
-## Why POSIX Group Kill
-
-`os.killpg(pgid, SIGTERM)` sends to every process in the group, including descendants
-that have reparented to PID 1. `SIGTERM` to the root PID only reaches the root — if
-it's already dead, reparented children escape entirely. Use POSIX containment when
-available; psutil fallback is accepted as degraded.
-
-Scope roots are launch shims and therefore identify what Meridian launched; they are
-not guaranteed to remain the serving backend process. The PGID is the cleanup handle
-that contains shim descendants, including reparented children. Reaper diagnostics
-report `pgid_reachable` as best-effort evidence only: signal 0 counts zombies, has no
-process-group birth-time reuse guard, and cannot see a child that changes its own
-process group.
-
-## Legacy Windows Job Object Handle Lifetime
-
-`assign_to_new_job(pid)` returns `(job_name, job_handle)`. The handle must stay alive —
-`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` kills all job members when the handle is closed. `ScopedProcessHandle` owns and
-explicitly closes it after termination.
-
-## Entry Points
-
-- `base.py` — `ScopedProcessHandle`, `ProcessScopeSnapshot`, `CleanupResult`
-- `posix.py` — `terminate_pgid()` (POSIX backend)
-- `windows_job.py` — `assign_to_new_job()`, `terminate_job()` (Windows backend)
-- `fallback.py` — `terminate_tree()` (async), `terminate_tree_sync()` (sync, no event loop)
-
-Use `terminate_tree_sync()` from hook contexts and synchronous teardown paths where no
-event loop is running.
-
-## Depth
-
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — PID reuse guard mechanics (PROC-006),
-POSIX orphan sweep (PROC-004), legacy Job Object status, fallback snapshot race
-
-→ [../.context/CONTEXT.md](../.context/CONTEXT.md) — parent platform invariants and import rules
-
-## Related
-
-- KB: `$MERIDIAN_CONTEXT_KB_DIR/architecture/process-scope.md` (see `meridian context kb`)
+[.context/CONTEXT.md](.context/CONTEXT.md) — PID reuse guard, orphan sweep, Job Object
+handle lifetime · [../.context/CONTEXT.md](../.context/CONTEXT.md)
