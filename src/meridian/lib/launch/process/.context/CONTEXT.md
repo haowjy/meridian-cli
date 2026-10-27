@@ -144,7 +144,7 @@ fallback. Live TERM/HUP/pane-kill/scope-stop probes therefore cover PTY black-bo
 native managed attach; native black-box is covered only by the fake-launcher seam test
 (`tests/integration/launch/test_blackbox_primary_signals.py`).
 
-## Session ID Observation — Invariant I-4
+## Session ID Observation
 
 `bind_entry` owns pre-exec assignment. `NativeRun.observe` checks only the first
 owned signal against pre-exec facts. `conclude_native_run` then observes artifact
@@ -176,5 +176,31 @@ ID and paths after the primary CLI's preview bind.
 
 ## Lateral Links
 
-→ [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — composition seam, three driving adapters, invariants I-1/I-4/I-10
+→ [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — composition seam, three driving adapters, rules
 → [../../streaming/.context/CONTEXT.md](../../streaming/.context/CONTEXT.md) — streaming spawn execution (sibling path)
+
+## Terminal ownership (from AGENTS.md)
+
+**The TUI owns the terminal exclusively.** `terminal_ownership.py` duplicates the
+terminal descriptors, redirects launcher fd 0 to `/dev/null` and fds 1 and 2 to
+the run's dedicated `launcher.log`, and yields the duplicates before the TUI
+process starts. Programs that open `/dev/tty` directly can still draw on the
+screen. Both black-box and managed attach callers keep that window around start
+callbacks and the relay through child exit; relays retain their own descriptor
+duplicates so a timed-out daemon relay cannot write through a recycled fd. New
+native-terminal drivers must enter the same window and explicitly attach the TUI
+to its yielded fds. Terminal capability and `isatty` checks on fds 0/1/2 must run
+before the window or use its saved fds. A background write racing restoration can
+split across the descriptor swap; this is accepted because the TUI has already
+exited. Only the post-exit result renderer may point users at captured launcher
+output on a normal exit. On an escaping error, the ownership window emits the
+same pointer after restoration, and only when the current window grew the log.
+
+## Native job control (from AGENTS.md)
+
+**Native job control belongs to the shell.** Launcher and TUI share its foreground
+process group. Both drivers enter `native_sigint_shield()` on the main thread alongside the
+terminal window, intercepting SIGINT only during the native TUI lifecycle;
+SIGTSTP is left alone. The native gate records no pgid and sends one root TERM on
+runner death, never a shared-group signal or delayed KILL. The managed backend
+uses its existing separate group gate.

@@ -2,7 +2,7 @@
 
 ## Architecture
 
-### The Prepare/Bind Composition Seam (Invariant I-1)
+### The Prepare/Bind Composition Seam 
 
 Runtime launch composition follows the prepare/bind pipeline in `context.py`.
 `prepare_launch_surface()` produces the mandatory `PreparedLaunchSurface`, then
@@ -192,24 +192,17 @@ Three concentric layers inside the spawn path, each defined by function scope:
 - `SpawnRequest` and `LaunchRuntime`: frozen Pydantic, JSON-safe field types only.
   No `Path` on `SpawnRequest`. No `arbitrary_types_allowed`.
 - `LaunchContext`: frozen dataclass. No pre-composed intermediate DTOs.
-- No derived/cached state on any DTO — factory recomputes from inputs on each call.
+- `SpawnRequest` carries resolved display metadata set at prepare time (`skill_paths`, `model_selection_*`, `selection_report`, `cli_command`, `permission_report`); executors must not compose from it. `PreparedLaunchSurface` caches the expensive resolution; `materialize_launch_context()` returns a new `LaunchContext`.
 
 Adding mutable state or `Path` fields to `SpawnRequest` breaks the JSON-safe
 constraint required for the background worker's disk-persisted request.
 
-### Invariants (from KB `architecture/launch-system.md`)
+### Rules this directory holds
 
-| Code | Rule |
-|------|------|
-| I-1 | All runtime composition uses `prepare_launch_surface()` then `bind_launch_context()`; adapters do not compose independently |
-| I-2 | Driving adapters and connections consume the bound argv, env, and permissions without reconstruction |
-| I-4 | `conclude_native_run()` once per turn after teardown joins: IDs → adapter → boundary → attribution |
-| I-5 | `SpawnRequest`/`LaunchRuntime` carry no derived state; `LaunchContext` complete at construction |
-| I-10 | Fork materialization (`fork.py`) happens only after spawn row exists |
-| I-13 | `LaunchContext.warnings` is the sole channel for composition warnings |
-
-These are checked on every PR touching `launch/`, `harness/`, `ops/spawn/`, `app/`,
-or `cli/streaming_serve.py`.
+- All runtime composition goes through `prepare_launch_surface()` then `bind_launch_context()`; driving adapters and connections consume bound argv, env and permissions without reconstruction.
+- `conclude_native_run()` runs once per turn after teardown joins: IDs → adapter → boundary → attribution ([process/.context/CONTEXT.md](../process/.context/CONTEXT.md)).
+- Fork materialization (`fork.py`) happens only after the spawn row exists.
+- `LaunchContext.warnings` is the sole channel for composition warnings.
 
 ### Composition Surfaces
 
@@ -668,10 +661,10 @@ so loaded skills reach the agent with the rest of the prompt. Don't add a skill 
 ## Patterns
 
 **Never call `fork.materialize_fork()` before the spawn row exists.** Fork writes
-a session artifact referencing the spawn — the row must exist first (I-10).
+a session artifact referencing the spawn — the row must exist first.
 
 **Warnings go to `LaunchContext.warnings`, not stderr or logs.** Adapters that
-surface composition issues through other channels violate I-13 and make warnings
+surface composition issues through other channels are wrong: they make warnings
 invisible to callers.
 
 **Background worker trusts the persisted `BackgroundWorkerLaunchRequest`.** It does
@@ -714,3 +707,88 @@ and projected with workspace grants into the reserved config agent by
 `OPENCODE_CONFIG_CONTENT` at bind for both versions; transports consume it unchanged.
 The ordered policy precedes appended workspace grants, and JSON serialization must
 preserve rule order. See [harness context](../../harness/.context/CONTEXT.md).
+
+## Skill loading (from AGENTS.md)
+
+Mars-resolved skill content comes from the launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
+not from reading `.mars/skills/` on disk. `_build_resolved_skills_from_bundle()` in `policies.py`
+constructs `ResolvedSkills` from bundle data and preserves `source_path` for snapshots and
+workspace projection. This includes bundled Meridian skills when the profile loads their
+Mars-provided copies. It reconstructs a primary-root path only for older producers that omit
+provenance. Snapshot replay uses only its persisted `loaded_skills`; an empty field means no
+skills are loaded.
+
+Meridian-owned operational skills stay in the wheel and are provided into the
+resolved Mars root before each launch. `bundled_skills.py` owns both the wheel
+inventory and the source a named `meridian skills` read may use. Names Mars reports
+as provided read from `.mars/skills/`; all others read from the wheel. Provided
+skills never enter harness-native skill directories.
+
+Wheel metadata builds the `# Meridian skills` trigger block. A skill already loaded
+by the Mars launch bundle has no trigger line, in either delivery mode: it is read
+from the bundle's copy, so a trigger could only point at a different copy. Otherwise,
+optional `metadata.mode` frontmatter gates the trigger on the resolved profile's
+declared mode, independent of whether the launch is a primary session or a spawn. The
+notify capability line uses the same mode gate. `meridian skills NAME` renders the
+selected copy under the same activation header injected skills get
+(`render_skill_block()`).
+
+The `bundle_adapter.py` module docstring inventories bundle fields Meridian deliberately does
+not read. `tools.rules` is the permission contract; `tools.mcp` is a flat list of permission
+names, never MCP server configuration.
+
+## Startup watchdog (from AGENTS.md)
+
+`_start_spawn_with_timeout()` in `streaming_runner.py` wraps the entire pre-connect
+span — backend boot, connection, and session handshake — with an outer
+`asyncio.timeout`. Default bound is 5 minutes, configured via
+`timeouts.startup_minutes` or `MERIDIAN_STARTUP_TIMEOUT_MINUTES`. Both the spawn
+path (`execute_with_streaming`) and the streaming-serve path (`run_streaming_spawn`)
+use the same helper. Exceeding the bound raises `StartupPhaseTimeout`, which the
+runner preserves as the turn's terminal failure.
+
+Rationale: before the watchdog, the pre-connect span was unbounded by accident. The
+recorded worst case was a spawn that wedged for 2h18m before any liveness signal.
+
+## Single-attempt execution and late diagnostics (from AGENTS.md)
+
+A Meridian harness turn executes once. Terminal frames, transport failures,
+timeouts, guardrails, identity failures, and generic subprocess failures all
+finalize that attempt without launch-level replay. Reports, usage, and identity
+come from `AttemptFacts` folded on live events; explicit terminal errors remain
+the causal final result. Transport-owned readiness polling may retry only within
+an adapter when the operation is demonstrably idempotent.
+
+Runner lifecycle diagnostics can execute after async boundaries. Their
+parent-creating writes use the published-spawn artifact mutation seam; never append
+late diagnostics directly into a spawn directory that retention may have deleted.
+Streaming budget checks observe typed cumulative `AttemptFacts.usage` immediately
+after the inline fold, before subscriber fan-out. Harness wire costs must first
+be normalized by the harness fold; a subscriber backlog cannot hide a breach.
+
+## Per-launch values stay out of the system prompt (from AGENTS.md)
+
+per-conversation values may stay in. Every execution has its own chat and so its own
+two links — `sessions/<chat>/work` and `sessions/<chat>/task` (`session_links.py`) —
+and their paths are per-launch for a spawn and per-conversation for a primary. So a
+spawn's run ID, its launching chat, and those two links go in the first user turn
+(`build_launch_facts_prompt()`), never the system prompt: sibling spawns then send
+byte-identical system bytes. A primary's own chat ID and its two links stay in the
+capability block, because a `--continue` replays no user turn. Bind also pins a
+checkout no store can recompute — this run's `--task-dir`, a launch from outside the
+project, or the pin its launcher passed on (read from the launcher's spawn scope, never
+from `MERIDIAN_TASK_DIR`) — in the execution's spawn scope before it publishes the
+links, and nothing else: a checkout that came from the item or the project root follows
+`work task-dir` and `work switch`, and `meridian task-dir clear` removes the pin. A spawn's `--goal`
+contract is its task turn (`_build_goal_instruction`'s text); a primary's is a
+guidance block, because goal text must never create a user turn, or a bare primary
+submits the goal as its first message, fresh and on every resume. A continued
+conversation inherits the goal from its row (`SpawnRecord.goal`), the way a continued
+spawn does. The work item's own goal is a pointer instead — `meridian work show`
+resolves the current item, so neither the text nor an ID that could go stale enters
+the prompt. An exact continue recomposes the system prompt from the launch snapshot
+(profile, loaded and available skills, inventory, execution policy, tools); within one
+Meridian version identical inputs produce identical bytes, so a fresh launch shares
+the cached prefix with its siblings and a continue keeps the conversation's. Only a
+real identity change — a new goal, surface, or config — may change them. Foreground
+and background spawns share one preamble for the same reason.

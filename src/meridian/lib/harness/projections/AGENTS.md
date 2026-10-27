@@ -10,11 +10,8 @@ Each projector is a pure function: `spec → (argv_additions, env_overrides)`. I
 knows everything about how a specific harness and mode receives its configuration —
 which flags exist, which are mutually exclusive, what goes in env vs argv.
 
-**Drift guards run at import time.** Each projector declares `_PROJECTED_FIELDS`
-(fields it maps to argv/env) and `_DELEGATED_FIELDS` (fields owned by the caller).
-`check_projection_drift()` runs when the module loads — if any spec field is missing
-from both sets, it raises `ImportError`. Adding a field to a `HarnessLaunchSpec`
-without updating the corresponding projector → startup failure.
+**Drift guard:** each projector declares `_PROJECTED_FIELDS` and `_DELEGATED_FIELDS`;
+`check_projection_drift()` raises `ImportError` at import when a spec field is in neither.
 
 ## Per-Harness Notes
 
@@ -27,28 +24,15 @@ without updating the corresponding projector → startup failure.
   `OPENCODE_CONFIG_CONTENT` (JSON), built at bind by `project_opencode_config.py`, not
   flags or a connection-time merge. `spec.agent_name` is selected wherever a session is opened or resumed; see
   [OpenCode prompt, agent and model delivery](../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
-- **Permission compile** (`permissions_<harness>.py`): one module per harness turns
-  `spec.permission_policy` into a typed native value (sandbox/approval modes, tool
-  allow/deny lists, OpenCode's version-canonical ordered agent rules). The harness's projectors call it and
-  spell the result as argv, env or payload; nothing outside the harness module reads the
-  policy's rules. The compile returns `(native value, EnforcementReport)`; its report is
-  registered as `HarnessProjectionPorts.permission_report`, and the harness's pure
-`effective_policy` port is registered beside it: the sandbox and shell network the harness
-really applies, which the child-spawn guardrail compares. Claude and Codex build it from
-the same pure network projector their compile uses, so compile, report, and guardrail
-cannot decide independently; Cursor maps its binary sandbox. OpenCode and Pi omit the port
-and get `UNENFORCED_POLICY` (`danger-full-access`, open network); `complete_report()`
-supplies their report line. The projectors, `--dry-run` and
-  `projection-manifest.json` all read these same policy facts.
+- **Permission compile** (`permissions_<harness>.py`): turns `spec.permission_policy` into a
+  typed native value plus `EnforcementReport`; projectors spell the result as argv, env or
+  payload and nothing else reads the policy's rules. Report and `effective_policy` ports
+  (what the child-spawn guardrail compares): [.context/CONTEXT.md](.context/CONTEXT.md).
 
 ## Key Rules
 
 **Don't call projectors directly from outside the adapter layer.** They are called
 by `adapter.resolve_launch_spec()` — that's the only intended callsite.
-
-**Adding a field to a `HarnessLaunchSpec` requires updating `_PROJECTED_FIELDS` or
-`_DELEGATED_FIELDS` in the corresponding projector.** Missing either → `ImportError`
-at startup.
 
 **An interactive starting prompt is argv's last item, after `--`.** Claude's
 `--add-dir <directories...>` is variadic: with no terminator it swallows a trailing
@@ -56,7 +40,7 @@ positional prompt, and the TUI opens with an empty composer. Claude and Pi end w
 `-- <prompt>`; the bare OpenCode TUI takes `--prompt <prompt>`. Pass every prompt
 argument through `_prompt_arg.check_prompt_argument` (rejects ≥ 128 KiB, the Linux
 per-argument limit). Pi reads a leading `@` as a file reference even after `--`, so
-its projector prefixes one space. Tests assert position, not just presence.
+its projector prefixes one space. 
 
 ## Entry Points
 

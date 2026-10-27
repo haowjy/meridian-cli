@@ -252,3 +252,19 @@ compile in `permissions_<harness>.py`.
   `SpawnParams` accounting invariant (the adapter-level counterpart to projection drift)
 - [../../../../pi_runtime/.context/CONTEXT.md](../../../../pi_runtime/.context/CONTEXT.md) —
   source of stable built extension artifacts that `pi_extension_projection.py` resolves
+
+## Permission compile and effective policy (from AGENTS.md)
+
+- **Permission compile** (`permissions_<harness>.py`): one module per harness turns
+  `spec.permission_policy` into a typed native value (sandbox/approval modes, tool
+  allow/deny lists, OpenCode's version-canonical ordered agent rules). The harness's projectors call it and
+  spell the result as argv, env or payload; nothing outside the harness module reads the
+  policy's rules. The compile returns `(native value, EnforcementReport)`; its report is
+  registered as `HarnessProjectionPorts.permission_report`, and the harness's pure
+`effective_policy` port is registered beside it: the sandbox and shell network the harness
+really applies, which the child-spawn guardrail compares. Claude and Codex build it from
+the same pure network projector their compile uses, so compile, report, and guardrail
+cannot decide independently; Cursor maps its binary sandbox. OpenCode and Pi omit the port
+and get `UNENFORCED_POLICY` (`danger-full-access`, open network); `complete_report()`
+supplies their report line. The projectors, `--dry-run` and
+  `projection-manifest.json` all read these same policy facts.
