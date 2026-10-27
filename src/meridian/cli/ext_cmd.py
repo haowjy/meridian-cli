@@ -17,7 +17,6 @@ from meridian.lib.bootstrap.services import build_extension_entrypoint, prepare_
 from meridian.lib.extensions.context import (
     ExtensionCommandServices,
     ExtensionInvocationContextBuilder,
-    build_extension_command_services,
 )
 from meridian.lib.extensions.dispatcher import ExtensionCommandDispatcher
 from meridian.lib.extensions.registry import build_first_party_registry, compute_manifest_hash
@@ -35,7 +34,7 @@ def _prepare_extension_runtime_read() -> tuple[
 ]:
     prepared = prepare_for_runtime_read(resolve_cli_project_root())
     application = build_extension_entrypoint(prepared)
-    services = build_extension_command_services(application=application)
+    services = ExtensionCommandServices(application=application)
     context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.CLI).with_authority(
         prepared.authority
     )

@@ -322,9 +322,7 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
 
     def resolve_launch_spec(self, run: SpawnParams) -> AdapterSpecT: ...
 
-    def launch_spec_warnings(
-        self, spec: ResolvedLaunchSpec
-    ) -> tuple[CompositionWarning, ...]: ...
+    def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]: ...
 
     def launch_environment_warnings(
         self,
@@ -353,9 +351,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str: ...
 
-    def env_defaults(
-        self, *, run: SpawnParams, env: Mapping[str, str]
-    ) -> dict[str, str]: ...
+    def env_defaults(self, *, run: SpawnParams, env: Mapping[str, str]) -> dict[str, str]: ...
 
     def project_launch_env(
         self,
@@ -636,9 +632,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         """Resolve typed launch spec from generic spawn parameters."""
         ...
 
-    def launch_spec_warnings(
-        self, spec: ResolvedLaunchSpec
-    ) -> tuple[CompositionWarning, ...]:
+    def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]:
         """Return non-fatal diagnostics produced while resolving a launch spec."""
 
         _ = spec
@@ -685,9 +679,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def blocked_child_env_vars(self) -> frozenset[str]:
         return frozenset()
 
-    def env_defaults(
-        self, *, run: SpawnParams, env: Mapping[str, str]
-    ) -> dict[str, str]:
+    def env_defaults(self, *, run: SpawnParams, env: Mapping[str, str]) -> dict[str, str]:
         """Optional process defaults; explicit inherited or launch values win."""
         _ = run, env
         return {}

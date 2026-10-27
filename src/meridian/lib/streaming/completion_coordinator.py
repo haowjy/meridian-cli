@@ -97,14 +97,12 @@ class CompletionCoordinator:
         close_outcome = self._profile.close_outcome(self.state, False)
         return self._candidate is not None and (
             self._profile.should_defer_close(self.state)
-            or
-            (
+            or (
                 self._phase in {"stabilizing", "validating"}
                 and close_outcome is not None
                 and close_outcome.status == "succeeded"
             )
-            or
-            self._success_validation is not None
+            or self._success_validation is not None
             or self._assessment is None
             or self._assessment.disposition == "unknown"
         )
@@ -137,12 +135,8 @@ class CompletionCoordinator:
         self._reset_cycle()
 
     def next_timeout(self) -> float | None:
-        if (
-            self._terminal_published
-            or (
-                self._candidate is None
-                and not self._profile.allows_evaluation_without_candidate()
-            )
+        if self._terminal_published or (
+            self._candidate is None and not self._profile.allows_evaluation_without_candidate()
         ):
             return None
         assessment = self._assessment or _INITIAL_ASSESSMENT
@@ -167,10 +161,7 @@ class CompletionCoordinator:
         transition = normalized_event.semantics.activity
         self.note_activity_transition(transition)
         decision = await self._evidence.observe_event(event, transition)
-        if (
-            not decision.duplicate_canonical_event
-            and self._profile.refresh_deadline_after_event()
-        ):
+        if not decision.duplicate_canonical_event and self._profile.refresh_deadline_after_event():
             self._refresh_profile_deadline()
         return None if decision.duplicate_canonical_event else normalized_event
 
@@ -233,8 +224,7 @@ class CompletionCoordinator:
 
     def wants_aux_wake(self) -> bool:
         return (
-            self._candidate is not None
-            or self._profile.allows_evaluation_without_candidate()
+            self._candidate is not None or self._profile.allows_evaluation_without_candidate()
         ) and self._evidence.wants_aux_wake()
 
     async def wait_for_aux_wake(self) -> None:
@@ -332,8 +322,7 @@ class CompletionCoordinator:
 
     async def _evaluate_wait(self, trigger: AssessmentTrigger) -> DrainLoopDecision:
         if self._terminal_published or (
-            self._candidate is None
-            and not self._profile.allows_evaluation_without_candidate()
+            self._candidate is None and not self._profile.allows_evaluation_without_candidate()
         ):
             return DrainLoopDecision()
         now = self._clock()

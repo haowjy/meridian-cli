@@ -67,4 +67,3 @@ class LiveBudgetTracker(BaseModel):
                     limit_usd=per_space,
                 )
         return None
-

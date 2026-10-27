@@ -319,7 +319,6 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
 
     assert preview.resolved_request.skill_paths
 
-
     assert projected.system_prompt.count("# Skill: /verification") == 1
     assert "# Meridian Agents" in projected.system_prompt
     assert "## Subagent" in projected.system_prompt
@@ -331,9 +330,9 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
     # Claude reads the appended prompt from a file named in argv.
     assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
     assert preview.binding.run_params.appended_system_prompt is not None
-    assert preview.binding.run_params.appended_system_prompt.count(
-        "Use verification checklist."
-    ) == 1
+    assert (
+        preview.binding.run_params.appended_system_prompt.count("Use verification checklist.") == 1
+    )
 
     assert "complete the task" in projected.user_turn_content
     assert f"# Reference: {file_ref.as_posix()}" in projected.user_turn_content
@@ -385,7 +384,8 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
             harness="claude",
             agent="dev-orchestrator",
             session=SessionRequest(
-                requested_harness_session_id=harness_session_id, source_native_store=str(source),
+                requested_harness_session_id=harness_session_id,
+                source_native_store=str(source),
                 continue_harness="claude",
                 continue_fork=True,
             ),
@@ -412,9 +412,9 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     assert projected.system_prompt.count("# Meridian spawn rules") == 1
     assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
     assert preview.binding.run_params.appended_system_prompt is not None
-    assert preview.binding.run_params.appended_system_prompt.count(
-        "Use verification checklist."
-    ) == 1
+    assert (
+        preview.binding.run_params.appended_system_prompt.count("Use verification checklist.") == 1
+    )
 
     assert "continue the task" in projected.user_turn_content
     assert "# Skill:" not in projected.user_turn_content
@@ -462,8 +462,7 @@ def test_spawn_prepare_headless_deny_error_names_denied_harness(
 ) -> None:
     _write_minimal_mars_config(tmp_path)
     (tmp_path / "meridian.toml").write_text(
-        "[spawn]\n"
-        'deny_headless_harnesses = ["codex"]\n',
+        '[spawn]\ndeny_headless_harnesses = ["codex"]\n',
         encoding="utf-8",
     )
     stub_bundle_request_and_resolve(
@@ -506,8 +505,7 @@ def test_spawn_prepare_headless_deny_same_harness_suggests_native_agent(
     """Same-harness caller gets pointed to native Agent() tool."""
     _write_minimal_mars_config(tmp_path)
     (tmp_path / "meridian.toml").write_text(
-        "[spawn]\n"
-        'deny_headless_harnesses = ["claude"]\n',
+        '[spawn]\ndeny_headless_harnesses = ["claude"]\n',
         encoding="utf-8",
     )
     stub_bundle_request_and_resolve(

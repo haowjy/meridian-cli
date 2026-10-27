@@ -8,7 +8,6 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -41,10 +40,6 @@ from meridian.lib.ops.session_reentry import (
     SessionReentryDecision,
     StartFromLaunch,
 )
-
-if TYPE_CHECKING:
-    from prompt_toolkit.input import Input
-    from prompt_toolkit.output import Output
 
 _TYPING_DEBOUNCE = 0.15
 
@@ -594,8 +589,6 @@ def run_browse_picker(
     limit: int = 50,
     status: Status = "active",
     sort: Sort = "updated",
-    input: Input | None = None,
-    output: Output | None = None,
 ) -> Launch | None:
     """Run the full-screen picker and return only safe re-entry decisions."""
 
@@ -651,8 +644,6 @@ def run_browse_picker(
         full_screen=True,
         style=_STYLE,
         refresh_interval=30,  # age and stale markers are computed at render
-        input=input,
-        output=output,
     )
     app.ttimeoutlen = 0.05  # a lone Esc must not wait half a second for a possible sequence
     browser.app = app

@@ -453,9 +453,7 @@ class SpawnApplicationService:
                     harness_session_id=resolved_request.session.requested_harness_session_id,
                     control_root=launch_ctx.control_root.as_posix(),
                     task_cwd=(
-                        launch_ctx.task_cwd.as_posix()
-                        if launch_ctx.task_cwd is not None
-                        else None
+                        launch_ctx.task_cwd.as_posix() if launch_ctx.task_cwd is not None else None
                     ),
                     execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
                     launch_mode=payload.launch_mode,
@@ -620,9 +618,7 @@ class SpawnApplicationService:
         signal_outcome: SignalCancelOutcome | None = None
         delivery_finalizing = False
         if primary_metadata is not None and primary_metadata.managed_backend:
-            managed_outcome = await self._cancel_managed_primary(
-                spawn_id, record, primary_metadata
-            )
+            managed_outcome = await self._cancel_managed_primary(spawn_id, record, primary_metadata)
             delivery_finalizing = managed_outcome.finalizing
         else:
             from meridian.lib.streaming.signal_canceller import SignalCanceller
@@ -743,9 +739,7 @@ class SpawnApplicationService:
             cancel_exit_code=intent.exit_code if intent is not None else 130,
             cancel_error=intent.error if intent is not None else "cancelled",
             execution_exit_code=(
-                runner_exit.exit_code
-                if runner_exit is not None
-                else record.last_attempt_exit_code
+                runner_exit.exit_code if runner_exit is not None else record.last_attempt_exit_code
             ),
             execution_terminal_status=runner_exit.status if runner_exit is not None else None,
         )
@@ -1110,52 +1104,6 @@ class SpawnApplicationService:
                 else None
             ),
             spawn_id=spawn_id,
-        )
-
-    # ---- Metadata Updates (SEAM-6) ----
-
-    def update_metadata(
-        self,
-        spawn_id: SpawnId | str,
-        *,
-        control_root: str | None = None,
-        task_cwd: str | None = None,
-        execution_cwd: str | None = None,
-        desc: str | None = None,
-        work_id: str | None = None,
-        harness_session_id: str | None = None,
-    ) -> None:
-        """Update spawn metadata and emit spawn.updated.
-
-        SEAM-6.1: Persists update via spawn_store and emits spawn.updated.
-        SEAM-6.2: Does NOT transition lifecycle state.
-
-        Delegates to spawn_store.update_spawn(). Emits lifecycle event
-        so observers (SSE, WS, debug trace) see metadata changes.
-        """
-        # Only call store if at least one field is provided
-        if all(
-            v is None
-            for v in (
-                control_root,
-                task_cwd,
-                execution_cwd,
-                desc,
-                work_id,
-                harness_session_id,
-            )
-        ):
-            return
-
-        spawn_store.update_spawn(
-            self._runtime_root,
-            spawn_id,
-            control_root=control_root,
-            task_cwd=task_cwd,
-            execution_cwd=execution_cwd,
-            desc=desc,
-            work_id=work_id,
-            harness_session_id=harness_session_id,
         )
 
 

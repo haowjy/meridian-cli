@@ -23,8 +23,9 @@ from meridian.lib.platform.locking import (
     lock_file,
 )
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
+from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_fold import (
     ConversationModelSelection as ConversationModelSelection,
@@ -75,6 +76,7 @@ _SESSION_CHAT_ID_FIELD = re.compile(rb'"chat_id"\s*:\s*"((?:[^"\\]|\\.)*)"')
 
 _ESCAPED_CHAT_ID_KEY_LETTER = re.compile(rb"\\u00(?:6[13489]|74|5[fF])")
 
+
 def _row_may_select_chat(raw: bytes, chat_ids: Collection[str]) -> bool:
     """Byte prefilter for selected replay. It may only nominate, never decide.
 
@@ -99,6 +101,23 @@ def _row_may_select_chat(raw: bytes, chat_ids: Collection[str]) -> bool:
         if value.strip() in chat_ids:
             return True
     return False
+
+
+def append_event(
+    data_path: Path,
+    lock_path: Path,
+    event: BaseModel,
+    *,
+    exclude_none: bool = False,
+) -> None:
+    line = json.dumps(
+        event.model_dump(mode="json", exclude_none=exclude_none),
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    with lock_file(lock_path):
+        append_durable_jsonl_line(data_path, line)
+
 
 def _append_session_event(
     data_path: Path,
@@ -128,6 +147,7 @@ def _append_session_event(
         data_path.chmod(0o600)
         append_event(data_path, lock_path, event, exclude_none=exclude_none)
 
+
 def _parse_model_observation(payload: Mapping[str, object]) -> SessionModelObservationEvent | None:
     if payload.get("event") != "model_observation":
         return None
@@ -135,6 +155,7 @@ def _parse_model_observation(payload: Mapping[str, object]) -> SessionModelObser
         return SessionModelObservationEvent.model_validate(payload)
     except ValidationError:
         return None
+
 
 def read_session_events(
     runtime_root: Path, chat_ids: Collection[str] | None = None
@@ -155,7 +176,8 @@ def read_session_events(
             )
             raw_id = (
                 cast("dict[str, object]", record).get("chat_id")
-                if isinstance(record, dict) else None
+                if isinstance(record, dict)
+                else None
             )
             if not isinstance(raw_id, str) or raw_id.strip() not in chat_ids:
                 return None
@@ -167,6 +189,7 @@ def read_session_events(
         raw_filter=None if chat_ids is None else lambda raw: _row_may_select_chat(raw, chat_ids),
     )
 
+
 def _records_by_session(
     runtime_root: Path, *, chat_ids: Collection[str] | None = None
 ) -> dict[str, SessionRecord]:
@@ -175,10 +198,12 @@ def _records_by_session(
         project_session_event(records, event)
     return records
 
+
 def _session_sort_key(chat_id: str) -> tuple[int, str]:
     if chat_id.startswith("c") and chat_id[1:].isdigit():
         return (int(chat_id[1:]), chat_id)
     return (10**9, chat_id)
+
 
 def get_session_record(runtime_root: Path, chat_id: str | None) -> SessionRecord | None:
     """Return a materialized record for one chat ID, if present."""
@@ -186,6 +211,7 @@ def get_session_record(runtime_root: Path, chat_id: str | None) -> SessionRecord
     if chat_id is None:
         return None
     return _records_by_session(runtime_root, chat_ids={chat_id}).get(chat_id)
+
 
 def _bound_model_selections(
     events: list[SessionEvent],
@@ -212,9 +238,13 @@ def _bound_model_selections(
         bound.append((event, native_id))
     return bound
 
+
 def get_initial_model_selection(
-    runtime_root: Path, harness: str, harness_session_id: str,
-    *, source_chat_id: str | None = None,
+    runtime_root: Path,
+    harness: str,
+    harness_session_id: str,
+    *,
+    source_chat_id: str | None = None,
 ) -> SessionModelSelectionEvent | None:
     """Read a legacy conversation's original value without seeding or replaying attempts."""
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -227,16 +257,22 @@ def get_initial_model_selection(
         if isinstance(event, SessionUpdateEvent):
             updates.setdefault((event.chat_id, event.session_instance_id), []).append(event)
     starts = [
-        event for event in events
+        event
+        for event in events
         if isinstance(event, SessionStartEvent) and event.harness == harness
     ]
-    start = next((
-        event for event in starts
-        if event.harness_session_id == harness_session_id or any(
-            update.harness_session_id == harness_session_id
-            for update in updates.get((event.chat_id, event.session_instance_id), [])
-        )
-    ), None)
+    start = next(
+        (
+            event
+            for event in starts
+            if event.harness_session_id == harness_session_id
+            or any(
+                update.harness_session_id == harness_session_id
+                for update in updates.get((event.chat_id, event.session_instance_id), [])
+            )
+        ),
+        None,
+    )
     origin_chat_id = start.chat_id if start is not None else source_chat_id
     if origin_chat_id is not None:
         start = next((event for event in starts if event.chat_id == origin_chat_id), None)
@@ -244,7 +280,8 @@ def get_initial_model_selection(
         return None
     generation_updates = updates.get((start.chat_id, start.session_instance_id), [])
     spawn_id = start.spawn_id or next(
-        (update.spawn_id for update in generation_updates if update.spawn_id), None,
+        (update.spawn_id for update in generation_updates if update.spawn_id),
+        None,
     )
     snapshot = start.launch_policy_snapshot or _linked_spawn_policy(runtime_root, spawn_id)
     selection = ConversationModelSelection(
@@ -264,22 +301,28 @@ def get_initial_model_selection(
             canonical_model_id=canonical if named else None,
             harness_model_id=executable if named else None,
             model_mode=(
-                "named" if named else
-                "harness_default" if not snapshot.model and not canonical else None
+                "named"
+                if named
+                else "harness_default"
+                if not snapshot.model and not canonical
+                else None
             ),
-            provider_constraint=(
-                snapshot.model_selection_provider_constraint if named else None
-            ),
+            provider_constraint=(snapshot.model_selection_provider_constraint if named else None),
             selection_source="initial_launch",
             provenance=snapshot.field_provenance,
         )
     return SessionModelSelectionEvent(
-        kind="initial_seed", harness=harness,
+        kind="initial_seed",
+        harness=harness,
         harness_session_id=HarnessSessionId(harness_session_id),
-        chat_id=start.chat_id, session_instance_id=start.session_instance_id,
-        spawn_id=spawn_id, startup_attempt_id=None,
-        recorded_at=utc_now_iso(), selection=selection,
+        chat_id=start.chat_id,
+        session_instance_id=start.session_instance_id,
+        spawn_id=spawn_id,
+        startup_attempt_id=None,
+        recorded_at=utc_now_iso(),
+        selection=selection,
     )
+
 
 def get_model_selection(
     runtime_root: Path,
@@ -308,6 +351,7 @@ def get_model_selection(
             current = event.selection
     return current if current is not None else seed
 
+
 def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent) -> bool:
     """Durably append once per invocation/conversation; false means already recorded."""
 
@@ -320,13 +364,17 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
                 paths.sessions_jsonl,
                 lambda payload: parse_event(payload, UnsupportedSessionRecords()),
             )
-            source_start = next((
-                start for start in events
-                if isinstance(start, SessionStartEvent)
-                and start.chat_id == event.chat_id
-                and start.session_instance_id == event.session_instance_id
-                and start.harness == event.harness
-            ), None)
+            source_start = next(
+                (
+                    start
+                    for start in events
+                    if isinstance(start, SessionStartEvent)
+                    and start.chat_id == event.chat_id
+                    and start.session_instance_id == event.session_instance_id
+                    and start.harness == event.harness
+                ),
+                None,
+            )
             if source_start is None:
                 raise ValueError("selection has no matching captured session generation")
             if event.kind == "initial_seed" and source_start.model_selection_protocol is not None:
@@ -337,9 +385,12 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
             for prior, prior_id in bound[:-1]:
                 if prior.harness != event.harness:
                     continue
-                if native_id is not None and prior_id == native_id and (
-                    event.kind == "initial_seed" or (
-                        prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id
+                if (
+                    native_id is not None
+                    and prior_id == native_id
+                    and (
+                        event.kind == "initial_seed"
+                        or (prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id)
                     )
                 ):
                     if event.kind == "invocation_started" and not any(
@@ -350,12 +401,17 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
                         and identity.harness_session_id == native_id
                         for identity in events
                     ):
-                        append_event(paths.sessions_jsonl, paths.sessions_flock, SessionUpdateEvent(
-                            chat_id=event.chat_id,
-                            session_instance_id=event.session_instance_id,
-                            startup_attempt_id=event.startup_attempt_id,
-                            harness_session_id=HarnessSessionId(native_id),
-                        ), exclude_none=True)
+                        append_event(
+                            paths.sessions_jsonl,
+                            paths.sessions_flock,
+                            SessionUpdateEvent(
+                                chat_id=event.chat_id,
+                                session_instance_id=event.session_instance_id,
+                                startup_attempt_id=event.startup_attempt_id,
+                                harness_session_id=HarnessSessionId(native_id),
+                            ),
+                            exclude_none=True,
+                        )
                     return False
                 if event.kind == "invocation_started" and (
                     prior.kind == event.kind
@@ -370,6 +426,7 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
             append_event(paths.sessions_jsonl, paths.sessions_flock, event)
             return True
 
+
 def get_last_executed_model(
     runtime_root: Path,
     harness: str,
@@ -383,6 +440,7 @@ def get_last_executed_model(
         if event.harness == harness and event.harness_session_id == harness_session_id:
             latest = event.observed_model_token
     return latest
+
 
 def resolve_session_ref(
     runtime_root: Path,
@@ -411,12 +469,14 @@ def resolve_session_ref(
         )
     return max(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
 
+
 def _linked_spawn_policy(runtime_root: Path, spawn_id: str | None) -> LaunchPolicySnapshot | None:
     """Bounded legacy read: an exact recorded link, never a newest-owner guess."""
     from meridian.lib.state import spawn_store
 
     row = spawn_store.get_spawn(runtime_root, spawn_id) if spawn_id else None
     return row.launch_policy_snapshot if row is not None else None
+
 
 def _get_or_create_observed_chat_locked(
     runtime_root: Path,
@@ -439,7 +499,9 @@ def _get_or_create_observed_chat_locked(
         raise ValueError(f"Source chat is missing or historical: {source_chat_id}")
     for record in (source, *records.values()):
         if record.record_mode == "live" and (
-            record.harness, record.native_store, record.harness_session_id
+            record.harness,
+            record.native_store,
+            record.harness_session_id,
         ) == (harness, native_store, session_id):
             return record.chat_id
     chat_id = reserve_chat_id(runtime_root)
@@ -448,9 +510,14 @@ def _get_or_create_observed_chat_locked(
     settings = source.model_dump(include=set(SessionSettings.model_fields))
     settings["launch_policy_snapshot"] = get_session_launch_policy_snapshot(runtime_root, source)
     start = SessionStartEvent(
-        chat_id=ChatId(chat_id), history_id=uuid.uuid4(), kind=source.kind,
-        harness=harness, harness_session_id=HarnessSessionId(session_id),
-        native_store=native_store, session_instance_id=generation, started_at=now,
+        chat_id=ChatId(chat_id),
+        history_id=uuid.uuid4(),
+        kind=source.kind,
+        harness=harness,
+        harness_session_id=HarnessSessionId(session_id),
+        native_store=native_store,
+        session_instance_id=generation,
+        started_at=now,
         **settings,
     )
     for event in (
@@ -460,6 +527,7 @@ def _get_or_create_observed_chat_locked(
         _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
     return chat_id
 
+
 def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
     """All generations, including historical and legacy starts, in source order."""
     return fold_session_generations(
@@ -468,6 +536,7 @@ def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
             lambda payload: parse_event(payload, UnsupportedSessionRecords()),
         )
     )
+
 
 def session_records_for_spawns(
     root: Path, records: Iterable[SpawnRecord]

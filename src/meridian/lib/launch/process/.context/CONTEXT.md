@@ -85,8 +85,7 @@ shape.
 
 - `SignalCoordinator` installs handlers for the union of its active receivers' target
   signals (main thread only) and restores any signal no longer targeted; it is the single
-  seam for the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and both
-  launcher receivers.
+  seam for the `SignalCallbackReceiver`s of both launchers.
 - Managed attach: a SIGTERM/SIGHUP latched when the main task resumes from the TUI
   wait yields cancelled/130 even if the TUI exits zero. Black-box: a signal latched
   before the wait thread reports completion does the same. Later signals do not change

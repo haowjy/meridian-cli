@@ -214,10 +214,6 @@ class SpawnLifecycleService:
         self._hooks = hooks or []
         self._record: SpawnRecord | None = None
 
-    def register_hook(self, hook: LifecycleHook) -> None:
-        """Register an additional lifecycle hook after construction."""
-        self._hooks.append(hook)
-
     # ------------------------------------------------------------------
     # Lifecycle transitions
     # ------------------------------------------------------------------
@@ -234,17 +230,13 @@ class SpawnLifecycleService:
             reservation, dispatch_events=dispatch_events, launch_lock=launch_lock
         )
 
-    def reserve(
-        self, reservation: SpawnReservation, *, launch_lock: LaunchSlot
-    ) -> str:
+    def reserve(self, reservation: SpawnReservation, *, launch_lock: LaunchSlot) -> str:
         """Persist a spawn row without dispatching lifecycle events."""
         return self.start(reservation, dispatch_events=False, launch_lock=launch_lock)
 
     def announce(self, spawn_id: str) -> None:
         """Dispatch spawn.created and initial telemetry for a reserved row."""
-        with bind_lifecycle_correlation(
-            self._correlation(operation="announce", spawn_id=spawn_id)
-        ):
+        with bind_lifecycle_correlation(self._correlation(operation="announce", spawn_id=spawn_id)):
             record = _spawn_store().get_spawn(self._runtime_root, spawn_id)
             if record is None:
                 raise ValueError(f"spawn row not found: {spawn_id}")
@@ -514,9 +506,7 @@ class SpawnLifecycleService:
                 )
                 event = self._build_event("spawn.finished", snapshot)
                 self._dispatch(event)
-                self._emit_telemetry_event_for_record(
-                    f"spawn.{snapshot.status}", snapshot
-                )
+                self._emit_telemetry_event_for_record(f"spawn.{snapshot.status}", snapshot)
             return outcome
 
     def mark_finalizing(self, spawn_id: str) -> bool:
@@ -921,8 +911,6 @@ def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     if terminal.error:
         payload["reason"] = terminal.error
     return payload
-
-
 
 
 # ---------------------------------------------------------------------------

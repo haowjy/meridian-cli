@@ -158,12 +158,9 @@ class WorkItem(BaseModel):
         return self.worktree.path
 
     @property
-    def worktree_name(self) -> str | None:
-        return self.worktree.name
-
-    @property
     def worktree_pending(self) -> bool:
         return self.worktree.pending
+
 
 class StoredWorkItemState(BaseModel):
     """The sole codec for the contents of ``__status.json``."""

@@ -3,7 +3,6 @@ import importlib
 import os
 import signal
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -18,13 +17,7 @@ from meridian.lib.launch.resolve import resolve_startup_timeout_seconds
 from meridian.lib.launch.signals import (
     SignalCallbackReceiver,
     SignalCoordinator,
-    SignalForwarder,
-    force_kill_process,
-    map_process_exit_code,
-    signal_process_group,
-    signal_to_exit_code,
 )
-from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 
@@ -177,192 +170,10 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
     assert _SignalDrivenConnection.send_cancel_calls == 1
 
 
-def test_signal_forwarder_forwards_sigint_and_sigterm(monkeypatch: pytest.MonkeyPatch) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.pid = 12345
-            self.returncode: int | None = None
-
-    sent_signals: list[signal.Signals] = []
-    force_kill_called: list[bool] = []
-
-    def fake_signal_process_group(
-        process: asyncio.subprocess.Process,
-        signum: signal.Signals,
-    ) -> None:
-        sent_signals.append(signum)
-
-    def fake_force_kill_process(process: asyncio.subprocess.Process) -> None:
-        force_kill_called.append(True)
-        process.returncode = -9
-
-    monkeypatch.setattr(signals_module, "signal_process_group", fake_signal_process_group)
-    monkeypatch.setattr(signals_module, "force_kill_process", fake_force_kill_process)
-
-    fake = FakeProcess()
-    forwarder = SignalForwarder(cast("asyncio.subprocess.Process", fake))
-    forwarder.forward_signal(signal.SIGINT)
-    forwarder.forward_signal(signal.SIGTERM)
-
-    # Two signals sent via signal_process_group, then force_kill_process called on second signal
-    assert sent_signals == [signal.SIGINT, signal.SIGTERM]
-    assert force_kill_called == [True]
-    assert forwarder.received_signal == signal.SIGTERM
-    assert signal_to_exit_code(signal.SIGINT) == 130
-    assert signal_to_exit_code(signal.SIGTERM) == 143
-    assert map_process_exit_code(raw_return_code=0, received_signal=signal.SIGTERM) == 143
-
-
-def test_signal_process_group_degrades_to_process_signal_for_shared_pgid(
+def test_signal_coordinator_dispatches_signal_to_all_active_receivers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import meridian.lib.launch.signals as signals_module
-
-    killpg_calls: list[tuple[int, signal.Signals]] = []
-    monkeypatch.setattr(signals_module, "IS_WINDOWS", False)
-    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999, raising=False)
-    monkeypatch.setattr(
-        signals_module.os,
-        "killpg",
-        lambda pgid, signum: killpg_calls.append((pgid, signum)),
-        raising=False,
-    )
-
-    process = _FakeSignalProcess()
-    signal_process_group(cast("asyncio.subprocess.Process", process), signal.SIGTERM)
-
-    assert process.sent == [signal.SIGTERM]
-    assert killpg_calls == []
-
-
-def test_signal_process_group_uses_killpg_for_group_leader(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    killpg_calls: list[tuple[int, signal.Signals]] = []
-    monkeypatch.setattr(signals_module, "IS_WINDOWS", False)
-    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345, raising=False)
-    monkeypatch.setattr(
-        signals_module.os,
-        "killpg",
-        lambda pgid, signum: killpg_calls.append((pgid, signum)),
-        raising=False,
-    )
-
-    process = _FakeSignalProcess()
-    signal_process_group(cast("asyncio.subprocess.Process", process), signal.SIGTERM)
-
-    assert process.sent == []
-    assert killpg_calls == [(12345, signal.SIGTERM)]
-
-
-def test_signal_process_group_on_windows_signals_process_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    monkeypatch.setattr(signals_module, "IS_WINDOWS", True)
-    monkeypatch.setattr(
-        signals_module.os,
-        "getpgid",
-        lambda _pid: pytest.fail("os.getpgid should not be called on Windows"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        signals_module.os,
-        "killpg",
-        lambda _pgid, _signum: pytest.fail("os.killpg should not be called on Windows"),
-        raising=False,
-    )
-
-    process = _FakeSignalProcess()
-    signal_process_group(cast("asyncio.subprocess.Process", process), signal.SIGTERM)
-
-    assert process.sent == [signal.SIGTERM]
-
-
-def test_force_kill_process_degrades_to_process_kill_for_shared_pgid(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    killpg_calls: list[tuple[int, signal.Signals]] = []
-    monkeypatch.setattr(signals_module, "IS_WINDOWS", False)
-    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999, raising=False)
-    monkeypatch.setattr(
-        signals_module.os,
-        "killpg",
-        lambda pgid, signum: killpg_calls.append((pgid, signum)),
-        raising=False,
-    )
-
-    process = _FakeSignalProcess()
-    force_kill_process(cast("asyncio.subprocess.Process", process))
-
-    assert process.killed is True
-    assert killpg_calls == []
-
-
-@pytest.mark.skipif(IS_WINDOWS, reason="POSIX SIGKILL group-leader semantics")
-def test_force_kill_process_uses_killpg_for_group_leader(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    killpg_calls: list[tuple[int, signal.Signals]] = []
-    monkeypatch.setattr(signals_module, "IS_WINDOWS", False)
-    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345, raising=False)
-    monkeypatch.setattr(
-        signals_module.os,
-        "killpg",
-        lambda pgid, signum: killpg_calls.append((pgid, signum)),
-        raising=False,
-    )
-
-    process = _FakeSignalProcess()
-    force_kill_process(cast("asyncio.subprocess.Process", process))
-
-    assert process.killed is False
-    assert killpg_calls == [(12345, signal.SIGKILL)]
-
-
-def test_force_kill_process_on_windows_kills_process_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    monkeypatch.setattr(signals_module, "IS_WINDOWS", True)
-    monkeypatch.setattr(
-        signals_module.os,
-        "getpgid",
-        lambda _pid: pytest.fail("os.getpgid should not be called on Windows"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        signals_module.os,
-        "killpg",
-        lambda _pgid, _signum: pytest.fail("os.killpg should not be called on Windows"),
-        raising=False,
-    )
-
-    process = _FakeSignalProcess()
-    force_kill_process(cast("asyncio.subprocess.Process", process))
-
-    assert process.killed is True
-
-
-def test_signal_coordinator_dispatches_signal_to_all_active_forwarders(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.pid = 12345
-            self.returncode: int | None = None
 
     installed_handlers: dict[signal.Signals, object] = {}
 
@@ -375,34 +186,31 @@ def test_signal_coordinator_dispatches_signal_to_all_active_forwarders(
         installed_handlers[signum] = handler
         return previous
 
-    sent_signals: list[signal.Signals] = []
-
-    def fake_signal_process_group(
-        process: asyncio.subprocess.Process,
-        signum: signal.Signals,
-    ) -> None:
-        sent_signals.append(signum)
-
-    def fake_force_kill_process(process: asyncio.subprocess.Process) -> None:
-        process.returncode = -9
-
     monkeypatch.setattr(signals_module.signal, "getsignal", fake_getsignal)
     monkeypatch.setattr(signals_module.signal, "signal", fake_signal)
-    monkeypatch.setattr(signals_module, "signal_process_group", fake_signal_process_group)
-    monkeypatch.setattr(signals_module, "force_kill_process", fake_force_kill_process)
 
     coordinator = SignalCoordinator()
-    monkeypatch.setattr(signals_module, "signal_coordinator", lambda: coordinator)
+    received: list[tuple[str, signal.Signals]] = []
+    first = SignalCallbackReceiver(
+        target_signals=(signal.SIGINT, signal.SIGTERM),
+        callback=lambda signum: received.append(("first", signum)),
+    )
+    second = SignalCallbackReceiver(
+        target_signals=(signal.SIGINT, signal.SIGTERM),
+        callback=lambda signum: received.append(("second", signum)),
+    )
 
-    first = SignalForwarder(cast("asyncio.subprocess.Process", FakeProcess()))
-    second = SignalForwarder(cast("asyncio.subprocess.Process", FakeProcess()))
-
-    with first, second:
+    coordinator.register_receiver(first)
+    coordinator.register_receiver(second)
+    try:
         handler = installed_handlers.get(signal.SIGTERM)
         assert callable(handler)
         handler(signal.SIGTERM.value, None)
+    finally:
+        coordinator.unregister_receiver(first)
+        coordinator.unregister_receiver(second)
 
-    assert sent_signals == [signal.SIGTERM, signal.SIGTERM]
+    assert sorted(received) == [("first", signal.SIGTERM), ("second", signal.SIGTERM)]
 
 
 def _install_signal_spies(

@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 _AUTOCOMPACT_TOKEN_MIN = 1000
 _AUTOCOMPACT_PCT_MIN = 1
 _AUTOCOMPACT_PCT_MAX = 100
-_ROUTING_OVERRIDE_FIELDS = frozenset({"model", "harness", "agent"})
 type ExecutionPolicyField = Literal[
     "effort",
     "sandbox",
@@ -211,17 +210,6 @@ class RuntimeOverrides(BaseModel):
     timeout: float | None = None
     resident_rearm_budget: int | None = None
 
-    def routing_scope(self) -> RuntimeOverrides:
-        """Return only routing fields used to select model, harness, and agent."""
-
-        return type(self).model_validate(
-            {
-                field_name: value
-                for field_name in _ROUTING_OVERRIDE_FIELDS
-                if (value := getattr(self, field_name)) is not None
-            }
-        )
-
     def execution_policy_scope(
         self,
         allowed_fields: frozenset[str] | None = None,
@@ -317,9 +305,7 @@ class RuntimeOverrides(BaseModel):
     @classmethod
     def from_agent_profile(cls, profile: AgentProfile | None) -> RuntimeOverrides:
         return cls(
-            resident_rearm_budget=(
-                None if profile is None else profile.resident_rearm_budget
-            )
+            resident_rearm_budget=(None if profile is None else profile.resident_rearm_budget)
         )
 
     @classmethod
@@ -358,6 +344,7 @@ class RuntimeOverrides(BaseModel):
         if config is None:
             return cls()
         return cls(resident_rearm_budget=config.resident_rearm_budget)
+
 
 def resolve(*layers: RuntimeOverrides) -> RuntimeOverrides:
     """Merge layers with first-non-none precedence."""

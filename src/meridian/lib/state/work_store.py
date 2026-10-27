@@ -198,4 +198,3 @@ def list_archived_work_items(
     if all_archived:
         return items, warnings
     return items[:limit], warnings
-

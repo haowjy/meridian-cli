@@ -10,6 +10,7 @@ import pytest
 
 from meridian.lib.catalog import model_aliases
 from meridian.lib.catalog.catalog_session import CatalogSession
+from meridian.lib.catalog.model_aliases import MarsResultCache, cached_mars_models_catalog
 from meridian.lib.catalog.models import resolve_model
 from meridian.lib.ops.catalog import CatalogModel, ModelsListInput, models_list_sync
 
@@ -47,17 +48,22 @@ def test_aliases_and_catalog_use_distinct_argv_keys_and_operation_caches(
 
     monkeypatch.setattr(model_aliases, "_resolve_mars_binary", lambda: "/fake/mars")
     monkeypatch.setattr(model_aliases.subprocess, "run", run)
-    first = CatalogSession(tmp_path)
+    cache = MarsResultCache()
+    first = CatalogSession(tmp_path, cache)
     assert first.alias_map()["demo"].model_id == "openai/demo"
     assert first.alias_map()["demo"].mars_provided_harness == "opencode"
     assert first.alias_map()["demo"].runnable_paths == ()
-    assert first.load_catalog() == [{"id": "openai/demo", "provider": "OpenAI"}]
-    assert first.load_catalog() == [{"id": "openai/demo", "provider": "OpenAI"}]
+    assert cached_mars_models_catalog(tmp_path, cache=cache) == [
+        {"id": "openai/demo", "provider": "OpenAI"}
+    ]
+    assert cached_mars_models_catalog(tmp_path, cache=cache) == [
+        {"id": "openai/demo", "provider": "OpenAI"}
+    ]
     assert calls == [
         ["/fake/mars", "models", "aliases", "--json", "--root", str(tmp_path)],
         ["/fake/mars", "models", "catalog", "--json", "--root", str(tmp_path)],
     ]
-    CatalogSession(tmp_path).load_catalog()
+    cached_mars_models_catalog(tmp_path, cache=MarsResultCache())
     assert calls[-1] == calls[1]
     assert len(calls) == 3
 
@@ -65,8 +71,16 @@ def test_aliases_and_catalog_use_distinct_argv_keys_and_operation_caches(
         {"harness_model_id": "openai/demo"}
     ]
     assert calls[-1] == [
-        "/fake/mars", "models", "list", "--harness", "opencode", "--all",
-        "--json", "--no-refresh-models", "--root", str(tmp_path),
+        "/fake/mars",
+        "models",
+        "list",
+        "--harness",
+        "opencode",
+        "--all",
+        "--json",
+        "--no-refresh-models",
+        "--root",
+        str(tmp_path),
     ]
 
 

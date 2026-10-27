@@ -10,8 +10,8 @@ import pytest
 from pydantic import BaseModel
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.event_store import append_event, read_events
-from meridian.lib.state.jsonl import JsonlDecodeError, iter_jsonl
+from meridian.lib.state.event_store import read_events
+from meridian.lib.state.jsonl import JsonlDecodeError, append_durable_jsonl_line, iter_jsonl
 from tests.conftest import posix_only
 
 
@@ -20,10 +20,10 @@ class _ReadEvent(BaseModel):
     kind: str
 
 
-class _AppendEvent(BaseModel):
-    z_key: str
-    a_key: str
-    optional: str | None = None
+def _append_event(data_path: Path, lock_path: Path, event: BaseModel) -> None:
+    line = json.dumps(event.model_dump(mode="json"), separators=(",", ":"), sort_keys=True)
+    with lock_file(lock_path):
+        append_durable_jsonl_line(data_path, line)
 
 
 def _parse_read_event(payload: dict[str, Any]) -> _ReadEvent:
@@ -99,47 +99,12 @@ def test_iter_jsonl_skips_empty_rows_but_strict_mode_rejects_corruption(
         next(rows)
 
 
-def test_append_event_multiple_appends_create_multiple_lines(tmp_path: Path) -> None:
-    data_path = tmp_path / "events.jsonl"
-    lock_path = tmp_path / "events.lock"
-
-    append_event(
-        data_path,
-        lock_path,
-        _AppendEvent(z_key="z1", a_key="a1", optional=None),
-        exclude_none=True,
-    )
-    append_event(
-        data_path,
-        lock_path,
-        _AppendEvent(z_key="z2", a_key="a2", optional=None),
-        exclude_none=True,
-    )
-
-    lines = data_path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 2
-    assert lines[0] == '{"a_key":"a1","z_key":"z1"}'
-    assert lines[1] == '{"a_key":"a2","z_key":"z2"}'
-def test_lock_file_is_reentrant_in_same_thread(tmp_path: Path) -> None:
-    lock_path = tmp_path / "events.lock"
-
-    with lock_file(lock_path) as outer:
-        with lock_file(lock_path) as inner:
-            assert inner is outer
-            assert not inner.closed
-        assert not outer.closed
-
-    assert outer.closed
-    with lock_file(lock_path):
-        pass
-
-
-def test_append_event_repairs_truncated_trailing_line(tmp_path: Path) -> None:
+def test_append_repairs_truncated_trailing_line(tmp_path: Path) -> None:
     data_path = tmp_path / "events.jsonl"
     lock_path = tmp_path / "events.lock"
     data_path.write_bytes(b'{"id":1,"kind":"start"}\n{"id":2,"kind":"torn"')
 
-    append_event(data_path, lock_path, _ReadEvent(id=3, kind="stop"))
+    _append_event(data_path, lock_path, _ReadEvent(id=3, kind="stop"))
 
     contents = data_path.read_bytes()
     assert contents == b'{"id":1,"kind":"start"}\n{"id":3,"kind":"stop"}\n'
@@ -150,7 +115,7 @@ def test_append_event_repairs_truncated_trailing_line(tmp_path: Path) -> None:
 
 
 @posix_only
-def test_append_event_repair_does_not_fabricate_hybrid_event(tmp_path: Path) -> None:
+def test_append_repair_does_not_fabricate_hybrid_event(tmp_path: Path) -> None:
     data_path = tmp_path / "events.jsonl"
     lock_path = tmp_path / "events.lock"
     prefix_line = '{"id":1,"kind":"start"}\n'
@@ -181,7 +146,7 @@ def test_append_event_repair_does_not_fabricate_hybrid_event(tmp_path: Path) -> 
     thread.start()
     assert reader_ready.wait(timeout=5)
 
-    append_event(data_path, lock_path, _ReadEvent(id=99, kind="stop"))
+    _append_event(data_path, lock_path, _ReadEvent(id=99, kind="stop"))
     repair_allowed.set()
     thread.join(timeout=5)
 

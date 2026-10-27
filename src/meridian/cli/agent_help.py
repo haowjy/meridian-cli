@@ -10,7 +10,6 @@ dispatch here — it must not mutate shared ``App`` help state for rendering.
 from __future__ import annotations
 
 import sys
-import textwrap
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast, get_args
@@ -99,31 +98,6 @@ class AlignedPlainFormatter(PlainFormatter):
             panel = evolve(panel, entries=_compact_parameter_entries(panel.entries))
         super().__call__(console, options, panel)
 
-    def _wrap_entry(self, left: str, desc: str, console: Console) -> str:
-        left_part = f"{self.indent}{left}: "
-        if not desc:
-            return f"{self.indent}{left}"
-        desc = " ".join(desc.split())
-        width = console.width
-        continuation_indent = " " * len(left_part)
-        if len(left_part) >= width - 20:
-            block_indent = self.indent + "  "
-            return left_part.rstrip() + "\n" + textwrap.fill(
-                desc,
-                width=width,
-                initial_indent=block_indent,
-                subsequent_indent=block_indent,
-                break_long_words=False,
-                break_on_hyphens=False,
-            )
-        return textwrap.fill(
-            desc,
-            width=width,
-            initial_indent=left_part,
-            subsequent_indent=continuation_indent,
-            break_long_words=False,
-            break_on_hyphens=False,
-        )
 
 ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
 
@@ -225,11 +199,14 @@ def leaf_help_rendering_scope(
     context manager only affects subcommand (leaf) ``-h`` / ``--help`` requests.
     """
 
-    if curated_group_help_target(
-        argv,
-        root_app=root_app,
-        registered_groups=registered_groups,
-    ) is not None:
+    if (
+        curated_group_help_target(
+            argv,
+            root_app=root_app,
+            registered_groups=registered_groups,
+        )
+        is not None
+    ):
         yield
         return
 

@@ -114,7 +114,9 @@ def _sweep_stale_sockets(own_path: Path) -> None:
                 # Preserve external replacements; runners never reuse socket names.
                 after = os.lstat(entry.path)
                 if (before.st_dev, before.st_ino, before.st_ctime_ns) == (
-                    after.st_dev, after.st_ino, after.st_ctime_ns
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_ctime_ns,
                 ):
                     os.unlink(entry.path)
 
@@ -129,12 +131,6 @@ class ControlSocketServer:
         self._manager = manager
         self._server: asyncio.AbstractServer | None = None
         self._port: int | None = None
-
-    @property
-    def discovery_path(self) -> Path:
-        """Return the platform-specific discovery artifact path."""
-
-        return self._port_file if IS_WINDOWS else self._socket_path
 
     @property
     def endpoint(self) -> str:

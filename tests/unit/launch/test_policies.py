@@ -145,9 +145,7 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
         model="gpt-5.4",
         harness="codex",
         agent="coder",
-        execution_policy=ResolvedExecutionPolicy(
-            effort="high", approval="auto", network="deny"
-        ),
+        execution_policy=ResolvedExecutionPolicy(effort="high", approval="auto", network="deny"),
         tool_rules=(tool_rule("bash", "allow", "exec_command"),),
         extra_args=("--search",),
         model_selection_requested_token="gpt54",

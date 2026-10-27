@@ -380,9 +380,7 @@ def resolve_ambient_work_dir(
     """Resolve the ambient artifact directory for a spawn (pure path math, no mkdir)."""
 
     resolved_root = runtime_root or resolve_project_runtime_root(project_root)
-    return resolve_spawn_log_dir(
-        project_root, spawn_id, runtime_root=resolved_root
-    ) / "work"
+    return resolve_spawn_log_dir(project_root, spawn_id, runtime_root=resolved_root) / "work"
 
 
 def pi_lifecycle_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:

@@ -83,9 +83,10 @@ def _build_resolved_skills_from_bundle(
             continue
         # Older bundle schema-4 producers omitted source_path. Keep the
         # reconstructed primary path only as their compatibility fallback.
-        source_path = entry.source_path or (
-            mars_root / ".mars" / "skills" / entry.name / "SKILL.md"
-        ).as_posix()
+        source_path = (
+            entry.source_path
+            or (mars_root / ".mars" / "skills" / entry.name / "SKILL.md").as_posix()
+        )
         loaded_skills.append(
             SkillContent(
                 name=entry.name,
@@ -148,6 +149,7 @@ class SurfacePolicyInput:
     @property
     def env_overrides(self) -> RuntimeOverrides:
         return self.layers[1] if len(self.layers) > 1 else RuntimeOverrides()
+
 
 @dataclass(frozen=True)
 class ResolvedLaunchPolicy:

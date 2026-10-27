@@ -20,7 +20,6 @@ from meridian.lib.service_context import (
     ApplicationContext,
     ApplicationServices,
     ExtensionEntryPoint,
-    SpawnEntryPoint,
 )
 from meridian.lib.state.project_identity import (
     ensure_project_identity,
@@ -218,27 +217,6 @@ def build_spawn_application_service_from_roots(
     return SpawnApplicationService(
         runtime_root,
         lifecycle_service,
-        spawn_manager=spawn_manager,
-    )
-
-
-def build_spawn_application_service_from_entrypoint(
-    entrypoint: SpawnEntryPoint | ExtensionEntryPoint,
-    *,
-    spawn_manager: SpawnManager | None = None,
-) -> SpawnApplicationService:
-    """Build a spawn application service from a shared application entrypoint."""
-
-    project_root = entrypoint.context.project_root
-    runtime_root = entrypoint.context.runtime_root
-    if project_root is None:
-        raise ValueError("Spawn entrypoint is missing project root.")
-    if runtime_root is None:
-        raise ValueError("Spawn entrypoint is missing runtime root.")
-    return build_spawn_application_service_from_roots(
-        project_root,
-        runtime_root,
-        lifecycle=entrypoint.services.lifecycle,
         spawn_manager=spawn_manager,
     )
 

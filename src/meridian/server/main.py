@@ -14,8 +14,8 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.logging import configure_logging
 from meridian.lib.extensions.context import (
+    ExtensionCommandServices,
     ExtensionInvocationContextBuilder,
-    build_extension_command_services,
 )
 from meridian.lib.extensions.dispatcher import ExtensionCommandDispatcher
 from meridian.lib.extensions.registry import (
@@ -154,7 +154,7 @@ async def extension_invoke(
         else prepare_for_runtime_read(project_root)
     )
     application = build_extension_entrypoint(prepared)
-    services = build_extension_command_services(application=application)
+    services = ExtensionCommandServices(application=application)
     context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.MCP).with_authority(
         prepared.authority
     )
