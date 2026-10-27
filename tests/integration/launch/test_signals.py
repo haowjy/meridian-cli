@@ -22,20 +22,6 @@ from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 
 
-class _FakeSignalProcess:
-    def __init__(self, pid: int = 12345) -> None:
-        self.pid = pid
-        self.returncode: int | None = None
-        self.sent: list[signal.Signals] = []
-        self.killed = False
-
-    def send_signal(self, signum: signal.Signals) -> None:
-        self.sent.append(signum)
-
-    def kill(self) -> None:
-        self.killed = True
-
-
 @pytest.mark.asyncio
 async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
     monkeypatch: pytest.MonkeyPatch,
@@ -167,6 +153,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
     )
 
     assert outcome.status == "cancelled"
+    assert outcome.exit_code == 143
     assert _SignalDrivenConnection.send_cancel_calls == 1
 
 

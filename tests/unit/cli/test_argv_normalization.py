@@ -4,6 +4,7 @@ import pytest
 
 from meridian.cli.argv_normalization import (
     FORK_IDENTITY_ERROR,
+    FORK_INFERENCE_ERROR,
     FROM_INFERENCE_ERROR,
     SELF_FORK_REF_SENTINEL,
     ForkModeResolution,
@@ -91,12 +92,16 @@ def test_resolve_optional_ref_self_sentinel(monkeypatch: pytest.MonkeyPatch) -> 
     assert resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name="--from") == "p42"
 
 
+@pytest.mark.parametrize(
+    ("flag_name", "message"),
+    [("--from", FROM_INFERENCE_ERROR), ("--fork", FORK_INFERENCE_ERROR)],
+)
 def test_resolve_optional_ref_self_sentinel_without_context_errors(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, flag_name: str, message: str
 ) -> None:
     monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
-    with pytest.raises(ValueError, match=FROM_INFERENCE_ERROR):
-        resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name="--from")
+    with pytest.raises(ValueError, match=message):
+        resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name=flag_name)
 
 
 def test_validate_fork_mode_conflicts_fork_and_fork_fresh() -> None:
