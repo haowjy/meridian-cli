@@ -10,8 +10,7 @@ routes on it deliver it. The built-in `notify` hook calls
 `service.send(notification, cfg, event=..., channels=...)`, and `emit` turns
 each route's `HookResult` into one `RouteResult` in its route-level
 `RouteReport`. Never call `send()` from a caller: that skips routing and every
-extension. Nothing here retries or reads notification config from environment
-variables directly.
+extension. Nothing here retries.
 
 `emit.py` is the only module that imports `lib/hooks`, lazily.
 If hook rows cannot load, `emit` drops and names each invalid row, preserves
