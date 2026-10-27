@@ -139,10 +139,14 @@ def _pending_archive_warning(runtime_root: Path, item: WorkItem) -> str | None:
     blockers = pending_archive_blockers(runtime_root, item.name)
     if not blockers:
         return None
-    noun = "spawn" if len(blockers) == 1 else "spawns"
+    if len(blockers) == 1:
+        return (
+            f"Work item '{item.name}' is done. Its directory moves to the archive when "
+            f"this active spawn finishes: {blockers[0]}."
+        )
     return (
         f"Work item '{item.name}' is done. Its directory moves to the archive when "
-        f"these active {noun} finish: {', '.join(blockers)}."
+        f"these active spawns finish: {', '.join(blockers)}."
     )
 
 
