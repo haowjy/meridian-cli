@@ -86,8 +86,6 @@ def build_capabilities_prompt(
     control_root: Path,
     task_dir: Path,
     task_link: Path | None = None,
-    work_id: str | None = None,
-    work_dir: Path | None = None,
     work_link: Path | None = None,
     chat_id: str | None = None,
     context_config: ContextConfig | None = None,
@@ -98,10 +96,14 @@ def build_capabilities_prompt(
     Only values shared by every launch of this conversation belong here: an exact
     continue recomposes the block from the launch snapshot, and a fresh launch of
     the same agent in the same work context must share the cached prefix. Per-launch
-    identity (run ID, a spawn's launching conversation, and the ambient
-    no-work-item scratch directory) goes in the first user turn through
-    :func:`build_launch_facts_prompt`; a primary's own chat ID and per-chat
-    work and task links stay here because they outlive the launch.
+    identity (the run ID, the conversation that launched the run, and a spawn's
+    per-chat links) goes in the first user turn through
+    :func:`build_launch_facts_prompt`; a primary's own chat ID and its per-chat
+    links stay here because they outlive the launch.
+
+    The work directory has one line, and a surface either places it here or in the
+    user turn: an item's ID and its scratch path are per-conversation state that a
+    ``work switch`` or ``work done`` invalidates, so the link is the only path named.
     """
 
     if resolved_context is None:
@@ -129,44 +131,22 @@ def build_capabilities_prompt(
         if required_mode is None or required_mode == profile_mode
     )
 
-    resolved_work_id = (work_id or "").strip()
     if work_link is not None:
-        # A primary's per-chat link outlives the launch and follows `work start`,
-        # `work switch` and `work rename`, so it replaces both the work-item ID and
-        # its scratch directory: either would go stale mid-conversation.
+        # A per-chat link outlives the launch and follows `work start`,
+        # `work switch`, `work done` and `work rename`, so it replaces both the
+        # work-item ID and its scratch directory: either would go stale mid-run.
         lines.append(
             f"- `{work_link.as_posix()}` — work directory "
             "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
             "directory it resolves to: the link follows `work start`, `work switch`, "
-            "and `work rename`."
-        )
-    elif resolved_work_id:
-        if work_dir is not None:
-            lines.append(
-                f"- Active work item `{resolved_work_id}`; work directory "
-                f"`{work_dir.as_posix()}` (`$MERIDIAN_ACTIVE_WORK_DIR`); inspect: "
-                "`meridian work current`."
-            )
-        else:
-            lines.append(
-                f"- Active work item `{resolved_work_id}`; its work directory is in "
-                "`$MERIDIAN_ACTIVE_WORK_DIR` (inspect: `meridian work current`)."
-            )
-    else:
-        # The ambient scratch directory is per-launch, so it is named in the user turn
-        # when the child receives one. Do not hard-code the env var's value: an exact
-        # continue with no source work suppresses it.
-        lines.append(
-            "- No active work item; inspect: `meridian work current` for this run's "
-            "work directory."
+            "`work done` and `work rename`."
         )
 
-    if work_link is not None or resolved_work_id:
-        # The goal text never enters a prompt: it is per-conversation state that can be
-        # edited mid-conversation, and a primary with no task must start no turn. The
-        # command resolves the item itself, so the pointer carries no ID that could go
-        # stale after `work switch`.
-        lines.append("- Your work item's goal and status: run `meridian work show`.")
+    # The goal text never enters a prompt: it is per-conversation state that can be
+    # edited mid-conversation, and a primary with no task must start no turn. The
+    # command resolves the item itself, so the pointer carries no ID that could go
+    # stale after `work switch`.
+    lines.append("- Your work item's goal and status: run `meridian work show`.")
 
     resolved_chat_id = (chat_id or "").strip()
     if resolved_chat_id:
@@ -247,15 +227,16 @@ def build_launch_facts_prompt(
     *,
     spawn_id: str | None = None,
     chat_id: str | None = None,
-    active_work_dir: Path | None = None,
+    work_link: Path | None = None,
+    task_link: Path | None = None,
 ) -> str:
     """Render per-launch identity for the first user turn.
 
     Only values that change between launches of the same conversation belong here:
-    the run ID, the conversation that launched this run, and, with no work item, the
-    ambient scratch directory that lives under this launch's spawn directory. Keeping
-    them out of the system prompt lets every launch of the same agent and work context
-    send byte-identical system bytes, so the harness prompt cache survives.
+    the run ID, the conversation that launched this run, and a spawn's per-chat
+    links, whose paths name the chat it runs in. Keeping them out of the system
+    prompt lets sibling spawns send byte-identical system bytes, so the harness
+    prompt cache is shared.
     """
 
     lines: list[str] = []
@@ -271,10 +252,18 @@ def build_launch_facts_prompt(
             f"- `{launched_by}` — the conversation that launched this run "
             "(`$MERIDIAN_CHAT_ID`), parent for handoff `--from`."
         )
-    if active_work_dir is not None:
+    if work_link is not None:
         lines.append(
-            f"- `{active_work_dir.as_posix()}` — scratch directory for this run "
-            "(`$MERIDIAN_ACTIVE_WORK_DIR`); inspect: `meridian work current`."
+            f"- `{work_link.as_posix()}` — work directory "
+            "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
+            "directory it resolves to: the link follows `work start`, `work switch`, "
+            "`work done` and `work rename`."
+        )
+    if task_link is not None:
+        lines.append(
+            f"- `{task_link.as_posix()}` — source checkout (`$MERIDIAN_TASK_DIR`); "
+            "write this literal path, never the directory it resolves to: the link "
+            "follows `meridian task-dir` and a work switch."
         )
     if not lines:
         return ""

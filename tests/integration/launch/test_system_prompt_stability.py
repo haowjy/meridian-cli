@@ -81,9 +81,9 @@ def test_system_prompt_is_stable_across_launches(
 ) -> None:
     """A continue keeps the bytes; a new goal or surface changes them.
 
-    The run ID, the launching chat and the ambient scratch directory are per-launch,
-    so they live in the user turn. Rebuilding them into the system prompt made every
-    continue miss the harness prompt cache.
+    The run ID, the launching chat, a spawn's goal and a spawn's per-chat links are
+    per-launch, so they live in the user turn. Rebuilding them into the system prompt
+    made every continue miss the harness prompt cache.
     """
 
     write_minimal_mars_config(tmp_path)
@@ -149,3 +149,6 @@ def test_system_prompt_is_stable_across_launches(
     )
     assert primary_goal != other_primary_goal
     assert primary != spawn
+    # A spawn's goal travels with its task, not the shared prefix: two spawns of the
+    # same agent must send the same system bytes whatever their goals.
+    assert spawn == _system_prompt(fresh)

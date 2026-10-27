@@ -244,10 +244,10 @@ def test_repair_uses_directory_timestamp_when_archived_at_is_missing(tmp_path: P
     assert payload["archived_at"] == repaired.archived_at
 
 
-def test_interrupted_archive_keeps_both_directories_and_the_old_status(
+def test_interrupted_archive_leaves_the_item_done_where_it_moved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A crash before the done status commits moves nothing: no half-archived item."""
+    """A crash between the move and the status write loses nothing and reads as done."""
 
     runtime_root = _state_root(tmp_path)
     item = work_repository.create_work_item(runtime_root, "archive-crash")
@@ -261,17 +261,18 @@ def test_interrupted_archive_keeps_both_directories_and_the_old_status(
     with pytest.raises(OSError, match="simulated crash"):
         work_repository.archive_work_item(runtime_root, item.name)
 
-    assert (runtime_root / "work" / item.name / "notes.md").read_text(encoding="utf-8") == "keep\n"
-    assert not (runtime_root / "archive" / "work" / item.name).exists()
+    archived = runtime_root / "archive" / "work" / item.name
+    assert (archived / "notes.md").read_text(encoding="utf-8") == "keep\n"
+    assert not (runtime_root / "work" / item.name).exists()
     loaded = work_store.get_work_item(runtime_root, item.name)
     assert loaded is not None
-    assert loaded.status == "blocked"
+    assert loaded.status == "done"
 
 
 def test_interrupted_reopen_leaves_the_item_archived(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A crash before the reopened status commits leaves the item done, files intact."""
+    """A crash before the move leaves the item archived, files intact, reopen-able."""
 
     runtime_root = _state_root(tmp_path)
     item = work_repository.create_work_item(runtime_root, "reopen-crash")
@@ -285,11 +286,18 @@ def test_interrupted_reopen_leaves_the_item_archived(
     with pytest.raises(OSError, match="simulated crash"):
         work_repository.reopen_work_item(runtime_root, item.name)
 
-    assert (runtime_root / "archive" / "work" / item.name / "notes.md").is_file()
+    archived = runtime_root / "archive" / "work" / item.name
+    assert (archived / "notes.md").is_file()
     assert not (runtime_root / "work" / item.name).exists()
     loaded = work_store.get_work_item(runtime_root, item.name)
     assert loaded is not None
     assert loaded.status == "done"
+
+    # The interrupted reopen is repaired by running it again, not by a sweep.
+    monkeypatch.undo()
+    reopened = work_repository.reopen_work_item(runtime_root, item.name)
+    assert reopened.status == "open"
+    assert (runtime_root / "work" / item.name / "notes.md").is_file()
 
 
 def test_delete_without_force_succeeds_for_status_only_directory(tmp_path: Path) -> None:

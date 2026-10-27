@@ -62,6 +62,7 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.session_links import (
+    execution_link_chat,
     refresh_session_links,
     session_task_link_path,
     session_work_link_path,
@@ -79,12 +80,9 @@ from meridian.lib.state.paths import (
     load_context_config,
     resolve_ambient_work_dir,
     resolve_kb_dir,
-    resolve_project_paths,
     resolve_spawn_log_dir,
 )
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
-from meridian.lib.state.work_repository import settle_pending_moves
-from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.tools import ToolRule
@@ -827,24 +825,6 @@ def build_child_runtime_env_overrides(
     return runtime_overrides
 
 
-def _resolve_bound_active_work_dir(
-    *,
-    project_root: Path,
-    requested_work_id: str | None,
-    child_spawn_id: str,
-    runtime_root: Path,
-) -> Path | None:
-    """Pure bind-time work-dir: named repo scratch or child ambient spawn dir."""
-
-    scope = resolve_bound_work_scope(
-        project_root=project_root,
-        requested_work_id=requested_work_id,
-        child_spawn_id=child_spawn_id,
-        runtime_root=runtime_root,
-    )
-    return scope.root if scope is not None else None
-
-
 def _reproject_capabilities_at_bind(
     *,
     composed_prompt: str,
@@ -856,8 +836,6 @@ def _reproject_capabilities_at_bind(
     control_root: Path,
     task_dir: Path,
     task_link: Path | None,
-    work_id: str | None,
-    work_dir: Path | None,
     work_link: Path | None,
     chat_id: str | None,
     launch_facts: str,
@@ -887,8 +865,6 @@ def _reproject_capabilities_at_bind(
         control_root=control_root,
         task_dir=task_dir,
         task_link=task_link,
-        work_id=work_id,
-        work_dir=work_dir,
         work_link=work_link,
         chat_id=chat_id,
     )
@@ -1744,39 +1720,31 @@ def bind_launch_context(
     suppresses_ambient_work = requested_work_id is None and _suppresses_ambient_work(
         resolved_request
     )
-    # Startup sweep: finish any `work done` move a crash or a just-finished spawn
-    # left deferred, before this launch resolves directories against the work store.
-    if not bindings.dry_run:
-        settle_pending_moves(resolve_project_paths(project_paths.project_root).root_dir)
     # A primary's environment and prompt name per-chat links that work and task-dir
-    # commands repoint, so neither goes stale while the session runs. Children keep
-    # their launch-bound directories: a child inherits its parent's chat id, so a
-    # chat-keyed link would be shared with the parent it belongs to.
+    # commands repoint, so neither goes stale while the session runs. Every
+    # execution has its own chat and so its own links: a spawn's are named in its
+    # `# Meridian run` user turn, not the system prompt, so sibling spawns share the
+    # cached prefix. A dry run has no session, so it keeps concrete directories.
     bound_work_link: Path | None = None
     bound_task_link: Path | None = None
-    if is_primary_launch and bindings.chat_id:
-        bound_work_link = session_work_link_path(runtime_root, bindings.chat_id)
-        bound_task_link = session_task_link_path(runtime_root, bindings.chat_id)
+    link_chat = execution_link_chat(
+        runtime_root,
+        spawn_id=bindings.spawn_id,
+        chat_id=bindings.chat_id,
+    )
+    if link_chat:
+        bound_work_link = session_work_link_path(runtime_root, link_chat)
+        bound_task_link = session_task_link_path(runtime_root, link_chat)
         if not bindings.dry_run:
             refresh_session_links(
                 project_paths.project_root,
                 runtime_root,
-                bindings.chat_id,
+                link_chat,
                 ambient_spawn_id=bindings.spawn_id,
                 # A `--task-dir` on this launch names a directory no command
-                # would resolve; the session's link follows it from here on.
+                # would resolve; the execution's link follows it from here on.
                 task_dir=directory_context.logical_task_cwd,
             )
-    bound_work_target = (
-        None
-        if bound_work_link is not None
-        else _resolve_bound_active_work_dir(
-            project_root=project_paths.project_root,
-            requested_work_id=requested_work_id,
-            child_spawn_id=bindings.spawn_id,
-            runtime_root=runtime_root,
-        )
-    )
     # Bind the child env before projection: it is the source of the prompt's launch
     # facts, so the capability block and the `# Meridian run` block describe the same
     # chat, spawn ID and work directory the child process actually receives.
@@ -1804,36 +1772,26 @@ def bind_launch_context(
     if suppresses_ambient_work:
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_DIR", None)
-    effective_work_id = (
-        child_context_env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip() or requested_work_id
-    )
     if bound_work_link is not None:
-        # A primary's work lives on its chat row, so a launch-time ID would shadow
-        # every later `work switch`; the link is the one path its prompt and
-        # environment name.
+        # The link is the one work path this execution names; an ID in the env would
+        # shadow the session row every work command writes.
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)
         child_context_env["MERIDIAN_ACTIVE_WORK_DIR"] = bound_work_link.as_posix()
+    effective_work_id = requested_work_id
     # A primary's own chat is its conversation and survives resume, so the system
     # prompt may name it. A spawn's chat is whichever conversation launched this run:
     # it changes with the launcher, so it goes in the user turn with the launch facts.
     primary_chat_id: str | None = None
     launching_chat_id: str | None = None
     if is_primary_launch:
-        primary_chat_id = (bindings.chat_id or "").strip() or None
+        primary_chat_id = link_chat or None
     else:
         launching_chat_id = child_context_env.get("MERIDIAN_CHAT_ID", "").strip() or None
-    # A work item's scratch directory is fixed for the conversation, so the system
-    # prompt can name it. A no-work-item directory belongs to this launch's spawn
-    # directory and changes on every continue: it goes in the user turn instead.
-    stable_work_dir = bound_work_target if effective_work_id is not None else None
-    ambient_work_dir: Path | None = None
-    if effective_work_id is None and not suppresses_ambient_work and bound_work_link is None:
-        raw_ambient_work_dir = child_context_env.get("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
-        ambient_work_dir = Path(raw_ambient_work_dir) if raw_ambient_work_dir else None
     launch_facts = build_launch_facts_prompt(
         spawn_id=child_context_env.get("MERIDIAN_SPAWN_ID"),
         chat_id=launching_chat_id,
-        active_work_dir=ambient_work_dir,
+        work_link=None if is_primary_launch else bound_work_link,
+        task_link=None if is_primary_launch else bound_task_link,
     )
     refreshed_prompt, prompt_payload, projected_content = _reproject_capabilities_at_bind(
         composed_prompt=resolved_request.prompt,
@@ -1843,11 +1801,9 @@ def bind_launch_context(
         harness=harness,
         project_root=project_paths.project_root,
         control_root=resolved_control_root,
-        task_dir=bound_task_link or directory_context.logical_task_cwd,
-        work_id=effective_work_id,
-        work_dir=stable_work_dir,
-        work_link=bound_work_link,
-        task_link=bound_task_link,
+        task_dir=directory_context.logical_task_cwd,
+        work_link=bound_work_link if is_primary_launch else None,
+        task_link=bound_task_link if is_primary_launch else None,
         chat_id=primary_chat_id,
         launch_facts=launch_facts,
         spawn_capable=prepared.has_spawn_capability,

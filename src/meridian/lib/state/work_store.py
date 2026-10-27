@@ -72,14 +72,6 @@ def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
         return None
     active_dir, archived_dir = locate_work_dirs(paths, work_id)
     warn_both_locations(work_id, active_dir, archived_dir)
-    if (
-        active_dir is not None
-        and archived_dir is not None
-        and not status_path(active_dir).is_file()
-    ):
-        # A spawn that outlived an archive move recreated the old path with its own
-        # writes and no metadata: the archived copy is still the item.
-        active_dir = None
     if active_dir is not None:
         return load_work_item_from_dir(active_dir, archived=False, mark_unsupported=True)
     if archived_dir is not None:

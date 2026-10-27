@@ -21,7 +21,7 @@ from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.launch.cwd import resolve_effective_task_dir
-from meridian.lib.launch.session_links import refresh_primary_links
+from meridian.lib.launch.session_links import refresh_links_for_chat
 from meridian.lib.ops.runtime import (
     RuntimeAuthoritySnapshot,
     resolve_runtime_authority_for_read,
@@ -398,7 +398,7 @@ def task_dir_set_sync(input: TaskDirSetInput) -> TaskDirMutationOutput:
     task_dir = _validated_task_dir_path(input.path)
     if not write_spawn_scope_task_dir(authority.project_root, spawn_id, task_dir):
         raise ValueError(f"Spawn '{spawn_id}' not found")
-    _refresh_primary_task_links(authority, runtime_ctx)
+    _refresh_session_task_links(authority, runtime_ctx)
     return TaskDirMutationOutput()
 
 
@@ -411,23 +411,19 @@ def task_dir_clear_sync(input: TaskDirClearInput) -> TaskDirMutationOutput:
     spawn_id = _require_session_spawn_id(runtime_ctx)
     if not write_spawn_scope_task_dir(authority.project_root, spawn_id, None):
         raise ValueError(f"Spawn '{spawn_id}' not found")
-    _refresh_primary_task_links(authority, runtime_ctx)
+    _refresh_session_task_links(authority, runtime_ctx)
     return TaskDirMutationOutput()
 
 
-def _refresh_primary_task_links(
+def _refresh_session_task_links(
     authority: RuntimeAuthoritySnapshot,
     runtime_ctx: RuntimeContext,
 ) -> None:
-    """Repoint the task link of the primary this session belongs to.
-
-    A spawn's checkout is launch-bound and owns no link, so the lookup finds
-    nothing to repoint there.
-    """
+    """Repoint the links of the execution this session belongs to."""
 
     if authority.runtime_root is None:
         return
-    refresh_primary_links(authority.project_root, authority.runtime_root, runtime_ctx.chat_id)
+    refresh_links_for_chat(authority.project_root, authority.runtime_root, runtime_ctx.chat_id)
 
 
 async def task_dir(input: TaskDirInput) -> TaskDirOutput:

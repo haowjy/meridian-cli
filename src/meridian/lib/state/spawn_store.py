@@ -766,20 +766,3 @@ def get_spawn(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     return _read_state(paths.spawns_dir, str(spawn_id))
-
-
-def list_live_primaries(runtime_root: Path) -> tuple[SpawnRecord, ...]:
-    """Return primary executions that are still running, liveness overlaid.
-
-    A primary owns a terminal and a conversation tree, so its work attachment
-    follows it beyond the chat it launched on; callers looking for "the live
-    primary for this chat" compare ``continue_chat_id`` against a session.
-    """
-
-    from meridian.lib.state.spawn_status import overlay_derived
-
-    return tuple(
-        row
-        for row in overlay_derived(runtime_root, list_spawns(runtime_root).records)
-        if row.kind == "primary" and _is_active_spawn_status(row.status)
-    )

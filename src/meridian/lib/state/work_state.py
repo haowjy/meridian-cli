@@ -343,9 +343,9 @@ def load_work_item_from_dir(
                 except ValidationError as exc:
                     _warn_work_state_validation_failure(str(metadata_path), str(exc))
                     stored = fallback
-    # An archived directory is done by location; a "done" status in the active
-    # directory is a deferred archive move, so the item is done and its directory
-    # follows once no live spawn still holds the old path.
+    # An archived directory is done by location, whatever its metadata still says:
+    # the location is what `work done` and `work reopen` move, and a crash between
+    # that move and the metadata write must not invent a second state.
     projected_status = "done" if archived else stored.status
     archived_at = None
     if projected_status == "done":

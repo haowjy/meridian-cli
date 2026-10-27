@@ -12,7 +12,13 @@ import structlog
 
 from meridian.lib.core.lifecycle import get_hook_dispatcher
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.launch.session_links import link_owners, refresh_session_links
+from meridian.lib.launch.session_links import (
+    LinkOwner,
+    chat_owner,
+    link_owners,
+    refresh_owner_links,
+    work_owners,
+)
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, work_repository, work_store
 from meridian.lib.state.paths import RuntimePaths, resolve_project_paths
@@ -81,13 +87,12 @@ def set_session_work_attachment(
     chat_id: str,
     work_id: str | None,
 ) -> None:
-    """Record a chat's work attachment and repoint the primary's links.
+    """Record a chat's work attachment and repoint the links of its execution.
 
-    The single seam for a chat's work item changing. A live primary can move off
+    The single seam for one chat's work item changing. A live primary can move off
     its entry chat — Claude ``/clear`` and ``/resume`` rotate the conversation —
     so every chat of that execution takes the new attachment, and the links stay
-    on the entry chat, whose path the launch environment and system prompt name.
-    Spawn sessions record the attachment and keep their launch-bound directories.
+    on the entry chat, whose path the launch environment and prompt name.
     Callers own the "does this chat exist" check.
     """
 
@@ -103,22 +108,71 @@ def set_session_work_attachment(
         for chat in dict.fromkeys(
             (
                 normalized,
-                *(owner.entry_chat for owner in owners),
-                *(owner.current_chat for owner in owners),
+                *(owner.chat for owner in owners),
+                *(owner.link_chat for owner in owners),
             )
         ):
             session_store.update_session_work_id(runtime_root, chat, work_id)
         # The rows are written before the links: the links are projections of them,
         # and both are under the sessions lock so a concurrent switch cannot
-        # interleave them. Only a primary owns links, and only its entry chat's
-        # path is named.
+        # interleave them.
+        refresh_owner_links(project_root, runtime_root, owners)
+
+
+def follow_work_item(
+    project_root: Path,
+    runtime_root: Path,
+    work_id: str,
+    *,
+    rename_to: str | None = None,
+    detach: Literal["primary", "all"] | None = None,
+    chat_id: str = "",
+) -> None:
+    """Make every execution attached to one work item follow it.
+
+    The single seam behind ``work done``, ``rename``, ``reopen`` and ``task-dir``:
+    one scan of the live sessions attached to the item, then the rows, then the
+    links, which are projections of the rows. ``rename_to`` moves the attachment
+    to the item's new name; ``detach`` returns those executions to their ambient
+    directory instead — a done item is no longer a primary's to edit, and a deleted
+    one is nobody's. *chat_id* is the caller, whose session may not be detectable as
+    live; it takes part when its row still names the item.
+    """
+
+    owners = list(work_owners(runtime_root, work_id))
+    caller = _attached_caller(runtime_root, chat_id, work_id)
+    if caller is not None and all(
+        caller.chat not in (owner.chat, owner.link_chat) for owner in owners
+    ):
+        owners.append(caller)
+    if not owners:
+        return
+    target_work_id = None if detach == "all" else rename_to or work_id
+    with lock_file(RuntimePaths.from_root_dir(runtime_root).sessions_flock):
         for owner in owners:
-            refresh_session_links(
-                project_root,
-                runtime_root,
-                owner.entry_chat,
-                ambient_spawn_id=owner.spawn_id,
-            )
+            if detach == "all" or (detach == "primary" and owner.kind == "primary"):
+                attachment = None
+            else:
+                attachment = target_work_id
+            for chat in dict.fromkeys((owner.chat, owner.link_chat)):
+                session_store.update_session_work_id(runtime_root, chat, attachment)
+        refresh_owner_links(project_root, runtime_root, tuple(owners))
+
+
+def _attached_caller(
+    runtime_root: Path,
+    chat_id: str,
+    work_id: str,
+) -> LinkOwner | None:
+    """The calling chat as an owner, when its row still names the item."""
+
+    normalized = chat_id.strip()
+    if not normalized:
+        return None
+    owner = chat_owner(runtime_root, normalized)
+    if owner is None or (owner.work_id or "") != work_id:
+        return None
+    return owner
 
 
 def activate_work(

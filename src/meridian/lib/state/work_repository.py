@@ -7,7 +7,6 @@ acquire the mutation lock or persist normalization.
 
 from __future__ import annotations
 
-import os
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -98,134 +97,21 @@ def _work_runtime_root(project_state_dir: Path) -> Path:
     return project_state_dir
 
 
-def pending_archive_blockers(runtime_root: Path, work_id: str) -> tuple[str, ...]:
-    """Return the live spawns that still hold a done item's directory.
-
-    A non-terminal spawn keeps its launch-bound work directory, so moving the item
-    out from under it would leave a ghost directory the spawn recreates on its next
-    write. Primaries are excluded: ``work done`` detaches them, and their spawn
-    rows keep the launch work id.
-    """
-
-    from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-    from meridian.lib.state import spawn_store
-    from meridian.lib.state.spawn_status import overlay_derived
-
-    rows = overlay_derived(
-        runtime_root,
-        spawn_store.list_spawns(runtime_root, work_id=work_id).records,
-    )
-    return tuple(
-        row.id
-        for row in rows
-        if (row.kind or "").strip() != "primary" and is_active_spawn_status(row.status)
-    )
-
-
-def _same_file_contents(left: Path, right: Path) -> bool:
-    try:
-        if left.stat().st_size != right.stat().st_size:
-            return False
-        return left.read_bytes() == right.read_bytes()
-    except OSError:
-        return False
-
-
-def _merge_conflicts(source: Path, destination: Path, *, relative: Path) -> list[Path]:
-    """List the paths that differ between two copies of one work directory.
-
-    ``__status.json`` never counts: the caller writes the authoritative state after
-    the move.
-    """
-
-    conflicts: list[Path] = []
-    for child in sorted(source.iterdir()):
-        if child.name == STATUS_FILENAME:
-            continue
-        target = destination / child.name
-        rel = relative / child.name
-        if not target.exists() and not target.is_symlink():
-            continue
-        if child.is_symlink() or target.is_symlink():
-            same_link = child.is_symlink() and target.is_symlink() and (
-                os.readlink(child) == os.readlink(target)
-            )
-            if not same_link:
-                conflicts.append(rel)
-            continue
-        if child.is_dir() and target.is_dir():
-            conflicts.extend(_merge_conflicts(child, target, relative=rel))
-        elif child.is_file() and target.is_file():
-            if not _same_file_contents(child, target):
-                conflicts.append(rel)
-        else:
-            conflicts.append(rel)
-    return conflicts
-
-
-def _merge_into(source: Path, destination: Path) -> None:
-    """Move *source* into *destination*, keeping every distinct file.
-
-    Only call after :func:`_merge_conflicts` returned nothing: shared paths are
-    identical, so dropping the source's copy of one loses no content.
-    """
-
-    for child in sorted(source.iterdir()):
-        if child.name == STATUS_FILENAME:
-            continue
-        target = destination / child.name
-        counterpart = target.exists() or target.is_symlink()
-        if child.is_symlink():
-            if counterpart:
-                child.unlink()
-            else:
-                child.rename(target)
-            continue
-        if child.is_file() and counterpart:
-            child.unlink()
-            continue
-        if child.is_dir() and target.is_dir():
-            _merge_into(child, target)
-            continue
-        child.rename(target)
-    (source / STATUS_FILENAME).unlink(missing_ok=True)
-    source.rmdir()
-
-
-def move_work_dir(
-    source: Path,
-    destination: Path,
-    *,
-    before_move: Callable[[], None] | None = None,
-) -> None:
+def move_work_dir(source: Path, destination: Path) -> None:
     """Move one work directory between the active and archived locations.
 
-    A spawn that still held the old path can recreate it, so both copies may exist
-    when the move finally runs. Merge the source into the destination when the
-    source only adds files, and refuse otherwise: silently losing one copy is worse
-    than stopping with both paths named. ``before_move`` runs after that check and
-    immediately before the first rename, so a refused move leaves the source's
-    metadata as it was.
+    A directory in both places means a copy is half-removed, half-written, or left
+    by a build that has since been replaced; silently picking one loses whatever the
+    other holds. Refuse with both paths named.
     """
 
-    if not destination.exists():
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if before_move is not None:
-            before_move()
-        source.rename(destination)
-        return
-    conflicts = _merge_conflicts(source, destination, relative=Path())
-    if conflicts:
-        shown = ", ".join(path.as_posix() for path in conflicts[:5])
-        more = f" (and {len(conflicts) - 5} more)" if len(conflicts) > 5 else ""
+    if destination.exists() or destination.is_symlink():
         raise ValueError(
-            f"Both {source.as_posix()} and {destination.as_posix()} exist and differ at "
-            f"{shown}{more}. Nothing was moved or deleted: reconcile the two directories "
-            "and re-run."
+            f"Both {source.as_posix()} and {destination.as_posix()} exist. Nothing was "
+            "moved or deleted: reconcile the two directories and re-run."
         )
-    if before_move is not None:
-        before_move()
-    _merge_into(source, destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(destination)
 
 
 def write_state_locked(runtime_root: Path, work_id: str, mutation: _NamespaceMutation[T]) -> T:
@@ -438,15 +324,12 @@ def archive_work_item(
     *,
     description: str | None = None,
 ) -> WorkItem:
-    """Mark an item done now and move its directory to the archive.
+    """Mark an item done and move its directory to the archive.
 
-    The move waits while any non-terminal spawn is still attached: those spawns hold
-    the item's directory as their launch-bound work directory, so moving it would
-    leave a ghost they recreate on the next write. The done status is written first,
-    so a crash leaves a pending move the startup sweep finishes.
+    One move, never deferred: a running spawn writes through its per-chat link, so
+    the directory moving under it is transparent, and a link is what lets the move
+    happen without stranding a worker on a path that no longer exists.
     """
-
-    project_runtime_root = _work_runtime_root(runtime_root)
 
     def archive(
         paths: ProjectPaths,
@@ -467,28 +350,22 @@ def archive_work_item(
                 "worktree": current.worktree.model_copy(update={"pending": False}),
             }
         )
-        if pending_archive_blockers(project_runtime_root, work_id):
-            _write_item(active_dir, archived_item)
-            return _MutationResult(archived_item)
         destination = archived_work_dir(paths, work_id)
-        move_work_dir(
-            active_dir,
-            destination,
-            before_move=lambda: _write_item(active_dir, archived_item),
-        )
+        # Move first: an archived directory is done by location, so a crash before
+        # the status lands leaves a readable, repairable item rather than one marked
+        # done where it is still being edited.
+        move_work_dir(active_dir, destination)
         return _MutationResult(archived_item, (destination, archived_item))
 
     return write_state_locked(runtime_root, work_id, archive)
 
 
 def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") -> WorkItem:
-    """Cancel a deferred archive move, or move the archived directory back to work/.
+    """Move a done item's directory back to work/ and reopen it.
 
-    The one implementation behind ``work reopen`` and ``work start`` on a done item.
-    A done item still in the active directory never moved, so reopening only rewrites
-    its status. An archived item moves back under the same rules as the archive move:
-    merge a copy a spawn recreated when it only adds files, otherwise refuse with both
-    paths named.
+    The one implementation behind ``work reopen``, ``work start`` on a done item and
+    ``work switch`` to one. The move refuses when both locations exist, naming both,
+    so neither copy is ever deleted to make room.
     """
 
     status = _validate_active_status(status)
@@ -510,96 +387,18 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
         if archived_dir is None:
             if active_dir is None:
                 raise ValueError(f"Work item '{work_id}' not found")
-            current = load_work_item_from_dir(active_dir, archived=False)
-            if current.status != "done":
-                raise ValueError(f"Work item '{work_id}' is already active.")
-            reopened = reopened_item(current)
-            return _MutationResult(reopened, (active_dir, reopened))
+            raise ValueError(f"Work item '{work_id}' is already active.")
 
         current = load_work_item_from_dir(archived_dir, archived=True)
         reopened = reopened_item(current)
         destination = active_work_dir(paths, work_id)
-        # Intent before the move, and only once the move is known to be allowed: a
-        # refused or crashed move leaves the item archived, never done in work/.
-        move_work_dir(
-            archived_dir,
-            destination,
-            before_move=lambda: _write_item(archived_dir, reopened),
-        )
+        # Status first here: an interrupted reopen then leaves the item archived and
+        # repair-able by re-running, never active and marked done.
+        _write_item(archived_dir, reopened)
+        move_work_dir(archived_dir, destination)
         return _MutationResult(reopened, (destination, reopened))
 
     return write_state_locked(runtime_root, work_id, reopen)
-
-
-def settle_pending_archive(
-    runtime_root: Path,
-    work_id: str,
-) -> WorkItem | None:
-    """Finish a deferred archive move once no live spawn still holds the item.
-
-    Reads the done status a deferred ``work done`` wrote and moves the directory when
-    the last attached spawn is terminal. Idempotent: with nothing pending it returns
-    ``None`` and touches nothing.
-    """
-
-    project_runtime_root = _work_runtime_root(runtime_root)
-
-    def settle(
-        paths: ProjectPaths,
-        active_dir: Path | None,
-        archived_dir: Path | None,
-    ) -> _MutationResult[WorkItem | None]:
-        if active_dir is None:
-            return _MutationResult(None)
-        item = load_work_item_from_dir(active_dir, archived=False)
-        if item.status != "done":
-            return _MutationResult(None)
-        if pending_archive_blockers(project_runtime_root, work_id):
-            return _MutationResult(None)
-        destination = archived_work_dir(paths, work_id)
-        move_work_dir(active_dir, destination)
-        return _MutationResult(item, (destination, item))
-
-    return write_state_locked(runtime_root, work_id, settle)
-
-
-def settle_pending_moves(runtime_root: Path) -> tuple[str, ...]:
-    """Finish every deferred archive move a crash or a finished spawn left behind.
-
-    The startup sweep: cheap enough for a launch, and it never fails the caller. An
-    item that cannot be merged keeps both copies and is reported as done until
-    ``work done``/``reopen`` resolves it with both paths named.
-    """
-
-    paths = project_paths_for_work_store(runtime_root)
-    if paths.work_dir is None or not paths.work_dir.is_dir():
-        return ()
-    settled: list[str] = []
-    for child in sorted(paths.work_dir.iterdir()):
-        if not child.is_dir() or slugify(child.name) != child.name:
-            continue
-        try:
-            if (child / STATUS_FILENAME).exists():
-                if settle_pending_archive(runtime_root, child.name) is not None:
-                    settled.append(child.name)
-                continue
-            # A spawn that held an archived item's old path after the move wrote a
-            # directory with no metadata: merge it into the archive it belongs to,
-            # once no other spawn is still writing there.
-            archived = archived_work_dir(paths, child.name)
-            if archived.is_dir() and not pending_archive_blockers(
-                _work_runtime_root(runtime_root), child.name
-            ):
-                move_work_dir(child, archived)
-                settled.append(child.name)
-        except Exception:
-            logger.warning(
-                "Could not finish a deferred work archive move.",
-                work_id=child.name,
-                work_dir=child.as_posix(),
-                exc_info=True,
-            )
-    return tuple(settled)
 
 
 def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> WorkItem:

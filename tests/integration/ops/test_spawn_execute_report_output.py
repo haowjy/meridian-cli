@@ -301,13 +301,23 @@ def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
     assert authority.runtime_root is not None
     params_path = authority.runtime_root / "spawns" / result.spawn_id / "params.json"
     params = json.loads(params_path.read_text(encoding="utf-8"))
+    spawn_row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
+    assert spawn_row is not None
+    # A spawn names its own chat's link, not a directory tied to this launch.
     bound_work_dir = (
-        authority.runtime_root / "spawns" / result.spawn_id / "work"
+        authority.runtime_root / "sessions" / str(spawn_row.chat_id) / "work"
     ).as_posix()
     assert params["phase"] == "bound"
     assert params["bound_work_id"] is None
     assert params["bound_work_dir"] == bound_work_dir
-    assert params["bound_task_dir"] == (tmp_path / "repo").as_posix()
+    # The task link resolves to the checkout; the checkout itself is in the prompt.
+    bound_task_dir = (
+        authority.runtime_root / "sessions" / str(spawn_row.chat_id) / "task"
+    ).as_posix()
+    assert params["bound_task_dir"] == bound_task_dir
+    assert (authority.runtime_root / "sessions" / str(spawn_row.chat_id) / "task").resolve() == (
+        tmp_path / "repo"
+    ).resolve()
     assert bound_work_dir in (params["user_turn_content"] or "")
     assert bound_work_dir not in (params["appended_system_prompt"] or "")
 
