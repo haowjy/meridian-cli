@@ -269,7 +269,9 @@ root that keep moving targets out of the prompt and environment:
 - `sessions/<chat>/task` (`MERIDIAN_TASK_DIR`) is the source checkout. It follows
   `meridian task-dir`, `meridian work task-dir`, and a switch to an item with its
   own checkout, so the same literal path keeps reaching the current one. A
-  spawn-scope `task-dir` outranks an item's checkout, as it does at launch.
+  spawn-scope `task-dir` outranks an item's checkout, as it does at launch; a
+  launch's `--task-dir` or inherited checkout becomes that scope, so later work
+  commands keep it.
 
 The chat in the path is the execution's own: a primary's entry chat (the one its
 launch named, which survives a `/clear` rotation) and a spawn's own chat. A primary

@@ -10,6 +10,11 @@ follow the commands that move their target, and both survive a Claude `/clear` o
 longer names the parent's directory; a primary names its links in the system prompt
 and a spawn names them in its `# Meridian run` user turn.
 
+A `--task-dir` given to a launch, or a checkout it inherited, is now recorded on the
+execution itself, so a later `work done`, `work rename`, `work switch` or
+`meridian task-dir` keeps that checkout instead of resetting the link to the project
+root. `meridian task-dir clear` returns the execution to its work item's checkout.
+
 `work done` now moves an item's directory to the archive at once, and the links of
 every session attached to it follow. A running spawn keeps writing through its link
 and its writes land in the archive; a primary attached to the item is returned to its

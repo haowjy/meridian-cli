@@ -223,7 +223,11 @@ and their paths are per-launch for a spawn and per-conversation for a primary. S
 spawn's run ID, its launching chat, and those two links go in the first user turn
 (`build_launch_facts_prompt()`), never the system prompt: sibling spawns then send
 byte-identical system bytes. A primary's own chat ID and its two links stay in the
-capability block, because a `--continue` replays no user turn. A spawn's `--goal`
+capability block, because a `--continue` replays no user turn. Bind also records a
+checkout no work command could recompute — this run's `--task-dir`, one inherited from
+its parent, or the caller's cwd outside the project — in the execution's spawn scope
+before it publishes the links, so a later work command's refresh resolves the same
+directory and `meridian task-dir clear` stays the way back. A spawn's `--goal`
 contract is its task turn (`_build_goal_instruction`'s text); a primary's is a
 guidance block, because goal text must never create a user turn, or a bare primary
 submits the goal as its first message, fresh and on every resume. A continued

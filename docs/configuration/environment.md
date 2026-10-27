@@ -41,9 +41,13 @@ spawn-scope override (`meridian task-dir set`, stored in per-spawn `scope.json`)
 work-item `task_dir` (`meridian work task-dir`) → inherited `MERIDIAN_TASK_DIR` →
 project root. Every execution's inherited value is its own per-chat link
 (`sessions/<chat>/task`), so the link's target follows those same steps.
+A launch that resolves an explicit `--task-dir`, an inherited checkout, or the
+caller's cwd outside the project records it in that execution's spawn scope, so the
+link and every later work command keep the checkout the launch resolved;
+`meridian task-dir clear` is the way back to the item's checkout.
 `meridian task-dir` prints the resolved directory, not the link. Clear a stale inherited value with
-`meridian task-dir clear`. Use `--task-dir` on primary/spawn launch for one-shot
-overrides — not `-C`, which retargets the entire project/control root.
+`meridian task-dir clear`. Use `--task-dir` on primary/spawn launch to give one
+execution its own checkout — not `-C`, which retargets the entire project/control root.
 
 ## Core
 

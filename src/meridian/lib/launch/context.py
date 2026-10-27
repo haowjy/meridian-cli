@@ -82,6 +82,7 @@ from meridian.lib.state.paths import (
     resolve_kb_dir,
     resolve_spawn_log_dir,
 )
+from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
@@ -426,6 +427,12 @@ _INLINE_FILE_REFS_WARNING_THRESHOLD = 5
 _INLINE_FILE_REFS_WARNING_MESSAGE = (
     "Many file refs will be inlined and may drain context; "
     "prefer folder refs or a design/context artifact."
+)
+# Launch task-cwd sources no work command could recompute: the checkout belongs to
+# this execution, so the launch records it in the spawn scope every later link
+# refresh reads.
+_PINNED_TASK_DIR_SOURCES = frozenset(
+    {"explicit-task-dir", "inherited-task-dir", "ambient-cwd"}
 )
 
 
@@ -1698,14 +1705,22 @@ def bind_launch_context(
         bound_work_link = session_work_link_path(runtime_root, link_chat)
         bound_task_link = session_task_link_path(runtime_root, link_chat)
         if not bindings.dry_run:
+            # A launch can resolve a checkout no work command would: this run's
+            # `--task-dir`, one inherited from its parent, or the caller's cwd
+            # outside the project. Record it as the execution's own scope, so the
+            # refresh every later command runs resolves the same directory, and
+            # `meridian task-dir clear` stays the way back to the item's checkout.
+            if directory_context.task_cwd_source in _PINNED_TASK_DIR_SOURCES:
+                write_spawn_scope_task_dir(
+                    project_paths.project_root,
+                    bindings.spawn_id,
+                    directory_context.logical_task_cwd,
+                )
             refresh_session_links(
                 project_paths.project_root,
                 runtime_root,
                 link_chat,
                 ambient_spawn_id=bindings.spawn_id,
-                # A `--task-dir` on this launch names a directory no command
-                # would resolve; the execution's link follows it from here on.
-                task_dir=directory_context.logical_task_cwd,
             )
     # Bind the child env before projection: it is the source of the prompt's launch
     # facts, so the capability block and the `# Meridian run` block describe the same

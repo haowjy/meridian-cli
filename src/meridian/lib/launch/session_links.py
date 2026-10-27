@@ -14,9 +14,11 @@ one chat. A spawn has its own chat and so its own links; they are named in its
 ``# Meridian run`` user turn rather than the system prompt, so sibling spawns keep
 sharing the cached prompt prefix.
 
-Nothing removes a link: it is a rebuildable projection, and an execution that ends
-leaves it pointing at a valid directory that the next launch of the chat repoints.
-Only removing the chat or the runtime root removes it.
+Nothing removes a link: it is a rebuildable projection. A live execution's links
+follow every move of its work directory and checkout; an execution that has ended
+keeps the targets its row named at the end, so they can point at a directory a later
+`work rename`, `work done` or `work reopen` moved away. The next launch of the chat
+repoints them. Only removing the chat or the runtime root removes the link.
 """
 
 from __future__ import annotations
@@ -123,13 +125,6 @@ def _owner_of(runtime_root: Path, record: session_store.SessionRecord) -> LinkOw
     )
 
 
-def chat_owner(runtime_root: Path, chat_id: str) -> LinkOwner | None:
-    """Return one chat as a link owner, live or not."""
-
-    record = session_store.chat_record(runtime_root, chat_id)
-    return _owner_of(runtime_root, record) if record is not None else None
-
-
 def execution_owners(runtime_root: Path) -> tuple[LinkOwner, ...]:
     """Return one owner per live execution, from the live session records.
 
@@ -199,14 +194,11 @@ def refresh_session_links(
     chat_id: str,
     *,
     ambient_spawn_id: str,
-    task_dir: Path | None = None,
 ) -> tuple[Path, Path]:
     """Point one chat's links at its work attachment and its checkout.
 
     Both targets are read and swapped under the sessions lock, so a concurrent
-    work command cannot leave a link on the state it just replaced. ``task_dir`` is
-    a launch's resolved checkout: a launch with ``--task-dir`` names a directory no
-    command would otherwise resolve.
+    work command cannot leave a link on the state it just replaced.
     """
 
     # The one lock every row write and link swap takes: a concurrent `work switch`
@@ -227,8 +219,7 @@ def refresh_session_links(
             runtime_root,
             chat_id,
             _TASK_LINK,
-            task_dir
-            or _session_task_target(
+            _session_task_target(
                 project_root,
                 runtime_root,
                 chat_id,
@@ -274,9 +265,10 @@ def _session_task_target(
 ) -> Path:
     """Return the checkout a chat's task link points at.
 
-    The same resolution a launch uses, minus the inherited directory: the
-    execution's own spawn-scope task dir, then its work item's task dir, then the
-    project root. The inherited ``MERIDIAN_TASK_DIR`` is the link itself, so
+    The same resolution a launch uses, from durable state only: the execution's own
+    spawn-scope task dir — written at bind when the launch resolved a ``--task-dir``,
+    inherited one, or the caller's directory — then its work item's task dir, then
+    the project root. The inherited ``MERIDIAN_TASK_DIR`` is the link itself, so
     following it would close the loop.
     """
 
@@ -333,7 +325,6 @@ def _sweep_staged_links(link: Path, name: str) -> None:
 
 __all__ = [
     "LinkOwner",
-    "chat_owner",
     "execution_link_chat",
     "execution_owners",
     "link_owners",

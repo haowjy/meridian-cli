@@ -346,7 +346,17 @@ and says to write the literal path, because `task-dir`, `work task-dir`, and a s
 repoint it). Both are projections, not authority: `launch/session_links.py` reads the
 chat row, the spawn scope and the work item under the sessions lock and swaps one
 symlink per link, and the launch env names the same paths
-(`MERIDIAN_ACTIVE_WORK_DIR`, `MERIDIAN_TASK_DIR`). The capability block carries a
+(`MERIDIAN_ACTIVE_WORK_DIR`, `MERIDIAN_TASK_DIR`).
+
+**The link's checkout is recorded, not re-derived.** A launch can resolve a checkout
+no work command would: an explicit `--task-dir`, a parent's inherited checkout, or a
+caller cwd outside the project. Before publishing the links, `bind_launch_context()`
+records that directory in the execution's spawn scope
+(`write_spawn_scope_task_dir()`), so the link refresh and the `meridian task-dir`
+command share one rule — spawn scope, then the item's checkout, then the project root
+— and a later `work done`, `work rename` or `work switch` cannot reset the link to the
+project root. `meridian task-dir clear` is the way back. A checkout that came from a
+work item needs no scope entry: every command recomputes it from the item. The capability block carries a
 primary's own chat ID and its two links, because a primary's `--continue` replays no
 user turn; per-launch values are rendered into the first user turn
 (`build_launch_facts_prompt()`), because one changed byte in the system prompt
