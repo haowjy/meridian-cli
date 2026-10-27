@@ -45,12 +45,6 @@ class PiExtensionLaunchProfile:
     interactive: bool
     session_boundary_enabled: bool = True
 
-    def bundle_enabled(self) -> bool:
-        """Whether any Meridian Pi extension bundle should load."""
-
-        return (self.background_tasks_enabled or self.spawn_watch_enabled
-                or self.session_boundary_enabled)
-
 
 def resolve_pi_managed_bash_entrypoint() -> tuple[str, ...]:
     """Resolve the Meridian managed-bash Pi extension entrypoint."""
@@ -170,12 +164,7 @@ def _resolve_extension_source_root() -> Path:
     if override:
         return Path(override).expanduser().resolve()
 
-    return (
-        Path(__file__).resolve().parents[3]
-        / "pi_runtime"
-        / "dist"
-        / "extensions"
-    )
+    return Path(__file__).resolve().parents[3] / "pi_runtime" / "dist" / "extensions"
 
 
 def default_extra_extension_path() -> Path:

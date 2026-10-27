@@ -5,39 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
-from meridian.lib.service_context import (
-    ApplicationContext,
-    ApplicationServices,
-    ExtensionEntryPoint,
-)
+from meridian.lib.service_context import ExtensionEntryPoint
 
 if TYPE_CHECKING:
-    from meridian.lib.config.models import MeridianConfig
-    from meridian.lib.core.lifecycle import SpawnLifecycleService
-    from meridian.lib.core.spawn_service import SpawnApplicationService
     from meridian.lib.extensions.types import ExtensionSurface
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
-
-
-class SpawnServiceFactory(Protocol):
-    """Factory contract for extension-facing spawn application services."""
-
-    def __call__(self, entrypoint: ExtensionEntryPoint) -> SpawnApplicationService: ...
-
-
-def _default_spawn_service_factory(entrypoint: ExtensionEntryPoint) -> SpawnApplicationService:
-    from meridian.lib.bootstrap.services import build_spawn_application_service_from_entrypoint
-
-    return build_spawn_application_service_from_entrypoint(entrypoint)
-
-
-@dataclass(frozen=True)
-class ExtensionSharedServices:
-    """Shared service factory bundle extensions can consume."""
-
-    spawn_service_factory: SpawnServiceFactory = _default_spawn_service_factory
 
 
 class ExtensionCapability(StrEnum):
@@ -104,10 +78,6 @@ class ExtensionInvocationContextBuilder:
         self._work_id = work_id
         return self
 
-    def with_work_path(self, path: Path | None) -> ExtensionInvocationContextBuilder:
-        self._work_path = path
-        return self
-
     def with_spawn_id(self, spawn_id: str | None) -> ExtensionInvocationContextBuilder:
         self._spawn_id = spawn_id
         return self
@@ -147,122 +117,12 @@ class ExtensionInvocationContextBuilder:
 class ExtensionCommandServices:
     """Services available to extension command handlers."""
 
-    authority: RuntimeAuthoritySnapshot | None = None
-    runtime_root: Path | None = None
-    meridian_dir: Path | None = None
     application: ExtensionEntryPoint = field(default_factory=ExtensionEntryPoint)
-    shared: ExtensionSharedServices = field(default_factory=ExtensionSharedServices)
 
     def resolved_project_root(self) -> Path | None:
-        """Resolve project root from shared application/authority inputs."""
+        """Project root of the shared application context, if known."""
 
-        project_root = self.application.context.project_root
-        if project_root is not None:
-            return project_root
-        if self.authority is not None:
-            return self.authority.project_root
-        return None
-
-    def resolved_runtime_root(self) -> Path | None:
-        """Resolve runtime root from shared application/authority inputs."""
-
-        runtime_root = self.application.context.runtime_root
-        if runtime_root is not None:
-            return runtime_root
-        if self.authority is not None:
-            return self.authority.runtime_root
-        return self.runtime_root
-
-    def require_project_root(self) -> Path:
-        """Return project root or raise if authority is unavailable."""
-
-        project_root = self.resolved_project_root()
-        if project_root is None:
-            raise ValueError("project_root not available")
-        return project_root
-
-    def require_runtime_root(self) -> Path:
-        """Return runtime root or raise if authority is unavailable."""
-
-        runtime_root = self.resolved_runtime_root()
-        if runtime_root is None:
-            raise ValueError("runtime_root not available")
-        return runtime_root
-
-    def build_spawn_service(self) -> SpawnApplicationService:
-        """Build spawn service from shared application/service authority."""
-
-        return self.shared.spawn_service_factory(self._resolved_spawn_entrypoint())
-
-    def _resolved_spawn_entrypoint(self) -> ExtensionEntryPoint:
-        """Return entrypoint with roots materialized from shared authority."""
-
-        project_root = self.resolved_project_root()
-        runtime_root = self.resolved_runtime_root()
-        context = self.application.context
-        authority = self.authority or context.authority
-        if (
-            context.project_root == project_root
-            and context.runtime_root == runtime_root
-            and context.authority == authority
-        ):
-            return self.application
-        return ExtensionEntryPoint(
-            context=ApplicationContext(
-                project_root=project_root,
-                runtime_root=runtime_root,
-                config=context.config,
-                authority=authority,
-            ),
-            services=self.application.services,
-        )
-
-
-def build_extension_command_services(
-    *,
-    application: ExtensionEntryPoint | None = None,
-    authority: RuntimeAuthoritySnapshot | None = None,
-    project_root: Path | None = None,
-    runtime_root: Path | None = None,
-    config: MeridianConfig | None = None,
-    lifecycle: SpawnLifecycleService | None = None,
-    meridian_dir: Path | None = None,
-    shared: ExtensionSharedServices | None = None,
-) -> ExtensionCommandServices:
-    """Build extension services with the shared application seam attached."""
-
-    base_application = application or ExtensionEntryPoint(
-        context=ApplicationContext(config=config, authority=authority),
-        services=ApplicationServices(lifecycle=lifecycle),
-    )
-    resolved_authority = authority or base_application.context.authority
-    resolved_project_root = (
-        base_application.context.project_root
-        or (resolved_authority.project_root if resolved_authority is not None else None)
-        or project_root
-    )
-    resolved_runtime_root = (
-        base_application.context.runtime_root
-        or (resolved_authority.runtime_root if resolved_authority is not None else None)
-        or runtime_root
-    )
-    resolved_application = ExtensionEntryPoint(
-        context=ApplicationContext(
-            project_root=resolved_project_root,
-            runtime_root=resolved_runtime_root,
-            config=base_application.context.config,
-            authority=resolved_authority,
-        ),
-        services=base_application.services,
-    )
-
-    return ExtensionCommandServices(
-        authority=resolved_authority,
-        runtime_root=resolved_runtime_root,
-        meridian_dir=meridian_dir,
-        application=resolved_application,
-        shared=shared or ExtensionSharedServices(),
-    )
+        return self.application.context.project_root
 
 
 __all__ = [
@@ -271,7 +131,4 @@ __all__ = [
     "ExtensionCommandServices",
     "ExtensionInvocationContext",
     "ExtensionInvocationContextBuilder",
-    "ExtensionSharedServices",
-    "SpawnServiceFactory",
-    "build_extension_command_services",
 ]

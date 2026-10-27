@@ -1,7 +1,7 @@
 # extensions/commands/ — First-Party Handler Implementations
 
 Handlers for first-party extension commands that are not plain ops (today
-`mermaid.py`; `biomed.py` is an empty placeholder). Specs register in
+`mermaid.py`). Specs register in
 `../first_party.py`, not here. Handler signature, pipeline, and surface rules:
 `../.context/CONTEXT.md`.
 

@@ -48,10 +48,6 @@ class NoopControlServer(ControlSocketServer):
     def endpoint(self) -> str:
         return "noop://control"
 
-    @property
-    def discovery_path(self) -> Path:
-        return Path("noop-control")
-
     async def start(self) -> None:
         return None
 

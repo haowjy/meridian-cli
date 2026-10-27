@@ -85,10 +85,6 @@ def _first_positional_token(argv: Sequence[str]) -> str | None:
     return token
 
 
-def first_positional_token_with_index(argv: Sequence[str]) -> tuple[int, str] | None:
-    return _first_positional_token_with_index(argv)
-
-
 def first_positional_token(argv: Sequence[str]) -> str | None:
     return _first_positional_token(argv)
 

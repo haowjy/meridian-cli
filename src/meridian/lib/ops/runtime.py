@@ -399,12 +399,6 @@ def resolve_runtime_root(project_root: Path) -> Path:
     return authority.runtime_root
 
 
-def resolve_runtime_root_or_none(project_root: Path) -> Path | None:
-    """Resolve runtime state root for read paths, returning None when uninitialized."""
-
-    return resolve_runtime_authority_for_read(project_root).runtime_root
-
-
 def resolve_runtime_root_for_read(project_root: Path) -> Path | None:
     """Resolve runtime state root for reads, or ``None`` without identity."""
 

@@ -37,13 +37,6 @@ def _list_work_item_dirs(root_dir: Path) -> list[Path]:
     ]
 
 
-def _normalize_worktree_path(path: str) -> str:
-    try:
-        return Path(path).expanduser().resolve().as_posix()
-    except OSError:
-        return Path(path).expanduser().as_posix()
-
-
 def work_item_needs_repair(runtime_root: Path, work_id: str) -> bool:
     """Return whether an existing item's persisted metadata is non-canonical."""
 
@@ -205,28 +198,3 @@ def list_archived_work_items(
     if all_archived:
         return items, warnings
     return items[:limit], warnings
-
-
-def list_work_item_references_for_path(
-    runtime_root: Path,
-    worktree_path: str,
-    *,
-    exclude_work_id: str | None = None,
-    include_archived: bool = True,
-) -> list[WorkItem]:
-    """Return work items that reference ``worktree_path``."""
-
-    target = _normalize_worktree_path(worktree_path)
-    active_items, _ = list_work_items(runtime_root)
-    archived_items: list[WorkItem] = []
-    if include_archived:
-        archived_items, _ = list_archived_work_items(runtime_root, all_archived=True)
-    matches: list[WorkItem] = []
-    for item in (*active_items, *archived_items):
-        if exclude_work_id is not None and item.name == exclude_work_id:
-            continue
-        if item.worktree_path is None:
-            continue
-        if _normalize_worktree_path(item.worktree_path) == target:
-            matches.append(item)
-    return matches

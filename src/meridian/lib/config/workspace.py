@@ -103,14 +103,6 @@ class WorkspaceSnapshot(BaseModel):
     def roots_count(self) -> int:
         return len(self.roots)
 
-    @property
-    def enabled_roots_count(self) -> int:
-        return sum(1 for root in self.roots if root.enabled)
-
-    @property
-    def missing_roots_count(self) -> int:
-        return sum(1 for root in self.roots if root.enabled and not root.exists)
-
     @classmethod
     def none(cls) -> WorkspaceSnapshot:
         return cls(status="none")

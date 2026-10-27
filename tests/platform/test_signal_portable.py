@@ -8,13 +8,12 @@ cleanup callable pattern correctly restores previous handlers.
 from __future__ import annotations
 
 import asyncio
-import os
 import signal
 import threading
 
 import pytest
 
-from meridian.lib.launch.signals import SignalForwarder
+from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
 from meridian.lib.launch.streaming_runner import (
     _install_signal_handlers,  # pyright: ignore[reportPrivateUsage]
 )
@@ -148,14 +147,14 @@ def test_returns_none_from_non_main_thread() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Signal layering: streaming handlers + SignalCoordinator/SignalForwarder
+# Signal layering: streaming handlers + SignalCoordinator/receivers
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_layering_streaming_handlers_restored_after_forwarder_unregisters() -> None:
-    """SignalCoordinator overrides handlers while a forwarder is registered;
-    when the forwarder unregisters, the streaming handlers come back.
+async def test_layering_streaming_handlers_restored_after_receiver_unregisters() -> None:
+    """SignalCoordinator overrides handlers while a receiver is registered;
+    when the receiver unregisters, the streaming handlers come back.
     """
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
@@ -168,28 +167,25 @@ async def test_layering_streaming_handlers_restored_after_forwarder_unregisters(
     streaming_handler_sigint = signal.getsignal(signal.SIGINT)
     streaming_handler_sigterm = signal.getsignal(signal.SIGTERM)
 
-    # Create a dummy process mock that does nothing
-    class _FakeProcess:
-        returncode: int | None = None
-        pid: int = os.getpid()
-
-        def send_signal(self, sig: signal.Signals) -> None:
-            pass
-
-    fake_proc = _FakeProcess()
-    # Satisfy the subprocess.Process type with duck-typing
-    forwarder = SignalForwarder(fake_proc)  # type: ignore[arg-type]
+    receiver = SignalCallbackReceiver(
+        target_signals=(signal.SIGINT, signal.SIGTERM),
+        callback=lambda _signum: None,
+    )
+    coordinator = signal_coordinator()
 
     try:
-        with forwarder:
-            # While forwarder is registered, SignalCoordinator owns the handlers
+        coordinator.register_receiver(receiver)
+        try:
+            # While a receiver is registered, SignalCoordinator owns the handlers
             active_sigint = signal.getsignal(signal.SIGINT)
             active_sigterm = signal.getsignal(signal.SIGTERM)
             # Coordinator installs its own handler (not the streaming one)
             assert active_sigint is not streaming_handler_sigint
             assert active_sigterm is not streaming_handler_sigterm
+        finally:
+            coordinator.unregister_receiver(receiver)
 
-        # After forwarder unregisters, coordinator restores previous (streaming) handlers
+        # After receiver unregisters, coordinator restores previous (streaming) handlers
         restored_sigint = signal.getsignal(signal.SIGINT)
         restored_sigterm = signal.getsignal(signal.SIGTERM)
         assert restored_sigint is streaming_handler_sigint

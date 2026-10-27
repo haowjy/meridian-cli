@@ -78,12 +78,6 @@ class ControlActionCoordinator:
         self._interrupt_epoch = state.interrupt_epoch
         self._interrupt_fence_submission = state.interrupt_fence_submission
 
-    @property
-    def actions_path(self) -> Path:
-        """Path for durable control-action transition records."""
-
-        return self._actions_path
-
     async def run_action(
         self,
         *,

@@ -38,8 +38,7 @@ resolve(cli_overrides, env_overrides, profile_overrides, config_overrides)
 ```
 
 Returns first-non-None per field across N layers. Constructors:
-`from_env()`, `from_agent_profile()`, `from_config()`, `from_spawn_config()`,
-`from_spawn_input()`, and `from_alias_entry()` — one per precedence source.
+`from_env()`, `from_agent_profile()`, `from_config()`, `from_spawn_config()`, and `from_alias_entry()` — one per precedence source.
 
 **Do not default to `""` or `0` to signal "not set" — use `None`.** A
 non-None value at any layer wins, even if it's the empty string.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -45,8 +44,7 @@ _PROVIDE_COMMANDS = frozenset(
     {"sync", "upgrade", "add", "remove", "repair", "validate", "doctor", "build"}
 )
 _USER_MUTATION_ERROR = (
-    "no project Mars root here; run 'meridian init --link', or use "
-    "'meridian mars --user …'"
+    "no project Mars root here; run 'meridian init --link', or use 'meridian mars --user …'"
 )
 
 
@@ -111,29 +109,8 @@ def _is_mars_mutation(args: Sequence[str]) -> bool:
     if commands[:1] == ("migrate",) and "--check" in args:
         return False  # reports what needs migrating and writes nothing
     return bool(
-        commands
-        and (
-            commands[0] in _MUTATING_COMMANDS
-            or commands[:2] in _MUTATING_COMMAND_PAIRS
-        )
+        commands and (commands[0] in _MUTATING_COMMANDS or commands[:2] in _MUTATING_COMMAND_PAIRS)
     )
-
-
-def decode_json_values(raw_stdout: str) -> list[object] | None:
-    decoder = json.JSONDecoder()
-    parsed_values: list[object] = []
-    index = 0
-    while index < len(raw_stdout):
-        while index < len(raw_stdout) and raw_stdout[index].isspace():
-            index += 1
-        if index >= len(raw_stdout):
-            return parsed_values
-        try:
-            parsed, index = decoder.raw_decode(raw_stdout, index)
-        except json.JSONDecodeError:
-            return None
-        parsed_values.append(parsed)
-    return parsed_values
 
 
 def parse_mars_passthrough(
@@ -154,8 +131,10 @@ def parse_mars_passthrough(
     # mars.toml into a bare project directory.
     if not user_scope and roots.scope == "user" and _is_mars_mutation(mars_args):
         raise ValueError(_USER_MUTATION_ERROR)
-    if user_scope and subcommand == "init" and any(
-        token == "--link" or token.startswith("--link=") for token in mars_args
+    if (
+        user_scope
+        and subcommand == "init"
+        and any(token == "--link" or token.startswith("--link=") for token in mars_args)
     ):
         raise ValueError("meridian mars init --link is project-only")
 

@@ -54,10 +54,6 @@ class PiQuiescenceTracker:
     def parent_idle(self) -> bool:
         return self._parent_idle and not self._compacting
 
-    @property
-    def compacting(self) -> bool:
-        return self._compacting
-
     async def start(self) -> None:
         if not self.enabled:
             return
@@ -126,9 +122,6 @@ class PiQuiescenceTracker:
 
     def has_tracked_bash_bg(self) -> bool:
         return self._ledger.tracked_bash_bg()
-
-    def has_pending_disk_notification(self) -> bool:
-        return not self._no_pending_disk_notifications()
 
     def evidence_failure(self) -> EvidenceFailure | None:
         return self._ledger.evidence_failure()

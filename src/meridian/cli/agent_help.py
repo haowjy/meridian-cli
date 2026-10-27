@@ -10,7 +10,6 @@ dispatch here — it must not mutate shared ``App`` help state for rendering.
 from __future__ import annotations
 
 import sys
-import textwrap
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast, get_args
@@ -98,92 +97,6 @@ class AlignedPlainFormatter(PlainFormatter):
         if panel.format == "parameter":
             panel = evolve(panel, entries=_compact_parameter_entries(panel.entries))
         super().__call__(console, options, panel)
-
-    def _wrap_entry(self, left: str, desc: str, console: Console) -> str:
-        left_part = f"{self.indent}{left}: "
-        if not desc:
-            return f"{self.indent}{left}"
-        desc = " ".join(desc.split())
-        width = console.width
-        continuation_indent = " " * len(left_part)
-        if len(left_part) >= width - 20:
-            block_indent = self.indent + "  "
-            return left_part.rstrip() + "\n" + textwrap.fill(
-                desc,
-                width=width,
-                initial_indent=block_indent,
-                subsequent_indent=block_indent,
-                break_long_words=False,
-                break_on_hyphens=False,
-            )
-        return textwrap.fill(
-            desc,
-            width=width,
-            initial_indent=left_part,
-            subsequent_indent=continuation_indent,
-            break_long_words=False,
-            break_on_hyphens=False,
-        )
-
-    def _format_parameter_entry(
-        self,
-        options: tuple[str, ...],
-        desc: str,
-        console: Console,
-        entry: HelpEntry,
-    ) -> None:
-        if not options:
-            return
-
-        desc_parts: list[str] = []
-        if desc:
-            desc_parts.append(desc)
-        if entry.choices:
-            desc_parts.append(f"[choices: {', '.join(entry.choices)}]")
-        if entry.env_var:
-            desc_parts.append(f"[env var: {', '.join(entry.env_var)}]")
-        if entry.default is not None:
-            desc_parts.append(f"[default: {entry.default}]")
-        if entry.required:
-            desc_parts.append("[required]")
-
-        options_str = ", ".join(options)
-        left = options_str if options_str else ""
-        wrapped = self._wrap_entry(left, " ".join(desc_parts), console)
-        console.print(wrapped, highlight=False, markup=False)
-
-    def _format_command_entry(
-        self,
-        names: tuple[str, ...],
-        shorts: tuple[str, ...],
-        desc: str,
-        console: Console,
-    ) -> None:
-        if names:
-            for index, name in enumerate(names):
-                if index == 0:
-                    parts = [name]
-                    if shorts:
-                        parts.append(", " + " ".join(shorts))
-                    entry_name = "".join(parts)
-                    console.print(
-                        self._wrap_entry(entry_name, desc, console),
-                        highlight=False,
-                        markup=False,
-                    )
-                else:
-                    console.print(
-                        textwrap.indent(name, self.indent),
-                        highlight=False,
-                        markup=False,
-                    )
-        elif shorts:
-            shorts_str = " ".join(shorts)
-            console.print(
-                self._wrap_entry(shorts_str, desc, console),
-                highlight=False,
-                markup=False,
-            )
 
 
 ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
@@ -286,11 +199,14 @@ def leaf_help_rendering_scope(
     context manager only affects subcommand (leaf) ``-h`` / ``--help`` requests.
     """
 
-    if curated_group_help_target(
-        argv,
-        root_app=root_app,
-        registered_groups=registered_groups,
-    ) is not None:
+    if (
+        curated_group_help_target(
+            argv,
+            root_app=root_app,
+            registered_groups=registered_groups,
+        )
+        is not None
+    ):
         yield
         return
 

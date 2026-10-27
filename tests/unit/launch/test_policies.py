@@ -53,24 +53,6 @@ def test_resolve_policy_fields_resolves_each_field_independently() -> None:
     assert resolved.autocompact == 70000
 
 
-def test_model_policy_scope_strips_routing_fields() -> None:
-    resolved = resolve_policy_fields(
-        RuntimeOverrides(
-            model="gpt55",
-            harness="codex",
-            agent="reviewer",
-            effort="high",
-        ).model_policy_scope(),
-        RuntimeOverrides(approval="auto").model_policy_scope(),
-    )
-
-    assert resolved.model is None
-    assert resolved.harness is None
-    assert resolved.agent is None
-    assert resolved.effort == "high"
-    assert resolved.approval == "auto"
-
-
 def test_match_model_policy_first_match_wins_by_list_order() -> None:
     winner = match_model_policy(
         model_policies=(
@@ -163,9 +145,7 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
         model="gpt-5.4",
         harness="codex",
         agent="coder",
-        execution_policy=ResolvedExecutionPolicy(
-            effort="high", approval="auto", network="deny"
-        ),
+        execution_policy=ResolvedExecutionPolicy(effort="high", approval="auto", network="deny"),
         tool_rules=(tool_rule("bash", "allow", "exec_command"),),
         extra_args=("--search",),
         model_selection_requested_token="gpt54",

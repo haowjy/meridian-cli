@@ -288,10 +288,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return self._thread_id
 
     @property
-    def current_turn_id(self) -> str | None:
-        return self._current_turn_id
-
-    @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
         thread_id = (self._thread_id or "").strip()
         if not thread_id:

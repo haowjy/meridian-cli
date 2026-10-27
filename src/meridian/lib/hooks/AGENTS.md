@@ -11,7 +11,7 @@ negative priority → declaration order.
 
 ## Rules
 
-- **Fire `HookDispatcher.fire(context)`**, built via `from_application_context(ctx)`; don't
+- **Fire `HookDispatcher.fire(context)`**, built from the hook config; don't
   instantiate the registry or runner directly. Import from `meridian.lib.hooks` (lazy
   `__getattr__`), not submodules, to avoid startup import cycles.
 - **Built-ins take general capabilities from `meridian.plugin_api`**; the exceptions are a
