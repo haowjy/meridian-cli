@@ -132,6 +132,8 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         harness_session_id="work-session",
         model="gpt-5.6-luna",
         chat_id="work-chat",
+        # A live session always belongs to an execution; a rename follows those.
+        spawn_id=str(running_spawn_id),
     )
     created = work_start_sync(
         WorkStartInput(

@@ -11,6 +11,8 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_read,
     resolve_runtime_authority_for_write,
 )
+from meridian.lib.state import work_repository
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 from meridian.lib.state.user_paths import get_project_home
 
@@ -161,6 +163,8 @@ def test_ambient_context_follows_the_execution_chat_but_explicit_chat_does_not(
     project_root = tmp_path / "project"
     runtime_root.mkdir()
     project_root.mkdir()
+    for name in ("work-current", "work-explicit"):
+        work_repository.create_work_item(resolve_project_paths(project_root).root_dir, name)
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p1")
     monkeypatch.setenv("MERIDIAN_CHAT_ID", "c-entry")
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", "work-stale")

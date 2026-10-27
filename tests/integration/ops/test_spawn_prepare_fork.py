@@ -125,6 +125,8 @@ def test_build_create_payload_inherits_work_from_context_from(
     _stub_bundle_adapter(monkeypatch)
     _stub_context_from_work(monkeypatch, "feature-x")
     _, runtime = _prepare_codex_runtime(tmp_path)
+    # A `--from` source's work name is inherited only while the item exists.
+    work_repository.create_work_item(resolve_project_paths(tmp_path).root_dir, "feature-x")
 
     artifacts = build_create_payload(
         SpawnCreateInput(

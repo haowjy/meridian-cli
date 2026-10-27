@@ -15,6 +15,7 @@ from meridian.lib.launch.composition_spawn import (
     compose_spawn_launch_surface,
 )
 from meridian.lib.launch.context import LaunchContext, PreparedLaunchSurface, RuntimeBindings
+from meridian.lib.launch.cwd import inheritable_task_dir
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.reference import parse_template_assignments
 from meridian.lib.launch.request import (
@@ -28,7 +29,6 @@ from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.work_attachment import resolve_current_work_alias
 from meridian.lib.state.paths import resolve_project_paths
-from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.user_paths import get_dry_run_preview_root
 
 from ..runtime import (
@@ -37,7 +37,6 @@ from ..runtime import (
     resolve_runtime_authority_for_read,
 )
 from .models import SpawnCreateInput
-from .task_dir import derive_inheritable_task_dir
 
 logger = structlog.get_logger(__name__)
 
@@ -137,29 +136,12 @@ def build_create_payload(
         ambient_work_id = (
             (resolved_context.work_id or "").strip() or None if inherit_ambient_work else None
         )
-        if (
-            inherit_ambient_work
-            and ambient_work_id is None
-            and resolved_context.chat_id
-            and runtime_root is not None
-        ):
-            try:
-                ambient_work_id = (
-                    get_session_active_work_id(runtime_root, resolved_context.chat_id) or ""
-                ).strip() or None
-            except Exception:
-                ambient_work_id = None
         project_state_dir = resolve_project_paths(project_root).root_dir
         spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id is not None else None
         inherited_for_child = (
             None
             if _is_exact_continue(payload) or (payload.task_dir or "").strip()
-            else derive_inheritable_task_dir(
-                project_root=project_root,
-                project_state_dir=project_state_dir,
-                spawn_id=spawn_id,
-                work_id=ambient_work_id,
-            )
+            else inheritable_task_dir(project_root, spawn_id)
         )
         # The one place a spawn's ``--from`` is resolved; launch only carries the refs.
         context_refs = tuple(resolve_context_ref(project_root, ref) for ref in payload.context_from)

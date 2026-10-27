@@ -100,18 +100,19 @@ caller carries an ID a `work switch` can invalidate; `work start`/`rename` refus
 `current` as a name the alias would shadow.
 `activate_work()` owns the user-visible choice made by `work start`, `work
 switch`, or a primary launch attaching `--work` / `--from`; it fires
-`work.activated` plus matching telemetry whether or not a session exists, and
-writes the attachment when `session_store.session_exists()` finds the chat
-record, even before a harness session ID is known. `publish_work_event()` owns
-hook context, active/archive work-directory resolution, and paired telemetry
-for every published work event. Incidental attachment maintenance (child
-inheritance, rename, and clear) writes through `session_store` without
-publishing an activation. `follow_work_item()` is the one seam for "every execution
-attached to this item follows it" — `work done`, `rename`, `reopen` and `task-dir`
-move the directory and then repoint the rows and links of the live sessions attached
-to it, in one scan of the live session records. Primary launch uses the same
-activation operation as the launch runner's default rather than a separate
-store-write seam.
+`work.activated` plus matching telemetry whether or not a session exists.
+`attach_executions()` is the one place an execution's attachment changes (`switch`,
+`start`, `clear`, a launch, and `rename`/`delete` for live executions): the item's
+links first, in the work store, then — in one session epoch, never nested with the
+work-store lock — the rows in one `set_work_attachments` batch and the chat links they
+project. It reads the caller's execution from its own spawn row (`execution_of`), so no
+command scans the spawn store. `work done`, `reopen` and `task-dir` write no session
+state: the item's own links carry every attached chat along. Rename and delete find
+only live executions (`execution_owners`); a chat that ended keeps its row, and a name
+that no longer names an item resolves to no item. `publish_work_event()` owns hook
+context, active/archive work-directory resolution, and paired telemetry for every
+published work event. Primary launch uses the same activation operation as the launch
+runner's default rather than a separate store-write seam.
 
 **Use `structlog.get_logger()`.** Never use stdlib `logging` in ops/ — the logging
 split matters for `capture_library_diagnostics()` at the launch boundary.

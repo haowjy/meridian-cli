@@ -72,7 +72,7 @@ def _seed_primary_spawn(
         task_cwd=task_cwd,
         kind="primary",
     )
-    session_store.update_session_work_id(runtime_root, "c-primary", work_id)
+    session_store.set_work_attachments(runtime_root, {"c-primary": work_id})
     session_store.stop_session(runtime_root, "c-primary")
     spawn_store.start_spawn(
         runtime_root,
@@ -460,7 +460,7 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
         task_cwd=source_task_dir.as_posix(),
         launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
     )
-    work_before = work_store.get_active_work_item(project_state_dir, "source-work")
+    work_before = work_store.get_work_item(project_state_dir, "source-work")
     source_task_dir.rmdir()
     if replacement == "file":
         source_task_dir.write_text("replacement", encoding="utf-8")
@@ -484,7 +484,7 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
     assert context.task_cwd is None
     assert context.work_id == "source-work"
     assert context.binding.work_id == "source-work"
-    work_after = work_store.get_active_work_item(project_state_dir, "source-work")
+    work_after = work_store.get_work_item(project_state_dir, "source-work")
     assert work_after == work_before
     assert work_after is not None
     assert work_after.task_dir == source_task_dir.as_posix()

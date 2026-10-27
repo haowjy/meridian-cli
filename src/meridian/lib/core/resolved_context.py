@@ -20,6 +20,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
+from meridian.lib.state.work_state import warn_missing_work_item
 
 
 class ContextBackend(Protocol):
@@ -75,7 +76,6 @@ class ResolvedContext:
     work_scope: WorkScope | None = None
     kb_dir: Path | None = None
     context_dirs: tuple[tuple[str, Path], ...] = ()
-    inherited_task_dir: Path | None = None
 
     @classmethod
     def from_environment(
@@ -87,8 +87,13 @@ class ResolvedContext:
         explicit_runtime_root: Path | None = None,
         backend: ContextBackend | None = None,
         context_config: ContextConfig | None = None,
+        environ: Mapping[str, str] | None = None,
     ) -> Self:
         """Resolve and freeze canonical runtime context from ``MERIDIAN_*`` values.
+
+        *environ* is the environment of the execution being described; a process
+        describing another one (the idle service, a notification label) passes that
+        execution's own, and this process's is the default.
 
         When *explicit_project_root* or *explicit_runtime_root* are supplied they
         take precedence over ``MERIDIAN_PROJECT_DIR``. ``runtime_root`` is derived
@@ -101,19 +106,14 @@ class ResolvedContext:
 
         from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 
+        env = os.environ if environ is None else environ
         backend_impl = backend or LocalFilesystemBackend()
 
-        spawn_id_raw = os.getenv("MERIDIAN_SPAWN_ID", "").strip()
+        spawn_id_raw = env.get("MERIDIAN_SPAWN_ID", "").strip()
         spawn_id = SpawnId(spawn_id_raw) if spawn_id_raw else None
-        parent_spawn_id_raw = os.getenv("_MERIDIAN_PARENT_SPAWN_ID", "").strip()
-        depth_raw = os.getenv(DEPTH_ENV, "0").strip()
-        project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
-        task_dir_raw = os.getenv("MERIDIAN_TASK_DIR", "").strip()
-        inherited_task_dir = (
-            Path(task_dir_raw).expanduser().resolve()
-            if task_dir_raw
-            else None
-        )
+        parent_spawn_id_raw = env.get("_MERIDIAN_PARENT_SPAWN_ID", "").strip()
+        depth_raw = env.get(DEPTH_ENV, "0").strip()
+        project_root_raw = env.get("MERIDIAN_PROJECT_DIR", "").strip()
         explicit_chat_id_raw = (explicit_chat_id or "").strip()
         explicit_work_id_raw = (explicit_work_id or "").strip()
         if explicit_chat_id_raw:
@@ -121,9 +121,9 @@ class ResolvedContext:
             work_id_raw = ""
             work_dir_raw = ""
         else:
-            chat_id_raw = os.getenv("MERIDIAN_CHAT_ID", "").strip()
-            work_id_raw = os.getenv("MERIDIAN_ACTIVE_WORK_ID", "").strip()
-            work_dir_raw = os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
+            chat_id_raw = env.get("MERIDIAN_CHAT_ID", "").strip()
+            work_id_raw = env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip()
+            work_dir_raw = env.get("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
 
         depth = parse_meridian_depth(depth_raw)
 
@@ -148,7 +148,7 @@ class ResolvedContext:
         # still names the conversation that launched it. With no row — an unmanaged
         # shell — the env is all there is. Explicit arguments keep their precedence.
         if not explicit_chat_id_raw and runtime_root is not None:
-            execution_chat = _execution_chat(os.environ, runtime_root, backend_impl)
+            execution_chat = _execution_chat(env, runtime_root, backend_impl)
             if execution_chat is not None:
                 chat_id_raw = execution_chat
                 work_id_raw = ""
@@ -178,6 +178,21 @@ class ResolvedContext:
             if project_root is not None
             else None
         )
+
+        # A row or env can name an item that no longer exists: a rename or delete does
+        # not rewrite chats that ended, and a launch snapshot outlives its item. That
+        # name is no item. Only an explicit name creates one, so a stale one never
+        # brings a deleted or renamed item back through `--from` or an ambient launch.
+        if (
+            work_id
+            and work_id_source != "explicit"
+            and project_paths is not None
+            and project_paths.work_dir is not None
+            and not work_store.work_item_exists(project_paths.root_dir, work_id)
+        ):
+            warn_missing_work_item(work_id, chat_id=chat_id_raw)
+            work_id = None
+            work_dir_raw = ""
 
         bound_work_dir: Path | None = None
 
@@ -239,7 +254,6 @@ class ResolvedContext:
             work_scope=work_scope,
             kb_dir=kb_dir,
             context_dirs=context_dirs,
-            inherited_task_dir=inherited_task_dir,
         )
 
     def child_env_overrides(
@@ -263,8 +277,6 @@ class ResolvedContext:
             overrides["MERIDIAN_ACTIVE_WORK_ID"] = self.work_id
         if self.work_dir is not None:
             overrides["MERIDIAN_ACTIVE_WORK_DIR"] = self.work_dir.as_posix()
-        if self.inherited_task_dir is not None:
-            overrides["MERIDIAN_TASK_DIR"] = self.inherited_task_dir.as_posix()
         for context_name, context_dir in self.context_dirs:
             if not context_name.strip():
                 continue

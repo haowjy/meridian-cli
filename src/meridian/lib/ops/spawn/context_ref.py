@@ -10,6 +10,7 @@ from meridian.lib.core.context_ref import (
     SpawnContextRef,
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
+from meridian.lib.ops.work_attachment import resolve_active_work_id
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived
@@ -197,8 +198,7 @@ def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> Sessio
             else primary_row.harness_session_id
         )
         or None,
-        work_id=(session_store.get_session_active_work_id(runtime_root, chat_id) or "").strip()
-        or None,
+        work_id=resolve_active_work_id(project_root, runtime_root, chat_id=chat_id),
         task_cwd=(primary_row.task_cwd or "").strip() or None,
     )
 

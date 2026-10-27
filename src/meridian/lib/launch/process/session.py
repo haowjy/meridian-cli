@@ -39,7 +39,7 @@ def resolve_attached_work_id(
     explicit_work_id: str | None,
     resume_chat_id: str | None,
     get_session_active_work_id_fn: Callable[[Path, str], str | None],
-    activate_work_fn: Callable[[Path, str, str], None],
+    activate_work_fn: Callable[[Path, str, str], object],
 ) -> str | None:
     preserved_work_id = None
     if explicit_work_id is None and resume_chat_id is not None:

@@ -62,7 +62,7 @@ def test_headless_picker_filters_then_activates_visible_row(tmp_path, monkeypatc
             model="gpt-5.4",
             kind="primary",
         ).chat_id
-        session_store.update_session_work_id(runtime_root, chat_id, work)
+        session_store.set_work_attachments(runtime_root, {chat_id: work})
         session_store.stop_session(runtime_root, chat_id)
     selected: list[str] = []
 

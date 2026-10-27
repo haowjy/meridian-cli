@@ -63,7 +63,7 @@ from meridian.lib.launch.launch_types import (
 from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.session_links import (
     execution_link_chat,
-    refresh_session_links,
+    republish_chat_links,
     session_task_link_path,
     session_work_link_path,
 )
@@ -76,12 +76,15 @@ from meridian.lib.safety.policy import (
     PermissionPolicy,
     build_permission_policy,
 )
+from meridian.lib.state import work_repository
 from meridian.lib.state.paths import (
     load_context_config,
     resolve_ambient_work_dir,
     resolve_kb_dir,
+    resolve_project_paths,
     resolve_spawn_log_dir,
 )
+from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
@@ -426,6 +429,14 @@ _INLINE_FILE_REFS_WARNING_THRESHOLD = 5
 _INLINE_FILE_REFS_WARNING_MESSAGE = (
     "Many file refs will be inlined and may drain context; "
     "prefer folder refs or a design/context artifact."
+)
+# Launch task-cwd sources no store can recompute: this run's `--task-dir`, a pin its
+# launcher passed on, or the caller's directory outside the project. The checkout
+# belongs to this execution, so bind pins it in the spawn scope that every later
+# link publish reads. Anything else — the item's checkout, the project root — is
+# recomputed from the work store, so it is never pinned and follows `work task-dir`.
+_PINNED_TASK_DIR_SOURCES = frozenset(
+    {"explicit-task-dir", "inherited-task-dir", "ambient-cwd"}
 )
 
 
@@ -1701,14 +1712,22 @@ def bind_launch_context(
         bound_work_link = session_work_link_path(runtime_root, link_chat)
         bound_task_link = session_task_link_path(runtime_root, link_chat)
         if not bindings.dry_run:
-            refresh_session_links(
+            if directory_context.task_cwd_source in _PINNED_TASK_DIR_SOURCES:
+                write_spawn_scope_task_dir(
+                    project_paths.project_root,
+                    bindings.spawn_id,
+                    directory_context.logical_task_cwd,
+                )
+            if requested_work_id is not None:
+                work_repository.ensure_item_links(
+                    resolve_project_paths(project_paths.project_root).root_dir,
+                    requested_work_id,
+                )
+            republish_chat_links(
                 project_paths.project_root,
                 runtime_root,
                 link_chat,
-                ambient_spawn_id=bindings.spawn_id,
-                # A `--task-dir` on this launch names a directory no command
-                # would resolve; the execution's link follows it from here on.
-                task_dir=directory_context.logical_task_cwd,
+                spawn_id=bindings.spawn_id,
             )
     # Bind the child env before projection: it is the source of the prompt's launch
     # facts, so the capability block and the `# Meridian run` block describe the same
@@ -1828,9 +1847,8 @@ def bind_launch_context(
     if resolved_agent:
         child_context_env["MERIDIAN_SESSION_AGENT"] = resolved_agent
     child_context_env["MERIDIAN_PROJECT_DIR"] = resolved_control_root.as_posix()
-    # Override inherited task-dir with the child's resolved task-dir.
-    # child_env_overrides() carries the parent's MERIDIAN_TASK_DIR;
-    # bind resolves the child's logical_task_cwd and overwrites.
+    # The child's own checkout: its link, which follows its pin and its item, or the
+    # resolved directory when there is no link (a dry run).
     child_context_env["MERIDIAN_TASK_DIR"] = (
         bound_task_link or directory_context.logical_task_cwd
     ).as_posix()

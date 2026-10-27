@@ -814,7 +814,7 @@ def test_primary_launch_invalid_reference_does_not_create_explicit_work(
     assert not (project_root / ".meridian" / "id").exists()
 
 
-def test_primary_launch_materializes_context_from_work(
+def test_primary_launch_does_not_create_work_named_by_context_from(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -872,7 +872,8 @@ def test_primary_launch_materializes_context_from_work(
 
     assert result.exit_code == 0
     assert result.primary_spawn_id == "p1"
-    assert work_store.get_work_item(project_state_dir, "inherited-work") is not None
+    # Only an explicit `--work` creates an item; a `--from` source's stale name is no item.
+    assert work_store.get_work_item(project_state_dir, "inherited-work") is None
 
 
 def test_primary_launch_explicit_work_precedence_over_context_from(

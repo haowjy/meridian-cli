@@ -84,6 +84,31 @@ def _build_meridian_skills_prompt(
     return "\n".join(lines)
 
 
+def _work_link_line(work_link: Path) -> str:
+    """The one work-link wording, for a primary's prompt and a spawn's run block."""
+
+    return (
+        f"- `{work_link.as_posix()}` — work directory "
+        "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
+        "directory it resolves to: the link follows `work start`, `work switch`, "
+        "`work done` and `work rename`."
+    )
+
+
+def _task_link_line(task_link: Path, *, detail: str = "", note: str = "") -> str:
+    """The one task-link wording; a surface adds only what it alone knows.
+
+    *detail* follows the environment variable and *note* the command it names, so
+    both surfaces carry the literal-path rule verbatim.
+    """
+
+    return (
+        f"- `{task_link.as_posix()}` — source checkout (`$MERIDIAN_TASK_DIR`){detail}; "
+        "write this literal path, never the directory it resolves to: the link "
+        f"follows `meridian task-dir` and a work switch{note}."
+    )
+
+
 def build_capabilities_prompt(
     *,
     spawn_capable: bool,
@@ -145,12 +170,7 @@ def build_capabilities_prompt(
         # A per-chat link outlives the launch and follows `work start`,
         # `work switch`, `work done` and `work rename`, so it replaces both the
         # work-item ID and its scratch directory: either would go stale mid-run.
-        lines.append(
-            f"- `{work_link.as_posix()}` — work directory "
-            "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
-            "directory it resolves to: the link follows `work start`, `work switch`, "
-            "`work done` and `work rename`."
-        )
+        lines.append(_work_link_line(work_link))
 
     # The goal text never enters a prompt: it is per-conversation state that can be
     # edited mid-conversation, and a primary with no task must start no turn. The
@@ -180,11 +200,14 @@ def build_capabilities_prompt(
         # A per-chat link: every task-dir change repoints it, so the literal path is
         # the one the session keeps using, and the directory it resolves to is not.
         lines.append(
-            f"- `{task_link.as_posix()}` — source checkout (`$MERIDIAN_TASK_DIR`); shell "
-            f"cwd is `{control_path}` (`$MERIDIAN_PROJECT_DIR`), so use absolute paths. "
-            "Write this literal path, never the directory it resolves to: the link "
-            "follows `meridian task-dir` and a work switch; inspect: `meridian "
-            f"task-dir`{spawn_suffix}."
+            _task_link_line(
+                task_link,
+                detail=(
+                    f"; shell cwd is `{control_path}` (`$MERIDIAN_PROJECT_DIR`), "
+                    "so use absolute paths"
+                ),
+                note=f"; inspect: `meridian task-dir`{spawn_suffix}",
+            )
         )
     elif paths_in_user_turn:
         # The user turn names the link; naming the directory it resolves to here would
@@ -273,18 +296,9 @@ def build_launch_facts_prompt(
             "(`$MERIDIAN_CHAT_ID`), parent for handoff `--from`."
         )
     if work_link is not None:
-        lines.append(
-            f"- `{work_link.as_posix()}` — work directory "
-            "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
-            "directory it resolves to: the link follows `work start`, `work switch`, "
-            "`work done` and `work rename`."
-        )
+        lines.append(_work_link_line(work_link))
     if task_link is not None:
-        lines.append(
-            f"- `{task_link.as_posix()}` — source checkout (`$MERIDIAN_TASK_DIR`); "
-            "write this literal path, never the directory it resolves to: the link "
-            "follows `meridian task-dir` and a work switch."
-        )
+        lines.append(_task_link_line(task_link))
     if not lines:
         return ""
     return "\n".join(("# Meridian run", "", *lines))

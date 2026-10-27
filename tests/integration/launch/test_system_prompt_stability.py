@@ -18,6 +18,11 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
+from meridian.lib.launch.session_links import (
+    session_task_link_path,
+    session_work_link_path,
+)
+from meridian.lib.state.spawn_store import start_spawn
 from tests.support.fixtures import allow_headless_claude, write_minimal_mars_config
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
@@ -46,6 +51,7 @@ def _bind(
     goal: str | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
     session: SessionRequest | None = None,
+    dry_run: bool = True,
 ) -> LaunchContext:
     return build_launch_context(
         spawn_id=spawn_id,
@@ -65,7 +71,7 @@ def _bind(
             project_paths_execution_cwd=project_root.as_posix(),
         ),
         harness_registry=get_default_harness_registry(),
-        dry_run=True,
+        dry_run=dry_run,
     )
 
 
@@ -73,6 +79,10 @@ def _system_prompt(context: LaunchContext) -> str:
     system_prompt = context.binding.run_params.appended_system_prompt
     assert system_prompt is not None
     return system_prompt
+
+
+def _run_block(context: LaunchContext) -> str:
+    return context.binding.spec.user_turn_content or ""
 
 
 def test_system_prompt_is_stable_across_launches(
@@ -152,3 +162,33 @@ def test_system_prompt_is_stable_across_launches(
     # A spawn's goal travels with its task, not the shared prefix: two spawns of the
     # same agent must send the same system bytes whatever their goals.
     assert spawn == _system_prompt(fresh)
+
+    # A live spawn names its per-chat links in the user turn. Bind two real spawns on
+    # different chats: the run blocks carry different links, the system bytes do not.
+    runtime_root = tmp_path / ".meridian"
+    for spawn_id, chat_id in (("p10", "c10"), ("p11", "c11")):
+        start_spawn(
+            runtime_root,
+            chat_id=chat_id,
+            model=_MODEL,
+            agent="coder",
+            harness=HarnessId.CLAUDE.value,
+            prompt="task prompt",
+            spawn_id=spawn_id,
+        )
+    linked_first = _bind(
+        tmp_path,
+        surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        spawn_id="p10",
+        dry_run=False,
+    )
+    linked_second = _bind(
+        tmp_path,
+        surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        spawn_id="p11",
+        dry_run=False,
+    )
+    assert _system_prompt(linked_first) == _system_prompt(linked_second)
+    assert session_work_link_path(runtime_root, "c10").as_posix() in _run_block(linked_first)
+    assert session_task_link_path(runtime_root, "c11").as_posix() in _run_block(linked_second)
+    assert _run_block(linked_first) != _run_block(linked_second)

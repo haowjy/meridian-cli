@@ -116,13 +116,13 @@ def test_spawn_ref_settings_follow_selected_chat_whether_or_not_observed(tmp_pat
         runtime, harness="claude", harness_session_id="entry", model="",
         native_store=store, kind="primary",
     ).chat_id
-    session_store.update_session_work_id(runtime, chat, "original-work")
+    session_store.set_work_attachments(runtime, {chat: "original-work"})
     session_store.stop_session(runtime, chat)
     spawn_store.start_spawn(
         runtime, spawn_id="p1", chat_id=chat, harness="claude", kind="primary",
         harness_session_id="entry", work_id="original-work", model="", agent="", prompt="",
     )
-    session_store.update_session_work_id(runtime, chat, "selected-chat-work")
+    session_store.set_work_attachments(runtime, {chat: "selected-chat-work"})
 
     def work(ref: str) -> str | None:
         return resolve_session_reference(tmp_path, ref, runtime_root=runtime).source_work_id
@@ -156,7 +156,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         claude_config_dir=str(tmp_path / "config"),
         kind="primary",
     ).chat_id
-    session_store.update_session_work_id(runtime, source, "work-a")
+    session_store.set_work_attachments(runtime, {source: "work-a"})
     snapshot = LaunchPolicySnapshot(model="model-a", harness="claude", agent="builder")
     generation = session_store.chat_record(runtime, source)
     assert generation is not None  # Final binding gives the entry its own policy.
@@ -218,7 +218,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
     ).harness_session_id == "entry"
 
     # Switching the current chat's work must govern the next /new; reuse doesn't reset it.
-    session_store.update_session_work_id(runtime, observed, "work-b")
+    session_store.set_work_attachments(runtime, {observed: "work-b"})
     assert session_store.get_or_create_observed_chat(
         runtime, source, "claude", str(tmp_path / "native"), "observed", spawn_id="p1"
     ) == observed
@@ -227,7 +227,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         runtime, observed, "claude", str(tmp_path / "native"), "following", spawn_id="p1"
     )
     assert session_store.get_session_active_work_id(runtime, following) == "work-b"
-    session_store.update_session_work_id(runtime, following, "")
+    session_store.set_work_attachments(runtime, {following: ""})
     assert resolve_session_reference(
         tmp_path, "p1", runtime_root=runtime,
     ).source_work_id is None  # Explicit detachment must not fall back to old spawn work.
@@ -247,7 +247,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         harness_session_id="existing", native_store=str(tmp_path / "other-native"),
         model="model-b", agent="reviewer", kind="primary",
     ).chat_id
-    session_store.update_session_work_id(runtime, other, "other-work")
+    session_store.set_work_attachments(runtime, {other: "other-work"})
     session_store.stop_session(runtime, other)
     before = session_store.chat_record(runtime, other)
     assert session_store.get_or_create_observed_chat(

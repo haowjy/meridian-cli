@@ -7,10 +7,10 @@ import pytest
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.launch.cwd import inheritable_task_dir
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.spawn.execute import _resolve_execution_contract
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.ops.spawn.task_dir import derive_inheritable_task_dir
 from meridian.lib.state import work_repository
 from meridian.lib.state.paths import resolve_project_paths
 
@@ -24,7 +24,7 @@ def _project(tmp_path: Path) -> Path:
     return project_root
 
 
-def test_derive_inheritable_task_dir_omits_work_item_provenance(
+def test_inheritable_task_dir_passes_on_only_the_launchers_pin(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -40,16 +40,12 @@ def test_derive_inheritable_task_dir_omits_work_item_provenance(
         item.name,
         task_dir=work_task_dir.as_posix(),
     )
+    # Inside a managed run `MERIDIAN_TASK_DIR` is the launcher's own link, never a pin.
     monkeypatch.setenv("MERIDIAN_TASK_DIR", inherited.as_posix())
 
-    derived = derive_inheritable_task_dir(
-        project_root=project_root,
-        project_state_dir=state_dir,
-        spawn_id=None,
-        work_id=item.name,
-    )
-
-    assert derived is None
+    assert inheritable_task_dir(project_root, "p-parent") is None
+    # Outside one, a value the user exported is an explicit choice.
+    assert inheritable_task_dir(project_root, None) == inherited.resolve()
 
 
 def test_execute_contract_does_not_shadow_ambient_work_item_task_dir(

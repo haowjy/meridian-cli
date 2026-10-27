@@ -24,14 +24,21 @@ bare path
                                       unsupported versions warn and are skipped by
                                       reads; read-then-append decisions refuse them
                                       in scope)
-  sessions/<chat>/work              — stable symlink to the chat's work directory — the
-                                      item's directory in `work/` or the archive, else the
-                                      execution's ambient one; a projection of the session
-                                      attachment, never authority
-  sessions/<chat>/task              — stable symlink to the chat's source checkout; a
-                                      projection of its spawn scope and work item
-                                      (`launch/session_links.py` publishes both for every
-                                      live execution, primary or spawn)
+  sessions/<chat>/work              — stable symlink to the chat's work directory: the
+                                      item's `work-items/<id>/work` link, else the
+                                      execution's ambient directory; a projection of
+                                      the session row, never authority
+  sessions/<chat>/task              — stable symlink to the chat's source checkout: the
+                                      execution's pinned checkout, else the item's
+                                      `work-items/<id>/task` link, else the project
+                                      root (`launch/session_links.py` publishes both
+                                      for every live execution, primary or spawn)
+  work-items/<id>/work              — the item's directory, in `work/` or the archive
+  work-items/<id>/task              — the item's `task_dir` while it is a directory,
+                                      else the project root, whether the item is active
+                                      or done (`work_store.item_checkout()`, the one
+                                      rule); both written only by the work store,
+                                      inside its lock, and rebuildable
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
@@ -282,10 +289,13 @@ model lookups rather than scanning observations once per row.
   codec, pure reads, and the single locked mutation repository, respectively.
   `work_repository.move_work_dir()` is the one active↔archive move: it refuses when
   both copies exist and never deletes one. The location, not a status field, says
-  whether an item is active, so `work done` moves at once and a caller repoints the
-  links that follow the item.
+  whether an item is active, so `work done` moves at once. `write_state_locked`
+  republishes the item's `work-items/<id>/{work,task}` links around every mutation, so
+  nothing else repoints anything when an item moves.
 - `session_store.py` — Session event I/O, lease ownership, and the canonical
   `session_exists()` predicate (a chat record exists; a harness ID is not required).
+  `session_writes()` is the one session write epoch and `set_work_attachments()` the
+  one batched attachment write.
 - `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars,
   and the `VersionedPrivateDoc` base for private coordination files.
 - `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC;
@@ -315,6 +325,16 @@ model lookups rather than scanning observations once per row.
 v2 read upgrader, and pure transitions.
 → [spawn/AGENTS.md](spawn/AGENTS.md)
 
+## Lock Order
+
+`work-store.flock` and the session write epoch (`session_store.session_writes()`: the
+history mutation gate shared, then `sessions.jsonl.flock`) are never held at the same
+time, in either order. A command that changes both stores runs them as sequential
+steps, work store first (`ops/work_attachment.attach_executions`). Every session writer
+enters the epoch through `session_writes()` and never takes `sessions_flock` alone: an
+exclusive holder of the gate (restore, archive, index rebuild) takes the sessions lock
+after it, so any other order deadlocks against it.
+
 ## Anti-Patterns
 
 **Don't read `state.json` without `read_state()`** — raw JSON reads bypass Pydantic
@@ -330,6 +350,9 @@ session handling may call `unlink_validated_lock()` only under a fresh, non-reen
 validated exclusive acquisition, immediately before release. Never unlink at ordinary
 release time or inside a reentrant context: leaving any lock held on the orphaned inode
 lets another contender validate against a recreated inode and causes split-brain.
+
+**Don't take `sessions_flock` outside `session_writes()`** — it skips the gate and
+inverts the order restore takes them in. Don't hold it across a work-store call either.
 
 **Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
 spawn ID allocation, initial row publication, and abandoned-stage GC. Later mutations

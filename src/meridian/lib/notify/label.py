@@ -45,19 +45,6 @@ def _primary_of(runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
     return None
 
 
-def _session_work_id(
-    project_root: Path,
-    runtime_root: Path,
-    *,
-    chat_id: str | None,
-) -> str | None:
-    """Work of one conversation, or of this process's own execution."""
-
-    from meridian.lib.ops.work_attachment import resolve_active_work_id
-
-    return _clean(resolve_active_work_id(project_root, runtime_root, chat_id=chat_id))
-
-
 def build_session_label(
     *,
     environ: Mapping[str, str] | None = None,
@@ -84,6 +71,7 @@ def build_session_label(
     child_agent: str | None = None
     child_harness: str | None = None
     # State modules load lazily: the label is built on `meridian notify` startup.
+    from meridian.lib.ops.work_attachment import resolve_active_work_id
     from meridian.lib.state.history_index import HistoryIndexIncomplete
     from meridian.lib.state.paths import resolve_project_runtime_root_or_none
 
@@ -96,7 +84,7 @@ def build_session_label(
                 child_spawn_id, child_agent, child_harness = spawn_id, agent, harness
                 agent, harness = primary.agent, primary.harness
                 work_id = (
-                    _session_work_id(
+                    resolve_active_work_id(
                         project_root,
                         runtime_root,
                         chat_id=primary.continue_chat_id,
@@ -105,7 +93,7 @@ def build_session_label(
                 )
             else:
                 work_id = (
-                    _session_work_id(project_root, runtime_root, chat_id=None) or work_id
+                    resolve_active_work_id(project_root, runtime_root, environ=env) or work_id
                 )
     except (OSError, ValueError, HistoryIndexIncomplete, sqlite3.Error):
         pass

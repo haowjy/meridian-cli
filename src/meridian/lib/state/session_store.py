@@ -4,8 +4,8 @@ import json
 import os
 import re
 import uuid
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
-from contextlib import ExitStack
+from collections.abc import Callable, Collection, Generator, Iterable, Iterator, Mapping
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import IO, Annotated, Literal, NamedTuple
 
@@ -269,6 +269,23 @@ def native_observations(
     return observations
 
 
+@contextmanager
+def session_writes(root: Path, *, timeout: float | None = None) -> Generator[None]:
+    """Hold the session write epoch: the history mutation gate (shared), then the sessions lock.
+
+    The one order every session writer takes. An exclusive holder of the gate
+    (restore, archive, index rebuild) takes the sessions lock after it, so a writer
+    that took them the other way round would deadlock against it. Both locks are
+    reentrant per thread, so a write inside this block re-enters them. The work
+    store's lock is never held at the same time, in either order.
+    """
+    with (
+        lock_file(HistoryChanges(root).mutation_lock, mode="shared", timeout=timeout),
+        lock_file(RuntimePaths.from_root_dir(root).sessions_flock, timeout=timeout),
+    ):
+        yield
+
+
 def append_chat_rows(root: Path, batches: Mapping[str, Iterable[SessionEvent]]) -> None:
     """Validate and durably append a chat batch once, inside one writer epoch.
 
@@ -276,10 +293,7 @@ def append_chat_rows(root: Path, batches: Mapping[str, Iterable[SessionEvent]]) 
     the same path and pay one fsync, not one fsync per chat.
     """
     paths = RuntimePaths.from_root_dir(root)
-    with (
-        lock_file(HistoryChanges(root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
-    ):
+    with session_writes(root):
         rows: list[BaseModel] = []
         for chat, batch in batches.items():
             for row in batch:
@@ -297,10 +311,7 @@ def append_native_rows(
     lock_timeout: float | None = None,
 ) -> None:
     paths = RuntimePaths.from_root_dir(root)
-    with (
-        lock_file(HistoryChanges(root).mutation_lock, mode="shared", timeout=lock_timeout),
-        lock_file(paths.sessions_flock, timeout=lock_timeout),
-    ):
+    with session_writes(root, timeout=lock_timeout):
         batch = list(rows)
         if any(row.harness_session_id != native_id for row in batch):
             raise ValueError("Observation append names a different native session")
@@ -432,14 +443,23 @@ def _write_session_lease(paths: RuntimePaths, chat_id: str, session_instance_id:
     )
 
 
-def resolve_session_instance_id(paths: RuntimePaths, runtime_root: Path, chat_id: str) -> str:
+def resolve_session_instance_id(
+    paths: RuntimePaths,
+    runtime_root: Path,
+    chat_id: str,
+    record: SessionRecord | None = None,
+) -> str:
+    """Choose the generation a write to *chat_id* names.
+
+    A caller that already folded the chat passes its *record*, so the journal is
+    not scanned again.
+    """
     held = _SESSION_LOCK_HANDLES.get(_session_lock_key(runtime_root, chat_id))
     held_generation = held.session_instance_id if held is not None else None
     lease_generation = ""
-    record = None
     if held_generation is None:
         _, lease_generation = _read_session_lease(paths, chat_id)
-        if not lease_generation.strip():
+        if not lease_generation.strip() and record is None:
             record = chat_record(runtime_root, chat_id)
     return session_instance_for_event(held_generation, lease_generation, record)
 
@@ -614,10 +634,7 @@ def start_session(
             tmux_target=tmux_target,
             model_selection_protocol=model_selection_protocol,
         )
-        with (
-            lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-            lock_file(paths.sessions_flock),
-        ):
+        with session_writes(runtime_root):
             existing = chat_record(runtime_root, resolved_chat_id, require_supported=True)
             if existing is not None:
                 from meridian.lib.state.session_identity import live_observer_for_chat
@@ -695,10 +712,7 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
         session_instance_id=session_instance_id,
         stopped_at=utc_now_iso(),
     )
-    with (
-        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
-    ):
+    with session_writes(runtime_root):
         append_chat_rows(runtime_root, {chat_id: [event]})
         _session_lease_path(paths, chat_id).unlink(missing_ok=True)
     _release_session_lock(runtime_root, chat_id)
@@ -726,18 +740,43 @@ def update_session_harness_id(
     )
 
 
-def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None) -> None:
-    """Set or clear the active work item for a session."""
+def set_work_attachments(
+    runtime_root: Path, changes: Mapping[str, str | None]
+) -> frozenset[str]:
+    """Attach chats to a work item, or detach them with ``None``, in one batch.
+
+    The one write behind an execution's attachment changing: one journal read for
+    the chats, one append, one fsync. A chat whose attachment already is the wanted
+    value is not written, an unknown chat is skipped, and a historical record is
+    inert and never written. Returns the chats that now carry their wanted value.
+    """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    normalized_work_id = work_id.strip() if work_id is not None else ""
-    event = SessionUpdateEvent(
-        chat_id=ChatId(chat_id),
-        harness_session_id=None,
-        session_instance_id=resolve_session_instance_id(paths, runtime_root, chat_id),
-        active_work_id=normalized_work_id,
-    )
-    append_chat_rows(runtime_root, {chat_id: [event]})
+    with session_writes(runtime_root):
+        records = _records_by_session(runtime_root, chat_ids=set(changes))
+        attached: set[str] = set()
+        batch: dict[str, list[SessionEvent]] = {}
+        for chat_id, work_id in changes.items():
+            record = records.get(chat_id)
+            if record is None or record.record_mode != "live":
+                continue
+            attached.add(chat_id)
+            wanted = (work_id or "").strip()
+            if (record.active_work_id or "") == wanted:
+                continue
+            batch[chat_id] = [
+                SessionUpdateEvent(
+                    chat_id=ChatId(chat_id),
+                    harness_session_id=None,
+                    session_instance_id=resolve_session_instance_id(
+                        paths, runtime_root, chat_id, record
+                    ),
+                    active_work_id=wanted,
+                )
+            ]
+        if batch:
+            append_chat_rows(runtime_root, batch)
+        return frozenset(attached)
 
 
 def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> None:
@@ -1145,19 +1184,6 @@ def get_last_executed_model(
     return latest
 
 
-def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[str]:
-    """Return active session IDs currently attached to a work item."""
-
-    normalized = work_id.strip()
-    if not normalized:
-        return []
-    return [
-        record.chat_id
-        for record in list_active_session_records(runtime_root)
-        if record.active_work_id == normalized
-    ]
-
-
 def get_session_records(
     runtime_root: Path,
     chat_ids: set[str],
@@ -1252,10 +1278,7 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
 
         cleaned_ids: list[str] = []
         stale_cleanup_scopes: list[str] = []
-        with (
-            lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-            lock_file(paths.sessions_flock),
-        ):
+        with session_writes(runtime_root):
             records: dict[str, SessionRecord] = {
                 record.chat_id: record
                 for record in get_session_records(
@@ -1341,11 +1364,7 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
 
 
 def append_historical_session(runtime_root: Path, record: SessionRecord) -> None:
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    with (
-        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
-    ):
+    with session_writes(runtime_root):
         existing = chat_record(runtime_root, record.chat_id, require_supported=True)
         if existing is not None:
             if existing == record:
@@ -1401,8 +1420,7 @@ def get_or_create_observed_chat(
     paths = RuntimePaths.from_root_dir(runtime_root)
     with (
         lock_file(paths.project_lifetime_flock, mode="shared", read_only_existing=True),
-        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
+        session_writes(runtime_root),
     ):
 
         def observe(row: SpawnRecord) -> SpawnRecord | Decline:

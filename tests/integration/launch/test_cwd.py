@@ -356,30 +356,6 @@ def test_resolve_effective_task_dir_precedence_scope_work_inherited_root(
     )
 
 
-def test_resolve_effective_task_dir_tombstone_skips_inherited(tmp_path: Path) -> None:
-    project_root = tmp_path / "project"
-    project_root.mkdir(parents=True)
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    inherited = tmp_path / "inherited"
-    inherited.mkdir(parents=True)
-    _publish_spawn(project_root)
-
-    write_spawn_scope_task_dir(project_root, "p1", None)
-    effective = resolve_effective_task_dir(
-        project_root=project_root,
-        project_state_dir=state_dir,
-        spawn_id="p1",
-        inherited_task_dir=inherited,
-        work_id=None,
-    )
-
-    assert effective == EffectiveTaskDir(
-        task_dir=project_root.resolve(),
-        source="project-root",
-    )
-
-
 def test_resolve_effective_task_dir_stale_work_falls_back_with_warning(tmp_path: Path) -> None:
     project_root, state_dir = _roots(tmp_path)
     work_id, stale = _work_with_stale_task_dir(state_dir, tmp_path, "stale-work")

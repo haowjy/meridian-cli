@@ -58,6 +58,12 @@ class RuntimePaths(BaseModel):
 
         return project_lifetime_lock_path(self.root_dir)
 
+    @property
+    def work_items_dir(self) -> Path:
+        """Return the per-item link directory the work store publishes into."""
+
+        return self.root_dir / "work-items"
+
     @classmethod
     def from_root_dir(cls, root_dir: Path) -> Self:
         """Build state-root-relative paths from an absolute state directory."""

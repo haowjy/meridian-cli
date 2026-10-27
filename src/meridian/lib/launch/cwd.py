@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -69,19 +70,6 @@ class LaunchDirectoryContext:
     def has_distinct_task_cwd(self) -> bool:
         return self.logical_task_cwd != self.authority_root
 
-def _active_task_dir_for_item(
-    *,
-    project_state_dir: Path,
-    work_id: str,
-) -> Path | None:
-    item = work_store.get_active_work_item(
-        project_state_dir,
-        work_id,
-    )
-    if item is None or item.task_dir is None:
-        return None
-    return Path(item.task_dir).expanduser().resolve()
-
 
 def _stale_work_task_dir_message(
     *,
@@ -134,6 +122,23 @@ def _validated_scope_task_dir(task_dir: Path) -> Path:
     raise ValueError(f"Spawn scope task_dir does not exist: {resolved}")
 
 
+def inheritable_task_dir(project_root: Path, spawn_id: str | None) -> Path | None:
+    """Return the checkout a launch inherits from the execution launching it.
+
+    Only a checkout the launcher pinned (its spawn scope) is inherited: a launcher
+    that follows its item or the project root passes nothing on, so its child
+    follows ``work task-dir`` and ``work switch`` too. ``MERIDIAN_TASK_DIR`` inside
+    a managed run is the launcher's own link — a projection of that rule — and is
+    never read back. Outside one, a value the user exported is an explicit choice.
+    """
+
+    normalized_spawn_id = (spawn_id or "").strip()
+    if normalized_spawn_id:
+        return read_spawn_scope(project_root.expanduser().resolve(), normalized_spawn_id).task_dir
+    exported = os.getenv("MERIDIAN_TASK_DIR", "").strip()
+    return Path(exported).expanduser().resolve() if exported else None
+
+
 def resolve_effective_task_dir(
     *,
     project_root: Path,
@@ -142,7 +147,12 @@ def resolve_effective_task_dir(
     inherited_task_dir: Path | None = None,
     work_id: str | None = None,
 ) -> EffectiveTaskDir:
-    """Resolve where the current process edits source code."""
+    """Resolve where the current process edits source code.
+
+    The execution's pin, else its item's checkout, else the project root.
+    *inherited_task_dir* is for a process outside a managed run, where an exported
+    ``MERIDIAN_TASK_DIR`` is all there is.
+    """
 
     resolved_project_root = project_root.expanduser().resolve()
     normalized_spawn_id = (spawn_id or "").strip() or None
@@ -155,15 +165,9 @@ def resolve_effective_task_dir(
                 task_dir=_validated_scope_task_dir(scope.task_dir),
                 source="scope",
             )
-        skip_inherited = scope.task_dir_cleared
-    else:
-        skip_inherited = False
 
     if normalized_work_id is not None:
-        work_path = _active_task_dir_for_item(
-            project_state_dir=project_state_dir,
-            work_id=normalized_work_id,
-        )
+        work_path = work_store.item_task_dir(project_state_dir, normalized_work_id)
         if work_path is not None:
             if work_path.is_dir():
                 return EffectiveTaskDir(task_dir=work_path, source="work-item")
@@ -176,7 +180,7 @@ def resolve_effective_task_dir(
     else:
         stale_message = None
 
-    if not skip_inherited and inherited_task_dir is not None:
+    if inherited_task_dir is not None:
         if stale_message is None:
             resolved_inherited = _validated_inherited_task_dir(inherited_task_dir)
             return EffectiveTaskDir(task_dir=resolved_inherited, source="inherited")
@@ -264,10 +268,7 @@ def resolve_task_cwd(
     ambient_selected_work_id = (ambient_work_id or "").strip() or None
 
     if selected_work_id is not None:
-        explicit_path = _active_task_dir_for_item(
-            project_state_dir=project_state_dir,
-            work_id=selected_work_id,
-        )
+        explicit_path = work_store.item_task_dir(project_state_dir, selected_work_id)
         if explicit_path is None:
             return TaskCwdResolution(
                 task_cwd=resolved_authority_root,
@@ -307,10 +308,7 @@ def resolve_task_cwd(
             )
 
     if selected_work_id is None and ambient_selected_work_id is not None:
-        ambient_path = _active_task_dir_for_item(
-            project_state_dir=project_state_dir,
-            work_id=ambient_selected_work_id,
-        )
+        ambient_path = work_store.item_task_dir(project_state_dir, ambient_selected_work_id)
         if ambient_path is None:
             return TaskCwdResolution(
                 task_cwd=resolved_authority_root,

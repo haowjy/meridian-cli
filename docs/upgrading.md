@@ -10,17 +10,30 @@ follow the commands that move their target, and both survive a Claude `/clear` o
 longer names the parent's directory; a primary names its links in the system prompt
 and a spawn names them in its `# Meridian run` user turn.
 
-`work done` now moves an item's directory to the archive at once, and the links of
-every session attached to it follow. A running spawn keeps writing through its link
-and its writes land in the archive; a primary attached to the item is returned to its
-ambient directory. There is no deferred move and no startup sweep, so `work done` no
-longer reports spawns that hold the directory.
+A `--task-dir` given to a launch, a launch from a directory outside the project, and
+a pin the launching execution passed on are now recorded on the execution itself, so a
+later `work done`, `work rename`, `work switch` or `meridian task-dir` keeps that
+checkout instead of resetting the link to the project root. `meridian task-dir clear`
+returns the execution to its work item's checkout. A checkout an execution only
+followed from its item or the project root is not pinned, so a child of such an
+execution follows `work task-dir` and `work switch` too.
+
+`work done` now moves an item's directory to the archive at once and writes no
+session state; the item's own links follow the directory, and every session attached
+to it follows them. A running spawn keeps writing through its link and its writes
+land in the archive; a primary attached to the item keeps it. There is no deferred
+move and no startup sweep, so `work done` no longer reports spawns that hold the
+directory. `work rename` moves live executions onto the new name; a chat that ended
+keeps its old name, so `--from` on it warns and creates nothing. Each item's links
+are created by its first write or by the first session that attaches to it, and
+`meridian doctor` republishes all of them.
 
 A spawn launched by an older build and still running across the upgrade holds the old
 concrete path, so it may recreate that directory after `work done` moves the item. A
 later `work done` or `work reopen` refuses when both locations exist and names both;
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
+
 ## Mars 0.20.0 (schema v1)
 
 Meridian pins `mars-agents==0.20.2`, up from 0.18.4. Mars 0.20 reads and writes schema v1,

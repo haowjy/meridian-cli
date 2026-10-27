@@ -17,7 +17,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.launch.context import PreparedLaunchSurface
-from meridian.lib.launch.cwd import resolve_task_cwd
+from meridian.lib.launch.cwd import inheritable_task_dir, resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest, is_exact_continue_session
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
@@ -60,7 +60,6 @@ from .failure_policy import finalize_launch_failure_sync
 from .models import SpawnActionOutput, SpawnCreateInput
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .query import read_report, read_spawn_row, spawn_session_log_available
-from .task_dir import derive_inheritable_task_dir
 
 logger = structlog.get_logger(__name__)
 _BACKGROUND_SUBMIT_MESSAGE = "Background spawn submitted."
@@ -140,12 +139,7 @@ def _resolve_execution_contract(
         ambient_work_id = None if explicit_work_id else ctx.work_id
         project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
         spawn_id = str(ctx.spawn_id) if ctx.spawn_id is not None else None
-        inherited_for_child = derive_inheritable_task_dir(
-            project_root=project_paths.project_root,
-            project_state_dir=project_state_dir,
-            spawn_id=spawn_id,
-            work_id=ambient_work_id,
-        )
+        inherited_for_child = inheritable_task_dir(project_paths.project_root, spawn_id)
         execution_cwd = resolve_task_cwd(
             project_paths.project_root,
             project_state_dir=project_state_dir,
@@ -280,7 +274,6 @@ def _reserve_then_prepare(
     context = _materialize_spawn_work_item(
         context=context,
         payload=payload,
-        request=request,
         project_root=project_paths.project_root,
     )
     _persist_execution_contract(context, preparation.execution_contract)

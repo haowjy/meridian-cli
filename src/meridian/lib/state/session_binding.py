@@ -6,15 +6,14 @@ from pathlib import Path
 
 from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.types import ChatId, HarnessSessionId
-from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_fold as sessions
-from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.native_binding import BindOutcome, Bound, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_store import (
     append_chat_rows,
     chats_rows,
     resolve_session_instance_id,
+    session_writes,
 )
 
 
@@ -122,11 +121,7 @@ def session_bindings(
     runtime_root: Path, *, scope: Collection[str] | None = None
 ) -> Generator[SessionBindings]:
     """Keep reads and appends in one sessions-lock epoch, including bulk imports."""
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    with (
-        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
-    ):
+    with session_writes(runtime_root):
         bindings = SessionBindings(runtime_root, scope)
         yield bindings
         bindings.commit()
