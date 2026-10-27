@@ -264,8 +264,10 @@ harness-overrides:
       spawn: false
 ```
 
-Meridian reads only this location. A profile still using the old top-level
-`resident-rearm-budget` or `meridian-capabilities` keys launches without them.
+Meridian reads only this location. Mars 0.21.0 moves old top-level
+`resident-rearm-budget` and `meridian-capabilities` keys into it in the installed copy of a
+pre-v1 profile and rejects them in a `schema = 1` package; `meridian mars migrate` rewrites the
+source. See [the upgrade notes](upgrading.md#mars-0210).
 
 ## Skills and Skill Variants
 

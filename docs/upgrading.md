@@ -34,9 +34,56 @@ later `work done` or `work reopen` refuses when both locations exist and names b
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
 
+## Mars 0.21.0
+
+Meridian pins `mars-agents==0.21.0`, up from 0.20.2. Only the `resident-rearm-budget` and
+`meridian-capabilities` profile keys need your attention; the rest needs nothing from you.
+
+### If your profiles set `resident-rearm-budget` or `meridian-capabilities`
+
+Both keys moved under the `harness-overrides.meridian` block, as
+`harness-overrides.meridian.resident-rearm-budget` and `harness-overrides.meridian.capabilities`.
+Meridian reads only the new location. `meridian` is a reserved consumer namespace like `flow`:
+Mars keeps the block in the installed profile, raises no `unknown harness override` warning for
+it, and never writes it to a harness file.
+
+What happens to an old top-level key depends on where the profile comes from:
+
+| Profile source | `meridian mars sync` | Launch |
+|---|---|---|
+| `.mars-src/` or `~/.meridian/mars/.mars-src/` (`--user`), no `[package] schema` | exit 0, warns ``authored `.mars-src` content uses the pre-v1 format (1 file to upgrade); run `mars migrate` `` | Works: sync moves the keys in the installed copy, so the budget and `spawn: false` apply. The file in `.mars-src/` keeps the old keys |
+| Dependency without `schema` (a pre-v1 package) | exit 0, warns ``package `<name>` uses the pre-v1 format (N files to upgrade); run `mars migrate` in its repository`` | Works, as above |
+| Dependency declaring `[package] schema = 1` | `meridian mars add` exits 2 and adds nothing: ``[field.removed] <name>: agents/<file>.md: `resident-rearm-budget` was removed; move it under `harness-overrides.meridian.resident-rearm-budget` `` | The dependency is not installed |
+
+The warning in the first two rows repeats on every sync until the source is migrated.
+
+`meridian mars migrate` moves both keys, values and order unchanged, in every row above
+(`meridian mars migrate --check` lists the edit and exits 1; add `--user` for `~/.meridian/mars`).
+On a schema 1 package it also adds `requires-mars = ">=0.20.0"` when none is declared. If a
+profile already has a `harness-overrides.meridian` block, that block wins and the top-level twin
+is dropped with a note. Package authors: Mars's
+[migration guide](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md#what-it-changes)
+lists what the migration changes.
+
+### MCP servers and hooks
+
+- A dependency narrowed by an include filter (`agents`, `skills`, `only_skills`, `only_agents`)
+  now contributes its MCP servers; before, sync silently dropped them. A newly visible server
+  replaces a hand-written entry with the same name in that target's MCP config, so rename your
+  entry if you want to keep it.
+- `${MARS_MCP_DIR}` in an MCP server's `command` or `args` names that server's own `mcp/<name>/`
+  files, which sync installs beside each target that writes MCP config.
+- Unmanaged content at `<target>/hooks/<name>/` no longer fails sync. It warns, stays untouched,
+  and withholds that target's hook entry; `meridian mars sync --force` adopts and overwrites it.
+
+Mars's docs also stopped describing `.agents/` as a default target: with nothing linked, sync
+writes only to `.mars/`, and `meridian mars link DIR` adds a target. Meridian never depended on
+`.agents/`. Mars's [0.21.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.21.0)
+release notes list the rest, including plugin-build fixes that affect only package authors.
+
 ## Mars 0.20.0 (schema v1)
 
-Meridian pins `mars-agents==0.20.2`, up from 0.18.4. Mars 0.20 reads and writes schema v1,
+Meridian 0.15.0 pinned `mars-agents==0.20.2`, up from 0.18.4. Mars 0.20 reads and writes schema v1,
 and it carries 0.19.0's changes too, which the old pin skipped. Mars documents the format
 ([schema v1](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/schema-v1.md),
 [migrating a package](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md))
@@ -106,15 +153,8 @@ In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the pack
   `[models.<alias>]`, fan-out candidates in
   [`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing), MCP grants as
   `mcp(server): allow` entries in `tools`.
-- **Moved:** `resident-rearm-budget` and `meridian-capabilities` are now
-  `harness-overrides.meridian.resident-rearm-budget` and
-  `harness-overrides.meridian.capabilities`, and Meridian reads only the new location. A profile
-  that still uses the old top-level keys launches without those settings, so move them by hand.
-  `meridian` is a reserved consumer namespace, not a harness: Mars keeps the block and never
-  lowers it. Mars 0.20.2, the version this build bundles, does not know the namespace yet: it
-  warns ``unknown harness override `meridian` `` when it parses the profile and preserves the
-  block. The Mars release after 0.20.6 reserves the namespace, rejects the old top-level keys as
-  removed fields, and `mars migrate` rewrites them.
+- **Moved:** `resident-rearm-budget` and `meridian-capabilities` now live under
+  `harness-overrides.meridian`. See [Mars 0.21.0](#mars-0210).
 
 A package you publish with `[package] schema = 1` is read strictly: a removed key fails sync with
 exit 2 and changes nothing. `mars migrate` also adds `requires-mars = ">=0.20.0"` to a package
@@ -135,7 +175,7 @@ requirement or one that allows an older Mars. Package maintainers: see Mars's
 - Mars 0.20.0 and 0.20.1 refused `mars check <path> --root <dir>`, which is how
   `meridian mars check <path>` reaches Mars, and failed to sync a dependency without a
   `mars.toml` whose `skills/` directory holds a stray file such as `__init__.py` or `README.md`
-  (`Not a directory`). Mars 0.20.2, the pinned version, fixes both; they behave as they did on
+  (`Not a directory`). Mars 0.20.2 and later fix both; they behave as they did on
   0.18.4 and need nothing from you.
 - Mars 0.19.0 orders hooks by shortest dependency depth, which changes the order only when a
   direct dependency is also reached transitively; Codex may ask you to re-trust moved hooks once
