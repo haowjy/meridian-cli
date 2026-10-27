@@ -241,11 +241,6 @@ class RuntimeOverrides(BaseModel):
             }
         )
 
-    def model_policy_scope(self) -> RuntimeOverrides:
-        """Compatibility wrapper for execution-policy-only model policy precedence."""
-
-        return self.execution_policy_scope()
-
     def to_env(self) -> dict[str, str]:
         """Render captured runtime overrides back to MERIDIAN_* env vars."""
 

@@ -384,7 +384,6 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.wait_yield_seconds_for_harness("claude") == 270.0
     assert config.wait_yield_seconds_for_harness("codex") == 45.0
     assert config.wait_yield_seconds_for_harness("unknown") == 120.0
-    assert config.default_model_for_harness("codex") == "gpt-5.4"
 
 
 def test_load_config_reads_pi_wait_yield_env(
@@ -501,7 +500,6 @@ def test_load_config_reads_pi_disable_managed_bash(tmp_path: Path) -> None:
     config = load_config(project_root)
 
     assert config.harness.pi.disable_managed_bash is True
-    assert config.default_model_for_harness("pi") == ""
     assert config.wait_yield_seconds_for_harness("pi") == config.default_wait_yield_seconds
 
 

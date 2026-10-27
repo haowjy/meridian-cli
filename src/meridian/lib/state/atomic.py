@@ -24,13 +24,6 @@ def atomic_write_text(path: Path, content: str) -> None:
         handle.write(content)
 
 
-def atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write bytes via same-directory temp file + fsync + replace."""
-
-    with atomic_replace(path, mode="wb", encoding=None, permissions=0o600) as handle:
-        handle.write(data)
-
-
 def append_text_line(path: Path, line: str) -> None:
     """Append one line and fsync before returning.
 

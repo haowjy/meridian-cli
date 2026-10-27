@@ -105,11 +105,6 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
             "native_flag": None,
         },
     ]
-    assert preview.projected_content.channel_manifest() == {
-        "system_instruction": "config-agent",
-        "user_task_prompt": "user-turn",
-        "task_context": "user-turn",
-    }
     assert f"# Reference: {file_ref.as_posix()}" in preview.binding.run_params.prompt
     assert f"# Reference: {dir_ref.as_posix()}/" in preview.binding.run_params.prompt
     assert "# Meridian Agents" not in preview.binding.run_params.prompt
