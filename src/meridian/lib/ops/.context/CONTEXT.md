@@ -259,7 +259,9 @@ here; otherwise it is invisible to those surfaces.
 **Work item attachment is ops-layer responsibility.** `work_attachment.py:ensure_explicit_work_item()`
 handles `--work` resolution before the spawn row is created. The resumed-session
 case (reading `preserved_work_id`) is handled inside `run_harness_process()` in
-`launch/process/`.
+`launch/process/`. `resolve_active_work_id()` reads an execution's own chat row for
+both kinds, since only that row survives a `/clear`; `follow_work_item()` repoints
+every attached execution after the directory moves.
 
 **Sync/conflict boundary: ops resolves roots, autosync_store owns artifacts.**
 `sync_conflicts.py` and `context.py` follow the same pattern: ops determines

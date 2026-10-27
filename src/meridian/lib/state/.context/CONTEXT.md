@@ -296,26 +296,22 @@ single mutation seam validates every active and archived copy before touching di
 
 ### Work Item Directory Moves
 
-The status file records the intended location and the directory follows. `work done`
-writes `done` first, then moves `<work root>/<slug>` to `<archive>/<slug>` — but only
-when no non-terminal spawn is still attached. A spawn's work directory is launch-bound,
-so moving it under a running spawn would leave a ghost directory the spawn recreates on
-its next write. The item reads as done while its directory is still in `work/`;
-`settle_pending_archive()` finishes the move when the last attached spawn reaches a
-terminal state (the terminal seam in `core/spawn_service`), and
-`settle_pending_moves()` is the crash-only startup sweep run by every launch bind and
-`meridian doctor`. Reopen is the same rule in reverse: the active status is written and
-the archived directory moves back, and a done item that never moved only needs its
-status rewritten. `work start` and `work switch` of a done item go through that reopen.
+The location is the state. `work done` moves `<work root>/<slug>` to
+`<archive>/<slug>` and `work reopen` moves it back, each in one step; there is no
+"done but not yet moved" status and no sweep to finish one. A directory in the archive
+is done by location, whatever its `__status.json` still says, so a crash between the
+rename and the metadata write reads correctly and `meridian doctor` normalizes the
+file. Reopen writes the reopened status before its move, so an interrupted reopen
+leaves the item archived and running the command again repairs it.
 
-One move core (`move_work_dir`) serves both directions. Both copies can exist — a spawn
-that outlived a move, or a crash — so it merges the source into the destination when
-every shared path is identical (the source only adds files) and refuses otherwise,
-naming both paths, without deleting either. `__status.json` is excluded from the
-comparison because the caller writes the authoritative state at the destination after
-the move. The intent write runs as `before_move`, after the conflict check, so a refused
-move leaves the source's metadata untouched. A directory with no `__status.json` beside
-an archived copy is a ghost, not an item: single-item reads resolve the archived copy.
+A running spawn is not a reason to defer: its work directory is a per-chat link
+(`launch/session_links.py`), so the directory moves under it and the next write lands
+at the new location. The command that moves an item repoints the links of every
+attached execution for the same reason (`ops/work_attachment.follow_work_item`), and
+a primary attached to an item that becomes done is detached instead.
+
+`move_work_dir` refuses when both locations exist, naming both, and never deletes
+either copy. Only `work delete --force` removes a directory.
 
 ### WorktreeMetadata
 

@@ -235,7 +235,7 @@ Runner-history pruning is explicit, never automatic; see
 | `meridian work done [SLUG]` | Mark a work item done and archive its scratch directory (default: this session's active work item) |
 | `meridian work sessions [SLUG]` | List sessions attached to a work item (default: this session's active work item) |
 | `meridian work rename [OLD] NEW` | Rename a work item; one argument renames this session's active item, like `git branch -m NEW` |
-| `meridian work delete SLUG\|current` | Delete a work item (requires a name) |
+| `meridian work delete [SLUG\|current]` | Delete a work item (default: this session's active work item) |
 | `meridian work reopen SLUG\|current` | Reopen a done work item |
 
 Commands that act on a work item default to the one this session is attached to,
@@ -244,35 +244,37 @@ and `current` names it anywhere a work id is accepted (`work show`, `sessions`,
 script has to carry an id that a `work switch` can invalidate. `current` is
 reserved: `work start`/`rename` refuse it as a name.
 
-`work done` marks the item done at once but moves its directory to the archive only
-when no live spawn is still attached: a spawn's work directory is launch-bound, so
-moving it under the spawn would leave a ghost the spawn recreates on its next write.
-`work show` and `work list` report the item as done meanwhile, and the command names
-the spawns that hold the move. The last one to finish moves the directory; a launch
-or `meridian doctor` finishes any move a crash left behind. `work reopen` reverses it
-under the same rules, and `work start` or `work switch` of a done item reopens it
-rather than attaching to a directory that is not there.
+`work done` moves the item's directory to the archive immediately and repoints every
+attached execution's link at it, so a spawn that is still running keeps writing
+through the same literal path and its writes land in the archive. A primary attached
+to the item is returned to its ambient directory, because a done item is no longer
+its to edit. `work rename` moves the directory and every attached execution's
+attachment with it. `work reopen` moves the directory back, and `work start` or
+`work switch` of a done item reopens it.
 
-A move never deletes either copy. If a directory exists in both places — a spawn that
-outlived the move, or an interrupted operation — the two are merged when the source
-only adds files, and refused with both paths named when a shared file differs.
+A move never deletes either copy. If a directory exists in both places — an
+interrupted operation, or a leftover — it is refused with both paths named, and
+nothing is moved or deleted.
 
-Within a primary session, two stable symlinks under the runtime root keep moving
-targets out of the prompt and environment:
+Every live execution, primary or spawn, has two stable symlinks under the runtime
+root that keep moving targets out of the prompt and environment:
 
 - `sessions/<chat>/work` (`MERIDIAN_ACTIVE_WORK_DIR`) is the work directory.
-  `work start`, `work switch`, and `work rename` repoint it; with no active item
-  it points at the session's ambient spawn work directory. Agents can write
-  prompt files with that literal path and pass it to `--prompt-file` without
-  resolving the work path again. The link follows the current item, so write a
-  prompt after the final switch; a path saved before a switch still names the
-  same link but reaches the new item.
+  `work start`, `work switch`, and `work rename` repoint it, and `work done` follows
+  the item into the archive; with no active item it points at the execution's ambient
+  spawn work directory. Agents can write prompt files with that literal path and pass
+  it to `--prompt-file` without resolving the work path again. The link follows the
+  current item, so write a prompt after the final switch; a path saved before a switch
+  still names the same link but reaches the new item.
 - `sessions/<chat>/task` (`MERIDIAN_TASK_DIR`) is the source checkout. It follows
   `meridian task-dir`, `meridian work task-dir`, and a switch to an item with its
   own checkout, so the same literal path keeps reaching the current one. A
   spawn-scope `task-dir` outranks an item's checkout, as it does at launch.
 
-Spawns keep concrete launch-bound directories; only a primary names these links.
+The chat in the path is the execution's own: a primary's entry chat (the one its
+launch named, which survives a `/clear` rotation) and a spawn's own chat. A primary
+launch names its links in the system prompt; a spawn names them in its first user
+turn, so sibling spawns share one cached system prompt.
 
 ## Hooks
 

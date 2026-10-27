@@ -39,10 +39,9 @@ Task directory (where source reads, edits, git, builds, and tests run) is separa
 `MERIDIAN_TASK_DIR` is inherited across spawns. Precedence within a session:
 spawn-scope override (`meridian task-dir set`, stored in per-spawn `scope.json`) →
 work-item `task_dir` (`meridian work task-dir`) → inherited `MERIDIAN_TASK_DIR` →
-project root. A primary's inherited value is its own per-chat link
-(`sessions/<chat>/task`), so the link's target follows those same steps; a spawn
-inherits the resolved directory instead of a link. `meridian task-dir` prints the
-resolved directory, not the link. Clear a stale inherited value with
+project root. Every execution's inherited value is its own per-chat link
+(`sessions/<chat>/task`), so the link's target follows those same steps.
+`meridian task-dir` prints the resolved directory, not the link. Clear a stale inherited value with
 `meridian task-dir clear`. Use `--task-dir` on primary/spawn launch for one-shot
 overrides — not `-C`, which retargets the entire project/control root.
 
@@ -51,16 +50,16 @@ overrides — not `-C`, which retargets the entire project/control root.
 | Variable | Purpose |
 |---|---|
 | `MERIDIAN_PROJECT_DIR` | Inherited project/control root; wins over literal CWD when set |
-| `MERIDIAN_TASK_DIR` | Source-edit directory. A primary gets a stable per-chat symlink (`sessions/<chat>/task`) that follows `meridian task-dir`, `meridian work task-dir`, and `work switch`, survives a Claude `/clear` or `/resume` and the session exiting; spawns get the resolved launch-bound directory. Set/clear via `meridian task-dir` |
+| `MERIDIAN_TASK_DIR` | Source-edit directory: a stable per-chat symlink (`sessions/<chat>/task`) for every execution, primary or spawn. It follows `meridian task-dir`, `meridian work task-dir`, and `work switch`, survives a Claude `/clear` or `/resume` and the session exiting. Set/clear via `meridian task-dir` |
 | `MERIDIAN_CONFIG` | User config overlay path |
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/`) |
-| `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists; a primary session reads the item from its chat's session row instead of this variable |
-| `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory. Primary sessions get a stable per-chat symlink that follows `work start`/`switch`/`rename`, survives a Claude `/clear` or `/resume` and the session exiting, and returns to the ambient spawn scope after `work done`/`delete`; spawns get the launch-bound work-item or ambient spawn scope (`spawns/p<N>/work`) |
+| `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists. Informational: every command reads the item from the execution's own chat row, which is what a `work switch` writes |
+| `MERIDIAN_ACTIVE_WORK_DIR` | Work directory: a stable per-chat symlink for every execution, primary or spawn. It follows `work start`/`switch`/`rename`, follows the item into the archive on `work done` and back on `work reopen`, survives a Claude `/clear` or `/resume` and the session exiting, and returns to the ambient spawn scope after `work delete` |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
 | `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
 
-Primary sessions point `MERIDIAN_ACTIVE_WORK_DIR` and `MERIDIAN_TASK_DIR` at stable
+Every session points `MERIDIAN_ACTIVE_WORK_DIR` and `MERIDIAN_TASK_DIR` at stable
 symlinks. Harnesses that match file-permission rules against literal paths (Claude
 Code) do not follow them: a profile's scoped `Edit` grant on the real work-item or
 checkout path does not authorize a write through the link. Meridian's `--add-dir`
