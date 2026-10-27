@@ -144,14 +144,14 @@ def _merge_conflicts(source: Path, destination: Path, *, relative: Path) -> list
             continue
         target = destination / child.name
         rel = relative / child.name
+        if not target.exists() and not target.is_symlink():
+            continue
         if child.is_symlink() or target.is_symlink():
             same_link = child.is_symlink() and target.is_symlink() and (
                 os.readlink(child) == os.readlink(target)
             )
             if not same_link:
                 conflicts.append(rel)
-            continue
-        if not target.exists():
             continue
         if child.is_dir() and target.is_dir():
             conflicts.extend(_merge_conflicts(child, target, relative=rel))
@@ -174,14 +174,18 @@ def _merge_into(source: Path, destination: Path) -> None:
         if child.name == STATUS_FILENAME:
             continue
         target = destination / child.name
-        if child.is_symlink() or (
-            child.is_file() and (target.exists() or target.is_symlink())
-        ):
+        counterpart = target.exists() or target.is_symlink()
+        if child.is_symlink():
+            if counterpart:
+                child.unlink()
+            else:
+                child.rename(target)
+            continue
+        if child.is_file() and counterpart:
             child.unlink()
             continue
         if child.is_dir() and target.is_dir():
             _merge_into(child, target)
-            child.rmdir()
             continue
         child.rename(target)
     (source / STATUS_FILENAME).unlink(missing_ok=True)
