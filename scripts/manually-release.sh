@@ -6,13 +6,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/manually-release.sh [patch|minor|major|X.Y.Z] [--push]
+  scripts/manually-release.sh [patch|minor|major|X.Y.Z] --notes-file PATH [--push]
   scripts/manually-release.sh tag-current [--push]
 
 Manual release helper for emergency/backfill releases.
 
 Creates a real release commit before tagging. The normal path remains the
 label-gated GitHub workflow.
+
+--notes-file PATH holds the changelog section for this release: the same
+### Upgrade notes/Added/Changed/... blocks or "None. <reason>" line a PR body
+uses. '-' reads standard input. CHANGELOG.md [Unreleased] is never promoted.
 USAGE
 }
 
@@ -49,34 +53,15 @@ require_clean_tree() {
   [[ -z "$(git -C "$ROOT_DIR" status --short)" ]] || die "working tree is not clean"
 }
 
-require_unreleased_entries() {
-  awk '
-    /^## \[Unreleased\]$/ { in_unreleased = 1; next }
-    in_unreleased && /^## \[/ { in_unreleased = 0 }
-    in_unreleased && /^- / { found = 1 }
-    END { exit found ? 0 : 1 }
-  ' "$ROOT_DIR/CHANGELOG.md" || die "CHANGELOG.md [Unreleased] has no bullet entries"
-}
-
-promote_changelog() {
+render_changelog() {
   local version="$1"
   local date="$2"
-  local tmp_file
-  tmp_file="$(mktemp)"
-  awk -v version="$version" -v date="$date" '
-    BEGIN { promoted = 0 }
-    {
-      if (!promoted && $0 == "## [Unreleased]") {
-        print "## [Unreleased]"
-        print ""
-        print "## [" version "] - " date
-        promoted = 1
-        next
-      }
-      print
-    }
-  ' "$ROOT_DIR/CHANGELOG.md" >"$tmp_file"
-  mv "$tmp_file" "$ROOT_DIR/CHANGELOG.md"
+  local notes_file="$3"
+  "$ROOT_DIR/scripts/changelog-notes.py" render \
+    --notes-file "$notes_file" \
+    --version "$version" \
+    --date "$date" \
+    --changelog "$ROOT_DIR/CHANGELOG.md"
 }
 
 write_version() {
@@ -131,17 +116,23 @@ main() {
   local command="$1"
   shift
   local push=0
+  local notes_file=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --push) push=1; shift ;;
+      --notes-file)
+        [[ $# -ge 2 ]] || die "--notes-file requires a path ('-' reads stdin)"
+        notes_file="$2"
+        shift 2
+        ;;
       -h|--help) usage; exit 0 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
 
-  cd "$ROOT_DIR"
-
   if [[ "$command" == "tag-current" ]]; then
+    [[ -z "$notes_file" ]] || die "tag-current does not take --notes-file"
+    cd "$ROOT_DIR"
     require_clean_tree
     tag="$(validate_current_release)"
     create_tag "$tag"
@@ -149,8 +140,20 @@ main() {
     exit 0
   fi
 
+  [[ -n "$notes_file" ]] || die "release commands require --notes-file PATH ('-' reads stdin)"
+  if [[ "$notes_file" == "-" ]]; then
+    stdin_notes="$(mktemp)"
+    trap 'rm -f "$stdin_notes"' EXIT
+    cat >"$stdin_notes"
+    notes_file="$stdin_notes"
+  else
+    [[ -f "$notes_file" ]] || die "notes file not found: $notes_file"
+    notes_file="$(cd "$(dirname "$notes_file")" && pwd)/$(basename "$notes_file")"
+  fi
+
+  cd "$ROOT_DIR"
   require_clean_tree
-  require_unreleased_entries
+  "$ROOT_DIR/scripts/changelog-notes.py" validate --notes-file "$notes_file"
   scripts/preflight.sh full
 
   local current target version today tag
@@ -167,8 +170,8 @@ main() {
   fi
 
   today="$(date -u +%Y-%m-%d)"
+  render_changelog "$version" "$today" "$notes_file"
   write_version "$version"
-  promote_changelog "$version" "$today"
   git add src/meridian/__init__.py CHANGELOG.md
   git commit -m "release: v$version"
   create_tag "$tag"
