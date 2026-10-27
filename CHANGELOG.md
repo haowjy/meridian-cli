@@ -30,12 +30,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   grok, deepseek and luna), `explorer` (`medium` to `low` on deepseek and sonnet)
   and the creative-writing agents that set an effort (`low` on deepseek). Only
   effort moves; no packaged rule changes approval, sandbox or network. `max` is its
-  own effort level, and `effort: none` fails the launch. See
-  [launch policy](docs/upgrading.md#policy-that-changes-at-launch).
+  own effort level, and Pi receives it as `--thinking max` where it received `xhigh`.
+  See [launch policy](docs/upgrading.md#policy-that-changes-at-launch).
 - Rollback to the previous Meridian (Mars 0.18.4) works after one `meridian mars sync`.
   See [rolling back](docs/upgrading.md#rolling-back).
 
 ### Changed
+- Effort `none` (reasoning off) works from `--effort`, `MERIDIAN_EFFORT`, `[primary] effort`,
+  a profile or an overlay, and `--effort` help lists it. It used to fail the launch
+  with `expected one of [...]`. Each harness lowers it: Claude and OpenCode pass no flag
+  (`--dry-run` reports Claude's omission), Codex passes `model_reasoning_effort="none"`
+  (some models reject it), Pi passes `--thinking off`. Pi passes `max` as `--thinking max`
+  instead of capping it at `xhigh`. See
+  [Effort by harness](docs/agent-profiles.md#effort-by-harness)
+  ([#774](https://github.com/haowjy/meridian-cli/issues/774)).
 - Bump pinned `mars-agents` to `0.20.2`, which reads and writes Mars schema v1
   and adds `mars provide` for host-provided skills. 0.20.2 also fixes two 0.20.0
   regressions: `meridian mars check <path>` works again, and a dependency without

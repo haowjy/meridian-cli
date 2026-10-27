@@ -11,6 +11,7 @@ from meridian.lib.harness.projections._guards import (
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.harness.projections.compaction import project_claude_autocompact_args
+from meridian.lib.harness.projections.effort import project_claude_effort_args
 from meridian.lib.harness.projections.permissions_claude import (
     ClaudeSettings,
     compile_claude_permissions,
@@ -137,8 +138,7 @@ def project_claude_spec_to_cli_args(
 
     if spec.model:
         command.extend(("--model", spec.model))
-    if spec.effort:
-        command.extend(("--effort", spec.effort))
+    command.extend(project_claude_effort_args(spec.effort))
     command.extend(project_claude_autocompact_args(spec.autocompact))
     if spec.agent_name:
         command.extend(("--agent", str(spec.agent_name)))
