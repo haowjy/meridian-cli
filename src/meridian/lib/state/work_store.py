@@ -64,6 +64,20 @@ def work_item_needs_repair(runtime_root: Path, work_id: str) -> bool:
         return True
 
 
+def work_item_exists(runtime_root: Path, work_id: str) -> bool:
+    """Return whether an item has a directory in ``work/`` or the archive.
+
+    Two stats and no read: the question a stale session row or env must answer
+    before it names an item.
+    """
+
+    paths = project_paths_for_work_store(runtime_root)
+    return any(
+        root is not None and (root / work_id).is_dir()
+        for root in (paths.work_dir, paths.work_archive_dir)
+    )
+
+
 def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     """Load one work item from active or archived directories."""
 

@@ -43,21 +43,19 @@ def test_spawn_scope_write_read_round_trip(tmp_path: Path) -> None:
     write_spawn_scope_task_dir(project_root, "p1", task_dir)
     scope = read_spawn_scope(project_root, "p1")
 
-    assert scope == SpawnScope(task_dir=task_dir.resolve(), task_dir_cleared=False)
+    assert scope == SpawnScope(task_dir=task_dir.resolve())
 
 
-def test_spawn_scope_tombstone_sets_cleared_flag(tmp_path: Path) -> None:
+def test_spawn_scope_unpin_leaves_no_task_dir(tmp_path: Path) -> None:
     project_root = _project(tmp_path)
     _publish_spawn(project_root)
 
     write_spawn_scope_task_dir(project_root, "p1", None)
-    scope = read_spawn_scope(project_root, "p1")
 
-    assert scope.task_dir is None
-    assert scope.task_dir_cleared is True
+    assert read_spawn_scope(project_root, "p1") == SpawnScope()
 
 
-def test_spawn_scope_missing_file_is_absent_not_cleared(tmp_path: Path) -> None:
+def test_spawn_scope_missing_file_has_no_pin(tmp_path: Path) -> None:
     project_root = _project(tmp_path)
 
     scope = read_spawn_scope(project_root, "p-missing")

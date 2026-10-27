@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import stat
+import time
 import uuid
 from collections.abc import Generator, Iterator
 from contextlib import AbstractContextManager, contextmanager, suppress
@@ -13,6 +14,9 @@ from typing import IO, Literal, overload
 from meridian.lib.platform import IS_WINDOWS
 
 _ATOMIC_TEMP_SUFFIX = ".tmp"
+# A publisher that crashed left its staged link behind; younger ones may belong
+# to a live publisher, so leave those alone.
+_STAGED_LINK_MAX_AGE_SECONDS = 3600.0
 
 
 class AtomicReplaceDurabilityError(OSError):
@@ -147,9 +151,45 @@ def atomic_write_text(path: Path, content: str, *, durable: bool = True) -> None
         handle.write(content)
 
 
+def atomic_symlink(link: Path, target: Path) -> Path | None:
+    """Point ``link`` at ``target``, replacing it atomically; return what was displaced.
+
+    Build the new link under a temporary name in the same directory, then rename it
+    over the old one, so a crash leaves either the old link or the new one. A link
+    that already names ``target`` is left alone. A real file or directory in the
+    slot — a writer that wrote the path instead of resolving it — is moved aside and
+    returned, because only a symlink can be swapped over. Staged links a crashed
+    publisher left behind are swept.
+    """
+
+    link.parent.mkdir(parents=True, exist_ok=True)
+    wanted = target.as_posix()
+    if link.is_symlink() and os.readlink(link) == wanted:
+        return None
+    name = link.name
+    cutoff = time.time() - _STAGED_LINK_MAX_AGE_SECONDS
+    for staged_link in link.parent.glob(f"{name}.*{_ATOMIC_TEMP_SUFFIX}"):
+        with suppress(OSError):
+            if staged_link.lstat().st_mtime < cutoff:
+                staged_link.unlink()
+    staged = link.parent / f"{name}.{os.getpid()}.{uuid.uuid4().hex}{_ATOMIC_TEMP_SUFFIX}"
+    os.symlink(wanted, staged)
+    displaced: Path | None = None
+    try:
+        if os.path.lexists(link) and not link.is_symlink():
+            displaced = link.with_name(f"{name}.displaced.{uuid.uuid4().hex}")
+            os.rename(link, displaced)
+        os.replace(staged, link)
+    except OSError:
+        staged.unlink(missing_ok=True)
+        raise
+    return displaced
+
+
 __all__ = [
     "AtomicReplaceDurabilityError",
     "atomic_replace",
+    "atomic_symlink",
     "atomic_write_text",
     "fsync_directory",
     "is_atomic_temp_name",

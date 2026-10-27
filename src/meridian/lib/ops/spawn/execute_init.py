@@ -246,14 +246,15 @@ def _materialize_spawn_work_item(
     *,
     context: _SpawnContext,
     payload: SpawnCreateInput,
-    request: SpawnRequest,
     project_root: Path,
 ) -> _SpawnContext:
-    """Create or attach explicit or inherited ``--from`` work and patch the spawn row."""
+    """Create or attach an explicit ``--work`` and patch the spawn row.
+
+    Inherited work (``--from`` or the launcher's own) never creates an item.
+    """
     final_work_id = context.work_id
     explicit_work = (payload.work or "").strip()
-    inherited_context_work = (request.inherited_context_work_id or "").strip()
-    if (explicit_work or inherited_context_work) and final_work_id:
+    if explicit_work and final_work_id:
         project_local_root = resolve_project_paths(project_root).root_dir
         final_work_id = ensure_explicit_work_item(project_local_root, final_work_id)
         if final_work_id != context.work_id:

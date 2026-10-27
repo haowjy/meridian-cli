@@ -61,6 +61,20 @@ def _warn_unknown_work_state_fields(path: str, fields: tuple[str, ...]) -> None:
     )
 
 
+def warn_missing_work_item(work_id: str, *, chat_id: str = "") -> None:
+    """Say once that a name from a session or `--from` source is no item any more."""
+
+    warn_once(
+        ("missing-work-item", work_id),
+        lambda: logger.warning(
+            "A session names a work item that no longer exists (renamed or deleted); "
+            "ignoring it. Pass --work to name one.",
+            work_id=work_id,
+            chat_id=chat_id,
+        ),
+    )
+
+
 def _warn_work_state_read_failure(path: str, error: str) -> None:
     warn_once(
         ("work-state-read-failure", path),
@@ -212,6 +226,12 @@ def project_paths_for_work_store(
         resolver = resolve_project_paths_for_write if create_project_uuid else resolve_project_paths
         return resolver(project_state_dir.parent)
     return ProjectPaths.from_root_dir(project_state_dir)
+
+
+def project_root_for_work_store(project_state_dir: Path) -> Path:
+    """Return the checkout a work item falls back to: the project root."""
+
+    return project_state_dir.parent if project_state_dir.name == ".meridian" else project_state_dir
 
 
 def active_work_dir(paths: ProjectPaths, work_id: str) -> Path:

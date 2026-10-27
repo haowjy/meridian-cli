@@ -15,6 +15,7 @@ from meridian.lib.launch.composition_spawn import (
     compose_spawn_launch_surface,
 )
 from meridian.lib.launch.context import LaunchContext, PreparedLaunchSurface, RuntimeBindings
+from meridian.lib.launch.cwd import inheritable_task_dir
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.reference import parse_template_assignments
 from meridian.lib.launch.request import (
@@ -36,7 +37,6 @@ from ..runtime import (
     resolve_runtime_authority_for_read,
 )
 from .models import SpawnCreateInput
-from .task_dir import derive_inheritable_task_dir
 
 logger = structlog.get_logger(__name__)
 
@@ -141,12 +141,7 @@ def build_create_payload(
         inherited_for_child = (
             None
             if _is_exact_continue(payload) or (payload.task_dir or "").strip()
-            else derive_inheritable_task_dir(
-                project_root=project_root,
-                project_state_dir=project_state_dir,
-                spawn_id=spawn_id,
-                work_id=ambient_work_id,
-            )
+            else inheritable_task_dir(project_root, spawn_id)
         )
         # The one place a spawn's ``--from`` is resolved; launch only carries the refs.
         context_refs = tuple(resolve_context_ref(project_root, ref) for ref in payload.context_from)

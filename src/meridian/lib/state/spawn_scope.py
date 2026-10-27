@@ -1,4 +1,4 @@
-"""Per-spawn mutable scope state (task-dir overrides and tombstones)."""
+"""Per-spawn mutable scope state: the checkout a spawn pinned."""
 
 from __future__ import annotations
 
@@ -22,12 +22,11 @@ _SCOPE_FILENAME = "scope.json"
 
 
 class SpawnScope(BaseModel):
-    """Mutable scope snapshot for one spawn."""
+    """Mutable scope snapshot for one spawn: the checkout it pinned, if any."""
 
     model_config = ConfigDict(frozen=True, strict=True)
 
     task_dir: Path | None = None
-    task_dir_cleared: bool = False
 
 
 class _StoredSpawnScope(BaseModel):
@@ -65,7 +64,7 @@ def read_spawn_scope(project_root: Path, spawn_id: str) -> SpawnScope:
     if stored is None:
         return SpawnScope()
     if stored.task_dir is None:
-        return SpawnScope(task_dir_cleared=True)
+        return SpawnScope()
     return SpawnScope(task_dir=Path(stored.task_dir).expanduser().resolve())
 
 
@@ -74,7 +73,7 @@ def write_spawn_scope_task_dir(
     spawn_id: str,
     task_dir: Path | None,
 ) -> bool:
-    """Write or tombstone task_dir in scope.json. Atomic tmp+rename."""
+    """Pin task_dir in scope.json, or unpin it with ``None``. Atomic tmp+rename."""
 
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     path = runtime_root / spawn_log_subpath(spawn_id) / _SCOPE_FILENAME

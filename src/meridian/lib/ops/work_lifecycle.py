@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
+from meridian.lib.launch.session_links import Execution, execution_owners
 from meridian.lib.ops.context import resolve_active_work_scope
 from meridian.lib.ops.runtime import (
     ResolvedRoots,
@@ -18,16 +19,17 @@ from meridian.lib.ops.runtime import (
     runtime_context,
 )
 from meridian.lib.ops.work_attachment import (
+    CURRENT_WORK_ID,
     activate_work,
+    attach_executions,
+    attach_session,
     ensure_work_name_is_usable,
-    follow_work_item,
     publish_work_event,
     resolve_active_work_id,
     resolve_work_id_argument,
-    set_session_work_attachment,
 )
 from meridian.lib.ops.work_dashboard import work_dir_display
-from meridian.lib.state import session_store, spawn_store, work_repository, work_store
+from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.work_scope import WorkScope
 from meridian.lib.state.work_state import WorkItem, slugify
 from meridian.lib.telemetry import emit_telemetry
@@ -139,21 +141,18 @@ def _archive_work_item(
     *,
     description: str | None = None,
 ) -> WorkItem:
-    """Archive the item, move its directory, and repoint every attached execution.
+    """Archive the item and move its directory; no session row or link is written.
 
-    The move is immediate: a child working in the item writes through its per-chat
-    link, which follows the directory into the archive. A primary is returned to
-    its ambient directory, because a done item is no longer its to edit.
+    The move is immediate. Every attached execution keeps its row and its chat
+    link, and the item's own links follow the directory into the archive, so a
+    spawn still working in it writes through the same literal path.
     """
 
-    with follow_work_item(
-        roots.project_root, roots.runtime_root, current.name, detach="primary"
-    ):
-        item = work_repository.archive_work_item(
-            roots.project_state_dir,
-            current.name,
-            description=description,
-        )
+    item = work_repository.archive_work_item(
+        roots.project_state_dir,
+        current.name,
+        description=description,
+    )
     publish_work_event(
         "work.done",
         project_root=roots.project_root,
@@ -161,14 +160,6 @@ def _archive_work_item(
         work_id=item.name,
         data={"status": item.status},
     )
-    return item
-
-
-def _reopen_work_item(roots: ResolvedRoots, current: WorkItem) -> WorkItem:
-    """Reopen an item and move its directory back for every attached execution."""
-
-    with follow_work_item(roots.project_root, roots.runtime_root, current.name):
-        item = work_repository.reopen_work_item(roots.project_state_dir, current.name)
     return item
 
 
@@ -408,7 +399,7 @@ def work_start_sync(
         if existing.status == "done":
             # Treat `work start <name>` on an archived item as an implicit reopen —
             # the user's intent is "I want to work on this" regardless of prior state.
-            item = _reopen_work_item(roots, existing)
+            item = work_repository.reopen_work_item(project_state_dir, existing.name)
             reattach_warning = f"Work item '{item.name}' was done; reopened automatically."
         else:
             item = existing
@@ -543,16 +534,19 @@ def work_delete_sync(
             runtime_root=roots.runtime_root,
         ),
     )
-    # The delete refuses before any row is written: a refused delete must not leave
-    # every attached execution detached from an item that is still there.
-    with follow_work_item(
-        roots.project_root, roots.runtime_root, item.name, detach="all"
-    ):
-        item, had_artifacts = work_repository.delete_work_item(
-            roots.project_state_dir,
-            item.name,
-            force=payload.force,
-        )
+    # A refused delete stops here and writes nothing; once the directories are gone,
+    # the live executions attached to the item return to their ambient directory.
+    item, had_artifacts = work_repository.delete_work_item(
+        roots.project_state_dir,
+        item.name,
+        force=payload.force,
+    )
+    attach_executions(
+        roots.project_root,
+        roots.runtime_root,
+        _executions_attached_to(roots, item.name),
+        None,
+    )
     _emit_work_transition(
         "work.deleted",
         work_id=item.name,
@@ -573,7 +567,7 @@ def work_reopen_sync(
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
     current = _resolve_work_item(roots, payload.work_id, command="reopen")
-    item = _reopen_work_item(roots, current)
+    item = work_repository.reopen_work_item(roots.project_state_dir, current.name)
     _emit_work_transition(
         "work.reopened",
         work_id=item.name,
@@ -599,7 +593,7 @@ def work_switch_sync(
     if item.status == "done":
         # Attaching to an archived item would name a directory that is not there;
         # switching to a done item means working on it again.
-        item = _reopen_work_item(roots, item)
+        item = work_repository.reopen_work_item(project_state_dir, item.name)
         reopen_warning = f"Work item '{item.name}' was done; reopened it."
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
     leave_warning = _leave_scope_warning(
@@ -609,8 +603,7 @@ def work_switch_sync(
         chat_id=chat_id,
         new_target=item.name,
     )
-    updated = session_store.session_exists(runtime_state_root, chat_id)
-    activate_work(
+    updated = activate_work(
         roots.project_root,
         chat_id,
         item.name,
@@ -628,6 +621,38 @@ def work_switch_sync(
     )
 
 
+def _executions_attached_to(roots: ResolvedRoots, work_id: str) -> tuple[Execution, ...]:
+    """Return the live executions whose session names *work_id*.
+
+    Only live executions follow a rename or a delete. An ended chat keeps the name its
+    row ended on; ``--from`` on it finds no such item and creates nothing.
+    """
+
+    return tuple(
+        execution
+        for execution in execution_owners(roots.runtime_root)
+        if execution.work_id == work_id
+    )
+
+
+def _follow_rename(roots: ResolvedRoots, old_name: str, new_name: str) -> int:
+    """Move what still names *old_name* onto *new_name*; return the executions moved.
+
+    The steps after the directory moved, each safe to repeat: live executions take
+    the new name (rows, then their links), child spawn rows follow, and the old
+    name's forwarded item links go. A rename that stopped after the move finishes by
+    running this again.
+    """
+
+    executions = _executions_attached_to(roots, old_name)
+    attach_executions(roots.project_root, roots.runtime_root, executions, new_name)
+    for spawn in spawn_store.list_spawns(roots.runtime_root, work_id=old_name).records:
+        if spawn.kind == "child":
+            spawn_store.update_spawn(roots.runtime_root, spawn.id, work_id=new_name)
+    work_repository.ensure_item_links(roots.project_state_dir, old_name)
+    return len(executions)
+
+
 def work_rename_sync(
     payload: WorkRenameInput,
     ctx: RuntimeContext | None = None,
@@ -635,8 +660,6 @@ def work_rename_sync(
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
-    runtime_state_root = roots.runtime_root
-    old_name = _resolve_work_item(roots, payload.work_id, command="rename").name
 
     new_slug = slugify(payload.new_name)
     if not new_slug or new_slug != payload.new_name:
@@ -646,20 +669,28 @@ def work_rename_sync(
         )
     ensure_work_name_is_usable(new_slug)
 
-    # Every execution attached to the old name follows the item's directory and its
-    # new name, not just the caller: every session row that names it, live or
-    # ended, and the links of the live ones.
-    with follow_work_item(
-        roots.project_root,
-        runtime_state_root,
-        old_name,
-        rename_to=new_slug,
+    named = (payload.work_id or "").strip()
+    if (
+        named not in ("", CURRENT_WORK_ID)
+        and work_store.get_work_item(project_state_dir, named) is None
+        and work_store.get_work_item(project_state_dir, new_slug) is not None
     ):
-        item = work_repository.rename_work_item(project_state_dir, old_name, new_slug)
+        repointed = _follow_rename(roots, named, new_slug)
+        return WorkRenameOutput(
+            old_name=named,
+            new_name=new_slug,
+            changed=False,
+            warning=_merge_warnings(
+                warning,
+                f"Work item '{named}' was already renamed to '{new_slug}'; "
+                f"repointed {repointed} session(s).",
+            ),
+        )
 
-    for spawn in spawn_store.list_spawns(runtime_state_root, work_id=old_name).records:
-        if spawn.kind == "child":
-            spawn_store.update_spawn(runtime_state_root, spawn.id, work_id=item.name)
+    old_name = _resolve_work_item(roots, payload.work_id, command="rename").name
+    item = work_repository.rename_work_item(project_state_dir, old_name, new_slug)
+    if item.name != old_name:
+        _follow_rename(roots, old_name, item.name)
 
     _emit_work_transition(
         "work.renamed",
@@ -682,9 +713,7 @@ def work_clear_sync(
     roots = resolve_roots(payload.project_root)
     runtime_root = roots.runtime_root
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
-    updated = session_store.session_exists(runtime_root, chat_id)
-    if updated:
-        set_session_work_attachment(roots.project_root, runtime_root, chat_id, None)
+    updated = attach_session(roots.project_root, runtime_root, chat_id, None)
     message = "Cleared active work item." if updated else "No active session; nothing to clear."
     return WorkClearOutput(message=message, warning=warning)
 
@@ -721,23 +750,21 @@ def work_task_dir_sync(
     item = _require_work_item(project_state_dir, active_work_id)
 
     if payload.clear:
-        with follow_work_item(project_root, runtime_root, item.name):
-            updated = work_repository.update_work_item_task_dir(
-                project_state_dir,
-                item.name,
-                task_dir=None,
-            )
+        updated = work_repository.update_work_item_task_dir(
+            project_state_dir,
+            item.name,
+            task_dir=None,
+        )
     else:
         requested_task_dir = (payload.task_dir or "").strip()
         if not requested_task_dir:
             raise ValueError("task_dir path is empty")
         resolved_task_dir = _validate_task_dir_path(requested_task_dir)
-        with follow_work_item(project_root, runtime_root, item.name):
-            updated = work_repository.update_work_item_task_dir(
-                project_state_dir,
-                item.name,
-                task_dir=resolved_task_dir.as_posix(),
-            )
+        updated = work_repository.update_work_item_task_dir(
+            project_state_dir,
+            item.name,
+            task_dir=resolved_task_dir.as_posix(),
+        )
 
     resolved_task_dir = updated.task_dir or project_root.as_posix()
     _emit_work_transition(

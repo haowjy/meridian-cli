@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+import os
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -13,14 +13,9 @@ import structlog
 
 from meridian.lib.core.lifecycle import get_hook_dispatcher
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.launch.session_links import (
-    link_owners,
-    refresh_owner_links,
-    work_owners,
-)
-from meridian.lib.platform.locking import lock_file
+from meridian.lib.launch.session_links import Execution, execution_of, publish_chat_links
 from meridian.lib.state import session_store, work_repository, work_store
-from meridian.lib.state.paths import RuntimePaths, resolve_project_paths
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry import emit_telemetry
 
@@ -80,94 +75,60 @@ def publish_work_event(
     )
 
 
-def set_session_work_attachment(
+def attach_executions(
+    project_root: Path,
+    runtime_root: Path,
+    executions: Iterable[Execution],
+    work_id: str | None,
+) -> frozenset[str]:
+    """Point executions at a work item, or at their ambient directory with ``None``.
+
+    The one place an execution's attachment changes, and the only session write a
+    work command makes: ``done``, ``reopen`` and ``task-dir`` move an item, and its
+    own links carry every attached chat along. The two stores are two steps, never
+    nested: the item's links come first, in the work store; then, in one session
+    epoch, the rows in one batch and the chat links they project. Every chat of an
+    execution takes the attachment — a primary can move off its entry chat (Claude
+    ``/clear`` and ``/resume`` rotate the conversation) — while the links stay on the
+    entry chat, whose path the launch environment and prompt name. Returns the chats
+    that now carry the attachment.
+    """
+
+    targets = tuple(executions)
+    if work_id:
+        work_repository.ensure_item_links(resolve_project_paths(project_root).root_dir, work_id)
+    with session_store.session_writes(runtime_root):
+        attached = session_store.set_work_attachments(
+            runtime_root, {chat: work_id for target in targets for chat in target.chats}
+        )
+        for target in targets:
+            if target.spawn_id:
+                publish_chat_links(
+                    project_root, runtime_root, target.entry_chat, spawn_id=target.spawn_id
+                )
+    return attached
+
+
+def attach_session(
     project_root: Path,
     runtime_root: Path,
     chat_id: str,
     work_id: str | None,
-) -> None:
-    """Record a chat's work attachment and repoint the links of its execution.
+) -> bool:
+    """Attach the execution a command on *chat_id* acts for; return whether the chat exists.
 
-    The single seam for one chat's work item changing. A live primary can move off
-    its entry chat — Claude ``/clear`` and ``/resume`` rotate the conversation —
-    so every chat of that execution takes the new attachment, and the links stay
-    on the entry chat, whose path the launch environment and prompt name.
-    Callers own the "does this chat exist" check.
+    An execution is read from the caller's own spawn row, so this costs no scan of
+    the spawn store.
     """
 
     normalized = chat_id.strip()
-    if not normalized or not session_store.session_exists(runtime_root, normalized):
-        return
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.sessions_flock):
-        # Read the owners under the same lock as the row writes: a chat observation
-        # copies a source row to its new chat while holding this lock, so listing
-        # outside it could miss the chat the primary just moved to.
-        owners = link_owners(runtime_root, normalized)
-        for chat in dict.fromkeys(
-            (
-                normalized,
-                *(owner.chat for owner in owners),
-                *(owner.link_chat for owner in owners),
-            )
-        ):
-            session_store.update_session_work_id(runtime_root, chat, work_id)
-        # The rows are written before the links: the links are projections of them,
-        # and both are under the sessions lock so a concurrent switch cannot
-        # interleave them.
-        refresh_owner_links(project_root, runtime_root, owners)
-
-
-@contextmanager
-def follow_work_item(
-    project_root: Path,
-    runtime_root: Path,
-    work_id: str,
-    *,
-    rename_to: str | None = None,
-    detach: Literal["primary", "all"] | None = None,
-) -> Generator[None]:
-    """Run one work mutation with the sessions lock held, then repoint its followers.
-
-    The single seam behind ``work done``, ``rename``, ``reopen``, ``task-dir`` and
-    ``delete``. The lock spans the mutation and the repoint, so no link can be
-    published against the directory a move just vacated, and no execution can attach
-    between the follower read and the write.
-
-    ``rename_to`` moves the attachment to the item's new name; ``detach`` returns
-    executions to their ambient directory instead — a done item is no longer a
-    primary's to edit, and a deleted one is nobody's. Those two are the mutations that
-    change the attachment, so they rewrite every row that names the item, live or
-    ended: rows are authority, and a chat that ended still names the item its next
-    launch inherits. ``reopen`` and ``task-dir`` change only the directory or checkout,
-    so they repoint the live executions' links and leave the rows alone. A mutation
-    that raises leaves every row and link as it was.
-    """
-
-    target_work_id = None if detach == "all" else rename_to or work_id
-    changes_attachment = rename_to is not None or detach is not None
-    with lock_file(RuntimePaths.from_root_dir(runtime_root).sessions_flock):
-        owners = list(work_owners(runtime_root, work_id))
-        # Chat -> session kind. The live owners' chats join the rows that name the
-        # item: a primary after `/clear` moves to a chat whose row the next launch
-        # creates, and the execution's attachment must reach that chat too.
-        followers: dict[str, str] = {}
-        if changes_attachment:
-            followers = {
-                record.chat_id: record.kind
-                for record in session_store.records_attached_to_work(runtime_root, work_id)
-            }
-            for owner in owners:
-                for chat in dict.fromkeys((owner.chat, owner.link_chat)):
-                    followers.setdefault(chat, owner.kind)
-        yield
-        for chat, kind in followers.items():
-            detached = detach == "all" or (detach == "primary" and kind == "primary")
-            session_store.update_session_work_id(
-                runtime_root, chat, None if detached else target_work_id
-            )
-        # Rows first: they are authority, and the links are their projection.
-        refresh_owner_links(project_root, runtime_root, tuple(owners))
+    if not normalized:
+        return False
+    execution = execution_of(
+        runtime_root, chat_id=normalized, spawn_id=os.environ.get("MERIDIAN_SPAWN_ID")
+    )
+    attached = attach_executions(project_root, runtime_root, (execution,), work_id)
+    return normalized in attached
 
 
 def activate_work(
@@ -176,17 +137,18 @@ def activate_work(
     work_id: str,
     *,
     runtime_root: Path | None = None,
-) -> None:
-    """Publish an intentional work choice and attach it to a session when possible."""
+) -> bool:
+    """Publish an intentional work choice and attach it to a session when possible.
+
+    Returns whether the chat is a session that took the attachment.
+    """
 
     if runtime_root is None:
         from meridian.lib.ops.runtime import resolve_runtime_root
 
         runtime_root = resolve_runtime_root(project_root)
     normalized = chat_id.strip()
-    attached = session_store.session_exists(runtime_root, normalized)
-    if attached:
-        set_session_work_attachment(project_root, runtime_root, normalized, work_id)
+    attached = attach_session(project_root, runtime_root, normalized, work_id)
     publish_work_event(
         "work.activated",
         project_root=project_root,
@@ -194,6 +156,7 @@ def activate_work(
         work_id=work_id,
         telemetry_ids={"chat_id": normalized} if attached else None,
     )
+    return attached
 
 
 def ensure_explicit_work_item(runtime_root: Path, work_id: str) -> str:
@@ -304,11 +267,15 @@ def materialize_launch_work_id(
     runtime_root: Path,
     *,
     explicit_work_id: str | None,
-    context_work_id: str | None,
 ) -> str | None:
-    """Materialize explicit ``--work`` or inherited ``--from`` work onto disk."""
+    """Materialize an explicit ``--work`` on disk; an inherited one never creates.
 
-    candidate = (explicit_work_id or "").strip() or (context_work_id or "").strip() or None
+    An ambient or ``--from`` work id names an item that already existed when the
+    launch resolved it, or none at all (a stale name resolves to no item). Only the
+    user naming an item with ``--work`` brings one into being.
+    """
+
+    candidate = (explicit_work_id or "").strip() or None
     if candidate is None:
         return None
     return ensure_explicit_work_item(runtime_root, candidate)

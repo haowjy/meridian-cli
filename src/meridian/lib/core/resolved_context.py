@@ -20,6 +20,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
+from meridian.lib.state.work_state import warn_missing_work_item
 
 
 class ContextBackend(Protocol):
@@ -75,7 +76,6 @@ class ResolvedContext:
     work_scope: WorkScope | None = None
     kb_dir: Path | None = None
     context_dirs: tuple[tuple[str, Path], ...] = ()
-    inherited_task_dir: Path | None = None
 
     @classmethod
     def from_environment(
@@ -108,12 +108,6 @@ class ResolvedContext:
         parent_spawn_id_raw = os.getenv("_MERIDIAN_PARENT_SPAWN_ID", "").strip()
         depth_raw = os.getenv(DEPTH_ENV, "0").strip()
         project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
-        task_dir_raw = os.getenv("MERIDIAN_TASK_DIR", "").strip()
-        inherited_task_dir = (
-            Path(task_dir_raw).expanduser().resolve()
-            if task_dir_raw
-            else None
-        )
         explicit_chat_id_raw = (explicit_chat_id or "").strip()
         explicit_work_id_raw = (explicit_work_id or "").strip()
         if explicit_chat_id_raw:
@@ -179,6 +173,20 @@ class ResolvedContext:
             else None
         )
 
+        # A row or env can name an item that no longer exists: a rename or delete does
+        # not rewrite chats that ended, and a launch snapshot outlives its item. That
+        # name is no item. Only an explicit name creates one, so a stale one never
+        # brings a deleted or renamed item back through `--from` or an ambient launch.
+        if (
+            work_id
+            and work_id_source != "explicit"
+            and project_paths is not None
+            and not work_store.work_item_exists(project_paths.root_dir, work_id)
+        ):
+            warn_missing_work_item(work_id, chat_id=chat_id_raw)
+            work_id = None
+            work_dir_raw = ""
+
         bound_work_dir: Path | None = None
 
         if work_id and project_paths is not None and project_paths.work_dir is not None:
@@ -239,7 +247,6 @@ class ResolvedContext:
             work_scope=work_scope,
             kb_dir=kb_dir,
             context_dirs=context_dirs,
-            inherited_task_dir=inherited_task_dir,
         )
 
     def child_env_overrides(
@@ -263,8 +270,6 @@ class ResolvedContext:
             overrides["MERIDIAN_ACTIVE_WORK_ID"] = self.work_id
         if self.work_dir is not None:
             overrides["MERIDIAN_ACTIVE_WORK_DIR"] = self.work_dir.as_posix()
-        if self.inherited_task_dir is not None:
-            overrides["MERIDIAN_TASK_DIR"] = self.inherited_task_dir.as_posix()
         for context_name, context_dir in self.context_dirs:
             if not context_name.strip():
                 continue

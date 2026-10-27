@@ -8,7 +8,9 @@ from pathlib import Path
 from meridian.lib.core.context_ref import ContextRef
 from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
 from meridian.lib.launch.reference import validate_reference_paths
+from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_kb_dir
+from meridian.lib.state.work_state import warn_missing_work_item
 
 
 @dataclass(frozen=True)
@@ -72,9 +74,16 @@ def resolve_launch_inputs(
         and normalized_explicit_work_id is None
         and normalized_ambient_work_id is None
     ):
-        context_work_id = next(
-            (work for ref in context_refs if (work := (ref.work_id or "").strip())), None
-        )
+        # A `--from` source can name an item a rename or delete since removed (a spawn
+        # row, or a chat that ended): that name is no item, and no launch revives it.
+        for ref in context_refs:
+            candidate = (ref.work_id or "").strip()
+            if not candidate:
+                continue
+            if work_store.work_item_exists(project_state_dir, candidate):
+                context_work_id = candidate
+                break
+            warn_missing_work_item(candidate)
 
     effective_work_id = (
         normalized_explicit_work_id or normalized_ambient_work_id or context_work_id

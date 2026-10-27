@@ -733,7 +733,7 @@ def run_harness_process(
     ),
     run_primary_attach_fn: RunPrimaryAttach = run_primary_attach,
     update_session_spawn_id_fn: Callable[..., None] = update_session_spawn_id,
-    activate_work_fn: Callable[[Path, str, str], None] = activate_work,
+    activate_work_fn: Callable[[Path, str, str], object] = activate_work,
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
 ) -> ProcessOutcome:
     """Start session, spawn tracking, launch process, wait for exit."""

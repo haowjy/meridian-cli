@@ -8,7 +8,7 @@ acquire the mutation lock or persist normalization.
 from __future__ import annotations
 
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -16,10 +16,14 @@ from typing import Generic, TypeVar
 import structlog
 
 from meridian.lib.core.logging import warning_cache_scope
-from meridian.lib.platform.atomic import atomic_write_text
+from meridian.lib.platform.atomic import atomic_symlink, atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import utc_now_iso
-from meridian.lib.state.paths import ProjectPaths, resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import (
+    ProjectPaths,
+    RuntimePaths,
+    resolve_project_runtime_root_for_write,
+)
 from meridian.lib.state.work_state import (
     STATUS_FILENAME,
     WorkItem,
@@ -29,6 +33,7 @@ from meridian.lib.state.work_state import (
     load_work_item_from_dir,
     locate_work_dirs,
     project_paths_for_work_store,
+    project_root_for_work_store,
     serialize_work_item_state,
     slugify,
     status_path,
@@ -46,6 +51,10 @@ _StateWrite = tuple[Path, WorkItem]
 class _MutationResult(Generic[T]):
     value: T
     state_write: _StateWrite | None = None
+    # Link directory -> the item whose targets it takes, republished after the
+    # mutation. Default: the mutated item's own links. A rename also forwards the old
+    # name's links to the new item, so executions still attached to it keep resolving.
+    links: Mapping[str, str] | None = None
 
 
 _NamespaceMutation = Callable[[ProjectPaths, Path | None, Path | None], _MutationResult[T]]
@@ -114,16 +123,51 @@ def move_work_dir(source: Path, destination: Path) -> None:
     source.rename(destination)
 
 
+def _publish_item_links(
+    links_dir: Path,
+    project_root: Path,
+    paths: ProjectPaths,
+    link_id: str,
+    item_id: str,
+) -> None:
+    """Point ``work-items/<link_id>/{work,task}`` at item ``item_id``'s targets.
+
+    The item's directory is wherever it is now (``work/`` or the archive); its
+    checkout is its ``task_dir`` while that is a directory, else the project root. An
+    item that no longer exists leaves no links.
+    """
+
+    active_dir, archived_dir = locate_work_dirs(paths, item_id)
+    work_dir = active_dir or archived_dir
+    if work_dir is None:
+        shutil.rmtree(links_dir / link_id, ignore_errors=True)
+        return
+    item = load_work_item_from_dir(work_dir, archived=active_dir is None)
+    checkout = Path(item.task_dir) if item.task_dir else None
+    atomic_symlink(links_dir / link_id / "work", work_dir)
+    atomic_symlink(
+        links_dir / link_id / "task",
+        checkout if checkout is not None and checkout.is_dir() else project_root,
+    )
+
+
 def write_state_locked(runtime_root: Path, work_id: str, mutation: _NamespaceMutation[T]) -> T:
     """Run one work mutation and its optional atomic state write under one lock.
 
     The seam deliberately disables reentrancy: a nested mutation could write an
     inner result and then let the outer mutation overwrite it from a stale
     snapshot.  Failing loudly is safer than permitting that composition.
+
+    The item's ``work-items/<id>/{work,task}`` links are republished here, before
+    the mutation (repairing whatever a crash or an older build left) and after it
+    (naming where the item ended up). Every session reaches an item through these
+    links, so a move needs no session write.
     """
 
     paths = project_paths_for_work_store(runtime_root, create_project_uuid=True)
     lock_root = _work_runtime_root(runtime_root)
+    links_dir = RuntimePaths.from_root_dir(lock_root).work_items_dir
+    project_root = project_root_for_work_store(runtime_root)
     with (
         warning_cache_scope(),
         lock_file(lock_root / "work-store.flock", reentrant=False),
@@ -135,11 +179,54 @@ def write_state_locked(runtime_root: Path, work_id: str, mutation: _NamespaceMut
             load_work_item_from_dir(active_dir, archived=False)
         if archived_dir is not None:
             load_work_item_from_dir(archived_dir, archived=True)
+        _publish_item_links(links_dir, project_root, paths, work_id, work_id)
         result = mutation(paths, active_dir, archived_dir)
         if result.state_write is not None:
             work_dir, item = result.state_write
             _write_item(work_dir, item)
+        for link_id, item_id in (result.links or {work_id: work_id}).items():
+            _publish_item_links(links_dir, project_root, paths, link_id, item_id)
         return result.value
+
+
+def _republish_only(
+    _paths: ProjectPaths,
+    _active_dir: Path | None,
+    _archived_dir: Path | None,
+) -> _MutationResult[None]:
+    return _MutationResult(None)
+
+
+def ensure_item_links(runtime_root: Path, work_id: str) -> None:
+    """Publish an item's links now; drop them if the item no longer exists.
+
+    Run before a chat links to the item, so no chat link names one that was never
+    created, and after a rename to drop the old name's forwarded links. The name may
+    come from a session row an older build or a hand edit wrote, and the links
+    directory is derived from it: only a slug can name an item.
+    """
+
+    if slugify(work_id) != work_id:
+        return
+    write_state_locked(runtime_root, work_id, _republish_only)
+
+
+def sweep_item_links(runtime_root: Path, work_ids: Collection[str]) -> None:
+    """Republish the links of every item in *work_ids* and drop the rest.
+
+    The one repair `meridian doctor` needs: any write of an item repairs its own
+    links, so only an item nothing wrote since an older build moved it, and the
+    links of items that are gone, wait for this.
+    """
+
+    links_dir = RuntimePaths.from_root_dir(_work_runtime_root(runtime_root)).work_items_dir
+    stale = (
+        sorted(child.name for child in links_dir.iterdir() if child.name not in work_ids)
+        if links_dir.is_dir()
+        else []
+    )
+    for work_id in (*sorted(work_ids), *stale):
+        ensure_item_links(runtime_root, work_id)
 
 
 def _write_item(work_dir: Path, item: WorkItem) -> None:
@@ -438,7 +525,10 @@ def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> Wor
         )
         target.parent.mkdir(parents=True, exist_ok=True)
         source.rename(target)
-        return _MutationResult(load_work_item_from_dir(target, archived=active_dir is None))
+        return _MutationResult(
+            load_work_item_from_dir(target, archived=active_dir is None),
+            links={normalized: normalized, old_work_id: normalized},
+        )
 
     return write_state_locked(runtime_root, old_work_id, rename)
 
