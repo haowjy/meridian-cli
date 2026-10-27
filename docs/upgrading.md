@@ -46,9 +46,10 @@ which Meridian no longer reads, and their settings are ignored without a message
 
 ### If your profiles set `resident-rearm-budget` or `meridian-capabilities`
 
-Both keys moved under the `harness-overrides.meridian` block, as
-`harness-overrides.meridian.resident-rearm-budget` and `harness-overrides.meridian.capabilities`.
-Meridian reads only the new location. `meridian` is a reserved consumer namespace like `flow`:
+Both keys moved under the `harness-overrides.meridian-cli` block, as
+`harness-overrides.meridian-cli.resident-rearm-budget` and `harness-overrides.meridian-cli.capabilities`.
+Meridian reads only the new location. `meridian-cli` is a reserved consumer namespace, like
+`meridian-flow` (Meridian Flow's):
 Mars keeps the block in the installed profile, raises no `unknown harness override` warning for
 it, and never writes it to a harness file.
 
@@ -58,7 +59,7 @@ What happens to an old top-level key depends on where the profile comes from:
 |---|---|---|
 | `.mars-src/` or `~/.meridian/mars/.mars-src/` (`--user`), no `[package] schema` | exit 0, warns ``authored `.mars-src` content uses the pre-v1 format (1 file to upgrade); run `mars migrate` `` | Works: sync moves the keys in the installed copy, so the budget and `spawn: false` apply. The file in `.mars-src/` keeps the old keys |
 | Dependency without `schema` (a pre-v1 package) | exit 0, warns ``package `<name>` uses the pre-v1 format (N files to upgrade); run `mars migrate` in its repository`` | Works, as above |
-| Dependency declaring `[package] schema = 1`, new | `meridian mars add` exits 2 and adds nothing: ``[field.removed] <name>: agents/<file>.md: `resident-rearm-budget` was removed; move it under `harness-overrides.meridian.resident-rearm-budget` `` | The dependency is not installed |
+| Dependency declaring `[package] schema = 1`, new | `meridian mars add` exits 2 and adds nothing: ``[field.removed] <name>: agents/<file>.md: `resident-rearm-budget` was removed; move it under `harness-overrides.meridian-cli.resident-rearm-budget` `` | The dependency is not installed |
 | Dependency declaring `[package] schema = 1`, already installed under Mars 0.20.2 | The same `field.removed` error, exit 2, for the whole project: nothing updates, including other dependencies and `.mars-src/` items | The installed copy keeps the old keys, so its budget and `spawn: false` are lost silently until you fix it |
 
 The warning in the first two rows repeats on every sync until the source is migrated. For the
@@ -70,11 +71,21 @@ or ask its maintainer to run `mars migrate`. A project that is itself a `schema 
 (`meridian mars migrate --check` lists the edit and exits 1; add `--user` for `~/.meridian/mars`).
 On a schema 1 package it also adds `requires-mars = ">=0.20.0"` when none is declared; a
 package that relies on these settings should declare `requires-mars = ">=0.21.0"` instead,
-because Mars 0.20.2 only warns about the `meridian` block and older Meridian never reads it. If a
-profile already has a `harness-overrides.meridian` block, that block wins and the top-level twin
-is dropped with a note. Package authors: Mars's
+because Mars 0.20.2 only warns about the `meridian-cli` block and older Meridian never reads it. If a
+profile already sets one of these keys under `harness-overrides.meridian-cli`, that value wins and the
+top-level twin is dropped with a note; the keys it does not set move over. Package authors: Mars's
 [migration guide](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md#what-it-changes)
 lists what the migration changes.
+
+**Renamed namespace.** The Mars release that names the namespace `meridian-cli` reports a
+`harness-overrides.meridian` block (and `harness-overrides.flow`, now `meridian-flow`) as
+``[field.removed] ... `harness-overrides.meridian` was renamed; use `harness-overrides.meridian-cli` ``.
+Meridian reads only `meridian-cli`, so a profile still using `meridian` loses its
+`resident-rearm-budget` and `capabilities` (including `spawn: false`) without a message
+until the block is renamed. `meridian mars migrate` renames it in place, in schema 1 files too.
+If the profile already has both blocks, they merge key by key: a key only the old block sets moves
+over, and where both set a key the `meridian-cli` value wins and the old one is dropped with a note
+(`field.restriction-lost` for a `capabilities` entry).
 
 ### MCP servers and hooks
 
@@ -166,7 +177,7 @@ In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the pack
   [`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing), MCP grants as
   `mcp(server): allow` entries in `tools`.
 - **Moved:** `resident-rearm-budget` and `meridian-capabilities` now live under
-  `harness-overrides.meridian`. See [Mars 0.21.0](#mars-0210).
+  `harness-overrides.meridian-cli`. See [Mars 0.21.0](#mars-0210).
 
 A package you publish with `[package] schema = 1` is read strictly: a removed key fails sync with
 exit 2 and changes nothing. `mars migrate` also adds `requires-mars = ">=0.20.0"` to a package

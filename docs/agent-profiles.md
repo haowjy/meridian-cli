@@ -61,7 +61,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `network-deny` | list[str] | `[]` | Hosts denied under `allow` or `allowlist`. Plain lists add and denies win; see the [merge rules](#permissions-by-harness) |
 | `effort` | str | — | Effort level: `none` (reasoning off), `low`, `medium`, `high`, `xhigh`, or `max`. What each harness does with it: [Effort by harness](#effort-by-harness) |
 | `approval` | str | — | When the harness stops to ask: `default`, `confirm`, `auto`, or `never`. Write `never`: schema v1 rejects `yolo` in a `mars.toml` overlay or an installed profile (`meridian mars migrate` rewrites authored profiles). Meridian's `--approval yolo`, `--yolo` and `MERIDIAN_APPROVAL=yolo` still mean `never`. See [Permissions by harness](#permissions-by-harness) |
-| `harness-overrides` | map | `{}` | Config for the resolved harness, plus Meridian's own `meridian` namespace; see [Harness-native passthrough](#harness-native-passthrough) and [Meridian settings](#meridian-settings) |
+| `harness-overrides` | map | `{}` | Config for the resolved harness, plus Meridian's own `meridian-cli` namespace; see [Harness-native passthrough](#harness-native-passthrough) and [Meridian settings](#meridian-settings) |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
 
 ## `mode`
@@ -120,7 +120,7 @@ deletes `harness`, `autocompact` and `autocompact_pct` from authored profile rul
 Set compaction on the model alias ([Compaction](#compaction-by-harness)) and `harness`
 on the profile or the alias.
 
-`harness-overrides.meridian.resident-rearm-budget` is a profile-level default, not a
+`harness-overrides.meridian-cli.resident-rearm-budget` is a profile-level default, not a
 model-policy override. The Mars launch-bundle schema does not currently expose a
 per-model resident rearm budget.
 
@@ -247,7 +247,7 @@ literal root key and is flattened like any other key; Meridian does not unwrap i
 
 ## Meridian settings
 
-`harness-overrides.meridian` is not a harness. Mars keeps the block in
+`harness-overrides.meridian-cli` is not a harness. Mars keeps the block in
 `.mars/agents/<name>.md`, never lowers it into a harness file, and never selects it
 for a launch; Meridian reads it from the installed profile.
 
@@ -258,7 +258,7 @@ for a launch; Meridian reads it from the installed profile.
 
 ```yaml
 harness-overrides:
-  meridian:
+  meridian-cli:
     resident-rearm-budget: 3
     capabilities:
       spawn: false
@@ -383,7 +383,7 @@ See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agen
 ## Agent inventory in the system prompt
 
 A spawn-capable agent (one with a non-empty `subagents:` list and no
-`harness-overrides.meridian.capabilities.spawn: false`) has Mars's `# Meridian Agents`
+`harness-overrides.meridian-cli.capabilities.spawn: false`) has Mars's `# Meridian Agents`
 inventory in its system prompt, grouped by `mode`. It lists only the agents named in the
 profile's `subagents:` list; agents native to the harness get their own section. The example is
 abridged:

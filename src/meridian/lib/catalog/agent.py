@@ -63,12 +63,12 @@ def _split_markdown_frontmatter(markdown: str) -> tuple[dict[str, object], str]:
 
 
 def _meridian_overrides(frontmatter: dict[str, object]) -> dict[object, object]:
-    """Return the `harness-overrides.meridian` block; Meridian owns it, Mars only keeps it."""
+    """Return the `harness-overrides.meridian-cli` block; Meridian owns it, Mars only keeps it."""
 
     overrides = frontmatter.get("harness-overrides")
     if not isinstance(overrides, dict):
         return {}
-    meridian = cast("dict[object, object]", overrides).get("meridian")
+    meridian = cast("dict[object, object]", overrides).get("meridian-cli")
     if not isinstance(meridian, dict):
         return {}
     return cast("dict[object, object]", meridian)

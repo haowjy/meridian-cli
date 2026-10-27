@@ -8,7 +8,7 @@ Hold completion uses an absolute deadline per arm. Only an explicit
 `rearm.signal` can grant a new window; ordinary harness or descendant activity cannot.
 Rearm grants are unlimited by default. `--resident-rearm-budget`,
 `MERIDIAN_RESIDENT_REARM_BUDGET`, profile
-`harness-overrides.meridian.resident-rearm-budget`, or
+`harness-overrides.meridian-cli.resident-rearm-budget`, or
 `timeouts.resident_rearm_budget` opts into a maximum number of granted extensions.
 The running grant count is persisted as `state.json`'s `resident_rearm_count`.
 

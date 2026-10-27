@@ -236,7 +236,7 @@ def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
                 "subagents: [reviewer]",
                 "harness: codex",
                 "harness-overrides:",
-                "  meridian:",
+                "  meridian-cli:",
                 "    capabilities:",
                 "      spawn: false",
                 "---",
