@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/manually-release.sh [patch|minor|major|X.Y.Z] --notes-file PATH [--push]
+  scripts/manually-release.sh <patch|minor|major|X.Y.Z> --notes-file PATH [--push]
   scripts/manually-release.sh tag-current [--push]
 
 Manual release helper for emergency/backfill releases.
@@ -14,9 +14,10 @@ Manual release helper for emergency/backfill releases.
 Creates a real release commit before tagging. The normal path remains the
 label-gated GitHub workflow.
 
---notes-file PATH holds the changelog section for this release: the same
-### Upgrade notes/Added/Changed/... blocks or "None. <reason>" line a PR body
-uses. '-' reads standard input. CHANGELOG.md [Unreleased] is never promoted.
+--notes-file PATH is a PR-body-style notes file: the "## Changelog" heading
+plus the ### Upgrade notes/Added/Changed/... blocks, or one "None. <reason>"
+line. '-' reads standard input. The script renders the blocks under the new
+version heading; it never promotes "## [Unreleased]", which must stay empty.
 USAGE
 }
 
@@ -62,6 +63,18 @@ render_changelog() {
     --version "$version" \
     --date "$date" \
     --changelog "$ROOT_DIR/CHANGELOG.md"
+}
+
+check_render() {
+  local version="$1"
+  local date="$2"
+  local notes_file="$3"
+  "$ROOT_DIR/scripts/changelog-notes.py" render \
+    --notes-file "$notes_file" \
+    --version "$version" \
+    --date "$date" \
+    --changelog "$ROOT_DIR/CHANGELOG.md" \
+    --dry-run >/dev/null
 }
 
 write_version() {
@@ -111,6 +124,9 @@ main() {
       usage
       exit 0
       ;;
+    -*)
+      die "the release command must come first: scripts/manually-release.sh patch --notes-file PATH"
+      ;;
   esac
 
   local command="$1"
@@ -154,9 +170,8 @@ main() {
   cd "$ROOT_DIR"
   require_clean_tree
   "$ROOT_DIR/scripts/changelog-notes.py" validate --notes-file "$notes_file"
-  scripts/preflight.sh full
 
-  local current target version today tag
+  local current version today tag
   current="$(read_version)"
   case "$command" in
     patch|minor|major) version="$(next_version "$command" "$current")" ;;
@@ -170,6 +185,9 @@ main() {
   fi
 
   today="$(date -u +%Y-%m-%d)"
+  check_render "$version" "$today" "$notes_file"
+  scripts/preflight.sh full
+
   render_changelog "$version" "$today" "$notes_file"
   write_version "$version"
   git add src/meridian/__init__.py CHANGELOG.md
