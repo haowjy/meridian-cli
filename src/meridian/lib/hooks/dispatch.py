@@ -253,21 +253,13 @@ class HookDispatcher(LifecycleHook):
         *,
         timeout_secs: int,
     ) -> HookResult:
-        payload_context = context
-        if hook.configured_event is not None:
-            # Deprecated config names intentionally stay outside the current
-            # Plugin API literal while this row's payload retains its old value.
-            payload_context = replace(
-                context,
-                event_name=cast("HookEventName", hook.configured_event),
-            )
         try:
             if hook.builtin:
-                result = self._run_builtin(hook, payload_context)
+                result = self._run_builtin(hook, context)
             else:
                 result = self._external_runner.run(
                     hook,
-                    payload_context,
+                    context,
                     timeout_secs=timeout_secs,
                 )
         except Exception as exc:

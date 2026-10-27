@@ -82,9 +82,7 @@ def _hooks_from_payload(
                 source=source,
                 row_source=row_source,
             )
-            hooks.extend(loaded.hooks)
-            if loaded.warning is not None:
-                warnings.append(loaded.warning)
+            hooks.extend(loaded)
         except ValueError as exc:
             errors.append(_named_row_error(raw_row, exc))
     return tuple(hooks), tuple(errors), tuple(warnings)

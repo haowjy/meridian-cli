@@ -1,5 +1,50 @@
 # Upgrade notes
 
+## Removed hook names and keys
+
+Hook config that the event-name migration deprecated is now rejected. `meridian hooks
+check` and `hooks list` report each row as invalid, naming the replacement; runtime
+dispatch drops invalid rows and keeps the valid ones.
+
+| Rejected | Use instead |
+| --- | --- |
+| `event = "spawn.start"`, `"spawn.running"` | `spawn.started` |
+| `event = "spawn.finalized"` | `spawn.finished` |
+| `event = "work.start"`, `"work.started"` | `work.activated` |
+| `event = "session.responded"` | `notify.your_turn` |
+| `event = "session.cache_expiring"` | `notify.cache_expiring` |
+| `failure_policy` | delete it; hook failures always continue |
+| `when.status = ["skipped"]` | delete the value; it never matched |
+| `when.status` on an event other than `spawn.finished`, or `when.agent` / `when.kind` on a work event | delete the condition, or move the row to an event that supplies it |
+
+A row that used to run under an old name received that name in `event_name` and
+`MERIDIAN_HOOK_EVENT`; after you rename it, it receives the new name, so update scripts
+that compare against the old one. Rows named `spawn.start` or `work.start` never fired
+before the window opened, and will start firing once renamed. `hooks list` no longer
+shows a `deprecated` status. See [Hook event names](#hook-event-names) for the
+original rename.
+
+## Spawn file listing removed
+
+`meridian spawn files` is removed. It never listed anything. Delete it from scripts,
+including `meridian spawn files <id> | xargs git add`; stage changes with `git add`.
+
+## Session browse `--include-archives` removed
+
+`meridian session browse --include-archives` is removed; passing it is now an unknown
+option error. It had no effect. Use `--status archived`, or Status: Archived in the
+picker.
+
+## Codex `network_access` native config reserved
+
+`harness-overrides.codex.sandbox_workspace_write.network_access` is a Meridian-owned
+key, like `writable_roots`. Meridian skips it and `--dry-run` reports
+`[unsupported] native_config: sandbox_workspace_write.network_access = ... -> skipped
+because Meridian owns this Codex config key; use the profile `network` field`. The
+profile `network` field decides the projected value; a profile that relied on the
+native value to differ from it now gets the `network` behavior. Replace the override
+with `network:` in the profile (see [agent profiles](agent-profiles.md)).
+
 ## Per-chat work and checkout links
 
 Each live session, primary or spawned, now reaches its work directory and source
@@ -316,9 +361,9 @@ rather than silently leaving the harness at its native network default. Meridian
 its bundled Mars over a separate executable on `PATH`.
 
 Replace Codex `harness-overrides.codex.sandbox_workspace_write.network_access` with the
-portable profile field. A well-formed boolean native value is deprecated in this release
-and still wins over the projected value; invalid values are ignored. The key becomes
-reserved and skipped in the following release.
+portable profile field. A well-formed boolean native value was deprecated in this release.
+It is now reserved and skipped; see
+[Codex `network_access` native config reserved](#codex-network_access-native-config-reserved).
 
 ## Child guardrail follows the harness
 
@@ -610,8 +655,7 @@ transcripts, so nothing is lost; `Space` opens the full transcript.
 `session browse --plain --format json` rows drop `live`, `historical`,
 `native_status` and `history_id`. `reentry.kind` (`resume`, `fork` or `blocked`)
 replaces `live` as what Enter does; an archived row's `chat_id` is its history id.
-The plain table columns are now STALE, TMUX, AGENT, IDLE (time since last turn), WORK. For
-`--include-archives` see [below](#session-browse---include-archives).
+The plain table columns are now STALE, TMUX, AGENT, IDLE (time since last turn), WORK.
 
 **Rolling back**
 
@@ -649,19 +693,18 @@ older builds ignore the new file, so rolling back works; an older CLI's
 
 ## Session browse `--include-archives`
 
-`meridian session browse --include-archives` is deprecated and has no effect. It
+`meridian session browse --include-archives` was deprecated and had no effect; it is
+now removed (see [Session browse `--include-archives` removed](#session-browse---include-archives-removed)). It
 duplicated Status: Archived: the picker's `/` transcript search now covers the
 rows the Status view shows, so switch Status to Archived (Tab, then left/right) or
 start with `--status archived` to search archived chats. It never searched ZIP
-contents and still does not. The flag is still accepted and prints a warning on
-stderr; it becomes an error in the next minor release. Nothing needs doing before
-or after upgrading.
+contents and still does not.
 
 ## Hook event names
 
 Hook event names now identify the persisted moment when they fire. This release
-opens a one-minor compatibility window: the new binary accepts both the old and
-new names, while warning once for each row that still needs migration.
+opened a one-minor compatibility window in which the binary accepted both the old and
+new names, warning once for each row that still needed migration. The window has closed.
 
 | Old | New |
 | --- | --- |
@@ -673,20 +716,8 @@ new names, while warning once for each row that still needs migration.
 | `session.responded` | `notify.your_turn` |
 | `session.cache_expiring` | `notify.cache_expiring` |
 
-Run `meridian hooks check` after upgrading. It exits successfully when these
-are the only findings and lists each deprecated row with its replacement.
-`meridian hooks list` shows the registration on the new event and marks it
-`deprecated`. Rename rows at leisure during this window; the old names stop
-loading in the next minor release.
-
-A row that still uses an old name is registered on the new event, but receives
-its configured old name in `HookContext.event_name`, JSON `event_name`, and
-`MERIDIAN_HOOK_EVENT`. This keeps existing command scripts working while their
-config is migrated. A row configured with the new name receives the new name.
-
-Rows configured with `spawn.start` or `work.start` were accepted previously but
-never fired. They now register on the live `spawn.started` and `work.activated`
-events, so the warning also says that the row will begin running.
+The old names and keys are now rejected; see
+[Removed hook names and keys](#removed-hook-names-and-keys).
 
 `work.created` is a separate new event that fires only when `work start`
 creates an item. `work.activated` fires whenever `work start` or `work switch`
@@ -706,17 +737,8 @@ code that constructed contexts through it should call `HookContext.from_roots`
 with the authority's `project_root` and `runtime_root`. The new `when.kind` list
 accepts `child`, `primary`, and `streaming`.
 
-The corresponding config transitions share the one-minor window:
-
-- `failure_policy` loads with a warning, has no effect, and will be rejected in
-  the next minor release. Hook failures always log and continue.
-- `when.status = ["skipped"]` warns and drops `skipped`; any other status values
-  in the list continue to filter normally. If no status remains, the row is
-  skipped instead of widening to match every status.
-- A row that explicitly names an event but sets a condition that event cannot
-  supply warns that it can never match and is skipped. In the next minor release
-  the same row becomes a config error. Because the skipped row does not register,
-  it no longer shadows a lower-file row with the same name and event.
+`failure_policy`, `when.status = ["skipped"]`, and a condition its event cannot
+supply were accepted with a warning in the same window and are now rejected too.
 
 For an unevented builtin row, Meridian enables only default events that can
 match its `when` conditions. Incompatible defaults remain as disabled
@@ -1363,11 +1385,8 @@ not touched.
 
 ## Spawn file listing
 
-`meridian spawn files` is deprecated: no harness produced its manifest, so it
-always returned an empty result. It still prints that empty result, with a
-warning on stderr, and becomes an error in the next minor release. Remove it
-from scripts, including `meridian spawn files <id> | xargs git add`; stage
-changes with `git add` directly.
+`meridian spawn files` was deprecated because no harness produced its manifest; it
+is now removed (see [Spawn file listing removed](#spawn-file-listing-removed)).
 
 ## Spawn message rename
 

@@ -292,8 +292,6 @@ def _hook_type(hook: Hook) -> str:
 
 
 def _hook_status(hook: Hook) -> str:
-    if hook.deprecated:
-        return "deprecated" if hook.enabled else "disabled (deprecated)"
     return "enabled" if hook.enabled else "disabled"
 
 
@@ -467,11 +465,7 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
                 f"Builtin hook {builtin.name!r} supports only [{supported}], not {run_event!r}."
             )
     if run_event != effective_hook.event:
-        effective_hook = replace(
-            effective_hook,
-            event=run_event,
-            configured_event=None,
-        )
+        effective_hook = replace(effective_hook, event=run_event)
 
     dispatcher = HookDispatcher(
         authority.project_root,

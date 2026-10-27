@@ -1410,30 +1410,6 @@ def _spawn_log_removed(
     )
 
 
-def _spawn_files_deprecated(
-    emit: Emitter,
-    spawn_id: Annotated[
-        str,
-        Parameter(help="Spawn id."),
-    ],
-    null: Annotated[
-        bool,
-        Parameter(name=["-0", "--null"], help="Accepted and ignored."),
-    ] = False,
-) -> None:
-    # Deprecated; removal tracked in cli/.context/TODO. No harness ever
-    # produced the manifest, so the old command always listed nothing; keep that
-    # output so `spawn files <id> | xargs git add` pipelines keep behaving.
-    _ = null
-    print(
-        "warning: `meridian spawn files` is deprecated and will be removed in the "
-        "next minor release; it never listed any files.",
-        file=sys.stderr,
-    )
-    if get_global_options().output.format == "json":
-        emit({"spawn_id": spawn_id, "written_files": []})
-
-
 def _append_spawn_help_epilogue(app: App) -> None:
     existing = app.help_epilogue or ""
     if existing and not existing.endswith("\n"):
@@ -1520,12 +1496,5 @@ def register_spawn_commands(app: App) -> None:
         show=False,
     )
     registered.add("spawn.log")
-    app.command(
-        partial(_spawn_files_deprecated, emit),
-        name="files",
-        help="Deprecated: never listed any files; removed in the next minor release.",
-        show=False,
-    )
-    registered.add("spawn.files")
     subcommands = frozenset(command.removeprefix("spawn.") for command in registered)
     app.default(partial(_spawn_create, subcommands, emit))

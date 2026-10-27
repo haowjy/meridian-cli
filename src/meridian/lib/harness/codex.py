@@ -393,32 +393,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             user_turn_content=run.user_turn_content,
         )
 
-    def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]:
-        permissions, _ = compile_codex_permissions(spec)
-        override = permissions.network.override
-        if override is None:
-            return ()
-        if override.argument is None:
-            return (
-                CompositionWarning(
-                    code="invalid_codex_network_access_native_config",
-                    message=(
-                        "Codex native_config sandbox_workspace_write.network_access must be "
-                        "an addressable boolean. It was ignored; use the profile network field."
-                    ),
-                ),
-            )
-        return (
-            CompositionWarning(
-                code="deprecated_codex_network_access_native_config",
-                message=(
-                    "Codex native_config sandbox_workspace_write.network_access is "
-                    "deprecated; use the profile network field instead. The native value "
-                    "wins for this release and becomes reserved in the next release."
-                ),
-            ),
-        )
-
     def launch_environment_warnings(
         self,
         *,

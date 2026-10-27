@@ -39,6 +39,7 @@ CODEX_RESERVED_NATIVE_CONFIG_KEYS: frozenset[str] = frozenset(
         CODEX_CONFIG_SANDBOX_MODE_KEY,
         CODEX_CONFIG_APPROVAL_POLICY_KEY,
         CODEX_CONFIG_WRITABLE_ROOTS_KEY,
+        CODEX_CONFIG_NETWORK_ACCESS_KEY,
         CODEX_CONFIG_NOTIFY_KEY,
         CODEX_CONFIG_WEB_SEARCH_KEY,
         CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY,
@@ -198,33 +199,23 @@ def project_codex_native_config(
             )
             continue
         element = f"native_config: {key} = {literal}"
-        if key == CODEX_CONFIG_NETWORK_ACCESS_KEY and not isinstance(value, bool):
-            lines.append(
-                ReportLine(
-                    element,
-                    "unsupported",
-                    "ignored because Codex network_access requires a boolean; use the "
-                    "profile network field",
-                )
-            )
-            continue
         if _reserved_codex_key(key):
             lines.append(
                 ReportLine(
                     element,
                     "unsupported",
-                    "skipped because Meridian owns this Codex config key",
+                    (
+                        "skipped because Meridian owns this Codex config key; "
+                        "use the profile `network` field"
+                        if key == CODEX_CONFIG_NETWORK_ACCESS_KEY
+                        else "skipped because Meridian owns this Codex config key"
+                    ),
                 )
             )
             continue
         override = f"{key}={literal}"
         arguments.extend(("-c", override))
         note = f"-c {override}"
-        if key == CODEX_CONFIG_NETWORK_ACCESS_KEY:
-            note += (
-                "; deprecated: use profile network instead; this passthrough wins for this "
-                "release and becomes a Meridian-reserved key in the next release"
-            )
         lines.append(ReportLine(element, "native", note))
     return tuple(arguments), tuple(lines)
 

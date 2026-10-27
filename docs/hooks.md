@@ -66,13 +66,10 @@ the event.
 
 A single hook row can register for multiple events. When a builtin supplies default events and no `event` field is set, one hook registration is created per default event. Setting `event` explicitly overrides this and registers for only that one event.
 
-During the one-minor event-name migration window, the former names
-`spawn.start`, `spawn.running`, `spawn.finalized`, `work.start`, `work.started`,
-`session.responded`, and `session.cache_expiring` still load. Meridian warns
-once per row, registers it on the replacement event, and marks it `deprecated`
-in `hooks list`; `hooks check` still exits successfully. See the
-[upgrade table](upgrading.md#hook-event-names). The old names will be rejected
-in the next minor release.
+The former event names `spawn.start`, `spawn.running`, `spawn.finalized`,
+`work.start`, `work.started`, `session.responded`, and `session.cache_expiring` are
+rejected with an error that names the replacement. See
+[Removed hook names and keys](upgrading.md#removed-hook-names-and-keys).
 
 ### Telemetry and debug output
 
@@ -128,16 +125,12 @@ event   = "spawn.finished"
 
 `command` and `builtin` are mutually exclusive.
 
-`failure_policy` is accepted only for the one-minor migration window. It has no
-effect, produces a warning, and will be rejected in the next minor release;
-hook failures always continue.
+`failure_policy` is rejected; hook failures always continue.
 
-Conditions that an event can never supply do not register: `when.status` is
+Conditions that an event can never supply are config errors: `when.status` is
 limited to `spawn.finished`, and work events cannot use `when.agent` or
-`when.kind`. During the migration window, an explicitly evented row warns that
-the condition can never match and is skipped; it becomes a config error in the
-next minor release. `when.status = ["skipped"]` likewise warns and drops that
-value because it never matched. When an unevented builtin row expands across
+`when.kind`. `when.status = ["skipped"]` is rejected too, because it never
+matched. When an unevented builtin row expands across
 its default events, Meridian keeps compatible registrations enabled and records
 incompatible registrations as disabled overrides. Those disabled entries still replace
 lower-precedence rows with the same name and event, so narrowing a higher row
