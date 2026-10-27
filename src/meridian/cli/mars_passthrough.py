@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TextIO
 
 from meridian import __version__
+from meridian.lib.bundled_skills import WHEEL, provide_bundled_skills, report_provide_refusal
 from meridian.lib.catalog.mars_roots import (
     ensure_user_mars_root,
     mars_fallback_args,
@@ -35,9 +36,14 @@ _MUTATING_COMMANDS = frozenset(
         "version",
         "repair",
         "resolve",
+        "migrate",
+        "provide",
     }
 )
 _MUTATING_COMMAND_PAIRS = frozenset({("models", "alias")})
+_PROVIDE_COMMANDS = frozenset(
+    {"sync", "upgrade", "add", "remove", "repair", "validate", "doctor", "build"}
+)
 _USER_MUTATION_ERROR = (
     "no project Mars root here; run 'meridian init --link', or use "
     "'meridian mars --user …'"
@@ -49,6 +55,7 @@ class MarsPassthroughRequest:
     command: tuple[str, ...]
     mars_args: tuple[str, ...]
     wants_json: bool
+    provide_root: Path | None
     user_scope: bool = False
 
 
@@ -101,6 +108,8 @@ def _mars_subcommand(args: Sequence[str]) -> str | None:
 
 def _is_mars_mutation(args: Sequence[str]) -> bool:
     commands = tuple(token for token in args if not token.startswith("-"))
+    if commands[:1] == ("migrate",) and "--check" in args:
+        return False  # reports what needs migrating and writes nothing
     return bool(
         commands
         and (
@@ -163,6 +172,12 @@ def parse_mars_passthrough(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
         wants_json=wants_json,
+        provide_root=(
+            selected_root
+            if subcommand in _PROVIDE_COMMANDS
+            and not any(argument in {"-h", "--help"} for argument in mars_args)
+            else None
+        ),
         user_scope=selected_root == user_mars_root(),
     )
 
@@ -183,6 +198,15 @@ def execute_mars_passthrough(
             print(f"error: {exc}", file=stderr_stream)
             raise SystemExit(1) from None
 
+    bundled_source = WHEEL
+    if request.provide_root is not None:
+        bundled_source = provide_bundled_skills(
+            request.provide_root,
+            executable=request.command[0],
+            run=run,
+            stderr=stderr_stream,
+        )
+
     run_kwargs: dict[str, object] = {
         "env": {
             **os.environ,
@@ -199,21 +223,24 @@ def execute_mars_passthrough(
                 text=True,
                 **run_kwargs,
             )
-            return MarsPassthroughResult(
+            outcome = MarsPassthroughResult(
                 request=request,
                 returncode=result.returncode,
                 stdout_text=result.stdout or "",
                 stderr_text=result.stderr or "",
             )
-
-        result = run(list(request.command), check=False, **run_kwargs)
-        return MarsPassthroughResult(request=request, returncode=result.returncode)
+        else:
+            result = run(list(request.command), check=False, **run_kwargs)
+            outcome = MarsPassthroughResult(request=request, returncode=result.returncode)
     except FileNotFoundError:
         print(
             "error: Failed to execute 'mars'. Install meridian with dependencies and retry.",
             file=stderr_stream,
         )
         raise SystemExit(1) from None
+    if outcome.returncode == 0:
+        report_provide_refusal(bundled_source, stderr=stderr_stream)
+    return outcome
 
 
 def run_mars_passthrough(

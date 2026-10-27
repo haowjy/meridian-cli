@@ -7,22 +7,27 @@ composition seam that wires them together.
 
 ## Skill Loading
 
-Package skill content comes from the Mars launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
+Mars-resolved skill content comes from the launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
 not from reading `.mars/skills/` on disk. `_build_resolved_skills_from_bundle()` in `policies.py`
 constructs `ResolvedSkills` from bundle data and preserves `source_path` for snapshots and
-workspace projection. It reconstructs a primary-root path only for older producers that omit
+workspace projection. This includes bundled Meridian skills when the profile loads their
+Mars-provided copies. It reconstructs a primary-root path only for older producers that omit
 provenance. Snapshot replay uses only its persisted `loaded_skills`; an empty field means no
 skills are loaded.
 
-Meridian-owned operational skills are a separate read-only package-data surface.
-`bundled_skills.py` reads their names and descriptions to build the always-present
-`# Meridian skills` trigger block; `meridian skills NAME` prints one on demand under
-the same activation header injected skills get (`render_skill_block()`). Their
-`name__meridian` spelling follows Mars's source-suffix collision rule.
-A skill's optional `mode` frontmatter gates its trigger on the resolved profile's
-declared mode, independent of whether the launch is a primary session or a spawn. The
-notify capability line uses the same mode gate. They never enter Mars's load/available
-lists or harness-native skill loading.
+Meridian-owned operational skills stay in the wheel and are provided into the
+resolved Mars root before each launch. `bundled_skills.py` owns both the wheel
+inventory and the source a named `meridian skills` read may use. Names Mars reports
+as provided read from `.mars/skills/`; all others read from the wheel. Provided
+skills never enter harness-native skill directories.
+
+Wheel metadata builds the `# Meridian skills` trigger block. A skill already loaded
+by the Mars launch bundle has no trigger line, preventing a loaded body and a pointer
+to a different copy from coexisting. Otherwise, optional `metadata.mode` frontmatter gates
+the trigger on the resolved profile's declared mode, independent of whether the
+launch is a primary session or a spawn. The notify capability line uses the same
+mode gate. `meridian skills NAME` renders the selected copy under the same activation
+header injected skills get (`render_skill_block()`).
 
 The `bundle_adapter.py` module docstring inventories bundle fields Meridian deliberately does
 not read. `tools.rules` is the permission contract; `tools.mcp` is a flat list of permission

@@ -8,6 +8,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar, cast
 
+import structlog
+
 from meridian.lib.config.loader import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
@@ -97,8 +99,56 @@ from meridian.lib.launch.constants import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.state import pi_lifecycle
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.history_changes import HistoryCoordinationError
+from meridian.lib.state.history_index import HistoryIndexIncomplete
 from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
+from meridian.lib.state.spawn_ownership import owned_parent_ids
+from meridian.lib.state.spawn_status import read_derived
+
+logger = structlog.get_logger(__name__)
+
+PI_OWED_PARENT_IDS_ENV = "_MERIDIAN_PI_OWED_PARENT_IDS"
+
+
+def _pi_owed_parent_ids(
+    *,
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    child_env: Mapping[str, str],
+) -> tuple[str, ...]:
+    """Resolve the delivery parents this Pi session's watcher must honor.
+
+    A resumed primary owns the results its crashed generation's children produce,
+    so the launch hands the extension the same parent set ``spawn collect``
+    computes instead of re-deriving generations in TypeScript. A failed read
+    leaves the extension its own direct children, as before the scope existed.
+    """
+
+    chat_id = child_env.get("MERIDIAN_CHAT_ID", "").strip()
+    if not chat_id:
+        return ()
+    try:
+        return owned_parent_ids(
+            runtime_root,
+            read_derived(runtime_root, str(spawn_id)),
+            chat_id=chat_id,
+            caller_spawn_id=str(spawn_id),
+        )
+    except (
+        HistoryIndexIncomplete,
+        HistoryCoordinationError,
+        OSError,
+        SpawnStateQuarantined,
+    ) as exc:
+        logger.warning(
+            "pi_owed_parent_scope_unavailable",
+            spawn_id=str(spawn_id),
+            chat_id=chat_id,
+            error=str(exc),
+        )
+        return ()
 
 
 def _write_pi_runtime_metadata_sidecar(
@@ -326,6 +376,14 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
             "_MERIDIAN_PI_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
         }
+        if launch_role == "primary":
+            owed_parents = _pi_owed_parent_ids(
+                runtime_root=runtime_root,
+                spawn_id=spawn_id,
+                child_env=child_env,
+            )
+            if owed_parents:
+                env_overrides[PI_OWED_PARENT_IDS_ENV] = ",".join(owed_parents)
 
         _write_pi_runtime_metadata_sidecar(
             runtime_root=runtime_root,

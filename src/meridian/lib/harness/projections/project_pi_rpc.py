@@ -9,6 +9,7 @@ from meridian.lib.harness.pi_identity import project_identity
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections.effort import project_pi_thinking_level
 from meridian.lib.harness.projections.permissions_pi import (
     compile_pi_permissions,
     project_pi_permission_args,
@@ -68,14 +69,6 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--no-extensions": ("--no-extensions",),
     "--mode": ("--mode",),
     "-e": ("-e", "--extension"),
-}
-
-_EFFORT_TO_THINKING: dict[str, str] = {
-    "low": "minimal",
-    "medium": "medium",
-    "high": "high",
-    "xhigh": "xhigh",
-    "max": "xhigh",
 }
 
 
@@ -140,10 +133,6 @@ def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     return model
 
 
-def _project_thinking_level(spec: ResolvedLaunchSpec) -> str | None:
-    return _EFFORT_TO_THINKING.get((spec.effort or "").strip().lower())
-
-
 def project_pi_spec_to_cli_args(
     spec: ResolvedLaunchSpec,
     *,
@@ -158,7 +147,7 @@ def project_pi_spec_to_cli_args(
     if model_arg is not None:
         command.extend(("--model", model_arg))
 
-    thinking_level = _project_thinking_level(spec)
+    thinking_level = project_pi_thinking_level(spec.effort)
     model_override_in_passthrough = any(
         _has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--model"]
     )

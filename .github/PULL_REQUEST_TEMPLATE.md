@@ -2,6 +2,22 @@
      purpose, the decisions, the surrounding work and the full scope from the
      sections up to Summary, before any detail. -->
 
+## Changelog
+
+<!-- CI validates this section; the release job renders it into CHANGELOG.md
+     under the new version heading and uses it as the GitHub Release body. Do
+     not edit CHANGELOG.md in this PR. Use `### Upgrade notes`, `### Added`,
+     `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`, or
+     `### Security` blocks with `- ` bullets (continuation lines are fine), or
+     replace the whole section with one line: `None. <reason nothing a user or
+     developer notices changed>`. Write one line per upgrade note, ending in an
+     absolute link to the guide section: `- ... See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#anchor).`
+     The guide carries the detail; the changelog entry links to it. Absolute
+     links resolve in both the PR body and the GitHub Release body. -->
+
+### Fixed
+- <what a user now sees that was broken before>
+
 ## Why
 
 <!-- State the problem or opportunity and why it matters. Include before-state
@@ -162,14 +178,9 @@ No `release:*` label defaults to a prerelease (RC). Unknown `release:*` labels a
 
 ## Post-Merge Automation
 
-After merge to `main`, CI (`.github/workflows/release-on-merge.yml`) will:
-
-1. Read the PR release label
-2. Skip only when `release:skip` is present (no label defaults to RC)
-3. Compute the next stable or RC version from existing `v*` tags
-4. Update `src/meridian/__init__.py` + promote `CHANGELOG.md` `[Unreleased]`
-5. Commit `release: vX.Y.Z` (or `release: vX.Y.Z-rc.N`), create/push the matching tag
-6. Let the tag push run `.github/workflows/release.yml`, which publishes to PyPI
+CI releases per your label after merge; see
+[what CI does](https://github.com/haowjy/meridian-cli/blob/main/docs/releasing.md#what-ci-does)
+for the steps.
 
 ## Cleanup
 

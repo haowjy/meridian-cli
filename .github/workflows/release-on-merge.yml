@@ -168,6 +168,7 @@ jobs:
           echo "should_release=true" >> "$GITHUB_OUTPUT"
           echo "release_kind=${release_kind}" >> "$GITHUB_OUTPUT"
           echo "bump_kind=${bump_kind}" >> "$GITHUB_OUTPUT"
+
           echo "::notice::Resolved release kind: ${release_kind}; bump kind: ${bump_kind}."
 
       - name: Skip when trigger already released
@@ -193,13 +194,14 @@ jobs:
           selected_tag=""
           selected_commit=""
 
-          while IFS=$'\t' read -r commit_hash commit_subject; do
-            if ! git show -s --format=%B "${commit_hash}" | grep -Fxq "Release-Trigger: ${TRIGGER_SHA}"; then
-              continue
-            fi
+          consider_commit() {
+            local commit_hash="$1"
+            local commit_subject="$2"
+            local subject_tag subject_is_stable subject_is_rc
+            local commit_stable_tag commit_rc_tag commit_tag candidate_rank candidate_mode candidate_tag
 
             if [[ ! "${commit_subject}" =~ ^release:\ (v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?)$ ]]; then
-              continue
+              return
             fi
             subject_tag="${BASH_REMATCH[1]}"
 
@@ -255,7 +257,23 @@ jobs:
               selected_tag="${candidate_tag}"
               selected_commit="${commit_hash}"
             fi
+          }
+
+          while IFS=$'\t' read -r commit_hash commit_subject; do
+            if git show -s --format=%B "${commit_hash}" | grep -Fxq "Release-Trigger: ${TRIGGER_SHA}"; then
+              consider_commit "${commit_hash}" "${commit_subject}"
+            fi
           done < <(git log --format=$'%H\t%s' main)
+
+          if (( best_rank == 99 )); then
+            newest_release_commit="$(git log --first-parent -1 --format=%H --grep='^release: v' main)"
+            if [[ -n "${newest_release_commit}" ]] && git merge-base --is-ancestor "${TRIGGER_SHA}" "${newest_release_commit}"; then
+              consider_commit "${newest_release_commit}" "$(git show -s --format=%s "${newest_release_commit}")"
+              if (( best_rank < 99 )); then
+                echo "::notice::Trigger ${TRIGGER_SHA} is contained in later release commit ${newest_release_commit}; treating it as already released."
+              fi
+            fi
+          fi
 
           if (( best_rank < 99 )); then
             echo "already_released=true" >> "$GITHUB_OUTPUT"
@@ -410,10 +428,6 @@ jobs:
           corepack enable
           cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
-      - name: Run shared preflight
-        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
-        run: scripts/preflight.sh full
-
       - name: Compute next release version
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         id: next_version
@@ -504,33 +518,48 @@ jobs:
           echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
           echo "Computed next ${release_kind} version ${next_version} (python=${python_version}) from base ${base_version} with ${bump_kind} bump."
 
+      - name: Collect and check release notes
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TRIGGER_SHA: ${{ github.sha }}
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+        run: |
+          notes_json="${RUNNER_TEMP}/prs.json"
+          scripts/collect-release-notes.sh "${notes_json}" --trigger-sha "${TRIGGER_SHA}"
+          python3 scripts/changelog-notes.py render \
+            --notes-json "${notes_json}" \
+            --version "${NEXT_VERSION}" \
+            --date "$(date -u +%Y-%m-%d)" \
+            --dry-run >/dev/null
+
+      - name: Run shared preflight
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        run: scripts/preflight.sh full
+
       - name: Update release files
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
           PYTHON_VERSION: ${{ steps.next_version.outputs.python_version }}
         run: |
-          sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${PYTHON_VERSION}\"/" src/meridian/__init__.py
+          if ! python3 scripts/changelog-notes.py render \
+            --notes-json "${RUNNER_TEMP}/prs.json" \
+            --version "${NEXT_VERSION}" \
+            --date "$(date -u +%Y-%m-%d)"; then
+            echo "::error::A merged PR body's '## Changelog' section is missing or invalid (the error above names it), or CHANGELOG.md has content under '## [Unreleased]'. Edit the named PR body and/or move stale [Unreleased] entries out of CHANGELOG.md, then re-run this workflow."
+            exit 1
+          fi
 
-          if grep -q '^## \[Unreleased\]$' CHANGELOG.md; then
-            today="$(date -u +%Y-%m-%d)"
-            tmp_file="$(mktemp)"
-            awk -v version="${NEXT_VERSION}" -v date="${today}" '
-              BEGIN { promoted = 0 }
-              {
-                if (!promoted && $0 == "## [Unreleased]") {
-                  print "## [Unreleased]"
-                  print ""
-                  print "## [" version "] - " date
-                  promoted = 1
-                  next
-                }
-                print
-              }
-            ' CHANGELOG.md > "${tmp_file}"
-            mv "${tmp_file}" CHANGELOG.md
-          else
-            echo "::warning::CHANGELOG.md missing '## [Unreleased]'; skipping changelog promotion."
+          sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${PYTHON_VERSION}\"/" src/meridian/__init__.py
+          # The sed is anchored, so a reformatted line leaves it unmatched and the
+          # release commit and tag would go out with the old version; release.yml's
+          # provenance check then fails after the fact, leaving a released section
+          # and a tag on main. Prove the bump before committing anything.
+          if ! grep -Fq "__version__ = \"${PYTHON_VERSION}\"" src/meridian/__init__.py; then
+            echo "::error::Version bump did not land: src/meridian/__init__.py has no '__version__ = \"${PYTHON_VERSION}\"' line; reformat the version line to exactly '__version__ = \"X.Y.Z\"'."
+            exit 1
           fi
 
       - name: Commit release changes

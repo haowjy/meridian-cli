@@ -22,6 +22,165 @@ later `work done` or `work reopen` refuses when both locations exist and names b
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
 
+## Mars 0.20.0 (schema v1)
+
+Meridian pins `mars-agents==0.20.2`, up from 0.18.4. Mars 0.20 reads and writes schema v1,
+and it carries 0.19.0's changes too, which the old pin skipped. Mars documents the format
+([schema v1](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/schema-v1.md),
+[migrating a package](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/migrating-to-schema-v1.md))
+and each change in its [0.20.2](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.2),
+[0.20.1](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.1), [0.20.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.0)
+and [0.19.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.19.0) release notes.
+This section lists what a Meridian user does about them, grouped by what you are editing.
+
+### Right after installing
+
+Run `meridian mars sync` once. Sync rewrites installed `.mars/` content as schema v1.
+
+- Until it runs, launches keep working: Mars upgrades installed pre-v1 profiles and skills in
+  memory the way sync would (`approval: yolo` reads as `never`; a skill's `type` as
+  `metadata.type`), and drops what schema v1 removed, such as a profile's `autocompact`.
+- A `meridian mars sync --frozen` (CI, scripts) fails with `frozen violation: lock file would
+  change but --frozen is set` until a plain sync has run, because the rewrite changes the
+  checksums of packages authored before schema v1. Run `meridian mars sync` once and commit
+  `mars.lock`; `--frozen` passes after that.
+- Sync warns ``package `<name>` uses the pre-v1 format (N files to upgrade); run `mars migrate`
+  in its repository`` on every run for each such dependency. It installs and works; only its
+  maintainer clears the warning.
+
+### If you write `mars.toml` overlays
+
+Mars checks `[agents.<name>]` overlays when `mars.toml` loads. A bad value fails every
+`meridian mars` command and every launch, not only sync.
+Mars's [overlay reference](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/mars-toml.md#agentsname-overlay)
+lists the accepted keys.
+
+| You have | Mars 0.20.0 does | Change it to |
+|---|---|---|
+| `[agents.X] approval = "yolo"` | load error: `` `approval` has invalid value `yolo`; allowed: default, auto, confirm, never `` | `approval = "never"` |
+| `autocompact`, `autocompact_pct` or `harness` in a `[[agents.X.model-policies]]` `override` | load error: `` model policy override `autocompact` has invalid value `` or `` unknown model policy override `harness` `` | Delete it. An override sets only `effort`, `sandbox`, `approval` and `network`. Set `harness` on the profile or the `[models.<alias>]` entry, and compaction as below |
+| `autocompact` or `autocompact_pct` directly in `[agents.X]`, or a `[skills.X.tools]` table | warning `` is no longer read and is ignored ``; nothing applies | Delete it |
+| An invalid `effort`, `sandbox`, `approval` or `network` in `[agents.X]` | load error | Fix the value |
+
+Meridian's own spellings keep working: `--approval yolo`, `--yolo` and `MERIDIAN_APPROVAL=yolo`
+run as `never`. Only `mars.toml` and profile files lost `yolo`.
+
+Mars now takes compaction only from the model alias. Set `autocompact` or `autocompact_pct` under
+`[models.<alias>]` in `mars.toml` (see Mars's
+[`[models]` reference](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/mars-toml.md#models)),
+so it applies to every launch that uses the alias, or set `primary.autocompact` /
+`primary.autocompact_pct` in `meridian.toml` for the primary session only. An alias that sets
+its own value wins over `primary.autocompact`.
+
+### If you write profiles or skills
+
+Pre-v1 content in `.mars-src/` is upgraded in memory on every sync, with one warning:
+``authored `.mars-src` content uses the pre-v1 format (N files to upgrade); run `mars migrate` ``.
+`meridian mars migrate` rewrites the files once and names each key it deletes
+(`meridian mars migrate --check` lists the changes and exits 1 if there are any). Run it from a
+project, or add `--user` for the profiles in `~/.meridian/mars`; outside a project, `migrate`
+without `--user` is refused, and `--check` still runs.
+In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the package's own
+`agents/` and `skills/` and leaves `.mars-src/` alone; edit those files by hand.
+
+- **Renamed or converted, behaviour kept:** `disallowed-tools` becomes `deny` entries in
+  `tools`; a `tools` list becomes a map; `model_invocable` and `network_allow` take their
+  hyphenated spellings; `approval: yolo` becomes `never`; a skill's `type` becomes
+  `metadata.type` and `when_to_use` is appended to `description`.
+- **Deleted, behaviour lost:** a profile's `autocompact` and `autocompact_pct`; `autocompact`,
+  `autocompact_pct` and `harness` in a `model-policies` override; `fanout`, `models` and
+  `mcp-tools`; a skill's `tools`, `allowed-tools` and `disallowed-tools`. Sync alone drops them
+  without naming them, so run `migrate` and restore what you still want: compaction on
+  `[models.<alias>]`, fan-out candidates in
+  [`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing), MCP grants as
+  `mcp(server): allow` entries in `tools`.
+- **Still read, now warned:** `resident-rearm-budget` and `meridian-capabilities` stay in the
+  installed profile and Meridian still reads them, but Mars warns ``unknown field `...` is kept in
+  the file but written to no native file`` on every sync.
+
+A package you publish with `[package] schema = 1` is read strictly: a removed key fails sync with
+exit 2 and changes nothing. `mars migrate` also adds `requires-mars = ">=0.20.0"` to a package
+that declares no requirement, and `meridian mars check` warns when a `schema = 1` package has no
+requirement or one that allows an older Mars. Package maintainers: see Mars's
+[migration guide](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/migrating-to-schema-v1.md).
+
+### If you depend on packages
+
+- A marketplace dependency with several plugins and no `plugin` key now fails sync with
+  `` `<name>` is a marketplace with these plugins ``; before, every plugin installed. Name each
+  plugin you want: `meridian mars add <marketplace> --plugin <name>`, or `plugin = "<name>"` on
+  the dependency entry.
+- A file symlink inside a skill or profile that points outside its package (in `.mars-src/` or a
+  path dependency) now fails sync with ``authored package entry escapes package root``; before,
+  Mars copied the target. Copy the file into the package. A symlink that stays inside the package
+  works.
+- Mars 0.20.0 and 0.20.1 refused `mars check <path> --root <dir>`, which is how
+  `meridian mars check <path>` reaches Mars, and failed to sync a dependency without a
+  `mars.toml` whose `skills/` directory holds a stray file such as `__init__.py` or `README.md`
+  (`Not a directory`). Mars 0.20.2, the pinned version, fixes both; they behave as they did on
+  0.18.4 and need nothing from you.
+- Mars 0.19.0 orders hooks by shortest dependency depth, which changes the order only when a
+  direct dependency is also reached transitively; Codex may ask you to re-trust moved hooks once
+  (`/hooks`). It also moves Mars-owned `mcpServers` entries in an `.opencode` target to OpenCode's
+  native `mcp` key on the next sync. Mars's 0.19.0 release notes describe both.
+
+### Policy that changes at launch
+
+- **`effort: max` now runs at `max`.** Mars 0.18.4 capped `max` to `xhigh` before Meridian saw
+  it, so a profile or `mars.toml` overlay that said `max` ran at `xhigh` on every harness. Mars
+  0.20 passes `max` through: Claude receives `--effort max`, Codex `model_reasoning_effort="max"`
+  and Pi `--thinking max`. Those launches now run higher, which costs more and runs slower. Set
+  `xhigh` to keep the old behaviour.
+- Mars gained `effort: none` (reasoning off). Meridian lowers it per harness: Claude receives no
+  `--effort` and keeps thinking, because current Claude models cannot turn thinking off (the
+  dry-run says so); Codex receives
+  `model_reasoning_effort="none"`; Pi receives `--thinking off`. OpenCode applies no effort.
+  `--dry-run` reports a launch that omits the flag. See
+  [Effort by harness](agent-profiles.md#effort-by-harness).
+- **Per-model rules in a profile now apply.** A matching `model-policies` rule's `override`
+  beats the profile's top-level value for `effort`, `sandbox`, `approval` and `network`. Under
+  Mars 0.19 and earlier the top-level value won, so a profile that set `effort` never ran its
+  own per-model `effort` rule; that was a bug, and schema v1 fixes it. A rule in a `mars.toml`
+  overlay (`[[agents.<name>.model-policies]]`) already beat the top-level value and still does.
+  A profile with `effort: max` and a `deepseek` rule at `high` ran at `xhigh` under Mars 0.18.4
+  and runs at `high` now, and one with a `sonnet` rule at `medium` runs at `medium`. A profile
+  with `approval: never` and a matching rule at `confirm` now launches at `confirm`, which makes
+  a headless spawn refuse its tool calls. Delete the rule's override to keep the top-level
+  value.
+- **Packaged profiles change their effort.** Their per-model rules were written for the rule
+  winning, and now they do. Only `effort` moves: no packaged rule sets `approval`, `sandbox` or
+  `network`. Checked against `meridian-dev-workflow` 0.15.16, `meridian-base` 0.12.1 and
+  `creative-writing-skills` 0.5.19:
+
+  | Profile | Ran at | Runs at now |
+  |---|---|---|
+  | `coder` | `xhigh` (top-level `max`) | `high` on deepseek and luna; `medium` on sonnet, opus and sol |
+  | `tech-lead` | `medium` | `xhigh` on grok; `high` on deepseek and astra |
+  | `reviewer` | `medium` | `high` on grok, deepseek and luna |
+  | `explorer` | `medium` | `low` on deepseek and sonnet |
+  | `continuity-checker`, `critic`, `editor`, `style-creator` | `high` | `low` on deepseek |
+
+  The list is not complete; `meridian spawn -a <profile> --model <alias> --dry-run` shows the
+  effort a launch resolves to. Other packages with a top-level `effort` and a matching rule change
+  the same way.
+
+### Rolling back
+
+Rollback works. Install the previous Meridian, which pins Mars 0.18.4, and run
+`meridian mars sync` once, then commit the `mars.lock` it writes. With a dependency authored
+before schema v1, a `--frozen` sync fails first, the same way it does after the upgrade. Mars
+0.18.4 reads the schema v1 content this release leaves behind: packages that declare
+`schema = 1`, and `.mars-src/` files you ran `migrate` on. Checked with the previous Meridian
+release and Mars 0.18.4 against projects last synced by this build.
+
+- A skill whose type lives in `metadata.type` reports the type `reference` again, because
+  Mars 0.18.4 reads only a top-level `type`.
+- Keys `meridian mars migrate` deleted stay deleted; restore them from version control.
+- Per-model `effort` rules stop applying again: a profile's top-level `effort` wins over its
+  `model-policies`, as it did under Mars 0.18.4.
+- `.mars/provided.lock` and the `.mars/skills/*__meridian` folders stay on disk and the old
+  build ignores them. `.mars/` is rebuildable, so deleting it and syncing also works.
+
 ## Meridian-owned operational skills
 
 Guidance whose subject is Meridian itself now ships with the CLI instead of a

@@ -98,9 +98,16 @@ Pi extensions coordinate private work with Python through disk files:
 - supervised watcher/storage diagnostics in `delivery-fault.json`
 
 See [the delivery contract](../../../pi_runtime/.context/delivery-contract.md) for full
-shapes and writers. `last-notification.json` is retired and ignored. Terminal tracked
-background Bash stays owed until its persisted wait marker or exact admission receipt.
-Canonical direct-child rows transfer matching launcher obligations, without log parsing.
+shapes and writers. `last-notification.json` is retired and ignored. A direct child is
+owed back only when its `launch_mode` is `background`: a launcher that waited for a
+foreground child already saw that result, so only its launching Bash record can still
+owe one. Core owns that rule (`state/spawn_ownership.is_owed_child`); the extension
+mirrors it as `isBackgroundLaunch`, and this drain applies it to both result blockers and
+launcher-obligation transfer. Terminal tracked background Bash stays owed until its
+persisted wait marker or exact admission receipt. A background direct-child row transfers
+its matching launcher obligation, without log parsing; a foreground row transfers
+nothing. Which parents are direct is core's rule too, handed to a primary launch as
+`_MERIDIAN_PI_OWED_PARENT_IDS`.
 
 Persisted descendant state comes independently through `DescendantRefreshOwner`. Its
 single-flight worker uses `ReconciledDescendantEvidence` to discover the transitive

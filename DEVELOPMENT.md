@@ -145,41 +145,11 @@ uv run --extra dev python -m pyright --warnings
 
 ## Release
 
-meridian-cli releases happen automatically after normal PR merges to `main` when the PR has a `release:*` label.
-
-### What you do
-
-1. Work in a worktree branch: `meridian work start "my-feature" --worktree`
-2. Write changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
-3. Open a PR with the PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
-4. Set one release label:
-   - `release:rc` for the default safe prerelease path
-   - `release:patch` or `release:stable` for stable patch release
-   - `release:skip` for no release
-5. Merge the PR to `main`
-
-PR merges without a `release:*` label skip auto-release. Direct pushes to `main`
-also skip auto-release because there is no PR label to inspect.
-
-Put `release:skip` in the pushed head commit message to skip auto-release even
-when a release label is present.
-
-### What CI does on main push
-
-`.github/workflows/release-on-merge.yml` runs on every normal push to `main`. It:
-
-1. Reads the selected merged PR label for the pushed commit
-2. Defaults unknown `release:*` labels to RC
-3. Skips when no `release:*` label is present or when `release:skip` is present
-4. Computes the next stable patch or next RC from existing git tags
-5. Bumps `src/meridian/__init__.py`
-6. Promotes `CHANGELOG.md` `[Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
-7. Creates commit `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`
-8. Creates and pushes tag `vX.Y.Z` or `vX.Y.Z-rc.N`
-9. PyPI publish runs through the tag-triggered `.github/workflows/release.yml`
-
-The workflow skips its own `release: v...` commit so release auto-commits do not
-trigger another release. `release.yml` is the only PyPI trusted publishing workflow identity.
+Releases are automatic from PR merges to `main`. Write the changelog entry in the
+PR body's `## Changelog` section, set one `release:*` label, and merge. Do not edit
+`CHANGELOG.md`, `__version__`, or `v*` tags by hand: CI owns them. The labels, the
+integration-branch flow for breaking changes, the PR-body gate, and the manual
+backfill helper are in [docs/releasing.md](docs/releasing.md).
 
 ### Post-merge
 
@@ -189,12 +159,6 @@ Clean up merged worktrees:
 scripts/prune-worktrees.sh --dry-run    # preview
 scripts/prune-worktrees.sh --yes        # execute
 ```
-
-### Boundaries
-
-- Do not edit `src/meridian/__init__.py` for stable releases — CI owns it
-- Do not create or push `v*` tags manually — CI owns them
-- The pre-push hook blocks direct `v*` tag pushes; GitHub Actions creates release tags without running local hooks
 
 ## Run from source
 

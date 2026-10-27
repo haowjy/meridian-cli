@@ -18,6 +18,17 @@ export function currentSpawnIdFromEnv(): string {
   return process.env.MERIDIAN_SPAWN_ID?.trim() || "unknown";
 }
 
+/**
+ * Parents whose direct children this session delivers. Core resolves the scope
+ * for an interactive primary (every primary generation of its chat) and omits it
+ * for a spawned or nested session, which owns only its own children.
+ */
+export function owedParentIdsFromEnv(spawnId = currentSpawnIdFromEnv()): ReadonlySet<string> {
+  const raw = process.env._MERIDIAN_PI_OWED_PARENT_IDS?.trim();
+  const ids = (raw ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+  return new Set(ids.length ? ids : [spawnId]);
+}
+
 export function resolvePiBashDir(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolveStateRoot(), "pi-bash", spawnId);
 }

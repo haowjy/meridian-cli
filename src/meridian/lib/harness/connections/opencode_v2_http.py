@@ -48,6 +48,7 @@ from meridian.lib.harness.connections.opencode_http import (
     permission_liveness_key,
     summarize_body,
 )
+from meridian.lib.harness.opencode_backend import v2_session_running
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_model,
     project_opencode_spec_to_session_payload,
@@ -145,6 +146,9 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
     _MESSAGE_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/api/session/{session_id}/prompt",)
     _EVENT_PATHS: ClassVar[tuple[str, ...]] = ("/api/event",)
     _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/api/session/{session_id}/interrupt",)
+    # 2.x answers the stall probe from the active-session listing instead of the
+    # 1.x status map, and encodes the session id differently in the response.
+    _SESSION_RUNNING_PROBE_PATH: ClassVar[str] = "/api/session/active"
 
     def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
         super().__init__(request_handler)
@@ -578,6 +582,11 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         """
 
         return await self._reconcile_initial_terminal()
+
+    def _session_running_from_status(self, payload: object, session_id: str) -> bool:
+        """Read the active-session listing: presence means the turn is executing."""
+
+        return v2_session_running(payload, session_id)
 
     async def _cleanup_runtime(self) -> None:
         task = self._stdout_drain_task
