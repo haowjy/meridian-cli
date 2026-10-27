@@ -43,6 +43,13 @@ Op-style handlers (single Pydantic input model) use `ExtensionCommandSpec.from_o
 `ExtensionInvocationContextBuilder.build()` uses `ExtensionCapabilities.denied()`
 unless the caller explicitly supplies capabilities with `with_capabilities()`.
 
+Today no command declares `required_capabilities` and nothing calls
+`with_capabilities()`, so step 5 never fires. Keep it anyway. The trust check,
+the `first_party` flag and capabilities are the seam for third-party extensions,
+which are still planned. Don't delete them as dead code. Third-party loading
+(provenance, signing, capability policy) was deferred in the extension-system-v2
+design, and the capability grants will be designed when that work starts.
+
 ## Registry Singleton
 
 `get_first_party_registry()` returns a module-level singleton built on first access. Use `build_first_party_registry()` in tests to get a fresh instance.
