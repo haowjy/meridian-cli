@@ -217,7 +217,7 @@ does with them:
 |---|---|---|
 | **Claude** | No `--effort` flag: Claude Code has no reasoning-off level. `--dry-run` reports the omission | `--effort <level>` |
 | **Codex** | `-c model_reasoning_effort="none"`. Some Codex models reject it | `-c model_reasoning_effort="<level>"` |
-| **Pi** | `--thinking off` | `--thinking <level>`, with `low` written as `minimal`. Pi clamps the level to what the model supports |
+| **Pi** | `--thinking off` | `--thinking <level>`. Pi clamps the level to what the model supports |
 | **OpenCode** | Not applied | Not applied, except the legacy V1 `run` fallback, which gets `--variant <level>` |
 | **Cursor** | Mars picks the model's default slug | Mars folds the level into the model slug; see [Cursor](configuration/cursor.md#effort-and-slug-resolution) |
 

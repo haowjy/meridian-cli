@@ -44,7 +44,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with `expected one of [...]`. Each harness lowers it: Claude and OpenCode pass no flag
   (`--dry-run` reports Claude's omission), Codex passes `model_reasoning_effort="none"`
   (some models reject it), Pi passes `--thinking off`. Pi passes `max` as `--thinking max`
-  instead of capping it at `xhigh`. See
+  instead of capping it at `xhigh`, and `low` as `--thinking low` instead of `minimal`. See
   [Effort by harness](docs/agent-profiles.md#effort-by-harness)
   ([#774](https://github.com/haowjy/meridian-cli/issues/774)).
 - Bump pinned `mars-agents` to `0.20.2`, which reads and writes Mars schema v1

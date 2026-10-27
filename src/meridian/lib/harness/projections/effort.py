@@ -11,10 +11,10 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import EnforcementReport, ReportLine
 
 # Pi's ``--thinking`` spelling for each effort level (pi 1.4 lists off, minimal, low,
-# medium, high, xhigh, max).
+# medium, high, xhigh, max): only ``none`` is spelled differently.
 _PI_THINKING_BY_EFFORT: dict[str, str] = {
     "none": "off",
-    "low": "minimal",
+    "low": "low",
     "medium": "medium",
     "high": "high",
     "xhigh": "xhigh",
