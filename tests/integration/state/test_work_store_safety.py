@@ -244,12 +244,15 @@ def test_repair_uses_directory_timestamp_when_archived_at_is_missing(tmp_path: P
     assert payload["archived_at"] == repaired.archived_at
 
 
-def test_interrupted_archive_is_archived_by_directory_location(
+def test_interrupted_archive_leaves_the_item_done_where_it_moved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A crash between the move and the status write loses nothing and reads as done."""
+
     runtime_root = _state_root(tmp_path)
     item = work_repository.create_work_item(runtime_root, "archive-crash")
     work_repository.update_work_item(runtime_root, item.name, status="blocked")
+    (runtime_root / "work" / item.name / "notes.md").write_text("keep\n", encoding="utf-8")
 
     def crash_before_metadata_write(_work_dir: Path, _item: WorkItem) -> None:
         raise OSError("simulated crash")
@@ -258,18 +261,22 @@ def test_interrupted_archive_is_archived_by_directory_location(
     with pytest.raises(OSError, match="simulated crash"):
         work_repository.archive_work_item(runtime_root, item.name)
 
+    archived = runtime_root / "archive" / "work" / item.name
+    assert (archived / "notes.md").read_text(encoding="utf-8") == "keep\n"
     assert not (runtime_root / "work" / item.name).exists()
-    assert (runtime_root / "archive" / "work" / item.name).is_dir()
     loaded = work_store.get_work_item(runtime_root, item.name)
     assert loaded is not None
     assert loaded.status == "done"
 
 
-def test_interrupted_reopen_is_active_by_directory_location(
+def test_interrupted_reopen_leaves_the_item_archived(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A crash before the move leaves the item archived, files intact, reopen-able."""
+
     runtime_root = _state_root(tmp_path)
     item = work_repository.create_work_item(runtime_root, "reopen-crash")
+    (runtime_root / "work" / item.name / "notes.md").write_text("keep\n", encoding="utf-8")
     work_repository.archive_work_item(runtime_root, item.name)
 
     def crash_before_metadata_write(_work_dir: Path, _item: WorkItem) -> None:
@@ -279,11 +286,18 @@ def test_interrupted_reopen_is_active_by_directory_location(
     with pytest.raises(OSError, match="simulated crash"):
         work_repository.reopen_work_item(runtime_root, item.name)
 
-    assert (runtime_root / "work" / item.name).is_dir()
-    assert not (runtime_root / "archive" / "work" / item.name).exists()
+    archived = runtime_root / "archive" / "work" / item.name
+    assert (archived / "notes.md").is_file()
+    assert not (runtime_root / "work" / item.name).exists()
     loaded = work_store.get_work_item(runtime_root, item.name)
     assert loaded is not None
-    assert loaded.status == "open"
+    assert loaded.status == "done"
+
+    # The interrupted reopen is repaired by running it again, not by a sweep.
+    monkeypatch.undo()
+    reopened = work_repository.reopen_work_item(runtime_root, item.name)
+    assert reopened.status == "open"
+    assert (runtime_root / "work" / item.name / "notes.md").is_file()
 
 
 def test_delete_without_force_succeeds_for_status_only_directory(tmp_path: Path) -> None:

@@ -100,8 +100,8 @@ def _session_execution_context(
         if attached_work_id is None:
             attached_work_id = (inherited_work_id or "").strip() or None
             if attached_work_id is not None:
-                session_store.update_session_work_id(
-                    runtime_root, managed.chat_id, attached_work_id
+                session_store.set_work_attachments(
+                    runtime_root, {managed.chat_id: attached_work_id}
                 )
         yield _SessionExecutionContext(
             chat_id=managed.chat_id,

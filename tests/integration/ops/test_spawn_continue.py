@@ -86,7 +86,7 @@ def _seed_spawn(
         skills=snapshot.skills if snapshot is not None else ("skill-c",),
         task_cwd=task_cwd,
     )
-    session_store.update_session_work_id(runtime_root, chat_id, work_id)
+    session_store.set_work_attachments(runtime_root, {chat_id: work_id})
     session_store.stop_session(runtime_root, chat_id)
     spawn_store.start_spawn(
         runtime_root,

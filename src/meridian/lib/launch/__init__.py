@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
-from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir_for_project
+from meridian.lib.state.paths import resolve_project_paths
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
@@ -46,16 +46,15 @@ if TYPE_CHECKING:
 
 
 def _explicit_work_id_for_launch(request: LaunchRequest) -> str | None:
-    return (request.work_id or "").strip() or None
+    """Resolve a primary's ``--work``; ``current`` names the session's item."""
+
+    from meridian.lib.ops.work_attachment import resolve_current_work_alias
+
+    return resolve_current_work_alias(request.work_id, usage="meridian --work <work_id>")
 
 
-def _resolve_work_id_for_launch(
-    project_root: Path,
-    request: LaunchRequest,
-    *,
-    context_work_id: str | None,
-) -> str | None:
-    """Resolve work item before entering the launch layer (policy, not mechanism)."""
+def _resolve_work_id_for_launch(project_root: Path, request: LaunchRequest) -> str | None:
+    """Materialize a primary's explicit ``--work`` before entering the launch layer."""
 
     from meridian.lib.ops.work_attachment import materialize_launch_work_id
 
@@ -63,7 +62,6 @@ def _resolve_work_id_for_launch(
     return materialize_launch_work_id(
         project_local_root,
         explicit_work_id=_explicit_work_id_for_launch(request),
-        context_work_id=context_work_id,
     )
 
 
@@ -101,6 +99,7 @@ def launch_primary(
         compile_prepared_policy_surface,
         prepare_launch_surface,
     )
+    from .cwd import inheritable_task_dir
     from .plan import build_primary_launch_runtime, build_primary_spawn_request
     from .process import run_harness_process
     from .types import LaunchResult
@@ -114,7 +113,12 @@ def launch_primary(
     )
     inherit_ambient_work = request.session_mode.value != "resume"
     inherited_task_dir = (
-        None if request.session_mode.value == "resume" else runtime_context.inherited_task_dir
+        None
+        if request.session_mode.value == "resume"
+        else inheritable_task_dir(
+            resolved_project_root,
+            str(runtime_context.spawn_id) if runtime_context.spawn_id is not None else None,
+        )
     )
     ambient_work_id = (
         None
@@ -162,28 +166,11 @@ def launch_primary(
     resolved_work_id = (
         preview_work_id
         if request.dry_run
-        else _resolve_work_id_for_launch(
-            resolved_project_root,
-            request,
-            context_work_id=launch_resolution.context_work_id,
-        )
+        else _resolve_work_id_for_launch(resolved_project_root, request)
     )
 
     runtime = runtime.model_copy(update=launch_resolution.runtime_updates)
     effective_work_id = resolved_work_id or launch_resolution.effective_work_id
-    configured_work_dir = resolved_project_paths.work_dir
-    if effective_work_id is None:
-        active_work_dir = runtime_context.work_dir if inherit_ambient_work else None
-    elif request.dry_run and configured_work_dir is None:
-        active_work_dir = None
-    elif request.dry_run:
-        assert configured_work_dir is not None
-        active_work_dir = configured_work_dir / effective_work_id
-    else:
-        active_work_dir = resolve_work_scratch_dir_for_project(
-            resolved_project_root,
-            effective_work_id,
-        )
     request_updates = dict(launch_resolution.request_updates)
     request_updates["work_id_hint"] = effective_work_id
     spawn_request = build_primary_spawn_request(request=request)
@@ -205,8 +192,6 @@ def launch_primary(
         project_root=resolved_project_root,
         harness_registry=harness_registry,
         catalog=CatalogSession(resolved_project_root),
-        active_work_dir=active_work_dir,
-        explicit_work_id=effective_work_id,
         dry_run=request.dry_run,
     )
     prepared = prepare_launch_surface(

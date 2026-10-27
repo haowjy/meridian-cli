@@ -91,14 +91,13 @@ def resolve_work_scope_from_parts(
     spawn_id: SpawnId | None,
     work_id: str | None,
     bound_work_dir: Path | None,
-    project_work_dir: Path | None = None,
     runtime_root: Path | None = None,
 ) -> WorkScope | None:
     """Resolve active work scope from already-derived context parts.
 
-    *bound_work_dir* is the env-bound directory when ``MERIDIAN_ACTIVE_WORK_DIR``
-    wins over canonical resolution; *project_work_dir* is the repo-scoped work
-    root used for named items when available.
+    *bound_work_dir* is the env-bound directory, or the item's directory as the work
+    store locates it: ``work/`` while the item is active, the archive once it is
+    done. Resolving an item's path here instead would name one of the two.
     """
 
     if bound_work_dir is not None:
@@ -109,9 +108,7 @@ def resolve_work_scope_from_parts(
         return WorkScope(kind="ambient_spawn", identifier="", root=bound_work_dir)
 
     if work_id:
-        if project_work_dir is not None:
-            root = project_work_dir / work_id
-        elif project_root is not None:
+        if project_root is not None:
             try:
                 root = resolve_work_scratch_dir_for_project(project_root, work_id)
             except ValueError:

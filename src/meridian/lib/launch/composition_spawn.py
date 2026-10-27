@@ -15,11 +15,9 @@ from meridian.lib.launch.context import (
     RuntimeBindings,
     bind_launch_context,
     compile_prepared_policy_surface,
-    normalize_explicit_work_id,
     prepare_launch_surface,
 )
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
-from meridian.lib.state.spawn.model import LaunchMode
 
 
 def compose_spawn_launch_surface(
@@ -29,7 +27,6 @@ def compose_spawn_launch_surface(
     harness_registry: HarnessRegistry,
     dry_run: bool,
     runtime_work_id: str | None = None,
-    launch_mode: LaunchMode | None = None,
     cache: MarsResultCache | None = None,
 ) -> PreparedLaunchSurface:
     """Policy + Mars + surface. No bind."""
@@ -45,24 +42,18 @@ def compose_spawn_launch_surface(
         execution_cwd=resolved_requested_task_cwd,
     )
     catalog = CatalogSession(project_paths.project_root, cache=cache)
-    explicit_work_id = normalize_explicit_work_id(
-        request_work_id_hint=request.work_id_hint,
-        runtime_work_id=runtime_work_id,
-    )
     prepared_policy = compile_prepared_policy_surface(
         request=request,
         runtime=runtime,
         project_root=project_paths.project_root,
         harness_registry=harness_registry,
         catalog=catalog,
-        explicit_work_id=explicit_work_id,
         dry_run=dry_run,
     )
     return prepare_launch_surface(
         request=request,
         runtime=runtime,
         prepared_policy=prepared_policy,
-        launch_mode=launch_mode,
     )
 
 

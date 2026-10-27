@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.core.domain import SkillContent
+from meridian.lib.core.domain import AvailableSkillEntry, SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.tools import ToolRule, ToolsField
 
@@ -21,6 +21,10 @@ class LaunchPolicySnapshot(BaseModel):
     agent_profile: dict[str, object] | None = None
     skills: tuple[str, ...] = ()
     loaded_skills: tuple[SkillContent, ...] = ()
+    # On-demand skills the first launch listed under `# Available Skills`. Only names,
+    # descriptions and paths: an exact continue recomposes the same listing without
+    # re-resolving the bundle. Empty on snapshots an older build wrote.
+    available_skills: tuple[AvailableSkillEntry, ...] = ()
     extra_args: tuple[str, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)

@@ -231,17 +231,18 @@ def test_project_config_v2_drives_managed_primary_attach(
     assert "OPENCODE_PASSWORD" not in backend_launches[0].env
 
     # Attach command: bare V2 TUI pointed at the server for the created session.
-    assert process_launcher.launch_commands == [
-        (
-            "opencode",
-            "--server",
-            cast("str", endpoint.url),
-            "--session",
-            _V2_SESSION_ID,
-            "--prompt",
-            "primary prompt",
-        )
-    ]
+    launch = process_launcher.launch_commands[0]
+    assert launch[:6] == (
+        "opencode",
+        "--server",
+        cast("str", endpoint.url),
+        "--session",
+        _V2_SESSION_ID,
+        "--prompt",
+    )
+    assert launch[6].startswith("# Meridian run\n\n")
+    assert "`dry-run-primary-opencode` — your run ID" in launch[6]
+    assert "primary prompt" in launch[6]
     assert process_launcher.launch_envs[0]["OPENCODE_PASSWORD"] == _SERVER_PASSWORD
     assert process_launcher.output_log_paths == [None]
 

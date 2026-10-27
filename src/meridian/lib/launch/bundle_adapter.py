@@ -33,10 +33,10 @@ from meridian.lib.catalog.mars_roots import (
     resolve_mars_executable,
     resolve_mars_roots,
 )
+from meridian.lib.core.domain import AvailableSkillEntry
 from meridian.lib.core.route_report import RouteDecisionReport
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
-from meridian.lib.launch.composition import AvailableSkillEntry
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     ResolvedExecutionPolicy,

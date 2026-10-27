@@ -111,13 +111,31 @@ recorded selection wins. Recorded canonical IDs are literal pins, including deli
 harness-default mode. A new invocation snapshot updates routing fields without
 rewriting the source snapshot.
 
-Replay preserves non-routing policy: agent/profile, skills and loaded content,
-execution policy, `tool_rules` and `platform_tool_rules`, terminal surface, inventory
-prompt, env and passthrough args. Legacy `mcp_tools` is accepted when reading a snapshot
-and ignored because it contains permission names, not MCP configuration. Exact continue
-permits an explicit model override with a cache/cost warning; it still rejects agent,
-skills, execution-policy, passthrough, env, work and task-dir mutations. Agent opt-out is
-also a mutation.
+Replay preserves non-routing policy: agent/profile, skills and loaded content, the
+available-skills listing (names, descriptions and paths, never bodies), execution
+policy, `tool_rules` and `platform_tool_rules`, terminal surface, inventory prompt, env
+and passthrough args. Legacy `mcp_tools` is accepted when reading a snapshot and ignored
+because it contains permission names, not MCP configuration. Exact continue permits an
+explicit model override with a cache/cost warning; it still rejects agent, skills,
+execution-policy, passthrough, env, work and task-dir mutations. Agent opt-out is also a
+mutation.
+
+The system prompt is not stored separately: an exact continue recomposes it from the
+snapshot through the same prepare pipeline. Because every per-launch value lives in the
+user turn, identical snapshot inputs produce identical bytes within one Meridian
+version (a package upgrade may change the rendered guidance), which is what keeps Pi's
+and OpenCode's prompt cache warm. A real identity change on continue — a new goal, a
+primary-vs-spawn surface change — correctly changes the prompt instead of being hidden
+by a replay. Foreground and background spawns share one preamble, so continuing in the
+other mode is not an identity change. A snapshot an older build wrote lacks the
+available-skills field and recomposes without that listing.
+
+Claude is the exception in mechanism, not outcome: its `--system-prompt-snapshot`
+default is `on`, so the CLI records the prompt on the conversation's first request and
+reuses that record on every later request and resume, even when a later launch passes
+different text, until the conversation is compacted. Meridian still writes and passes
+the recorded prompt file; Claude discards it. Editing an agent profile or launch config
+therefore does not reach a continued Claude conversation until it compacts.
 
 Primary and spawn accepted-running callbacks append selection intent through
 `SessionAttempt`. Its captured generation/startup attempt also binds native-ID
@@ -285,7 +303,9 @@ scanning (`scan_agent_profiles()`, `load_agent_profile()`) stays neutral — CLI
 listing and explicit `-a <name>` resolution are unaffected.
 
 Resume and snapshot replay carry `bundle_inventory_prompt` on
-`LaunchPolicySnapshot` so inventory survives without re-calling mars.
+`LaunchPolicySnapshot` so inventory survives without re-calling mars. The same
+snapshot carries `available_skills` (names, descriptions, paths) so the
+`# Available Skills` listing recomposes instead of disappearing on continue.
 
 ### Spawn CWD and Directory Contracts
 
@@ -318,10 +338,55 @@ task directory.
 `# Meridian capabilities` section. Preparation leaves one typed placeholder;
 `bind_launch_context()` renders the whole block once, after the profile's spawn
 capability and declared mode and the final control root, logical task cwd, work
-directory/id, spawn ID, chat ID, KB, and extra contexts are known. The notification
+item, chat and KB are known. Every execution has its own chat and therefore its own
+two links: the work directory (`work_link`, a literal path with no item ID, because
+the ID goes stale after `work switch`, and no scratch path, because `work done` moves
+it) and the source checkout (`task_link`, which replaces the concrete directory line
+and says to write the literal path, because `task-dir`, `work task-dir`, and a switch
+repoint it). Both are projections, not authority: each is a symlink to a link the
+work store keeps for the item (`work-items/<id>/work` and `task`), so a move of the
+item (`work done`, `reopen`, `task-dir`) never touches a chat link. `launch/
+session_links.py` computes the targets from the chat row and the spawn scope alone
+(`chat_link_targets()`, pure — it never asks the work store where an item lives) and
+swaps one symlink per link under the session write epoch; the launch env names the same
+paths (`MERIDIAN_ACTIVE_WORK_DIR`, `MERIDIAN_TASK_DIR`).
+
+**A checkout is pinned only when no store can recompute it.** The task link is the
+execution's pin, else its item's checkout, else the project root. Before publishing the
+links, `bind_launch_context()` pins the directory in the execution's spawn scope
+(`write_spawn_scope_task_dir()`) for the three launch facts nothing else records: an
+explicit `--task-dir`, a launch from a directory outside the project (an implicit
+`--task-dir`), and the pin its launcher passed on (`inheritable_task_dir()` reads the
+launcher's spawn scope, never `MERIDIAN_TASK_DIR`, which inside a managed run is the
+launcher's own link). A checkout that came from a work item or the project root needs no
+pin: the item's link recomputes it, so a child of an execution that merely follows its
+item follows `work task-dir` and `work switch` too. `meridian task-dir clear` removes the
+pin. The capability block carries a
+primary's own chat ID and its two links, because a primary's `--continue` replays no
+user turn; per-launch values are rendered into the first user turn
+(`build_launch_facts_prompt()`), because one changed byte in the system prompt
+invalidates the harness prompt cache for the whole conversation. That covers the run
+ID, a spawn's launching chat, and a spawn's two links — their paths name the spawn's
+own chat — plus a spawn's goal contract. Sibling spawns therefore send identical
+system bytes.
+A primary's `--goal` is a guidance block instead: it holds for the whole conversation,
+and goal text must never create a user turn. A primary that launches bare would
+otherwise submit the goal as its first message, fresh and on every resume, and a Codex
+primary would lose it entirely because its user turn is synthetic. A continued
+conversation inherits the goal from its row (`SpawnRecord.goal`) unless `--goal`
+overrides it. The work item's own goal is neither text nor user turn: the block
+carries a pointer, "run `meridian work show`", and that command resolves the session's
+current work item itself, so the prompt holds no goal that could be edited
+mid-conversation and no ID that could go stale. The block names
+`$MERIDIAN_ACTIVE_WORK_DIR` and `$MERIDIAN_TASK_DIR` for the links it names. Its run-ID row
+names `$MERIDIAN_SPAWN_ID` and points at `meridian task-dir --json`, which prints it as
+`spawn_id`: a restricted shell cannot expand the variable, and `meridian spawn list` lists runs
+without saying which one is the caller's. The notification
 row is present only for a `mode: primary` profile; delegation rows remain gated by
 spawn capability. The source line names the actual control root as shell cwd and gives
-the absolute task directory; when they match it collapses to one shorter line.
+the absolute task directory; when they match it collapses to one shorter line, and a
+primary's checkout is always the second form because its link never equals the
+control root.
 Restricted shells need the resolved paths because they refuse variable expansion and
 compound `cd` calls. Do not compose or append a second directory instruction before
 or after projection.
@@ -357,7 +422,9 @@ valid tier. The fallback is read-time only — work state is never mutated on a
 read path. `WorkTaskDirMissing` is raised only when even the fallback
 `authority_root` does not exist; it is mapped to error name
 `work_task_dir_missing` at the pre-init boundary in `ops/spawn/pre_init.py`.
-Both `resolve_task_cwd()` and `resolve_effective_task_dir()` implement this.
+Both `resolve_task_cwd()` and `resolve_effective_task_dir()` implement this. Both read
+an item's `task_dir` through `work_store.item_task_dir()`, which finds the item active
+or done: a done item keeps its checkout, as its `task` link does.
 
 **Warning threading.** `TaskCwdResolution.warning` carries the stale-path
 warning from `resolve_task_cwd()`. Callers must explicitly merge it into
@@ -393,14 +460,11 @@ Launch uses a work item's `task_dir` as its logical task cwd. Persisted
 manage git worktrees.
 
 **Premature-derivation trap in `ops/spawn/prepare.py`.** `build_create_payload()`
-derives the parent's inheritable task dir via `derive_inheritable_task_dir()`
-before calling `resolve_launch_inputs()`. That derivation calls
-`resolve_effective_task_dir()`, which can raise on a stale work-item path.
-When an explicit `--task-dir` flag is present, `build_create_payload()` skips
-the derivation entirely (sets `inherited_for_child = None`) so the stale value
-never blocks an explicit override. Without this skip, the stale-path exception
-fires before the explicit flag reaches `resolve_task_cwd()`, breaking the
-documented config-precedence rule that CLI flags always win.
+derives the parent's inheritable task dir via `inheritable_task_dir()` (its spawn-scope
+pin) before calling `resolve_launch_inputs()`. When an explicit `--task-dir` flag is
+present, `build_create_payload()` skips the derivation entirely
+(sets `inherited_for_child = None`), so CLI flags keep their documented precedence
+over anything inherited.
 
 ### Workspace Projection
 
@@ -571,7 +635,9 @@ Loaded skills reach the agent one way on every harness, primary and spawn:
 `_build_spawn_composed_launch_content()` and `_resolve_primary_projection()`, and
 harness projection places them in the system prompt after the agent profile.
 Bind-time re-projection rebuilds from the same composed content, so the skills
-survive it without special handling.
+survive it without special handling. An exact continue takes them from the launch
+snapshot, including the on-demand `available_skills` listing (whose bodies the
+snapshot never stores), so the recomposed system prompt matches the conversation's.
 
 Don't add a second channel keyed on a harness capability. A native skill list
 shows only model-invocable skills, so a loaded skill that isn't model-invocable

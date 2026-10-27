@@ -36,26 +36,44 @@ path-derived `adhoc.*` state under `MERIDIAN_HOME` and never write into the CWD.
 Run `meridian init` when the directory should have committed, shareable identity.
 
 Task directory (where source reads, edits, git, builds, and tests run) is separate.
-`MERIDIAN_TASK_DIR` is inherited across spawns. Precedence within a session:
-spawn-scope override (`meridian task-dir set`, stored in per-spawn `scope.json`) →
-work-item `task_dir` (`meridian work task-dir`) → inherited `MERIDIAN_TASK_DIR` →
-project root. Query with `meridian task-dir`; clear a stale inherited value with
-`meridian task-dir clear`. Use `--task-dir` on primary/spawn launch for one-shot
-overrides — not `-C`, which retargets the entire project/control root.
+Inside a managed run, `MERIDIAN_TASK_DIR` is the execution's own per-chat link
+(`sessions/<chat>/task`), a projection of one rule and never an input to it.
+Precedence within a session: the execution's pin (`meridian task-dir set`, stored in
+per-spawn `scope.json`) → work-item `task_dir` (`meridian work task-dir`) → project
+root. Outside a managed run an exported `MERIDIAN_TASK_DIR` is an explicit checkout,
+like `--task-dir`.
+
+Three things pin a checkout to one execution at launch: `--task-dir`, a launch from a
+directory outside the project (treated as an implicit `--task-dir`), and the pin of
+the execution that launched it. Every other checkout — the item's, the project root —
+is read from the work store, so it follows `work task-dir` and `work switch`; a child
+of an execution that follows its item inherits no pin. `meridian task-dir clear`
+removes the pin and returns the execution to its item's checkout.
+`meridian task-dir` prints the resolved directory, not the link. Use `--task-dir` on
+primary/spawn launch to give one execution its own checkout — not `-C`, which
+retargets the entire project/control root.
 
 ## Core
 
 | Variable | Purpose |
 |---|---|
 | `MERIDIAN_PROJECT_DIR` | Inherited project/control root; wins over literal CWD when set |
-| `MERIDIAN_TASK_DIR` | Inherited source-edit directory; set/clear via `meridian task-dir` |
+| `MERIDIAN_TASK_DIR` | Source-edit directory: a stable per-chat symlink (`sessions/<chat>/task`) for every execution, primary or spawn. It follows `meridian task-dir`, `meridian work task-dir`, and `work switch`, survives a Claude `/clear` or `/resume` and the session exiting. Set/clear via `meridian task-dir` |
 | `MERIDIAN_CONFIG` | User config overlay path |
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/`) |
-| `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
-| `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory: named work item scratch dir when attached, else the run's ambient spawn scope (`spawns/p<N>/work`) |
+| `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists. Informational: every command reads the item from the execution's own chat row, which is what a `work switch` writes |
+| `MERIDIAN_ACTIVE_WORK_DIR` | Work directory: a stable per-chat symlink for every execution, primary or spawn. It follows `work start`/`switch`/`rename`, follows the item into the archive on `work done` and back on `work reopen`, survives a Claude `/clear` or `/resume` and the session exiting, and returns to the ambient spawn scope after `work delete` |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
 | `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
+
+Every session points `MERIDIAN_ACTIVE_WORK_DIR` and `MERIDIAN_TASK_DIR` at stable
+symlinks. Harnesses that match file-permission rules against literal paths (Claude
+Code) do not follow them: a profile's scoped `Edit` grant on the real work-item or
+checkout path does not authorize a write through the link. Meridian's `--add-dir`
+projection grants the runtime root, which contains both links, so file access is
+covered; a scoped `Edit` rule needs the link's parent directory
+(`sessions/<chat>/`) instead of the real path.
 
 Internally, `_MERIDIAN_DEPTH` carries the current zero-based counter while the
 public `MERIDIAN_MAX_DEPTH` remains the user-configurable cap. Other internal

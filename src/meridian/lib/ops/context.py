@@ -20,8 +20,10 @@ from meridian.lib.core.formatting import relative_time
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
-from meridian.lib.launch.cwd import resolve_effective_task_dir
+from meridian.lib.launch.cwd import inheritable_task_dir, resolve_effective_task_dir
+from meridian.lib.launch.session_links import execution_link_chat, republish_chat_links
 from meridian.lib.ops.runtime import (
+    RuntimeAuthoritySnapshot,
     resolve_runtime_authority_for_read,
     resolve_runtime_authority_for_write,
 )
@@ -365,17 +367,20 @@ def _resolve_effective_task_dir_output() -> TaskDirOutput:
     authority = resolve_runtime_authority_for_read()
     runtime_ctx = RuntimeContext.from_environment()
     resolved = ResolvedContext.from_environment()
+    spawn_id = str(runtime_ctx.spawn_id) if runtime_ctx.spawn_id is not None else None
     effective = resolve_effective_task_dir(
         project_root=authority.project_root,
         project_state_dir=authority.project_state_dir,
-        spawn_id=str(runtime_ctx.spawn_id) if runtime_ctx.spawn_id is not None else None,
-        inherited_task_dir=resolved.inherited_task_dir,
+        spawn_id=spawn_id,
+        # Inside a managed run `MERIDIAN_TASK_DIR` is this execution's own link, not an
+        # input: its pin and its item decide.
+        inherited_task_dir=None if spawn_id else inheritable_task_dir(authority.project_root, None),
         work_id=resolved.work_id,
     )
     return TaskDirOutput(
         task_dir=effective.task_dir.as_posix(),
         source=effective.source,
-        spawn_id=str(runtime_ctx.spawn_id) if runtime_ctx.spawn_id is not None else None,
+        spawn_id=spawn_id,
         warning=effective.warning,
     )
 
@@ -396,6 +401,7 @@ def task_dir_set_sync(input: TaskDirSetInput) -> TaskDirMutationOutput:
     task_dir = _validated_task_dir_path(input.path)
     if not write_spawn_scope_task_dir(authority.project_root, spawn_id, task_dir):
         raise ValueError(f"Spawn '{spawn_id}' not found")
+    _refresh_session_task_links(authority, runtime_ctx)
     return TaskDirMutationOutput()
 
 
@@ -408,7 +414,24 @@ def task_dir_clear_sync(input: TaskDirClearInput) -> TaskDirMutationOutput:
     spawn_id = _require_session_spawn_id(runtime_ctx)
     if not write_spawn_scope_task_dir(authority.project_root, spawn_id, None):
         raise ValueError(f"Spawn '{spawn_id}' not found")
+    _refresh_session_task_links(authority, runtime_ctx)
     return TaskDirMutationOutput()
+
+
+def _refresh_session_task_links(
+    authority: RuntimeAuthoritySnapshot,
+    runtime_ctx: RuntimeContext,
+) -> None:
+    """Repoint the links of the execution this session belongs to."""
+
+    spawn_id = str(runtime_ctx.spawn_id) if runtime_ctx.spawn_id is not None else ""
+    if authority.runtime_root is None or not spawn_id:
+        return
+    entry_chat = execution_link_chat(authority.runtime_root, spawn_id=spawn_id)
+    if entry_chat:
+        republish_chat_links(
+            authority.project_root, authority.runtime_root, entry_chat, spawn_id=spawn_id
+        )
 
 
 async def task_dir(input: TaskDirInput) -> TaskDirOutput:

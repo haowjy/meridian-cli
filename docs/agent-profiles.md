@@ -316,7 +316,7 @@ directory).
 
 | How the agent gets the skill | What reaches the agent |
 |---|---|
-| `load` (or the flat list) | The skill's full text, in the system prompt after the profile body, on every launch |
+| `load` (or the flat list) | The skill's full text, in the system prompt after the profile body, when the conversation starts. An exact `--continue` recomposes the prompt from the launch snapshot, so profile and skill edits take effect on the next fresh launch, not mid-conversation. |
 | `--skills NAME` on `meridian spawn` or `meridian start` | Same as `load`, for that launch |
 | `available` | The skill's name and description under `# Available Skills`, grouped by [type](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#type). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
 
@@ -327,6 +327,13 @@ So `model-invocable: false` plus `load` gives one agent a skill that no other
 agent sees or loads on its own. The reverse pairing doesn't work: an `available`
 skill with `model-invocable: false` is named in the listing, but the harness
 won't load it.
+
+An exact `--continue` recomposes the system prompt from the launch snapshot, so it
+sends the same profile, skills, and capability guidance the conversation started
+with; edits apply on the next fresh launch, not mid-conversation. `--fork` keeps that
+identity too; `--fork-fresh` is the branching form that picks up edits.
+Claude is stricter still: its default `--system-prompt-snapshot on` keeps the prompt
+it recorded until the conversation compacts, even if Meridian passes different text.
 
 Each loaded skill is headed `# Skill: /<name>` with a line saying its text is
 already loaded and where its resource files are. An agent body can name a loaded

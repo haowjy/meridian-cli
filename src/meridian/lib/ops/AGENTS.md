@@ -91,17 +91,28 @@ operations through this module. Adding a new operation requires an entry here �
 otherwise it is invisible to both surfaces.
 
 **Work item attachment is ops-layer responsibility.** `work_attachment.py:ensure_explicit_work_item()`
-handles `--work` resolution before the spawn row is created.
+handles `--work` resolution before the spawn row is created, and
+`resolve_active_work_id()` is the one read behind a "current" work item: every
+execution follows its own chat's row, and the launch env only speaks for an unmanaged
+shell. Commands that act on an item
+take one when given, `current`, or nothing (`work done` without an argument), so no
+caller carries an ID a `work switch` can invalidate; `work start`/`rename` refuse
+`current` as a name the alias would shadow.
 `activate_work()` owns the user-visible choice made by `work start`, `work
 switch`, or a primary launch attaching `--work` / `--from`; it fires
-`work.activated` plus matching telemetry whether or not a session exists, and
-writes the attachment when `session_store.session_exists()` finds the chat
-record, even before a harness session ID is known. `publish_work_event()` owns
-hook context, active/archive work-directory resolution, and paired telemetry
-for every published work event. Incidental attachment maintenance (child
-inheritance, rename, and clear) writes through `session_store` without
-publishing an activation. Primary launch uses the same activation operation as
-the launch runner's default rather than a separate store-write seam.
+`work.activated` plus matching telemetry whether or not a session exists.
+`attach_executions()` is the one place an execution's attachment changes (`switch`,
+`start`, `clear`, a launch, and `rename`/`delete` for live executions): the item's
+links first, in the work store, then — in one session epoch, never nested with the
+work-store lock — the rows in one `set_work_attachments` batch and the chat links they
+project. It reads the caller's execution from its own spawn row (`execution_of`), so no
+command scans the spawn store. `work done`, `reopen` and `task-dir` write no session
+state: the item's own links carry every attached chat along. Rename and delete find
+only live executions (`execution_owners`); a chat that ended keeps its row, and a name
+that no longer names an item resolves to no item. `publish_work_event()` owns hook
+context, active/archive work-directory resolution, and paired telemetry for every
+published work event. Primary launch uses the same activation operation as the launch
+runner's default rather than a separate store-write seam.
 
 **Use `structlog.get_logger()`.** Never use stdlib `logging` in ops/ — the logging
 split matters for `capture_library_diagnostics()` at the launch boundary.

@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
+from meridian.lib.core.domain import AvailableSkillEntry
 from meridian.lib.core.types import HarnessId
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
-from meridian.lib.launch.composition import AvailableSkillEntry
 from meridian.lib.launch.composition_spawn import compose_spawn_launch_surface
 from meridian.lib.launch.context import (
     LaunchContext,

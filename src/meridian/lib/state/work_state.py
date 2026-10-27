@@ -61,6 +61,20 @@ def _warn_unknown_work_state_fields(path: str, fields: tuple[str, ...]) -> None:
     )
 
 
+def warn_missing_work_item(work_id: str, *, chat_id: str = "") -> None:
+    """Say once that a name from a session or `--from` source is no item any more."""
+
+    warn_once(
+        ("missing-work-item", work_id),
+        lambda: logger.warning(
+            "A session names a work item that no longer exists (renamed or deleted); "
+            "ignoring it. Pass --work to name one.",
+            work_id=work_id,
+            chat_id=chat_id,
+        ),
+    )
+
+
 def _warn_work_state_read_failure(path: str, error: str) -> None:
     warn_once(
         ("work-state-read-failure", path),
@@ -214,6 +228,12 @@ def project_paths_for_work_store(
     return ProjectPaths.from_root_dir(project_state_dir)
 
 
+def project_root_for_work_store(project_state_dir: Path) -> Path:
+    """Return the checkout a work item falls back to: the project root."""
+
+    return project_state_dir.parent if project_state_dir.name == ".meridian" else project_state_dir
+
+
 def active_work_dir(paths: ProjectPaths, work_id: str) -> Path:
     if paths.work_dir is None:
         raise ValueError("Project work path is unresolved.")
@@ -227,9 +247,17 @@ def archived_work_dir(paths: ProjectPaths, work_id: str) -> Path:
 
 
 def locate_work_dirs(paths: ProjectPaths, work_id: str) -> tuple[Path | None, Path | None]:
+    """Return the item's directories that exist, as (active, archived).
+
+    An unconfigured archive root has nothing to find.
+    """
+
     active = active_work_dir(paths, work_id)
-    archived = archived_work_dir(paths, work_id)
-    return active if active.is_dir() else None, archived if archived.is_dir() else None
+    archived = archived_work_dir(paths, work_id) if paths.work_archive_dir is not None else None
+    return (
+        active if active.is_dir() else None,
+        archived if archived is not None and archived.is_dir() else None,
+    )
 
 
 def warn_both_locations(work_id: str, active_dir: Path | None, archived_dir: Path | None) -> None:
@@ -343,17 +371,20 @@ def load_work_item_from_dir(
                 except ValidationError as exc:
                     _warn_work_state_validation_failure(str(metadata_path), str(exc))
                     stored = fallback
-    if archived:
-        projected_status = "done"
-    else:
-        projected_status = default_status if stored.status == "done" else stored.status
+    # An archived directory is done by location, whatever its metadata still says:
+    # the location is what `work done` and `work reopen` move, and a crash between
+    # that move and the metadata write must not invent a second state.
+    projected_status = "done" if archived else stored.status
+    archived_at = None
+    if projected_status == "done":
+        archived_at = stored.archived_at or (fallback.archived_at if archived else None)
     return WorkItem(
         name=work_dir.name,
         description=stored.description,
         goal=stored.goal,
         status=projected_status,
         created_at=stored.created_at,
-        archived_at=(stored.archived_at or fallback.archived_at) if archived else None,
+        archived_at=archived_at,
         task_dir=stored.task_dir,
         worktree=stored.worktree,
         stored_state_extras=dict(stored.model_extra or {}),

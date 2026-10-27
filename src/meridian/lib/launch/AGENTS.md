@@ -216,6 +216,32 @@ implicit authority. Use `resolve_task_context_inputs()` to land it in the user t
 Variable content in the system prompt also destroys prompt-cache locality.
 See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) for the full rationale.
 
+**Don't put per-launch values in the system prompt.** Per-launch values stay out;
+per-conversation values may stay in. Every execution has its own chat and so its own
+two links — `sessions/<chat>/work` and `sessions/<chat>/task` (`session_links.py`) —
+and their paths are per-launch for a spawn and per-conversation for a primary. So a
+spawn's run ID, its launching chat, and those two links go in the first user turn
+(`build_launch_facts_prompt()`), never the system prompt: sibling spawns then send
+byte-identical system bytes. A primary's own chat ID and its two links stay in the
+capability block, because a `--continue` replays no user turn. Bind also pins a
+checkout no store can recompute — this run's `--task-dir`, a launch from outside the
+project, or the pin its launcher passed on (read from the launcher's spawn scope, never
+from `MERIDIAN_TASK_DIR`) — in the execution's spawn scope before it publishes the
+links, and nothing else: a checkout that came from the item or the project root follows
+`work task-dir` and `work switch`, and `meridian task-dir clear` removes the pin. A spawn's `--goal`
+contract is its task turn (`_build_goal_instruction`'s text); a primary's is a
+guidance block, because goal text must never create a user turn, or a bare primary
+submits the goal as its first message, fresh and on every resume. A continued
+conversation inherits the goal from its row (`SpawnRecord.goal`), the way a continued
+spawn does. The work item's own goal is a pointer instead — `meridian work show`
+resolves the current item, so neither the text nor an ID that could go stale enters
+the prompt. An exact continue recomposes the system prompt from the launch snapshot
+(profile, loaded and available skills, inventory, execution policy, tools); within one
+Meridian version identical inputs produce identical bytes, so a fresh launch shares
+the cached prefix with its siblings and a continue keeps the conversation's. Only a
+real identity change — a new goal, surface, or config — may change them. Foreground
+and background spawns share one preamble for the same reason.
+
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — spawn CWD three-directory model

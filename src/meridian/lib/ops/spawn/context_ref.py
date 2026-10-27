@@ -10,7 +10,8 @@ from meridian.lib.core.context_ref import (
     SpawnContextRef,
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import session_identity, session_store
+from meridian.lib.ops.work_attachment import resolve_active_work_id
+from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived
 
@@ -55,6 +56,14 @@ def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> Spawn
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
         return None
+    # A tracked chat names its own execution. After `/clear` the entry chat is a
+    # stopped predecessor of the live one, so the owner-chat search below would miss
+    # the primary that moved off it.
+    record = session_store.chat_record(runtime_root, chat_id)
+    if record is not None and record.spawn_id:
+        row = spawn_store.get_spawn(runtime_root, record.spawn_id)
+        if row is not None:
+            return row
     owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, chat_id) or chat_id
     spawns = overlay_derived(
         runtime_root,
@@ -162,25 +171,34 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
 
 
 def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> SessionContextRef:
-    chat_id = (primary_row.chat_id or "").strip()
+    """Name the conversation the primary is in now, not the one it launched on.
+
+    ``--from <entry chat>`` after a Claude ``/clear`` must continue the live
+    conversation: the entry chat's own transcript stops where the rotation happened.
+    """
+
+    chat_id = (primary_row.continue_chat_id or primary_row.chat_id or "").strip()
     if not chat_id:
         raise ValueError(f"Primary spawn '{primary_row.id}' has no associated session")
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
         raise ValueError(f"Primary spawn '{primary_row.id}' has no runtime state")
-    work_id = (
-        session_store.get_session_active_work_id(runtime_root, chat_id) or ""
-    ).strip() or None
+    record = session_store.chat_record(runtime_root, chat_id)
     return SessionContextRef(
         chat_id=chat_id,
         primary_spawn_id=primary_row.id,
-        history_id=primary_row.history_id,
+        history_id=(record.history_id if record is not None else None) or primary_row.history_id,
         status=primary_row.status,
         agent=primary_row.agent or "",
         model=primary_row.model or "",
         harness=primary_row.harness or "",
-        harness_session_id=primary_row.harness_session_id,
-        work_id=work_id,
+        harness_session_id=(
+            (record.harness_session_id or "").strip()
+            if record is not None
+            else primary_row.harness_session_id
+        )
+        or None,
+        work_id=resolve_active_work_id(project_root, runtime_root, chat_id=chat_id),
         task_cwd=(primary_row.task_cwd or "").strip() or None,
     )
 

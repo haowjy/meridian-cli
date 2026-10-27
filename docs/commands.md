@@ -222,17 +222,74 @@ Runner-history pruning is explicit, never automatic; see
 | Command | Description |
 | ------- | ----------- |
 | `meridian work` | Dashboard — active work items and spawns |
-| `meridian work current` | Print the active work scope directory (named work item or ambient spawn scope) |
+| `meridian work current` | Print the active work scope directory (a primary session's attached work item, otherwise its launch-bound or ambient spawn scope) |
 | `meridian work path RELPATH` | Materialize a path under the active scope and print its absolute path (creates parent dirs) |
 | `meridian work root` | Print the configured work root (context tree for named work items) |
 | `meridian work start LABEL` | Create a work item if missing, or switch to it |
 | `meridian work start LABEL --task-dir PATH` | Create/switch and set task directory for source edits |
 | `meridian work list` | List all work items |
-| `meridian work show SLUG` | Show one work item, its directory, and attached spawns |
-| `meridian work switch SLUG` | Set active work item |
+| `meridian work show [SLUG]` | Show one work item, its directory, and attached spawns (default: this session's active work item) |
+| `meridian work switch SLUG\|current` | Set active work item |
 | `meridian work task-dir [PATH\|--clear]` | Show/set/clear active work-item task directory |
-| `meridian work done SLUG` | Mark a work item done and archive its scratch directory |
-| `meridian work sessions SLUG` | List sessions attached to a work item |
+| `meridian work update [SLUG] --status/--desc/--goal` | Update a work item (default: this session's active work item) |
+| `meridian work done [SLUG]` | Mark a work item done and archive its scratch directory (default: this session's active work item) |
+| `meridian work sessions [SLUG]` | List sessions attached to a work item (default: this session's active work item) |
+| `meridian work rename [OLD] NEW` | Rename a work item; one argument renames this session's active item, like `git branch -m NEW` |
+| `meridian work delete [SLUG\|current]` | Delete a work item (default: this session's active work item) |
+| `meridian work reopen SLUG\|current` | Reopen a done work item |
+
+Commands that act on a work item default to the one this session is attached to,
+and `current` names it anywhere a work id is accepted (`work show`, `sessions`,
+`done`, `update`, `rename`, `delete`, `switch`, `reopen`, `spawn --work`), so no
+script has to carry an id that a `work switch` can invalidate. `current` is
+reserved: `work start`/`rename` refuse it as a name.
+
+`work done` moves the item's directory to the archive immediately and writes no
+session state: every attached execution keeps its attachment, and the item's own
+links follow the directory, so a spawn that is still running keeps writing through
+the same literal path and its writes land in the archive. A primary attached to the
+item keeps it, and `work switch` to a done item reopens it. `work rename` moves the
+directory and moves the executions that are live and attached to it onto the new
+name. A chat that already ended keeps the name it ended on, so `--from` on it warns
+that the item no longer exists and creates nothing; pass `--work` to name one. A
+`work rename` that stopped part way is finished by running it again with the same two
+names; with a name that was never renamed to the new one, it reports that the item is
+not found. A done item keeps its checkout, so `meridian task-dir` and the `task` link
+still name it. `work delete` returns the live executions to their ambient directory.
+`work reopen` moves the directory back, and `work start` or `work switch` of a done
+item reopens it.
+
+A move never deletes either copy. If a directory exists in both places — an
+interrupted operation, or a leftover — it is refused with both paths named, and
+nothing is moved or deleted.
+
+Every live execution, primary or spawn, has two stable symlinks under the runtime
+root that keep moving targets out of the prompt and environment. Each points at a
+link the work store keeps for the item (`work-items/<id>/work` and `task`), so a move
+of the item needs no write to any session:
+
+- `sessions/<chat>/work` (`MERIDIAN_ACTIVE_WORK_DIR`) is the work directory.
+  `work start`, `work switch`, `work rename` and `work delete` repoint it, and a
+  `work done` or `work reopen` moves the item under it; with no active item it
+  points at the execution's ambient spawn work directory. Agents can write prompt
+  files with that literal path and pass it to `--prompt-file` without resolving the
+  work path again. The link follows the current item, so write a prompt after the
+  final switch; a path saved before a switch still names the same link but reaches
+  the new item.
+- `sessions/<chat>/task` (`MERIDIAN_TASK_DIR`) is the source checkout: the execution's
+  pinned checkout, else its item's checkout, else the project root. It follows
+  `meridian task-dir`, `meridian work task-dir`, and a switch to an item with its own
+  checkout, so the same literal path keeps reaching the current one. Three things
+  pin a checkout to one execution, and `meridian task-dir clear` removes the pin: a
+  launch's `--task-dir`; a launch from a directory outside the project, which counts
+  as `--task-dir`; and the pin of the execution that launched it. A child of an
+  execution that follows its item or the project root inherits no pin, so it follows
+  `work task-dir` and `work switch` too.
+
+The chat in the path is the execution's own: a primary's entry chat (the one its
+launch named, which survives a `/clear` rotation) and a spawn's own chat. A primary
+launch names its links in the system prompt; a spawn names them in its first user
+turn, so sibling spawns share one cached system prompt.
 
 ## Hooks
 

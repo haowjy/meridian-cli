@@ -259,7 +259,18 @@ here; otherwise it is invisible to those surfaces.
 **Work item attachment is ops-layer responsibility.** `work_attachment.py:ensure_explicit_work_item()`
 handles `--work` resolution before the spawn row is created. The resumed-session
 case (reading `preserved_work_id`) is handled inside `run_harness_process()` in
-`launch/process/`.
+`launch/process/`. `resolve_active_work_id()` reads an execution's own chat row for
+both kinds, since only that row survives a `/clear`. A row, or an env snapshot, that
+names an item with no directory resolves to no item, with a warning (one rule in
+`ResolvedContext`), so `--from` on a chat that ended before a rename or delete cannot
+bring the old item back; only an explicit `--work` creates one
+(`materialize_launch_work_id` takes nothing else). `attach_executions()` is the one
+seam for an execution's attachment changing: the item's own links first (work store),
+then rows and chat links in one session epoch. `done`, `reopen` and `task-dir` write
+no session state, and `rename` and `delete` move live executions only, so no command
+rewrites historical or ended rows. The old design held the sessions lock across the
+move and rewrote every row that named the item; it deadlocked against `session
+restore`, failed on historical rows after the move, and spent 99 s on a 603-row item.
 
 **Sync/conflict boundary: ops resolves roots, autosync_store owns artifacts.**
 `sync_conflicts.py` and `context.py` follow the same pattern: ops determines

@@ -9,7 +9,7 @@ from typing import Protocol
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.core.domain import SkillContent
+from meridian.lib.core.domain import AvailableSkillEntry, SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
@@ -78,6 +78,7 @@ class ReplayedLaunchPolicySnapshot:
     routing: ResolvedLaunchRouting
     execution_policy: ResolvedExecutionPolicy
     resolved_tool_rules: tuple[ToolRule, ...] = ()
+    available_skills: tuple[AvailableSkillEntry, ...] = ()
     # Candidate platform denies named for the snapshotted harness; empty when an older build
     # wrote the snapshot (the policy layer then asks Mars for them).
     platform_tool_rules: tuple[ToolRule, ...] = ()
@@ -131,6 +132,7 @@ def build_launch_policy_snapshot(
     *,
     model_selection: SnapshotModelSelection | None = None,
     loaded_skills: tuple[SkillContent, ...] = (),
+    available_skills: tuple[AvailableSkillEntry, ...] = (),
     bundle_inventory_prompt: str | None = None,
     profile: AgentProfile | None = None,
 ) -> LaunchPolicySnapshot:
@@ -148,6 +150,7 @@ def build_launch_policy_snapshot(
         agent_profile=_persisted_agent_profile(profile=profile, request=request),
         skills=request.skills,
         loaded_skills=loaded_skills,
+        available_skills=available_skills,
         execution_policy=request.execution_policy,
         tool_rules=request.tool_rules,
         platform_tool_rules=request.platform_tool_rules,
@@ -213,6 +216,7 @@ def replay_launch_policy_snapshot(
         ),
         execution_policy=snapshot.execution_policy,
         resolved_tool_rules=snapshot.tool_rules or legacy_tool_rules(snapshot.tools),
+        available_skills=snapshot.available_skills,
         platform_tool_rules=snapshot.platform_tool_rules,
         terminal_surface_mode=terminal_surface_mode,
         matched_policy_rule=snapshot.matched_policy_rule,

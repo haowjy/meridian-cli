@@ -103,7 +103,7 @@ def test_live_session_appends_do_not_replay_the_session_log(
     monkeypatch.setattr(session_store, "list_session_generations", refuse_replay)
     monkeypatch.setattr(session_store, "read_events", refuse_replay)
 
-    session_store.update_session_work_id(runtime_root, chat_id, "work")
+    session_store.update_session_spawn_id(runtime_root, chat_id, "p1")
     selection = session_store.SessionModelSelectionEvent(
         kind="invocation_started",
         harness="codex",

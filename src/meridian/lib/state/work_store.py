@@ -64,6 +64,44 @@ def work_item_needs_repair(runtime_root: Path, work_id: str) -> bool:
         return True
 
 
+def work_item_exists(runtime_root: Path, work_id: str) -> bool:
+    """Return whether an item has a directory in ``work/`` or the archive.
+
+    Two stats and no read: the question a stale session row or env must answer
+    before it names an item.
+    """
+
+    paths = project_paths_for_work_store(runtime_root)
+    return paths.work_dir is not None and any(locate_work_dirs(paths, work_id))
+
+
+def _recorded_task_dir(item: WorkItem) -> Path | None:
+    return Path(item.task_dir).expanduser().resolve() if item.task_dir else None
+
+
+def item_task_dir(runtime_root: Path, work_id: str) -> Path | None:
+    """Return the checkout an item records, whether it is active or done.
+
+    A done item keeps its checkout: its agents are still working there, and its
+    ``task`` link keeps naming it.
+    """
+
+    item = get_work_item(runtime_root, work_id)
+    return _recorded_task_dir(item) if item is not None else None
+
+
+def item_checkout(item: WorkItem, project_root: Path) -> Path:
+    """Return the checkout an item's agents edit: its ``task_dir`` while that is a
+    directory, otherwise the project root.
+
+    The one rule behind the item's ``task`` link, for a done item as for an active one.
+    A reader that reports a stale ``task_dir`` takes it from :func:`item_task_dir`.
+    """
+
+    recorded = _recorded_task_dir(item)
+    return recorded if recorded is not None and recorded.is_dir() else project_root
+
+
 def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     """Load one work item from active or archived directories."""
 
@@ -79,32 +117,18 @@ def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     return None
 
 
-def get_active_work_item(
-    runtime_root: Path,
-    work_id: str,
-) -> WorkItem | None:
-    """Load one active work item."""
-
-    paths = project_paths_for_work_store(runtime_root)
-    if paths.work_dir is None:
-        return None
-    active_dir = active_work_dir(paths, work_id)
-    if not active_dir.is_dir():
-        return None
-    return load_work_item_from_dir(active_dir, archived=False, mark_unsupported=True)
-
-
 def work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
-    """Return current active/archive work directory if present, otherwise active path."""
+    """Return current active/archive work directory if present, otherwise active path.
+
+    Location is authoritative: `work done` moves the directory, so a reader that
+    assumed the active path would name a directory that is no longer there. An
+    unconfigured archive root simply has nothing to find.
+    """
 
     paths = project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = locate_work_dirs(paths, work_id)
     warn_both_locations(work_id, active_dir, archived_dir)
-    if active_dir is not None:
-        return active_dir
-    if archived_dir is not None:
-        return archived_dir
-    return active_work_dir(paths, work_id)
+    return active_dir or archived_dir or active_work_dir(paths, work_id)
 
 
 def list_work_items(runtime_root: Path) -> tuple[list[WorkItem], list[str]]:

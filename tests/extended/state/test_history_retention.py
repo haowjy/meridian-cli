@@ -641,7 +641,7 @@ def test_restore_conflicts_with_changed_native_session_metadata(tmp_path: Path) 
         state.terminal.finished_at,
     )
     receipt = publish_archive(root, tmp_path / "zips", (record,))
-    session_store.update_session_work_id(root, chat, "changed-after-capture")
+    session_store.set_work_attachments(root, {chat: "changed-after-capture"})
     with pytest.raises(ValueError, match="identity conflict"):
         restore_archive(root, tmp_path / "zips" / receipt.zip_name, (str(state.history_id),))
 
@@ -915,8 +915,7 @@ def test_historical_session_updates_are_refused(tmp_path: Path) -> None:
     assert row.session_instance_id is not None
     assert row.session_instance_id.startswith("historical-")
     before = (fresh / "sessions.jsonl").read_bytes()
-    with pytest.raises(ValueError, match="Historical"):
-        session_store.update_session_work_id(fresh, row.chat_id, "changed")
+    assert session_store.set_work_attachments(fresh, {row.chat_id: "changed"}) == frozenset()
     assert (fresh / "sessions.jsonl").read_bytes() == before
     event = json.loads(before)
     event["record"]["active_work_id"] = "foreign-edit"

@@ -84,6 +84,31 @@ def _build_meridian_skills_prompt(
     return "\n".join(lines)
 
 
+def _work_link_line(work_link: Path) -> str:
+    """The one work-link wording, for a primary's prompt and a spawn's run block."""
+
+    return (
+        f"- `{work_link.as_posix()}` — work directory "
+        "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
+        "directory it resolves to: the link follows `work start`, `work switch`, "
+        "`work done` and `work rename`."
+    )
+
+
+def _task_link_line(task_link: Path, *, detail: str = "", note: str = "") -> str:
+    """The one task-link wording; a surface adds only what it alone knows.
+
+    *detail* follows the environment variable and *note* the command it names, so
+    both surfaces carry the literal-path rule verbatim.
+    """
+
+    return (
+        f"- `{task_link.as_posix()}` — source checkout (`$MERIDIAN_TASK_DIR`){detail}; "
+        "write this literal path, never the directory it resolves to: the link "
+        f"follows `meridian task-dir` and a work switch{note}."
+    )
+
+
 def build_capabilities_prompt(
     *,
     spawn_capable: bool,
@@ -91,14 +116,30 @@ def build_capabilities_prompt(
     project_root: Path,
     control_root: Path,
     task_dir: Path,
-    active_work_dir: Path | None = None,
-    spawn_id: str | None = None,
+    task_link: Path | None = None,
+    work_link: Path | None = None,
+    paths_in_user_turn: bool = False,
     chat_id: str | None = None,
-    work_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
 ) -> str:
-    """Render the single late-bound capability and directory guidance block."""
+    """Render the stable capability and directory guidance block.
+
+    Only values shared by every launch of this conversation belong here: an exact
+    continue recomposes the block from the launch snapshot, and a fresh launch of
+    the same agent in the same work context must share the cached prefix. Per-launch
+    identity (the run ID, the conversation that launched the run, and a spawn's
+    per-chat links) goes in the first user turn through
+    :func:`build_launch_facts_prompt`; a primary's own chat ID and its per-chat
+    links stay here because they outlive the launch.
+
+    The work directory has one line, and a surface either places it here or in the
+    user turn: an item's ID and its scratch path are per-conversation state that a
+    ``work switch`` or ``work done`` invalidates, so the link is the only path named.
+    ``paths_in_user_turn`` says the user turn names them instead, which a spawn does
+    because its link paths belong to its own chat; a primary cannot, because a
+    ``--continue`` replays no user turn.
+    """
 
     if resolved_context is None:
         if context_config is None:
@@ -125,16 +166,26 @@ def build_capabilities_prompt(
         if required_mode is None or required_mode == profile_mode
     )
 
-    if active_work_dir is None:
+    if work_link is not None:
+        # A per-chat link outlives the launch and follows `work start`,
+        # `work switch`, `work done` and `work rename`, so it replaces both the
+        # work-item ID and its scratch directory: either would go stale mid-run.
+        lines.append(_work_link_line(work_link))
+
+    # The goal text never enters a prompt: it is per-conversation state that can be
+    # edited mid-conversation, and a primary with no task must start no turn. The
+    # command resolves the item itself, so the pointer carries no ID that could go
+    # stale after `work switch`.
+    lines.append("- Your work item's goal and status: run `meridian work show`.")
+
+    resolved_chat_id = (chat_id or "").strip()
+    if resolved_chat_id:
+        # Only a primary renders this: its chat is the conversation's own, so it
+        # survives resume. A spawn's launching chat is per-launch and lives in the
+        # `# Meridian run` block.
         lines.append(
-            "- No active work directory (`$MERIDIAN_ACTIVE_WORK_DIR`); inspect: "
-            "`meridian work current`."
-        )
-    else:
-        item = f" for work item `{work_id}`" if (work_id or "").strip() else ""
-        lines.append(
-            f"- `{active_work_dir.as_posix()}` — work directory for scratch/artifacts "
-            f"(`$MERIDIAN_ACTIVE_WORK_DIR`{item}); inspect: `meridian work current`."
+            f"- `{resolved_chat_id}` — this conversation's chat "
+            "(`$MERIDIAN_CHAT_ID`), parent for handoff `--from`."
         )
 
     task_path = task_dir.as_posix()
@@ -145,7 +196,30 @@ def build_capabilities_prompt(
         if spawn_capable
         else ""
     )
-    if task_dir == control_root:
+    if task_link is not None:
+        # A per-chat link: every task-dir change repoints it, so the literal path is
+        # the one the session keeps using, and the directory it resolves to is not.
+        lines.append(
+            _task_link_line(
+                task_link,
+                detail=(
+                    f"; shell cwd is `{control_path}` (`$MERIDIAN_PROJECT_DIR`), "
+                    "so use absolute paths"
+                ),
+                note=f"; inspect: `meridian task-dir`{spawn_suffix}",
+            )
+        )
+    elif paths_in_user_turn:
+        # The user turn names the link; naming the directory it resolves to here would
+        # be a second answer to "where do I work".
+        lines.append(
+            f"- Shell cwd is `{control_path}` (`$MERIDIAN_PROJECT_DIR`); your work "
+            "directory and source checkout are the links `$MERIDIAN_ACTIVE_WORK_DIR` and "
+            "`$MERIDIAN_TASK_DIR`, which this run's `# Meridian run` block names. Write "
+            "those literal paths, never the directories they resolve to; inspect: "
+            f"`meridian task-dir`{spawn_suffix}."
+        )
+    elif task_dir == control_root:
         lines.append(
             f"- `{task_path}` — source checkout and shell cwd "
             "(`$MERIDIAN_TASK_DIR`, `$MERIDIAN_PROJECT_DIR`); inspect: `meridian task-dir`"
@@ -169,18 +243,11 @@ def build_capabilities_prompt(
             "(`$MERIDIAN_CONTEXT_KB_DIR`); inspect: `meridian context kb`."
         )
 
-    run_id = (spawn_id or "").strip()
-    if run_id:
-        lines.append(
-            f"- `{run_id}` — your run ID (`$MERIDIAN_SPAWN_ID`), the ID your caller "
-            "holds; use it in names."
-        )
-    current_chat_id = (chat_id or "").strip()
-    if current_chat_id:
-        lines.append(
-            f"- `{current_chat_id}` — root conversation ID (`$MERIDIAN_CHAT_ID`), parent "
-            "for handoff `--from`."
-        )
+    lines.append(
+        "- Your run ID is in `$MERIDIAN_SPAWN_ID`; `meridian task-dir --json` prints "
+        "it as `spawn_id`, and a launch with a first user turn also gets it in that "
+        "turn's `# Meridian run` block."
+    )
 
     other_context: list[str] = []
     if resolved_context.work_archive is not None:
@@ -197,6 +264,44 @@ def build_capabilities_prompt(
         lines.append("- " + "; ".join(other_context) + "; inspect: `meridian context`.")
 
     return "\n".join(lines)
+
+
+def build_launch_facts_prompt(
+    *,
+    spawn_id: str | None = None,
+    chat_id: str | None = None,
+    work_link: Path | None = None,
+    task_link: Path | None = None,
+) -> str:
+    """Render per-launch identity for the first user turn.
+
+    Only values that change between launches of the same conversation belong here:
+    the run ID, the conversation that launched this run, and a spawn's per-chat
+    links, whose paths name the chat it runs in. Keeping them out of the system
+    prompt lets sibling spawns send byte-identical system bytes, so the harness
+    prompt cache is shared.
+    """
+
+    lines: list[str] = []
+    run_id = (spawn_id or "").strip()
+    if run_id:
+        lines.append(
+            f"- `{run_id}` — your run ID (`$MERIDIAN_SPAWN_ID`), the ID your caller "
+            "holds; use it in names."
+        )
+    launched_by = (chat_id or "").strip()
+    if launched_by:
+        lines.append(
+            f"- `{launched_by}` — the conversation that launched this run "
+            "(`$MERIDIAN_CHAT_ID`), parent for handoff `--from`."
+        )
+    if work_link is not None:
+        lines.append(_work_link_line(work_link))
+    if task_link is not None:
+        lines.append(_task_link_line(task_link))
+    if not lines:
+        return ""
+    return "\n".join(("# Meridian run", "", *lines))
 
 
 def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
@@ -292,6 +397,7 @@ def build_guidance_blocks(
 __all__ = [
     "build_capabilities_prompt",
     "build_guidance_blocks",
+    "build_launch_facts_prompt",
     "build_spawn_usage_contract",
     "has_spawn_capability",
 ]
