@@ -306,3 +306,54 @@ user message, never replayed launch settings. Unsent TUI-local changes are not
 observable, and GET/POST is not atomic against simultaneous TUI submission.
 Continue preserves native choice. Dry-run projects serve/inspection/bootstrap/
 attach without native observations or a misleading black-box command.
+
+## OpenCode connection behavior (from AGENTS.md)
+
+- **OpenCode** (`opencode_connection.py` dispatcher → `opencode_http.py` V1 /
+  `opencode_v2_http.py` V2): one registered class reads the backend version launch
+  bind resolved onto the spec (`spec.opencode_version`) at `start()`, then delegates. Both transports manage `opencode serve` and share process lifecycle,
+  liveness, and SSE framing; V2 overrides the `/api` session surface, basic auth,
+  event envelopes, and model switch. 1.x is legacy/frozen. Connections consume the
+  bound `OPENCODE_CONFIG_CONTENT` as given, including the reserved agent's permission
+  rules, and select `spec.agent_name` wherever they
+  create or resume a session; see
+  [OpenCode prompt, agent and model delivery](../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
+  V1 creation uses `{providerID, id}`; a fresh session's initial prompt carries `{providerID, modelID}`.
+  On V1 resume the native committed model is retained and an explicit model is
+  rejected with `HarnessCapabilityMismatch` (V2 applies it via `POST /api/session/{id}/model`).
+  Follow-up messages omit the model to retain native state. Rejected/timed-out
+  creation never retries an empty payload. V2 terminal signals are
+  `session.execution.{succeeded,failed,interrupted}` (V1 uses `session.idle`/`session.error`).
+  V2's `/api/event` stream is live-only: a terminal that lands between the
+  pre-subscribe session GET and the SSE attach is re-polled on the liveness-timeout
+  path (`_reconcile_on_stall`) through the same guarded helper, so the missed
+  terminal is surfaced instead of a stall. That one-turn policy remains the spawn
+  default. A stall first asks `_session_still_running()`, and a session that is still
+  executing is a long tool, not a stall; the probe semantics, the busy ceiling and the
+  answer that ends a stretch are in
+  [OpenCode: Version Dispatcher, V2 Transport, Storage](../.context/CONTEXT.md#opencode-version-dispatcher-v2-transport-storage).
+  A primary observer's stream lives until the primary closes: quiet, EOF, and
+  recoverable errors reconnect without synthesizing terminal events into the
+  interactive session. When the probe reports the turn ended (or cannot answer), that
+  reconnect triggers the idle sensor's post-reconnect resync, which recovers a terminal
+  the quiet stream missed. Spawn streams may end at a reconciled terminal.
+  OpenCode's `permission.asked` (V1) / `permission.v2.asked` (V2) stream events are
+  routed to the injected `ServerRequestHandler` as `HarnessRequest`s, not
+  yielded raw; the handler runs in a bounded background task (a stalled reply must
+  not block the SSE drain) and re-surfaces policy events through the connection's
+  injected-event queue, which `events()` multiplexes ahead of the idle SSE read in
+  FIFO order. Reply events (`permission.replied` / `permission.v2.replied`) are also
+  observed: a reply for a still-pending request clears it and journals
+  `request/resolved` (releasing the liveness key), while the stream echo of a reply
+  Meridian already made passes through.
+
+## Ownership-transfer guard (from AGENTS.md)
+
+**Ownership-transfer guard: `reap_on_ownership_transfer_failure()`.** When external
+cancellation hits during adapter startup, dispatch, or manager registration, a
+child process can be stranded between owners. `reap_on_ownership_transfer_failure()`
+in `base.py` catches `BaseException`, shields cleanup from repeated cancellation
+deliveries in a while-not-done loop, and bounds foreground cleanup to 30 seconds.
+Durable `spawn_owned` process scopes and the reaper own any residue beyond that
+bound. The rejected alternative (`with suppress` single-shot) did not survive
+repeated cancellation.
