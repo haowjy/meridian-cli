@@ -326,6 +326,11 @@ the item's `task` link, and `meridian task-dir` reads the same item, active or d
 `meridian doctor` republishes every item's links and drops the ones whose item is gone
 (`sweep_item_links`, reported as `item_links`), except a gone name whose `work` link
 still resolves — a stopped rename's forward link, which its re-run still needs.
+One window is not covered: a kill between the directory move and the forward-link
+publish leaves no forward link, so the re-run reports the old name as not found. Doctor
+then drops the old name's links, and `work rename` must be re-run from the new name.
+The window is microseconds; closing it would mean publishing the forward link before
+the move.
 
 **The two stores' locks are never held at the same time.** The work store's lock
 (`work-store.flock`) and the session pair (`session_store.session_writes`: the history

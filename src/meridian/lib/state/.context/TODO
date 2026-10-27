@@ -28,3 +28,7 @@
   `pi-bash` watch (it serves the other Pi coordination files), then remove the
   `docs/upgrading.md` topic. Until then, never delete the legacy file: an older
   `spawn wait` may still be writing it.
+- `ops/work_lifecycle.py` rename: child spawn rows are renamed through
+  `spawn_store.list_spawns(work_id=old)`, a full scan of every spawn file (about
+  789 ms on a 2,600-spawn project). Index spawns by work id, or read the attached
+  set from the rename's own owner lookup.
