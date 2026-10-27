@@ -1043,7 +1043,9 @@ def _resolve_spawn_prepare_projection(
         resolved_template_variables,
     )
 
-    supplemental_documents = compose_skill_prompt_documents(resolved_skills.loaded_skills)
+    supplemental_documents = compose_skill_prompt_documents(
+        resolved_skills.loaded_skills, policy.skill_delivery
+    )
 
     agent_profile_body = ""
     if (
@@ -1072,7 +1074,6 @@ def _resolve_spawn_prepare_projection(
         user_task_prompt=join_content_blocks(task_contract, cleaned_user_prompt),
         reference_items=task_ctx.reference_items,
         prior_output=task_ctx.prior_output,
-        skill_delivery=policy.skill_delivery,
     )
 
     projected = harness.project_content(composed)
@@ -1122,7 +1123,7 @@ def _resolve_primary_projection(
     )
 
     supplemental_documents = (
-        *compose_skill_prompt_documents(resolved_skills.loaded_skills),
+        *compose_skill_prompt_documents(resolved_skills.loaded_skills, policy.skill_delivery),
         *request.supplemental_prompt_documents,
     )
     agent_profile_body = ""
@@ -1151,7 +1152,6 @@ def _resolve_primary_projection(
         user_task_prompt=request.prompt,
         reference_items=task_ctx.reference_items,
         prior_output=task_ctx.prior_output,
-        skill_delivery=policy.skill_delivery,
     )
 
     projected = harness.project_content(composed)

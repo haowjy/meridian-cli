@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from meridian.lib.core.domain import SkillContent
+from meridian.lib.core.domain import SkillContent, SkillDeliveryMode
 from meridian.lib.launch.composition import PromptDocument
 
 
@@ -25,9 +25,26 @@ def render_skill_block(skill: SkillContent) -> str:
     )
 
 
-def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[PromptDocument, ...]:
-    """Format loaded skills as typed supplemental prompt documents."""
+def _named_skill_pointer(skill: SkillContent) -> str:
+    """One line naming a loaded skill and the file that holds its body.
 
+    The harness's own skill list omits non-model-invocable skills, so the
+    `SKILL.md` path is what keeps a named skill reachable.
+    """
+
+    return f"Read `{Path(skill.path).as_posix()}` before using `/{skill.name}`."
+
+
+def compose_skill_prompt_documents(
+    skills: Sequence[SkillContent], skill_delivery: SkillDeliveryMode
+) -> tuple[PromptDocument, ...]:
+    """Format loaded skills as typed supplemental prompt documents.
+
+    Named delivery turns each document into a pointer line, so the renderer groups
+    and heads the skills the same way in both modes.
+    """
+
+    named = skill_delivery == "named"
     documents: list[PromptDocument] = []
     for skill in skills:
         if not skill.content.strip():
@@ -38,7 +55,7 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
                 kind="skill",
                 logical_name=skill.name,
                 path=path,
-                content=render_skill_block(skill),
+                content=_named_skill_pointer(skill) if named else render_skill_block(skill),
                 skill_type=skill.skill_type,
             )
         )

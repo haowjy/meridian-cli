@@ -135,7 +135,11 @@ def _direct_prepared_surface(
         request
         if request.launch_policy_snapshot is not None
         else request.model_copy(
-            update={"launch_policy_snapshot": build_launch_policy_snapshot(request)}
+            update={
+                "launch_policy_snapshot": build_launch_policy_snapshot(
+                    request, skill_delivery="inline"
+                )
+            }
         )
     )
     request_warning = (request.warning or "").strip()

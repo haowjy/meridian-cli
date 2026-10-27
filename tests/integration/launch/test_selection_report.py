@@ -99,7 +99,7 @@ def test_report_v3_survives_bundle_and_snapshot(
         harness=str(result.harness),
         selection_report=result.selection_report,
     )
-    snapshot = build_launch_policy_snapshot(request=request)
+    snapshot = build_launch_policy_snapshot(request=request, skill_delivery="inline")
     assert snapshot.model_dump(mode="json")["selection_report"] == report()
     assert "fallback_chain" not in snapshot.model_dump()
 

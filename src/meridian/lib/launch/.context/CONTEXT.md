@@ -625,19 +625,19 @@ survive it without special handling. An exact continue takes them from the launc
 snapshot, including the on-demand `available_skills` listing (whose bodies the
 snapshot never stores), so the recomposed system prompt matches the conversation's.
 
-`ComposedLaunchContent.skill_delivery` chooses how that one channel renders them.
-`inline` (the default) writes each body under its type header. `named`, the
-experimental `[experimental] skill_delivery` setting, keeps the type groups and
-headers but replaces each body with a line naming the skill and the path to its
-`SKILL.md` — the file-read fallback is what keeps a `model-invocable: false` skill
-reachable, since no harness's skill tool lists it. Both modes share one grouping
-renderer and differ only in the per-skill block. `# Available Skills` is unchanged
-in both modes. The mode is part of the persisted launch-policy snapshot, so an
-exact continue renders as its source launch did even when config or the
-environment changed; a snapshot written before the field existed replays as
-`inline`. Named mode points at the base `SKILL.md`, so on a harness with a
-`variants/<harness>/SKILL.md` it names the base file rather than the variant body
-Mars delivered.
+`skill_delivery` on the launch policy chooses what each document holds. `inline`
+(the default) writes the skill's body, headed with its name and directory. `named`,
+the experimental `[experimental] skill_delivery` setting, writes one line naming the
+file to read and the skill's `/name` instead — the file-read fallback is what keeps
+a `model-invocable: false` skill reachable, since no harness's skill tool lists it.
+The renderer never sees the mode: it groups documents by type and heads each group
+in both modes, so named delivery keeps the same headers and can only differ inside a
+skill's block. `# Available Skills` is unchanged in both modes. The mode is part of
+the persisted launch-policy snapshot, so an exact continue renders as its source
+launch did even when config or the environment changed; a snapshot written before
+the field existed replays as `inline`. Named mode points at the base `SKILL.md`, so
+on a harness with a `variants/<harness>/SKILL.md` it names the base file rather
+than the variant body Mars delivered.
 
 Don't add a second channel keyed on a harness capability. A native skill list
 shows only model-invocable skills, so a loaded skill that isn't model-invocable

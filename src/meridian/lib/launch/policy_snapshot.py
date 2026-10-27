@@ -135,7 +135,7 @@ def build_launch_policy_snapshot(
     available_skills: tuple[AvailableSkillEntry, ...] = (),
     bundle_inventory_prompt: str | None = None,
     profile: AgentProfile | None = None,
-    skill_delivery: SkillDeliveryMode = "inline",
+    skill_delivery: SkillDeliveryMode,
 ) -> LaunchPolicySnapshot:
     """Build a durable launch-policy snapshot from a resolved request."""
 

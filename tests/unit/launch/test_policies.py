@@ -173,7 +173,9 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
         matched_policy_rule="settings:2",
         selection_report={"version": 2, "outcome": "selected"},
     )
-    snapshot = build_launch_policy_snapshot(request, loaded_skills=(skill,))
+    snapshot = build_launch_policy_snapshot(
+        request, loaded_skills=(skill,), skill_delivery="inline"
+    )
 
     replayed = replay_launch_policy_snapshot(
         snapshot=snapshot,

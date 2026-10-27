@@ -10,16 +10,14 @@ See spec S-1 for category definitions.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import IntEnum
-from itertools import groupby
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from meridian.lib.launch.reference import ReferenceItem
 
-from meridian.lib.core.domain import AvailableSkillEntry, SkillDeliveryMode
+from meridian.lib.core.domain import AvailableSkillEntry
 from meridian.lib.launch.reference import (
     measure_rendered_reference_block_bytes,
     render_reference_blocks,
@@ -177,9 +175,6 @@ class ComposedLaunchContent:
     guidance_blocks: tuple[CompositionBlock, ...] = ()
     """Ordered guidance (inventory, capabilities, prompting, rules, context paths)."""
 
-    skill_delivery: SkillDeliveryMode = "inline"
-    """Whether loaded skills render their full text or a line naming their files."""
-
 
 def composed_content_for_bind_refresh(
     composed: ComposedLaunchContent,
@@ -334,73 +329,6 @@ def _loaded_skill_type_header(skill_type: str) -> str:
     return f"## {label}"
 
 
-_NAMED_SKILLS_INSTRUCTION = (
-    "Load these skills before starting, unless they are already in your context:"
-)
-
-
-def _render_loaded_skills_by_type(
-    documents: tuple[PromptDocument, ...],
-    render_document: Callable[[PromptDocument], str],
-    *,
-    document_separator: str = "\n\n",
-) -> str:
-    """Render skills grouped by type, each document's block under its group header.
-
-    The per-document renderer decides what a skill contributes (its full body or
-    a pointer to its file); an empty result skips that document.
-    """
-    groups: list[str] = []
-    for skill_type, grouped_documents in groupby(
-        documents, key=lambda document: document.skill_type
-    ):
-        entries = [
-            entry
-            for entry in (
-                render_document(document).strip() for document in grouped_documents
-            )
-            if entry
-        ]
-        if not entries:
-            continue
-        groups.append(
-            join_content_blocks(
-                _loaded_skill_type_header(skill_type),
-                document_separator.join(entries),
-            )
-        )
-    return join_content_blocks(*groups)
-
-
-def _render_skill_body(document: PromptDocument) -> str:
-    return document.content
-
-
-def _render_skill_pointer(document: PromptDocument) -> str:
-    """Name a loaded skill and its file for an agent that reads it on demand.
-
-    The harness's own skill list omits non-model-invocable skills, so the
-    `SKILL.md` path is what keeps every named skill reachable.
-    """
-    return f"/{document.logical_name} (`{document.path}`)"
-
-
-def _render_loaded_skill_blocks(
-    documents: tuple[PromptDocument, ...],
-    skill_delivery: SkillDeliveryMode,
-) -> str:
-    """Render loaded skills in the configured delivery mode, grouped by type."""
-    named = skill_delivery == "named"
-    grouped = _render_loaded_skills_by_type(
-        documents,
-        _render_skill_pointer if named else _render_skill_body,
-        document_separator="\n" if named else "\n\n",
-    )
-    if not (named and grouped):
-        return grouped
-    return join_content_blocks(_NAMED_SKILLS_INSTRUCTION, grouped)
-
-
 def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, ...]) -> str:
     """Render the available skills listing with bundle-provided descriptions."""
     if not available_skills:
@@ -445,8 +373,7 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
 
     Order: agent_profile_body, auto-loaded skills
     (grouped by type: principles first, then guardrails, then others,
-    then bootstrap; in named mode one line naming their files instead of
-    their bodies), available skills listing,
+    then bootstrap), available skills listing,
     guidance_blocks (sorted by phase then priority), report_instruction,
     then passthrough fragments.
     """
@@ -467,14 +394,17 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     ordered_blocks: list[str] = []
     for field_name in SYSTEM_INSTRUCTION_BLOCK_ORDER:
         if field_name == "supplemental_documents":
-            # Auto-loaded skills: full content in inline mode, file pointers in
-            # named mode; either way grouped by type after the profile and before
-            # bootstrap.
-            skill_block = _render_loaded_skill_blocks(
-                ordered_skill_documents, content.skill_delivery
-            )
-            if skill_block:
-                ordered_blocks.append(skill_block)
+            # Auto-loaded skills: full content, grouped by type with headers.
+            if ordered_skill_documents:
+                current_type: str | None = None
+                for doc in ordered_skill_documents:
+                    if doc.content.strip():
+                        if doc.skill_type != current_type:
+                            current_type = doc.skill_type
+                            header = _loaded_skill_type_header(current_type)
+                            if header:
+                                ordered_blocks.append(header)
+                        ordered_blocks.append(doc.content.strip())
             # Bootstrap documents after skills
             ordered_blocks.extend(document.content for document in bootstrap_documents)
             continue
