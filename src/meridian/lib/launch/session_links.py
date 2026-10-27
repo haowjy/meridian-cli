@@ -96,24 +96,26 @@ def execution_link_chat(
     return ((row.chat_id or "") if row is not None else "").strip()
 
 
-def chat_owner(runtime_root: Path, chat_id: str) -> LinkOwner | None:
-    """Return one chat as a link owner, live or not.
+def _owner_of(runtime_root: Path, record: session_store.SessionRecord) -> LinkOwner:
+    """One session record as a link owner.
 
-    A primary can move off its entry chat, so the row's entry chat — not the chat a
-    command happens to run on — owns the links.
+    A primary's run row, not the chat a command happens to run on, says where the
+    execution is now and which chat owns its links: Claude ``/clear`` moves it to a new
+    chat while the process keeps running on the old one, whose lease it still holds. The
+    new chat inherits the attachment and every later write touches both rows, so the
+    record's own attachment is the execution's.
     """
 
-    record = session_store.chat_record(runtime_root, chat_id)
-    if record is None:
-        return None
     spawn_id = (record.spawn_id or "").strip()
+    chat = record.chat_id
     link_chat = record.chat_id
     if record.kind == "primary" and spawn_id:
         row = spawn_store.get_spawn(runtime_root, spawn_id)
         if row is not None:
             link_chat = (row.chat_id or "").strip() or link_chat
+            chat = (row.continue_chat_id or "").strip() or chat
     return LinkOwner(
-        chat=record.chat_id,
+        chat=chat,
         link_chat=link_chat,
         spawn_id=spawn_id,
         kind=record.kind,
@@ -121,20 +123,26 @@ def chat_owner(runtime_root: Path, chat_id: str) -> LinkOwner | None:
     )
 
 
+def chat_owner(runtime_root: Path, chat_id: str) -> LinkOwner | None:
+    """Return one chat as a link owner, live or not."""
+
+    record = session_store.chat_record(runtime_root, chat_id)
+    return _owner_of(runtime_root, record) if record is not None else None
+
+
 def execution_owners(runtime_root: Path) -> tuple[LinkOwner, ...]:
     """Return one owner per live execution, from the live session records.
 
-    One spawn read per live primary is the whole cost; scanning every spawn file
-    here would grow with the project's history.
+    One index read and one spawn read per live primary is the whole cost. Reading each
+    chat's record separately would re-scan the session journal, and scanning every
+    spawn file would grow with the project's history.
     """
 
     owners: dict[str, LinkOwner] = {}
     for record in session_store.list_active_session_records(runtime_root):
         if not (record.spawn_id or "").strip():
             continue
-        owner = chat_owner(runtime_root, record.chat_id)
-        if owner is None:
-            continue
+        owner = _owner_of(runtime_root, record)
         owners.setdefault(owner.link_chat, owner)
     return tuple(owners.values())
 

@@ -18,7 +18,7 @@ from meridian.lib.core.depth import (
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
 
 
@@ -180,9 +180,13 @@ class ResolvedContext:
         )
 
         bound_work_dir: Path | None = None
-        project_work_dir = project_paths.work_dir if project_paths is not None else None
 
-        if (
+        if work_id and project_paths is not None and project_paths.work_dir is not None:
+            # The item's directory where it actually is: `work done` moves it to the
+            # archive, and a command that resolved the other location would name a
+            # path that no longer exists.
+            bound_work_dir = work_store.work_scratch_dir(project_paths.root_dir, work_id)
+        elif (
             work_dir_raw
             and not explicit_work_id_raw
             and work_id_source in ("none", "env")
@@ -197,7 +201,6 @@ class ResolvedContext:
             spawn_id=spawn_id,
             work_id=work_id,
             bound_work_dir=bound_work_dir,
-            project_work_dir=project_work_dir,
             runtime_root=runtime_root,
         )
         work_dir = work_scope.root if work_scope is not None else None
