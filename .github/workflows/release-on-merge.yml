@@ -169,10 +169,6 @@ jobs:
           echo "release_kind=${release_kind}" >> "$GITHUB_OUTPUT"
           echo "bump_kind=${bump_kind}" >> "$GITHUB_OUTPUT"
 
-          body_path="${RUNNER_TEMP}/pr-body.md"
-          jq -r '.body // ""' <<<"${selected_pr}" > "${body_path}"
-          echo "body_path=${body_path}" >> "$GITHUB_OUTPUT"
-
           echo "::notice::Resolved release kind: ${release_kind}; bump kind: ${bump_kind}."
 
       - name: Skip when trigger already released
@@ -198,13 +194,14 @@ jobs:
           selected_tag=""
           selected_commit=""
 
-          while IFS=$'\t' read -r commit_hash commit_subject; do
-            if ! git show -s --format=%B "${commit_hash}" | grep -Fxq "Release-Trigger: ${TRIGGER_SHA}"; then
-              continue
-            fi
+          consider_commit() {
+            local commit_hash="$1"
+            local commit_subject="$2"
+            local subject_tag subject_is_stable subject_is_rc
+            local commit_stable_tag commit_rc_tag commit_tag candidate_rank candidate_mode candidate_tag
 
             if [[ ! "${commit_subject}" =~ ^release:\ (v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?)$ ]]; then
-              continue
+              return
             fi
             subject_tag="${BASH_REMATCH[1]}"
 
@@ -260,7 +257,23 @@ jobs:
               selected_tag="${candidate_tag}"
               selected_commit="${commit_hash}"
             fi
+          }
+
+          while IFS=$'\t' read -r commit_hash commit_subject; do
+            if git show -s --format=%B "${commit_hash}" | grep -Fxq "Release-Trigger: ${TRIGGER_SHA}"; then
+              consider_commit "${commit_hash}" "${commit_subject}"
+            fi
           done < <(git log --format=$'%H\t%s' main)
+
+          if (( best_rank == 99 )); then
+            newest_release_commit="$(git log --first-parent -1 --format=%H --grep='^release: v' main)"
+            if [[ -n "${newest_release_commit}" ]] && git merge-base --is-ancestor "${TRIGGER_SHA}" "${newest_release_commit}"; then
+              consider_commit "${newest_release_commit}" "$(git show -s --format=%s "${newest_release_commit}")"
+              if (( best_rank < 99 )); then
+                echo "::notice::Trigger ${TRIGGER_SHA} is contained in later release commit ${newest_release_commit}; treating it as already released."
+              fi
+            fi
+          fi
 
           if (( best_rank < 99 )); then
             echo "already_released=true" >> "$GITHUB_OUTPUT"
@@ -509,18 +522,104 @@ jobs:
           echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
           echo "Computed next ${release_kind} version ${next_version} (python=${python_version}) from base ${base_version} with ${bump_kind} bump."
 
+      - name: Collect release notes
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        id: collect_notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          last_release="$(git log --first-parent -1 --format=%H --grep='^release: v' HEAD)"
+          if [[ -n "${last_release}" ]]; then
+            walk_range="${last_release}..HEAD"
+          else
+            walk_range="HEAD"
+          fi
+
+          mapfile -t walk_commits < <(
+            git log --first-parent --reverse --format=$'%H\t%s' "${walk_range}" |
+              while IFS=$'\t' read -r commit_hash commit_subject; do
+                if [[ "${commit_subject}" == "release: "* ]]; then
+                  continue
+                fi
+                printf '%s\n' "${commit_hash}"
+              done
+          )
+
+          if (( ${#walk_commits[@]} == 0 )); then
+            echo "::notice::No commits between the last release commit (${last_release:-none}) and ${TRIGGER_SHA}; releasing the trigger's notes alone (stable promotion after an RC)."
+            walk_commits=("${TRIGGER_SHA}")
+          fi
+          if (( ${#walk_commits[@]} > 50 )); then
+            echo "::error::Found ${#walk_commits[@]} commits since the last release; the release-notes walk is capped at 50 so entries are never silently dropped. Cut an intermediate release first."
+            exit 1
+          fi
+
+          notes_dir="${RUNNER_TEMP}/changelog-notes"
+          rm -rf "${notes_dir}"
+          mkdir -p "${notes_dir}"
+
+          written=0
+          for commit_hash in "${walk_commits[@]}"; do
+            prs_json="$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${REPOSITORY}/commits/${commit_hash}/pulls")"
+            candidates="$(jq --arg commit_sha "${commit_hash}" '
+              [ .[]
+                | select(.merged_at != null and .base.ref == "main")
+              ] as $merged
+              | ($merged | map(select(.merge_commit_sha == $commit_sha))) as $exact
+              | if ($exact | length) > 0 then $exact else $merged end
+            ' <<<"${prs_json}")"
+            candidate_count="$(jq 'length' <<<"${candidates}")"
+
+            if [[ "${candidate_count}" -eq 0 ]]; then
+              echo "::notice::Commit ${commit_hash} has no merged PR targeting main; skipping (direct push)."
+              continue
+            fi
+            if [[ "${candidate_count}" -gt 1 ]]; then
+              echo "::error::Ambiguous merged PR for commit ${commit_hash}; found ${candidate_count} candidates."
+              jq -r '.[] | "- #\(.number) \(.html_url) (merge_commit_sha=\(.merge_commit_sha // "null"))"' <<<"${candidates}"
+              exit 1
+            fi
+
+            pr_number="$(jq -r '.[0].number' <<<"${candidates}")"
+            notes_file="$(printf '%s/notes-%03d-pr%s.md' "${notes_dir}" "${written}" "${pr_number}")"
+            jq -r '.[0].body // ""' <<<"${candidates}" > "${notes_file}"
+            echo "::notice::Collected notes for PR #${pr_number} (commit ${commit_hash}) into ${notes_file}."
+            written=$((written + 1))
+          done
+
+          if [[ "${written}" -eq 0 ]]; then
+            echo "::error::No merged PRs found between the last release commit and ${TRIGGER_SHA}; nothing to render."
+            exit 1
+          fi
+
+          echo "notes_dir=${notes_dir}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Collected ${written} notes file(s) for the release."
+
       - name: Update release files
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
           PYTHON_VERSION: ${{ steps.next_version.outputs.python_version }}
-          BODY_PATH: ${{ steps.release_intent.outputs.body_path }}
+          NOTES_DIR: ${{ steps.collect_notes.outputs.notes_dir }}
         run: |
-          if ! python3 scripts/changelog-notes.py render \
-            --notes-file "${BODY_PATH}" \
+          notes_args=()
+          while IFS= read -r notes_file; do
+            notes_args+=(--notes-file "${notes_file}")
+          done < <(find "${NOTES_DIR}" -maxdepth 1 -name 'notes-*.md' -print | sort)
+
+          if (( ${#notes_args[@]} == 0 )); then
+            echo "::error::No notes files found in ${NOTES_DIR}."
+            exit 1
+          fi
+
+          if ! python3 scripts/changelog-notes.py render "${notes_args[@]}" \
             --version "${NEXT_VERSION}" \
             --date "$(date -u +%Y-%m-%d)"; then
-            echo "::error::The merged PR body's '## Changelog' section is missing or invalid, or CHANGELOG.md has content under '## [Unreleased]'. Fix the source (edit the PR body and/or move stale [Unreleased] entries into it), then re-run this workflow."
+            echo "::error::A merged PR body's '## Changelog' section is missing or invalid (the error above names it), or CHANGELOG.md has content under '## [Unreleased]'. Edit the named PR body and/or move stale [Unreleased] entries out of CHANGELOG.md, then re-run this workflow."
             exit 1
           fi
 
