@@ -200,7 +200,7 @@ def build_spawn_reservation(
         desc=resolved_desc,
         work_id=work_id,
         goal=request.goal,
-        # I-10: do NOT pre-populate harness_session_id on fork starts.
+        # Do NOT pre-populate harness_session_id on fork starts.
         # materialize_fork() writes it via update_spawn after the row exists.
         harness_session_id=(
             None if request.session.continue_fork else request.session.requested_harness_session_id

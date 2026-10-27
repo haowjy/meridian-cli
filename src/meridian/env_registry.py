@@ -37,6 +37,9 @@ class EnvVar:
     purpose: str
     child: bool = False
     hook_field: str | None = None
+    # Names something inside one project (an ID, or a path under its state or
+    # checkout), so the value means nothing in another project.
+    project_scoped: bool = False
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,7 @@ class EnvFamily:
     subtype: EnvSubtype
     purpose: str
     child: bool = False
+    project_scoped: bool = False
 
     def contains(self, name: str) -> bool:
         if not name.startswith(self.prefix) or not name.endswith(self.suffix):
@@ -66,7 +70,13 @@ def _public_config(name: str, purpose: str) -> EnvVar:
     return EnvVar(name, EnvTier.PUBLIC, EnvSubtype.CONFIG_INPUT, purpose)
 
 
-def _public_handle(name: str, purpose: str, *, hook_field: str | None = None) -> EnvVar:
+def _public_handle(
+    name: str,
+    purpose: str,
+    *,
+    hook_field: str | None = None,
+    project_scoped: bool = False,
+) -> EnvVar:
     return EnvVar(
         name,
         EnvTier.PUBLIC,
@@ -74,6 +84,7 @@ def _public_handle(name: str, purpose: str, *, hook_field: str | None = None) ->
         purpose,
         child=True,
         hook_field=hook_field,
+        project_scoped=project_scoped,
     )
 
 
@@ -87,8 +98,17 @@ def _hook_payload(name: str, purpose: str, hook_field: str) -> EnvVar:
     )
 
 
-def _internal_handle(name: str, purpose: str, *, child: bool = True) -> EnvVar:
-    return EnvVar(name, EnvTier.INTERNAL, EnvSubtype.INJECTED_HANDLE, purpose, child=child)
+def _internal_handle(
+    name: str, purpose: str, *, child: bool = True, project_scoped: bool = False
+) -> EnvVar:
+    return EnvVar(
+        name,
+        EnvTier.INTERNAL,
+        EnvSubtype.INJECTED_HANDLE,
+        purpose,
+        child=child,
+        project_scoped=project_scoped,
+    )
 
 
 ENV_VARS: tuple[EnvVar, ...] = (
@@ -187,12 +207,21 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_WAIT_TIMEOUT_MINUTES", "Wait operation timeout."),
     # Public handles injected for agents, prompts, and tools.
     _public_handle(
-        "MERIDIAN_ACTIVE_WORK_DIR", "Active work artifact directory.", hook_field="work_dir"
+        "MERIDIAN_ACTIVE_WORK_DIR",
+        "Active work artifact directory.",
+        hook_field="work_dir",
+        project_scoped=True,
     ),
-    _public_handle("MERIDIAN_ACTIVE_WORK_ID", "Active work identifier.", hook_field="work_id"),
+    _public_handle(
+        "MERIDIAN_ACTIVE_WORK_ID",
+        "Active work identifier.",
+        hook_field="work_id",
+        project_scoped=True,
+    ),
     _public_handle(
         "MERIDIAN_CHAT_ID",
         "Launch-time chat identifier; ambient commands resolve the run's current chat.",
+        project_scoped=True,
     ),
     _public_handle(
         "MERIDIAN_PROJECT_DIR",
@@ -201,8 +230,13 @@ ENV_VARS: tuple[EnvVar, ...] = (
     ),
     _public_handle("MERIDIAN_SESSION_ROLE", "Meridian launch role: primary or spawn."),
     _public_handle("MERIDIAN_SESSION_AGENT", "Resolved agent profile for this launch."),
-    _public_handle("MERIDIAN_SPAWN_ID", "Current spawn identifier.", hook_field="spawn_id"),
-    _public_handle("MERIDIAN_TASK_DIR", "Logical task checkout directory."),
+    _public_handle(
+        "MERIDIAN_SPAWN_ID",
+        "Current spawn identifier.",
+        hook_field="spawn_id",
+        project_scoped=True,
+    ),
+    _public_handle("MERIDIAN_TASK_DIR", "Logical task checkout directory.", project_scoped=True),
     # Public hook payload fields.
     _hook_payload("MERIDIAN_HOOK_EVENT", "Hook event name.", "event_name"),
     _hook_payload("MERIDIAN_HOOK_EVENT_ID", "Hook event identifier.", "event_id"),
@@ -241,16 +275,22 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_GATE_SCOPE", "Launch guardian signal scope.", child=False),
     _internal_handle("_MERIDIAN_GATE_GRACE", "Launch guardian TERM grace period.", child=False),
     _internal_handle("_MERIDIAN_DEPTH", "Current delegated spawn depth."),
-    _internal_handle("_MERIDIAN_PARENT_SPAWN_ID", "Parent spawn identifier."),
-    _internal_handle("_MERIDIAN_RUNTIME_DIR", "Resolved per-project runtime directory."),
+    _internal_handle("_MERIDIAN_PARENT_SPAWN_ID", "Parent spawn identifier.", project_scoped=True),
+    _internal_handle(
+        "_MERIDIAN_RUNTIME_DIR", "Resolved per-project runtime directory.", project_scoped=True
+    ),
     _internal_handle("_MERIDIAN_HARNESS", "Harness identity propagated one level."),
     _internal_handle(
         "_MERIDIAN_CALLER_BOUNDARY",
         "Launcher-recorded PID namespace, sandbox, network, and spawn CLI guardrail.",
     ),
-    _internal_handle("_MERIDIAN_GUARDRAIL_RUN_ID", "Guardrail run identifier."),
-    _internal_handle("_MERIDIAN_GUARDRAIL_CHAT_ID", "Chat id for `meridian session log`."),
-    _internal_handle("_MERIDIAN_GUARDRAIL_REPORT", "Guardrail report path."),
+    _internal_handle(
+        "_MERIDIAN_GUARDRAIL_RUN_ID", "Guardrail run identifier.", project_scoped=True
+    ),
+    _internal_handle(
+        "_MERIDIAN_GUARDRAIL_CHAT_ID", "Chat id for `meridian session log`.", project_scoped=True
+    ),
+    _internal_handle("_MERIDIAN_GUARDRAIL_REPORT", "Guardrail report path.", project_scoped=True),
     _internal_handle(
         "_MERIDIAN_PRIMARY_STDERR_LOG_PATH", "Primary subprocess stderr path.", child=False
     ),
@@ -261,12 +301,17 @@ ENV_VARS: tuple[EnvVar, ...] = (
     ),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_PATH", "Pi boundary observation path."),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE", "Pi boundary launch nonce."),
-    _internal_handle("_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root."),
+    _internal_handle(
+        "_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root.", project_scoped=True
+    ),
     _internal_handle(
         "_MERIDIAN_PI_OWED_PARENT_IDS",
         "Resolved Pi result-delivery parent scope for the launch's spawn watcher.",
+        project_scoped=True,
     ),
-    _internal_handle("_MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier."),
+    _internal_handle(
+        "_MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier.", project_scoped=True
+    ),
     _internal_handle("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS", "Resolved Pi child-wave timeout."),
     _internal_handle("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "Resolved Pi task-ping interval."),
     _internal_handle(
@@ -291,6 +336,7 @@ ENV_FAMILIES: tuple[EnvFamily, ...] = (
         subtype=EnvSubtype.INJECTED_HANDLE,
         purpose="Named context directory exposed to agents and prompts.",
         child=True,
+        project_scoped=True,
     ),
     EnvFamily(
         prefix="MERIDIAN_SECRET_",
@@ -317,6 +363,15 @@ def is_registered_env_name(name: str) -> bool:
     return name in ENV_VAR_BY_NAME or any(family.contains(name) for family in ENV_FAMILIES)
 
 
+def is_project_scoped_env_name(name: str) -> bool:
+    """Return whether *name* holds identity or a path that is valid only in its own project."""
+
+    item = ENV_VAR_BY_NAME.get(name)
+    if item is not None:
+        return item.project_scoped
+    return any(family.project_scoped and family.contains(name) for family in ENV_FAMILIES)
+
+
 def is_allowed_child_env_name(name: str) -> bool:
     """Return whether the registry permits bind-time child injection of *name*."""
 
@@ -336,5 +391,6 @@ __all__ = [
     "EnvTier",
     "EnvVar",
     "is_allowed_child_env_name",
+    "is_project_scoped_env_name",
     "is_registered_env_name",
 ]

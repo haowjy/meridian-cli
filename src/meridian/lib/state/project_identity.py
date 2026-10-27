@@ -155,6 +155,18 @@ def resolve_project_identity(project_root: Path) -> ProjectIdentity:
     )
 
 
+def is_same_project(first: Path, second: Path) -> bool:
+    """Return whether two roots resolve to one project identity.
+
+    A worktree shares its project's committed ID; an ad-hoc identity is per path.
+    A committed root with no ID yet has no identity to match.
+    """
+
+    first_identity = resolve_project_identity(first)
+    second_identity = resolve_project_identity(second)
+    return first_identity.id is not None and first_identity == second_identity
+
+
 def nearest_ancestor_project_marker(project_root: Path) -> Path | None:
     """Return the nearest marked ancestor without changing identity resolution."""
 

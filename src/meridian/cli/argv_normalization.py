@@ -13,12 +13,12 @@ FORK_IDENTITY_ERROR = (
     "Use --fork-fresh to change agent, model, or skills."
 )
 FORK_INFERENCE_ERROR = (
-    "Cannot infer --fork target: not inside a Meridian-managed session. "
-    "Pass --fork REF explicitly."
+    "Cannot infer --fork target: not inside a Meridian-managed session, or -C targets "
+    "another project. Pass --fork REF explicitly."
 )
 FROM_INFERENCE_ERROR = (
-    "Cannot infer --from target: not inside a Meridian-managed session. "
-    "Pass --from REF explicitly."
+    "Cannot infer --from target: not inside a Meridian-managed session, or -C targets "
+    "another project. Pass --from REF explicitly."
 )
 _FORK_FRESH_CONFLICT = "Cannot combine --fork with --fork-fresh."
 _FORK_CONTINUE_CONFLICT = "Cannot combine --fork with --continue."

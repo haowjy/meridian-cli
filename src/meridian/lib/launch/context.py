@@ -272,7 +272,7 @@ class LaunchContext:
     projected_content: ProjectedContent | None = None
     seed_harness_session_id: str | None = None
     seed_harness_session_args: tuple[str, ...] = ()
-    # I-13: adapter input transformations surface here instead of silently mutating.
+    # Adapter input transformations surface here instead of silently mutating.
     warnings: tuple[CompositionWarning, ...] = ()
     model_selection: ModelSelectionContext | None = None
 
