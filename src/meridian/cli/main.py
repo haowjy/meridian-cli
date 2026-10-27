@@ -994,6 +994,17 @@ def _print_agent_root_help() -> None:
     print(render_root_help(agent_mode=True), end="")
 
 
+# Caller identity is per project: under ``-C`` these name a spawn, chat and work item in
+# the caller's own project, not in the target one. Depth is process nesting and stays.
+_CALLER_IDENTITY_ENV = (
+    "MERIDIAN_SPAWN_ID",
+    "MERIDIAN_CHAT_ID",
+    "_MERIDIAN_PARENT_SPAWN_ID",
+    "MERIDIAN_ACTIVE_WORK_ID",
+    "MERIDIAN_ACTIVE_WORK_DIR",
+)
+
+
 @contextmanager
 def _directory_env_scope(
     project_root: Path | None,
@@ -1002,17 +1013,20 @@ def _directory_env_scope(
     """Set ``MERIDIAN_PROJECT_DIR`` and restore on exit.
 
     When *directory_explicit* (``-C`` active), also unset ``_MERIDIAN_RUNTIME_DIR``
-    so the runtime layer derives from project identity instead of a stale override.
+    so the runtime layer derives from project identity instead of a stale override,
+    and unset the caller's spawn/chat/work identity so no command, ops layer or
+    child launched from here attributes itself to another project's IDs.
     """
 
     keys = ["MERIDIAN_PROJECT_DIR"]
     if directory_explicit:
-        keys.append("_MERIDIAN_RUNTIME_DIR")
+        keys.extend(("_MERIDIAN_RUNTIME_DIR", *_CALLER_IDENTITY_ENV))
     saved = {key: os.environ.get(key) for key in keys}
     if project_root is not None:
         os.environ["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
     if directory_explicit:
-        os.environ.pop("_MERIDIAN_RUNTIME_DIR", None)
+        for key in keys[1:]:
+            os.environ.pop(key, None)
     try:
         yield
     finally:

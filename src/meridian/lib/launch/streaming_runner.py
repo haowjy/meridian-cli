@@ -457,7 +457,7 @@ async def run_streaming_spawn(
     """Run one streaming spawn to completion without spawn-store finalization.
 
     Callers are responsible for resolving *spec* through the launch prepare/bind
-    pipeline before calling this function. I-8 (executors stay mechanism-only): this
+    pipeline before calling this function. Executors stay mechanism-only: this
     executor accepts a fully-composed spec and MUST NOT perform composition.
     """
 
@@ -865,7 +865,7 @@ async def execute_with_streaming(
 ) -> int:
     """Execute one streaming spawn and always finalize the spawn row.
 
-    I-8 ownership: composition happens in driving adapters. This executor
+    Composition happens in driving adapters. This executor
     consumes pre-composed `LaunchContext` and does subprocess/transport
     mechanics only.
     """
@@ -1007,7 +1007,7 @@ async def execute_with_streaming(
             session_id_observer=native_run.observe,
         )
 
-        # I-10: spawn row MUST exist before execute_with_streaming is called.
+        # Spawn row MUST exist before execute_with_streaming is called.
         # Mid-flight row creation is forbidden — callers must call start_spawn first.
         spawn_row = spawn_store.get_spawn(runtime_root, run.spawn_id)
         if spawn_row is None:

@@ -29,9 +29,13 @@ argv
 - **Every command runs inside `invocation_scope()`.** `main.py` installs parsed options around bootstrap and dispatch separately, and `main()` holds one warning cache across both so a command warns once per key; tests and other in-process callers must install their own explicit `GlobalOptions`. `get_global_options()` raises outside that boundary rather than inventing defaults.
 - **`to_cli_output()` dispatch, not `isinstance` in `main.py`.** Command handlers return typed result objects. Each implements `to_cli_output()`. Adding result types does not require editing `main.py`.
 - **Read-only invocation classes never initialize authority or telemetry.** `READ_ROOTLESS`, `READ_PROJECT`, and `READ_RUNTIME` never allocate project/session IDs or create missing runtime roots. Discovery within an existing runtime may catch up its disposable history index under the state layer's coordination locks; it must not mutate lifecycle authority.
-- **`-C` has no observer identity.** `resolve_cli_observer_context()` supplies the
-  ambient spawn ID only when observation is enabled and the invocation did not use
-  `-C`. Commands directed at another project may read results but never consume them;
+- **`-C` drops the caller's identity.** Spawn, chat, and work IDs are per project, so
+  `MERIDIAN_SPAWN_ID`, `MERIDIAN_CHAT_ID`, `_MERIDIAN_PARENT_SPAWN_ID`, and
+  `MERIDIAN_ACTIVE_WORK_*` name the caller in a different project. `main._directory_env_scope`
+  unsets them for the whole `-C` invocation, so every `RuntimeContext`, ops read, telemetry
+  owner, and child env launched from it is unattributed (no parent, owner chat, or
+  work). `_MERIDIAN_DEPTH` stays: it counts process nesting, the recursion guard.
+  Commands directed at another project may read results but never consume them;
   `spawn ack -C` is refused because acknowledgement has no read-only meaning.
 - **Every real subcommand gets an exact descriptor.** `classify_invocation()` falls back to the longest matching prefix, so a missing `spawn <sub>` descriptor silently inherits `spawn`'s `WRITE_RUNTIME` bootstrap and telemetry class. Add the descriptor with the command; delete descriptors whose command no longer exists. No test catches drift.
 - **Project identity has committed and ad-hoc tiers.** Every cwd is eligible.
