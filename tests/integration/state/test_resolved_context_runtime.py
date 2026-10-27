@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.core.resolved_context import ResolvedContext, SpawnChat
+from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_read,
@@ -19,9 +19,9 @@ if TYPE_CHECKING:
 
 
 class _CurrentChatBackend:
-    def get_spawn_chat(self, runtime_root: Path, spawn_id: SpawnId) -> SpawnChat | None:
+    def get_execution_chat(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
         _ = runtime_root, spawn_id
-        return SpawnChat(current_chat_id="c-current", is_primary=False)
+        return "c-current"
 
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
         _ = runtime_root
@@ -153,7 +153,7 @@ def test_resolve_runtime_authority_honors_empty_override_over_project_state(
     assert authority.runtime_root_source == "env"
 
 
-def test_ambient_context_follows_spawn_current_chat_but_explicit_chat_does_not(
+def test_ambient_context_follows_the_execution_chat_but_explicit_chat_does_not(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:

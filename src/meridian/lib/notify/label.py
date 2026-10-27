@@ -45,19 +45,17 @@ def _primary_of(runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
     return None
 
 
-def _session_work_id(env: Mapping[str, str], runtime_root: Path) -> str | None:
-    """Work of the session ``env`` is in now, following the spawn's current chat."""
+def _session_work_id(
+    project_root: Path,
+    runtime_root: Path,
+    *,
+    chat_id: str | None,
+) -> str | None:
+    """Work of one conversation, or of this process's own execution."""
 
-    from meridian.lib.core.resolved_context import LocalFilesystemBackend, follow_current_chat
+    from meridian.lib.ops.work_attachment import resolve_active_work_id
 
-    launch_work_id = _clean(env.get("MERIDIAN_ACTIVE_WORK_ID"))
-    current_chat_id = follow_current_chat(env, runtime_root)
-    if launch_work_id and not current_chat_id:
-        return launch_work_id
-    chat_id = current_chat_id or _clean(env.get("MERIDIAN_CHAT_ID"))
-    if not chat_id:
-        return None
-    return _clean(LocalFilesystemBackend().get_session_active_work_id(runtime_root, chat_id))
+    return _clean(resolve_active_work_id(project_root, runtime_root, chat_id=chat_id))
 
 
 def build_session_label(
@@ -97,14 +95,18 @@ def build_session_label(
             if primary is not None and primary.id != spawn_id:
                 child_spawn_id, child_agent, child_harness = spawn_id, agent, harness
                 agent, harness = primary.agent, primary.harness
-                # The launch chat covers a primary with no recorded current chat.
-                primary_env = {
-                    "MERIDIAN_SPAWN_ID": primary.id,
-                    "MERIDIAN_CHAT_ID": primary.chat_id or "",
-                }
-                work_id = _session_work_id(primary_env, runtime_root) or work_id
+                work_id = (
+                    _session_work_id(
+                        project_root,
+                        runtime_root,
+                        chat_id=primary.continue_chat_id,
+                    )
+                    or work_id
+                )
             else:
-                work_id = _session_work_id(env, runtime_root)
+                work_id = (
+                    _session_work_id(project_root, runtime_root, chat_id=None) or work_id
+                )
     except (OSError, ValueError, HistoryIndexIncomplete, sqlite3.Error):
         pass
     return SessionLabel(

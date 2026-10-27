@@ -159,16 +159,19 @@ CURRENT_WORK_ID = "current"
 def resolve_active_work_id(
     project_root: Path | None = None,
     runtime_root: Path | None = None,
+    *,
+    chat_id: str | None = None,
 ) -> str | None:
     """Return the work item this session acts on, if any.
 
-    The one read behind every "current item": a primary follows its conversation
-    (``/clear`` and ``/resume`` move it), a spawn uses its launch snapshot until its
-    session row carries an attachment. With neither root given, the process
-    environment supplies both.
+    The one read behind every "current item": an execution follows its own
+    conversation (``/clear`` and ``/resume`` move it), and the env is a launch
+    snapshot that only outside a managed run is the whole story. *chat_id* names a
+    conversation to read instead of this process's own.
     """
 
     resolved = ResolvedContext.from_environment(
+        explicit_chat_id=chat_id,
         explicit_project_root=project_root,
         explicit_runtime_root=runtime_root,
     )

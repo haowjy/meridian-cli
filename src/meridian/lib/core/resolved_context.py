@@ -18,21 +18,8 @@ from meridian.lib.core.depth import (
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
-
-
-@dataclass(frozen=True)
-class SpawnChat:
-    """A spawn execution's conversation, as far as work resolution needs it.
-
-    ``current_chat_id`` is the pointer the launcher published after an owned
-    observation; the entry chat is not an observation, so it stays ``None`` until
-    the conversation actually moves.
-    """
-
-    current_chat_id: str | None
-    is_primary: bool
 
 
 class ContextBackend(Protocol):
@@ -42,8 +29,8 @@ class ContextBackend(Protocol):
         """Look up the active work ID for a session."""
         ...
 
-    def get_spawn_chat(self, runtime_root: Path, spawn_id: SpawnId) -> SpawnChat | None:
-        """Resolve a launch snapshot to its spawn's conversation pointer."""
+    def get_execution_chat(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+        """The conversation an execution acts on, from its own spawn row."""
         ...
 
 
@@ -51,47 +38,26 @@ class LocalFilesystemBackend:
     """Default context backend backed by local state modules."""
 
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
-        from meridian.lib.state.history_index import HistoryIndex
+        # The same row read every work command uses; a projection would be a second
+        # answer to "what is this chat's item" that could disagree with the writes.
+        return session_store.get_session_active_work_id(runtime_root, chat_id)
 
-        records = HistoryIndex(runtime_root).sessions(chat_ids={chat_id})
-        return records[0].active_work_id if records else None
-
-    def get_spawn_chat(self, runtime_root: Path, spawn_id: SpawnId) -> SpawnChat | None:
+    def get_execution_chat(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
         row = spawn_store.get_spawn(runtime_root, spawn_id)
-        if row is None:
-            return None
-        return SpawnChat(
-            current_chat_id=row.continue_chat_id if row.current_chat_id else None,
-            is_primary=row.kind == "primary",
-        )
+        return ((row.continue_chat_id or "") if row is not None else "").strip() or None
 
 
-def _spawn_chat(
-    env: Mapping[str, str],
-    runtime_root: Path,
-    backend: ContextBackend | None = None,
-) -> SpawnChat | None:
-    spawn_id = env.get("MERIDIAN_SPAWN_ID", "").strip()
-    if not spawn_id:
-        return None
-    return (backend or LocalFilesystemBackend()).get_spawn_chat(runtime_root, SpawnId(spawn_id))
-
-
-def follow_current_chat(
+def _execution_chat(
     env: Mapping[str, str],
     runtime_root: Path,
     backend: ContextBackend | None = None,
 ) -> str | None:
-    """The spawn's current conversation, once it has moved off the launch snapshot.
-
-    ``MERIDIAN_CHAT_ID`` is fixed at launch, and a spawned process inherits its
-    parent's. Once the launcher has admitted an owned native observation, the
-    spawn's durable current pointer names the conversation, and its work comes
-    from that conversation's session.
-    """
-
-    chat = _spawn_chat(env, runtime_root, backend)
-    return chat.current_chat_id if chat is not None else None
+    spawn_id = env.get("MERIDIAN_SPAWN_ID", "").strip()
+    if not spawn_id:
+        return None
+    return (backend or LocalFilesystemBackend()).get_execution_chat(
+        runtime_root, SpawnId(spawn_id)
+    )
 
 
 @dataclass(frozen=True)
@@ -175,21 +141,21 @@ class ResolvedContext:
         else:
             runtime_root = None
 
-        # MERIDIAN_CHAT_ID and MERIDIAN_ACTIVE_WORK_ID are a launch snapshot. A
-        # primary's work lives on its chat's session row — the process outlives a
-        # chat rotation (Claude /clear, /resume) and every work command writes that
-        # row — so no launch-time ID may shadow it. A spawn's snapshot goes stale
-        # once the launcher publishes a new current chat. Explicit chat and work
-        # arguments retain their normal precedence.
+        # MERIDIAN_CHAT_ID and MERIDIAN_ACTIVE_WORK_ID are a launch snapshot, and a
+        # spawn inherits its parent's chat id: only the execution's own session row
+        # names the conversation it acts on. A primary's row follows a chat rotation
+        # (Claude /clear, /resume); a spawn's row is its own chat even though the env
+        # still names the conversation that launched it. With no row — an unmanaged
+        # shell — the env is all there is. Explicit arguments keep their precedence.
         if not explicit_chat_id_raw and runtime_root is not None:
-            spawn_chat = _spawn_chat(os.environ, runtime_root, backend_impl)
-            if spawn_chat is not None and (spawn_chat.is_primary or spawn_chat.current_chat_id):
-                chat_id_raw = spawn_chat.current_chat_id or chat_id_raw
+            execution_chat = _execution_chat(os.environ, runtime_root, backend_impl)
+            if execution_chat is not None:
+                chat_id_raw = execution_chat
                 work_id_raw = ""
                 work_dir_raw = ""
 
-        # Authoritative work-ID precedence:
-        # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.
+        # Authoritative work-ID precedence: explicit override > the execution's own
+        # chat row > MERIDIAN_ACTIVE_WORK_ID (only outside a managed run).
         work_id: str | None = None
         work_id_source: Literal["explicit", "env", "session", "none"] = "none"
         if explicit_work_id_raw:
