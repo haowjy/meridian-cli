@@ -38,8 +38,10 @@ picker.
 ## Codex `network_access` native config removed
 
 `harness-overrides.codex.sandbox_workspace_write.network_access` is a Meridian-owned key.
-A Codex launch whose profile sets it now fails with a config error naming the `network`
-field; it no longer launches with the value ignored. Replace the override with `network:` in
+It used to override the network value Meridian projected, with a deprecation warning. A
+fresh Codex launch whose profile sets it now fails with a config error naming the `network`
+field. A continued session that an older build recorded with the key runs under its stored
+`network`; the key is dropped. Replace the override with `network:` in
 the profile (see [agent profiles](agent-profiles.md)).
 
 ## Per-chat work and checkout links

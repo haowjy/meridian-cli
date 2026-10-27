@@ -21,7 +21,6 @@ from meridian.lib.core.overrides import (
 )
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
-from meridian.lib.harness.projections.native_config import reject_removed_codex_native_config
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
@@ -503,8 +502,9 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         network_input,
         final_sandbox or "default",
     )
-    if resolved_harness == HarnessId.CODEX:
-        reject_removed_codex_native_config(bundle_result.execution_policy.native_config)
+    surface.harness_registry.get_subprocess_harness(resolved_harness).reject_removed_native_config(
+        bundle_result.execution_policy.native_config
+    )
     resolved_execution_policy = ResolvedExecutionPolicy(
         effort=resolved_execution_policy_overrides.effort,
         sandbox=final_sandbox,

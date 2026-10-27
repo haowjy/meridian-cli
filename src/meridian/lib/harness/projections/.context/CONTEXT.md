@@ -36,9 +36,10 @@ plain pass-through, and the report lines for what a harness leaves unapplied: Cl
 `model_reasoning_effort`, `none` included. Cursor's effort is Mars's: it folds the level
 into `harness_model`.
 
-`sandbox_workspace_write.network_access` in Codex native config is a launch error
-(`reject_removed_codex_native_config`, called from `launch/policies.py`), so it never reaches
-a projector; the profile `network` field is its only owner.
+`sandbox_workspace_write.network_access` is a reserved Codex native key: the projectors drop
+it, so a snapshot an older build wrote (continue, resume) runs under its stored `network`.
+A fresh launch fails before projection (`reject_removed_native_config` on the Codex
+adapter, called from `launch/policies.py`); the profile `network` field is its only owner.
 
 `pi_extension_projection.py` is not a spec projector — it resolves stable
 Meridian-owned Pi extension entrypoints without copying or materializing them.

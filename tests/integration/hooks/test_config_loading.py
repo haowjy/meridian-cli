@@ -102,7 +102,7 @@ def test_hook_config_model_normalizes_closed_values(tmp_path: Path) -> None:
         ),
         (
             'event = "spawn.finished"\n[hooks.when]\nstatus = ["success", "skipped"]',
-            "`skipped` was removed",
+            "expected values in [cancelled, failure, success, timeout], got 'skipped'",
         ),
         (
             'event = "spawn.started"\n[hooks.when]\nstatus = ["success"]',

@@ -169,11 +169,6 @@ in a directory with no Meridian runtime state; only `interval`-throttled hooks s
 `MERIDIAN_HOOKS_ENABLED=false` turns off all hook dispatch, including
 notification delivery.
 
-A row configured with a deprecated event name receives that configured name in
-JSON `event_name` and `MERIDIAN_HOOK_EVENT`, even though `hooks list` shows its
-replacement event. Rows configured with current names receive the current name.
-This payload compatibility lasts only for the event-name migration window.
-
 ### JSON stdin payload
 
 Every command hook receives one object like this on standard input:

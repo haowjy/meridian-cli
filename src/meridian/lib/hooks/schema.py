@@ -16,6 +16,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
@@ -64,6 +65,8 @@ def _hook_event(value: object) -> str | object:
         return normalized
     if not normalized:
         raise ValueError("expected non-empty string")
+    if normalized in _REMOVED_EVENT_NAMES:
+        raise ValueError(f"`{normalized}` was removed; use `{_REMOVED_EVENT_NAMES[normalized]}`")
     if normalized not in _KNOWN_HOOK_EVENTS:
         valid = ", ".join(sorted(_KNOWN_HOOK_EVENTS))
         raise ValueError(f"expected one of [{valid}], got {normalized!r}")
@@ -162,6 +165,14 @@ class HookSpec(BaseModel):
     remote: NonEmptyString | None = None
     options: dict[str, object] = Field(default_factory=dict)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_failure_policy(cls, data: object) -> object:
+        row = json_object(data)
+        if row is not None and "failure_policy" in row:
+            raise ValueError("`failure_policy` was removed; hook failures always continue")
+        return data
+
     @field_validator("exclude", mode="before")
     @classmethod
     def _tuple_exclude(cls, value: object) -> object:
@@ -181,35 +192,9 @@ def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
     return tuple(values)
 
 
-def _reject_removed_names(raw_value: object, *, source: str) -> None:
-    row = json_object(raw_value)
-    if row is None:
-        return
-
-    event = _normalized_string(row.get("event"))
-    if isinstance(event, str) and event in _REMOVED_EVENT_NAMES:
-        raise ValueError(
-            f"Invalid value for '{source}.event': `{event}` was removed; "
-            f"use `{_REMOVED_EVENT_NAMES[event]}`."
-        )
-    if "failure_policy" in row:
-        raise ValueError(
-            f"Invalid value for '{source}.failure_policy': `failure_policy` was removed; "
-            "hook failures always continue."
-        )
-    when = json_object(row.get("when"))
-    statuses = json_list(when.get("status")) if when is not None else None
-    if statuses is not None and any(_normalized_string(item) == "skipped" for item in statuses):
-        raise ValueError(
-            f"Invalid value for '{source}.when.status': `skipped` was removed; "
-            "it never matched."
-        )
-
-
 def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec:
     """Validate one hook row, rejecting names and keys that were removed."""
 
-    _reject_removed_names(raw_value, source=source)
     warn_unknown_model_keys(raw_value, model=HookSpec, source=source)
     try:
         return HookSpec.model_validate(raw_value)

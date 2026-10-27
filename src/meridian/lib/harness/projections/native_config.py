@@ -39,6 +39,7 @@ CODEX_RESERVED_NATIVE_CONFIG_KEYS: frozenset[str] = frozenset(
         CODEX_CONFIG_SANDBOX_MODE_KEY,
         CODEX_CONFIG_APPROVAL_POLICY_KEY,
         CODEX_CONFIG_WRITABLE_ROOTS_KEY,
+        CODEX_CONFIG_NETWORK_ACCESS_KEY,
         CODEX_CONFIG_NOTIFY_KEY,
         CODEX_CONFIG_WEB_SEARCH_KEY,
         CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY,
@@ -159,7 +160,10 @@ def _reserved_codex_key(key: str) -> bool:
 
 
 def reject_removed_codex_native_config(config: NativeConfig) -> None:
-    """Fail launch on Codex native keys whose deprecation window has closed."""
+    """Fail a fresh launch on Codex native keys whose deprecation window has closed.
+
+    Replayed snapshots skip this; the reserved-key set drops the key for them.
+    """
 
     for segments, _value in flatten_native_config(config):
         if ".".join(segments) == CODEX_CONFIG_NETWORK_ACCESS_KEY:
