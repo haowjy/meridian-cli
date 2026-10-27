@@ -28,7 +28,6 @@ from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.work_attachment import resolve_current_work_alias
 from meridian.lib.state.paths import resolve_project_paths
-from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.user_paths import get_dry_run_preview_root
 
 from ..runtime import (
@@ -137,18 +136,6 @@ def build_create_payload(
         ambient_work_id = (
             (resolved_context.work_id or "").strip() or None if inherit_ambient_work else None
         )
-        if (
-            inherit_ambient_work
-            and ambient_work_id is None
-            and resolved_context.chat_id
-            and runtime_root is not None
-        ):
-            try:
-                ambient_work_id = (
-                    get_session_active_work_id(runtime_root, resolved_context.chat_id) or ""
-                ).strip() or None
-            except Exception:
-                ambient_work_id = None
         project_state_dir = resolve_project_paths(project_root).root_dir
         spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id is not None else None
         inherited_for_child = (
