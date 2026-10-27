@@ -213,8 +213,8 @@ change what Meridian launches with, and a list-valued `tools` key under
 Per-field, strongest to weakest:
 1. CLI flags (`-m`, `--effort`, etc.)
 2. Environment variables (`MERIDIAN_MODEL`, `MERIDIAN_EFFORT`)
-3. Matched model-policy rule (from combined overlay+profile list, first-match-wins)
-4. Agent overlay generic defaults
+3. Agent overlay scalar fields (`[agents.<name>]` `effort`, `approval`, `sandbox`, `network`)
+4. Matched model-policy rule (from combined overlay+profile list, first-match-wins)
 5. Agent profile defaults
 6. Config-level defaults
 7. Model alias defaults
