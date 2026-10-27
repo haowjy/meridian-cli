@@ -240,8 +240,7 @@ def test_project_config_v2_drives_managed_primary_attach(
         _V2_SESSION_ID,
         "--prompt",
     )
-    assert launch[6].startswith("# Meridian run\n\n")
-    assert "`dry-run-primary-opencode` — your run ID" in launch[6]
+    assert "your run ID" not in launch[6]
     assert "primary prompt" in launch[6]
     assert process_launcher.launch_envs[0]["OPENCODE_PASSWORD"] == _SERVER_PASSWORD
     assert process_launcher.output_log_paths == [None]
