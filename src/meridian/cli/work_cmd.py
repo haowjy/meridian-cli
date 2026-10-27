@@ -204,7 +204,7 @@ def _work_delete(
     emit: Emitter,
     work_id: Annotated[
         str,
-        Parameter(help="Work item id."),
+        Parameter(help=_CURRENT_ITEM_HELP),
     ],
     force: Annotated[
         bool,
@@ -219,7 +219,7 @@ def _work_switch(
     emit: Emitter,
     work_id: Annotated[
         str,
-        Parameter(help="Work item id."),
+        Parameter(help=_CURRENT_ITEM_HELP),
     ],
 ) -> None:
     emit(work_switch_sync(WorkSwitchInput(work_id=work_id, chat_id=_runtime_chat_id())))
@@ -229,7 +229,7 @@ def _work_reopen(
     emit: Emitter,
     work_id: Annotated[
         str,
-        Parameter(help="Work item id."),
+        Parameter(help=_CURRENT_ITEM_HELP),
     ],
 ) -> None:
     emit(work_reopen_sync(WorkReopenInput(work_id=work_id)))
@@ -241,8 +241,8 @@ def _work_rename(
         str,
         Parameter(
             help=(
-                "Current work item id, or the new name when it is the only argument. "
-                "Defaults to this session's current item."
+                f"{_CURRENT_ITEM_HELP} With one argument it is the new name, "
+                "renaming the current item."
             )
         ),
     ] = "",
