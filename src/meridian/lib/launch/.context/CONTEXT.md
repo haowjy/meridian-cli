@@ -774,7 +774,8 @@ and their paths are per-launch for a spawn and per-conversation for a primary. S
 spawn's run ID, its launching chat, and those two links go in the first user turn
 (`build_launch_facts_prompt()`), never the system prompt: sibling spawns then send
 byte-identical system bytes. A primary's own chat ID and its two links stay in the
-capability block, because a `--continue` replays no user turn. Bind also pins a
+capability block, because a `--continue` replays no user turn. A primary gets no run-ID
+line: it exists so a caller can find and wait on a spawn, and a primary's handle is its chat ID. Bind also pins a
 checkout no store can recompute — this run's `--task-dir`, a launch from outside the
 project, or the pin its launcher passed on (read from the launcher's spawn scope, never
 from `MERIDIAN_TASK_DIR`) — in the execution's spawn scope before it publishes the
