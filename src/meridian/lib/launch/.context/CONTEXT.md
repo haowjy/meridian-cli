@@ -328,8 +328,10 @@ or after projection.
 
 Every prompt also has a short `# Meridian skills` block generated from the
 descriptions under `meridian.skills`. It is a trigger index, not loaded skill
-content: the agent reads a matching entry through the read-only `meridian skills`
-command. Bundled names use the `name__meridian` collision spelling. The
+content: the agent reads a matching entry through `meridian skills`. A skill Mars
+loaded with non-blank content into the prompt is omitted from the index. An empty
+loaded entry has no prompt document, so its trigger remains. Bundled names use the
+`name__meridian` collision spelling. The
 `handoff__meridian`, `notify__meridian`, `work__meridian`, `escalation__meridian`,
 and `prompt-authoring__meridian` triggers carry `mode: primary`; `sessions__meridian` remains
 visible to every profile. The gate follows the profile's declared mode even when a
@@ -528,10 +530,11 @@ rationale lives at `$MERIDIAN_CONTEXT_KB_DIR/concepts/session-initiation.md`;
 at this layer, the rule is simply to keep `--from` blocks in user-turn context
 blocks and out of `SystemInstruction`.
 
-### Package Skill Loading — Mars Bundle Interface
+### Skill Loading — Mars Bundle Interface
 
-Package skill content comes from the Mars launch-bundle JSON (parsed in
-`bundle_adapter.py`), not from reading `.mars/skills/` on disk. Mars reads the agent profile's `skills:` (a flat list
+Skill content comes from the Mars launch-bundle JSON (parsed in
+`bundle_adapter.py`), not from Meridian reading `.mars/skills/` on disk. This includes
+bundled Meridian skills Mars provided when a profile declares them. Mars reads the agent profile's `skills:` (a flat list
 means all `load`; a mapping has `load` and `available`), adds the `--skills`
 names Meridian passes as `--skill` to `load`, selects the harness variant, and
 returns:

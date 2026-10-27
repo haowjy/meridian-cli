@@ -1024,6 +1024,11 @@ def _build_shared_composition(
     assert network is not None
     guidance_blocks = build_guidance_blocks(
         profile=policy.profile,
+        loaded_skills=frozenset(
+            skill.name
+            for skill in policy.resolved_skills.loaded_skills
+            if skill.content.strip()
+        ),
         spawn_usage_contract=spawn_usage_contract,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
         harness_guidance=policy.adapter.shell_network_guidance(
