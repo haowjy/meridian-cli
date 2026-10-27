@@ -34,9 +34,9 @@ later `work done` or `work reopen` refuses when both locations exist and names b
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
 
-## Mars 0.21.0
+## Mars 0.22.0
 
-Meridian pins `mars-agents==0.21.0`, up from 0.20.2. Two profile keys moved
+Meridian pins `mars-agents==0.22.0`, up from 0.20.2. Two profile keys moved
 (`resident-rearm-budget` and `meridian-capabilities`), and a changed MCP merge rule may need
 a rename; the rest needs nothing from you.
 
@@ -70,14 +70,14 @@ or ask its maintainer to run `mars migrate`. A project that is itself a `schema 
 `meridian mars migrate` moves both keys, values and order unchanged, in every row above
 (`meridian mars migrate --check` lists the edit and exits 1; add `--user` for `~/.meridian/mars`).
 On a schema 1 package it also adds `requires-mars = ">=0.20.0"` when none is declared; a
-package that relies on these settings should declare `requires-mars = ">=0.21.0"` instead,
+package that relies on these settings should declare `requires-mars = ">=0.22.0"` instead,
 because Mars 0.20.2 only warns about the `meridian-cli` block and older Meridian never reads it. If a
 profile already sets one of these keys under `harness-overrides.meridian-cli`, that value wins and the
 top-level twin is dropped with a note; the keys it does not set move over. Package authors: Mars's
 [migration guide](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md#what-it-changes)
 lists what the migration changes.
 
-**Renamed namespace.** The Mars release that names the namespace `meridian-cli` reports a
+**Renamed namespace.** Mars 0.22.0 reports a
 `harness-overrides.meridian` block (and `harness-overrides.flow`, now `meridian-flow`) as
 ``[field.removed] ... `harness-overrides.meridian` was renamed; use `harness-overrides.meridian-cli` ``.
 Meridian reads only `meridian-cli`, so a profile still using `meridian` loses its
@@ -101,7 +101,7 @@ over, and where both set a key the `meridian-cli` value wins and the old one is 
 Mars's docs also stopped describing `.agents/` as a default target: with nothing linked, sync
 writes only to `.mars/`, and `meridian mars link DIR` adds a target. Meridian never depended on
 `.agents/`. The MCP filter fix landed in Mars 0.20.5, and `${MARS_MCP_DIR}` and the hooks change
-in 0.20.4. Mars's [0.20.3 through 0.21.0](https://github.com/meridian-flow/mars-agents/blob/main/CHANGELOG.md)
+in 0.20.4. Mars's [0.20.3 through 0.22.0](https://github.com/meridian-flow/mars-agents/blob/main/CHANGELOG.md)
 changelog lists the rest, including plugin-build fixes that affect only package authors.
 
 ## Mars 0.20.0 (schema v1)
@@ -177,7 +177,7 @@ In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the pack
   [`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing), MCP grants as
   `mcp(server): allow` entries in `tools`.
 - **Moved:** `resident-rearm-budget` and `meridian-capabilities` now live under
-  `harness-overrides.meridian-cli`. See [Mars 0.21.0](#mars-0210).
+  `harness-overrides.meridian-cli`. See [Mars 0.22.0](#mars-0220).
 
 A package you publish with `[package] schema = 1` is read strictly: a removed key fails sync with
 exit 2 and changes nothing. `mars migrate` also adds `requires-mars = ">=0.20.0"` to a package
