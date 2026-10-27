@@ -28,7 +28,8 @@ to the project with `meridian mars add <source>` or pass `--model`.
 when this fallback is available, `unsupported` when the installed Mars lacks it,
 and `n/a` when the user root is already primary.
 
-Package mutations without `--user` require a project Mars root. In a bare
+Package mutations without `--user` require a project Mars root; so do `migrate` (except
+`migrate --check`, which only reports) and `provide`. In a bare
 directory they fail before Mars can create a marker. `meridian mars init` is the
 explicit exception: it writes only `mars.toml`; the next Meridian runtime write
 mints the committed `[project] id` in `meridian.toml`.

@@ -55,7 +55,9 @@ its own value wins over `primary.autocompact`.
 Pre-v1 content in `.mars-src/` is upgraded in memory on every sync, with one warning:
 ``authored `.mars-src` content uses the pre-v1 format (N files to upgrade); run `mars migrate` ``.
 `meridian mars migrate` rewrites the files once and names each key it deletes
-(`meridian mars migrate --check` lists the changes and exits 1 if there are any).
+(`meridian mars migrate --check` lists the changes and exits 1 if there are any). Run it from a
+project, or add `--user` for the profiles in `~/.meridian/mars`; outside a project, `migrate`
+without `--user` is refused, and `--check` still runs.
 In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the package's own
 `agents/` and `skills/` and leaves `.mars-src/` alone; edit those files by hand.
 
