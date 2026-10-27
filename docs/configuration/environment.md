@@ -36,18 +36,22 @@ path-derived `adhoc.*` state under `MERIDIAN_HOME` and never write into the CWD.
 Run `meridian init` when the directory should have committed, shareable identity.
 
 Task directory (where source reads, edits, git, builds, and tests run) is separate.
-`MERIDIAN_TASK_DIR` is inherited across spawns. Precedence within a session:
-spawn-scope override (`meridian task-dir set`, stored in per-spawn `scope.json`) →
-work-item `task_dir` (`meridian work task-dir`) → inherited `MERIDIAN_TASK_DIR` →
-project root. Every execution's inherited value is its own per-chat link
-(`sessions/<chat>/task`), so the link's target follows those same steps.
-A launch that resolves an explicit `--task-dir`, an inherited checkout, or the
-caller's cwd outside the project records it in that execution's spawn scope, so the
-link and every later work command keep the checkout the launch resolved;
-`meridian task-dir clear` is the way back to the item's checkout.
-`meridian task-dir` prints the resolved directory, not the link. Clear a stale inherited value with
-`meridian task-dir clear`. Use `--task-dir` on primary/spawn launch to give one
-execution its own checkout — not `-C`, which retargets the entire project/control root.
+Inside a managed run, `MERIDIAN_TASK_DIR` is the execution's own per-chat link
+(`sessions/<chat>/task`), a projection of one rule and never an input to it.
+Precedence within a session: the execution's pin (`meridian task-dir set`, stored in
+per-spawn `scope.json`) → work-item `task_dir` (`meridian work task-dir`) → project
+root. Outside a managed run an exported `MERIDIAN_TASK_DIR` is an explicit checkout,
+like `--task-dir`.
+
+Three things pin a checkout to one execution at launch: `--task-dir`, a launch from a
+directory outside the project (treated as an implicit `--task-dir`), and the pin of
+the execution that launched it. Every other checkout — the item's, the project root —
+is read from the work store, so it follows `work task-dir` and `work switch`; a child
+of an execution that follows its item inherits no pin. `meridian task-dir clear`
+removes the pin and returns the execution to its item's checkout.
+`meridian task-dir` prints the resolved directory, not the link. Use `--task-dir` on
+primary/spawn launch to give one execution its own checkout — not `-C`, which
+retargets the entire project/control root.
 
 ## Core
 

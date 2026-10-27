@@ -343,20 +343,25 @@ two links: the work directory (`work_link`, a literal path with no item ID, beca
 the ID goes stale after `work switch`, and no scratch path, because `work done` moves
 it) and the source checkout (`task_link`, which replaces the concrete directory line
 and says to write the literal path, because `task-dir`, `work task-dir`, and a switch
-repoint it). Both are projections, not authority: `launch/session_links.py` reads the
-chat row, the spawn scope and the work item under the sessions lock and swaps one
-symlink per link, and the launch env names the same paths
-(`MERIDIAN_ACTIVE_WORK_DIR`, `MERIDIAN_TASK_DIR`).
+repoint it). Both are projections, not authority: each is a symlink to a link the
+work store keeps for the item (`work-items/<id>/work` and `task`), so a move of the
+item (`work done`, `reopen`, `task-dir`) never touches a chat link. `launch/
+session_links.py` computes the targets from the chat row and the spawn scope alone
+(`chat_link_targets()`, pure — it never asks the work store where an item lives) and
+swaps one symlink per link under the session write epoch; the launch env names the same
+paths (`MERIDIAN_ACTIVE_WORK_DIR`, `MERIDIAN_TASK_DIR`).
 
-**The link's checkout is recorded, not re-derived.** A launch can resolve a checkout
-no work command would: an explicit `--task-dir`, a parent's inherited checkout, or a
-caller cwd outside the project. Before publishing the links, `bind_launch_context()`
-records that directory in the execution's spawn scope
-(`write_spawn_scope_task_dir()`), so the link refresh and the `meridian task-dir`
-command share one rule — spawn scope, then the item's checkout, then the project root
-— and a later `work done`, `work rename` or `work switch` cannot reset the link to the
-project root. `meridian task-dir clear` is the way back. A checkout that came from a
-work item needs no scope entry: every command recomputes it from the item. The capability block carries a
+**A checkout is pinned only when no store can recompute it.** The task link is the
+execution's pin, else its item's checkout, else the project root. Before publishing the
+links, `bind_launch_context()` pins the directory in the execution's spawn scope
+(`write_spawn_scope_task_dir()`) for the three launch facts nothing else records: an
+explicit `--task-dir`, a launch from a directory outside the project (an implicit
+`--task-dir`), and the pin its launcher passed on (`inheritable_task_dir()` reads the
+launcher's spawn scope, never `MERIDIAN_TASK_DIR`, which inside a managed run is the
+launcher's own link). A checkout that came from a work item or the project root needs no
+pin: the item's link recomputes it, so a child of an execution that merely follows its
+item follows `work task-dir` and `work switch` too. `meridian task-dir clear` removes the
+pin. The capability block carries a
 primary's own chat ID and its two links, because a primary's `--continue` replays no
 user turn; per-launch values are rendered into the first user turn
 (`build_launch_facts_prompt()`), because one changed byte in the system prompt
@@ -453,14 +458,11 @@ Launch uses a work item's `task_dir` as its logical task cwd. Persisted
 manage git worktrees.
 
 **Premature-derivation trap in `ops/spawn/prepare.py`.** `build_create_payload()`
-derives the parent's inheritable task dir via `derive_inheritable_task_dir()`
-before calling `resolve_launch_inputs()`. That derivation calls
-`resolve_effective_task_dir()`, which can raise on a stale work-item path.
-When an explicit `--task-dir` flag is present, `build_create_payload()` skips
-the derivation entirely (sets `inherited_for_child = None`) so the stale value
-never blocks an explicit override. Without this skip, the stale-path exception
-fires before the explicit flag reaches `resolve_task_cwd()`, breaking the
-documented config-precedence rule that CLI flags always win.
+derives the parent's inheritable task dir via `inheritable_task_dir()` (its spawn-scope
+pin) before calling `resolve_launch_inputs()`. When an explicit `--task-dir` flag is
+present, `build_create_payload()` skips the derivation entirely
+(sets `inherited_for_child = None`), so CLI flags keep their documented precedence
+over anything inherited.
 
 ### Workspace Projection
 

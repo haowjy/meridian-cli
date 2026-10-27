@@ -308,13 +308,24 @@ in place by `work reopen` (and so by `work switch`), instead of refusing as alre
 active forever.
 
 A running spawn is not a reason to defer: its work directory is a per-chat link
-(`launch/session_links.py`), so the directory moves under it and the next write lands
-at the new location. The command that moves an item repoints the links of every
-attached execution for the same reason (`ops/work_attachment.follow_work_item`), and
-a primary attached to an item that becomes done is detached instead. That helper holds
-the sessions lock across both the move and the repoint — sessions before work-store,
-never the reverse, and nothing takes them in the other order — so no link can be
-published against the directory the move just vacated.
+(`launch/session_links.py`) that points at a link the work store owns,
+`work-items/<id>/work`, so the directory moves under it and the next write lands at the
+new location. `write_state_locked` republishes `work-items/<id>/{work,task}` before
+and after every mutation of the item — before, to repair whatever a crash or an older
+build left, which is why re-running a command that then refuses ("already archived")
+still repairs the links. No session row is written by `done`, `reopen` or `task-dir`:
+the chat link depends on the chat's row and the execution's scope, never on where the
+work store keeps the item. A rename repoints the old name's links at the new item so
+live chat links keep resolving until the sessions have followed, then the old name's
+links are dropped (`ensure_item_links`). `meridian doctor` republishes every item's
+links and drops the ones whose item is gone (`sweep_item_links`).
+
+**The two stores' locks are never held at the same time.** The work store's lock
+(`work-store.flock`) and the session pair (`session_store.session_writes`: the history
+mutation gate shared, then `sessions.jsonl.flock`) are each taken alone; a command that
+changes both (rename, delete, switch) runs them as sequential steps, work store first.
+Holding both is what deadlocked `work done` against `session restore`, which takes the
+gate exclusively and then the sessions lock.
 
 `move_work_dir` refuses when both locations exist, naming both, and never deletes
 either copy. Only `work delete --force` removes a directory.

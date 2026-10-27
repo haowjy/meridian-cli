@@ -244,34 +244,43 @@ and `current` names it anywhere a work id is accepted (`work show`, `sessions`,
 script has to carry an id that a `work switch` can invalidate. `current` is
 reserved: `work start`/`rename` refuse it as a name.
 
-`work done` moves the item's directory to the archive immediately and repoints every
-attached execution's link at it, so a spawn that is still running keeps writing
-through the same literal path and its writes land in the archive. A primary attached
-to the item is returned to its ambient directory, because a done item is no longer
-its to edit. `work rename` moves the directory and every attached execution's
-attachment with it. `work reopen` moves the directory back, and `work start` or
-`work switch` of a done item reopens it.
+`work done` moves the item's directory to the archive immediately and writes no
+session state: every attached execution keeps its attachment, and the item's own
+links follow the directory, so a spawn that is still running keeps writing through
+the same literal path and its writes land in the archive. A primary attached to the
+item keeps it, and `work switch` to a done item reopens it. `work rename` moves the
+directory and moves the executions that are live and attached to it onto the new
+name. A chat that already ended keeps the name it ended on, so `--from` on it warns
+that the item no longer exists and creates nothing; pass `--work` to name one.
+`work delete` returns the live executions to their ambient directory. `work reopen`
+moves the directory back, and `work start` or `work switch` of a done item reopens it.
 
 A move never deletes either copy. If a directory exists in both places — an
 interrupted operation, or a leftover — it is refused with both paths named, and
 nothing is moved or deleted.
 
 Every live execution, primary or spawn, has two stable symlinks under the runtime
-root that keep moving targets out of the prompt and environment:
+root that keep moving targets out of the prompt and environment. Each points at a
+link the work store keeps for the item (`work-items/<id>/work` and `task`), so a move
+of the item needs no write to any session:
 
 - `sessions/<chat>/work` (`MERIDIAN_ACTIVE_WORK_DIR`) is the work directory.
-  `work start`, `work switch`, and `work rename` repoint it, and `work done` follows
-  the item into the archive; with no active item it points at the execution's ambient
-  spawn work directory. Agents can write prompt files with that literal path and pass
-  it to `--prompt-file` without resolving the work path again. The link follows the
-  current item, so write a prompt after the final switch; a path saved before a switch
-  still names the same link but reaches the new item.
-- `sessions/<chat>/task` (`MERIDIAN_TASK_DIR`) is the source checkout. It follows
-  `meridian task-dir`, `meridian work task-dir`, and a switch to an item with its
-  own checkout, so the same literal path keeps reaching the current one. A
-  spawn-scope `task-dir` outranks an item's checkout, as it does at launch; a
-  launch's `--task-dir` or inherited checkout becomes that scope, so later work
-  commands keep it.
+  `work start`, `work switch`, `work rename` and `work delete` repoint it, and a
+  `work done` or `work reopen` moves the item under it; with no active item it
+  points at the execution's ambient spawn work directory. Agents can write prompt
+  files with that literal path and pass it to `--prompt-file` without resolving the
+  work path again. The link follows the current item, so write a prompt after the
+  final switch; a path saved before a switch still names the same link but reaches
+  the new item.
+- `sessions/<chat>/task` (`MERIDIAN_TASK_DIR`) is the source checkout: the execution's
+  pinned checkout, else its item's checkout, else the project root. It follows
+  `meridian task-dir`, `meridian work task-dir`, and a switch to an item with its own
+  checkout, so the same literal path keeps reaching the current one. Three things
+  pin a checkout to one execution, and `meridian task-dir clear` removes the pin: a
+  launch's `--task-dir`; a launch from a directory outside the project, which counts
+  as `--task-dir`; and the pin of the execution that launched it. A child of an
+  execution that follows its item or the project root inherits no pin, so it follows
+  `work task-dir` and `work switch` too.
 
 The chat in the path is the execution's own: a primary's entry chat (the one its
 launch named, which survives a `/clear` rotation) and a spawn's own chat. A primary

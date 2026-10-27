@@ -260,13 +260,17 @@ here; otherwise it is invisible to those surfaces.
 handles `--work` resolution before the spawn row is created. The resumed-session
 case (reading `preserved_work_id`) is handled inside `run_harness_process()` in
 `launch/process/`. `resolve_active_work_id()` reads an execution's own chat row for
-both kinds, since only that row survives a `/clear`. `follow_work_item()` is a
-context manager: it takes the sessions lock, reads the attached executions and (when
-the attachment itself changes) every session row that names the item, live or ended,
-lets the caller's move run under that lock, then rewrites those rows and repoints the
-live executions' links. Rows are authority, so `work rename` reaches a chat that ended
-and a later `--from` cannot re-create the old item. `reopen` and `task-dir` change only
-the directory or checkout, so they repoint links and leave the rows alone.
+both kinds, since only that row survives a `/clear`. A row, or an env snapshot, that
+names an item with no directory resolves to no item, with a warning (one rule in
+`ResolvedContext`), so `--from` on a chat that ended before a rename or delete cannot
+bring the old item back; only an explicit `--work` creates one
+(`materialize_launch_work_id` takes nothing else). `attach_executions()` is the one
+seam for an execution's attachment changing: the item's own links first (work store),
+then rows and chat links in one session epoch. `done`, `reopen` and `task-dir` write
+no session state, and `rename` and `delete` move live executions only, so no command
+rewrites historical or ended rows. The old design held the sessions lock across the
+move and rewrote every row that named the item; it deadlocked against `session
+restore`, failed on historical rows after the move, and spent 99 s on a 603-row item.
 
 **Sync/conflict boundary: ops resolves roots, autosync_store owns artifacts.**
 `sync_conflicts.py` and `context.py` follow the same pattern: ops determines
