@@ -168,6 +168,11 @@ jobs:
           echo "should_release=true" >> "$GITHUB_OUTPUT"
           echo "release_kind=${release_kind}" >> "$GITHUB_OUTPUT"
           echo "bump_kind=${bump_kind}" >> "$GITHUB_OUTPUT"
+
+          body_path="${RUNNER_TEMP}/pr-body.md"
+          jq -r '.body // ""' <<<"${selected_pr}" > "${body_path}"
+          echo "body_path=${body_path}" >> "$GITHUB_OUTPUT"
+
           echo "::notice::Resolved release kind: ${release_kind}; bump kind: ${bump_kind}."
 
       - name: Skip when trigger already released
@@ -509,29 +514,17 @@ jobs:
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
           PYTHON_VERSION: ${{ steps.next_version.outputs.python_version }}
+          BODY_PATH: ${{ steps.release_intent.outputs.body_path }}
         run: |
-          sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${PYTHON_VERSION}\"/" src/meridian/__init__.py
-
-          if grep -q '^## \[Unreleased\]$' CHANGELOG.md; then
-            today="$(date -u +%Y-%m-%d)"
-            tmp_file="$(mktemp)"
-            awk -v version="${NEXT_VERSION}" -v date="${today}" '
-              BEGIN { promoted = 0 }
-              {
-                if (!promoted && $0 == "## [Unreleased]") {
-                  print "## [Unreleased]"
-                  print ""
-                  print "## [" version "] - " date
-                  promoted = 1
-                  next
-                }
-                print
-              }
-            ' CHANGELOG.md > "${tmp_file}"
-            mv "${tmp_file}" CHANGELOG.md
-          else
-            echo "::warning::CHANGELOG.md missing '## [Unreleased]'; skipping changelog promotion."
+          if ! python3 scripts/changelog-notes.py render \
+            --notes-file "${BODY_PATH}" \
+            --version "${NEXT_VERSION}" \
+            --date "$(date -u +%Y-%m-%d)"; then
+            echo "::error::The merged PR body's '## Changelog' section is missing or invalid, or CHANGELOG.md has content under '## [Unreleased]'. Fix the source (edit the PR body and/or move stale [Unreleased] entries into it), then re-run this workflow."
+            exit 1
           fi
+
+          sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${PYTHON_VERSION}\"/" src/meridian/__init__.py
 
       - name: Commit release changes
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'

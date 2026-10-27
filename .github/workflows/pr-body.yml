@@ -1,0 +1,28 @@
+name: PR body
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-body-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changelog-section:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate changelog section
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          body_file="${RUNNER_TEMP}/pr-body.md"
+          printf '%s' "${PR_BODY}" > "${body_file}"
+          python3 scripts/changelog-notes.py validate --notes-file "${body_file}"
