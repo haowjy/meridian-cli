@@ -38,8 +38,8 @@ grant `sessions/<chat>/` instead, because harness path rules do not follow symli
 
 Meridian pins `mars-agents==0.20.2`, up from 0.18.4. Mars 0.20 reads and writes schema v1,
 and it carries 0.19.0's changes too, which the old pin skipped. Mars documents the format
-([schema v1](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/schema-v1.md),
-[migrating a package](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/migrating-to-schema-v1.md))
+([schema v1](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/schema-v1.md),
+[migrating a package](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md))
 and each change in its [0.20.2](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.2),
 [0.20.1](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.1), [0.20.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.0)
 and [0.19.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.19.0) release notes.
@@ -64,7 +64,7 @@ Run `meridian mars sync` once. Sync rewrites installed `.mars/` content as schem
 
 Mars checks `[agents.<name>]` overlays when `mars.toml` loads. A bad value fails every
 `meridian mars` command and every launch, not only sync.
-Mars's [overlay reference](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/mars-toml.md#agentsname-overlay)
+Mars's [overlay reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/mars-toml.md#agentsname-overlay)
 lists the accepted keys.
 
 | You have | Mars 0.20.0 does | Change it to |
@@ -79,7 +79,7 @@ run as `never`. Only `mars.toml` and profile files lost `yolo`.
 
 Mars now takes compaction only from the model alias. Set `autocompact` or `autocompact_pct` under
 `[models.<alias>]` in `mars.toml` (see Mars's
-[`[models]` reference](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/mars-toml.md#models)),
+[`[models]` reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/mars-toml.md#models)),
 so it applies to every launch that uses the alias, or set `primary.autocompact` /
 `primary.autocompact_pct` in `meridian.toml` for the primary session only. An alias that sets
 its own value wins over `primary.autocompact`.
@@ -120,7 +120,7 @@ A package you publish with `[package] schema = 1` is read strictly: a removed ke
 exit 2 and changes nothing. `mars migrate` also adds `requires-mars = ">=0.20.0"` to a package
 that declares no requirement, and `meridian mars check` warns when a `schema = 1` package has no
 requirement or one that allows an older Mars. Package maintainers: see Mars's
-[migration guide](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/migrating-to-schema-v1.md).
+[migration guide](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md).
 
 ### If you depend on packages
 
