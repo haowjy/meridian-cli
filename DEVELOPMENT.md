@@ -150,8 +150,8 @@ meridian-cli releases happen automatically after normal PR merges to `main` when
 ### What you do
 
 1. Work in a worktree branch: `meridian work start "my-feature" --worktree`
-2. Write changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
-3. Open a PR with the PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
+2. Open a PR with the PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
+3. Write the changelog entry in the PR body's `## Changelog` section (the template's first section); do not edit `CHANGELOG.md`
 4. Set one release label:
    - `release:rc` for the default safe prerelease path
    - `release:patch` or `release:stable` for stable patch release
@@ -173,7 +173,7 @@ when a release label is present.
 3. Skips when no `release:*` label is present or when `release:skip` is present
 4. Computes the next stable patch or next RC from existing git tags
 5. Bumps `src/meridian/__init__.py`
-6. Promotes `CHANGELOG.md` `[Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
+6. Renders the merged PR body's `## Changelog` section into `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
 7. Creates commit `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`
 8. Creates and pushes tag `vX.Y.Z` or `vX.Y.Z-rc.N`
 9. PyPI publish runs through the tag-triggered `.github/workflows/release.yml`

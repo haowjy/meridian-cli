@@ -6,9 +6,10 @@ has a `release:*` label.
 ## What you do
 
 1. Create/select your code directory (for example `git worktree add ../meridian-cli.worktrees/my-feature -b my-feature`), then start the work item with `meridian work start "my-feature" --task-dir ../meridian-cli.worktrees/my-feature` (or run `meridian work task-dir ../meridian-cli.worktrees/my-feature` after `work start`)
-2. Add changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
-   - `scripts/check-changelog-placement.py` enforces this in CI and the push hook; use the `changelog:edit-released` label or `MERIDIAN_CHANGELOG_ALLOW_RELEASED=1` for an intentional released-section edit.
-3. Open a PR using the PR template
+2. Open a PR using the PR template
+3. Write the changelog entry in the PR body's `## Changelog` section (the
+   template's first section). CI validates it on every edit; the release job
+   renders it. Do not edit `CHANGELOG.md` — no PR does.
 4. Set one release label. The bump tracks breakage, not size: a change that
    does not break existing behaviour is a patch, however much it adds.
    - `release:rc` for the default safe prerelease path
@@ -35,8 +36,8 @@ feature), users should get one breaking release, not one per PR.
    PR to `main` early, as a draft. That PR carries the `release:minor`/`release:major`
    label, the combined changelog and upgrade notes, and the whole-change review.
 2. Point each part's PR at the integration branch, not `main`. Merging into it releases
-   nothing, so those PRs need no release label. Their changelog entries go under
-   `[Unreleased]` as usual and arrive in `main` together.
+   nothing, so those PRs need no release label. Copy their changelog sections into the
+   integration PR's `## Changelog`: only the PR merged to `main` is rendered.
 3. When the last part lands and the combined change passes the full gate, mark the
    integration PR ready, merge it, and CI releases everything once.
 
@@ -50,7 +51,7 @@ archive format, a one-time import or repair) must ship upgrade guidance. New sta
 that older builds ignore is still a patch; `release:minor` is for state changes an
 older build cannot read:
 
-- a `### Upgrade notes` block under `CHANGELOG.md` `[Unreleased]`: what users must
+- a `### Upgrade notes` block in the PR body's `## Changelog` section: what users must
   do or will notice, one line each, linking the guide;
 - a section in [upgrading.md](upgrading.md) for that version: what changed and why,
   steps before and after installing, one-time imports and repairs and their output,
@@ -92,6 +93,10 @@ Use these rules when changing a stored format, config key, hook name, or CLI fla
 
 ## What CI does
 
+On pull requests, `.github/workflows/pr-body.yml` validates the `## Changelog`
+section whenever the body changes and fails the PR when it is missing or
+malformed.
+
 On push to `main`, `.github/workflows/release-on-merge.yml`:
 
 - Reads the selected merged PR label for the pushed commit
@@ -99,13 +104,21 @@ On push to `main`, `.github/workflows/release-on-merge.yml`:
 - Skips only when `release:skip` is present or the commit has no associated PR; a merged PR with no `release:*` label defaults to RC
 - Computes the next stable (patch/minor/major) or next RC from git tags
 - Updates `src/meridian/__init__.py`
-- Promotes `CHANGELOG.md` `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
+- Renders the selected merged PR body's `## Changelog` section into `CHANGELOG.md` as `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
 - Creates commit `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`
 - Creates and pushes tag `vX.Y.Z` or `vX.Y.Z-rc.N`
 - Lets the tag push trigger `.github/workflows/release.yml` for PyPI publish
 
+If the `## Changelog` section is missing or malformed, the release fails before
+committing: edit the merged PR body and re-run the workflow. If the failure is
+content under `## [Unreleased]` (an old branch's entry), move that text into the
+merged PR body and remove it from `CHANGELOG.md` first. Re-runs stay idempotent
+through the `Release-Trigger` guard and the script's duplicate-version check.
+
 `release.yml` is the only PyPI trusted publishing workflow identity. Manual or
-backfill `v*` tag pushes use the same workflow and provenance checks.
+backfill `v*` tag pushes use the same workflow and provenance checks. It also
+creates the GitHub Release for the tag, using the released `## [X.Y.Z]` section
+as the release body; re-running edits the existing release.
 
 The release workflow ignores its own `release: v...` commit so the auto-commit
 does not recursively release again.
@@ -123,12 +136,15 @@ When commits land on `main` without a PR (direct push), auto-release is skipped 
 there is no PR label to read. Use the manual release helper:
 
 ```bash
-scripts/manually-release.sh patch --push   # bump, commit, tag, and push
-scripts/manually-release.sh patch          # same but skip the push
+scripts/manually-release.sh patch --notes-file notes.md --push   # bump, commit, tag, and push
+scripts/manually-release.sh patch --notes-file notes.md          # same but skip the push
 ```
 
-The script runs full preflight, bumps `__version__`, promotes `CHANGELOG.md [Unreleased]`,
-commits `release: vX.Y.Z`, creates the annotated tag, and optionally pushes.
+The script validates `--notes-file` (the same `### ...` blocks or one
+`None. <reason>` line a PR body uses), runs full preflight, bumps `__version__`,
+renders the notes into `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, commits
+`release: vX.Y.Z`, creates the annotated tag, and optionally pushes.
+`--notes-file -` reads standard input.
 
 **`push.followTags=true` gotcha:** the repo has `push.followTags=true`, so a plain
 `git push origin HEAD:main` also attempts to push any local `v*` tag, which the
@@ -143,5 +159,6 @@ git push --no-verify origin vX.Y.Z           # push the tag (bypasses local v* g
 ## Boundaries
 
 - Do not edit `__version__` — CI owns version bumps
+- Do not edit `CHANGELOG.md` in a PR — the release job renders it from the merged PR body
 - Do not create or push `v*` tags manually — CI owns tags
 - The pre-push hook blocks direct `v*` tag pushes

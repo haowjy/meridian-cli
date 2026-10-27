@@ -38,11 +38,6 @@ if [[ "$has_branch_refs" == true ]]; then
   # Unset git-exported GIT_DIR so preflight subprocesses (pytest) don't
   # leak the real repo into test fixtures that create isolated git repos.
   unset GIT_DIR
-  changelog_args=(--base origin/main)
-  if [[ "${MERIDIAN_CHANGELOG_ALLOW_RELEASED:-}" == 1 ]]; then
-    changelog_args+=(--allow-released)
-  fi
-  "$ROOT_DIR/scripts/check-changelog-placement.py" "${changelog_args[@]}"
   # Routine pushes use the prepared-environment fast gate. Run
   # scripts/preflight.sh extended explicitly before release/full validation.
   exec "$ROOT_DIR/scripts/preflight.sh" fast

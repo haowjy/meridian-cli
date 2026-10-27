@@ -6,6 +6,8 @@
 nightly schedule.
 
 - PRs get a non-blocking release-label warning.
+- `pr-body.yml` validates the PR body's `## Changelog` section on open, edit,
+  synchronize and reopen, and fails the PR when it is missing or malformed.
 - Routine CI and the local pre-push hook run the same `scripts/preflight.sh fast`
   gate over default pytest paths, lint and typecheck; its 60-second budget is a
   warning target and never fails or stops the gate.
@@ -41,7 +43,8 @@ When release is enabled, the workflow:
 
 1. Runs `scripts/preflight.sh full`.
 2. Bumps `src/meridian/__init__.py` (`X.Y.Z` stable, `X.Y.ZrcN` for RC).
-3. Promotes `CHANGELOG.md` `[Unreleased]`.
+3. Renders the selected merged PR body's `## Changelog` section into `CHANGELOG.md`
+   under `## [X.Y.Z] - YYYY-MM-DD` (or the RC heading).
 4. Commits `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`.
 5. Creates and pushes `vX.Y.Z` or `vX.Y.Z-rc.N`.
 6. Lets the tag push trigger `release.yml`.
@@ -66,8 +69,9 @@ Manual tags must point at a valid release commit (stable or RC):
 - The tagged commit is reachable from the default branch.
 
 Use `scripts/manually-release.sh` for stable manual/backfill release commits. It
-runs the shared preflight, blocks empty `[Unreleased]` releases, updates version
-and changelog, creates the release commit, and tags the result.
+takes `--notes-file PATH` (the same `### ...` blocks or `None. <reason>` line a
+PR body uses; `-` reads stdin), runs the shared preflight, validates the notes,
+updates the version and changelog, creates the release commit, and tags the result.
 
 `scripts/manually-release.sh` does **not** create RC release commits. Manual RC
 backfill requires a pre-existing valid RC release commit and an RC tag push
