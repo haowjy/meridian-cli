@@ -71,10 +71,9 @@ These override spawn-level runtime policy. They sit above project config but bel
 |---|---|
 | `MERIDIAN_MODEL` | Model for this spawn (alias or canonical ID) |
 | `MERIDIAN_EFFORT` | Reasoning effort: `low`, `medium`, `high`, `xhigh`, `max` |
-| `MERIDIAN_APPROVAL` | Approval mode: `default`, `confirm`, `auto`, `never` (`yolo` is read as `never`; `mars.toml` overlays no longer accept it). See [Permissions by harness](../agent-profiles.md#permissions-by-harness) |
+| `MERIDIAN_APPROVAL` | Approval mode: `default`, `confirm`, `auto`, `never` (`yolo` is read as `never`). See [Permissions by harness](../agent-profiles.md#permissions-by-harness) |
 | `MERIDIAN_SANDBOX` | Sandbox level: `default`, `read-only`, `workspace-write`, `danger-full-access`. See [Permissions by harness](../agent-profiles.md#permissions-by-harness) |
-| `MERIDIAN_AUTOCOMPACT` | Context-token compaction threshold (int, minimum 1000). Overrides the model alias's `autocompact`; see [Compaction by harness](../agent-profiles.md#compaction-by-harness) |
-| `MERIDIAN_AUTOCOMPACT_PCT` | Context-window percentage that triggers compaction (int 1–100) |
+| `MERIDIAN_AUTOCOMPACT` | Context compaction threshold (int 1–100) |
 | `MERIDIAN_TIMEOUT` | Spawn timeout in minutes (float > 0) |
 | `MERIDIAN_RESIDENT_REARM_BUDGET` | Maximum resident deadline extensions (int >= 0; unset is unlimited) |
 

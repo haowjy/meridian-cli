@@ -23,7 +23,7 @@ skills never enter harness-native skill directories.
 
 Wheel metadata builds the `# Meridian skills` trigger block. A skill already loaded
 by the Mars launch bundle has no trigger line, preventing a loaded body and a pointer
-to a different copy from coexisting. Otherwise, optional `metadata.mode` frontmatter gates
+to a different copy from coexisting. Otherwise, optional `mode` frontmatter gates
 the trigger on the resolved profile's declared mode, independent of whether the
 launch is a primary session or a spawn. The notify capability line uses the same
 mode gate. `meridian skills NAME` renders the selected copy under the same activation

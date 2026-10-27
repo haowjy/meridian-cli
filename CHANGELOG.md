@@ -4,34 +4,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Upgrade notes
-- Mars 0.20 (schema v1). Run `meridian mars sync` once after upgrading: it
-  rewrites installed `.mars/` content to schema v1 (launches read the old content
-  meanwhile); afterwards a `--frozen` sync fails once until `mars.lock` is
-  committed again. See
-  [Mars 0.20.0](docs/upgrading.md#mars-0200-schema-v1).
-- `mars.toml` overlays that worked now fail every command: `[agents.X] approval =
-  "yolo"` (write `never`), and `autocompact`, `autocompact_pct` or `harness` in a
-  `model-policies` override. Mars reads compaction only from `[models.<alias>]` now;
-  profile and overlay `autocompact` / `autocompact_pct` are dropped. See
-  [overlays](docs/upgrading.md#if-you-write-marstoml-overlays).
-- Profiles and skills in `.mars-src/`: run `meridian mars migrate`. It renames what
-  has a schema v1 spelling and deletes what does not (profile `autocompact`,
-  `fanout`, a skill's `allowed-tools`). See
-  [profiles and skills](docs/upgrading.md#if-you-write-profiles-or-skills).
-- Dependencies: a marketplace with several plugins needs `plugin = "<name>"`, and a
-  symlink that leaves its package now fails sync. See
-  [packages](docs/upgrading.md#if-you-depend-on-packages).
-- Launch policy: `max` is its own effort level, and a matching `model-policies`
-  override now beats the profile's top-level `effort`, `sandbox`, `approval` and
-  `network`. `effort: none` fails the launch. See
-  [launch policy](docs/upgrading.md#policy-that-changes-at-launch).
-- Rollback to the previous Meridian (Mars 0.18.4) works after one `meridian mars sync`.
-  See [rolling back](docs/upgrading.md#rolling-back).
-
 ### Changed
-- Bump pinned `mars-agents` to `0.20.1`, which reads and writes Mars schema v1
-  and adds `mars provide` for host-provided skills.
 - Meridian provides its bundled `*__meridian` skills to Mars before launches and
   package-resolving `meridian mars` commands. `meridian skills NAME` reads the
   project `.mars/skills/` copy Mars recorded for this build, while older Mars

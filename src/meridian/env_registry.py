@@ -102,8 +102,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
     # Public configuration inputs.
     _public_config("MERIDIAN_AGENT", "Default agent selection."),
     _public_config("MERIDIAN_APPROVAL", "Harness approval policy override."),
-    _public_config("MERIDIAN_AUTOCOMPACT", "Token count that triggers automatic compaction."),
-    _public_config("MERIDIAN_AUTOCOMPACT_PCT", "Context fill percent that triggers compaction."),
+    _public_config("MERIDIAN_AUTOCOMPACT", "Automatic context compaction toggle."),
+    _public_config("MERIDIAN_AUTOCOMPACT_PCT", "Automatic compaction threshold."),
     _public_config("MERIDIAN_CONFIG", "Explicit Meridian configuration file."),
     _public_config("MERIDIAN_DEBUG", "Debug telemetry output toggle."),
     _public_config("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS", "Default wait yield interval."),

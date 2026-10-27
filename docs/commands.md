@@ -512,7 +512,7 @@ deny_headless_harnesses = ["claude"]
 That blocks spawn routes after model/profile resolution selects Claude, while
 leaving primary Claude launches available.
 
-See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `no-fallback`, and `mode`. Profile `fanout` and `fallback-order` are gone in schema v1 (dropped from pre-v1 content, an error in `schema = 1` packages); use `model-policies` list order + `no-fallback: true`, and [`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing) for fan-out agents.
+See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `no-fallback`, and `mode`. Legacy `fanout` and `fallback-order` are rejected; use `model-policies` list order + `no-fallback: true`.
 
 ### Bundled Meridian skills
 

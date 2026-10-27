@@ -59,13 +59,10 @@ def _parse_skill_metadata(text: str, *, folder_name: str) -> BundledSkill:
     import frontmatter  # pyright: ignore[reportMissingTypeStubs]  # No stubs upstream.
 
     post = frontmatter.loads(text)
-    fields = dict(post.metadata)
-    name = str(fields.get("name", "")).strip()
-    description = str(fields.get("description", "")).strip()
-    raw_metadata: object = fields.get("metadata", {})
-    if not isinstance(raw_metadata, dict):
-        raise RuntimeError(f"bundled skill {folder_name!r} metadata must be a mapping")
-    raw_mode = cast("dict[str, object]", raw_metadata).get("mode")
+    metadata = dict(post.metadata)
+    name = str(metadata.get("name", "")).strip()
+    description = str(metadata.get("description", "")).strip()
+    raw_mode = metadata.get("mode")
     if not name or not description:
         raise RuntimeError(f"bundled skill {folder_name!r} needs name and description")
     if name != folder_name:
@@ -79,7 +76,7 @@ def _parse_skill_metadata(text: str, *, folder_name: str) -> BundledSkill:
         mode = "subagent"
     elif raw_mode is not None:
         raise RuntimeError(
-            f"bundled skill {folder_name!r} metadata.mode must be 'primary' or 'subagent'"
+            f"bundled skill {folder_name!r} mode must be 'primary' or 'subagent'"
         )
     return BundledSkill(name=name, description=description, mode=mode)
 

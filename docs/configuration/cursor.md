@@ -42,7 +42,7 @@ meridian spawn --harness cursor -m claude-opus-4-7 --effort high
 
 | Meridian approval mode | Cursor flag |
 |---|---|
-| `never` | `--yolo` |
+| `never` (also spelled `yolo`) | `--yolo` |
 | `auto` | `--force` |
 | `default` / `confirm` | *(no flag)* |
 

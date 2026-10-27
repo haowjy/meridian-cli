@@ -333,10 +333,10 @@ loaded with non-blank content into the prompt is omitted from the index. An empt
 loaded entry has no prompt document, so its trigger remains. Bundled names use the
 `name__meridian` collision spelling. The
 `handoff__meridian`, `notify__meridian`, `work__meridian`, `escalation__meridian`,
-and `prompt-authoring__meridian` triggers carry `metadata.mode: primary`;
-`sessions__meridian` remains visible to every profile. The gate follows the profile's
-declared mode even when a primary-mode profile is launched as a spawn, and comes from
-skill frontmatter rather than a hardcoded name set. Package skills remain on the Mars/harness path below.
+and `prompt-authoring__meridian` triggers carry `mode: primary`; `sessions__meridian` remains
+visible to every profile. The gate follows the profile's declared mode even when a
+primary-mode profile is launched as a spawn, and comes from skill frontmatter rather
+than a hardcoded name set. Package skills remain on the Mars/harness path below.
 
 Spawn-capable prompts also receive `# Prompting subagents`: durable briefing
 judgment that must remain in the prompt even though flag mechanics live in the
