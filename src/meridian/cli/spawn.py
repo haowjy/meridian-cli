@@ -1268,6 +1268,7 @@ def _spawn_subagents(emit: Emitter) -> None:
     emit(
         spawn_subagents_sync(
             SpawnSubagentsInput(),
+            ctx=resolve_cli_observer_context(observe=True),
             sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),
         )
