@@ -259,7 +259,6 @@ def _work_rename(
             WorkRenameInput(
                 work_id=work_id,
                 new_name=new_name,
-                chat_id=_runtime_chat_id(),
             )
         )
     )

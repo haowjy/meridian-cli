@@ -1145,16 +1145,51 @@ def get_last_executed_model(
     return latest
 
 
-def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[str]:
-    """Return active session IDs currently attached to a work item."""
+def _row_may_name_work_id(raw: bytes, work_id: str) -> bool:
+    """Byte prefilter for attached-row scans. It may only nominate, never decide.
+
+    A work id is an ASCII slug, so a ``active_work_id`` value carrying it appears
+    verbatim in the JSON. A row the scan cannot see into — NUL bytes may mean
+    UTF-16/32 — is nominated unread; ``records_attached_to_work`` judges it.
+    """
+
+    return b"\x00" in raw or work_id.encode() in raw
+
+
+def records_attached_to_work(runtime_root: Path, work_id: str) -> list[SessionRecord]:
+    """Return every session record attached to one work item, live or ended.
+
+    Rows are authority: a chat that ended still names the item its next launch
+    inherits, so renaming or detaching an item rewrites these rows, not only the
+    live executions' links. One raw prefilter pass nominates the chats; only the
+    latest attachment of each decides, so a chat that switched away is not returned.
+    """
 
     normalized = work_id.strip()
     if not normalized:
         return []
+    path = RuntimePaths.from_root_dir(runtime_root).sessions_jsonl
+
+    def select(row: dict[str, object]) -> str | None:
+        record = _row_record(row)
+        attached = record.get("active_work_id")
+        chat = record.get("chat_id")
+        if not isinstance(attached, str) or attached.strip() != normalized:
+            return None
+        return chat.strip() if isinstance(chat, str) and chat.strip() else None
+
+    chats = set(
+        read_events(
+            path,
+            select,
+            raw_filter=lambda raw: _row_may_name_work_id(raw, normalized),
+        )
+    )
+    records = _records_by_session(runtime_root, chat_ids=chats)
     return [
-        record.chat_id
-        for record in list_active_session_records(runtime_root)
-        if record.active_work_id == normalized
+        record
+        for record in records.values()
+        if (record.active_work_id or "").strip() == normalized
     ]
 
 

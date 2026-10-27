@@ -146,17 +146,14 @@ def _archive_work_item(
     its ambient directory, because a done item is no longer its to edit.
     """
 
-    item = work_repository.archive_work_item(
-        roots.project_state_dir,
-        current.name,
-        description=description,
-    )
-    follow_work_item(
-        roots.project_root,
-        roots.runtime_root,
-        item.name,
-        detach="primary",
-    )
+    with follow_work_item(
+        roots.project_root, roots.runtime_root, current.name, detach="primary"
+    ):
+        item = work_repository.archive_work_item(
+            roots.project_state_dir,
+            current.name,
+            description=description,
+        )
     publish_work_event(
         "work.done",
         project_root=roots.project_root,
@@ -170,8 +167,8 @@ def _archive_work_item(
 def _reopen_work_item(roots: ResolvedRoots, current: WorkItem) -> WorkItem:
     """Reopen an item and move its directory back for every attached execution."""
 
-    item = work_repository.reopen_work_item(roots.project_state_dir, current.name)
-    follow_work_item(roots.project_root, roots.runtime_root, item.name)
+    with follow_work_item(roots.project_root, roots.runtime_root, current.name):
+        item = work_repository.reopen_work_item(roots.project_state_dir, current.name)
     return item
 
 
@@ -326,7 +323,6 @@ class WorkRenameInput(BaseModel):
 
     work_id: str = ""
     new_name: str
-    chat_id: str = ""
     project_root: str | None = None
 
 
@@ -547,21 +543,16 @@ def work_delete_sync(
             runtime_root=roots.runtime_root,
         ),
     )
-    # Delete first: it refuses when artifacts exist without --force, and a refused
-    # delete must not leave every attached execution detached from an item that is
-    # still there. The owners come from the session rows, so they are still found
-    # afterwards, and their links are repointed in the same pass.
-    item, had_artifacts = work_repository.delete_work_item(
-        roots.project_state_dir,
-        item.name,
-        force=payload.force,
-    )
-    follow_work_item(
-        roots.project_root,
-        roots.runtime_root,
-        item.name,
-        detach="all",
-    )
+    # The delete refuses before any row is written: a refused delete must not leave
+    # every attached execution detached from an item that is still there.
+    with follow_work_item(
+        roots.project_root, roots.runtime_root, item.name, detach="all"
+    ):
+        item, had_artifacts = work_repository.delete_work_item(
+            roots.project_state_dir,
+            item.name,
+            force=payload.force,
+        )
     _emit_work_transition(
         "work.deleted",
         work_id=item.name,
@@ -655,21 +646,20 @@ def work_rename_sync(
         )
     ensure_work_name_is_usable(new_slug)
 
-    item = work_repository.rename_work_item(project_state_dir, old_name, new_slug)
+    # Every execution attached to the old name follows the item's directory and its
+    # new name, not just the caller: every session row that names it, live or
+    # ended, and the links of the live ones.
+    with follow_work_item(
+        roots.project_root,
+        runtime_state_root,
+        old_name,
+        rename_to=new_slug,
+    ):
+        item = work_repository.rename_work_item(project_state_dir, old_name, new_slug)
 
     for spawn in spawn_store.list_spawns(runtime_state_root, work_id=old_name).records:
         if spawn.kind == "child":
             spawn_store.update_spawn(runtime_state_root, spawn.id, work_id=item.name)
-
-    # Every execution attached to the old name follows the item's directory and its
-    # new name, not just the caller.
-    follow_work_item(
-        roots.project_root,
-        runtime_state_root,
-        old_name,
-        rename_to=item.name,
-        chat_id=resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx)),
-    )
 
     _emit_work_transition(
         "work.renamed",
@@ -731,31 +721,25 @@ def work_task_dir_sync(
     item = _require_work_item(project_state_dir, active_work_id)
 
     if payload.clear:
-        updated = work_repository.update_work_item_task_dir(
-            project_state_dir,
-            item.name,
-            task_dir=None,
-        )
+        with follow_work_item(project_root, runtime_root, item.name):
+            updated = work_repository.update_work_item_task_dir(
+                project_state_dir,
+                item.name,
+                task_dir=None,
+            )
     else:
         requested_task_dir = (payload.task_dir or "").strip()
         if not requested_task_dir:
             raise ValueError("task_dir path is empty")
         resolved_task_dir = _validate_task_dir_path(requested_task_dir)
-        updated = work_repository.update_work_item_task_dir(
-            project_state_dir,
-            item.name,
-            task_dir=resolved_task_dir.as_posix(),
-        )
+        with follow_work_item(project_root, runtime_root, item.name):
+            updated = work_repository.update_work_item_task_dir(
+                project_state_dir,
+                item.name,
+                task_dir=resolved_task_dir.as_posix(),
+            )
 
     resolved_task_dir = updated.task_dir or project_root.as_posix()
-    # The task link is a projection of this setting, and every attached execution
-    # edits the item's checkout, so each one's link follows it.
-    follow_work_item(
-        project_root,
-        runtime_root,
-        updated.name,
-        chat_id=(payload.chat_id or "").strip(),
-    )
     _emit_work_transition(
         "work.task_dir_updated",
         work_id=updated.name,

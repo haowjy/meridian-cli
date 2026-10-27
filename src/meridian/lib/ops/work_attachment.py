@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -13,8 +14,6 @@ import structlog
 from meridian.lib.core.lifecycle import get_hook_dispatcher
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.launch.session_links import (
-    LinkOwner,
-    chat_owner,
     link_owners,
     refresh_owner_links,
     work_owners,
@@ -119,6 +118,7 @@ def set_session_work_attachment(
         refresh_owner_links(project_root, runtime_root, owners)
 
 
+@contextmanager
 def follow_work_item(
     project_root: Path,
     runtime_root: Path,
@@ -126,55 +126,44 @@ def follow_work_item(
     *,
     rename_to: str | None = None,
     detach: Literal["primary", "all"] | None = None,
-    chat_id: str = "",
-) -> None:
-    """Make every execution attached to one work item follow it.
+) -> Generator[None]:
+    """Run one work mutation with the sessions lock held, then repoint its followers.
 
-    The single seam behind ``work done``, ``rename``, ``reopen`` and ``task-dir``:
-    one scan of the live sessions attached to the item, then the rows, then the
-    links, which are projections of the rows. ``rename_to`` moves the attachment
-    to the item's new name; ``detach`` returns those executions to their ambient
-    directory instead — a done item is no longer a primary's to edit, and a deleted
-    one is nobody's. *chat_id* is the caller, whose session may not be detectable as
-    live; it takes part when its row still names the item.
+    The single seam behind ``work done``, ``rename``, ``reopen``, ``task-dir`` and
+    ``delete``. Followers are read before the caller's mutation, under the sessions
+    lock the repoint takes, so no execution can attach between the read and the
+    write; the lock spans the move too, so no link points at the directory the move
+    just vacated. Every row that names the item is rewritten, live or ended: rows are
+    authority, and a chat that ended still names the item its next launch inherits.
+    Only live executions have links to repoint.
+
+    ``rename_to`` moves the attachment to the item's new name; ``detach`` returns
+    executions to their ambient directory instead — a done item is no longer a
+    primary's to edit, and a deleted one is nobody's. A mutation that raises leaves
+    every row and link as it was.
     """
 
     target_work_id = None if detach == "all" else rename_to or work_id
     with lock_file(RuntimePaths.from_root_dir(runtime_root).sessions_flock):
-        # Owners are read under the same lock as the row writes, as everywhere else: a
-        # concurrent switch cannot name an execution whose row this pass then misses.
         owners = list(work_owners(runtime_root, work_id))
-        caller = _attached_caller(runtime_root, chat_id, work_id)
-        if caller is not None and all(
-            caller.chat not in (owner.chat, owner.link_chat) for owner in owners
-        ):
-            owners.append(caller)
-        if not owners:
-            return
+        # Chat -> session kind. The live owners' chats join the rows that name the
+        # item: a primary after `/clear` moves to a chat whose row the next launch
+        # creates, and the execution's attachment must reach that chat too.
+        followers: dict[str, str] = {
+            record.chat_id: record.kind
+            for record in session_store.records_attached_to_work(runtime_root, work_id)
+        }
         for owner in owners:
-            if detach == "all" or (detach == "primary" and owner.kind == "primary"):
-                attachment = None
-            else:
-                attachment = target_work_id
             for chat in dict.fromkeys((owner.chat, owner.link_chat)):
-                session_store.update_session_work_id(runtime_root, chat, attachment)
+                followers.setdefault(chat, owner.kind)
+        yield
+        for chat, kind in followers.items():
+            detached = detach == "all" or (detach == "primary" and kind == "primary")
+            session_store.update_session_work_id(
+                runtime_root, chat, None if detached else target_work_id
+            )
+        # Rows first: they are authority, and the links are their projection.
         refresh_owner_links(project_root, runtime_root, tuple(owners))
-
-
-def _attached_caller(
-    runtime_root: Path,
-    chat_id: str,
-    work_id: str,
-) -> LinkOwner | None:
-    """The calling chat as an owner, when its row still names the item."""
-
-    normalized = chat_id.strip()
-    if not normalized:
-        return None
-    owner = chat_owner(runtime_root, normalized)
-    if owner is None or (owner.work_id or "") != work_id:
-        return None
-    return owner
 
 
 def activate_work(

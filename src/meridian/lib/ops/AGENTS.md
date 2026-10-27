@@ -107,9 +107,11 @@ hook context, active/archive work-directory resolution, and paired telemetry
 for every published work event. Incidental attachment maintenance (child
 inheritance, rename, and clear) writes through `session_store` without
 publishing an activation. `follow_work_item()` is the one seam for "every execution
-attached to this item follows it" — `work done`, `rename`, `reopen` and `task-dir`
-move the directory and then repoint the rows and links of the live sessions attached
-to it, in one scan of the live session records. Primary launch uses the same
+attached to this item follows it" — `work done`, `rename`, `reopen`, `task-dir` and
+`delete` run their move under its sessions lock, then rewrite every session row that
+names the item (live or ended) and repoint the links of the live executions. One scan
+each, and a mutation that raises leaves rows and links as they were. Primary launch
+uses the same
 activation operation as the launch runner's default rather than a separate
 store-write seam.
 
