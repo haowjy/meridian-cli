@@ -6,6 +6,21 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-27
+
+### Added
+- Experimental `[experimental] skill_delivery` setting (`inline` default, `named`) and
+  `MERIDIAN_EXPERIMENTAL_SKILL_DELIVERY`, to compare how an agent's loaded skills reach
+  it. `named` keeps inline mode's type groups and headers but replaces each skill's text
+  with one line naming the skill and the path to its `SKILL.md` and asking the agent to
+  read it now, so the text comes from disk instead of the prompt. The mode is recorded in the launch-policy snapshot, so an
+  exact `--continue` delivers skills the way its source launch did even after the
+  setting changes, and a snapshot written before the field delivered inline; a fresh
+  launch or a `--fork` uses the current setting. An `available` skill, the `# Available
+  Skills` listing and `meridian skills` are unchanged, and a skill with a
+  `variants/<harness>/SKILL.md` is named by its base file rather than the variant. See
+  [experimental skill delivery](https://github.com/haowjy/meridian-cli/blob/main/docs/configuration.md#experimental-skill-delivery).
+
 ## [0.16.0] - 2026-10-27
 
 ### Upgrade notes
