@@ -102,8 +102,12 @@ requirement or one that allows an older Mars. Package maintainers: see Mars's
 
 ### Policy that changes at launch
 
-- `max` is its own effort level above `xhigh`. Meridian passes it through: Claude receives
-  `--effort max` and Codex `model_reasoning_effort="max"`.
+- `max` is its own effort level above `xhigh`, and Mars gained `effort: none` (reasoning off).
+  Meridian lowers both per harness: Claude receives `--effort max`, and no `--effort` for `none`,
+  which Claude Code has no spelling for; Codex receives `model_reasoning_effort="max"` and
+  `"none"`; Pi receives `--thinking max` and `--thinking off`. Pi used to receive `--thinking
+  xhigh` for `max`. OpenCode applies neither. `--dry-run` reports a launch that omits the flag. See
+  [Effort by harness](agent-profiles.md#effort-by-harness).
 - **Per-model rules in a profile now apply.** A matching `model-policies` rule's `override`
   beats the profile's top-level value for `effort`, `sandbox`, `approval` and `network`. Under
   Mars 0.19 and earlier the top-level value won, so a profile that set `effort` never ran its
@@ -130,10 +134,6 @@ requirement or one that allows an older Mars. Package maintainers: see Mars's
   The list is not complete; `meridian spawn -a <profile> --model <alias> --dry-run` shows the
   effort a launch resolves to. Other packages with a top-level `effort` and a matching rule change
   the same way.
-- Mars gained `effort: none`. Meridian does not lower it per harness yet
-  ([#774](https://github.com/haowjy/meridian-cli/issues/774)): a launch whose effort resolves to
-  `none`, from `--effort`, a profile or an overlay, fails with ``expected one of ['high', 'low',
-  'max', 'medium', 'xhigh']``. Leave it unset until that lands.
 
 ### Rolling back
 

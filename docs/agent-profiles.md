@@ -59,7 +59,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `network` | str | sandbox-derived | Whether shell commands may open connections: `allow`, `deny`, or `allowlist`. `network-allow` and `network-deny` hold exact hosts, IPs, or wildcard hosts. Unset denies under `read-only`/`workspace-write`, allows under `danger-full-access`, and leaves an unset/default sandbox harness-native. Built-in web tools remain under `tools: web`. See [Permissions by harness](#permissions-by-harness) |
 | `network-allow` | list[str] | `[]` | Hosts permitted by `network: allowlist`. Plain lists add across policy layers; see the [merge rules](#permissions-by-harness) |
 | `network-deny` | list[str] | `[]` | Hosts denied under `allow` or `allowlist`. Plain lists add and denies win; see the [merge rules](#permissions-by-harness) |
-| `effort` | str | — | Effort level: `low`, `medium`, `high`, `xhigh`, or `max`. `none` is not supported yet |
+| `effort` | str | — | Effort level: `none` (reasoning off), `low`, `medium`, `high`, `xhigh`, or `max`. What each harness does with it: [Effort by harness](#effort-by-harness) |
 | `approval` | str | — | When the harness stops to ask: `default`, `confirm`, `auto`, or `never`. Write `never`: schema v1 rejects `yolo` in a `mars.toml` overlay or an installed profile (`meridian mars migrate` rewrites authored profiles). Meridian's `--approval yolo`, `--yolo` and `MERIDIAN_APPROVAL=yolo` still mean `never`. See [Permissions by harness](#permissions-by-harness) |
 | `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited. Meridian reads it from the installed profile; Mars reports it as an unknown field on every sync |
 | `harness-overrides` | map | `{}` | Harness-native launch config selected for the resolved harness; see [Harness-native passthrough](#harness-native-passthrough) |
@@ -205,6 +205,21 @@ Claude applies the percentage to its autocompact window, so both fields can be
 set together. A Claude token value outside its native 100000–1000000 range is
 not passed to the CLI. `--dry-run` reports every applied value and every
 unsupported value or harness.
+
+## Effort by harness
+
+`effort` comes from `--effort`, `MERIDIAN_EFFORT`, the profile or an overlay, a matching
+`model-policies` rule, or the model alias's `default_effort`; the [precedence](configuration/mars.md)
+decides which. `none` means reasoning off, and `max` is a level above `xhigh`. What each harness
+does with them:
+
+| Harness | `none` | `low` through `max` |
+|---|---|---|
+| **Claude** | No `--effort` flag: Claude Code has no reasoning-off level. `--dry-run` reports the omission | `--effort <level>` |
+| **Codex** | `-c model_reasoning_effort="none"`. Some Codex models reject it | `-c model_reasoning_effort="<level>"` |
+| **Pi** | `--thinking off` | `--thinking <level>`, with `low` written as `minimal`. Pi clamps the level to what the model supports |
+| **OpenCode** | Not applied | Not applied, except the legacy V1 `run` fallback, which gets `--variant <level>` |
+| **Cursor** | Mars picks the model's default slug | Mars folds the level into the model slug; see [Cursor](configuration/cursor.md#effort-and-slug-resolution) |
 
 ## Harness-native passthrough
 
