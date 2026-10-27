@@ -36,8 +36,13 @@ grant `sessions/<chat>/` instead, because harness path rules do not follow symli
 
 ## Mars 0.21.0
 
-Meridian pins `mars-agents==0.21.0`, up from 0.20.2. Only the `resident-rearm-budget` and
-`meridian-capabilities` profile keys need your attention; the rest needs nothing from you.
+Meridian pins `mars-agents==0.21.0`, up from 0.20.2. Two profile keys moved
+(`resident-rearm-budget` and `meridian-capabilities`), and a changed MCP merge rule may need
+a rename; the rest needs nothing from you.
+
+**After upgrading, run `meridian mars sync`** (and `meridian mars --user sync` if you use a user
+root). Launches do not sync, so until you do, installed profiles keep the old top-level keys,
+which Meridian no longer reads, and their settings are ignored without a message.
 
 ### If your profiles set `resident-rearm-budget` or `meridian-capabilities`
 
@@ -53,13 +58,19 @@ What happens to an old top-level key depends on where the profile comes from:
 |---|---|---|
 | `.mars-src/` or `~/.meridian/mars/.mars-src/` (`--user`), no `[package] schema` | exit 0, warns ``authored `.mars-src` content uses the pre-v1 format (1 file to upgrade); run `mars migrate` `` | Works: sync moves the keys in the installed copy, so the budget and `spawn: false` apply. The file in `.mars-src/` keeps the old keys |
 | Dependency without `schema` (a pre-v1 package) | exit 0, warns ``package `<name>` uses the pre-v1 format (N files to upgrade); run `mars migrate` in its repository`` | Works, as above |
-| Dependency declaring `[package] schema = 1` | `meridian mars add` exits 2 and adds nothing: ``[field.removed] <name>: agents/<file>.md: `resident-rearm-budget` was removed; move it under `harness-overrides.meridian.resident-rearm-budget` `` | The dependency is not installed |
+| Dependency declaring `[package] schema = 1`, new | `meridian mars add` exits 2 and adds nothing: ``[field.removed] <name>: agents/<file>.md: `resident-rearm-budget` was removed; move it under `harness-overrides.meridian.resident-rearm-budget` `` | The dependency is not installed |
+| Dependency declaring `[package] schema = 1`, already installed under Mars 0.20.2 | The same `field.removed` error, exit 2, for the whole project: nothing updates, including other dependencies and `.mars-src/` items | The installed copy keeps the old keys, so its budget and `spawn: false` are lost silently until you fix it |
 
-The warning in the first two rows repeats on every sync until the source is migrated.
+The warning in the first two rows repeats on every sync until the source is migrated. For the
+last row, upgrade the dependency to a release that migrated, override it with a migrated copy,
+or ask its maintainer to run `mars migrate`. A project that is itself a `schema = 1` package
+(it has its own `agents/` directory) hits the same error; run `meridian mars migrate` in it.
 
 `meridian mars migrate` moves both keys, values and order unchanged, in every row above
 (`meridian mars migrate --check` lists the edit and exits 1; add `--user` for `~/.meridian/mars`).
-On a schema 1 package it also adds `requires-mars = ">=0.20.0"` when none is declared. If a
+On a schema 1 package it also adds `requires-mars = ">=0.20.0"` when none is declared; a
+package that relies on these settings should declare `requires-mars = ">=0.21.0"` instead,
+because Mars 0.20.2 only warns about the `meridian` block and older Meridian never reads it. If a
 profile already has a `harness-overrides.meridian` block, that block wins and the top-level twin
 is dropped with a note. Package authors: Mars's
 [migration guide](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md#what-it-changes)
@@ -78,8 +89,9 @@ lists what the migration changes.
 
 Mars's docs also stopped describing `.agents/` as a default target: with nothing linked, sync
 writes only to `.mars/`, and `meridian mars link DIR` adds a target. Meridian never depended on
-`.agents/`. Mars's [0.21.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.21.0)
-release notes list the rest, including plugin-build fixes that affect only package authors.
+`.agents/`. The MCP filter fix landed in Mars 0.20.5, and `${MARS_MCP_DIR}` and the hooks change
+in 0.20.4. Mars's [0.20.3 through 0.21.0](https://github.com/meridian-flow/mars-agents/blob/main/CHANGELOG.md)
+changelog lists the rest, including plugin-build fixes that affect only package authors.
 
 ## Mars 0.20.0 (schema v1)
 

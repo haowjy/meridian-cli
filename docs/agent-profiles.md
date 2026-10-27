@@ -384,7 +384,9 @@ See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agen
 
 A spawn-capable agent (one with a non-empty `subagents:` list and no
 `harness-overrides.meridian.capabilities.spawn: false`) has Mars's `# Meridian Agents`
-inventory in its system prompt, grouped by `mode`:
+inventory in its system prompt, grouped by `mode`. It lists only the agents named in the
+profile's `subagents:` list; agents native to the harness get their own section. The example is
+abridged:
 
 ```
 # Meridian Agents

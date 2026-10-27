@@ -541,7 +541,7 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars doctor` | Check for drift and integrity issues |
 
 Mars also has `adopt`, `override`, `rename`, `resolve`, `outdated`, `why`, `cache`,
-`version`, and `build`; run `meridian mars <command> --help`, or read Mars's
+`version`, `build`, `validate`, `export`, `agents`, and `skills`; run `meridian mars <command> --help`, or read Mars's
 [CLI reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/cli/commands.md).
 The `models` commands are under
 [Configuration & Diagnostics](#configuration--diagnostics).
