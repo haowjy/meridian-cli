@@ -11,17 +11,12 @@ on:
     - cron: "17 3 * * *"
 
 jobs:
-  pr-changelog-note:
+  pr-release-label:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
       - name: Warn when release label is missing
         env:
           LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
@@ -37,28 +32,7 @@ jobs:
           if [[ "${has_release_label}" == true ]]; then
             echo "::notice::Release label detected on this PR."
           else
-            echo "::warning::No release:* label set. Merge to main will skip auto-release."
-          fi
-
-      - name: Check CHANGELOG.md placement
-        env:
-          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
-        run: |
-          changelog_args=(--base HEAD^1 --head HEAD)
-          if jq -e 'index("changelog:edit-released") != null' <<<"${LABELS_JSON}" >/dev/null; then
-            changelog_args+=(--allow-released)
-          fi
-          python3 scripts/check-changelog-placement.py "${changelog_args[@]}"
-
-      - name: Note CHANGELOG.md coverage
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          if git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- CHANGELOG.md | grep -q '^CHANGELOG\.md$'; then
-            echo "::notice::CHANGELOG.md is updated in this PR."
-          else
-            echo "::notice::CHANGELOG.md is unchanged in this PR."
+            echo "::warning::No release:* label set. Merge to main defaults to a prerelease (RC)."
           fi
 
   fast-gate:

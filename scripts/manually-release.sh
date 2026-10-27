@@ -6,13 +6,25 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/manually-release.sh [patch|minor|major|X.Y.Z] [--push]
+  scripts/manually-release.sh <patch|minor|major|X.Y.Z> [--notes-file PATH] [--no-collect] [--push]
   scripts/manually-release.sh tag-current [--push]
 
 Manual release helper for emergency/backfill releases.
 
 Creates a real release commit before tagging. The normal path remains the
 label-gated GitHub workflow.
+
+By default it collects the "## Changelog" sections of merged PRs since the last
+"release: v" commit, the same walk the release workflow uses, so a release:skip
+merge or a failed release run does not lose its notes. --notes-file PATH adds
+notes after the collected ones: a PR-body-style file with the "## Changelog"
+heading plus the ### Upgrade notes/Added/Changed/... blocks, or one
+"None. <reason>" line. '-' reads standard input. --no-collect releases from
+--notes-file alone (offline, or a direct-push-only range); collection needs an
+authenticated `gh`.
+
+The script renders the blocks under the new version heading; it never promotes
+"## [Unreleased]", which must stay empty.
 USAGE
 }
 
@@ -26,7 +38,13 @@ validate_version() {
 }
 
 read_version() {
-  grep -oP '(?<=__version__ = ")[^"]+' "$ROOT_DIR/src/meridian/__init__.py"
+  local file="$ROOT_DIR/src/meridian/__init__.py"
+  local pattern='(?<=__version__ = ")[^"]+'
+  local version
+  if ! version="$(grep -oP "${pattern}" "${file}")"; then
+    die "cannot read __version__ from ${file}: no line matches the pattern ${pattern}"
+  fi
+  printf '%s\n' "${version}"
 }
 
 next_version() {
@@ -49,40 +67,21 @@ require_clean_tree() {
   [[ -z "$(git -C "$ROOT_DIR" status --short)" ]] || die "working tree is not clean"
 }
 
-require_unreleased_entries() {
-  awk '
-    /^## \[Unreleased\]$/ { in_unreleased = 1; next }
-    in_unreleased && /^## \[/ { in_unreleased = 0 }
-    in_unreleased && /^- / { found = 1 }
-    END { exit found ? 0 : 1 }
-  ' "$ROOT_DIR/CHANGELOG.md" || die "CHANGELOG.md [Unreleased] has no bullet entries"
-}
-
-promote_changelog() {
-  local version="$1"
-  local date="$2"
-  local tmp_file
-  tmp_file="$(mktemp)"
-  awk -v version="$version" -v date="$date" '
-    BEGIN { promoted = 0 }
-    {
-      if (!promoted && $0 == "## [Unreleased]") {
-        print "## [Unreleased]"
-        print ""
-        print "## [" version "] - " date
-        promoted = 1
-        next
-      }
-      print
-    }
-  ' "$ROOT_DIR/CHANGELOG.md" >"$tmp_file"
-  mv "$tmp_file" "$ROOT_DIR/CHANGELOG.md"
+render() {
+  "$ROOT_DIR/scripts/changelog-notes.py" render "$@" --changelog "$ROOT_DIR/CHANGELOG.md"
 }
 
 write_version() {
   local version="$1"
-  sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${version}\"/" \
-    "$ROOT_DIR/src/meridian/__init__.py"
+  local file="$ROOT_DIR/src/meridian/__init__.py"
+  local expected="__version__ = \"${version}\""
+  sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${version}\"/" "${file}"
+  # The sed is anchored, so a reformatted line (`__version__ = "0.1.0"  # x`)
+  # leaves it unmatched; the commit and tag would go out and release.yml's
+  # provenance check would fail after the fact, with a released section and a
+  # tag already on main. Prove the bump before committing anything.
+  grep -Fq "${expected}" "${file}" \
+    || die "version bump did not land: ${file} has no '${expected}' line; reformat the version line to exactly '__version__ = \"X.Y.Z\"'"
 }
 
 validate_current_release() {
@@ -126,22 +125,34 @@ main() {
       usage
       exit 0
       ;;
+    -*)
+      die "the release command must come first: scripts/manually-release.sh patch --notes-file PATH"
+      ;;
   esac
 
   local command="$1"
   shift
   local push=0
+  local collect=1
+  local notes_file=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --push) push=1; shift ;;
+      --no-collect) collect=0; shift ;;
+      --notes-file)
+        [[ $# -ge 2 ]] || die "--notes-file requires a path ('-' reads stdin)"
+        notes_file="$2"
+        shift 2
+        ;;
       -h|--help) usage; exit 0 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
 
-  cd "$ROOT_DIR"
-
   if [[ "$command" == "tag-current" ]]; then
+    [[ -z "$notes_file" ]] || die "tag-current does not take --notes-file"
+    [[ "$collect" -eq 1 ]] || die "tag-current does not take --no-collect"
+    cd "$ROOT_DIR"
     require_clean_tree
     tag="$(validate_current_release)"
     create_tag "$tag"
@@ -149,11 +160,25 @@ main() {
     exit 0
   fi
 
-  require_clean_tree
-  require_unreleased_entries
-  scripts/preflight.sh full
+  work_dir="$(mktemp -d)"
+  trap 'rm -rf "$work_dir"' EXIT
 
-  local current target version today tag
+  # Resolve --notes-file before changing directory, so a relative path means
+  # the caller's working directory, not the repository root.
+  if [[ -n "$notes_file" ]]; then
+    if [[ "$notes_file" == "-" ]]; then
+      cat >"$work_dir/notes.md"
+      notes_file="$work_dir/notes.md"
+    else
+      [[ -f "$notes_file" ]] || die "notes file not found: $notes_file"
+      notes_file="$(cd "$(dirname "$notes_file")" && pwd)/$(basename "$notes_file")"
+    fi
+  fi
+
+  cd "$ROOT_DIR"
+  require_clean_tree
+
+  local current version today tag
   current="$(read_version)"
   case "$command" in
     patch|minor|major) version="$(next_version "$command" "$current")" ;;
@@ -165,10 +190,25 @@ main() {
   if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
     die "tag already exists: $tag"
   fi
-
   today="$(date -u +%Y-%m-%d)"
+
+  local notes_args=()
+  if [[ "$collect" -eq 1 ]]; then
+    if ! scripts/collect-release-notes.sh "$work_dir/prs.json"; then
+      die "collecting merged PR notes failed (see the error above); pass --no-collect to release from --notes-file alone"
+    fi
+    notes_args+=(--notes-json "$work_dir/prs.json")
+  fi
+  if [[ -n "$notes_file" ]]; then
+    notes_args+=(--notes-file "$notes_file")
+  fi
+  [[ ${#notes_args[@]} -gt 0 ]] || die "no notes: pass --notes-file PATH, or drop --no-collect so merged PRs are collected"
+
+  render "${notes_args[@]}" --version "$version" --date "$today" --dry-run >/dev/null
   write_version "$version"
-  promote_changelog "$version" "$today"
+  scripts/preflight.sh full
+
+  render "${notes_args[@]}" --version "$version" --date "$today"
   git add src/meridian/__init__.py CHANGELOG.md
   git commit -m "release: v$version"
   create_tag "$tag"
