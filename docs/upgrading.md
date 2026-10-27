@@ -110,7 +110,8 @@ requirement or one that allows an older Mars. Package maintainers: see Mars's
   and Pi `--thinking max`. Those launches now run higher, which costs more and runs slower. Set
   `xhigh` to keep the old behaviour.
 - Mars gained `effort: none` (reasoning off). Meridian lowers it per harness: Claude receives no
-  `--effort`, since Claude Code has no spelling for it; Codex receives
+  `--effort` and keeps thinking, because current Claude models cannot turn thinking off (the
+  dry-run says so); Codex receives
   `model_reasoning_effort="none"`; Pi receives `--thinking off`. OpenCode applies no effort.
   `--dry-run` reports a launch that omits the flag. See
   [Effort by harness](agent-profiles.md#effort-by-harness).

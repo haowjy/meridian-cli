@@ -215,7 +215,7 @@ does with them:
 
 | Harness | `none` | `low` through `max` |
 |---|---|---|
-| **Claude** | No `--effort` flag: Claude Code has no reasoning-off level. `--dry-run` reports the omission | `--effort <level>` |
+| **Claude** | No `--effort` flag, so Claude Code's default applies: current Claude models think adaptively and cannot turn thinking off (`MAX_THINKING_TOKENS=0` stops it only on older fixed-budget models). `--dry-run` reports the omission | `--effort <level>` |
 | **Codex** | `-c model_reasoning_effort="none"`. Some Codex models reject it | `-c model_reasoning_effort="<level>"` |
 | **Pi** | `--thinking off` | `--thinking <level>`. Pi clamps the level to what the model supports |
 | **OpenCode** | Not applied | Not applied, except the legacy V1 `run` fallback, which gets `--variant <level>` |

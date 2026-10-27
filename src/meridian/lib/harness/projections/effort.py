@@ -55,7 +55,9 @@ def effort_report(spec: ResolvedLaunchSpec, *, harness: str) -> EnforcementRepor
     if harness == "Claude" and not project_claude_effort_args(effort):
         return (
             ReportLine(
-                element, "unsupported", "Claude Code has no reasoning-off level; --effort omitted"
+                element,
+                "unsupported",
+                "current Claude models cannot turn thinking off; --effort omitted",
             ),
         )
     if harness == "OpenCode":
