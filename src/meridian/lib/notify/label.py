@@ -93,12 +93,7 @@ def build_session_label(
                 )
             else:
                 work_id = (
-                    resolve_active_work_id(
-                        project_root,
-                        runtime_root,
-                        chat_id=_clean(env.get("MERIDIAN_CHAT_ID")),
-                    )
-                    or work_id
+                    resolve_active_work_id(project_root, runtime_root, environ=env) or work_id
                 )
     except (OSError, ValueError, HistoryIndexIncomplete, sqlite3.Error):
         pass

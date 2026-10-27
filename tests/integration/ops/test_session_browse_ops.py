@@ -86,7 +86,7 @@ def test_session_list_is_primary_only_ordered_by_activity_and_capped(tmp_path: P
         kind="primary",
         task_cwd=(tmp_path / "task").as_posix(),
     ).chat_id
-    session_store.update_session_work_id(runtime_root, live_chat, "browse-feature")
+    session_store.set_work_attachments(runtime_root, {live_chat: "browse-feature"})
     try:
         output = session_list_sync(SessionListInput(project_root=project_root.as_posix(), limit=1))
     finally:
@@ -382,7 +382,7 @@ def test_session_list_enriches_only_the_visible_limit(
             model="gpt-5.4",
             kind="primary",
         ).chat_id
-        session_store.update_session_work_id(runtime_root, chat_id, work_id)
+        session_store.set_work_attachments(runtime_root, {chat_id: work_id})
         if index < 2:
             session_store.stop_session(runtime_root, chat_id)
         chat_ids.append(chat_id)

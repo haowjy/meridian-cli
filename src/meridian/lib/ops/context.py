@@ -21,7 +21,7 @@ from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_effective_task_dir
-from meridian.lib.launch.session_links import execution_link_chat, publish_chat_links
+from meridian.lib.launch.session_links import execution_link_chat, republish_chat_links
 from meridian.lib.ops.runtime import (
     RuntimeAuthoritySnapshot,
     resolve_runtime_authority_for_read,
@@ -429,7 +429,7 @@ def _refresh_session_task_links(
         return
     entry_chat = execution_link_chat(authority.runtime_root, spawn_id=spawn_id)
     if entry_chat:
-        publish_chat_links(
+        republish_chat_links(
             authority.project_root, authority.runtime_root, entry_chat, spawn_id=spawn_id
         )
 

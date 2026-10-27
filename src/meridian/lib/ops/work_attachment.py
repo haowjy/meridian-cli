@@ -102,9 +102,14 @@ def attach_executions(
             runtime_root, {chat: work_id for target in targets for chat in target.chats}
         )
         for target in targets:
-            if target.spawn_id:
+            # A chat that took no row (unknown or historical) keeps the links it has.
+            if target.spawn_id and target.entry_chat in attached:
                 publish_chat_links(
-                    project_root, runtime_root, target.entry_chat, spawn_id=target.spawn_id
+                    project_root,
+                    runtime_root,
+                    target.entry_chat,
+                    spawn_id=target.spawn_id,
+                    work_id=work_id,
                 )
     return attached
 
@@ -173,19 +178,22 @@ def resolve_active_work_id(
     runtime_root: Path | None = None,
     *,
     chat_id: str | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> str | None:
     """Return the work item this session acts on, if any.
 
     The one read behind every "current item": an execution follows its own
     conversation (``/clear`` and ``/resume`` move it), and the env is a launch
     snapshot that only outside a managed run is the whole story. *chat_id* names a
-    conversation to read instead of this process's own.
+    conversation to read instead of this process's own; *environ* describes another
+    execution's environment instead of this process's.
     """
 
     resolved = ResolvedContext.from_environment(
         explicit_chat_id=chat_id,
         explicit_project_root=project_root,
         explicit_runtime_root=runtime_root,
+        environ=environ,
     )
     return (resolved.work_id or "").strip() or None
 

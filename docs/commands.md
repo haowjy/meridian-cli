@@ -251,9 +251,13 @@ the same literal path and its writes land in the archive. A primary attached to 
 item keeps it, and `work switch` to a done item reopens it. `work rename` moves the
 directory and moves the executions that are live and attached to it onto the new
 name. A chat that already ended keeps the name it ended on, so `--from` on it warns
-that the item no longer exists and creates nothing; pass `--work` to name one.
-`work delete` returns the live executions to their ambient directory. `work reopen`
-moves the directory back, and `work start` or `work switch` of a done item reopens it.
+that the item no longer exists and creates nothing; pass `--work` to name one. A
+`work rename` that stopped part way is finished by running it again with the same two
+names; with a name that was never renamed to the new one, it reports that the item is
+not found. A done item keeps its checkout, so `meridian task-dir` and the `task` link
+still name it. `work delete` returns the live executions to their ambient directory.
+`work reopen` moves the directory back, and `work start` or `work switch` of a done
+item reopens it.
 
 A move never deletes either copy. If a directory exists in both places — an
 interrupted operation, or a leftover — it is refused with both paths named, and

@@ -437,7 +437,8 @@ def _doctor_local(
             healed_work_items += 1
     if healed_work_items:
         repaired.append("work_item_metadata")
-    work_repository.sweep_item_links(project_state_dir, work_ids)
+    if work_repository.sweep_item_links(project_state_dir, work_ids):
+        repaired.append("item_links")
 
     killed_orphan_spawns: tuple[str, ...] = ()
     if kill_orphans and is_root_side_effect_process():

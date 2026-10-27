@@ -740,20 +740,6 @@ def update_session_harness_id(
     )
 
 
-def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None) -> None:
-    """Set or clear the active work item for a session."""
-
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    normalized_work_id = work_id.strip() if work_id is not None else ""
-    event = SessionUpdateEvent(
-        chat_id=ChatId(chat_id),
-        harness_session_id=None,
-        session_instance_id=resolve_session_instance_id(paths, runtime_root, chat_id),
-        active_work_id=normalized_work_id,
-    )
-    append_chat_rows(runtime_root, {chat_id: [event]})
-
-
 def set_work_attachments(
     runtime_root: Path, changes: Mapping[str, str | None]
 ) -> frozenset[str]:

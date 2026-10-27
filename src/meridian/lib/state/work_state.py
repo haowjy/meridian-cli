@@ -247,9 +247,17 @@ def archived_work_dir(paths: ProjectPaths, work_id: str) -> Path:
 
 
 def locate_work_dirs(paths: ProjectPaths, work_id: str) -> tuple[Path | None, Path | None]:
+    """Return the item's directories that exist, as (active, archived).
+
+    An unconfigured archive root has nothing to find.
+    """
+
     active = active_work_dir(paths, work_id)
-    archived = archived_work_dir(paths, work_id)
-    return active if active.is_dir() else None, archived if archived.is_dir() else None
+    archived = archived_work_dir(paths, work_id) if paths.work_archive_dir is not None else None
+    return (
+        active if active.is_dir() else None,
+        archived if archived is not None and archived.is_dir() else None,
+    )
 
 
 def warn_both_locations(work_id: str, active_dir: Path | None, archived_dir: Path | None) -> None:

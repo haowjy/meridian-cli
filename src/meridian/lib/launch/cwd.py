@@ -70,19 +70,6 @@ class LaunchDirectoryContext:
     def has_distinct_task_cwd(self) -> bool:
         return self.logical_task_cwd != self.authority_root
 
-def _active_task_dir_for_item(
-    *,
-    project_state_dir: Path,
-    work_id: str,
-) -> Path | None:
-    item = work_store.get_active_work_item(
-        project_state_dir,
-        work_id,
-    )
-    if item is None or item.task_dir is None:
-        return None
-    return Path(item.task_dir).expanduser().resolve()
-
 
 def _stale_work_task_dir_message(
     *,
@@ -180,10 +167,7 @@ def resolve_effective_task_dir(
             )
 
     if normalized_work_id is not None:
-        work_path = _active_task_dir_for_item(
-            project_state_dir=project_state_dir,
-            work_id=normalized_work_id,
-        )
+        work_path = work_store.item_task_dir(project_state_dir, normalized_work_id)
         if work_path is not None:
             if work_path.is_dir():
                 return EffectiveTaskDir(task_dir=work_path, source="work-item")
@@ -284,10 +268,7 @@ def resolve_task_cwd(
     ambient_selected_work_id = (ambient_work_id or "").strip() or None
 
     if selected_work_id is not None:
-        explicit_path = _active_task_dir_for_item(
-            project_state_dir=project_state_dir,
-            work_id=selected_work_id,
-        )
+        explicit_path = work_store.item_task_dir(project_state_dir, selected_work_id)
         if explicit_path is None:
             return TaskCwdResolution(
                 task_cwd=resolved_authority_root,
@@ -327,10 +308,7 @@ def resolve_task_cwd(
             )
 
     if selected_work_id is None and ambient_selected_work_id is not None:
-        ambient_path = _active_task_dir_for_item(
-            project_state_dir=project_state_dir,
-            work_id=ambient_selected_work_id,
-        )
+        ambient_path = work_store.item_task_dir(project_state_dir, ambient_selected_work_id)
         if ambient_path is None:
             return TaskCwdResolution(
                 task_cwd=resolved_authority_root,

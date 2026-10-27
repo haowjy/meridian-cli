@@ -317,8 +317,15 @@ still repairs the links. No session row is written by `done`, `reopen` or `task-
 the chat link depends on the chat's row and the execution's scope, never on where the
 work store keeps the item. A rename repoints the old name's links at the new item so
 live chat links keep resolving until the sessions have followed, then the old name's
-links are dropped (`ensure_item_links`). `meridian doctor` republishes every item's
-links and drops the ones whose item is gone (`sweep_item_links`).
+links are dropped (`ensure_item_links`). That forwarded `work` link is the only trace a
+rename that stopped after the move leaves, so it is also the evidence a repeated
+`work rename OLD NEW` needs to finish the rename (`rename_stopped_after_move()`): with
+no such link the old name is just not found. A done item keeps its checkout, because
+its agents are still working there: `work_store.item_checkout()` is the one rule behind
+the item's `task` link, and `meridian task-dir` reads the same item, active or done.
+`meridian doctor` republishes every item's links and drops the ones whose item is gone
+(`sweep_item_links`, reported as `item_links`), except a gone name whose `work` link
+still resolves — a stopped rename's forward link, which its re-run still needs.
 
 **The two stores' locks are never held at the same time.** The work store's lock
 (`work-store.flock`) and the session pair (`session_store.session_writes`: the history

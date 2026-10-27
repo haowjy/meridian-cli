@@ -422,7 +422,9 @@ valid tier. The fallback is read-time only — work state is never mutated on a
 read path. `WorkTaskDirMissing` is raised only when even the fallback
 `authority_root` does not exist; it is mapped to error name
 `work_task_dir_missing` at the pre-init boundary in `ops/spawn/pre_init.py`.
-Both `resolve_task_cwd()` and `resolve_effective_task_dir()` implement this.
+Both `resolve_task_cwd()` and `resolve_effective_task_dir()` implement this. Both read
+an item's `task_dir` through `work_store.item_task_dir()`, which finds the item active
+or done: a done item keeps its checkout, as its `task` link does.
 
 **Warning threading.** `TaskCwdResolution.warning` carries the stale-path
 warning from `resolve_task_cwd()`. Callers must explicitly merge it into

@@ -63,7 +63,7 @@ from meridian.lib.launch.launch_types import (
 from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.session_links import (
     execution_link_chat,
-    publish_chat_links,
+    republish_chat_links,
     session_task_link_path,
     session_work_link_path,
 )
@@ -1720,7 +1720,7 @@ def bind_launch_context(
                     resolve_project_paths(project_paths.project_root).root_dir,
                     requested_work_id,
                 )
-            publish_chat_links(
+            republish_chat_links(
                 project_paths.project_root,
                 runtime_root,
                 link_chat,

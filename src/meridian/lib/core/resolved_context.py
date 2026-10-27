@@ -87,8 +87,13 @@ class ResolvedContext:
         explicit_runtime_root: Path | None = None,
         backend: ContextBackend | None = None,
         context_config: ContextConfig | None = None,
+        environ: Mapping[str, str] | None = None,
     ) -> Self:
         """Resolve and freeze canonical runtime context from ``MERIDIAN_*`` values.
+
+        *environ* is the environment of the execution being described; a process
+        describing another one (the idle service, a notification label) passes that
+        execution's own, and this process's is the default.
 
         When *explicit_project_root* or *explicit_runtime_root* are supplied they
         take precedence over ``MERIDIAN_PROJECT_DIR``. ``runtime_root`` is derived
@@ -101,13 +106,14 @@ class ResolvedContext:
 
         from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 
+        env = os.environ if environ is None else environ
         backend_impl = backend or LocalFilesystemBackend()
 
-        spawn_id_raw = os.getenv("MERIDIAN_SPAWN_ID", "").strip()
+        spawn_id_raw = env.get("MERIDIAN_SPAWN_ID", "").strip()
         spawn_id = SpawnId(spawn_id_raw) if spawn_id_raw else None
-        parent_spawn_id_raw = os.getenv("_MERIDIAN_PARENT_SPAWN_ID", "").strip()
-        depth_raw = os.getenv(DEPTH_ENV, "0").strip()
-        project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
+        parent_spawn_id_raw = env.get("_MERIDIAN_PARENT_SPAWN_ID", "").strip()
+        depth_raw = env.get(DEPTH_ENV, "0").strip()
+        project_root_raw = env.get("MERIDIAN_PROJECT_DIR", "").strip()
         explicit_chat_id_raw = (explicit_chat_id or "").strip()
         explicit_work_id_raw = (explicit_work_id or "").strip()
         if explicit_chat_id_raw:
@@ -115,9 +121,9 @@ class ResolvedContext:
             work_id_raw = ""
             work_dir_raw = ""
         else:
-            chat_id_raw = os.getenv("MERIDIAN_CHAT_ID", "").strip()
-            work_id_raw = os.getenv("MERIDIAN_ACTIVE_WORK_ID", "").strip()
-            work_dir_raw = os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
+            chat_id_raw = env.get("MERIDIAN_CHAT_ID", "").strip()
+            work_id_raw = env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip()
+            work_dir_raw = env.get("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
 
         depth = parse_meridian_depth(depth_raw)
 
@@ -142,7 +148,7 @@ class ResolvedContext:
         # still names the conversation that launched it. With no row — an unmanaged
         # shell — the env is all there is. Explicit arguments keep their precedence.
         if not explicit_chat_id_raw and runtime_root is not None:
-            execution_chat = _execution_chat(os.environ, runtime_root, backend_impl)
+            execution_chat = _execution_chat(env, runtime_root, backend_impl)
             if execution_chat is not None:
                 chat_id_raw = execution_chat
                 work_id_raw = ""

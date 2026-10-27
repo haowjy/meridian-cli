@@ -191,32 +191,52 @@ def publish_chat_links(
     chat_id: str,
     *,
     spawn_id: str,
+    work_id: str | None,
 ) -> tuple[Path, Path]:
-    """Point one chat's links where its row and its execution's scope say.
+    """Point one chat's links at *work_id*, the item its row carries, and its scope's pin.
 
-    Holds the session write epoch and reads the row and the scope inside it, so
-    concurrent ``work switch``es converge on the last row written. The item's own
-    links must exist before a chat links to it: ``work_repository.ensure_item_links``
-    runs first, outside this epoch, because the work store's lock is never held
-    together with the session locks.
+    Holds the session write epoch, so concurrent ``work switch``es converge on the
+    last row written; a caller that just wrote the row passes the value it wrote.
+    The item's own links must exist before a chat links to it:
+    ``work_repository.ensure_item_links`` runs first, outside this epoch, because the
+    work store's lock is never held together with the session locks.
     """
 
     with session_store.session_writes(runtime_root):
-        work_id = (session_store.get_session_active_work_id(runtime_root, chat_id) or "").strip()
+        item = (work_id or "").strip()
         ambient_dir = resolve_ambient_work_dir(project_root, spawn_id, runtime_root=runtime_root)
-        if not work_id:
+        if not item:
             # A chat with no item never links to nothing.
             ambient_dir.mkdir(parents=True, exist_ok=True)
         work_target, task_target = chat_link_targets(
             runtime_root,
             project_root,
-            work_id=work_id or None,
+            work_id=item or None,
             pin=read_spawn_scope(project_root, spawn_id).task_dir,
             ambient_dir=ambient_dir,
         )
         return (
             _publish(runtime_root, chat_id, _WORK_LINK, work_target),
             _publish(runtime_root, chat_id, _TASK_LINK, task_target),
+        )
+
+
+def republish_chat_links(
+    project_root: Path,
+    runtime_root: Path,
+    chat_id: str,
+    *,
+    spawn_id: str,
+) -> tuple[Path, Path]:
+    """Point one chat's links where its row says, for a caller that wrote no row."""
+
+    with session_store.session_writes(runtime_root):
+        return publish_chat_links(
+            project_root,
+            runtime_root,
+            chat_id,
+            spawn_id=spawn_id,
+            work_id=session_store.get_session_active_work_id(runtime_root, chat_id),
         )
 
 
@@ -239,6 +259,7 @@ __all__ = [
     "execution_of",
     "execution_owners",
     "publish_chat_links",
+    "republish_chat_links",
     "session_task_link_path",
     "session_work_link_path",
 ]

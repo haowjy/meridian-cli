@@ -261,7 +261,7 @@ def test_work_task_dir_ignores_spawn_scope_and_inherited_env(
         model="gpt-5.4",
         chat_id="chat-work",
     )
-    session_store.update_session_work_id(runtime.authority.runtime_root, "chat-work", item.name)
+    session_store.set_work_attachments(runtime.authority.runtime_root, {"chat-work": item.name})
 
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-work")
     monkeypatch.setenv("MERIDIAN_TASK_DIR", inherited.as_posix())

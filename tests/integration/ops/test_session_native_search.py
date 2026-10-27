@@ -213,7 +213,7 @@ def test_work_filter_keeps_only_in_scope_owners_without_pruning_other_keys(tmp_p
             ).chat_id
         )
         write_native(store / f"{sid}.jsonl", "needle")
-    session_store.update_session_work_id(root, chats[0], "work")
+    session_store.set_work_attachments(root, {chats[0]: "work"})
     all_hits = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
     assert len(all_hits.matches) == 2
     scoped = session_search_sync(

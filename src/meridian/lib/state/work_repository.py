@@ -7,6 +7,7 @@ acquire the mutation lock or persist normalization.
 
 from __future__ import annotations
 
+import os
 import shutil
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ import structlog
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.platform.atomic import atomic_symlink, atomic_write_text
 from meridian.lib.platform.locking import lock_file
+from meridian.lib.state import work_store
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.paths import (
     ProjectPaths,
@@ -75,7 +77,9 @@ def _has_artifacts(work_dir: Path) -> bool:
     return any(child.name != STATUS_FILENAME for child in work_dir.iterdir())
 
 
-def _validate_exact_slug(raw_name: str) -> str:
+def validate_work_slug(raw_name: str) -> str:
+    """Return *raw_name* if it is a work-item slug as written; raise otherwise."""
+
     normalized = slugify(raw_name)
     if not normalized or normalized != raw_name:
         raise ValueError(
@@ -132,11 +136,11 @@ def _publish_item_links(
 ) -> None:
     """Point ``work-items/<link_id>/{work,task}`` at item ``item_id``'s targets.
 
-    The item's directory is wherever it is now (``work/`` or the archive); its
-    checkout is its ``task_dir`` while that is a directory, else the project root. An
-    item that no longer exists leaves no links. The links directory is derived from
-    the name, and a name can come from a session row an older build or a hand edit
-    wrote: only a slug can name an item, and nothing else is joined onto a path here.
+    The item's directory is wherever it is now (``work/`` or the archive), and a done
+    item keeps its checkout (:func:`work_store.item_checkout`). An item that no longer
+    exists leaves no links. The links directory is derived from the name, and a name can
+    come from a session row an older build or a hand edit wrote: only a slug can name an
+    item, and nothing else is joined onto a path here.
     """
 
     if slugify(link_id) != link_id or slugify(item_id) != item_id:
@@ -147,12 +151,8 @@ def _publish_item_links(
         shutil.rmtree(links_dir / link_id, ignore_errors=True)
         return
     item = load_work_item_from_dir(work_dir, archived=active_dir is None)
-    checkout = Path(item.task_dir) if item.task_dir else None
     atomic_symlink(links_dir / link_id / "work", work_dir)
-    atomic_symlink(
-        links_dir / link_id / "task",
-        checkout if checkout is not None and checkout.is_dir() else project_root,
-    )
+    atomic_symlink(links_dir / link_id / "task", work_store.item_checkout(item, project_root))
 
 
 def write_state_locked(runtime_root: Path, work_id: str, mutation: _NamespaceMutation[T]) -> T:
@@ -211,22 +211,63 @@ def ensure_item_links(runtime_root: Path, work_id: str) -> None:
     write_state_locked(runtime_root, work_id, _republish_only)
 
 
-def sweep_item_links(runtime_root: Path, work_ids: Collection[str]) -> None:
+def _item_links_dir(runtime_root: Path) -> Path:
+    return RuntimePaths.from_root_dir(_work_runtime_root(runtime_root)).work_items_dir
+
+
+def _link_targets(link_dir: Path) -> list[str | None]:
+    """Where one ``work-items/<id>`` directory's two links point now."""
+
+    return [
+        os.readlink(link) if link.is_symlink() else None
+        for link in (link_dir / "work", link_dir / "task")
+    ]
+
+
+def sweep_item_links(runtime_root: Path, work_ids: Collection[str]) -> int:
     """Republish the links of every item in *work_ids* and drop the rest.
 
     The one repair `meridian doctor` needs: any write of an item repairs its own
     links, so only an item nothing wrote since an older build moved it, and the
-    links of items that are gone, wait for this.
+    links of items that are gone, wait for this. A name that is no item keeps its
+    links while its ``work`` link still resolves: a rename that stopped after its
+    directory moved forwards the old name to the new item, and its re-run needs that
+    link. Returns how many items' links changed.
     """
 
-    links_dir = RuntimePaths.from_root_dir(_work_runtime_root(runtime_root)).work_items_dir
+    links_dir = _item_links_dir(runtime_root)
     stale = (
-        sorted(child.name for child in links_dir.iterdir() if child.name not in work_ids)
+        sorted(
+            child.name
+            for child in links_dir.iterdir()
+            if child.name not in work_ids and not (child / "work").is_dir()
+        )
         if links_dir.is_dir()
         else []
     )
+    changed = 0
     for work_id in (*sorted(work_ids), *stale):
+        before = _link_targets(links_dir / work_id)
         ensure_item_links(runtime_root, work_id)
+        changed += _link_targets(links_dir / work_id) != before
+    return changed
+
+
+def rename_stopped_after_move(runtime_root: Path, old_name: str, new_name: str) -> bool:
+    """Return whether renaming *old_name* to *new_name* moved the directory and stopped.
+
+    From the move until the rename's last step, the old name is no item and its
+    ``work`` link is forwarded to the new item. That link is the only trace a stopped
+    rename leaves: a name that was never renamed to *new_name* has none, so a repeated
+    rename of it is a mistake, not a rename to finish. *old_name* is a validated slug.
+    """
+
+    paths = project_paths_for_work_store(runtime_root)
+    if paths.work_dir is None or work_store.work_item_exists(runtime_root, old_name):
+        return False
+    link = _item_links_dir(runtime_root) / old_name / "work"
+    new_dir = next(filter(None, locate_work_dirs(paths, new_name)), None)
+    return new_dir is not None and link.is_symlink() and link.resolve() == new_dir.resolve()
 
 
 def _write_item(work_dir: Path, item: WorkItem) -> None:
@@ -304,7 +345,7 @@ def ensure_work_item_metadata(
     goal: str | None = None,
     status: str = "open",
 ) -> WorkItem:
-    normalized = _validate_exact_slug(work_id)
+    normalized = validate_work_slug(work_id)
     normalized_goal = _normalize_goal(goal)
     status = _validate_active_status(status)
 
@@ -495,7 +536,7 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
 
 
 def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> WorkItem:
-    normalized = _validate_exact_slug(new_name)
+    normalized = validate_work_slug(new_name)
 
     def rename(
         paths: ProjectPaths,

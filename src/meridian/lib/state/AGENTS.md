@@ -35,8 +35,10 @@ bare path
                                       for every live execution, primary or spawn)
   work-items/<id>/work              — the item's directory, in `work/` or the archive
   work-items/<id>/task              — the item's `task_dir` while it is a directory,
-                                      else the project root; both written only by the
-                                      work store, inside its lock, and rebuildable
+                                      else the project root, whether the item is active
+                                      or done (`work_store.item_checkout()`, the one
+                                      rule); both written only by the work store,
+                                      inside its lock, and rebuildable
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock

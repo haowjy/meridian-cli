@@ -661,31 +661,26 @@ def work_rename_sync(
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
 
-    new_slug = slugify(payload.new_name)
-    if not new_slug or new_slug != payload.new_name:
-        raise ValueError(
-            f"Invalid work item name '{payload.new_name}'. "
-            f"Use a slug (lowercase, hyphens, no spaces) — e.g. '{new_slug or 'my-feature'}'."
-        )
+    new_slug = work_repository.validate_work_slug(payload.new_name)
     ensure_work_name_is_usable(new_slug)
 
     named = (payload.work_id or "").strip()
-    if (
-        named not in ("", CURRENT_WORK_ID)
-        and work_store.get_work_item(project_state_dir, named) is None
-        and work_store.get_work_item(project_state_dir, new_slug) is not None
-    ):
-        repointed = _follow_rename(roots, named, new_slug)
-        return WorkRenameOutput(
-            old_name=named,
-            new_name=new_slug,
-            changed=False,
-            warning=_merge_warnings(
-                warning,
-                f"Work item '{named}' was already renamed to '{new_slug}'; "
-                f"repointed {repointed} session(s).",
-            ),
-        )
+    if named not in ("", CURRENT_WORK_ID):
+        work_repository.validate_work_slug(named)
+        # A rename to finish leaves its forwarded links behind. Any other name that
+        # names no item is a typo, and must not reattach what a gone name carried.
+        if work_repository.rename_stopped_after_move(project_state_dir, named, new_slug):
+            repointed = _follow_rename(roots, named, new_slug)
+            return WorkRenameOutput(
+                old_name=named,
+                new_name=new_slug,
+                changed=False,
+                warning=_merge_warnings(
+                    warning,
+                    f"Work item '{named}' was already renamed to '{new_slug}'; "
+                    f"repointed {repointed} session(s).",
+                ),
+            )
 
     old_name = _resolve_work_item(roots, payload.work_id, command="rename").name
     item = work_repository.rename_work_item(project_state_dir, old_name, new_slug)
