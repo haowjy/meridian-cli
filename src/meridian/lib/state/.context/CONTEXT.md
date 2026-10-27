@@ -389,7 +389,7 @@ Any writer into a destructible `spawns/<id>/` directory that can outlive deletio
 not recreate its owner. Parent-creating mutations take the spawn-state lock and refuse
 a missing published row through `published_artifact_lock()`; callback-only writers use
 `mutate_published_spawn_artifact()` on the same seam. Signals, scope, history,
-reaper diagnostics, failure sentinels, and harness journals all use it.
+reaper diagnostics, and harness journals all use it.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
 the repository never imports the projection. Cross-leaf operations belong in
