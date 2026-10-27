@@ -53,4 +53,4 @@ unless the caller explicitly supplies capabilities with `with_capabilities()`.
 
 One spec keeps surface implementations from diverging. The full design lives in:
 
-→ `$MERIDIAN_CONTEXT_KB_DIR/concepts/extension-system.md` (see `meridian context kb`)
+KB `concepts/extension-system.md`.

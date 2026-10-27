@@ -69,7 +69,7 @@ Key `SpawnApplicationService` methods:
 
 Both paths converge at `launch_prepared_spawn()`. This helper:
 1. Resolves session continuation (if resuming or forking)
-2. Materializes fork (only after spawn row exists — invariant I-10)
+2. Materializes fork (only after the spawn row exists; `launch/fork.py` raises otherwise)
 3. Builds child env overrides
 4. Reuses or recomposes the prepared surface, then calls `bind_spawn_launch_context()`
 5. Calls `execute_with_streaming()`
@@ -87,7 +87,7 @@ resolution changed the request), then binds it with the real spawn ID.
 For streaming-serve, `SpawnApplicationService.prepare_spawn()` enforces:
 - **SEAM-1**: No spawn row on resolution failure
 - **SEAM-2**: Row metadata always reflects resolved model/agent/harness
-- **SEAM-3**: `ConnectionConfig.env_overrides` populated from `LaunchContext.env_overrides`
+- **SEAM-3**: `ConnectionConfig` (including `child_env`) is projected from `LaunchContext`
 
 ### ops/spawn/prepare.py — The Exception to SPEC_ONLY
 
@@ -244,8 +244,9 @@ even when no lease changed.
 ### Logging Convention
 
 `ops/` uses `structlog.get_logger()` throughout. Do not use stdlib `logging` —
-the logging split between catalog/config (stdlib) and ops/launch/harness (structlog)
-matters for the `capture_library_diagnostics()` boundary around spawn preparation.
+the split between catalog/config (stdlib, captured by
+`capture_library_diagnostics()` around spawn preparation) and ops/launch/harness
+(structlog) is deliberate. (`ops/mars.py` is a stdlib-`logging` exception.)
 
 ## Patterns
 
@@ -281,6 +282,40 @@ and `resolve_context_paths()`), then delegates all artifact access to
 constructs those paths directly. `_find_sync_roots()` in `sync_conflicts.py`
 uses `autosync_store.has_autosync_state()` to filter candidates, so candidate
 discovery stays in ops and artifact presence checking stays in the store.
+
+## Operation modules
+
+- `sync_conflicts.py` lists/shows/resolves conflicts; see the sync boundary pattern above.
+- `session_log.select_session_log_window` windows an already-parsed transcript; detail
+  consumers retain one `read_session_transcript` snapshot across windows. `session_list`
+  scopes status and ordering before limiting. Idle state refines live AGE and cache
+  deadlines only; it is GC-able notification state, not turn history.
+- Discovery composes the shared `state/history_index.py` projection; lifecycle/control
+  reads stay authoritative. `session_search_index.py` (`SearchProjection`) rows are
+  rebuildable from authoritative bindings and exact native sources;
+  `session_index.py` coordinates explicit inspection/rebuild, not another index.
+- `session_archive.py` owns eligibility, dependency protection and the shared manual/
+  automatic retention policy; ZIP bytes and inert restore live in `state/retention_*`.
+  Stop-maintenance seals native snapshots; explicit `session archive --apply` captures
+  the exact native snapshot of selected records itself, before final selection.
+- `runner_history_prune.py` is the explicit `session archive --prune-runner-history`
+  rule: terminal, older than N days, exact native source(s) resolve now → drop runner
+  stream files. Any doubt skips; automatic maintenance never calls it.
+- Raw native session references keep the supplied ID, not a matching chat's later ID,
+  and their harness namespace must be unambiguous or explicit. Tracked chat/spawn
+  references use their recorded harness; native-file discovery cannot replace it. A chat
+  transcript reads only its bound native key; missing identity or transcript is typed
+  unavailable, and runner output or primary metadata cannot repair it.
+
+## Spawn preparation policy
+
+Only callers in a Meridian-projected `read-only` or `workspace-write` sandbox that their
+harness enforces inherit the child-spawn CLI guardrail (`project_effective_policy`).
+Preparation checks the child harness's effective sandbox and the caller's recorded
+effective-network floor against the child's harness-owned effective typed policy by exact
+containment, before materializing runtime authority and state; binding does not change
+that request policy. Every creation form resolves models from the existing cache here, so
+catalog refresh cannot write before the policy is accepted.
 
 ## Related KB
 

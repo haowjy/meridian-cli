@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-10-27
+
+### Fixed
+- Spawn create telemetry owner and `meridian spawn subagents` now take the caller's identity from the runtime context the command passes, not from a separate read of `MERIDIAN_SPAWN_ID`.
+
 ## [0.16.1] - 2026-10-27
 
 ### Added

@@ -14,9 +14,10 @@ to silently create filesystem state (UUIDs, directories, `.gitignore` entries).
 `resolve_*` helpers. `prepare_for_project_write()` and
 `prepare_for_runtime_write()` call `ensure_*` helpers.
 
-Every cwd is eligible as a project root. Write preparation creates
-`meridian.toml` and its project ID on first use; read-only preparation leaves a
-bare directory unchanged.
+Every cwd is eligible as a project root. Write preparation mints a marked project's
+committed ID or materializes path-derived state under the user home
+(`ensure_project_identity`); it never creates `meridian.toml` in a bare directory.
+Read-only preparation leaves a bare directory unchanged.
 
 `ensure_runtime_dirs()` also performs crash recovery for spawn publication: under
 `spawns_flock`, it removes only abandoned entries beneath `spawns/.staging/`.
@@ -43,10 +44,11 @@ ProjectReadContext
   ├── authority: RuntimeAuthoritySnapshot
   ├── project_root: Path
   ├── layout: ProjectLayoutSnapshot
-  └── config: MeridianConfig | None
+  ├── config: MeridianConfig | None
+  └── notice: str | None              ← human-facing first-materialization notice
 
 RuntimeReadContext(ProjectReadContext)
-  └── runtime_root: Path | None   ← None if project has no UUID yet
+  └── runtime_root: Path | None   ← None for unminted or unmaterialized identity
 
 ProjectWriteContext(ProjectReadContext)
   └── project_dirs_ensured: bool = True
@@ -79,4 +81,4 @@ commands use the cwd-derived root.
 
 ## Related KB
 
-→ KB: `$MERIDIAN_CONTEXT_KB_DIR/architecture/startup-pipeline.md` (see `meridian context kb`)
+KB `architecture/startup-pipeline.md`.

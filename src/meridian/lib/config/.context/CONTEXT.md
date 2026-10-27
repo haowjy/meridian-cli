@@ -140,6 +140,31 @@ with no metadata validates from TOML but has no env var and no generic CLI acces
 coercion with source-specific error messages. Always pass the source name for
 debuggable errors.
 
+## Harness profile settings
+
+Per-harness profiles under `HarnessConfig` expose TOML-settable fields:
+
+- `[harness.claude] model` (env `MERIDIAN_HARNESS_MODEL_CLAUDE`), `wait_yield_seconds`
+  (env `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE`).
+- `[harness.claude.spawn_watch] enabled`: loads the interactive-primary background-result
+  watcher (default `true`; TOML-only).
+- `[harness.<id>.idle] enabled`: built by `harness_idle_model()` so each profile's
+  canonical key, file alias, and env name stay unique.
+- `[harness.<claude|codex>] allow_builtin_agents` (default `false`): whether the harness's
+  own subagents are available. Codex launches with
+  `-c features.multi_agent_v2=false -c agents.max_depth=0` (on Codex 0.162
+  `features.multi_agent=false` leaves the v1 tools available, and `--disable` would fail on
+  a build lacking the feature). Claude omits its scoped built-in `Agent(...)` denies when
+  enabled; its generic-agent platform deny is then reported partial. Generic Claude `Agent`
+  routing follows Mars `[settings.meridian.agent_copy]`, not `meridian.toml`.
+
+## Module map
+
+`models.py` (schema root `MeridianConfig`), `harness_models.py`, `history_models.py`,
+`model_base.py` (warning policy), `loader.py` (validation, merge, provenance),
+`layers.py` (user/project/local discovery), `dynamic_sections.py`, `errors.py`,
+`schema.py` (`config_field()`), `project_root.py`, `context_config.py`, `catalog.py`.
+
 ## Related KB
 
 - `$MERIDIAN_CONTEXT_KB_DIR/concepts/config-precedence.md` — full precedence chain and per-spawn vs project config distinction (see `meridian context kb`)

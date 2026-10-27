@@ -1,84 +1,37 @@
 # lib/core/ — Shared Primitives
 
-Shared primitives and cross-surface spawn orchestration. Most lib packages import
-from here; pure types and utilities stay dependency-light, but `spawn_service.py`
-and related modules intentionally compose `launch/`, `state/`, `harness/`, and
-`streaming/` so every surface shares one spawn application seam.
+Typed IDs, config merge, runtime context, spawn lifecycle, and `SpawnApplicationService`
+(the one spawn application seam for CLI and streaming-serve). Most lib packages import
+from here, so keep pure types dependency-light; `spawn_service.py` and related modules
+intentionally compose `launch/`, `state/`, `harness/`, and `streaming/`.
 
-## Mental Model
+## Rules
 
-Core provides: typed IDs, config merge semantics, runtime context, output routing,
-spawn lifecycle state machine, process depth tracking, and `SpawnApplicationService`
-(create/list/cancel/prepare spawns across CLI and streaming-serve). Domain types and
-merge helpers are harness-agnostic substrate; spawn application code is the
-deliberate exception that wires policy surfaces to launch and persistence.
+- **`SpawnStatus` (`domain.py`) is the single status authority.** Use the derived sets
+  (`ACTIVE_SPAWN_STATUSES`, `TERMINAL_SPAWN_STATUSES`, …); never create a parallel status
+  vocabulary or frozenset. `SpawnKind` lives in `plugin_api/types.py`; extend that literal.
+- **Use `SpawnId`, `ModelId`, `ChatId`, `HarnessSessionId`, not `str`.** Persisted chat and
+  harness-session fields use the `Annotated` aliases that normalize blanks to `None`.
+- **`RuntimeOverrides`: `None` means "not set", never `""` or `0`.** A non-None value at a
+  high-precedence layer wins, including the empty string.
+- **The environment registry is the sole declaration of child-process Meridian keys.**
+  Don't add child env keys outside the bind seam; register every key before projecting it
+  (`validate_child_env_keys()` rejects unknown names). Build `ResolvedContext` with
+  `from_environment()`, not dict literals.
+- **Every creation form (create, continue, fork) enters one caller-boundary path** before
+  operation-specific state: `caller_boundary.py` owns the checks, `ops/spawn/api.py` the
+  shared entry.
+- **Spawn preparation materializes the bound launch before persistence**: adapter-owned
+  writes finish (`launch.context.materialize_launch_context()`) before
+  `SpawnApplicationService` creates the row.
+- **`is_root_side_effect_process()` fails closed**: a malformed non-empty
+  `_MERIDIAN_DEPTH` returns `False`. Root-only side effects (the reaper) must not run in
+  delegated agent processes.
+- **Dead-launch finalization has one writer**, `finalize_dead_launch()`; see
+  [../state/AGENTS.md](../state/AGENTS.md).
+- **`LifecycleHook.on_event()` exceptions are logged, never block transitions.**
+- **`lifecycle.py` imports `spawn_store` lazily** (`_spawn_store()`) to break a cycle with
+  `state/__init__`; keep it lazy.
 
-## Key Rules
-
-- **`SpawnStatus` (StrEnum in `domain.py`) is the single status authority.** Lifecycle sets (`ALL_SPAWN_STATUSES`, `ACTIVE_SPAWN_STATUSES`, `TERMINAL_SPAWN_STATUSES`) are derived from a member→`SpawnLifecycleClass` map. `TerminalSpawnStatus` is a `Literal` alias checked at import time to match the terminal members. Do not create parallel status vocabularies or frozensets — use the derived sets.
-- **`SpawnKind` in `plugin_api/types.py` is shared by core lifecycle and persisted spawn state.** Extend that literal rather than creating another child/primary/streaming vocabulary.
-- **Use `SpawnId`, `ModelId`, `ChatId`, and `HarnessSessionId` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; pyright catches wrong-ID bugs statically. Persisted chat and harness-session fields use Pydantic-aware `Annotated` aliases that normalize blank identities to `None` and enforce non-empty values at every parse boundary.
-- **`RuntimeOverrides`: use `None` to mean "not set", never `""` or `0`.** `resolve(*layers)` returns first-non-None per field. An empty string at a high-precedence layer wins over a meaningful value at a lower one.
-- **The environment registry is the sole declaration of child-process Meridian keys.** `ResolvedContext.child_env_overrides()` produces shared context handles, and the launch bind seam adds registered launch-specific handles such as `_MERIDIAN_HARNESS`; `validate_child_env_keys()` rejects unknown public or internal names.
-- **Every creation form enters one caller-boundary path before operation-specific state.**
-  Create, continue, and fork receive the same structured pre-init refusal without
-  duplicating the spawn grammar in the entrypoint. `caller_boundary.py` owns the record
-  and checks; `ops/spawn/api.py` owns the shared entry.
-- **Spawn preparation materializes the bound launch before persistence.** The streaming
-  service shares `launch.context.materialize_launch_context()` with the other real launch
-  drivers; adapter-owned writes complete before `SpawnApplicationService` creates the row.
-- **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `_MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
-- **`LifecycleHook.on_event()` exceptions are logged but never block transitions.** Hooks must tolerate partial data.
-- **`spawn_store` is imported at the bottom of `lifecycle.py`** to break a circular import with `state/__init__`. Do not move it to the top.
-
-**Dead-launch finalization has one writer.**
-`SpawnApplicationService.finalize_dead_launch()` alone persists the outcome of a
-dead lock-backed launch, and only after `state.spawn_status.claim_dead_launch()`
-returns `Claimed`; `Live` is a no-op and `Lockless` stays on the explicit legacy
-compatibility path. `cancel_descendants()` selects stored-active rows so this writer
-can converge dead children instead of skipping their derived terminal views.
-
-## Entry Points
-
-- `types.py` — typed IDs and persisted identity normalization
-- `overrides.py` — `RuntimeOverrides`, `resolve(*layers)` (config precedence merge)
-- `resolved_context.py` — `ResolvedContext.from_environment()` (authoritative runtime env for one process)
-- `child_env.py` — `ALLOWED_CHILD_ENV_KEYS`, `validate_child_env_keys()`
-- `lifecycle.py` — `SpawnLifecycleService` (state machine: created → running → finalizing → finalized)
-- `spawn_service.py` — `SpawnApplicationService` (create/list/cancel/finalize dead spawns)
-- `sink.py` — `OutputSink` protocol, `NullSink` (output routing abstraction)
-- `depth.py` — `is_root_side_effect_process()`, `child_meridian_depth()`
-- `caller_boundary.py` — launcher-recorded PID namespace, sandbox, and typed
-  effective-network containment guardrail
-- `clock.py` — `Clock` protocol, `RealClock` (injectable time for tests)
-- `domain.py` — `Spawn` domain model
-- `event_hooks.py` — `run_event_hooks()` (shared fold-hook dispatch over one raw event)
-
-## Spawn Lifecycle Transitions
-
-```
-start()           → spawn.created (+ spawn.started when initially running)
-mark_running()    → spawn.started on queued→running
-record_exited()   → (sets exit code, no event)
-mark_finalizing() → CAS running→finalizing (no event)
-finalize()        → spawn.finished
-cancel()          → finalize(status='cancelled')
-```
-
-`LifecycleEvent` uses UUID v5 `event_id` stable per `(spawn_id, event_type)` — safe to deduplicate on re-delivery.
-
-## Anti-Patterns
-
-- Don't default override fields to `""` or `0` — use `None`. A non-None value wins at any layer, including the empty string.
-- Don't build `ResolvedContext` from dict literals in application code — use `ResolvedContext.from_environment()`.
-- Don't add Meridian child env keys outside the bind seam, and register every permitted key before projecting it.
-- Don't pass raw `str` where `SpawnId` or `ModelId` is expected — mypy will catch it but it's also a clarity failure.
-
-## Related
-
-- `../state/` — spawn store consumed by `SpawnLifecycleService`
-- `types.py` — `HarnessId`
-- `../launch/` — uses `SpawnApplicationService` and `ResolvedContext`
-
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — ID type details, override merge semantics, `OutputSink` swap pattern, depth rationale, child env key enforcement
-→ KB: `$MERIDIAN_CONTEXT_KB_DIR/concepts/config-precedence.md` (see `meridian context kb`)
+[.context/CONTEXT.md](.context/CONTEXT.md) — ID types, override merge, `OutputSink`,
+depth, child env, lifecycle transitions and events, cleanup policy.
