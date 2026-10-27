@@ -132,6 +132,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          skip-existing: true
 
   github-release:
     name: Publish GitHub Release
@@ -151,6 +152,11 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           TAG_VERSION="${RELEASE_TAG#v}"
+          if [[ ! -f scripts/changelog-notes.py ]]; then
+            echo "::notice::scripts/changelog-notes.py is absent at ${RELEASE_TAG}; the tag predates PR-body changelogs, so the GitHub Release body is skipped."
+            exit 0
+          fi
+
           notes_file="${RUNNER_TEMP}/release-notes.md"
           python3 scripts/changelog-notes.py extract \
             --version "${TAG_VERSION}" > "${notes_file}"
