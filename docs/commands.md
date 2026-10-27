@@ -29,7 +29,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
 | `meridian spawn message ID --message "text"` | Post a message to a running streaming spawn or supported primary inbox |
 | `meridian spawn stats` | Aggregate spawn statistics |
-| `meridian spawn children ID` | List direct child spawns |
+| `meridian spawn children [ID]` | List direct child spawns (defaults to this spawn) |
 
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).

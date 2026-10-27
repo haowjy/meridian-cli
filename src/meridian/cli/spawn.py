@@ -909,13 +909,17 @@ def _spawn_list(
 def _spawn_children(
     emit: Emitter,
     spawn_id: Annotated[
-        str,
-        Parameter(name="spawn_id", help="Parent spawn ID."),
-    ],
+        str | None,
+        Parameter(
+            name="spawn_id",
+            help="Parent spawn ID (defaults to MERIDIAN_SPAWN_ID).",
+        ),
+    ] = None,
 ) -> None:
     emit(
         spawn_children_sync(
             SpawnChildrenInput(spawn_id=spawn_id),
+            ctx=RuntimeContext.from_environment(),
             sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),
         )
@@ -1044,7 +1048,10 @@ def _spawn_stats(
     emit: Emitter,
     spawn_id: Annotated[
         str | None,
-        Parameter(name="spawn_id", help="Spawn ID to get stats for (includes descendants)."),
+        Parameter(
+            name="spawn_id",
+            help="Spawn ID to get stats for (includes descendants; default: all spawns).",
+        ),
     ] = None,
     session: Annotated[
         str | None,
