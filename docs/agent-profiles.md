@@ -61,8 +61,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `network-deny` | list[str] | `[]` | Hosts denied under `allow` or `allowlist`. Plain lists add and denies win; see the [merge rules](#permissions-by-harness) |
 | `effort` | str | — | Effort level: `none` (reasoning off), `low`, `medium`, `high`, `xhigh`, or `max`. What each harness does with it: [Effort by harness](#effort-by-harness) |
 | `approval` | str | — | When the harness stops to ask: `default`, `confirm`, `auto`, or `never`. Write `never`: schema v1 rejects `yolo` in a `mars.toml` overlay or an installed profile (`meridian mars migrate` rewrites authored profiles). Meridian's `--approval yolo`, `--yolo` and `MERIDIAN_APPROVAL=yolo` still mean `never`. See [Permissions by harness](#permissions-by-harness) |
-| `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited. Meridian reads it from the installed profile; Mars reports it as an unknown field on every sync |
-| `harness-overrides` | map | `{}` | Harness-native launch config selected for the resolved harness; see [Harness-native passthrough](#harness-native-passthrough) |
+| `harness-overrides` | map | `{}` | Config for the resolved harness, plus Meridian's own `meridian` namespace; see [Harness-native passthrough](#harness-native-passthrough) and [Meridian settings](#meridian-settings) |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
 
 ## `mode`
@@ -132,9 +131,9 @@ deletes `harness`, `autocompact` and `autocompact_pct` from authored profile rul
 Set compaction on the model alias ([Compaction](#compaction-by-harness)) and `harness`
 on the profile or the alias.
 
-`resident-rearm-budget` is a top-level profile default, not a model-policy
-override. The Mars launch-bundle schema does not currently expose a per-model
-resident rearm budget.
+`harness-overrides.meridian.resident-rearm-budget` is a profile-level default, not a
+model-policy override. The Mars launch-bundle schema does not currently expose a
+per-model resident rearm budget.
 
 Spawn timeout is not an agent-profile field. Set the runtime ceiling in minutes
 with `--timeout`, `MERIDIAN_TIMEOUT`, or Meridian's `primary.timeout` config.
@@ -256,6 +255,28 @@ names as `[unsupported] native_config: ... -> not applied for <Harness>`.
 
 The selected harness block is the config tree. A key named `native-config` inside it is a
 literal root key and is flattened like any other key; Meridian does not unwrap it.
+
+## Meridian settings
+
+`harness-overrides.meridian` is not a harness. Mars keeps the block in
+`.mars/agents/<name>.md`, never lowers it into a harness file, and never selects it
+for a launch; Meridian reads it from the installed profile.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited |
+| `capabilities` | map | — | Meridian runtime capabilities. `spawn: false` withholds spawning even when `subagents:` is non-empty |
+
+```yaml
+harness-overrides:
+  meridian:
+    resident-rearm-budget: 3
+    capabilities:
+      spawn: false
+```
+
+Meridian reads only this location. A profile still using the old top-level
+`resident-rearm-budget` or `meridian-capabilities` keys launches without them.
 
 ## Skills and Skill Variants
 

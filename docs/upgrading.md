@@ -106,9 +106,15 @@ In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the pack
   `[models.<alias>]`, fan-out candidates in
   [`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing), MCP grants as
   `mcp(server): allow` entries in `tools`.
-- **Still read, now warned:** `resident-rearm-budget` and `meridian-capabilities` stay in the
-  installed profile and Meridian still reads them, but Mars warns ``unknown field `...` is kept in
-  the file but written to no native file`` on every sync.
+- **Moved:** `resident-rearm-budget` and `meridian-capabilities` are now
+  `harness-overrides.meridian.resident-rearm-budget` and
+  `harness-overrides.meridian.capabilities`, and Meridian reads only the new location. A profile
+  that still uses the old top-level keys launches without those settings, so move them by hand.
+  `meridian` is a reserved consumer namespace, not a harness: Mars keeps the block and never
+  lowers it. Mars 0.20.2, the version this build bundles, does not know the namespace yet: it
+  warns ``unknown harness override `meridian` `` when it parses the profile and preserves the
+  block. The Mars release after 0.20.6 reserves the namespace, rejects the old top-level keys as
+  removed fields, and `mars migrate` rewrites them.
 
 A package you publish with `[package] schema = 1` is read strictly: a removed key fails sync with
 exit 2 and changes nothing. `mars migrate` also adds `requires-mars = ">=0.20.0"` to a package
