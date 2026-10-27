@@ -130,32 +130,36 @@ def follow_work_item(
     """Run one work mutation with the sessions lock held, then repoint its followers.
 
     The single seam behind ``work done``, ``rename``, ``reopen``, ``task-dir`` and
-    ``delete``. Followers are read before the caller's mutation, under the sessions
-    lock the repoint takes, so no execution can attach between the read and the
-    write; the lock spans the move too, so no link points at the directory the move
-    just vacated. Every row that names the item is rewritten, live or ended: rows are
-    authority, and a chat that ended still names the item its next launch inherits.
-    Only live executions have links to repoint.
+    ``delete``. The lock spans the mutation and the repoint, so no link can be
+    published against the directory a move just vacated, and no execution can attach
+    between the follower read and the write.
 
     ``rename_to`` moves the attachment to the item's new name; ``detach`` returns
     executions to their ambient directory instead — a done item is no longer a
-    primary's to edit, and a deleted one is nobody's. A mutation that raises leaves
-    every row and link as it was.
+    primary's to edit, and a deleted one is nobody's. Those two are the mutations that
+    change the attachment, so they rewrite every row that names the item, live or
+    ended: rows are authority, and a chat that ended still names the item its next
+    launch inherits. ``reopen`` and ``task-dir`` change only the directory or checkout,
+    so they repoint the live executions' links and leave the rows alone. A mutation
+    that raises leaves every row and link as it was.
     """
 
     target_work_id = None if detach == "all" else rename_to or work_id
+    changes_attachment = rename_to is not None or detach is not None
     with lock_file(RuntimePaths.from_root_dir(runtime_root).sessions_flock):
         owners = list(work_owners(runtime_root, work_id))
         # Chat -> session kind. The live owners' chats join the rows that name the
         # item: a primary after `/clear` moves to a chat whose row the next launch
         # creates, and the execution's attachment must reach that chat too.
-        followers: dict[str, str] = {
-            record.chat_id: record.kind
-            for record in session_store.records_attached_to_work(runtime_root, work_id)
-        }
-        for owner in owners:
-            for chat in dict.fromkeys((owner.chat, owner.link_chat)):
-                followers.setdefault(chat, owner.kind)
+        followers: dict[str, str] = {}
+        if changes_attachment:
+            followers = {
+                record.chat_id: record.kind
+                for record in session_store.records_attached_to_work(runtime_root, work_id)
+            }
+            for owner in owners:
+                for chat in dict.fromkeys((owner.chat, owner.link_chat)):
+                    followers.setdefault(chat, owner.kind)
         yield
         for chat, kind in followers.items():
             detached = detach == "all" or (detach == "primary" and kind == "primary")

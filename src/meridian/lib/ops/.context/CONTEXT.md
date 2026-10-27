@@ -261,11 +261,12 @@ handles `--work` resolution before the spawn row is created. The resumed-session
 case (reading `preserved_work_id`) is handled inside `run_harness_process()` in
 `launch/process/`. `resolve_active_work_id()` reads an execution's own chat row for
 both kinds, since only that row survives a `/clear`. `follow_work_item()` is a
-context manager: it takes the sessions lock, reads every attached execution and every
-session row that names the item (live or ended), lets the caller's move run under that
-lock, then rewrites the rows and repoints the live executions' links. Rows are
-authority, so `work rename` reaches a chat that ended and a later `--from` cannot
-re-create the old item.
+context manager: it takes the sessions lock, reads the attached executions and (when
+the attachment itself changes) every session row that names the item, live or ended,
+lets the caller's move run under that lock, then rewrites those rows and repoints the
+live executions' links. Rows are authority, so `work rename` reaches a chat that ended
+and a later `--from` cannot re-create the old item. `reopen` and `task-dir` change only
+the directory or checkout, so they repoint links and leave the rows alone.
 
 **Sync/conflict boundary: ops resolves roots, autosync_store owns artifacts.**
 `sync_conflicts.py` and `context.py` follow the same pattern: ops determines
