@@ -1,26 +1,10 @@
 # extensions/commands/ — First-Party Handler Implementations
 
-This directory holds handler logic for first-party extension commands. Each file defines one or more `ExtensionCommandSpec` instances. The files here are command implementations, not registration — specs are registered in `lib/extensions/first_party.py`.
+Handlers for first-party extension commands that are not plain ops (today
+`mermaid.py`; `biomed.py` is an empty placeholder). Specs register in
+`../first_party.py`, not here. Handler signature, pipeline, and surface rules:
+`../.context/CONTEXT.md`.
 
-## What Lives Here
-
-- `mermaid.py` — `MERMAID_CHECK_SPEC`: validates Mermaid diagram syntax in a file or directory
-- `biomed.py` — placeholder for biomed runtime bridge commands (currently empty)
-
-## Adding a Command
-
-1. Write an async handler: `async def my_handler(args: dict, context, services) → ExtensionResult`
-2. Or use `ExtensionCommandSpec.from_op()` if you have a single Pydantic input model
-3. Construct `ExtensionCommandSpec(first_party=True, ...)`
-4. Register the spec in `../first_party.py`
-
-Handler must return `ExtensionJSONResult` or `ExtensionErrorResult` — never raise. Return `ExtensionErrorResult` with a meaningful error code instead of letting exceptions propagate (the dispatcher catches unhandled exceptions as `handler_error`, but that loses context).
-
-## Key Rules
-
-- `first_party=True` is required for all specs here
-- Import from `meridian.lib.*` freely — these are internal implementations, not plugin boundary code
-
-## Related
-
-→ [../.context/CONTEXT.md](../.context/CONTEXT.md) — dispatcher pipeline, handler signature contract, surface rules, capability model
+- Every spec here sets `first_party=True`.
+- Return `ExtensionJSONResult` or `ExtensionErrorResult`; don't raise.
+- Importing `meridian.lib.*` is fine; these are internals, not plugin-boundary code.

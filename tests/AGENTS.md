@@ -1,67 +1,37 @@
 # Testing
 
-Prefer smoke tests over unit tests. Too many unit tests is bad when you're
-constantly refactoring. Unit tests protect pure functional cores that are hard
-to exercise through the CLI: policy and state transitions, concurrency
-decisions, security/env sanitization, algorithms, and parsing edges.
+Prefer smoke tests over unit tests; too many unit tests hurt when you're constantly
+refactoring. Unit tests protect pure functional cores that are hard to exercise through
+the CLI: policy and state transitions, concurrency decisions, security/env sanitization,
+algorithms, and parsing edges.
 
-Write few tests. Verify a change by running the CLI against a scratch runtime
-and running the existing tests that cover what you touched. A new test, a new
-parameterized case, or an extension of an existing test must guard one of:
+Write few tests. Verify a change by running the CLI against a scratch runtime and running
+the existing tests that cover what you touched. A new test, parameterized case, or
+extension of an existing test must guard one of:
 
 - a pure core whose edges the CLI can't reach cheaply (the list above);
 - a regression your brief names, at a seam that reproduces the real bug;
-- a contract an outside consumer relies on: a harness protocol, an on-disk
-  format, a published CLI output shape.
+- a contract an outside consumer relies on: a harness protocol, an on-disk format, a
+  published CLI output shape.
 
-Before adding one, extend or replace the test that already covers the same
-behavior, and delete a weaker duplicate in the same change. Every test runs
-in every full gate, and integration tests that spawn processes cost seconds
-each.
+Before adding one, extend or replace the test that already covers the same behavior, and
+delete a weaker duplicate in the same change. Every test runs in every full gate, and
+integration tests that spawn processes cost seconds each.
 
 ## Running
 
 ```bash
-uv run pytest-llm              # Fast default subset (prepared fast gate)
-uv run pytest tests/           # Full suite; run before marking a PR ready
-uv run meridian                # Smoke test the CLI directly
+uv run pytest-llm       # default subset (prepared fast gate), not the complete suite
+uv run pytest tests/    # full suite: run before marking a PR ready
+uv run meridian         # smoke test the CLI directly
 ```
 
-Bare `pytest` and `pytest-llm` use the directory-level default paths in
-`pyproject.toml` (unit, contract, platform, and selected integration seams).
-Those seams are `integration/config`, `catalog`, `safety`, `harness`, `hooks`,
-`idle`, `prompt`, `telemetry`, and `state`.
-The default is intentionally not the complete suite. Use an explicit `tests/`
-path for release, nightly, or full regression checks; focused paths continue to
-override `testpaths`, including files under `tests/extended/`. Tests in
-`tests/smoke/` and `tests/e2e/` are not pytest-collected: they contain opt-in
-scripts and manual/runtime guides. The [smoke index](smoke/README.md) distinguishes
-cheap executable checks from live/network probes.
-
-PR CI runs the full gate, but agents should still run `uv run pytest tests/`
-before marking a PR ready. Tests marked `requires_pi_dist` skip locally when Pi
-bundles are absent and fail on GitHub Actions; build them with
-`cd src/meridian/pi_runtime && pnpm install && pnpm run build:extensions`.
-
-Runtime adapter changes also have local package gates:
-
-```bash
-cd src/meridian/pi_runtime && pnpm run verify:extensions
-claude plugin validate src/meridian/claude_runtime/meridian-idle
-claude plugin test src/meridian/claude_runtime/meridian-idle
-claude plugin validate src/meridian/claude_runtime/meridian-spawn-watch
-claude plugin test src/meridian/claude_runtime/meridian-spawn-watch
-```
-
-The Claude commands are required for every change under
-`src/meridian/claude_runtime/`; CI does not provide the `claude` binary. The Pi
-gate builds the projected bundles and runs their Vitest suites; CI runs the Pi
-Vitest suites in the `runtime-extensions` job.
-
-Use `uv run pytest --runner-history=off <tests>` to trap implicit reads of legacy
-spawn/artifact runner `history.jsonl` (Meridian no longer writes it). The trap is
-inherited by CLI subprocesses through a test-only `sitecustomize`; legacy archive
-inventory may still hash the bytes, and native Claude history is not trapped.
+Focused paths override `testpaths` (including `tests/extended/`). `tests/smoke/` and
+`tests/e2e/` are opt-in scripts and guides, not pytest-collected
+([smoke index](smoke/README.md)). Default seams, Pi/Claude runtime-adapter gates, the
+runner-history trap: [.context/CONTEXT.md](.context/CONTEXT.md). Changes under
+`src/meridian/claude_runtime/` require the local `claude plugin validate`/`test` gates
+there; CI lacks the `claude` binary.
 
 ## Where Tests Go
 
@@ -74,91 +44,28 @@ tests/extended/     Expensive state and launch-lock lifecycle contracts; explici
 tests/smoke/        Opt-in scripts and guides for CLI-visible behavior.
 ```
 
-Mock choreography around a real seam does not make a unit test. Exercise that
-seam in integration and stub only the external boundary. The narrow exception
-for a coherent fail-closed security suite is defined in
-[`unit/AGENTS.md`](unit/AGENTS.md).
+Mock choreography around a real seam does not make a unit test: exercise the seam in
+integration and stub only the external boundary (the one exception is in
+[`unit/AGENTS.md`](unit/AGENTS.md)). Every new test directory gets an `__init__.py`,
+or same-named files in two directories collide at collection.
 
-## Shared Test Support
+## Test Support and Fakes
 
-Search `tests/support/` before adding a local fake. Common helpers include
-`fakes.py` for clocks, `async_determinism.py` for bounded async
-observation, `executables.py` for CLI preflight stubs, `process_race.py` for
-cross-process contention, and adapter-specific support in `opencode.py`,
-`pi.py`, and `resident_drain.py`.
-For spawn state, prefer state helpers (`create_lifecycle_service`,
-`spawn_store.get_spawn`) or direct `state.json` assertions.
+Search `tests/support/` before adding a local fake. For spawn state, prefer state helpers
+(`create_lifecycle_service`, `spawn_store.get_spawn`) or direct `state.json` assertions.
 
-Control-socket isolation must cross interpreter boundaries: the root fixture's
-patch does not reach subprocesses. Apply the private socket root in every
-test-launched Meridian interpreter. See [the crash-test driver](support/launch_lock_driver.py)
-and [the foreground CLI helper](integration/cli/test_spawn_report.py) for the two entrypoint patterns.
-
-### Fake Fidelity
-
-When exit classification depends on event ordering, fakes must reproduce the real
-connection's pre-EOF death shape. A non-zero subprocess exit is not clean iterator
-exhaustion: the exit code becomes a `meridian/error/connectionClosed` event before the
-iterator ends. This invariant applies to every adapter that synthesizes such an
-event. Do not replace it with direct `handle_stream_exit(None)` calls; that skips the
-precedence path where a generic process-exit failure is recorded before stream exit.
-
-Worked helpers:
-
-- `tests/support/pi.py`: `pi_process_exit_event(return_code)` builds Pi's canonical
-  close event, and `write_pi_bash_record(...)` supplies managed-bash disk evidence.
-- `tests/support/opencode.py`: `FakeOpenCodeProcess.exit(return_code)` makes backend
-  death observable while the OpenCode event iterator is still active.
-
-A fake connection that reports a native session ID must adopt
-`spec.native_identity.session_id` in `start()` when the plan assigns
-one. A fixed ID contradicts the prebound identity and fails the attempt as
-`entry_mismatch` before the scenario under test runs. Fakes that model a missing
-identity signal stay silent; report a different ID only in a deliberate
-mismatch regression.
-
-Native source fixtures for continue/fork tests carry faithful native headers:
-Claude a first-line `sessionId`, Codex a `session_meta.payload.id`, Pi a
-`type: session` header with `id` — each equal to the recorded ID. Exact
-locators validate the header before resume, fork, or reads, so an empty or
-`{}` journal is refused as `missing`, not resumed. Never loosen the validator
-to make a fixture pass; fix the fixture.
-
-Add fidelity only for a real behavior under test. Do not pre-build alternate close,
-timeout, or reader-error scenarios without a contract they protect.
-
-Upgrade fixtures come from the real older build, not from state this build writes.
-`test_history_schema_namespace.py` seeds `history.sqlite3` with tables captured
-from 0.6.7. For a live upgrade probe, run the old build as `uvx --isolated --from
-meridian-cli==X meridian`; without `--isolated`, uvx reuses an installed tool of
-the same name and version, and "old" is the PR build. Confirm it is old before
-trusting a result: 0.6.7 writes `spawns/pN/history.jsonl` and rejects
-`--prune-runner-history`. Also run an old runner across the upgrade: a background
-0.6.7 spawn that is still running while the new build runs.
-
-## CI Environment
-
-Tests that spawn the real CLI (e.g. `test_spawn_prompt_input.py`) need a stub
-harness binary on `PATH`. Mars validates harness installation even for `--dry-run`,
-so the test fails with `pre_init_failed` on CI runners that have no harness binaries.
-Use `tests/support/executables.prepend_fake_executables` to inject stubs.
-
-For a fake executable that logs argv or emits fixed output, prefer a POSIX
-`sh` shim over a cold Python process. Starting the child does not prove the shim
-reached its observable action: bounded-poll for the expected log or state before
-teardown instead of sleeping or stopping immediately.
-
-## Module Reload and Class Identity
-
-Integration tests that call `importlib.reload()` on a module create a new class
-object for every class defined in that module. If a unit test sharing the same
-xdist worker imported the class at collection time, `isinstance` and
-`pytest.raises` compare against the stale class object and fail. Reference
-symbols through the live module object instead of binding at import time. See
-`tests/integration/launch/test_streaming_runner_watchdog.py` for the pattern.
-
-## Test packages
-
-Every new test directory gets an `__init__.py`. Under pytest's default import
-mode, same-named test files in two non-package directories collide at
-collection, and parallel lanes only find this after merge.
+- **Fakes must reproduce the real death shape.** A non-zero subprocess exit becomes a
+  `meridian/error/connectionClosed` event before the iterator ends; don't shortcut with
+  `handle_stream_exit(None)`. Native source fixtures carry faithful headers (never loosen
+  the validator to pass a fixture). Detail and helpers: `.context/CONTEXT.md`.
+- **Upgrade fixtures come from the real older build**, not state this build writes
+  (`uvx --isolated --from meridian-cli==X meridian`; without `--isolated` uvx reuses the
+  installed tool).
+- **Tests that spawn the real CLI need a stub harness binary on `PATH`** (Mars validates
+  harness installation even for `--dry-run`): `executables.prepend_fake_executables`.
+- **Control-socket isolation must cross interpreter boundaries**: the root fixture's patch
+  doesn't reach subprocesses; see `support/launch_lock_driver.py` and
+  `integration/cli/test_spawn_report.py`.
+- **`importlib.reload()` creates new class objects**, so a unit test on the same xdist
+  worker that imported the class at collection fails `isinstance`/`pytest.raises`.
+  Reference symbols through the live module (`integration/launch/test_streaming_runner_watchdog.py`).

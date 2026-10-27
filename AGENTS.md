@@ -4,7 +4,7 @@ Multi-agent coordination CLI. Launches harness subprocesses, tracks state
 on disk, surfaces results. Coordinates agents — does not control them.
 
 Compatibility: one-release deprecation for config, CLI, and hook names; new builds
-read state older builds wrote. Details: `docs/releasing.md#compatibility-and-versioning`.
+read state older builds wrote (`docs/releasing.md#compatibility-and-versioning`).
 
 ## Safety Rules
 
@@ -56,9 +56,8 @@ Derived fields inherit the precedence level of their source.
 
 ## Release & PRs
 
-Read `docs/releasing.md` before releasing or opening a PR.
-
-The pre-push hook runs the fast gate, so push after the last review fix, not before.
+Read `docs/releasing.md` before releasing or opening a PR. The pre-push hook runs
+the fast gate: push after the last review fix.
 
 Docs never state release status ("unreleased", "next release"): the release
 commit stamps the version into `CHANGELOG.md`, and `[Unreleased]` is only an
@@ -71,11 +70,11 @@ Docs-only changes (`docs/`, `AGENTS.md`, `.context/`) need no PR: push them stra
 `main`. A direct push to `main` releases nothing.
 
 PRs: use `.github/PULL_REQUEST_TEMPLATE.md` — fill every section. Set a
-`release:*` label before merging. No label defaults to RC.
+`release:*` label before merging; no label defaults to RC.
 
-A breaking change split across several PRs ships as one release: merge the parts into an
+A breaking change split across PRs ships as one release: merge the parts into an
 integration branch whose single PR to `main` carries the `release:minor`/`release:major`
-label. Plan this when you split the work. See `docs/releasing.md#breaking-changes-split-across-several-prs`.
+label (`docs/releasing.md#breaking-changes-split-across-several-prs`).
 
 Prompt packages: `meridian mars version patch [--push]` from the prompt repo.
 meridian-cli and mars-agents: CI auto-release on labeled PR merge.

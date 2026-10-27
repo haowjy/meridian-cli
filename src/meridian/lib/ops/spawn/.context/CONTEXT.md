@@ -309,6 +309,31 @@ the primary result content structurally with report and transcript fields.
 Callers in default text mode now get the report inline without needing a separate `spawn show`
 call. Callers that need machine-readable output should request `--format json`.
 
+## Caller default and continuation details
+
+- `spawn done`, `spawn rearm`, and `spawn children` default to the caller's own spawn:
+  `_resolve_caller_spawn_id()` takes the explicit value, then `runtime_context(ctx).spawn_id`,
+  else raises "Spawn ID is required. Pass spawn_id or set MERIDIAN_SPAWN_ID." `spawn stats`
+  without an id keeps its older meaning (every spawn); `spawn message` stays explicit.
+- Native-ID continuation resolves the harness namespace before reading the session's
+  recorded spawn ID, checking that row's exact chat and harness. Never substitute an
+  owner's newest spawn; keep the supplied native ID even when the chat has a newer
+  identity. `--harness` disambiguates ownership; it cannot reconstruct missing retained
+  spawn metadata.
+- Exact continue passes its verified source chat into the spawn session scope; fresh and
+  fork launches allocate separate chats. The captured `SessionAttempt` follows the session
+  generation into streaming execution, and native-ID callbacks and accepted-running
+  model-selection writes use that capture. A recording failure is a coordination error,
+  not a reason to replay the model turn.
+- A spawn's `--from` stays in `context_refs` and is not copied onto
+  `SessionRequest.context_from_*`: lineage covers primary sessions only, so the prior
+  context reaches the child only as rendered context blocks. `prepare.py` calls
+  `context_ref.resolve_context_ref()` once per spawn; launch only renders the result.
+- Stored vs derived status: `read_derived()` / `overlay_derived()` serve liveness, display,
+  wait, and idle. Cancel convergence, archive, and destruction select stored status;
+  cancel targets stay stored-active until `finalize_dead_launch()` persists the outcome,
+  so overlay-first selection would skip dead launches that still need convergence.
+
 ## Lateral Links
 
 → [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — ops/ layer overview, SpawnApplicationService, SEAM-1/2/3

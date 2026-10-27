@@ -1,26 +1,24 @@
 # plugin_api/ — Stable External Plugin Surface
 
-The only surface external plugins (and built-in hooks) may import from. Breaking
+The only surface external plugins may import from. Breaking
 changes follow the project's compatibility and migration policy; this package
 does not carry an independent version. Internal `meridian.lib.*` is not stable;
 this is.
 
-## Mental Model
+## Boundary
 
-Built-in hooks in `lib/hooks/builtin/` take general capabilities from here, not from `meridian.lib.*`; if one needs a general capability this package lacks, extend the API. Only a built-in's tightly coupled companion (see `lib/hooks/builtin/AGENTS.md`) may be imported directly, and such companions never belong here: nothing in this package imports Meridian's policy or state internals.
-
-External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `meridian.plugin_api`, not from internal modules that may change without notice.
+External plugins import `Hook`, `HookContext`, etc. from `meridian.plugin_api`, never
+from `meridian.lib.*`. Built-in hooks follow the same rule for general capabilities; if
+one needs something this package lacks, extend the API. A built-in's tightly coupled
+companion (`lib/hooks/builtin/AGENTS.md`) may import `lib` directly, and such companions
+never belong here.
 
 ## What's Stable Here
 
 - `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `SpawnKind`, `SpawnStatus`, `Notification`, `NOTIFICATION_EVENTS` — the hook contract types. Builtin implementations may set `HookResult.details` to JSON-serializable data and document where their keys surface. Core, state, and `lib/hooks` use these exact closed vocabularies and payload classes rather than defining parallel copies.
-- `state.py` — `get_project_home()`, `get_user_home()` — state root access
-- `fs.py` — `file_lock()`, `atomic_write_text()` — cross-platform locking and atomic
-  replacement for plugins
-- `git.py` — `resolve_clone_path()` — git clone path helpers
-- `config.py` — `get_user_config()` — user config access. Resolves the path with
-  `resolve_user_config_path()` so `--config` and `MERIDIAN_CONFIG` apply; never read
-  `~/.meridian/config.toml` directly
+- `state.py`, `fs.py`, `git.py`, `config.py` — state-root access, locking/atomic writes,
+  clone paths, user config. Read user config through `get_user_config()` so `--config`
+  and `MERIDIAN_CONFIG` apply; never read `~/.meridian/config.toml` directly.
 
 ## Import Pattern
 
@@ -33,13 +31,8 @@ Submodule utilities (`fs`, `git`, `config`) are NOT re-exported from `__init__.p
 
 ## Key Rules
 
-- `HookContext.to_env()` and `HookContext.to_json()` are the canonical serialization paths. External hooks receive both. Use them; don't build the serialization manually.
 - Additions are fine; removals or signature changes follow the compatibility
   policy in `docs/releasing.md`.
-- Stable wrappers may delegate to dependency-neutral `meridian.lib.platform` primitives.
-  They must not depend on `meridian.lib.state` or other policy/state internals.
-
-## Related
-
-- `../lib/hooks/builtin/` — built-in hooks that use this API as their only import surface
-- `../lib/hooks/` — internal hook dispatch, built on these types
+- Wrappers may delegate to dependency-neutral primitives (`lib.platform` locking and
+  atomic writes, `lib.state.user_paths`, `lib.config.project_root`). They must not pull in
+  the state stores or other policy internals.

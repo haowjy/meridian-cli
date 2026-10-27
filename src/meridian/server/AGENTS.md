@@ -1,28 +1,11 @@
 # server/ — MCP Stdio Server
 
-FastMCP stdio server that exposes Meridian extension commands to MCP clients (Claude Desktop, etc.). Runs as a standalone process via `meridian serve`. Thin wrapper: two tools, one module.
+FastMCP stdio server for `meridian serve`: two tools (`extension_list_commands`,
+`extension_invoke`) routed through the same `ExtensionCommandDispatcher` as the CLI, so
+the dispatcher's surface checks decide what MCP can call.
 
-## Mental Model
-
-The server exposes two MCP tools:
-- `extension_list_commands` — lists available extension commands
-- `extension_invoke` — invokes a command by fqid
-
-Invocations route through the same `ExtensionCommandDispatcher` used by CLI.
-Surface checks in the dispatcher enforce what's callable via MCP.
-
-## Key Behaviors
-
-- Logging runs in `json_mode=True` — no TTY noise on stdio (stdio is the MCP transport)
-- Telemetry runs in `STDERR` mode — rootless, no Segment storage
-- Extension commands run in process through the shared dispatcher
-- Bootstrap uses `prepare_for_runtime_read` — read-only, no directory creation
-
-## Entry Points
-
-- `main.py` — `run_server()` starts the server; `mcp` is the FastMCP app object
-
-## Related
-
-- `../lib/extensions/` — extension registry and dispatcher that back both tools
-- `../plugin_api/` — stable types used by hooks (separate concern from extensions)
+- **Stdout is the MCP transport.** Logging runs `json_mode=True`; telemetry runs in
+  `STDERR` mode (rootless, no Segment storage). Nothing else may write to stdout.
+- **Bootstrap is read-only** (`prepare_for_runtime_read`) except for the identity-writing
+  commands in `_IDENTITY_WRITING_TOOLS` (`spawn.create`, `spawn.continue`), which use
+  `prepare_for_runtime_write`. Add to that set only a command that must mint identity.

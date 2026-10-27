@@ -1,171 +1,33 @@
 # lib/ops/ — Operation Policy Layer
 
-Policy between surfaces and mechanisms. CLI commands and MCP tools call into ops;
-ops calls into `launch/`, `state/`, and `harness/`. Owns *what* to do — access
-control, input validation, lifecycle sequencing — not *how* to run a process.
+Policy between surfaces (CLI, MCP) and mechanism: access control, input validation,
+lifecycle sequencing. Calls `launch/`, `state/`, and (through launch) `harness/`.
+Detail: `.context/CONTEXT.md`; the spawn subpackage: `spawn/AGENTS.md`.
 
-```
-CLI / MCP
-      │
-      ▼
-ops/          ← policy: depth checks, work attachment, validate, route
-      │
-      ├──→ launch/     ← composition + execution
-      ├──→ state/      ← spawn/session stores
-      └──→ harness/    ← adapters (indirectly through launch/)
-```
+## Rules
 
-If you find yourself building argv, merging envs, or projecting workspace roots
-inside ops/, that logic belongs in `launch/`.
-
-## ops/spawn/ — The Core Subpackage
-
-The spawn subprocess is the second of three driving adapters into `lib/launch/`.
-This package owns foreground and background child-spawn paths (not primary sessions).
-→ [spawn/AGENTS.md](spawn/AGENTS.md)
-
-**SpawnApplicationService** (built by `build_spawn_application_service()` in
-`lib/bootstrap/services.py`) is the policy coordinator. Its key methods:
-
-- `prepare_spawn()` — resolve-before-persist entry point for streaming-serve.
-  No row created on resolution failure (SEAM-1).
-- `cancel()` — surface-neutral cancel pipeline: managed-primary, signal, finalizing races.
-- `complete_spawn()` — idempotent terminal seam; acquires per-spawn lock internally.
-- `finalize_dead_launch()` — the sole dead lock-backed outcome writer; see `core/AGENTS.md`.
-- `archive()` — hides terminal spawns; distinct from verified ZIP retention.
-
-**Depth guard:** `api.py` checks `max_depth_reached()` before executing spawns. A
-spawn chain that hits the limit returns `depth_exceeded_output()` instead of a new
-spawn. The reaper also reads `_MERIDIAN_DEPTH` and skips reaping when nested.
-
-## Operation Categories
-
-**Session:** `session_lineage.py` (indexed fork/from component),
-`session_model.py` (native executed-model refresh), `session_list.py`, `session_reentry.py`, `session_transcript.py`,
-`session_log.py`, `session_log_render.py` (pure rendering — clean/raw modes, tool
-collapsing, content pipeline), `session_render.py`, `session_search.py`,
-`session_search_index.py` (`SearchProjection` — rebuildable search rows refreshed
-from authoritative bindings and exact native sources), `session_target.py`, `session_export.py`, `session_repair.py` (inspect or bind
-an unbound chat's native session), `session_corpus.py`,
-`session_archive.py`, `runner_history_prune.py` (explicit dry-run-first prune of
-redundant runner history for bound chats), `session_index.py`.
-
-`session_log.select_session_log_window` windows an already-parsed transcript;
-detail consumers retain one `read_session_transcript` snapshot across windows.
-`session_list` scopes status and ordering before limiting. Idle state refines live
-AGE and cache deadlines only; it is GC-able notification state, not turn history.
-
-Discovery composes the shared `state/history_index.py` projection; lifecycle/control
-reads stay authoritative. `session_corpus.py` selects search roots and work scope.
-`session_archive.py` owns eligibility, dependency protection and the shared manual/
-automatic retention policy; ZIP bytes and inert restore live in `state/retention_*`.
-Stop-maintenance seals native snapshots; explicit `session archive --apply` captures
-the exact native snapshot of selected records itself, before final selection.
-`runner_history_prune.py` is the explicit `session archive --prune-runner-history`
-rule: terminal, older than N days, exact native source(s) resolve now → drop runner
-stream files. Any doubt skips; automatic maintenance never calls it.
-`session_index.py` coordinates explicit index inspection/rebuild, not another index.
-
-**Work and workspace:** `work_lifecycle.py`, `work_attachment.py`,
-`work_dashboard.py`, `workspace.py`.
-
-**Config and catalog:** `config.py`, `config_surface.py`, `catalog.py`, `mars.py`.
-
-**Sync and conflicts:** `sync_conflicts.py` — CLI-facing conflict management
-(`list_conflicts_sync`, `show_conflict_sync`, `resolve_conflict_sync`). Resolves
-which directories are sync roots via context config; delegates all artifact
-access (read and transaction-scoped mark-resolved) to
-`hooks/builtin/autosync_store`. Does not construct paths into `.meridian/autosync/`
-or parse conflict JSON. `context.py:_sync_status_for_context()` calls
-`autosync_store.read_status()` → `SyncRootStatus` to add sync summary lines to
-`meridian context` output.
-
-**Infrastructure:** `runtime.py` (`OperationRuntime`, `build_runtime()`),
-`commands.py` (operation manifest), `hooks.py`, `diag.py`, `qi.py`,
-`report.py`, `reference.py`, `context.py`, `migration.py`, `pruning.py`.
-
-## Key Rules
-
-**`commands.py` is the operation manifest.** CLI and MCP surfaces discover available
-operations through this module. Adding a new operation requires an entry here —
-otherwise it is invisible to both surfaces.
-
-**Work item attachment is ops-layer responsibility.** `work_attachment.py:ensure_explicit_work_item()`
-handles `--work` resolution before the spawn row is created, and
-`resolve_active_work_id()` is the one read behind a "current" work item: every
-execution follows its own chat's row, and the launch env only speaks for an unmanaged
-shell. Commands that act on an item
-take one when given, `current`, or nothing (`work done` without an argument), so no
-caller carries an ID a `work switch` can invalidate; `work start`/`rename` refuse
-`current` as a name the alias would shadow.
-`activate_work()` owns the user-visible choice made by `work start`, `work
-switch`, or a primary launch attaching `--work` / `--from`; it fires
-`work.activated` plus matching telemetry whether or not a session exists.
-`attach_executions()` is the one place an execution's attachment changes (`switch`,
-`start`, `clear`, a launch, and `rename`/`delete` for live executions): the item's
-links first, in the work store, then — in one session epoch, never nested with the
-work-store lock — the rows in one `set_work_attachments` batch and the chat links they
-project. It reads the caller's execution from its own spawn row (`execution_of`), so no
-command scans the spawn store. `work done`, `reopen` and `task-dir` write no session
-state: the item's own links carry every attached chat along. Rename and delete find
-only live executions (`execution_owners`); a chat that ended keeps its row, and a name
-that no longer names an item resolves to no item. `publish_work_event()` owns hook
-context, active/archive work-directory resolution, and paired telemetry for every
-published work event. Primary launch uses the same activation operation as the launch
-runner's default rather than a separate store-write seam.
-
-**Use `structlog.get_logger()`.** Never use stdlib `logging` in ops/ — the logging
-split matters for `capture_library_diagnostics()` at the launch boundary.
-
-**Session references go through `ops/reference.py`.** `resolve_session_reference()`
-→ `ResolvedSessionReference` handles spawn IDs (`p123`), chat IDs, and bare
-references for `--continue`/`--fork` targets. `--from` refs resolve separately,
-once, through `ops/spawn/context_ref.resolve_context_ref()`; `-f` files resolve in
-`launch/reference.py`.
-
-**Choose spawn status by the operation's intent.** Follow
-`spawn/AGENTS.md#stored-vs-derived-status`; archive and destruction select stored
-status, while display and liveness use the derived view.
-
-Raw native references retain the supplied ID, not a matching chat's later ID.
-Their harness namespace must be unambiguous or explicit. Tracked chat/spawn
-references use their recorded harness; native-file discovery cannot replace it.
-A chat transcript reads only its bound native key. Missing identity or transcript
-is typed unavailable; runner output and primary metadata cannot repair it.
-
-## Resolve Before Persist
-
-Both streaming-serve (`SpawnApplicationService.prepare_spawn()`) and the spawn
-subprocess prepare launch policy before creating a row. Only callers in a Meridian-projected
-`read-only` or `workspace-write` sandbox that their harness enforces inherit the
-child-spawn CLI guardrail (`project_effective_policy`). Spawn
-preparation checks the child harness's effective sandbox and the caller's recorded effective-network
-floor against the child's harness-owned effective typed policy by exact containment
-before materializing runtime authority and state; binding does not change that request
-policy. Every creation form resolves models
-from the existing cache during this preparation, so catalog refresh cannot write before
-the policy is accepted. Keep resolution and policy checks on the preparation side of the
-row boundary; keep the nested guardrail on the pre-materialization side.
-
-## Anti-Patterns
-
-**Don't build argv or compose env in ops/.** That's `launch/` territory.
-If an ops function knows which CLI flags to pass to Claude, something is wrong.
-
-**Don't add harness-specific logic to ops/.** Policy is harness-agnostic.
-
-**Don't set `LaunchArgvIntent.REQUIRED` on execution paths.** Only
-`ops/spawn/prepare.py` uses `REQUIRED` for dry-run display. All execution paths
-use `SPEC_ONLY`.
-
-## Depth
-
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — SpawnApplicationService layer diagram,
-   execution path ownership, SEAM-1/2/3 contracts, resolve-before-persist detail.
-
-## Related
-
-- `spawn/AGENTS.md` — spawn policy subpackage depth
-- `../launch/AGENTS.md` — mechanism layer ops/spawn drives
-- `../state/AGENTS.md` — state stores ops reads from
-- KB `architecture/launch-system.md` — launch adapter architecture; ops/spawn is adapter #2 of three
+- **No mechanism in ops.** Building argv, merging envs, or projecting workspace roots
+  belongs in `launch/`; harness-specific logic belongs in `harness/`.
+- **`commands.py` is the operation manifest.** CLI and MCP discover operations there; an
+  operation without an entry is invisible to both.
+- **Resolve before persist.** Streaming-serve (`SpawnApplicationService.prepare_spawn()`)
+  and the spawn subprocess prepare launch policy before creating the row. Keep
+  resolution and policy checks on the preparation side of the row boundary, and the
+  nested-spawn guardrail on the pre-materialization side (`.context/CONTEXT.md`,
+  "Spawn preparation policy").
+- **Work attachment is ops-layer.** `--work` resolves in
+  `work_attachment.ensure_explicit_work_item()` before the spawn row exists.
+  `resolve_active_work_id()` is the one read behind a "current" work item; commands
+  that act on an item take one given, `current`, or nothing, so no caller carries an ID
+  a `work switch` can invalidate. `attach_executions()` is the only place an
+  execution's attachment changes (item links in the work store first, then rows and
+  chat links in one session epoch, never nested with the work-store lock);
+  `activate_work()` and `publish_work_event()` own the user-visible work events and
+  paired telemetry. Details and the incident behind it: `.context/CONTEXT.md`.
+- **Session references go through `ops/reference.py`** (`resolve_session_reference()`
+  → `ResolvedSessionReference`) for `--continue`/`--fork` targets. `--from` resolves
+  once through `ops/spawn/context_ref.resolve_context_ref()`; `-f` files in
+  `launch/reference.py`.
+- **Choose spawn status by intent**: see `spawn/AGENTS.md` (stored vs derived).
+- **Sync artifacts belong to `hooks/builtin/autosync_store`**; ops resolves which
+  directories are sync roots and never builds `.meridian/autosync/` paths.

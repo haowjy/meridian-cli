@@ -17,13 +17,5 @@ Mirror `src/meridian/lib/` structure under `tests/unit/`.
 - Test takes >100ms
 - Uses `tmp_path` for non-trivial file operations
 
-## Running
-
-```bash
-uv run pytest tests/unit/ -v           # All
-uv run pytest tests/unit/ -k "mars"    # Pattern
-```
-
-The unit directory itself should complete in <2 seconds total on prepared
-developer environments. This is a unit-suite target, not a promise for the
-broader default gate or the complete `tests/` run.
+The unit directory should finish in <2 seconds on a prepared environment (a unit-suite
+target, not a promise for the default gate or the full run).
