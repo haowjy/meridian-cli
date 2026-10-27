@@ -24,8 +24,9 @@ def resolve_cli_project_root() -> Path:
 def resolve_cli_observer_context(*, observe: bool) -> "RuntimeContext":
     """Return the allowed observer and ambient chat scope for this invocation.
 
-    Under ``-C`` the caller's identity is already gone from the environment
-    (``main._directory_env_scope``), so no observer or chat comes back there.
+    Under a cross-project ``-C`` the caller's identity is already gone from the
+    environment (``main._directory_env_scope``), so no observer or chat comes back;
+    a same-project ``-C`` keeps it and may observe.
     """
 
     from meridian.lib.core.context import RuntimeContext

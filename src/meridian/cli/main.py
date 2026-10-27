@@ -76,8 +76,10 @@ from meridian.cli.startup.help import render_root_help
 from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
+from meridian.env_registry import is_project_scoped_env_name
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.launch.errors import WorkTaskDirMissing
+from meridian.lib.state.project_identity import is_same_project
 from meridian.lib.telemetry import emit_telemetry
 
 if TYPE_CHECKING:
@@ -994,17 +996,6 @@ def _print_agent_root_help() -> None:
     print(render_root_help(agent_mode=True), end="")
 
 
-# Caller identity is per project: under ``-C`` these name a spawn, chat and work item in
-# the caller's own project, not in the target one. Depth is process nesting and stays.
-_CALLER_IDENTITY_ENV = (
-    "MERIDIAN_SPAWN_ID",
-    "MERIDIAN_CHAT_ID",
-    "_MERIDIAN_PARENT_SPAWN_ID",
-    "MERIDIAN_ACTIVE_WORK_ID",
-    "MERIDIAN_ACTIVE_WORK_DIR",
-)
-
-
 @contextmanager
 def _directory_env_scope(
     project_root: Path | None,
@@ -1013,20 +1004,28 @@ def _directory_env_scope(
     """Set ``MERIDIAN_PROJECT_DIR`` and restore on exit.
 
     When *directory_explicit* (``-C`` active), also unset ``_MERIDIAN_RUNTIME_DIR``
-    so the runtime layer derives from project identity instead of a stale override,
-    and unset the caller's spawn/chat/work identity so no command, ops layer or
-    child launched from here attributes itself to another project's IDs.
+    so the runtime layer derives from project identity instead of a stale override.
+    If ``-C`` also targets a different project than the inherited one, unset every
+    project-scoped variable (``env_registry``): the caller's spawn, chat, work and
+    task-dir name things in its own project, and no command, ops layer or child
+    launched from here may read them as the target's.
     """
 
-    keys = ["MERIDIAN_PROJECT_DIR"]
+    inherited_root = os.environ.get("MERIDIAN_PROJECT_DIR", "").strip()
+    other_project = (
+        directory_explicit
+        and project_root is not None
+        and not (inherited_root and is_same_project(Path(inherited_root), project_root))
+    )
+    dropped = [key for key in os.environ if other_project and is_project_scoped_env_name(key)]
     if directory_explicit:
-        keys.extend(("_MERIDIAN_RUNTIME_DIR", *_CALLER_IDENTITY_ENV))
+        dropped.append("_MERIDIAN_RUNTIME_DIR")
+    keys = ["MERIDIAN_PROJECT_DIR", *dict.fromkeys(dropped)]
     saved = {key: os.environ.get(key) for key in keys}
+    for key in keys[1:]:
+        os.environ.pop(key, None)
     if project_root is not None:
         os.environ["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
-    if directory_explicit:
-        for key in keys[1:]:
-            os.environ.pop(key, None)
     try:
         yield
     finally:

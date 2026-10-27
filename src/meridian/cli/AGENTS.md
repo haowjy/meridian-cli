@@ -44,11 +44,16 @@ session-initiation handling: `.context/CONTEXT.md`.
   callers and tests install explicit `GlobalOptions`.
 - **Handlers return typed results implementing `to_cli_output()`**; no `isinstance`
   dispatch in `main.py`.
-- **`-C` drops the caller's identity.** `main._directory_env_scope` unsets the spawn,
-  chat, parent, and work IDs for the whole invocation (they name another project's
-  records), so context, ops, telemetry, and child env are unattributed. Depth stays: it
-  is the recursion guard. Commands aimed at another project may read results, never
-  consume them. `spawn ack -C` is refused.
+- **Identity is valid only in its own project.** When `-C` resolves to a different
+  project identity than the inherited `MERIDIAN_PROJECT_DIR` (`is_same_project`; a
+  worktree of the same committed project is the same project),
+  `main._directory_env_scope` unsets every `project_scoped` variable in
+  `env_registry.py` (spawn, chat, parent, work, task dir, ...) for the whole invocation,
+  so context, ops, telemetry, and child env are unattributed and the task dir falls to
+  the target's root. Tag new per-project variables there; don't list them here. Depth
+  stays: it is the recursion guard. Commands aimed at another project may read results,
+  never consume them; `spawn ack` is refused when no spawn identity remains. Same-project
+  `-C` keeps attribution and may observe (`resolve_cli_observer_context`).
 - **Fork/from/continue conflicts live in `validate_fork_mode()`** (`argv_normalization.py`),
   consumed by `spawn.py` and `primary_launch.py` via `ForkModeResolution`. The
   `--fork` + model/agent/skills identity lock is CLI policy, not an ops invariant.
