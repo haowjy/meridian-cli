@@ -88,6 +88,16 @@ leases, and consumes nothing. If a result was already terminal it returns the te
 subset immediately; otherwise it waits for the owed set to finish. Hidden `spawn ack`
 records the delivered IDs only after the harness admits their message.
 
+## Caller-Default Spawn ID
+
+`spawn done`, `spawn rearm`, and `spawn children` default to the caller's own spawn
+when no id is given. The CLI passes `RuntimeContext.from_environment()` and the
+operation resolves the id via `_resolve_caller_spawn_id()` — explicit value, then
+`runtime_context(ctx).spawn_id` — raising "Spawn ID is required. Pass spawn_id or set
+MERIDIAN_SPAWN_ID." when both are empty. `spawn stats` without an id keeps its
+different, older meaning: every spawn. `spawn message` stays explicit; messaging
+yourself has no use.
+
 ## Stored vs Derived Status
 
 Use `read_derived()` / `overlay_derived()` for liveness, display, wait, and idle.
