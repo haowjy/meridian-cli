@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `meridian spawn children` takes an optional spawn ID and defaults to the caller's
+  spawn (`MERIDIAN_SPAWN_ID`), like `meridian spawn done` and `meridian spawn rearm`.
+  Outside a spawn with no ID it exits non-zero and says to pass one.
+
 ## [0.14.11] - 2026-10-27
 
 ### Changed

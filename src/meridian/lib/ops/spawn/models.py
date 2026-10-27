@@ -555,7 +555,7 @@ class SpawnListInput(BaseModel):
 class SpawnChildrenInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    spawn_id: str
+    spawn_id: str | None = None
     project_root: str | None = None
 
 
