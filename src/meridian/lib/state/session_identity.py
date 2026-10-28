@@ -170,10 +170,15 @@ def live_observer_for_chat(
 
     if records is None:
         scan = spawn_store.list_spawns(runtime_root)
-        if any(
-            quarantine_may_observe(runtime_root, report, chat_id)
-            for report in scan.quarantines
-        ):
+        for report in scan.quarantines:
+            if not quarantine_may_observe(runtime_root, report, chat_id):
+                continue
+            if report.newer_version is not None:
+                raise ValueError(
+                    "Cannot establish current-chat ownership: "
+                    f"spawn {report.spawn_id} was written by a newer Meridian "
+                    f"(state v{report.newer_version}); use that build to inspect or continue it"
+                )
             raise ValueError("Cannot establish current-chat ownership; run `meridian doctor`")
         records = scan.records
     for row in records:

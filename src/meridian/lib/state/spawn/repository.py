@@ -64,6 +64,10 @@ class SpawnStateQuarantineReport:
     spawn_id: str
     state_path: Path
     validation_errors: tuple[object, ...]
+    # Set when a later build wrote the row (``v`` above the supported version): its state
+    # version and the chats it names. None for every other quarantine.
+    newer_version: int | None = None
+    newer_chat_ids: frozenset[str] = frozenset()
 
     @property
     def dogfood_row(self) -> bool:
@@ -84,6 +88,18 @@ class SpawnStateQuarantined(ValueError):
         self.report = report
         hint = "; run `meridian doctor` to migrate it" if report.dogfood_row else ""
         super().__init__(f"Spawn state quarantined: {report.state_path}{hint}")
+
+
+class SpawnStateNewer(SpawnStateQuarantined):
+    """A row a later build wrote: this build can neither read nor rewrite it."""
+
+    def __init__(self, report: SpawnStateQuarantineReport) -> None:
+        self.report = report
+        ValueError.__init__(
+            self,
+            f"Spawn state {report.state_path} was written by a newer Meridian "
+            f"(state v{report.newer_version}); use that build to inspect or continue it",
+        )
 
 
 class QuarantinedChatIdStatus(Enum):
@@ -110,29 +126,6 @@ def read_quarantined_chat_id(report: SpawnStateQuarantineReport) -> QuarantinedC
         current_chat_id
         if isinstance(current_chat_id, str)
         else QuarantinedChatIdStatus.NO_CHAT_ID
-    )
-
-
-def newer_format_chat_ids(report: SpawnStateQuarantineReport) -> frozenset[str] | None:
-    """Chats a newer-format row observes, or None when the row is not newer-format.
-
-    Newer format: the file parses as a JSON object whose ``v`` is an int above 3, i.e. a
-    row a later build wrote. Truncated, corrupt or invalid-v3 rows return None.
-    """
-
-    try:
-        payload = json_object(json.loads(report.state_path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        return None
-    if payload is None:
-        return None
-    version = payload.get("v")
-    if isinstance(version, bool) or not isinstance(version, int) or version <= 3:
-        return None
-    return frozenset(
-        value
-        for value in (payload.get("current_chat_id"), payload.get("chat_id"))
-        if isinstance(value, str)
     )
 
 
@@ -229,6 +222,23 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
                     "invalid_root", "spawn state root must be an object"
                 )
             raw = cast("dict[str, Any]", parsed)
+            version = raw.get("v")
+            if isinstance(version, int) and not isinstance(version, bool) and version > 3:
+                raise SpawnStateNewer(
+                    SpawnStateQuarantineReport(
+                        spawn_id=spawn_id,
+                        state_path=path,
+                        validation_errors=(
+                            {"type": "newer_format", "loc": ("v",), "msg": f"state v{version}"},
+                        ),
+                        newer_version=version,
+                        newer_chat_ids=frozenset(
+                            value
+                            for value in (raw.get("current_chat_id"), raw.get("chat_id"))
+                            if isinstance(value, str)
+                        ),
+                    )
+                )
             candidate = upgrade_legacy_spawn_state(raw) if raw.get("v", 2) == 2 else raw
             stored = StoredSpawnState.model_validate(candidate)
             if stored.id != spawn_id:
@@ -390,12 +400,12 @@ __all__ = [
     "Missing",
     "QuarantinedChatIdRead",
     "QuarantinedChatIdStatus",
+    "SpawnStateNewer",
     "SpawnStateQuarantineReport",
     "SpawnStateQuarantined",
     "StoredSpawnState",
     "is_safe_spawn_dir_name",
     "iter_spawn_ids",
-    "newer_format_chat_ids",
     "read_prompt",
     "read_quarantined_chat_id",
     "read_state",

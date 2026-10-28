@@ -58,6 +58,7 @@ from meridian.lib.state.spawn.repository import (
     Applied,
     Decline,
     LockedMutationResult,
+    SpawnStateNewer,
     SpawnStateQuarantined,
     SpawnStateQuarantineReport,
     record_to_stored_state,
@@ -279,9 +280,14 @@ def start_spawn(
             resolved_spawn_id = SpawnId(f"p{next_value}")
         from meridian.lib.state.session_store import chat_record
 
-        parent = (
-            _read_state(paths.spawns_dir, parent_id, include_prompt=False) if parent_id else None
-        )
+        try:
+            parent = (
+                _read_state(paths.spawns_dir, parent_id, include_prompt=False)
+                if parent_id
+                else None
+            )
+        except SpawnStateNewer:
+            parent = None  # Only the optional parent_history_id comes from it.
         owner = chat_record(runtime_root, owner_chat_id or chat_id)
         record = SpawnRecord(
             session_instance_id=owner.session_instance_id if owner and kind == "primary" else None,
