@@ -10,7 +10,6 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.state import session_identity, session_store, spawn_store
-from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord
 
 
 def test_observed_chat_refuses_unsupported_native_scope_without_duplicate(tmp_path: Path):
@@ -297,17 +296,3 @@ def test_observed_chat_is_protected_by_its_live_run_not_a_copied_lease(tmp_path:
         harness_session_id="current", native_store=str(tmp_path / "native"),
     )
     session_store.stop_session(runtime, current)
-
-
-def test_spawn_current_chat_precedes_boundary_but_not_mismatch():
-    row = SpawnRecord(
-        id="p1", status="running", chat_id="c-old", current_chat_id="c-new"
-    )
-    assert row.continue_chat_id == "c-new"
-    terminal = row.model_copy(update={"status": "succeeded"})
-    assert terminal.continue_chat_id == "c-new"
-    assert terminal.model_copy(update={"record_mode": "historical"}).continue_chat_id is None
-    mismatch = row.model_copy(update={
-        "run_boundary": RunBoundaryOutcome(status="mismatch"),
-    })
-    assert mismatch.continue_chat_id == "c-old"

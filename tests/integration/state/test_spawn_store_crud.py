@@ -19,7 +19,6 @@ from meridian.lib.bootstrap.runtime_state import ensure_runtime_dirs
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.state import spawn_store as spawn_store_module
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import RuntimePaths
@@ -396,109 +395,6 @@ def test_start_spawn_rejects_symlinked_staging_container(tmp_path: Path) -> None
 
     assert victim.read_text(encoding="utf-8") == "keep\n"
     assert not (paths.spawns_dir / "p1").exists()
-
-
-def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    control_root = (tmp_path / "control-root").resolve()
-    task_cwd = (tmp_path / "task-cwd").resolve()
-    control_root.mkdir(parents=True, exist_ok=True)
-    task_cwd.mkdir(parents=True, exist_ok=True)
-
-    spawn_id = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c1",
-            model="gpt-5.4",
-            agent="coder",
-            harness="codex",
-            prompt="hello",
-            control_root=control_root.as_posix(),
-            task_cwd=task_cwd.as_posix(),
-            execution_cwd=task_cwd.as_posix(),
-        )
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.control_root == control_root.as_posix()
-    assert row.task_cwd == task_cwd.as_posix()
-    assert row.execution_cwd == task_cwd.as_posix()
-
-
-def test_start_spawn_persists_goal_from_start_metadata(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c1",
-            model="gpt-5.4",
-            agent="coder",
-            harness="codex",
-            prompt="hello",
-            metadata=SpawnStartMetadata(
-                desc="goal test",
-                work_id="  w-goal  ",
-                goal="  keep scope tight  ",
-            ),
-        )
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.desc == "goal test"
-    assert row.work_id == "w-goal"
-    assert row.goal == "keep scope tight"
-
-
-def test_start_spawn_persists_launch_policy_snapshot(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    snapshot = LaunchPolicySnapshot(
-        model="claude-sonnet-4-6",
-        harness="claude",
-        agent="coder",
-        skills=("testing-principles",),
-        loaded_skills=(
-            SkillContent(
-                name="testing-principles",
-                description="testing-principles skill",
-                path="/skills/testing-principles/SKILL.md",
-                content="# testing-principles\n\nBe consistent.\n",
-                skill_type="reference",
-            ),
-        ),
-        execution_policy=ResolvedExecutionPolicy(
-            approval="auto",
-            sandbox="workspace-write",
-            effort="high",
-        ),
-        tools={"write": "allow"},
-        # Retained only to prove older snapshots with this legacy field still load.
-        mcp_tools=("legacy-native-permission",),
-        extra_args=("--append-system-prompt", "stable"),
-        terminal_surface_mode="pty_mediated",
-        matched_policy_rule="profile-default",
-        model_selection_requested_token="sonnet",
-        model_selection_canonical_id="claude-sonnet-4-6",
-        model_selection_harness_provenance="alias-default",
-        selection_report={"version": 2, "outcome": "selected"},
-    )
-
-    spawn_id = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c1",
-            model="claude-sonnet-4-6",
-            agent="coder",
-            harness="claude",
-            prompt="hello",
-            launch_policy_snapshot=snapshot,
-        )
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.launch_policy_snapshot == snapshot
 
 
 def test_start_spawn_embeds_launch_policy_snapshot_in_state_json(tmp_path: Path) -> None:

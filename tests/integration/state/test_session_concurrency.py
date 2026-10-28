@@ -100,36 +100,22 @@ def test_start_session_acquires_lifetime_lock_before_appending_start_event(
         harness_session_id="thread-ordered",
         model="gpt-5.4",
     ).chat_id
+    lock_path = runtime_root / "sessions" / f"{chat_id}.lock"
     try:
         assert observed["checked"] is True
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
-
-
-def test_start_session_holds_exclusive_lock_across_processes(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="thread-exclusive",
-        model="gpt-5.4",
-    ).chat_id
-    lock_path = runtime_root / "sessions" / f"{chat_id}.lock"
-
-    try:
-        held = run_spawn_race_or_skip(
+        held_after_start = run_spawn_race_or_skip(
             _can_acquire_lock_nonblocking_worker,
             [(lock_path.as_posix(),)],
         )
-        assert held == [False]
+        assert held_after_start == [False]
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
-    released = run_spawn_race_or_skip(
+    released_after_stop = run_spawn_race_or_skip(
         _can_acquire_lock_nonblocking_worker,
         [(lock_path.as_posix(),)],
     )
-    assert released == [True]
+    assert released_after_stop == [True]
 
 
 def test_start_session_rolls_back_lock_and_event_on_append_failure(
