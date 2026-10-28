@@ -108,8 +108,10 @@ The former `agent_copy` fan-out allowlist key is removed. If present in
 `[settings.meridian.fanout].agents` and ignores the old value.
 
 For Claude launches, Meridian uses the same boundary for native `Agent()`
-delegation. Generic Claude `Agent` is allowed only when Mars has Claude
-`agent_copy` enabled and `.claude` is an effective managed target; otherwise
+delegation. Generic Claude `Agent` is allowed only when Mars actually installed at least one agent
+into Claude's native directory, as recorded in `.mars/native-agents.json`. That holds
+for `agent_copy` set in any Mars config layer, including the user `config.toml`;
+otherwise
 the launch denies native `Agent` and guides delegation back to `meridian spawn`.
 Claude built-in
 agents (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
