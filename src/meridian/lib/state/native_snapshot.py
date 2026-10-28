@@ -18,11 +18,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.history_codec import TranscriptHeader
+from meridian.lib.state.paths import HISTORY_FILENAME, NATIVE_SNAPSHOT_FILENAME, LaunchPaths
 from meridian.lib.utils.json_shapes import json_object
 
-NATIVE_SNAPSHOT_FILENAME = "native-transcript.jsonl"
 SNAPSHOT_RECORD = "meridian.native.snapshot"
 SNAPSHOT_RECORDS = frozenset((SNAPSHOT_RECORD, "meridian.native.event", "meridian.native.seal"))
 HEADER_LIMIT = 64 * 1024
@@ -435,7 +434,7 @@ def read_snapshot(
 
 def canonical_transcript_path(spawn_dir: Path) -> Path | None:
     """Return a sealed native snapshot if one exists for this spawn."""
-    snapshot = spawn_dir / NATIVE_SNAPSHOT_FILENAME
+    snapshot = LaunchPaths(spawn_dir).native_transcript
     return snapshot if snapshot.is_file() else None
 
 

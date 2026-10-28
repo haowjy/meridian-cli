@@ -35,7 +35,6 @@ from meridian.lib.harness.idle_types import IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.idle import sidecar as idle_sidecar
-from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
 from meridian.lib.platform.launch_gate import ProcessIdentity
@@ -43,6 +42,7 @@ from meridian.lib.platform.process_scope import scope_from_identity, terminate_s
 from meridian.lib.platform.process_scope.base import (
     ProcessScopeSnapshot,
 )
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
 
@@ -370,7 +370,7 @@ class PrimaryAttachLauncher:
             telemetry.clear()
             with (
                 native_sigint_shield(self._process_launcher),
-                tui_terminal_window(self._spawn_dir / LAUNCHER_LOG_FILENAME) as window,
+                tui_terminal_window(LaunchPaths(self._spawn_dir).launcher_log) as window,
             ):
                 try:
                     running_process = self._process_launcher.start(

@@ -55,11 +55,6 @@ from meridian.lib.launch.artifact_io import (
     record_identity_failure,
     write_projection_artifacts,
 )
-from meridian.lib.launch.constants import (
-    LAUNCHER_LOG_FILENAME,
-    OUTPUT_FILENAME,
-    PRIMARY_META_FILENAME,
-)
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
@@ -69,7 +64,7 @@ from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import (
     ActivityState,
     PrimaryMetadata,
@@ -329,16 +324,14 @@ def run_primary_process_with_capture(
 def _cleanup_managed_primary_sidecars(spawn_dir: Path) -> None:
     """Delete managed sidecars when attach startup falls back to black-box launch."""
 
-    for filename in (
-        PRIMARY_META_FILENAME,
-        OUTPUT_FILENAME,
-    ):
+    launch = LaunchPaths(spawn_dir)
+    for sidecar in (launch.primary_meta, launch.output):
         with suppress(OSError):
-            (spawn_dir / filename).unlink()
+            sidecar.unlink()
 
 
 def _managed_primary_stderr_excerpt(spawn_dir: Path, *, max_chars: int = 1200) -> str | None:
-    stderr_path = spawn_dir / "stderr.log"
+    stderr_path = LaunchPaths(spawn_dir).stderr_log
     max_bytes = max(max_chars * 4, 4096)
     try:
         file_size = stderr_path.stat().st_size
@@ -444,7 +437,7 @@ def _execute_primary_process(
 
     terminal_surface_mode = harness_contract.capabilities.terminal_surface_mode
     use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
-    launcher_diagnostics_path = log_dir / LAUNCHER_LOG_FILENAME
+    launcher_diagnostics_path = LaunchPaths(log_dir).launcher_log
     if use_managed_backend:
         process_launcher = select_process_launcher(
             None, terminal_surface_mode=terminal_surface_mode
@@ -477,13 +470,13 @@ def _execute_primary_process(
             _cleanup_managed_primary_sidecars(log_dir)
 
     output_log_path = (
-        log_dir / OUTPUT_FILENAME
+        LaunchPaths(log_dir).output
         if (harness_contract.capabilities.captures_blackbox_output and "--print" in command)
         else None
     )
     blackbox_env = dict(child_env)
     if harness_contract.primary_stderr_log:
-        blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
+        blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(LaunchPaths(log_dir).stderr_log)
 
     def record_blackbox_started(identity: ProcessIdentity) -> None:
         captured = output_log_path is not None
@@ -543,7 +536,7 @@ def _finalize_lifecycle(
 
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
-        log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id, runtime_root=runtime_root)
+        log_dir = LaunchPaths.for_row(runtime_root, primary_spawn_id).dir
         extraction = enrich_finalize(
             extractor=get_harness_bundle(harness_adapter.id).extractor,
             facts=facts,
@@ -848,7 +841,7 @@ def run_harness_process(
                 # exists once its row is written, and the session listing matches
                 # archived primaries to their session by it.
                 update_session_spawn_id(runtime_root, chat_id, str(primary_spawn_id))
-                lifecycle = LifecycleLog.for_spawn(runtime_root, config_root, primary_spawn_id)
+                lifecycle = LifecycleLog.for_spawn(runtime_root, primary_spawn_id)
                 forked_session_id: str | None = None
                 if should_fork:
                     source_session_id = (
@@ -864,9 +857,7 @@ def run_harness_process(
                     resolved_harness_session_id = forked_session_id
                 if forked_session_id:
                     expected_harness_session_id = forked_session_id
-                log_dir = resolve_spawn_log_dir(
-                    config_root, primary_spawn_id, runtime_root=runtime_root
-                )
+                log_dir = LaunchPaths.for_row(runtime_root, primary_spawn_id).dir
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
                 primary_started_local_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -906,7 +897,7 @@ def run_harness_process(
                 )
                 runtime_context = materialize_launch_context(runtime_context)
                 write_projection_artifacts(
-                    log_dir=log_dir,
+                    launch=LaunchPaths(log_dir),
                     launch_context=runtime_context,
                     surface="primary",
                 )
@@ -1131,9 +1122,7 @@ def run_harness_process(
                         _write_native_primary_metadata(
                             runtime_root=runtime_root,
                             spawn_id=primary_spawn_id,
-                            spawn_dir=resolve_spawn_log_dir(
-                                config_root, primary_spawn_id, runtime_root=runtime_root
-                            ),
+                            spawn_dir=LaunchPaths.for_row(runtime_root, primary_spawn_id).dir,
                             command=native_primary_metadata_command,
                             launch_cwd=launch_child_cwd,
                             launcher_pid=os.getpid(),

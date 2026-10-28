@@ -15,7 +15,6 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload,
 )
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.constants import OUTPUT_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as runner_module
 from meridian.lib.launch.process.primary_attach import (
@@ -32,6 +31,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.platform.launch_gate import ProcessIdentity
+from meridian.lib.state.paths import LaunchPaths
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
@@ -173,11 +173,11 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         managed_calls += 1
         spawn_dir = Path(spawn_dir)
         spawn_dir.mkdir(parents=True, exist_ok=True)
-        (spawn_dir / PRIMARY_META_FILENAME).write_text(
+        (LaunchPaths(spawn_dir).primary_meta).write_text(
             '{"managed_backend":true}\n',
             encoding="utf-8",
         )
-        (spawn_dir / OUTPUT_FILENAME).write_text(
+        (LaunchPaths(spawn_dir).output).write_text(
             '{"type":"turn/started"}\n',
             encoding="utf-8",
         )
@@ -214,8 +214,8 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     assert managed_calls == 1
     assert black_box_calls == 1
     assert captured_spawn_dir is not None
-    assert not (captured_spawn_dir / PRIMARY_META_FILENAME).exists()
-    assert not (captured_spawn_dir / OUTPUT_FILENAME).exists()
+    assert not (LaunchPaths(captured_spawn_dir).primary_meta).exists()
+    assert not (LaunchPaths(captured_spawn_dir).output).exists()
     assert captured_black_box_cwd == project_root
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
     assert outcome.exit_code == 0

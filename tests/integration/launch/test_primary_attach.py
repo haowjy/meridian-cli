@@ -21,7 +21,6 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
-from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
 from meridian.lib.launch.process.ports import (
@@ -36,6 +35,7 @@ from meridian.lib.launch.process.primary_attach import (
 )
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk, record_scope
 from meridian.lib.state.spawn_store import start_spawn
 
@@ -347,7 +347,7 @@ class FakeProcessLauncher(ProcessLauncher):
         self.launch_commands.append(command)
         self.launch_envs.append(dict(env))
         self.output_log_paths.append(output_log_path)
-        metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
+        metadata_path = LaunchPaths(self.spawn_dir).primary_meta
         assert metadata_path.exists()
         self.metadata_seen_at_launch = cast(
             "dict[str, object]",
@@ -399,7 +399,7 @@ class BlockingProcessLauncher(ProcessLauncher):
     ) -> BlockingProcessLauncher:
         _ = (cwd, env, output_log_path, terminal_fds)
         self.launch_commands.append(command)
-        metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
+        metadata_path = LaunchPaths(self.spawn_dir).primary_meta
         assert metadata_path.exists()
         return self
 
@@ -453,7 +453,7 @@ class FailingEventConnection(FakeManagedConnection):
 def _read_metadata(spawn_dir: Path) -> dict[str, object]:
     return cast(
         "dict[str, object]",
-        json.loads((spawn_dir / PRIMARY_META_FILENAME).read_text(encoding="utf-8")),
+        json.loads((LaunchPaths(spawn_dir).primary_meta).read_text(encoding="utf-8")),
     )
 
 

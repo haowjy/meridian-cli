@@ -34,7 +34,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
+from meridian.lib.state.paths import LaunchPaths, RuntimePaths, normalize_path_for_write
 from meridian.lib.state.spawn.model import (
     AUTHORITATIVE_ORIGINS,
 )
@@ -343,7 +343,7 @@ def start_spawn(
         staging_dir = ensure_spawn_staging_dir(paths)
         stage_dir = staging_dir / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
         stage_dir.mkdir()
-        atomic_write_text(stage_dir / "starting-prompt.md", prompt)
+        atomic_write_text(LaunchPaths(stage_dir).starting_prompt, prompt)
         stored_state = record_to_stored_state(record)
         atomic_write_text(
             stage_dir / "state.json",

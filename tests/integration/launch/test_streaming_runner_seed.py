@@ -23,8 +23,8 @@ from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.workspace_projection import ProjectionResult
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
+    LaunchPaths,
     resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
 )
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -103,11 +103,8 @@ class _ClaudeSeedPersistenceConnection:
 
     async def events(self):  # type: ignore[no-untyped-def]
         assert self._project_root is not None
-        log_dir = resolve_spawn_log_dir(
-            self._project_root,
-            self._spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(self._project_root),
-        )
+        runtime_root = resolve_project_runtime_root_for_write(self._project_root)
+        log_dir = LaunchPaths.for_row(runtime_root, self._spawn_id).dir
         (log_dir / "report.md").write_text("seeded claude complete", encoding="utf-8")
         yield RawHarnessEvent(
             event_type="result",

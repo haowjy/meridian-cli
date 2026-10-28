@@ -55,7 +55,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import (
     APP_LAUNCH_MODE,
     LaunchMode,
@@ -471,9 +471,7 @@ class SpawnApplicationService:
         # The spawn dir exists only now, and the bound launch may reference files in it
         # (``system-prompt.md``), so a prepared spawn is launchable without caller help.
         write_projection_artifacts(
-            log_dir=resolve_spawn_log_dir(
-                launch_ctx.project_root, persisted_spawn_id, runtime_root=self._runtime_root
-            ),
+            launch=LaunchPaths.for_row(self._runtime_root, persisted_spawn_id),
             launch_context=launch_ctx,
             surface="spawn",
         )

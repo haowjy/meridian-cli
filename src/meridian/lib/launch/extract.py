@@ -17,11 +17,9 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.cost import estimate_usage_cost
-from meridian.lib.launch.constants import (
-    REPORT_FILENAME,
-)
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.permission_journal import PermissionJournal
 
 # ---------------------------------------------------------------------------
@@ -63,7 +61,7 @@ def _persist_report(
     if extracted.content is None:
         return None
 
-    target = log_dir / REPORT_FILENAME
+    target = LaunchPaths(log_dir).report
     if extracted.source in {"assistant_message", "failure_reason", "pi_failure"}:
         heading = (
             "# Spawn failed" if extracted.source in {"failure_reason", "pi_failure"} else "# Report"

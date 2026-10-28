@@ -22,8 +22,8 @@ from meridian.lib.launch.env import apply_pi_bind_time_env, build_harness_child_
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
+    LaunchPaths,
     resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
 )
 
 _PI_HELP = (
@@ -120,7 +120,7 @@ async def test_claude_probe_and_main_process_share_sanitized_bound_environment(
         harness="claude",
         prompt="hello",
     )
-    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=runtime_root).mkdir(
+    LaunchPaths.for_row(runtime_root, spawn_id).dir.mkdir(
         parents=True, exist_ok=True
     )
     await connection.start(
@@ -218,7 +218,7 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
         harness="pi",
         prompt="hello",
     )
-    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=runtime_root).mkdir(
+    LaunchPaths.for_row(runtime_root, spawn_id).dir.mkdir(
         parents=True, exist_ok=True
     )
     await connection.start(

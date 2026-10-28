@@ -25,14 +25,16 @@ from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_codec import transcript_header
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.native_snapshot import (
-    NATIVE_SNAPSHOT_FILENAME,
     SnapshotHeader,
     SnapshotObservation,
     SnapshotRecord,
     SourceRevision,
     write_snapshot,
 )
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import (
+    NATIVE_SNAPSHOT_FILENAME,
+    resolve_project_runtime_root_for_write,
+)
 from meridian.lib.utils.json_shapes import loads_json_object
 
 OLD = "2000-01-01T00:00:00+00:00"

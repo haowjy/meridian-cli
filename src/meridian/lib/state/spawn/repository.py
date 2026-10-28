@@ -21,6 +21,7 @@ from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.paths import STARTING_PROMPT_FILENAME
 from meridian.lib.state.spawn.legacy import (
     LegacySpawnStateUpgradeError,
     upgrade_legacy_spawn_state,
@@ -153,7 +154,7 @@ def _state_path(spawns_dir: Path, spawn_id: str) -> Path:
 
 
 def _prompt_path(spawns_dir: Path, spawn_id: str) -> Path:
-    return _spawn_dir(spawns_dir, spawn_id) / "starting-prompt.md"
+    return _spawn_dir(spawns_dir, spawn_id) / STARTING_PROMPT_FILENAME
 
 
 def spawn_lock_path(spawns_dir: Path, spawn_id: str) -> Path:

@@ -68,7 +68,7 @@ def close(project: Path, root: Path, key: str) -> None:
     assert resolve_project_runtime_root(project) == root
     assert materialize_native_history(project, root, key) == ("pi", "probe-native")
     assert session_stop_maintenance(project, key) is None
-    from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+    from meridian.lib.state.paths import NATIVE_SNAPSHOT_FILENAME
 
     snapshot = root / "spawns" / key / NATIVE_SNAPSHOT_FILENAME
     assert complete_published_snapshot(snapshot).state == "complete"

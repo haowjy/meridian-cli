@@ -16,10 +16,8 @@ from meridian.lib.harness.opencode_transcript import (
     interpret_opencode_v2_record,
 )
 from meridian.lib.harness.pi_journal import is_pi_journal_entry_type, pi_context_edit_annotation
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.native_snapshot import (
     HEADER_LIMIT,
-    NATIVE_SNAPSHOT_FILENAME,
     SnapshotHeader,
     SnapshotStream,
     TranscriptReadPaused,
@@ -30,6 +28,7 @@ from meridian.lib.state.native_snapshot import (
     reject_unframed_storage_frame,
     reject_unframed_storage_record,
 )
+from meridian.lib.state.paths import HISTORY_FILENAME, NATIVE_SNAPSHOT_FILENAME
 from meridian.lib.utils.json_shapes import json_object
 
 _TRANSCRIPT_TEXT_KEYS: tuple[str, ...] = (

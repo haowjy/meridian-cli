@@ -22,7 +22,7 @@ from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_lock import adopt_handoff, take_handoff_fd
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths, resolve_spawn_dir
 from meridian.lib.telemetry.bootstrap import TelemetryMode, TelemetryPlan, install
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
@@ -34,14 +34,6 @@ from .failure_policy import finalize_launch_failure, finalize_launch_failure_syn
 
 logger = structlog.get_logger(__name__)
 _SETUP_TELEMETRY_COMPAT = setup_telemetry
-BACKGROUND_STDOUT_FILENAME = "background-launcher.stdout.log"
-BACKGROUND_STDERR_FILENAME = "background-launcher.stderr.log"
-_BG_WORKER_REQUEST_FILENAME = "bg-worker-request.json"
-_BACKGROUND_RUNTIME_ARTIFACTS = (
-    BACKGROUND_STDOUT_FILENAME,
-    BACKGROUND_STDERR_FILENAME,
-    _BG_WORKER_REQUEST_FILENAME,
-)
 
 
 class BackgroundWorkerLaunchRequest(BaseModel):
@@ -69,8 +61,8 @@ def _resolve_background_execution_cwd(
 
 def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:
     """Remove non-durable launcher artifacts after terminal completion."""
-    for name in _BACKGROUND_RUNTIME_ARTIFACTS:
-        target = log_dir / name
+    launch = LaunchPaths(log_dir)
+    for target in (launch.background_stdout, launch.background_stderr, launch.bg_worker_request):
         with suppress(FileNotFoundError):
             target.unlink()
 
@@ -78,14 +70,14 @@ def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:
 def _persist_bg_worker_request(log_dir: Path, payload: BackgroundWorkerLaunchRequest) -> None:
     """Write background worker launch request to the spawn log directory."""
 
-    params_path = log_dir / _BG_WORKER_REQUEST_FILENAME
+    params_path = LaunchPaths(log_dir).bg_worker_request
     atomic_write_text(params_path, payload.model_dump_json(indent=2) + "\n")
 
 
 def _load_bg_worker_request(log_dir: Path) -> BackgroundWorkerLaunchRequest:
     """Load background worker launch request from the spawn log directory."""
 
-    params_path = log_dir / _BG_WORKER_REQUEST_FILENAME
+    params_path = LaunchPaths(log_dir).bg_worker_request
     return BackgroundWorkerLaunchRequest.model_validate_json(
         params_path.read_text(encoding="utf-8")
     )
@@ -206,7 +198,7 @@ def _background_worker_main(
     # Bootstrap and child context derive their runtime from the argv authority.
     os.environ["_MERIDIAN_RUNTIME_DIR"] = str(runtime_root)
     resolved_context = runtime_context(ctx)
-    launch_lock = adopt_handoff(handoff_fd, runtime_root / "spawns" / str(spawn_id))
+    launch_lock = adopt_handoff(handoff_fd, resolve_spawn_dir(runtime_root, spawn_id))
     with launch_lock:
         prepared = prepare_for_runtime_write(project_root)
         project_paths = resolve_project_config_paths(project_root=prepared.project_root)
@@ -220,9 +212,7 @@ def _background_worker_main(
                 )
             )
             register_spawn_telemetry_observer()
-            log_dir = resolve_spawn_log_dir(
-                project_paths.project_root, spawn_id, runtime_root=runtime_root
-            )
+            log_dir = LaunchPaths.for_row(runtime_root, spawn_id).dir
 
             try:
                 launch_request = _load_bg_worker_request(log_dir)
@@ -271,7 +261,6 @@ if __name__ == "__main__":
 
 
 __all__ = [
-    "_BACKGROUND_RUNTIME_ARTIFACTS",
     "BackgroundWorkerLaunchRequest",
     "_background_worker_main",
     "_build_background_worker_command",

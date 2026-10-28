@@ -17,6 +17,7 @@ from meridian.lib.harness.idle_types import (
 from meridian.lib.idle.service import ArmResult, IdleService
 from meridian.lib.observability import DebugTracer
 from meridian.lib.state.idle_store import IdleState, Stage
+from meridian.lib.state.paths import LaunchPaths
 
 
 class SidecarClock(Protocol):
@@ -42,7 +43,7 @@ class SensorErrorReporter:
     def __init__(self, ctx: IdleSensorContext) -> None:
         self._tracer = DebugTracer(
             spawn_id=str(ctx.spawn_id or ""),
-            debug_path=ctx.spawn_dir / "debug.jsonl",
+            debug_path=LaunchPaths(ctx.spawn_dir).debug,
             report_failures=False,
         )
         self._counts: dict[tuple[str, str, str], int] = {}

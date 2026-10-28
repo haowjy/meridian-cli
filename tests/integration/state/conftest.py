@@ -6,9 +6,8 @@ import json
 from pathlib import Path
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import LaunchPaths, resolve_runtime_paths
 from meridian.lib.state.reaper import reconcile_active_spawn
 from meridian.lib.state.spawn.model import LaunchMode, SpawnRecord
 
@@ -87,7 +86,7 @@ def _write_primary_meta(
     activity: str = "idle",
     managed_backend: bool = True,
 ) -> Path:
-    metadata_path = runtime_root / "spawns" / spawn_id / PRIMARY_META_FILENAME
+    metadata_path = LaunchPaths.for_row(runtime_root, spawn_id).primary_meta
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text(
         json.dumps(

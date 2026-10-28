@@ -40,7 +40,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.session_store import (
     ChatBusyError,
     update_session_claude_config_dir,
@@ -262,11 +262,7 @@ async def _prepare_execution_handoff(
                 exc_info=True,
             )
         write_projection_artifacts(
-            log_dir=resolve_spawn_log_dir(
-                project_paths.project_root,
-                spawn.spawn_id,
-                runtime_root=runtime_root,
-            ),
+            launch=LaunchPaths.for_row(runtime_root, spawn.spawn_id),
             launch_context=launch_context,
             surface="spawn",
         )

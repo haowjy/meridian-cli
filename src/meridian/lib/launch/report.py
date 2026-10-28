@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.spawn_lifecycle import DurableReportEvidence, classify_durable_report_text
 from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.launch.constants import REPORT_FILENAME
+from meridian.lib.state.paths import LaunchPaths
 
 ReportSource = Literal["report_md", "assistant_message", "failure_reason", "pi_failure"]
 
@@ -31,7 +31,7 @@ def extract_or_fallback_report(
     load_native_text: Callable[[], str | None] | None = None,
     failure_reason: str | None = None,
 ) -> ExtractedReport:
-    report_path = spawn_dir / REPORT_FILENAME
+    report_path = LaunchPaths(spawn_dir).report
     try:
         report = report_path.read_text(encoding="utf-8", errors="ignore").strip()
     except OSError:

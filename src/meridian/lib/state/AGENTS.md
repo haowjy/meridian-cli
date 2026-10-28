@@ -37,6 +37,14 @@ against a recreated inode (split-brain).
 
 ## Rules that prevent corruption
 
+- **Per-launch files**: reach `report.md`, `stderr.log`, `output.jsonl`, `params.json`,
+  prompts, `primary_meta.json`, `process_scopes.json`, signals, `control_actions.jsonl`,
+  debug and runner logs, and the harness boundary files only through `LaunchPaths`
+  (`paths.py`; build with `for_row`, construct directly only from a launch directory you
+  were handed). Spawn-level files (`state.json`, `launch.lock`, `scope.json`,
+  `observed-spawns.json`, `reaper_cleanup_claim.json`, the control socket) stay joined to
+  the spawn directory. `meridian.dev.check_launch_paths` (fast gate) rejects a per-launch
+  file name written as a literal anywhere else.
 - **Spawn updates**: every update to a published spawn goes through `write_state_locked()`
   (re-read under lock, pure mutator, atomic write). Never read `state.json` without
   `read_state()`; raw JSON skips validation and `SpawnRecord` reconstruction.

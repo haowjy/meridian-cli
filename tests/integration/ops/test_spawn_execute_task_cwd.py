@@ -13,7 +13,7 @@ from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.ops.spawn.execute_bg import _load_bg_worker_request
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -102,9 +102,7 @@ def test_spawn_create_background_handoff_preserves_external_task_cwd(
     assert row.task_cwd == external_task_cwd.as_posix()
 
     bg_request = _load_bg_worker_request(
-        resolve_spawn_log_dir(
-            project_root, spawn_id, runtime_root=authority.runtime_root
-        )
+        LaunchPaths.for_row(authority.runtime_root, spawn_id).dir
     )
     assert bg_request.runtime.control_root == project_root.as_posix()
     assert bg_request.runtime.requested_task_cwd == external_task_cwd.as_posix()

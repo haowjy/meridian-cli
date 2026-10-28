@@ -78,11 +78,11 @@ from meridian.lib.safety.policy import (
 )
 from meridian.lib.state import work_repository
 from meridian.lib.state.paths import (
+    LaunchPaths,
     load_context_config,
     resolve_ambient_work_dir,
     resolve_kb_dir,
     resolve_project_paths,
-    resolve_spawn_log_dir,
 )
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
@@ -109,7 +109,7 @@ from .composition import (
     join_content_blocks,
     replace_capabilities_block,
 )
-from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
+from .constants import DRY_RUN_REPORT_PATH
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan, merge_env_overrides, undo_direnv
 from .permissions import launch_permission_rules
@@ -1539,11 +1539,9 @@ def bind_launch_context(
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
-    spawn_log_dir = resolve_spawn_log_dir(
-        project_paths.project_root, bindings.spawn_id, runtime_root=runtime_root
-    )
-    report_artifact_path = spawn_log_dir / REPORT_FILENAME
-    system_prompt_path = spawn_log_dir / SYSTEM_PROMPT_FILENAME
+    launch_paths = LaunchPaths.for_row(runtime_root, bindings.spawn_id)
+    report_artifact_path = launch_paths.report
+    system_prompt_path = launch_paths.system_prompt
     logical_task_cwd = project_paths.execution_cwd.resolve()
     directory_context = LaunchDirectoryContext(
         authority_root=resolved_control_root,

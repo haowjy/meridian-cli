@@ -2,8 +2,9 @@
 
 import os
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Self, cast
+from typing import Protocol, Self, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -26,6 +27,11 @@ def normalize_path_for_write(path: str | None) -> str | None:
     if not path:
         return path
     return os.path.abspath(os.path.normpath(path))
+
+
+class _HasId(Protocol):
+    @property
+    def id(self) -> SpawnId | str: ...
 
 
 class RuntimePaths(BaseModel):
@@ -353,22 +359,166 @@ def resolve_work_scratch_dir_for_project(
     return resolved_project_paths.work_dir / work_id
 
 
-def spawn_log_subpath(spawn_id: SpawnId | str) -> Path:
-    """Return spawn log path relative to the Meridian state root."""
+def resolve_spawn_dir(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+    """Return the spawn directory. Spawn-level files (``state.json``, ``launch.lock``,
+    ``scope.json``, ``observed-spawns.json``, the reaper claim, the control socket) live
+    here for every launch; per-launch files go through ``LaunchPaths``."""
 
-    return Path("spawns") / str(spawn_id)
+    return runtime_root / "spawns" / str(spawn_id)
 
 
-def resolve_spawn_log_dir(
-    project_root: Path,
-    spawn_id: SpawnId | str,
-    *,
-    runtime_root: Path,
-) -> Path:
-    """Resolve absolute spawn log directory for a spawn ID."""
+# Per-launch file names. This module is the only place they appear as literals
+# (tests/AGENTS.md "source gates": scripts/check_launch_paths.py enforces it).
+HISTORY_FILENAME = "history.jsonl"  # retired runner stream; never written
+RETIRED_RUNNER_STREAM_FILENAMES: tuple[str, ...] = (HISTORY_FILENAME, "last-observed-event.json")
+NATIVE_SNAPSHOT_FILENAME = "native-transcript.jsonl"
+PROCESS_SCOPES_FILENAME = "process_scopes.json"
+STARTING_PROMPT_FILENAME = "starting-prompt.md"
+REPORT_FILENAME = "report.md"
+PI_RUNTIME_META_FILENAME = "pi_runtime_meta.json"
+BACKGROUND_STDOUT_FILENAME = "background-launcher.stdout.log"
+BACKGROUND_STDERR_FILENAME = "background-launcher.stderr.log"
+BG_WORKER_REQUEST_FILENAME = "bg-worker-request.json"
+# Files the archive skips. Older builds still write the legacy ones; remove with
+# legacy_runner_alive once no lockless rows remain.
+RETENTION_EXCLUDED_FILENAMES = frozenset(
+    {
+        "heartbeat",
+        "finalize-evidence.json",
+        "launch-boundary.jsonl",
+        PROCESS_SCOPES_FILENAME,
+        "reaper_cleanup_claim.json",
+        "restored-from.json",
+    }
+)
 
-    _ = project_root
-    return runtime_root / spawn_log_subpath(spawn_id)
+
+@dataclass(frozen=True)
+class LaunchPaths:
+    """Every per-launch file of one launch, reached only through this class.
+
+    Today a launch directory is the spawn directory. Build one with ``for_row``;
+    construct directly only where a caller was handed the launch directory itself
+    (a runner or connection that receives ``spawn_dir``).
+    """
+
+    dir: Path
+
+    @classmethod
+    def for_row(cls, runtime_root: Path, row: SpawnId | str | _HasId) -> Self:
+        spawn_id = row if isinstance(row, str) else row.id
+        return cls(resolve_spawn_dir(runtime_root, spawn_id))
+
+    @property
+    def starting_prompt(self) -> Path:
+        return self.dir / STARTING_PROMPT_FILENAME
+
+    @property
+    def system_prompt(self) -> Path:
+        return self.dir / "system-prompt.md"
+
+    @property
+    def legacy_prompt(self) -> Path:
+        return self.dir / "prompt.md"
+
+    @property
+    def references(self) -> Path:
+        return self.dir / "references.json"
+
+    @property
+    def projection_manifest(self) -> Path:
+        return self.dir / "projection-manifest.json"
+
+    @property
+    def inline_reference_bytes(self) -> Path:
+        return self.dir / "inline-file-reference-bytes.json"
+
+    @property
+    def report(self) -> Path:
+        return self.dir / REPORT_FILENAME
+
+    @property
+    def stderr_log(self) -> Path:
+        return self.dir / "stderr.log"
+
+    @property
+    def output(self) -> Path:
+        return self.dir / "output.jsonl"
+
+    @property
+    def launcher_log(self) -> Path:
+        return self.dir / "launcher.log"
+
+    @property
+    def runner_lifecycle(self) -> Path:
+        return self.dir / "runner-lifecycle.jsonl"
+
+    @property
+    def claude_boundary(self) -> Path:
+        return self.dir / "claude-session-boundary.jsonl"
+
+    @property
+    def params(self) -> Path:
+        return self.dir / "params.json"
+
+    @property
+    def primary_meta(self) -> Path:
+        return self.dir / "primary_meta.json"
+
+    @property
+    def pi_runtime_meta(self) -> Path:
+        return self.dir / PI_RUNTIME_META_FILENAME
+
+    @property
+    def pi_lifecycle(self) -> Path:
+        return self.dir / "pi-lifecycle.json"
+
+    @property
+    def pi_session_boundary(self) -> Path:
+        return self.dir / "pi-session-boundary.json"
+
+    @property
+    def process_scopes(self) -> Path:
+        return self.dir / PROCESS_SCOPES_FILENAME
+
+    @property
+    def accepted_signals(self) -> Path:
+        return self.dir / "accepted-signals.json"
+
+    def signal(self, kind: str) -> Path:
+        return self.dir / f"{kind}.signal"
+
+    @property
+    def control_actions(self) -> Path:
+        return self.dir / "control_actions.jsonl"
+
+    @property
+    def permission_cursors(self) -> Path:
+        return self.dir / "permission_request_cursors.json"
+
+    @property
+    def debug(self) -> Path:
+        return self.dir / "debug.jsonl"
+
+    @property
+    def native_transcript(self) -> Path:
+        return self.dir / NATIVE_SNAPSHOT_FILENAME
+
+    @property
+    def background_stdout(self) -> Path:
+        return self.dir / BACKGROUND_STDOUT_FILENAME
+
+    @property
+    def background_stderr(self) -> Path:
+        return self.dir / BACKGROUND_STDERR_FILENAME
+
+    @property
+    def bg_worker_request(self) -> Path:
+        return self.dir / BG_WORKER_REQUEST_FILENAME
+
+    @property
+    def ambient_work(self) -> Path:
+        return self.dir / "work"
 
 
 def resolve_ambient_work_dir(
@@ -380,14 +530,10 @@ def resolve_ambient_work_dir(
     """Resolve the ambient artifact directory for a spawn (pure path math, no mkdir)."""
 
     resolved_root = runtime_root or resolve_project_runtime_root(project_root)
-    return resolve_spawn_log_dir(project_root, spawn_id, runtime_root=resolved_root) / "work"
-
-
-def pi_lifecycle_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    return runtime_root / "spawns" / str(spawn_id) / "pi-lifecycle.json"
+    return LaunchPaths.for_row(resolved_root, spawn_id).ambient_work
 
 
 def observed_spawns_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     """Consumed-result and wait-lease record owned by one parent spawn."""
 
-    return runtime_root / "spawns" / str(spawn_id) / "observed-spawns.json"
+    return resolve_spawn_dir(runtime_root, spawn_id) / "observed-spawns.json"

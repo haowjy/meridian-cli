@@ -26,6 +26,7 @@ from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
+from meridian.lib.state.paths import LaunchPaths, resolve_spawn_dir
 from meridian.lib.state.spawn_signals import write_accepted_signals
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
@@ -149,7 +150,7 @@ class SpawnManager:
 
             tracer = _DebugTracer(
                 spawn_id=str(spawn_id),
-                debug_path=self._spawn_dir(spawn_id) / "debug.jsonl",
+                debug_path=LaunchPaths(self._spawn_dir(spawn_id)).debug,
             )
 
         connection: HarnessConnection[Any] | None = None
@@ -836,7 +837,7 @@ class SpawnManager:
                 )
 
     def _spawn_dir(self, spawn_id: SpawnId) -> Path:
-        return self._runtime_root / "spawns" / str(spawn_id)
+        return resolve_spawn_dir(self._runtime_root, spawn_id)
 
     async def _cleanup_completed_session(
         self,

@@ -93,7 +93,6 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.launch.constants import (
     BASE_COMMAND_PI_SUBPROCESS,
-    PI_RUNTIME_META_FILENAME,
     PRIMARY_BASE_COMMAND_PI,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
@@ -101,7 +100,7 @@ from meridian.lib.state import pi_lifecycle
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryCoordinationError
 from meridian.lib.state.history_index import HistoryIndexIncomplete
-from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_ownership import owned_parent_ids
@@ -161,7 +160,7 @@ def _write_pi_runtime_metadata_sidecar(
 
     if payload.get("runtime_path") is None:
         return
-    metadata_path = runtime_root / spawn_log_subpath(spawn_id) / PI_RUNTIME_META_FILENAME
+    metadata_path = LaunchPaths.for_row(runtime_root, spawn_id).pi_runtime_meta
     mutate_published_spawn_artifact(
         runtime_root,
         spawn_id,
@@ -372,7 +371,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         env_overrides: dict[str, str] = {
             "MERIDIAN_PI_BINARY": resolved_runtime.binary_path,
             "_MERIDIAN_PI_SESSION_BOUNDARY_PATH": str(
-                (runtime_root / spawn_log_subpath(spawn_id) / "pi-session-boundary.json").resolve()
+                LaunchPaths.for_row(runtime_root, spawn_id).pi_session_boundary.resolve()
             ),
             "_MERIDIAN_PI_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
         }

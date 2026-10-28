@@ -33,12 +33,12 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.json_doc import mutate_model, read_model
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 from meridian.lib.utils.json_shapes import json_object, tuple_or_empty
 
 logger = logging.getLogger(__name__)
 
-_SIDECAR_FILENAME = "process_scopes.json"
 _CLEANUP_CLAIM_FILENAME = "reaper_cleanup_claim.json"
 _FIRST_WRITER_WAIT_SECONDS = 2.0
 
@@ -89,7 +89,7 @@ class ScopeProjectionSnapshot:
 
 
 def _sidecar_path(runtime_root: Path, spawn_id: SpawnId) -> Path:
-    return runtime_root / "spawns" / str(spawn_id) / _SIDECAR_FILENAME
+    return LaunchPaths.for_row(runtime_root, spawn_id).process_scopes
 
 
 def _read_raw(path: Path) -> ScopeProjection:

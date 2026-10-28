@@ -22,7 +22,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
@@ -43,6 +42,7 @@ from meridian.lib.launch.session_links import session_task_link_path
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.state import session_store
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_store import get_spawn, list_spawns
 from tests.support.launch import (
     assert_task_cwd_instruction,
@@ -538,7 +538,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
         spawn_path = Path(spawn_dir)
         spawn_path.mkdir(parents=True, exist_ok=True)
-        diagnostics_path = spawn_path / LAUNCHER_LOG_FILENAME
+        diagnostics_path = LaunchPaths(spawn_path).launcher_log
         diagnostics_path.write_text("relay failed\n", encoding="utf-8")
         diagnostics_paths.append(diagnostics_path.resolve())
         raise PrimaryAttachError("managed startup error")

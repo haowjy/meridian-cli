@@ -33,8 +33,8 @@ from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
 from meridian.lib.state.paths import (
+    LaunchPaths,
     resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
 )
 from tests.support.async_determinism import AsyncDeterminism
 from tests.support.fakes import FakeClock
@@ -1090,12 +1090,8 @@ async def test_opencode_launch_process_passes_child_env_to_managed_backend(
     spec = ResolvedLaunchSpec()
     fake_process = FakeOpenCodeProcess()
     captured: dict[str, object] = {}
-    resolve_spawn_log_dir(
-        config.control_root,
-        config.spawn_id,
-        runtime_root=config.runtime_root
-        or resolve_project_runtime_root_for_write(config.control_root),
-    ).mkdir(
+    LaunchPaths.for_row(config.runtime_root
+        or resolve_project_runtime_root_for_write(config.control_root), config.spawn_id).dir.mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -1149,12 +1145,8 @@ def _set_startup_failure(
     config: ConnectionConfig,
     text: str,
 ) -> None:
-    spawn_dir = resolve_spawn_log_dir(
-        config.control_root,
-        config.spawn_id,
-        runtime_root=config.runtime_root
-        or resolve_project_runtime_root_for_write(config.control_root),
-    )
+    spawn_dir = LaunchPaths.for_row(config.runtime_root
+        or resolve_project_runtime_root_for_write(config.control_root), config.spawn_id).dir
     spawn_dir.mkdir(parents=True, exist_ok=True)
     connection._stderr_log_path = spawn_dir / "stderr.log"
     connection._stderr_log_path.write_text(text, encoding="utf-8")

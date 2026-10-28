@@ -23,8 +23,8 @@ from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
+    LaunchPaths,
     resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
 )
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.pi_extensions import configure_pi_extension_projection
@@ -71,12 +71,8 @@ async def _start_existing_pi_connection(
     config: ConnectionConfig,
     spec: ResolvedLaunchSpec,
 ) -> None:
-    resolve_spawn_log_dir(
-        config.control_root,
-        config.spawn_id,
-        runtime_root=config.runtime_root
-        or resolve_project_runtime_root_for_write(config.control_root),
-    ).mkdir(
+    LaunchPaths.for_row(config.runtime_root
+        or resolve_project_runtime_root_for_write(config.control_root), config.spawn_id).dir.mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -423,11 +419,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
         event.event_type == "meridian.lifecycle.parse_error" for event in non_phase_events
     )
     stderr_log = (
-        resolve_spawn_log_dir(
-            tmp_path,
-            spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
-        )
+        LaunchPaths.for_row(resolve_project_runtime_root_for_write(tmp_path), spawn_id).dir
         / "stderr.log"
     )
     stderr_text = stderr_log.read_text(encoding="utf-8")
@@ -805,11 +797,7 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     stderr_log = (
-        resolve_spawn_log_dir(
-            tmp_path,
-            spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
-        )
+        LaunchPaths.for_row(resolve_project_runtime_root_for_write(tmp_path), spawn_id).dir
         / "stderr.log"
     )
     stderr_log.parent.mkdir(parents=True)

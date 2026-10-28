@@ -14,11 +14,10 @@ from pytest import MonkeyPatch
 
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import HISTORY_FILENAME, resolve_project_runtime_root_for_write
 from tests.support.opencode_db import (
     write_opencode_db_session,
     write_opencode_db_session_with_parts,

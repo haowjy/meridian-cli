@@ -56,8 +56,8 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.paths import (
+    LaunchPaths,
     resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,10 +187,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
             config.control_root
         )
-        spawn_dir = resolve_spawn_log_dir(
-            config.control_root, config.spawn_id, runtime_root=runtime_root
-        )
-        self._stderr_log_path = spawn_dir / "stderr.log"
+        self._stderr_log_path = LaunchPaths.for_row(runtime_root, config.spawn_id).stderr_log
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
         handle = await launch_managed_backend(

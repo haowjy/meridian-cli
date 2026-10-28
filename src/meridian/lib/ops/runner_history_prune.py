@@ -24,12 +24,12 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.constants import RETIRED_RUNNER_STREAM_FILENAMES
 from meridian.lib.ops.session_target import resolve_run_sources
 from meridian.lib.platform.atomic import iter_atomic_temp_paths
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexBusy
+from meridian.lib.state.paths import RETIRED_RUNNER_STREAM_FILENAMES, resolve_spawn_dir
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.session_store import SessionRecord
@@ -89,7 +89,7 @@ def _megabytes(size: int) -> str:
 def runner_stream_files(root: Path, spawn_id: str) -> tuple[Path, ...]:
     """Runner-stream files of one spawn, including legacy artifact and attempt copies."""
     files: list[Path] = []
-    for base in (root / "spawns" / spawn_id, root / "artifacts" / spawn_id):
+    for base in (resolve_spawn_dir(root, spawn_id), root / "artifacts" / spawn_id):
         if not base.is_dir() or base.is_symlink():
             continue
         attempts = sorted(

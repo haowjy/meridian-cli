@@ -9,7 +9,7 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import pi_lifecycle, session_store, spawn_store
-from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.permission_journal import PermissionJournal
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
@@ -67,7 +67,7 @@ def read_report(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return None, None
-    report_path = resolved_runtime_root / "spawns" / spawn_id / "report.md"
+    report_path = LaunchPaths.for_row(resolved_runtime_root, spawn_id).report
     if not report_path.is_file():
         return None, None
     text = report_path.read_text(encoding="utf-8", errors="ignore")
@@ -84,7 +84,7 @@ def read_report_summary(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return None, None
-    report_path = resolved_runtime_root / "spawns" / spawn_id / "report.md"
+    report_path = LaunchPaths.for_row(resolved_runtime_root, spawn_id).report
     if not report_path.is_file():
         return None, None
     # A UTF-8 code point uses at most four bytes. Ignoring an incomplete trailing
@@ -194,7 +194,7 @@ def _read_running_log_details(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return "", None
-    stderr_path = resolved_runtime_root / "spawns" / spawn_id / "stderr.log"
+    stderr_path = LaunchPaths.for_row(resolved_runtime_root, spawn_id).stderr_log
     if not stderr_path.is_file():
         return stderr_path.as_posix(), None
     stderr_text = stderr_path.read_text(encoding="utf-8", errors="ignore")
@@ -235,7 +235,7 @@ def _pi_cleanup_telemetry(
 def denied_requests(runtime_root: Path, spawn_id: str) -> tuple[DeniedRequestOutput, ...]:
     """The calls the spawn's model made that were refused, from its permission journal."""
 
-    journal = PermissionJournal(runtime_root / spawn_log_subpath(spawn_id))
+    journal = PermissionJournal(LaunchPaths.for_row(runtime_root, spawn_id).dir)
     return tuple(
         DeniedRequestOutput(
             request_id=record.request_id,

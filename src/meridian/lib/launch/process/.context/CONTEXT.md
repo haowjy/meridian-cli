@@ -54,8 +54,8 @@ connection stops; the black-box fallback never starts it.
 
 1. Calls `run_primary_attach()` → `PrimaryAttachLauncher`
 2. On `PrimaryAttachError`: if `primary_attach_failure_policy == "raise"`, re-raises; otherwise
-   logs a warning, deletes managed sidecars (`PRIMARY_META_FILENAME`, `OUTPUT_FILENAME`,
-   `stderr.log`), and falls back to black-box
+   logs a warning, deletes managed sidecars (`LaunchPaths.primary_meta`, `.output`,
+   `.stderr_log`), and falls back to black-box
 3. Black-box: calls `run_primary_process_with_capture_fn()` directly
 
 Managed attach feeds owned IDs into `NativeRun.observe`. Black-box artifact IDs

@@ -15,6 +15,7 @@ import {
   resolveBashRecordsPath,
   resolveClearedSpawnsPath,
   resolvePiBashDir,
+  resolveReportPath,
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
@@ -305,7 +306,7 @@ export class SpawnWatchRuntime {
     for (const item of initial) {
       if (candidates.length >= MAX_NOTIFICATION_MEMBERS) break;
       const separatorBytes = candidates.length ? Buffer.byteLength(NOTIFICATION_SEPARATOR) : 0;
-      const itemMandatoryBytes = mandatoryNotificationBytes(item, this.spawnsDir);
+      const itemMandatoryBytes = mandatoryNotificationBytes(item);
       if (mandatoryBytes + separatorBytes + itemMandatoryBytes > MAX_NOTIFICATION_BYTES) break;
       candidates.push({ item, mandatoryBytes: itemMandatoryBytes });
       mandatoryBytes += separatorBytes + itemMandatoryBytes;
@@ -388,9 +389,9 @@ export class SpawnWatchRuntime {
   }
 
   private async renderSpawnNotification(item: NotificationItem, maxBytes: number): Promise<string | undefined> {
-    const reportPath = path.join(this.spawnsDir, item.id, "report.md");
+    const reportPath = resolveReportPath(item.id);
     const report = await readBoundedReport(reportPath);
-    const frame = spawnNotificationFrame(item, this.spawnsDir, report.text);
+    const frame = spawnNotificationFrame(item, report.text);
     if (report.truncated) frame.truncationNotice = spawnReportTruncationNotice(reportPath);
     return renderNotificationFrame(frame, maxBytes);
   }
@@ -592,8 +593,8 @@ function notificationOutcome(item: NotificationItem): string {
   return `${code}${item.duration}${item.error === undefined ? "" : "; result error"}`;
 }
 
-function spawnNotificationFrame(item: NotificationItem, spawnsDir: string, report: string | null): NotificationFrame {
-  const reportPath = path.join(spawnsDir, item.id, "report.md");
+function spawnNotificationFrame(item: NotificationItem, report: string | null): NotificationFrame {
+  const reportPath = resolveReportPath(item.id);
   const details = [`Worker: ${item.label}`];
   if (item.error) details.push(`Failure: ${item.error}`);
   details.push("", report || "No durable report content was published.");
@@ -625,12 +626,12 @@ function formatBashNotification(item: NotificationItem, maxBytes: number): strin
   return renderNotificationFrame(bashNotificationFrame(item), maxBytes);
 }
 
-function mandatoryNotificationBytes(item: NotificationItem, spawnsDir: string): number {
+function mandatoryNotificationBytes(item: NotificationItem): number {
   const frame = item.kind === "spawn"
-    ? spawnNotificationFrame(item, spawnsDir, null)
+    ? spawnNotificationFrame(item, null)
     : bashNotificationFrame(item);
   if (item.kind === "spawn") {
-    const reportPath = path.join(spawnsDir, item.id, "report.md");
+    const reportPath = resolveReportPath(item.id);
     frame.truncationNotice = spawnReportTruncationNotice(reportPath);
   }
   return Buffer.byteLength(`${frame.prefix}\n\n${frame.truncationNotice}\n${frame.lookup}`);

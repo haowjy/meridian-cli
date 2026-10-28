@@ -24,8 +24,10 @@ from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import (
+    NATIVE_SNAPSHOT_FILENAME,
+    resolve_project_runtime_root_for_write,
+)
 
 NEEDLE = "SNAPNEEDLE"
 

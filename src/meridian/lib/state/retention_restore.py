@@ -21,6 +21,7 @@ from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.paths import STARTING_PROMPT_FILENAME, resolve_spawn_dir
 from meridian.lib.state.retention_archive import (
     ArchivedRecord,
     ArchiveReceipt,
@@ -180,9 +181,9 @@ def _stage_record(
         }
     )
     stored = record_to_stored_state(state)
-    if "starting-prompt.md" in record.required_files:
+    if STARTING_PROMPT_FILENAME in record.required_files:
         stored = stored.model_copy(
-            update={"prompt_length": len((stage / "starting-prompt.md").read_text())}
+            update={"prompt_length": len((stage / STARTING_PROMPT_FILENAME).read_text())}
         )
     atomic_write_text(stage / "state.json", stored.model_dump_json())
     if (
@@ -269,7 +270,7 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                     local_id = plan.local_id
                 if existing is not None and existing.id != local_id:
                     raise ValueError("Restore publication alias conflict")
-                destination = root / "spawns" / local_id
+                destination = resolve_spawn_dir(root, local_id)
                 source = HistorySource(kind="spawn", key=local_id)
                 destination.parent.mkdir(parents=True, exist_ok=True)
             # The durable plan owns a deterministic stage, including across process death.

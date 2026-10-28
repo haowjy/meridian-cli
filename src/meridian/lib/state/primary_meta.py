@@ -9,8 +9,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.state.json_doc import mutate_model, read_model, write_model
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import (
     PublishedArtifactUnavailable,
     published_artifact_lock,
@@ -131,10 +131,10 @@ def primary_meta_path(
     if has_spawn_dir and has_runtime_pair:
         raise ValueError("Provide either spawn_dir or runtime_root+spawn_id, not both")
     if has_spawn_dir:
-        return spawn_dir / PRIMARY_META_FILENAME
+        return LaunchPaths(spawn_dir).primary_meta
     if runtime_root is None or spawn_id is None:
         raise ValueError("runtime_root and spawn_id are required when spawn_dir is not provided")
-    return runtime_root / "spawns" / spawn_id / PRIMARY_META_FILENAME
+    return LaunchPaths.for_row(runtime_root, spawn_id).primary_meta
 
 def read_primary_metadata(runtime_root: Path, spawn_id: str) -> PrimaryMetadata | None:
     """Tolerant read with crash-only semantics. Returns None for missing/corrupt file."""

@@ -17,6 +17,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
 )
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.permission_journal import (
     REJECT_DECISION,
     TERMINAL_STATUSES,
@@ -59,7 +60,7 @@ class PermissionBroker(ServerRequestHandler):
         self._policy_hook = policy_hook
         self._auto_reject_runtime_requests = auto_reject_runtime_requests
         self._harness_id = harness_id
-        self._cursor_path = spawn_dir / "permission_request_cursors.json"
+        self._cursor_path = LaunchPaths(spawn_dir).permission_cursors
 
         self._lock = asyncio.Lock()
         self._journal = PermissionJournal(spawn_dir)

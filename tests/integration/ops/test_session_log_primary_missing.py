@@ -12,10 +12,9 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import HISTORY_FILENAME, resolve_project_runtime_root_for_write
 
 
 def _write_spawn_output(

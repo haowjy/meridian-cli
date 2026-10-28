@@ -37,6 +37,7 @@ from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.paths import LaunchPaths
 
 
 async def streaming_serve(
@@ -116,10 +117,9 @@ async def streaming_serve(
         if debug:
             from meridian.lib.observability.debug_tracer import DebugTracer
 
-            spawn_dir = runtime_root / "spawns" / str(spawn_id)
             tracer = DebugTracer(
                 spawn_id=str(spawn_id),
-                debug_path=spawn_dir / "debug.jsonl",
+                debug_path=LaunchPaths.for_row(runtime_root, spawn_id).debug,
                 echo_stderr=True,
             )
             connection_config = replace(connection_config, debug_tracer=tracer)
@@ -150,7 +150,7 @@ async def streaming_serve(
                 startup_attempt_id=uuid.uuid4().hex,
             ) as managed:
                 spawn_store.update_spawn(runtime_root, spawn_id, chat_id=managed.chat_id)
-                lifecycle = LifecycleLog.for_spawn(runtime_root, project_root, spawn_id)
+                lifecycle = LifecycleLog.for_spawn(runtime_root, spawn_id)
                 try:
                     native_run = bind_entry(
                         managed,
@@ -274,7 +274,7 @@ async def streaming_serve(
                         facts=facts,
                         native_key=native_key,
                         spawn_id=spawn_id,
-                        log_dir=runtime_root / "spawns" / str(spawn_id),
+                        log_dir=LaunchPaths.for_row(runtime_root, spawn_id).dir,
                         model_id=prepared.resolved_model,
                         harness_id=harness_id,
                         project_root=project_root,

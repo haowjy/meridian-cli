@@ -26,7 +26,7 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.spawn import execute as spawn_execute_module
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _PI_BUSY_REJECTION = (
@@ -288,7 +288,7 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
         harness="pi",
         prompt="FIRST",
     )
-    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=tmp_path).mkdir(
+    LaunchPaths.for_row(tmp_path, spawn_id).dir.mkdir(
         parents=True, exist_ok=True
     )
     manager = SpawnManager(
@@ -356,7 +356,7 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
         harness="pi",
         prompt="FIRST",
     )
-    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=tmp_path).mkdir(
+    LaunchPaths.for_row(tmp_path, spawn_id).dir.mkdir(
         parents=True, exist_ok=True
     )
     manager = SpawnManager(

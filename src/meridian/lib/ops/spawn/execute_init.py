@@ -27,8 +27,8 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import (
+    LaunchPaths,
     resolve_project_paths,
-    resolve_spawn_log_dir,
     resolve_work_scratch_dir_for_project,
 )
 from meridian.lib.state.spawn.model import LaunchMode
@@ -377,12 +377,7 @@ def _write_params_json(
     binding: ResolvedLaunchBinding | None = None,
 ) -> None:
     """Write resolved execution params to the spawn directory."""
-    params_path = (
-        resolve_spawn_log_dir(
-            project_paths.project_root, spawn_id, runtime_root=runtime_root
-        )
-        / "params.json"
-    )
+    params_path = LaunchPaths.for_row(runtime_root, spawn_id).params
     params_path.parent.mkdir(parents=True, exist_ok=True)
     params_payload = _params_payload(request_metadata, binding=binding)
     atomic_write_text(params_path, json.dumps(params_payload, indent=2) + "\n")

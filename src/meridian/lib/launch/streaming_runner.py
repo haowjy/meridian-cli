@@ -45,10 +45,8 @@ from meridian.lib.launch.artifact_io import (
 from meridian.lib.launch.constants import (
     CURSOR_INACTIVITY_TIMEOUT_SECONDS,
     DEFAULT_INFRA_EXIT_CODE,
-    REPORT_FILENAME,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
-    STDERR_FILENAME,
     SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
 )
 from meridian.lib.launch.context import LaunchContext
@@ -88,7 +86,7 @@ from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbit
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
 from meridian.lib.safety.guardrails import run_guardrails
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -688,7 +686,7 @@ async def _run_streaming_attempt(
             timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
         watchdog_task = asyncio.create_task(
             _report_watchdog(
-                report_path=log_dir / REPORT_FILENAME,
+                report_path=LaunchPaths(log_dir).report,
                 completion_event=completion_event,
                 manager=manager,
                 spawn_id=run.spawn_id,
@@ -887,10 +885,8 @@ async def execute_with_streaming(
     atexit_callback: Callable[[], None] | None = None
 
     try:
-        log_dir = resolve_spawn_log_dir(project_root, run.spawn_id, runtime_root=runtime_root)
-        lifecycle = LifecycleLog.for_spawn(
-            runtime_root, project_root, run.spawn_id, clock=resolved_clock
-        )
+        log_dir = LaunchPaths.for_row(runtime_root, run.spawn_id).dir
+        lifecycle = LifecycleLog.for_spawn(runtime_root, run.spawn_id, clock=resolved_clock)
         lifecycle_path = lifecycle.path
 
         def _record_lifecycle(event: str, **details: object) -> None:
@@ -977,7 +973,7 @@ async def execute_with_streaming(
 
             tracer = DebugTracer(
                 spawn_id=str(run.spawn_id),
-                debug_path=log_dir / "debug.jsonl",
+                debug_path=LaunchPaths(log_dir).debug,
                 echo_stderr=stream_stdout_to_terminal,
             )
 
@@ -1130,7 +1126,7 @@ async def execute_with_streaming(
                         )
                         conclusion.failure_reason = attempt.start_error
                         _append_text_to_stderr_log(
-                            stderr_path=log_dir / STDERR_FILENAME,
+                            stderr_path=LaunchPaths(log_dir).stderr_log,
                             text=attempt.start_error,
                         )
                     attempt_cancelled = False
@@ -1257,7 +1253,7 @@ async def execute_with_streaming(
                                 conclusion.exit_code = 1
                                 conclusion.failure_reason = "guardrail_failed"
                                 _append_text_to_stderr_log(
-                                    stderr_path=log_dir / STDERR_FILENAME,
+                                    stderr_path=LaunchPaths(log_dir).stderr_log,
                                     text=_guardrail_failure_text(guardrail_result.failures),
                                 )
         except asyncio.CancelledError:

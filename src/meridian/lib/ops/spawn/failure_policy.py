@@ -27,7 +27,7 @@ async def finalize_launch_failure(
         record_identity_failure(
             error,
             phase="launch_failure",
-            lifecycle=LifecycleLog.for_spawn(runtime_root, project_root, spawn_id),
+            lifecycle=LifecycleLog.for_spawn(runtime_root, spawn_id),
         )
     service = build_spawn_application_service_from_roots(project_root, runtime_root)
     return await service.complete_spawn(

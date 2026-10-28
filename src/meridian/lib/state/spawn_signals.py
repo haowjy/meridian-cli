@@ -12,7 +12,7 @@ from typing import Literal, cast, get_args
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
@@ -31,13 +31,13 @@ class ResidentSignals:
 def spawn_signal_path(runtime_root: Path, spawn_id: SpawnId | str, kind: SpawnSignalKind) -> Path:
     """Return the authoritative path for a resident spawn signal file."""
 
-    return runtime_root / spawn_log_subpath(spawn_id) / f"{kind}.signal"
+    return LaunchPaths.for_row(runtime_root, spawn_id).signal(kind)
 
 
 def _accepted_signals_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     """Return the file where a runner declares which signals its drain plan reads."""
 
-    return runtime_root / spawn_log_subpath(spawn_id) / "accepted-signals.json"
+    return LaunchPaths.for_row(runtime_root, spawn_id).accepted_signals
 
 
 def write_accepted_signals(

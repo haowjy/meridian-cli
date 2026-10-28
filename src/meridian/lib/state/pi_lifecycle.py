@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.json_doc import mutate_model, read_model
-from meridian.lib.state.paths import pi_lifecycle_path
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import (
     PublishedArtifactUnavailable,
     published_artifact_lock,
@@ -23,12 +23,13 @@ class PiLifecycle(BaseModel):
 
 
 def read(runtime_root: Path, spawn_id: SpawnId | str) -> PiLifecycle:
-    return read_model(pi_lifecycle_path(runtime_root, spawn_id), PiLifecycle) or PiLifecycle()
+    path = LaunchPaths.for_row(runtime_root, spawn_id).pi_lifecycle
+    return read_model(path, PiLifecycle) or PiLifecycle()
 
 
 def record(runtime_root: Path, spawn_id: SpawnId | str, event: PiLifecycle) -> None:
     resolved_spawn_id = SpawnId(str(spawn_id))
-    path = pi_lifecycle_path(runtime_root, resolved_spawn_id)
+    path = LaunchPaths.for_row(runtime_root, resolved_spawn_id).pi_lifecycle
 
     def update(prior: PiLifecycle | None) -> tuple[PiLifecycle, None]:
         prior = prior or PiLifecycle()

@@ -375,9 +375,8 @@ def test_archive_after_prune_captures_native_and_ships_no_runner_members(
     import zipfile
 
     from meridian.lib.config.history_models import HistoryArchiveConfig
-    from meridian.lib.launch.constants import RETIRED_RUNNER_STREAM_FILENAMES
     from meridian.lib.ops.session_archive import archive_history, materialize_native_history
-    from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+    from meridian.lib.state.paths import NATIVE_SNAPSHOT_FILENAME, RETIRED_RUNNER_STREAM_FILENAMES
 
     project, root, store = corpus(tmp_path)
     key = add_spawn(root, store, 1)

@@ -19,12 +19,11 @@ from meridian.lib.ops.session_archive import (
 from meridian.lib.ops.session_target import resolve_capture_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.native_snapshot import (
+from meridian.lib.state.native_snapshot import TranscriptValidation, read_snapshot
+from meridian.lib.state.paths import (
     NATIVE_SNAPSHOT_FILENAME,
-    TranscriptValidation,
-    read_snapshot,
+    resolve_project_runtime_root_for_write,
 )
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
 
 

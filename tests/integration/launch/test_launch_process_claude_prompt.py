@@ -19,7 +19,6 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
-from meridian.lib.launch.constants import OUTPUT_FILENAME
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import PrimaryProcessResult, run_harness_process
 from meridian.lib.launch.request import (
@@ -380,7 +379,7 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
     )
 
     assert isinstance(captured["output_log_path"], Path)
-    assert captured["output_log_path"].name == OUTPUT_FILENAME
+    assert captured["output_log_path"].name == "output.jsonl"
     assert outcome.resolved_harness_session_id != emitted_session_id
     assert outcome.resolved_harness_session_id
     spawns = list_spawns(launch_context.runtime_root)

@@ -15,6 +15,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.spawn.owed import consume_result_if_shown
 from meridian.lib.state.history_index import indexed_spawn_scan
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_status import read_derived
 
 
@@ -58,7 +59,7 @@ def _report_path(project_root: Path, *, spawn_id: str) -> Path:
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
         raise ValueError(f"Report for spawn '{spawn_id}' not found")
-    return runtime_root / "spawns" / spawn_id / "report.md"
+    return LaunchPaths.for_row(runtime_root, spawn_id).report
 
 
 def _report_snippet(text: str, *, query: str) -> str:
@@ -143,7 +144,7 @@ def report_show_sync(
         spawn_id=payload.spawn_id,
         ctx=resolved_ctx,
     )
-    report_path = runtime_root / "spawns" / spawn_id / "report.md"
+    report_path = LaunchPaths.for_row(runtime_root, spawn_id).report
     if not report_path.is_file():
         raise ValueError(f"Report for spawn '{spawn_id}' not found")
     report = report_path.read_text(encoding="utf-8", errors="ignore").strip()

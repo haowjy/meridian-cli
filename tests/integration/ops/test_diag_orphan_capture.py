@@ -13,8 +13,10 @@ from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.ops import diag
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import (
+    NATIVE_SNAPSHOT_FILENAME,
+    resolve_project_runtime_root_for_write,
+)
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.reaper_cleanup_claim import claim_active_spawn_scopes
 from meridian.lib.state.spawn.model import SpawnKind, SpawnRecord

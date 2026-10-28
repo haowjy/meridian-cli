@@ -14,6 +14,7 @@ from typing import cast
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionNotReady
 from meridian.lib.state.jsonl import append_durable_jsonl_line
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 
@@ -66,7 +67,7 @@ class ControlActionCoordinator:
         retry_delay_secs: float = 0.05,
     ) -> None:
         self._spawn_id = spawn_id
-        self._actions_path = spawn_dir / "control_actions.jsonl"
+        self._actions_path = LaunchPaths(spawn_dir).control_actions
         self._runtime_root = spawn_dir.parent.parent
         self._default_max_attempts = max(1, int(default_max_attempts))
         self._retry_delay_secs = max(0.0, float(retry_delay_secs))

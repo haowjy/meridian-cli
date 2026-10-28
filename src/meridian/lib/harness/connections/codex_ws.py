@@ -80,7 +80,7 @@ from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths, resolve_project_runtime_root_for_write
 
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
@@ -387,14 +387,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         env = dict(config.child_env)
         self._codex_home = resolve_codex_home(env)
         effective_cwd = self._effective_project_root()
-        spawn_dir = resolve_spawn_log_dir(
-            config.control_root,
-            config.spawn_id,
-            runtime_root=(
-                config.runtime_root or resolve_project_runtime_root_for_write(config.control_root)
-            ),
+        runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
+            config.control_root
         )
-        self._stderr_log_path = spawn_dir / "stderr.log"
+        self._stderr_log_path = LaunchPaths.for_row(runtime_root, config.spawn_id).stderr_log
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
 
