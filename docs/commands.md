@@ -569,7 +569,7 @@ hooks, harness defaults, and primary-session defaults.
 
 Meridian CLI processes default `MERIDIAN_MANAGED=1` in their environment, while preserving an explicit outer override. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc. `[settings.meridian.agent_copy] harnesses = ["claude"]` is the selective override when `.claude` is an effective managed target; it materializes qualifying Claude-native copies even under managed mode or `agent_emission = "never"`.
 
-In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only with Mars Claude `agent_copy` plus an effective `.claude` managed target. Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
+In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only when Mars installed at least one agent into `.claude` (recorded in `.mars/native-agents.json` by the last sync, whatever caused it: `agent_copy` in any Mars config layer, `agent_emission = "always"`, or a bare `mars sync` run outside Meridian). Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
 Headless Claude spawns are allowed by default. To prevent `meridian spawn -a <agent>` from launching them, set:
 

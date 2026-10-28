@@ -108,11 +108,13 @@ The former `agent_copy` fan-out allowlist key is removed. If present in
 `[settings.meridian.fanout].agents` and ignores the old value.
 
 For Claude launches, Meridian uses the same boundary for native `Agent()`
-delegation. Generic Claude `Agent` is allowed only when Mars has Claude
-`agent_copy` enabled and `.claude` is an effective managed target; otherwise
-the launch denies native `Agent` and guides delegation back to `meridian spawn`.
-Claude built-in
-agents (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
+delegation. Generic Claude `Agent` is allowed only when the last sync actually
+installed at least one agent into Claude's native directory, as recorded in
+`.mars/native-agents.json`. That covers `agent_copy` in any Mars config layer
+(including the user `config.toml`), `agent_emission = "always"`, and a bare
+`mars sync` run outside Meridian. Otherwise the launch denies native `Agent` and
+guides delegation back to `meridian spawn`. Claude built-in agents (`Explore`,
+`Plan`, `General-purpose` / `general-purpose`) stay denied.
 
 ## Deny headless spawn harnesses
 
@@ -130,7 +132,9 @@ deny_headless_harnesses = ["claude"]
 With that setting, a Claude primary session can still run. Spawns try permitted
 routes and declared model backups instead of selecting Claude and rejecting it
 afterward. An explicit Claude harness pin fails; it cannot override the exclusion.
-To completely avoid Claude-side delegation, combine it with no Claude `agent_copy`:
+To completely avoid Claude-side delegation, also make sure no sync installs Claude-native
+agents: no Claude `agent_copy`, no `agent_emission = "always"`, and sync through
+`meridian mars sync`:
 
 ```toml
 [settings.meridian.agent_copy]

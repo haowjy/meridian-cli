@@ -122,8 +122,8 @@ no launch snapshot profile was threaded in.
 
 Claude native Agent routing has separate controls. The `[harness.claude]` table's
 `allow_builtin_agents` option controls the scoped built-in `Agent(...)` denies
-(default `false`). Generic `Agent` permission follows Mars
-`[settings.meridian.agent_copy]` via `agent_copy_enabled()` in
+(default `false`). Generic `Agent` permission follows what Mars
+installed (`.mars/native-agents.json`) via `agent_copy_enabled()` in
 `lib/catalog/agent_copy.py`.
 
 ## Schema Metadata (`schema.py`)
@@ -156,7 +156,7 @@ Per-harness profiles under `HarnessConfig` expose TOML-settable fields:
   `features.multi_agent=false` leaves the v1 tools available, and `--disable` would fail on
   a build lacking the feature). Claude omits its scoped built-in `Agent(...)` denies when
   enabled; its generic-agent platform deny is then reported partial. Generic Claude `Agent`
-  routing follows Mars `[settings.meridian.agent_copy]`, not `meridian.toml`.
+  routing follows Mars-installed native agents, not `meridian.toml`.
 
 ## Module map
 
