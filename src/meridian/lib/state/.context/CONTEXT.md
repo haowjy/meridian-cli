@@ -233,6 +233,13 @@ free runner-lifetime `launch.lock`, and persists the same status, exit code, and
 that `read_derived()` projects: cancel intent yields `cancelled`, otherwise runner
 disappearance yields `failed`/`crashed`. Origin and timestamps may differ. It never
 finalizes a lockless legacy row.
+
+The background repair on primary launch is `recover_crashed_launches()`, not a row walk:
+one pass at a time under `locks/repair.lock`, candidates are the history index's active
+rows in spawn-ID order resuming after `repair-cursor`, at most 64 launch-lock attempts
+and 32 recoveries per pass, lockless rows untouched, and a busy index skips the pass.
+Only doctor still reads every `state.json` (`iter_repair_candidates`), and only doctor
+resolves a terminal row's leftover reaper claim.
 Before finalization it snapshots exact cleanup targets into
 `reaper_cleanup_claim.json`; after finalization it terminates the claimed scopes. This
 finalize-first order makes state convergence independent of slow cleanup; a crash

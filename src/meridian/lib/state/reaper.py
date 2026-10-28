@@ -9,14 +9,17 @@ from typing import TypedDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
+from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
     is_terminal_spawn_status,
 )
 from meridian.lib.core.types import SpawnId
-from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.platform.process_scope import is_pgid_reachable
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scopes_from_disk
@@ -175,6 +178,80 @@ def iter_repair_candidates(runtime_root: Path) -> Iterator[SpawnRecord]:
             or cleanup_claim_path(runtime_root, spawn_id).is_file()
         ):
             yield record
+
+
+_MAX_LOCK_ATTEMPTS_PER_PASS = 64
+_MAX_RECOVERIES_PER_PASS = 32
+
+
+def _spawn_number(spawn_id: str) -> int:
+    digits = spawn_id.lstrip("p")
+    return int(digits) if digits.isdigit() else -1
+
+
+def _read_cursor(path: Path) -> int:
+    try:
+        return _spawn_number(path.read_text(encoding="utf-8").strip())
+    except OSError:
+        return -1
+
+
+def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[SpawnRecord, ...]:
+    """Run one bounded background pass; return the rows it finalized.
+
+    Candidates are the index's active rows in spawn-ID order, resuming after
+    ``repair-cursor`` and wrapping. Each costs one non-blocking launch-lock
+    attempt, so a pass touches at most 64 rows however many exist. Lockless
+    rows (older builds) are never touched; doctor handles those.
+    """
+    if not is_root_side_effect_process():
+        return ()
+    with try_lock_file(runtime_root / "locks" / "repair.lock", reentrant=False) as held:
+        if held is None:
+            return ()
+        try:
+            rows = HistoryIndex(runtime_root).spawns(status=set(ACTIVE_SPAWN_STATUSES))
+        except HistoryIndexIncomplete:
+            return ()
+        candidates = sorted(
+            (row for row in rows if row.record_mode != "historical"),
+            key=lambda row: _spawn_number(row.id),
+        )
+        cursor_path = runtime_root / "repair-cursor"
+        cursor = _read_cursor(cursor_path)
+        ordered = [row for row in candidates if _spawn_number(row.id) > cursor] + [
+            row for row in candidates if _spawn_number(row.id) <= cursor
+        ]
+        service = build_spawn_application_service_from_roots(project_root, runtime_root)
+
+        def claim_cleanup(stored: SpawnRecord) -> None:
+            _claim_reaper_cleanup(
+                runtime_root, stored, read_primary_metadata(runtime_root, stored.id)
+            )
+
+        async def run() -> tuple[SpawnRecord, ...]:
+            recovered: list[SpawnRecord] = []
+            last: str | None = None
+            for row in ordered[:_MAX_LOCK_ATTEMPTS_PER_PASS]:
+                last = row.id
+                result = await service.finalize_dead_launch(
+                    SpawnId(row.id), origin="reconciler", before_finalize=claim_cleanup
+                )
+                # A Settled claim (the index lagged) returns a terminal row too;
+                # only our own terminal counts as a recovery.
+                if (
+                    isinstance(result, SpawnRecord)
+                    and result.terminal is not None
+                    and result.terminal.origin == "reconciler"
+                ):
+                    recovered.append(_cleanup_after_finalize(runtime_root, result))
+                    if len(recovered) >= _MAX_RECOVERIES_PER_PASS:
+                        break
+            if last is not None:
+                atomic_write_text(cursor_path, last)
+            return tuple(recovered)
+
+        return asyncio.run(run())
 
 
 def reconcile_active_spawn(
