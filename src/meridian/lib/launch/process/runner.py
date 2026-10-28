@@ -79,6 +79,7 @@ from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
     update_session_claude_config_dir,
+    update_session_spawn_id,
 )
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 
@@ -843,6 +844,10 @@ def run_harness_process(
                         launch_lock=launch_lock,
                     )
                 )
+                # The start event already names the spawn; the spawn's history ID only
+                # exists once its row is written, and the session listing matches
+                # archived primaries to their session by it.
+                update_session_spawn_id(runtime_root, chat_id, str(primary_spawn_id))
                 lifecycle = LifecycleLog.for_spawn(runtime_root, config_root, primary_spawn_id)
                 forked_session_id: str | None = None
                 if should_fork:
