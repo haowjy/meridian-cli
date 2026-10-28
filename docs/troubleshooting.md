@@ -162,8 +162,8 @@ meridian spawn report search "keyword"   # search across all spawn reports
 ## `--continue` refuses: the chat is held
 
 ```text
-Chat c123 is held by pid 4242; continue after it exits, or --fork c123
-p45 moved to c130 but still holds c123 until it exits; continue after it exits, or --fork c123
+Pre-launch setup failed. error='Chat c123 is held by pid 4242; continue after it exits, or --fork c123'
+Pre-launch setup failed. error='p45 moved to c130 but still holds c123 until it exits; continue after it exits, or --fork c123'
 ```
 
 A run that started in chat `c123` keeps that chat's lock until its process exits, even

@@ -60,8 +60,8 @@ spawn ID and a raw harness session ID mean the same thing everywhere.
   accepts a raw harness session ID.
 - `--from cN` names chat `cN`'s own transcript, and `--from pN` the spawn's current chat,
   not its entry chat. A conversation that ran `/clear` is in a new chat, so a handoff
-  passes the run's spawn ID (`--from p123`, the `$MERIDIAN_SPAWN_ID` literal in the
-  capabilities block) to follow the current chat; a chat ID there reads the transcript
+  passes the run's own spawn ID (`--from p123`; `meridian task-dir --json` prints it as
+  `spawn_id`) to follow the current chat; a chat ID there reads the transcript
   from before the `/clear`.
 - A message's reply command names the sender's current chat, so it still reaches a
   primary after a `/clear`. The old chat ID still names the run in `spawn show` and

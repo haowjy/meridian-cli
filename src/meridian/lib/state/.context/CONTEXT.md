@@ -533,6 +533,10 @@ spawn"); resume, read and `--from` still work on the chat.
   post-start `update_session_spawn_id` stays: it is the only writer of the session's
   `history_id`, which the session listing needs to hide archived primaries.
 - An observed (`/clear`) chat's start event names the observing run.
+- An exact continue publishes its successor on the chat's existing generation before the
+  session starts, so a racing continue sees the chat as busy. A failed start withdraws it
+  (`session_store.withdraw_unstarted_spawn_link`); a crash between publish and withdrawal
+  still leaves the stale link.
 
 A crash between reservation and row write leaves a link to no row; readers skip it.
 `history_id` is the relocation-stable ID of a spawn's history. Only the generation a
