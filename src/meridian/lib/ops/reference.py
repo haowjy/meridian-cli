@@ -261,14 +261,7 @@ def _resolve_chat_reference(
     if not records:
         return _resolve_untracked_reference(project_root, ref)
     session = records[0]
-    # The record read above already holds the chat's newest link; only an unlinked
-    # newest generation needs the walk back. No index: references resolve from the
-    # session records alone.
-    owner = (
-        SpawnId(session.spawn_id)
-        if session.spawn_id and spawn_store.get_spawn(runtime_root, session.spawn_id)
-        else session_identity.newest_linked_spawn(runtime_root, ref)
-    )
+    owner = session_identity.chat_owner_spawn(runtime_root, ref, newest=session)
     return _reference_from_session(
         runtime_root,
         session,

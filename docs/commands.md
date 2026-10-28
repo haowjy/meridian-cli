@@ -47,7 +47,9 @@ sender can receive one, the command that answers it: `meridian spawn message <se
 with `-C <sender project root>` when the sender is in another project. A primary whose
 harness has a message route states its own address in that form in its capabilities block.
 A chat ID means that chat's own session, never a child it launched; the same holds for
-`spawn show`, `cancel` and the other ref-taking commands. Other primary harnesses
+`spawn show`, `cancel` and the other ref-taking commands. After a `/clear` or a resume
+of its native session, `spawn show` and `cancel` name the spawn that first owned the chat, while
+`spawn message` reaches the run that is live in it now. Other primary harnesses
 fail immediately because they do not yet expose a message route
 ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
 

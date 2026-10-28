@@ -12,7 +12,6 @@ from pathlib import Path
 
 from meridian.lib.core.types import SpawnId, normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -75,37 +74,27 @@ def get_owner_chat_for_session(
     return session_owner_chat_id(runtime_root, record)
 
 
-def newest_linked_spawn(runtime_root: Path, chat_id: str) -> SpawnId | None:
-    """Return the spawn linked by the newest generation of ``chat_id`` that has one.
+def chat_owner_spawn(
+    runtime_root: Path,
+    chat_id: str,
+    *,
+    newest: SessionRecord | None = None,
+) -> SpawnId | None:
+    """Return the spawn that owns ``chat_id``: the one that ran it, whether or not it still runs.
 
-    Reads only the session records. A launch that failed before linking leaves its
-    generation unlinked, so the walk goes back past it.
+    Every generation records the spawn that executed it at its start, so the answer is
+    the newest generation whose spawn row still exists; a link to a row that was never
+    written (a crash between reserving the ID and writing the row) is skipped. Pass the
+    chat's already-read ``newest`` record to answer a linked chat without reading the
+    rest. Which run is live in the chat right now is a different question, not asked here.
     """
+    if newest is not None and newest.spawn_id and spawn_store.get_spawn(
+        runtime_root, newest.spawn_id
+    ):
+        return SpawnId(newest.spawn_id)
     for generation in reversed(session_store.chat_generations(runtime_root, chat_id)):
         if generation.spawn_id and spawn_store.get_spawn(runtime_root, generation.spawn_id):
             return SpawnId(generation.spawn_id)
-    return None
-
-
-def chat_owner_spawn(runtime_root: Path, chat_id: str) -> SpawnId | None:
-    """Return the spawn that owns ``chat_id``: the one that ran it, whether or not it still runs.
-
-    The index's session row links the newest generation's spawn. When that generation is
-    unlinked, the record walk (:func:`newest_linked_spawn`) goes back to an earlier one;
-    a chat with no linked generation falls back to its newest spawn row. An unbound child
-    reservation also carries its launcher's chat ID, so it never counts. Which run is live
-    in the chat right now is a different question, not asked here.
-    """
-    index = HistoryIndex(runtime_root)
-    current = next(iter(index.sessions(chat_ids={chat_id})), None)
-    if current is not None:
-        if current.spawn_id and spawn_store.get_spawn(runtime_root, current.spawn_id):
-            return SpawnId(current.spawn_id)
-        if linked := newest_linked_spawn(runtime_root, chat_id):
-            return linked
-    for row in index.spawns(chat_id=chat_id):
-        if not (row.kind == "child" and row.owner_chat_id == row.chat_id):
-            return SpawnId(row.id)
     return None
 
 
@@ -145,6 +134,9 @@ def session_records_for_spawns(
         candidates = linked.get(record.id, [])
         if record.chat_id:
             candidates = [session for session in candidates if session.chat_id == record.chat_id]
+        candidates = [
+            session for session in candidates if session.history_id in {None, record.history_id}
+        ]
         if record.session_instance_id and record.chat_id is not None:
             session = exact.get((record.chat_id, record.session_instance_id))
             if session is None and candidates:
@@ -246,14 +238,16 @@ def get_session_record_for_spawn(
         return None
 
     row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+    if row is None:
+        return None
     generations = (
         session_store.chat_generations(runtime_root, row.chat_id)
-        if row is not None and row.chat_id
+        if row.chat_id
         else session_store.fold_session_generations(
             session_store.chats_rows(runtime_root, None).ordered,
         )
     )
-    if row is not None and row.session_instance_id:
+    if row.session_instance_id:
         return next(
             (
                 record
@@ -269,12 +263,12 @@ def get_session_record_for_spawn(
     for record in reversed(generations):
         if record.spawn_id != normalized_spawn_id:
             continue
+        if record.history_id not in {None, row.history_id}:
+            continue
         if require_harness_session_id and record.harness_session_id is None:
             continue
         return record
 
-    if row is None:
-        return None
     exact_chat_id = spawn_exact_chat_id(row)
     if exact_chat_id is None:
         return None
@@ -313,7 +307,6 @@ __all__ = [
     "is_tracked_chat_ref",
     "live_observer_for_chat",
     "native_identity_candidates",
-    "newest_linked_spawn",
     "session_exact_chat_id",
     "session_owner_chat_id",
     "session_records_for_spawns",
