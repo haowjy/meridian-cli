@@ -183,7 +183,10 @@ def _session_log(
     ref: Annotated[
         str,
         Parameter(
-            help=("Session reference: chat id (c123), spawn id (p123), or harness session id.")
+            help=(
+                "Session reference: chat id (c123), spawn id (p123), harness session id, "
+                "or history UUID."
+            )
         ),
     ] = "",
     segment: Annotated[
@@ -311,7 +314,10 @@ def _session_export(
     ref: Annotated[
         str,
         Parameter(
-            help=("Session reference: chat id (c123), spawn id (p123), or harness session id.")
+            help=(
+                "Session reference: chat id (c123), spawn id (p123), harness session id, "
+                "or history UUID."
+            )
         ),
     ] = "",
     file_path: Annotated[

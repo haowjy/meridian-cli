@@ -64,7 +64,7 @@ retargets the entire project/control root.
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists. Informational: every command reads the item from the execution's own chat row, which is what a `work switch` writes |
 | `MERIDIAN_ACTIVE_WORK_DIR` | Work directory: a stable per-chat symlink for every execution, primary or spawn. It follows `work start`/`switch`/`rename`, follows the item into the archive on `work done` and back on `work reopen`, survives a Claude `/clear` or `/resume` and the session exiting, and returns to the ambient spawn scope after `work delete` |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
-| `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
+| `MERIDIAN_CHAT_ID` | Chat of the conversation that launched this run: a primary's own chat, or for a spawn the chat of the session that spawned it. It is a launch snapshot; ambient commands read the run's own chat row, which follows a `/clear` or `/resume` in a primary |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
 
 Every session points `MERIDIAN_ACTIVE_WORK_DIR` and `MERIDIAN_TASK_DIR` at stable

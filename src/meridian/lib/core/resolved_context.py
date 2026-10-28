@@ -141,11 +141,12 @@ class ResolvedContext:
         else:
             runtime_root = None
 
-        # MERIDIAN_CHAT_ID and MERIDIAN_ACTIVE_WORK_ID are a launch snapshot, and a
-        # spawn inherits its parent's chat id: only the execution's own session row
-        # names the conversation it acts on. A primary's row follows a chat rotation
+        # MERIDIAN_CHAT_ID and MERIDIAN_ACTIVE_WORK_ID are a launch snapshot naming the
+        # conversation that launched this run (a primary's own chat; a spawn's
+        # launcher's chat): only the execution's own session row names the
+        # conversation it acts on. A primary's row follows a chat rotation
         # (Claude /clear, /resume); a spawn's row is its own chat even though the env
-        # still names the conversation that launched it. With no row — an unmanaged
+        # still names the launcher's. With no row — an unmanaged
         # shell — the env is all there is. Explicit arguments keep their precedence.
         if not explicit_chat_id_raw and runtime_root is not None:
             execution_chat = _execution_chat(env, runtime_root, backend_impl)
