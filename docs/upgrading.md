@@ -78,9 +78,9 @@ later `work done` or `work reopen` refuses when both locations exist and names b
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
 
-## Mars 0.24.0
+## Mars 0.24.1
 
-Meridian pins `mars-agents==0.24.0`, up from 0.23.4. Run `meridian mars sync` after upgrading
+Meridian pins `mars-agents==0.24.1`, up from 0.23.4. Run `meridian mars sync` after upgrading
 (and `meridian mars --user sync` for a user root).
 
 ### MCP servers move to the files harnesses read
@@ -110,8 +110,8 @@ passes no MCP flags, so a spawn sees the servers its harness finds from its work
 - Hook config files (`.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json`)
   are written through symlinks, keep their permissions and key order, and end with a newline.
 
-Mars's [0.24.0 release notes](https://github.com/haowjy/mars-agents/releases/tag/v0.24.0) list
-the rest.
+Mars's [0.24.0](https://github.com/haowjy/mars-agents/releases/tag/v0.24.0) and
+[0.24.1](https://github.com/haowjy/mars-agents/releases/tag/v0.24.1) release notes list the rest.
 
 ## Mars 0.23.4
 

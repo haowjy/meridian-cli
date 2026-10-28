@@ -99,13 +99,8 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
     if result.returncode != 0:
         return None
 
-    # Mars 0.24 prints `⚠ ... is overridden` warnings on stdout ahead of the
-    # JSON array even with --json, so drop leading non-JSON lines.
-    json_lines = result.stdout.splitlines()
-    while json_lines and not json_lines[0].lstrip().startswith("["):
-        json_lines.pop(0)
     try:
-        payload = json.loads("\n".join(json_lines))
+        payload = json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError):
         return None
 
