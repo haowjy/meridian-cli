@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.refs import RefNotFound, parse_ref
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
@@ -197,10 +198,14 @@ def _format_duration(started_at: str | None, stopped_at: str | None) -> str | No
 
 
 def _locate_export_subject(project_root: Path, runtime_root: Path, ref: str) -> Located | None:
-    """What the exported ref names locally; ``None`` for archived, untracked or missing."""
+    """What the exported ref names locally; ``None`` for archived, untracked, missing or ambiguous.
+
+    The transcript is already in hand, so a native ID that names two files only costs the
+    metadata and appendices a local record would add.
+    """
     try:
         located = locate(project_root, ref, runtime_root=runtime_root)
-    except RefNotFound:
+    except (RefNotFound, NativeIdentityError):
         return None
     return located if isinstance(located, Located) else None
 

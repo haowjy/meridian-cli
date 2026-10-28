@@ -415,9 +415,21 @@ def resolve_transcript_source(
         assert located.chat is not None
         if located.ref.kind == "chat":
             return _chat_target(located.runtime_root, located.chat)
+        chat = located.chat
+        key = chat.native_key()
+        if key is None and located.ref.kind == "native":
+            # The newest generation may predate the native store; an older one can still
+            # name the file.
+            generations = session_store.native_generations(
+                located.runtime_root, located.ref.value
+            )
+            for older in reversed(generations):
+                if (key := older.native_key()) is not None:
+                    chat = older
+                    break
         # A legacy binding with no native store can't name its file: read it as untracked.
-        if (key := located.chat.native_key()) is not None:
-            target = _native_target(key, located.chat)
+        if key is not None:
+            target = _native_target(key, chat)
             return target._replace(
                 view_label=(
                     "also bound to " + ", ".join(located.also_bound) if located.also_bound else None
