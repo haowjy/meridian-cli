@@ -59,21 +59,6 @@ def session_owner_chat_id(
     return session_exact_chat_id(record)
 
 
-def get_owner_chat_for_session(
-    runtime_root: Path,
-    chat_id: str,
-) -> str | None:
-    """Resolve owner/session-family chat id for an exact session chat id."""
-
-    normalized = normalize_optional_identity(chat_id)
-    if normalized is None:
-        return None
-    record = session_store.chat_record(runtime_root, normalized)
-    if record is None:
-        return None
-    return session_owner_chat_id(runtime_root, record)
-
-
 def chat_owner_spawn(
     runtime_root: Path,
     chat_id: str,
@@ -291,7 +276,6 @@ def spawn_matches_exact_session(row: SpawnRecord, session_chat_id: str) -> bool:
 
 __all__ = [
     "chat_owner_spawn",
-    "get_owner_chat_for_session",
     "get_session_record_for_spawn",
     "live_observer_for_chat",
     "native_identity_candidates",

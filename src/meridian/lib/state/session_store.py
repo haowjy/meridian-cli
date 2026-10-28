@@ -1305,18 +1305,6 @@ def native_generations(
     return sorted(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
 
 
-def resolve_session_ref(
-    runtime_root: Path,
-    ref: str,
-    *,
-    harness: str | None = None,
-) -> SessionRecord | None:
-    """The generation a native ID resolves to, or ``None``."""
-
-    matches = native_generations(runtime_root, ref, harness=harness)
-    return matches[-1] if matches else None
-
-
 def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
     """Return the active work item ID for a session, or None."""
 

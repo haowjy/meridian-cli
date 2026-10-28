@@ -34,6 +34,11 @@ def outcome(function, *args, **kwargs):
         return (type(exc).__name__, str(exc))
 
 
+def newest_native_generation(root: Path, native: str, *, harness: str | None = None):
+    matches = s.native_generations(root, native, harness=harness)
+    return matches[-1] if matches else None
+
+
 def compare_reads(root: Path, chats: list[str], identities: set[tuple[str, str]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for chat in chats:
@@ -48,11 +53,11 @@ def compare_reads(root: Path, chats: list[str], identities: set[tuple[str, str]]
             assert actual == expected, (name, harness, native, actual, expected)
         counts[name] = len(identities)
     for harness, native in sorted(identities):
-        assert outcome(s.resolve_session_ref, root, native, harness=harness) == outcome(
+        assert outcome(newest_native_generation, root, native, harness=harness) == outcome(
             old.resolve_session_ref, root, native, harness=harness
         ), ("resolve_session_ref", harness, native)
     for native in sorted({native for _, native in identities}):
-        assert outcome(s.resolve_session_ref, root, native) == outcome(
+        assert outcome(newest_native_generation, root, native) == outcome(
             old.resolve_session_ref, root, native
         )
     counts["resolve_session_ref"] = len(identities) + len({native for _, native in identities})

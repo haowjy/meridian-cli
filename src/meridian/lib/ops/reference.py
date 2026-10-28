@@ -258,35 +258,30 @@ def resolve_session_reference(
     root = located.runtime_root
     if located.spawn is not None:
         result = _resolve_spawn_reference(root, located.spawn, project_root)
-        recover = {"spawn_id": located.spawn.id}
-    else:
-        chat = located.chat
-        assert chat is not None
-        if located.ref.kind == "native" and harness_hint is None:
-            inferred = infer_harness_from_untracked_session_ref(project_root, located.ref.value)
-            if inferred is not None and chat.harness and str(inferred) != chat.harness:
-                raise ValueError(
-                    "Native session reference is ambiguous across harnesses; specify --harness."
-                )
-        owner = chat_spawn(located)
-        result = _reference_from_session(
-            root,
-            chat,
-            project_root,
-            _normalize_optional(chat.harness_session_id),
-            spawn_id=str(owner) if owner is not None else None,
-        )
-        recover = {"chat_id": chat.chat_id}
-    # A native ID is found by its recorded session ID, so there is nothing to recover.
-    if (
-        located.ref.kind != "native"
-        and result.missing_harness_session_id
-        and _normalize_optional(result.harness_session_id) is None
-    ):
-        recovery = recover_harness_session_id(root, **recover)
-        if recovery is not None:
-            return replace(result, recovery=recovery)
-    return result
+        if (
+            result.missing_harness_session_id
+            and _normalize_optional(result.harness_session_id) is None
+        ):
+            recovery = recover_harness_session_id(root, spawn_id=located.spawn.id)
+            if recovery is not None:
+                return replace(result, recovery=recovery)
+        return result
+    chat = located.chat
+    assert chat is not None
+    if located.ref.kind == "native" and harness_hint is None:
+        inferred = infer_harness_from_untracked_session_ref(project_root, located.ref.value)
+        if inferred is not None and chat.harness and str(inferred) != chat.harness:
+            raise ValueError(
+                "Native session reference is ambiguous across harnesses; specify --harness."
+            )
+    owner = chat_spawn(located)
+    return _reference_from_session(
+        root,
+        chat,
+        project_root,
+        _normalize_optional(chat.harness_session_id),
+        spawn_id=str(owner) if owner is not None else None,
+    )
 
 
 __all__ = [
