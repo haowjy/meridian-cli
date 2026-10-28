@@ -212,6 +212,16 @@ equivalent of `LaunchRuntime`. It resolves runtime root from env (`_MERIDIAN_RUN
 project state, or user home. Operations that need both project and runtime state
 use `resolve_runtime_root_and_config()`.
 
+`_MERIDIAN_RUNTIME_DIR` is honoured at every spawn depth, so a probe inside a spawn
+can target a scratch runtime. One rule, `state/runtime_root.runtime_override_root`,
+serves both `ops/runtime.py` and `ResolvedContext`. The launch bind seam sets it on a
+child only when the launcher's own runtime came from an override, so ordinary children
+carry nothing and derive their runtime as usual (a nested `MERIDIAN_HOME=/tmp/x`
+probe stays isolated). `-C` to a different project unsets it (a `-C` to the inherited
+project keeps it; with no inherited `MERIDIAN_PROJECT_DIR` every `-C` counts as
+different), and hooks pop it. The old depth gate guarded only against a stale parent
+value redirecting `-C`; those unsets cover it.
+
 ### Depth Guard
 
 `ops/spawn/api.py` checks `max_depth_reached()` before executing spawns. A spawn

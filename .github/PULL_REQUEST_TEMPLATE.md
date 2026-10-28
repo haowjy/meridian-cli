@@ -130,8 +130,9 @@
      observed. Include setup, steps, expected/actual results, and workflows a
      probe covered. Name which harnesses (claude, codex, cursor, opencode, pi)
      were exercised live and which only through fakes. Runtime probes run
-     against a copied or scratch runtime (`_MERIDIAN_RUNTIME_DIR`), never a real
-     one. If no manual path exists, say why. For performance changes, report
+     against a copied or scratch runtime (`_MERIDIAN_RUNTIME_DIR=<dir>`, honoured
+     at any spawn depth, including inside a spawn; confirm with `spawn --dry-run`
+     that `Write root` names it; `-C` to another project drops it), never a real one. If no manual path exists, say why. For performance changes, report
      comparable numbers with metric, method, environment/workload, and
      baseline/result; omit benchmarks when performance is unaffected. -->
 

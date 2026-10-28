@@ -96,15 +96,18 @@ class ResolvedContext:
         execution's own, and this process's is the default.
 
         When *explicit_project_root* or *explicit_runtime_root* are supplied they
-        take precedence over ``MERIDIAN_PROJECT_DIR``. ``runtime_root`` is derived
-        from ``project_root`` identity into user state unless
-        *explicit_runtime_root* is supplied — inherited ``_MERIDIAN_RUNTIME_DIR`` is
-        never read.
+        take precedence over ``MERIDIAN_PROJECT_DIR``. ``runtime_root`` is
+        *explicit_runtime_root*, else the ``_MERIDIAN_RUNTIME_DIR`` override (the
+        same rule as ``ops/runtime.py``), else derived from ``project_root`` identity
+        into user state.
         """
 
         import os
 
-        from meridian.lib.state.runtime_root import derive_runtime_root_from_project
+        from meridian.lib.state.runtime_root import (
+            derive_runtime_root_from_project,
+            runtime_override_root,
+        )
 
         env = os.environ if environ is None else environ
         backend_impl = backend or LocalFilesystemBackend()
@@ -136,6 +139,8 @@ class ResolvedContext:
         )
         if explicit_runtime_root is not None:
             runtime_root = explicit_runtime_root
+        elif (override_root := runtime_override_root(project_root, env)) is not None:
+            runtime_root = override_root
         elif project_root is not None:
             runtime_root = derive_runtime_root_from_project(project_root)
         else:
