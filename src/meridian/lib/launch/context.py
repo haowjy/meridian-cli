@@ -84,6 +84,7 @@ from meridian.lib.state.paths import (
     resolve_project_paths,
     resolve_spawn_log_dir,
 )
+from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.streaming.control_socket import socket_directory
@@ -1855,9 +1856,13 @@ def bind_launch_context(
     child_context_env["MERIDIAN_TASK_DIR"] = (
         bound_task_link or directory_context.logical_task_cwd
     ).as_posix()
-    # The launcher's runtime root is explicit for the child: a scratch-runtime launch
-    # must not let the child (or its own spawns) fall back to the real runtime.
-    child_context_env["_MERIDIAN_RUNTIME_DIR"] = runtime_root.as_posix()
+    # Pass the runtime down only when the launcher's own came from an override, so a
+    # scratch launch keeps its children on scratch. An ordinary launch sets nothing:
+    # a nested process then derives its runtime (e.g. under its own MERIDIAN_HOME)
+    # instead of inheriting one that looks like a deliberate override.
+    derived_runtime_root = derive_runtime_root_from_project(resolved_control_root)
+    if derived_runtime_root is None or runtime_root != derived_runtime_root.resolve():
+        child_context_env["_MERIDIAN_RUNTIME_DIR"] = runtime_root.as_posix()
     if harness.id == HarnessId.PI:
         child_context_env["_MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
     runtime_override_env = (

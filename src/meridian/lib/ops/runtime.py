@@ -2,7 +2,6 @@
 
 import asyncio
 import functools
-import os
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +26,7 @@ from meridian.lib.state.project_identity import (
     resolve_project_identity,
     state_id,
 )
+from meridian.lib.state.runtime_root import runtime_override_root
 from meridian.lib.state.user_paths import get_project_home, get_user_home
 
 if TYPE_CHECKING:
@@ -39,24 +39,6 @@ RuntimeRootSource = Literal[
     "user-home-project",
     "unresolved",
 ]
-
-
-def _runtime_override_env_root(project_root: Path, *, ignore_runtime_env: bool) -> Path | None:
-    """Return the ``_MERIDIAN_RUNTIME_DIR`` runtime root, honoured at any spawn depth.
-
-    Launchers set it for their children (``launch/context.py``), so an inherited
-    value is the launcher's explicit choice. ``-C`` unsets it at process scope and
-    hooks and ``BLOCKED_CHILD_ENV_VARS`` strip it from foreign envs; callers that
-    pass *ignore_runtime_env* (the ``-C`` flag) skip it explicitly.
-    """
-
-    if ignore_runtime_env:
-        return None
-    override = os.getenv("_MERIDIAN_RUNTIME_DIR", "").strip()
-    if not override:
-        return None
-    candidate = Path(override).expanduser()
-    return candidate if candidate.is_absolute() else project_root / candidate
 
 
 def async_from_sync(sync_fn: Callable[P, T]) -> Callable[P, Coroutine[Any, Any, T]]:
@@ -185,14 +167,11 @@ def inspect_runtime_authority_for_read(
     project_root: str | Path | None = None,
     *,
     execution_cwd: Path | None = None,
-    ignore_runtime_env: bool | None = None,
 ) -> RuntimeAuthoritySnapshot:
     """Resolve read authority without running migrations or writing state."""
 
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
-    override_root = _runtime_override_env_root(
-        authority.project_root, ignore_runtime_env=bool(ignore_runtime_env)
-    )
+    override_root = runtime_override_root(authority.project_root)
     identity = resolve_project_identity(authority.project_root)
     project_id = state_id(identity)
     if override_root is not None:
@@ -219,14 +198,12 @@ def resolve_runtime_authority_for_read(
     project_root: str | Path | None = None,
     *,
     execution_cwd: Path | None = None,
-    ignore_runtime_env: bool | None = None,
 ) -> RuntimeAuthoritySnapshot:
     """Resolve read authority, including the once-only legacy native-key import."""
 
     authority = inspect_runtime_authority_for_read(
         project_root,
         execution_cwd=execution_cwd,
-        ignore_runtime_env=ignore_runtime_env,
     )
     if authority.runtime_root is not None:
         from meridian.lib.ops.legacy_native_import import maybe_import_legacy_native_sessions
@@ -239,14 +216,11 @@ def plan_runtime_authority_for_write(
     project_root: str | Path | None = None,
     *,
     execution_cwd: Path | None = None,
-    ignore_runtime_env: bool | None = None,
 ) -> RuntimeAuthoritySnapshot:
     """Resolve the runtime path a write would use without materializing identity or state."""
 
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
-    override = _runtime_override_env_root(
-        authority.project_root, ignore_runtime_env=bool(ignore_runtime_env)
-    )
+    override = runtime_override_root(authority.project_root)
     if override is not None:
         runtime_root = override
         runtime_source: RuntimeRootSource = "env"
@@ -268,14 +242,12 @@ def resolve_runtime_authority_for_write(
     project_root: str | Path | None = None,
     *,
     execution_cwd: Path | None = None,
-    ignore_runtime_env: bool | None = None,
 ) -> RuntimeAuthoritySnapshot:
     """Resolve project/runtime authority for mutating callers."""
 
     authority = plan_runtime_authority_for_write(
         project_root,
         execution_cwd=execution_cwd,
-        ignore_runtime_env=ignore_runtime_env,
     )
     identity_created = False
     ensured_project_id = authority.project_id
