@@ -225,6 +225,15 @@ gets `depth_exceeded_output()` instead of a new spawn. The reaper also checks
 This resolves spawn IDs (e.g., `p123`), chat IDs, and bare references to canonical
 spawn rows. Operations that accept `--from` or `-f` go through this.
 
+A chat ID names the spawn that ran that chat, never a child it launched, in every
+command (owner's ruling). `resolve_spawn_ref`, `_resolve_chat_reference` and `--from`'s
+primary selection all get the chat's spawn from `session_identity.chat_owner_spawn`, a
+walk of the chat's session generations; do not add a second chat→spawn rule, a spawn-row
+scan, or an index read beside it. A chat whose generations name no existing spawn is
+unresolved: the fix for a missing link is in the writer that started the generation
+(`lib/state/.context/CONTEXT.md`, "Chat→spawn link"), not a reader fallback. Which run is
+live in a chat is a separate question that only `spawn message` asks.
+
 Session browse has a narrower authority question: whether a primary chat has a
 durably recorded harness session id and may therefore resume or fork.
 `session_list.py` uses the batch
