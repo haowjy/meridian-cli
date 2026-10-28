@@ -26,12 +26,16 @@ jobs:
       - name: Check the changelog section
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # pull_request.base.sha is the base as of the PR's last head push, and
+          # an edited event keeps it. Once the base branch moves (a release
+          # commit), comparing the merge commit against it blames the PR for
+          # the base's own CHANGELOG changes. Compare against the base tip.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           body_file="${RUNNER_TEMP}/pr-body.md"
           base_file="${RUNNER_TEMP}/base-changelog.md"
           printf '%s' "${PR_BODY}" > "${body_file}"
-          git show "${BASE_SHA}:CHANGELOG.md" > "${base_file}"
+          git show "origin/${BASE_REF}:CHANGELOG.md" > "${base_file}"
           python3 scripts/changelog-notes.py validate \
             --notes-file "${body_file}" \
             --changelog CHANGELOG.md \
