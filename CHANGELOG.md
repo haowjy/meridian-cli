@@ -6,6 +6,17 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-10-28
+
+### Added
+- Bundled skill `md-validation__meridian`, visible to every profile: how to run `meridian kg check`, `kg graph` and `mermaid check`, which context names and ignore files they read, and what each Mermaid style warning catches and how to suppress it. Read it with `meridian skills md-validation__meridian`. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#meridian-owned-operational-skills).
+
+## [0.17.2] - 2026-10-28
+
+### Fixed
+- Pressing Ctrl-C while a primary launch is starting its wait thread no longer leaves the harness child running: the thread now starts inside the block that terminates the child and cancels the wait.
+- Pi managed Bash: stopping a task no longer fails with `Command failed: ps -A` when the host is slow. A failed or timed-out process-group probe now counts as "still unknown" and is retried until the TERM/KILL wait runs out; only then does stopping report an error, with the probe failure as its cause. The same bounded retry now covers a command that has exited but left background children, so one slow `ps` no longer records a normal command as faulted.
+
 ## [0.17.1] - 2026-10-28
 
 ### Changed

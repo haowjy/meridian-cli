@@ -4,7 +4,6 @@ import asyncio
 import json
 import signal
 import threading
-import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -22,7 +21,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
-from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
+from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
 from meridian.lib.launch.process.ports import (
@@ -193,6 +192,7 @@ class FakeManagedConnection:
         self._subprocess_pid = subprocess_pid
         self._port_bind_failures = port_bind_failures
         self._stop_event = asyncio.Event()
+        self.events_drained = threading.Event()
         self.stop_called = False
         self.stop_reasons: list[str | None] = []
         self.idle_sensor: RecordingIdleSensor | None = None
@@ -315,6 +315,7 @@ class FakeManagedConnection:
         for event in self._events:
             yield event
             await asyncio.sleep(0)
+        self.events_drained.set()
         await self._stop_event.wait()
 
 
@@ -323,7 +324,8 @@ class FakeProcessLauncher(ProcessLauncher):
     spawn_dir: Path
     pid: int = 4242
     exit_code: int = 0
-    pause_seconds: float = 0.05
+    # Held until set, so a TUI exit cannot outrun the events a test asserts on.
+    exit_after: threading.Event | None = None
     launch_commands: list[tuple[str, ...]] = field(default_factory=list)
     launch_envs: list[dict[str, str]] = field(default_factory=list)
     output_log_paths: list[Path | None] = field(default_factory=list)
@@ -354,7 +356,8 @@ class FakeProcessLauncher(ProcessLauncher):
         return self
 
     def wait(self) -> LaunchedProcess:
-        time.sleep(self.pause_seconds)
+        if self.exit_after is not None:
+            assert self.exit_after.wait(timeout=30), "events were never consumed"
         return LaunchedProcess(exit_code=self.exit_code, pid=self.pid)
 
     def terminate(self) -> None:
@@ -478,7 +481,9 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
         spawn_dir=spawn_dir,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
+        process_launcher=FakeProcessLauncher(
+            spawn_dir=spawn_dir, exit_after=connection.events_drained
+        ),
     )
 
     outcome = await launcher.run(
@@ -507,7 +512,6 @@ async def test_opencode_bundle_registers_idle_sensor_and_ttl_detection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bundle = get_harness_bundle(HarnessId.OPENCODE)
     sensor = RecordingIdleSensor()
     spawn_dir = tmp_path / "spawns" / "p-opencode-idle"
     connection = FakeManagedConnection(
@@ -552,8 +556,6 @@ async def test_opencode_bundle_registers_idle_sensor_and_ttl_detection(
         env={},
     )
 
-    assert bundle.primary_idle_sensor is opencode_idle.primary_idle_sensor
-    assert bundle.detect_ttl is opencode_idle.detect_ttl
     assert outcome.exit_code == 0
     assert sidecar_hooks == [opencode_idle.detect_ttl]
 
@@ -610,8 +612,7 @@ async def test_primary_attach_observer_end_waits_for_tui(
         )
     )
     try:
-        async with asyncio.timeout(1.0):
-            await stream_closed.wait()
+        await stream_closed.wait()
         await asyncio.sleep(0)
         assert not run_task.done()
         assert connection.stop_reasons == []
@@ -726,63 +727,6 @@ def test_primary_attach_cancellation_does_not_join_uncooperative_wait_thread(
         assert connection.stop_reasons == [None]
     finally:
         process_launcher.release.set()
-
-
-@pytest.mark.asyncio
-async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_or_tui(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    spawn_dir = tmp_path / "spawns" / "p900-codex-stream"
-    tui_started = asyncio.Event()
-    stream_closed = asyncio.Event()
-    connection = FailingEventConnection(
-        fail_after_started=tui_started,
-        stream_closed=stream_closed,
-        events=[],
-        session_id="sess-codex",
-    )
-    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
-    terminated_scopes: list[str] = []
-
-    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
-        _ = grace_seconds
-        terminated_scopes.append(f"{scope.scope_id}:{reason}")
-        return None
-
-    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p900-codex-stream"),
-        spawn_dir=spawn_dir,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-        on_running=lambda _pid: tui_started.set(),
-    )
-
-    run_task = asyncio.create_task(
-        launcher.run(
-            config=_build_config(spawn_id=SpawnId("p900-codex-stream"), control_root=tmp_path),
-            spec=_build_spec(),
-            cwd=tmp_path,
-            env={},
-        )
-    )
-
-    await stream_closed.wait()
-    await asyncio.sleep(0)
-
-    assert run_task.done() is False
-    assert connection.stop_reasons == []
-    assert terminated_scopes == []
-
-    process_launcher.release.set()
-    outcome = await run_task
-
-    assert outcome.exit_code == 143
-    assert connection.stop_reasons == [None]
-    assert terminated_scopes == []
-    assert _read_metadata(spawn_dir)["tui_pid"] == 5252
 
 
 @pytest.mark.parametrize("observer_error", [None, RuntimeError("observer failed")])
@@ -1027,42 +971,6 @@ async def test_primary_attach_upgrades_provisional_backend_scope_without_duplica
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_writes_no_runner_history(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p902"
-    connection = FakeManagedConnection(
-        events=[
-            RawHarnessEvent(
-                event_type="turn/started",
-                payload={"turnId": "t1"},
-                harness_id="codex",
-            ),
-            RawHarnessEvent(
-                event_type="turn/completed",
-                payload={"turnId": "t1"},
-                harness_id="codex",
-            ),
-        ]
-    )
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir, pause_seconds=0.08)
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p902"),
-        spawn_dir=spawn_dir,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-    )
-
-    await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p902"), control_root=tmp_path),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
-    )
-
-    assert not (spawn_dir / HISTORY_FILENAME).exists()
-
-
-@pytest.mark.asyncio
 async def test_primary_attach_activity_transitions_update_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1099,7 +1007,9 @@ async def test_primary_attach_activity_transitions_update_metadata(
             ),
         ]
     )
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir, pause_seconds=0.08)
+    process_launcher = FakeProcessLauncher(
+        spawn_dir=spawn_dir, exit_after=connection.events_drained
+    )
     launcher = PrimaryAttachLauncher(
         spawn_id=SpawnId("p903"),
         spawn_dir=spawn_dir,

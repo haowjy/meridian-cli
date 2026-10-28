@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { parseBashRecordsFile } from "../../shared/schemas";
+import { until } from "../../shared/test_wait";
 import { BashRuntime } from "./bash_runtime";
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -20,15 +21,6 @@ function restoreEnv(): void {
     else process.env[key] = value;
     delete savedEnv[key];
   }
-}
-
-async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("timed out waiting for condition");
 }
 
 describe("BashRuntime task pings", () => {
@@ -49,9 +41,9 @@ describe("BashRuntime task pings", () => {
     } });
     try {
       const started = await runtime.execute({ command: "sleep 5", background: true }, undefined) as { bash_id: string };
-      await waitFor(() => failedAttempts === 1);
+      await until(() => failedAttempts === 1);
       const recordsPath = path.join(runtimeRoot, "pi-bash", "p-test-ping-failure", "bash-records.json");
-      await waitFor(async () => {
+      await until(async () => {
         const file = parseBashRecordsFile(JSON.parse(await readFile(recordsPath, "utf8")));
         return file?.records[started.bash_id]?.ping_sent_at_ms === null;
       });
@@ -67,7 +59,7 @@ describe("BashRuntime task pings", () => {
       const pings: string[] = [];
       const rebound = new BashRuntime({ onBackgroundPing: (record) => { pings.push(record.bash_id); } });
       expect(rebound).toBe(runtime);
-      await waitFor(() => pings.length === 1);
+      await until(() => pings.length === 1);
       await new Promise((resolve) => setTimeout(resolve, 60));
       expect(pings).toEqual([started.bash_id]);
       expect(unhandled).toEqual([]);
@@ -104,9 +96,9 @@ describe("BashRuntime task pings", () => {
       const file = parseBashRecordsFile(JSON.parse(await readFile(path.join(runtimeRoot, "pi-bash", "p-test-ping", "bash-records.json"), "utf8")));
       expect(file?.spawn_id).toBe("p-test-ping");
       expect(file?.records[bashId]?.originating_bash_id).toBe("b-12345678");
-      await waitFor(() => runtime.list(true)[0]!.log_bytes > 0);
+      await until(() => runtime.list(true)[0]!.log_bytes > 0);
       expect(await runtime.manage({ action: "output", bash_id: bashId })).toMatchObject({ output: bashId });
-      await waitFor(() => pings.length === 1);
+      await until(() => pings.length === 1);
       expect(pings).toEqual([bashId]);
 
       await new Promise((resolve) => setTimeout(resolve, 60));

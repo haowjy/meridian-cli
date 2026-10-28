@@ -14,6 +14,7 @@ export class ShellTask {
   private terminating: Promise<void> | null = null;
   // Once the group is observed gone it never signals again: its id may be reused.
   private groupGone = false;
+  private probeError: unknown;
 
   constructor(command: string, cwd: string, env: NodeJS.ProcessEnv) {
     this.child = spawn(command, { cwd, env, shell: true, detached: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -28,8 +29,18 @@ export class ShellTask {
     const code = await this.closed;
     // A shell can exit after launching background work with redirected pipes.
     // Keep ownership until that work exits too; zombies execute no further work.
-    while (await this.hasLiveGroup()) await delay(50);
-    return code;
+    // A `ps` failure is "unknown": retry for up to KILL_WAIT_MS of continuous failure before faulting the task.
+    let failingSince: number | null = null;
+    for (;;) {
+      try {
+        if (!await this.hasLiveGroup()) return code;
+        failingSince = null;
+      } catch (error) {
+        failingSince ??= performance.now();
+        if (performance.now() - failingSince > KILL_WAIT_MS) throw error;
+      }
+      await delay(50);
+    }
   }
 
   terminate(): Promise<void> {
@@ -41,7 +52,9 @@ export class ShellTask {
     this.signal("SIGTERM");
     if (await this.waitUntilGone(TERM_WAIT_MS)) return;
     this.signal("SIGKILL");
-    if (!await this.waitUntilGone(KILL_WAIT_MS)) throw new Error("Owned shell process group did not exit after SIGKILL");
+    if (await this.waitUntilGone(KILL_WAIT_MS)) return;
+    // A probe that kept failing is "unknown", not "gone": only now, with the wait spent, is it an error.
+    throw new Error("Owned shell process group did not exit after SIGKILL", { cause: this.probeError });
   }
 
   private signal(signal: NodeJS.Signals): void {
@@ -57,10 +70,19 @@ export class ShellTask {
   private async waitUntilGone(timeoutMs: number): Promise<boolean> {
     const deadline = performance.now() + timeoutMs;
     do {
-      if (this.exitCode !== null && !await this.hasLiveGroup()) return true;
+      if (this.exitCode !== null && !await this.groupLooksLive()) return true;
       await delay(25);
     } while (performance.now() < deadline);
-    return this.exitCode !== null && !await this.hasLiveGroup();
+    return this.exitCode !== null && !await this.groupLooksLive();
+  }
+
+  /** A failed or timed-out `ps` (slow on a loaded host) leaves the group's state unknown: assume live and retry. */
+  private async groupLooksLive(): Promise<boolean> {
+    try {
+      const live = await this.hasLiveGroup();
+      this.probeError = undefined;
+      return live;
+    } catch (error) { this.probeError = error; return true; }
   }
 
   private async hasLiveGroup(): Promise<boolean> {

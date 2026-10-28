@@ -360,7 +360,7 @@ def _render_match(
     )
     if scope.runtime_root != runtime_root:
         command = (
-            "env -u MERIDIAN_PROJECT_DIR -u _MERIDIAN_DEPTH "
+            "env -u MERIDIAN_PROJECT_DIR "
             f"_MERIDIAN_RUNTIME_DIR={quote(str(scope.runtime_root))} " + command
         )
     return SessionSearchMatch(

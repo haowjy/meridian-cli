@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { BashRecord, BashRecordsFile } from "../shared/schemas";
 import { BashRuntime, type BashListRow } from "./src/bash_runtime";
+import { until } from "../shared/test_wait";
 
 type Verdict = "ok" | "fail" | "fail-always";
 
@@ -46,12 +47,6 @@ const holdsTerminal = (file: BashRecordsFile): boolean => Object.values(file.rec
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const outcomes = ["ok", "fail", "fail-always"] as const;
-
-async function until(predicate: () => boolean | Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) { if (await predicate()) return; await pause(5); }
-  throw new Error("condition not reached");
-}
 
 /** True when the promise is still unresolved after a grace period. */
 async function stillPending(promise: Promise<unknown>): Promise<boolean> {

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BashRecord, BashRecordsFile } from "../shared/schemas";
 import { BashRuntime, type BashListRow } from "./src/bash_runtime";
 import type { ShellTask } from "./src/shell_task";
+import { until } from "../shared/test_wait";
 
 // Real private files, with two gates at the filesystem boundary: every read of the records file is
 // counted (and, when armed, held after it has read its bytes, so a held read stays stale), and
@@ -42,12 +43,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const SPAWN = "p-recovery";
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(predicate: () => boolean, timeoutMs = 1500): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) { if (predicate()) return; await pause(5); }
-  throw new Error("condition not reached");
-}
-
 const stored = (bashId: string, patch: Partial<BashRecord> = {}): BashRecord => ({
   bash_id: bashId, command: "sleep 30", cwd: "/", pid: null, status: "running", is_background: true, is_tracked: true,
   exit_code: null, started_at_ms: 1, ended_at_ms: null, log_path: "l", stdout_log_path: "o", stderr_log_path: "e",

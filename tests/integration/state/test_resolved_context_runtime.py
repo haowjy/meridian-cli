@@ -97,27 +97,6 @@ def test_runtime_override_bypasses_adhoc_materialization(
     assert list(project_root.iterdir()) == []
 
 
-def test_resolve_runtime_authority_ignores_runtime_env_when_flagged(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir(parents=True)
-    (project_root / "meridian.toml").write_text(
-        '[project]\nid = "proj-flag"\n', encoding="utf-8"
-    )
-    override = tmp_path / "override"
-    override.mkdir()
-    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", override.as_posix())
-
-    authority = resolve_runtime_authority_for_read(
-        project_root,
-        ignore_runtime_env=True,
-    )
-
-    assert authority.runtime_root == get_project_home("proj-flag")
-
-
 def test_resolve_runtime_authority_derives_when_runtime_dir_absent(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -146,7 +125,7 @@ def test_resolve_runtime_authority_honors_empty_override_over_project_state(
     (state_dir / "spawns.jsonl").write_text("", encoding="utf-8")
     override = tmp_path / "empty-override"
     override.mkdir()
-    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", override.as_posix())
 
     authority = resolve_runtime_authority_for_read(project_root)

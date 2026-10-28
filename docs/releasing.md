@@ -30,21 +30,27 @@ to `main` skip auto-release because there is no associated PR to inspect.
 Put `release:skip` in the pushed head commit message to skip auto-release even
 when a release label is present.
 
-### Breaking changes split across several PRs
+### Minor and major releases collect on a release branch
 
 Each PR merged to `main` with `release:minor` or `release:major` cuts its own breaking
-release. When one piece of work breaks behaviour in several PRs (a stack, or lanes of one
-feature), users should get one breaking release, not one per PR.
+release. So breaking work never merges to `main` piece by piece: every minor or major
+release is assembled on an integration branch named `release/v<X>.<Y>.0` (for a major,
+`release/v<X>.0.0`), even when it starts as one PR. Users get one breaking release with one
+set of upgrade notes, and later breaking work for the same version joins the same branch.
 
-1. Create an integration branch from `main` (for example `release/<topic>`) and open its
-   PR to `main` early, as a draft. That PR carries the `release:minor`/`release:major`
-   label, the combined changelog and upgrade notes, and the whole-change review.
-2. Point each part's PR at the integration branch, not `main`. Merging into it releases
+1. If `release/v<X>.<Y>.0` doesn't exist yet, create it from `main` and push it. Open its PR
+   to `main` as a draft once the first part has merged (GitHub refuses a PR with no
+   changes). That PR carries the `release:minor`/`release:major` label, the combined
+   changelog and upgrade notes, and the whole-change review.
+2. Point each part's PR at the release branch, not `main`. Merging into it releases
    nothing, so those PRs need no release label. Copy their changelog sections into the
-   integration PR's `## Changelog`: only commits on `main`'s first-parent history reach
-   the renderer, so part PRs merged into the integration branch never render on their own.
-3. When the last part lands and the combined change passes the full gate, mark the
-   integration PR ready, merge it, and CI releases everything once.
+   release PR's `## Changelog`: only commits on `main`'s first-parent history reach the
+   renderer, so part PRs merged into the release branch never render on their own.
+3. The agent leading the release merges its part PRs into the release branch once each
+   passes its own review and CI; that needs no human approval. Merging the release PR to
+   `main` does.
+4. When the last part lands and the combined change passes the full gate, mark the
+   release PR ready, merge it (with approval), and CI releases everything once.
 
 Work that must ship separately (for example, a part another release depends on) gets its
 own release. Decide that when the work is planned, not at merge time.

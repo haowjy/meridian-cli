@@ -1,7 +1,6 @@
 """SQL-scoped no-argument spawn-wait discovery."""
 
 import json
-import time
 from pathlib import Path
 
 import pytest
@@ -15,7 +14,20 @@ from meridian.lib.ops.spawn.models import SpawnWaitInput
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import LaunchMode, SpawnKind, SpawnRecord
+from tests.support.fakes import FakeClock
 from tests.support.resident_drain import start_row
+
+
+@pytest.fixture(autouse=True)
+def frozen_history_clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    """Freeze the clock history_index checks deadlines against.
+
+    The wait deadline then never expires on a loaded host; these tests assert on discovery
+    results, not on how fast they arrive.
+    """
+    clock = FakeClock(1000.0)
+    monkeypatch.setattr(history_index, "time", clock)
+    return clock
 
 
 def _runtime(tmp_path: Path) -> tuple[Path, Path]:
@@ -94,6 +106,7 @@ def _bind_pi_transcript(project: Path, root: Path, spawn_id: str) -> None:
 def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    frozen_history_clock: FakeClock,
 ) -> None:
     _, root = _runtime(tmp_path)
     primary = _spawn(root, "p-primary", owner=None, kind="primary")
@@ -151,7 +164,7 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
         SpawnWaitInput(),
         root,
         RuntimeContext(spawn_id=SpawnId(primary), chat_id="c9008"),
-        deadline=time.monotonic() + 5,
+        deadline=frozen_history_clock.monotonic() + 5,
     )
 
     assert not targets.discovery_pending
@@ -164,6 +177,7 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
 
 def test_nested_discovery_reaches_live_child_through_archived_ancestor(
     tmp_path: Path,
+    frozen_history_clock: FakeClock,
 ) -> None:
     project, root = _runtime(tmp_path)
     start_row(root, "p1", HarnessId.PI, None)
@@ -204,7 +218,7 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
         SpawnWaitInput(),
         root,
         RuntimeContext(spawn_id=SpawnId("p1"), chat_id="c9008"),
-        deadline=time.monotonic() + 5,
+        deadline=frozen_history_clock.monotonic() + 5,
     )
 
     assert targets.blocked_on_ids == ("p3",)

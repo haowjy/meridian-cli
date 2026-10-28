@@ -390,9 +390,10 @@ content: the agent reads a matching entry through `meridian skills`. A skill Mar
 loaded with non-blank content into the prompt is omitted from the index. An empty
 loaded entry has no prompt document, so its trigger remains. Bundled names use the
 `name__meridian` collision spelling. The
-`handoff__meridian`, `notify__meridian`, `work__meridian`, `escalation__meridian`,
-and `prompt-authoring__meridian` triggers carry `metadata.mode: primary`;
-`sessions__meridian` remains visible to every profile. The gate follows the profile's
+`handoff__meridian`, `notify__meridian`, `messaging__meridian`, `work__meridian`,
+`escalation__meridian`, and `prompt-authoring__meridian` triggers carry
+`metadata.mode: primary`; `sessions__meridian` and `md-validation__meridian` remain
+visible to every profile. The gate follows the profile's
 declared mode even when a primary-mode profile is launched as a spawn, and comes from
 skill frontmatter rather than a hardcoded name set. Package skills remain on the Mars/harness path below.
 

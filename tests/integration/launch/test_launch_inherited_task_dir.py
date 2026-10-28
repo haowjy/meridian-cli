@@ -15,6 +15,7 @@ from meridian.lib.launch.request import LaunchArgvIntent
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
+from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_store import start_spawn
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -60,9 +61,11 @@ def test_inherited_task_dir_round_trips_through_dry_run_prepare(
     assert artifacts.request.task_cwd_source == "inherited-task-dir"
 
 
+@pytest.mark.parametrize("override_launcher", [False, True])
 def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    override_launcher: bool,
 ) -> None:
     project_root = _seed_project(tmp_path)
     parent_inherited = tmp_path / "parent-worktree"
@@ -78,6 +81,9 @@ def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
     monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     runtime = build_runtime(project_root)
+    derived_runtime_root = derive_runtime_root_from_project(project_root)
+    assert derived_runtime_root is not None
+    runtime_root = tmp_path / "scratch-runtime" if override_launcher else derived_runtime_root
 
     artifacts = build_create_payload(
         SpawnCreateInput(
@@ -92,7 +98,7 @@ def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     )
     launch_runtime = build_spawn_mars_runtime(
         runtime=runtime,
-        runtime_root=project_root / ".meridian",
+        runtime_root=runtime_root,
         control_root=project_root,
         execution_cwd=artifacts.request.task_cwd,
         argv_intent=LaunchArgvIntent.REQUIRED,
@@ -110,6 +116,11 @@ def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     child_env = bound.binding.environment.child_context_env
     assert child_env["MERIDIAN_TASK_DIR"] == child_task_dir.resolve().as_posix()
     assert child_env["MERIDIAN_TASK_DIR"] != parent_inherited.as_posix()
+    # Only an override launch hands its runtime to the child.
+    if override_launcher:
+        assert child_env["_MERIDIAN_RUNTIME_DIR"] == runtime_root.resolve().as_posix()
+    else:
+        assert "_MERIDIAN_RUNTIME_DIR" not in child_env
 
 
 def test_parent_scope_file_task_dir_is_inherited_by_child(

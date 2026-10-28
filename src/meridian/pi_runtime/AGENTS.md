@@ -56,6 +56,10 @@ Per-extension detail: [.context/CONTEXT.md](.context/CONTEXT.md).
   source changes; launch projection may otherwise use an installed bundle.
 - Import Pi packages only from their package roots; extension-loader subpath
   imports are not reliable.
+- Tests wait with the shared `until()` in `extensions/shared/test_wait.ts`, which has no
+  deadline of its own; vitest's `testTimeout` is the hang guard. Don't add a local poll
+  helper with a short deadline, or a fixed sleep before an assertion
+  (the repository root's `tests/AGENTS.md`, "No flaky tests").
 
 ## Depth
 

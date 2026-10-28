@@ -1022,13 +1022,12 @@ def _directory_env_scope(
 ) -> Generator[Caller | None, None, None]:
     """Set ``MERIDIAN_PROJECT_DIR`` and restore on exit.
 
-    When *directory_explicit* (``-C`` active), also unset ``_MERIDIAN_RUNTIME_DIR``
-    so the runtime layer derives from project identity instead of a stale override.
-    If ``-C`` also targets a different project than the inherited one, unset every
-    project-scoped variable (``env_registry``): the caller's spawn, chat, work and
-    task-dir name things in its own project, and no command, ops layer or child
-    launched from here may read them as the target's. The dropped caller is yielded
-    as a :class:`Caller` so a message frame can still name its sender.
+    If ``-C`` targets a different project than the inherited one, unset every
+    project-scoped variable (``env_registry``): a runtime override survives ``-C`` only
+    when the inherited ``MERIDIAN_PROJECT_DIR`` is that same project. The caller's
+    spawn, chat, work and task-dir name things in its own project, and no command,
+    ops layer or child launched from here may read them as the target's. The dropped
+    caller is yielded as a :class:`Caller` so a message frame can still name its sender.
     """
 
     other_project = (
@@ -1045,8 +1044,6 @@ def _directory_env_scope(
         if caller_spawn
         else None
     )
-    if directory_explicit:
-        dropped.append("_MERIDIAN_RUNTIME_DIR")
     keys = ["MERIDIAN_PROJECT_DIR", *dict.fromkeys(dropped)]
     saved = {key: os.environ.get(key) for key in keys}
     for key in keys[1:]:
