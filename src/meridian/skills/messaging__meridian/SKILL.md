@@ -25,10 +25,9 @@ project. No `-C` for a session in your own project. A chat with no running sessi
 fails with a message saying so.
 Every spawn command (`show`, `cancel`, ...) takes a chat ID the same way: it names the
 run live in that chat now, else the spawn that ran it. After a `/clear` the run is in a
-new chat, so its address is that new chat (the one in its messages' sender line); the
-chat its capabilities block named no longer reaches it. To resume a session, prefer
-`meridian --continue <chat>` or `meridian session browse` over a native `/resume`, which
-Meridian follows only on a best-effort basis.
+new chat, so its address is that new chat (the one in its messages' sender line). The
+chat its capabilities block named still names the run in `show` and `cancel`, but
+`spawn message` refuses it.
 
 **Reading a message.** It opens with `[Meridian] Message from spawn pNN (chat cNN)`
 and, when the sender can receive one, the exact command to answer. Reply with that

@@ -48,8 +48,9 @@ with `-C <sender project root>` when the sender is in another project. A primary
 harness has a message route states its own address in that form in its capabilities block.
 Every spawn command resolves a chat ID, like `spawn message` does, to the run live in
 that chat now, else the spawn that ran it; a chat ID never means a child it launched.
-After a `/clear` the run is in a new chat, so its old chat ID names the run only until
-then, and the address to use is the chat in the sender line or `continue_chat_id`.
+After a `/clear` the run is in a new chat, so `spawn message` refuses its old chat ID
+(`show` and `cancel` still name the run through it), and the address to use is the chat
+in the sender line or `continue_chat_id`.
 `cancel` on a primary still needs `--force`. Other primary harnesses
 fail immediately because they do not yet expose a message route
 ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
@@ -207,7 +208,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | `meridian session archive --list` | Show current/snapshot ZIPs and their registered locations |
 | `meridian session import ZIP` | Select a verified transferred ZIP snapshot for direct reads |
 | `meridian session restore REF... --archive ZIP_OR_UUID` | Restore only selected histories with fresh inert local aliases; preserve the ZIP |
-| `meridian session repair REF` | Read-only: for an unbound chat (`c123`, or its spawn `p123`), list candidate native session files with evidence and the exact bind command; for a bound chat, show its binding |
+| `meridian session repair REF` | Read-only: for an unbound chat (`c123`, its spawn `p123`, a raw harness session ID, or `@latest`/`@last-failed`/`@last-completed`), list candidate native session files with evidence and the exact bind command; for a bound chat, show its binding |
 | `meridian session repair REF --native PATH [--force]` | Bind an unbound chat to that native session file after validation; `--force` accepts a cwd mismatch or a start outside the chat's time window |
 
 Archive destinations can also come from configuration. Automation is off by
@@ -618,9 +619,9 @@ takeover is followed on a best-effort basis), else the spawn that ran it. `spawn
 cancel` on a primary still needs `--force`. A ref that names nothing fails with one
 not-found error.
 
-`--continue`, `--fork`, `--fork-fresh`, `--from` and `session log`/`export`/`search`
-also accept symbolic references. `spawn message` refuses them, because they name
-finished spawns:
+Every spawn command above, `--continue`, `--fork`, `--fork-fresh`, `--from`,
+`session log`/`export`/`search` and `session repair` also accept symbolic references.
+`spawn message` is the exception and refuses them, because they name finished spawns:
 
 | Reference | Resolves to |
 | --------- | ----------- |

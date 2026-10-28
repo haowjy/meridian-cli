@@ -34,37 +34,42 @@ later `work done` or `work reopen` refuses when both locations exist and names b
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
 
-## Chat IDs name the chat's own session
+## Chat and session references
 
-A chat ID now means that chat's own session in every spawn command. Before, `spawn
-show`, `status`, `children`, `wait`, `cancel` and `--continue`/`--fork`/`--from` on a
-chat ID resolved to the newest spawn in the chat's family, which could be a child it
-had launched. Scripts that relied on that to reach the newest child must pass the
-child's `pN` ID.
-
-References resolve the same way everywhere:
+Every command that takes a reference now resolves it through one rule, so a chat ID, a
+spawn ID and a raw harness session ID mean the same thing everywhere.
 
 - Every spawn command (`show`, `status`, `children`, `wait`, `cancel`, `done`, `rearm`,
   `report`, `message`) takes a spawn ID, a chat ID or a raw harness session ID. A chat or
   raw ID names the run live in that chat now (a native `/resume` takeover, followed on a
-  best-effort basis), else the spawn that ran it. `cancel` on a primary still needs
-  `--force`.
-- `--continue`, `--fork` and `session log`/`export`/`search` accept `@latest`,
-  `@last-failed` and `@last-completed`, as `spawn show` and `--from` already did.
-  `spawn message` refuses them.
-- A ref that names nothing fails with one not-found error, instead of falling through
-  to the harness as an untracked session ID. Only a raw session ID with no Meridian
-  record still resumes untracked.
-- `--from cN` names chat `cN` itself, and `--from pN` the spawn's current chat, not its
-  entry chat.
+  best-effort basis), else the spawn that ran it. A chat ID never means a child that
+  chat launched. `cancel` on a primary still needs `--force`.
+- A ref shaped `p<digits>` or `c<digits>` is always a Meridian spawn or chat. One that
+  names nothing fails with a single not-found error (`Chat 'c99999' not found`) instead
+  of falling through to the harness as an untracked session ID. Any other value is
+  treated as a native session ID; only one with no Meridian record resumes untracked, and
+  only through primary `--continue`/`--fork` and spawn `--fork`. Spawn `--continue`
+  requires retained spawn metadata and refuses it.
+- A raw harness session ID names the chat of the newest generation that recorded it.
+  Before, it named the lowest-numbered chat, so `session log <id>` on a session recorded
+  under two chats now reads the newer one. An ID recorded under two native stores (or
+  two harnesses) is refused as ambiguous; pass the chat ID instead.
+- `--continue`, `--fork`, `--fork-fresh`, `session log`/`export`/`search` and
+  `session repair` accept `@latest`, `@last-failed` and `@last-completed`, as the
+  spawn commands and `--from` do. `spawn message` refuses them. `session repair` also
+  accepts a raw harness session ID.
+- `--from cN` names chat `cN`'s own transcript, and `--from pN` the spawn's current chat,
+  not its entry chat. A conversation that ran `/clear` is in a new chat, so a handoff
+  passes the run's spawn ID (`--from p123`, the `$MERIDIAN_SPAWN_ID` literal in the
+  capabilities block) to follow the current chat; a chat ID there reads the transcript
+  from before the `/clear`.
 - A message's reply command names the sender's current chat, so it still reaches a
-  primary after a `/clear`.
-- Chat IDs must have the form `c<digits>`; `--continue` on any other value is rejected.
+  primary after a `/clear`. The old chat ID still names the run in `spawn show` and
+  `cancel`, but `spawn message` refuses it.
 - `--continue` on a chat a live run still holds fails within about two seconds, naming
-  the holder; continue after it exits, or `--fork` the chat. It used to wait on the
-  lock.
-- After a `/clear`, prefer `meridian --continue <chat>` or `meridian session browse`
-  to a native `/resume`.
+  the holder (`Chat c1 is held by pid 4242; continue after it exits, or --fork c1`);
+  continue after it exits, or `--fork` the chat. It used to wait on the lock. See
+  [Troubleshooting](troubleshooting.md#continue-refuses-the-chat-is-held).
 
 `meridian [-C REPO] spawn message REF` accepts a chat ID and reaches the session
 running in that chat now; `-C` addresses a session in another project. Chat and spawn
