@@ -534,11 +534,23 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | ------- | ----------- |
 | `meridian mars init [--link DIR]` | Initialize mars project (`mars.toml`) and optionally create the initial link target in the same command |
 | `meridian mars add SOURCE` | Add an agent/skill package source |
+| `meridian mars remove NAME` | Remove a dependency and prune its installed items |
 | `meridian mars sync` | Compile packages into `.mars/`; materialize configured harness targets |
 | `meridian mars link DIR` | Link compiled output into a harness tool directory |
-| `meridian mars list` | Show installed agents (grouped by mode) and skills |
+| `meridian mars unlink DIR` | Remove a link target |
+| `meridian mars list` | Show installed agents, skills, and bootstrap docs by name and description |
 | `meridian mars upgrade` | Fetch latest versions and sync |
+| `meridian mars migrate [--check]` | Rewrite pre-v1 authored content to schema v1; `--check` lists the changes and exits 1 |
+| `meridian mars check [PATH]` | Validate a package's schema, structure, and plugin output |
+| `meridian mars provide <provider>@<version>=<dir>` | Install a host's own skills under `.mars/skills/`; Meridian runs this itself on launch |
+| `meridian mars repair` | Rebuild managed state from config and dependencies |
 | `meridian mars doctor` | Check for drift and integrity issues |
+
+Mars also has `adopt`, `override`, `rename`, `resolve`, `outdated`, `why`, `cache`,
+`version`, `build`, `validate`, `export`, `agents`, and `skills`; run `meridian mars <command> --help`, or read Mars's
+[CLI reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/cli/commands.md).
+The `models` commands are under
+[Configuration & Diagnostics](#configuration--diagnostics).
 
 Mars config (`mars.toml`, plus local Mars overlays) owns package dependencies,
 targets, model aliases/catalog settings, project routing defaults
@@ -563,7 +575,7 @@ hooks, harness defaults, and primary-session defaults.
 
 Meridian CLI processes default `MERIDIAN_MANAGED=1` in their environment, while preserving an explicit outer override. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc. `[settings.meridian.agent_copy] harnesses = ["claude"]` is the selective override when `.claude` is an effective managed target; it materializes qualifying Claude-native copies even under managed mode or `agent_emission = "never"`.
 
-In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only with Mars Claude `agent_copy` plus an effective `.claude` managed target. Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
+In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only when Mars installed at least one agent into `.claude` (recorded in `.mars/native-agents.json` by the last sync, whatever caused it: `agent_copy` in any Mars config layer, `agent_emission = "always"`, or a bare `mars sync` run outside Meridian). Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
 Headless Claude spawns are allowed by default. To prevent `meridian spawn -a <agent>` from launching them, set:
 

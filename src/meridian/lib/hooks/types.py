@@ -80,10 +80,6 @@ class Hook:
     when: HookWhen | None = None
     exclude: tuple[str, ...] = ()
     options: Mapping[str, object] = field(default_factory=_default_options)
-    # During the deprecation window, dispatch stays keyed by `event` while this
-    # name is restored only in the payload seen by the configured row.
-    configured_event: str | None = None
-    deprecated: bool = False
     # Legacy field kept for backward compatibility.
     # Builtins should prefer config.options.
     remote: str | None = None

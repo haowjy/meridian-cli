@@ -71,7 +71,7 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
     Returns ``None`` when the check cannot be completed (missing binary, command
     failure, malformed JSON, timeout). HEAD-constrained rows are ignored because
     they track moving refs and would produce noisy perpetual updates. Up-to-date
-    rows are ignored, and malformed rows are skipped.
+    rows are ignored, and malformed or unchecked (``?``) rows are skipped.
     """
 
     executable = resolve_mars_executable()
@@ -136,6 +136,10 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
         updateable_s = updateable.strip()
         latest_s = latest.strip()
         if not locked_s or not updateable_s or not latest_s:
+            continue
+        # Mars prints "?" for versions it did not check (overridden or
+        # plugin-selected dependency, or version listing failed) and "-" for no lock.
+        if "?" in (updateable_s, latest_s) or locked_s == "-":
             continue
         if normalized_source in seen:
             continue

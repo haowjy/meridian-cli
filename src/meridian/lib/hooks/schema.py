@@ -6,8 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from typing import Annotated, Literal, get_args
+from typing import Annotated, get_args
 
 from pydantic import (
     BaseModel,
@@ -17,6 +16,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
@@ -42,59 +42,17 @@ _WHEN_FIELDS: tuple[HookWhenField, ...] = ("status", "agent", "kind")
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-@dataclass(frozen=True)
-class HookConfigDeprecationWindow:
-    """Config breaks accepted until this window changes to error."""
-
-    mode: Literal["warn", "error"]
-    event_replacements: tuple[tuple[str, HookEventName], ...]
-    newly_live_events: frozenset[str]
-    ignored_fields: frozenset[str]
-    removed_status_values: frozenset[str]
-
-
-# Flip this table's mode to "error" in the next minor release. The metadata
-# below is also the complete inventory of compatibility behavior to remove.
-NEXT_MINOR_HOOK_CONFIG_BREAKS = HookConfigDeprecationWindow(
-    mode="warn",
-    event_replacements=(
-        ("spawn.start", "spawn.started"),
-        ("spawn.running", "spawn.started"),
-        ("spawn.finalized", "spawn.finished"),
-        ("work.start", "work.activated"),
-        ("work.started", "work.activated"),
-        ("session.responded", "notify.your_turn"),
-        ("session.cache_expiring", "notify.cache_expiring"),
-    ),
-    newly_live_events=frozenset(("spawn.start", "work.start")),
-    ignored_fields=frozenset(("failure_policy",)),
-    removed_status_values=frozenset(("skipped",)),
-)
-
-
-@dataclass(frozen=True)
-class _DeprecationIssue:
-    source: str
-    warning: str
-    error: str
-    prevents_registration: bool = False
-
-
-@dataclass(frozen=True)
-class NormalizedHookRow:
-    """Typed row plus compatibility metadata retained through registration."""
-
-    spec: HookSpec
-    configured_event: str | None = None
-    deprecations: tuple[_DeprecationIssue, ...] = ()
-
-
-@dataclass(frozen=True)
-class HookRowLoad:
-    """Runtime registrations and at most one warning for one config row."""
-
-    hooks: tuple[Hook, ...]
-    warning: str | None = None
+# Hook names and keys removed from config; each maps to its replacement. Rows
+# using them are rejected with an error that names it.
+_REMOVED_EVENT_NAMES: dict[str, HookEventName] = {
+    "spawn.start": "spawn.started",
+    "spawn.running": "spawn.started",
+    "spawn.finalized": "spawn.finished",
+    "work.start": "work.activated",
+    "work.started": "work.activated",
+    "session.responded": "notify.your_turn",
+    "session.cache_expiring": "notify.cache_expiring",
+}
 
 
 def _normalized_string(value: object) -> str | object:
@@ -107,6 +65,8 @@ def _hook_event(value: object) -> str | object:
         return normalized
     if not normalized:
         raise ValueError("expected non-empty string")
+    if normalized in _REMOVED_EVENT_NAMES:
+        raise ValueError(f"`{normalized}` was removed; use `{_REMOVED_EVENT_NAMES[normalized]}`")
     if normalized not in _KNOWN_HOOK_EVENTS:
         valid = ", ".join(sorted(_KNOWN_HOOK_EVENTS))
         raise ValueError(f"expected one of [{valid}], got {normalized!r}")
@@ -205,6 +165,14 @@ class HookSpec(BaseModel):
     remote: NonEmptyString | None = None
     options: dict[str, object] = Field(default_factory=dict)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_failure_policy(cls, data: object) -> object:
+        row = json_object(data)
+        if row is not None and "failure_policy" in row:
+            raise ValueError("`failure_policy` was removed; hook failures always continue")
+        return data
+
     @field_validator("exclude", mode="before")
     @classmethod
     def _tuple_exclude(cls, value: object) -> object:
@@ -224,121 +192,14 @@ def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
     return tuple(values)
 
 
-def _prepare_deprecated_row(
-    raw_value: object,
-    *,
-    source: str,
-) -> tuple[object, str | None, tuple[_DeprecationIssue, ...]]:
-    row = json_object(raw_value)
-    if row is None:
-        return raw_value, None, ()
+def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec:
+    """Validate one hook row, rejecting names and keys that were removed."""
 
-    prepared = dict(row)
-    configured_event: str | None = None
-    issues: list[_DeprecationIssue] = []
-    replacements = dict(NEXT_MINOR_HOOK_CONFIG_BREAKS.event_replacements)
-
-    raw_event = prepared.get("event")
-    normalized_event = _normalized_string(raw_event)
-    if isinstance(normalized_event, str) and normalized_event in replacements:
-        replacement = replacements[normalized_event]
-        configured_event = normalized_event
-        prepared["event"] = replacement
-        now_runs = (
-            " This row will now run; it never fired under the deprecated name."
-            if normalized_event in NEXT_MINOR_HOOK_CONFIG_BREAKS.newly_live_events
-            else ""
-        )
-        issues.append(
-            _DeprecationIssue(
-                source=f"{source}.event",
-                warning=(
-                    f"`{normalized_event}` is deprecated; use `{replacement}`."
-                    f"{now_runs} It will be rejected in the next minor release."
-                ),
-                error=f"`{normalized_event}` was removed; use `{replacement}`",
-            )
-        )
-
-    for field in NEXT_MINOR_HOOK_CONFIG_BREAKS.ignored_fields:
-        if field not in prepared:
-            continue
-        prepared.pop(field)
-        issues.append(
-            _DeprecationIssue(
-                source=f"{source}.{field}",
-                warning=(
-                    f"`{field}` is deprecated; it has no effect and will be rejected "
-                    "in the next minor release."
-                ),
-                error=f"`{field}` was removed; hook failures always continue",
-            )
-        )
-
-    raw_when = json_object(prepared.get("when"))
-    if raw_when is not None:
-        prepared_when = dict(raw_when)
-        raw_statuses = prepared_when.get("status")
-        statuses = json_list(raw_statuses)
-        if statuses is not None:
-            retained_statuses: list[object] = []
-            for status in statuses:
-                normalized_status = _normalized_string(status)
-                if (
-                    isinstance(normalized_status, str)
-                    and normalized_status in NEXT_MINOR_HOOK_CONFIG_BREAKS.removed_status_values
-                ):
-                    continue
-                retained_statuses.append(status)
-            if len(retained_statuses) != len(statuses):
-                prepared_when["status"] = retained_statuses
-                removed = ", ".join(
-                    f'"{value}"'
-                    for value in sorted(NEXT_MINOR_HOOK_CONFIG_BREAKS.removed_status_values)
-                )
-                emptied_filter = not retained_statuses
-                warning = (
-                    f"`when.status = [{removed}]` is deprecated and has been dropped "
-                    "because it never matched. It will be rejected in the next minor "
-                    "release."
-                )
-                if emptied_filter:
-                    # A compatibility drop must not widen a filter into match-all.
-                    warning = (
-                        f"`when.status = [{removed}]` is deprecated; the row is skipped "
-                        "because it could never match. It will be rejected in the next "
-                        "minor release."
-                    )
-                issues.append(
-                    _DeprecationIssue(
-                        source=f"{source}.when.status",
-                        warning=warning,
-                        error=f"when.status values [{removed}] were removed",
-                        prevents_registration=emptied_filter,
-                    )
-                )
-        prepared["when"] = prepared_when
-
-    return prepared, configured_event, tuple(issues)
-
-
-def normalize_hook_row(raw_value: object, *, source: str) -> NormalizedHookRow:
-    """Validate one hook row and retain its compatibility-window metadata."""
-
-    prepared, configured_event, deprecations = _prepare_deprecated_row(
-        raw_value,
-        source=source,
-    )
-    warn_unknown_model_keys(prepared, model=HookSpec, source=source)
+    warn_unknown_model_keys(raw_value, model=HookSpec, source=source)
     try:
-        spec = HookSpec.model_validate(prepared)
+        return HookSpec.model_validate(raw_value)
     except ValidationError as error:
         raise config_validation_error(error, source=source) from None
-    return NormalizedHookRow(
-        spec=spec,
-        configured_event=configured_event,
-        deprecations=deprecations,
-    )
 
 
 def _slugify_hook_name_component(raw: str) -> str:
@@ -400,62 +261,30 @@ def _unsupported_when_field(
     return None
 
 
-def _impossible_when_issue(
+def _reject_impossible_when(
     when: HookWhen | None,
     event: HookEventName,
     *,
     row_source: str,
-) -> _DeprecationIssue | None:
+) -> None:
     field = _unsupported_when_field(when, event)
     if field is None:
-        return None
-
+        return
     if field == "status":
-        warning = (
-            "`when.status` condition is only available for `spawn.finished`, "
-            f"got `{event}`; the condition can never match and the row is skipped. "
-            "It will be rejected in the next minor release."
-        )
         error = f"condition is only available for 'spawn.finished', got {event!r}"
     else:
-        warning = (
-            f"`when.{field}` condition is unavailable for `{event}`; the condition can "
-            "never match and the row is skipped. It will be rejected in the next minor "
-            "release."
-        )
         error = f"condition is unavailable for {event!r}"
-    return _DeprecationIssue(
-        source=f"{row_source}.when.{field}",
-        warning=warning,
-        error=error,
-    )
-
-
-def _deprecation_warning(
-    *,
-    hook_name: str,
-    issues: tuple[_DeprecationIssue, ...],
-) -> str | None:
-    if not issues:
-        return None
-    if NEXT_MINOR_HOOK_CONFIG_BREAKS.mode == "error":
-        issue = issues[0]
-        raise ValueError(
-            f"hook {hook_name!r}: Invalid value for '{issue.source}': {issue.error}."
-        )
-    return f"hook {hook_name!r}: " + " ".join(issue.warning for issue in issues)
+    raise ValueError(f"Invalid value for '{row_source}.when.{field}': {error}.")
 
 
 def hooks_from_spec(
-    normalized: NormalizedHookRow,
+    spec: HookSpec,
     *,
     source: str,
     row_source: str,
-) -> HookRowLoad:
+) -> tuple[Hook, ...]:
     """Apply semantic validation and construct runtime hooks from one typed spec."""
 
-    spec = normalized.spec
-    deprecations = list(normalized.deprecations)
     command = spec.command
     options = dict(spec.options)
     if spec.remote is not None:
@@ -496,20 +325,7 @@ def hooks_from_spec(
     enabled_events: frozenset[HookEventName]
     if spec.event is not None:
         events = (spec.event,)
-        impossible = _impossible_when_issue(
-            when,
-            spec.event,
-            row_source=row_source,
-        )
-        if impossible is not None:
-            deprecations.append(impossible)
-            return HookRowLoad(
-                hooks=(),
-                warning=_deprecation_warning(
-                    hook_name=name,
-                    issues=tuple(deprecations),
-                ),
-            )
+        _reject_impossible_when(when, spec.event, row_source=row_source)
         enabled_events = frozenset(events)
     elif builtin is not None:
         events = builtin.default_events
@@ -534,42 +350,24 @@ def hooks_from_spec(
                 f"[{supported}], got {unsupported[0]!r}."
             )
 
-    if any(issue.prevents_registration for issue in deprecations):
-        return HookRowLoad(
-            hooks=(),
-            warning=_deprecation_warning(
-                hook_name=name,
-                issues=tuple(deprecations),
-            ),
-        )
-
     interval = spec.interval or (builtin.default_interval if builtin is not None else None)
 
-    warning = _deprecation_warning(
-        hook_name=name,
-        issues=tuple(deprecations),
-    )
-    return HookRowLoad(
-        hooks=tuple(
-            Hook(
-                name=name,
-                event=event,
-                source=source,
-                command=command,
-                builtin=spec.builtin,
-                timeout_secs=spec.timeout_secs,
-                interval=interval,
-                enabled=spec.enabled and event in enabled_events,
-                priority=spec.priority,
-                require_serial=spec.require_serial,
-                when=when,
-                exclude=spec.exclude,
-                options=options,
-                remote=spec.remote,
-                configured_event=normalized.configured_event,
-                deprecated=warning is not None,
-            )
-            for event in events
-        ),
-        warning=warning,
+    return tuple(
+        Hook(
+            name=name,
+            event=event,
+            source=source,
+            command=command,
+            builtin=spec.builtin,
+            timeout_secs=spec.timeout_secs,
+            interval=interval,
+            enabled=spec.enabled and event in enabled_events,
+            priority=spec.priority,
+            require_serial=spec.require_serial,
+            when=when,
+            exclude=spec.exclude,
+            options=options,
+            remote=spec.remote,
+        )
+        for event in events
     )

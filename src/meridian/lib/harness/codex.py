@@ -52,6 +52,7 @@ from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.projections.native_config import reject_removed_codex_native_config
 from meridian.lib.harness.projections.permissions_codex import (
     compile_codex_permissions,
     effective_codex_policy,
@@ -393,32 +394,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             user_turn_content=run.user_turn_content,
         )
 
-    def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]:
-        permissions, _ = compile_codex_permissions(spec)
-        override = permissions.network.override
-        if override is None:
-            return ()
-        if override.argument is None:
-            return (
-                CompositionWarning(
-                    code="invalid_codex_network_access_native_config",
-                    message=(
-                        "Codex native_config sandbox_workspace_write.network_access must be "
-                        "an addressable boolean. It was ignored; use the profile network field."
-                    ),
-                ),
-            )
-        return (
-            CompositionWarning(
-                code="deprecated_codex_network_access_native_config",
-                message=(
-                    "Codex native_config sandbox_workspace_write.network_access is "
-                    "deprecated; use the profile network field instead. The native value "
-                    "wins for this release and becomes reserved in the next release."
-                ),
-            ),
-        )
-
     def launch_environment_warnings(
         self,
         *,
@@ -426,6 +401,9 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         child_cwd: Path,
     ) -> tuple[CompositionWarning, ...]:
         return codex_network_config_warnings(child_cwd, child_env)
+
+    def reject_removed_native_config(self, native_config: Mapping[str, object]) -> None:
+        reject_removed_codex_native_config(native_config)
 
     def build_primary_runtime_request_handler(
         self,
