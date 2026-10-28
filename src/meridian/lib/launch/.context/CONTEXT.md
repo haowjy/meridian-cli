@@ -498,6 +498,11 @@ and captures stdlib warnings; structlog bypasses it and would leak to stderr.
 
 ### `session_scope()` Teardown Contract
 
+A run holds its entry chat's lifetime lock (`sessions/<chat>.lock`) until it exits, even after
+`/clear` moves it to another chat. `start_session` waits at most two seconds for that lock (long enough for `doctor`'s brief hold or an owner mid-exit) and then raises
+`ValueError("Chat cN is held ...")`, so `--continue cN` never hangs on a live owner. The continue
+sweep refuses such an owner earlier, and says so when the owner has moved to another chat.
+
 `session_scope()` in `session_scope.py` is the context manager for session lifetime.
 Its `finally` block has a two-phase teardown — both phases always run:
 

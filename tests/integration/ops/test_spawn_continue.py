@@ -59,7 +59,7 @@ def _seed_spawn(
     work_id: str | None = "w-spawn",
     task_cwd: str | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
-    chat_id: str = "c-seed",
+    chat_id: str = "c9001",
 ) -> None:
     snapshot = launch_policy_snapshot
     harness = snapshot.harness if snapshot is not None else "codex"
@@ -167,7 +167,7 @@ def test_spawn_continue_imports_legacy_native_store_before_reference_resolution(
     )
     session_store.start_session(
         runtime_root,
-        chat_id="c-legacy",
+        chat_id="c9010",
         spawn_id="p9251",
         harness="claude",
         harness_session_id=session_id,
@@ -176,11 +176,11 @@ def test_spawn_continue_imports_legacy_native_store_before_reference_resolution(
         execution_cwd=project_root.as_posix(),
         control_root=project_root.as_posix(),
     )
-    session_store.stop_session(runtime_root, "c-legacy")
+    session_store.stop_session(runtime_root, "c9010")
     spawn_store.start_spawn(
         runtime_root,
         spawn_id="p9251",
-        chat_id="c-legacy",
+        chat_id="c9010",
         model=snapshot.model,
         agent="",
         harness="claude",
@@ -220,7 +220,7 @@ def test_spawn_continue_imports_legacy_native_store_before_reference_resolution(
     )
 
     assert result.status == "dry-run"
-    imported = session_store.chat_record(runtime_root, "c-legacy")
+    imported = session_store.chat_record(runtime_root, "c9010")
     assert imported is not None
     assert imported.native_store == native_store.as_posix()
 
@@ -589,7 +589,7 @@ def _recovered_reference(
     return ResolvedSessionReference(
         harness_session_id=None,
         harness="codex",
-        source_chat_id="c-seed",
+        source_chat_id="c9001",
         source_spawn_id="p32",
         source_model="gpt-5.3-codex",
         source_agent=None,

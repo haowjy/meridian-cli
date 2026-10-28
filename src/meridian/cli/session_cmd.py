@@ -122,23 +122,8 @@ def _session_browse(
         Literal["updated", "created"],
         Parameter(name="--sort", help="Session ordering."),
     ] = "updated",
-    include_archives: Annotated[
-        bool,
-        Parameter(
-            name="--include-archives",
-            help="Deprecated, no effect: / searches the chats the Status view shows.",
-        ),
-    ] = False,
 ) -> None:
     from meridian.lib.ops.session_list import SessionListInput, session_list_sync
-
-    if include_archives:
-        print(
-            "warning: --include-archives is deprecated and has no effect; `/` searches the "
-            "chats the Status view shows (use Status: Archived or --status archived). "
-            "It will be removed in the next minor release.",
-            file=sys.stderr,
-        )
 
     presentation = resolve_browse_presentation(
         plain=plain,
@@ -183,7 +168,10 @@ def _session_log(
     ref: Annotated[
         str,
         Parameter(
-            help=("Session reference: chat id (c123), spawn id (p123), or harness session id.")
+            help=(
+                "Session reference: chat id (c123), spawn id (p123), harness session id, "
+                "history UUID, or @latest / @last-failed / @last-completed."
+            )
         ),
     ] = "",
     segment: Annotated[
@@ -311,7 +299,10 @@ def _session_export(
     ref: Annotated[
         str,
         Parameter(
-            help=("Session reference: chat id (c123), spawn id (p123), or harness session id.")
+            help=(
+                "Session reference: chat id (c123), spawn id (p123), harness session id, "
+                "history UUID, or @latest / @last-failed / @last-completed."
+            )
         ),
     ] = "",
     file_path: Annotated[

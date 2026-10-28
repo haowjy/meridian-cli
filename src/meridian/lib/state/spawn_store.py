@@ -24,6 +24,7 @@ from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.launch_policy_snapshot import (
     LaunchPolicySnapshot as LaunchPolicySnapshot,
 )
+from meridian.lib.core.refs import is_spawn_id
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status as _is_active_spawn_status,
 )
@@ -92,17 +93,9 @@ logger = structlog.get_logger(__name__)
 
 def _spawn_id_index(spawn_id: SpawnId | str) -> int:
     value = str(spawn_id)
-    if is_spawn_id_shape(value):
+    if is_spawn_id(value):
         return int(value[1:])
     return 0
-
-
-def is_spawn_id_shape(spawn_id: SpawnId | str) -> bool:
-    """Return whether *spawn_id* has Meridian's persisted spawn ID shape."""
-
-    value = str(spawn_id)
-    suffix = value[1:]
-    return len(value) > 1 and value[0] == "p" and suffix.isascii() and suffix.isdigit()
 
 
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
@@ -692,7 +685,7 @@ def mark_spawn_running(
 
 
 def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
-    if len(spawn.id) >= 2 and spawn.id[0] in {"p", "r"} and spawn.id[1:].isdigit():
+    if is_spawn_id(spawn.id):
         return (int(spawn.id[1:]), spawn.id)
     return (10**9, spawn.id)
 

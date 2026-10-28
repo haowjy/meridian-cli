@@ -61,7 +61,7 @@ def _seed_primary_spawn(
     )
     session_store.start_session(
         runtime_root,
-        chat_id="c-primary",
+        chat_id="c9002",
         spawn_id=spawn_id,
         harness=snapshot.harness if snapshot is not None else "codex",
         harness_session_id=harness_session_id or "",
@@ -72,12 +72,12 @@ def _seed_primary_spawn(
         task_cwd=task_cwd,
         kind="primary",
     )
-    session_store.set_work_attachments(runtime_root, {"c-primary": work_id})
-    session_store.stop_session(runtime_root, "c-primary")
+    session_store.set_work_attachments(runtime_root, {"c9002": work_id})
+    session_store.stop_session(runtime_root, "c9002")
     spawn_store.start_spawn(
         runtime_root,
         spawn_id=spawn_id,
-        chat_id="c-primary",
+        chat_id="c9002",
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
         agent=(snapshot.agent or "agent-a") if snapshot is not None else "agent-a",
         skills=snapshot.skills if snapshot is not None else ("skill-a",),
@@ -162,20 +162,20 @@ def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
         "launch_primary",
         lambda **kwargs: LaunchResult(
             command=(), exit_code=0, primary_spawn_id="p41",
-            continue_ref="session-41", continue_chat_id="c-primary",
+            continue_ref="session-41", continue_chat_id="c9002",
         ),
     )
 
     output = _run_primary_continue(tmp_path, "")
     text = output.format_text()
     assert "Session finished." in text
-    assert "meridian --continue c-primary" in text
+    assert "meridian --continue c9002" in text
     assert "exit unresolved" not in text
     assert output.exit_code == 0 and output.boundary_summary is None
     row = spawn_store.get_spawn(runtime_root, "p41")
     assert row is not None and row.run_boundary is not None
     assert row.harness_session_id == "session-41"
-    assert row.continue_chat_id == "c-primary"
+    assert row.continue_chat_id == "c9002"
     assert "unverified" in (run_boundary_summary(row) or "")
     # Suppressing absent proof must not suppress actual warnings; no extra CLI launches needed.
     mismatch = row.model_copy(update={"run_boundary": RunBoundaryOutcome(status="mismatch")})
@@ -186,13 +186,13 @@ def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
     assert (run_boundary_summary(mismatch, include_unverified=False) or "").startswith("warning:")
     assert (run_boundary_summary(successor, include_unverified=False) or "").startswith("warning:")
     assert run_boundary_summary(observed, include_unverified=False) == (
-        "entry c-primary (session-41) → last observed chat c-observed"
+        "entry c9002 (session-41) → last observed chat c-observed"
     )
     historical = observed.model_copy(update={
         "record_mode": "historical", "run_boundary": RunBoundaryOutcome(status="verified"),
     })
     assert historical.continue_chat_id is None
-    assert run_boundary_summary(historical) == "entry c-primary (session-41) → exit c-observed"
+    assert run_boundary_summary(historical) == "entry c9002 (session-41) → exit c-observed"
     assert spawn_view_label(historical) == "p41 → c-observed (verified exit chat)"
 
 
@@ -330,8 +330,8 @@ def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
     spawn_store.start_spawn(
         runtime_root,
         spawn_id="p51",
-        chat_id="c-spawn",
-        owner_chat_id="c-primary",
+        chat_id="c9005",
+        owner_chat_id="c9002",
         model=snapshot.model,
         agent=snapshot.agent or "agent-spawn",
         skills=snapshot.skills,
@@ -353,7 +353,7 @@ def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
         harness_session_id="session-spawn",
         native_store=str(native_store),
         model=snapshot.model,
-        chat_id="c-spawn",
+        chat_id="c9005",
         agent=snapshot.agent or "agent-spawn",
         skills=snapshot.skills,
         kind="spawn",

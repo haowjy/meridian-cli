@@ -59,21 +59,6 @@ def session_owner_chat_id(
     return session_exact_chat_id(record)
 
 
-def get_owner_chat_for_session(
-    runtime_root: Path,
-    chat_id: str,
-) -> str | None:
-    """Resolve owner/session-family chat id for an exact session chat id."""
-
-    normalized = normalize_optional_identity(chat_id)
-    if normalized is None:
-        return None
-    record = session_store.chat_record(runtime_root, normalized)
-    if record is None:
-        return None
-    return session_owner_chat_id(runtime_root, record)
-
-
 def chat_owner_spawn(
     runtime_root: Path,
     chat_id: str,
@@ -96,17 +81,6 @@ def chat_owner_spawn(
         if generation.spawn_id and spawn_store.get_spawn(runtime_root, generation.spawn_id):
             return SpawnId(generation.spawn_id)
     return None
-
-
-def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
-    """Return whether ``ref`` is a Meridian chat/session id in this runtime root."""
-
-    normalized = normalize_optional_identity(ref)
-    if normalized is None or not normalized.startswith("c"):
-        return False
-    if normalized[1:].isdigit():
-        return True
-    return session_store.session_exists(runtime_root, normalized)
 
 
 def session_records_for_spawns(
@@ -302,9 +276,7 @@ def spawn_matches_exact_session(row: SpawnRecord, session_chat_id: str) -> bool:
 
 __all__ = [
     "chat_owner_spawn",
-    "get_owner_chat_for_session",
     "get_session_record_for_spawn",
-    "is_tracked_chat_ref",
     "live_observer_for_chat",
     "native_identity_candidates",
     "session_exact_chat_id",

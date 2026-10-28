@@ -87,7 +87,7 @@ def test_shared_native_id_lists_other_chats(tmp_path: Path) -> None:
         ref=sid, file_path=None, project_root=tmp_path, runtime_root=root
     )
     assert target.source.path == native
-    assert target.view_label == "also bound to c2"
+    assert target.view_label == "also bound to c1"
 
 
 @pytest.mark.parametrize(

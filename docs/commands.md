@@ -7,7 +7,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | Command | Description |
 | ------- | ----------- |
 | `meridian` | Launch the primary agent session with startup context, including the installed agent catalog |
-| `meridian --continue REF` | Resume a prior primary session from a chat/session ref (`c123`), spawn ref (`p123`), or raw harness session id. Chat IDs are now the preferred reference — shown in the quit message when a primary session ends. |
+| `meridian --continue REF` | Resume a prior primary session from a chat/session ref (`c123`), spawn ref (`p123`), or raw harness session id (the newest generation with a native session key, else the newest). Chat IDs are the preferred reference — shown in the quit message when a primary session ends. |
 | `meridian --fork [REF]` | Launch a new primary session by forking while preserving launch identity (agent/model/skills). `REF` accepts a spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id. |
 | `meridian --fork-fresh [REF]` | Launch a new primary session by forking and allowing launch identity changes (`-m`, `-a`). |
 | `meridian --from [REF]` | Launch a fresh primary session with prior spawn or chat/session context as reference material only. `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
@@ -46,10 +46,12 @@ message opens with a `[Meridian]` line naming the sending spawn and chat and, wh
 sender can receive one, the command that answers it: `meridian spawn message <sender chat ID>`,
 with `-C <sender project root>` when the sender is in another project. A primary whose
 harness has a message route states its own address in that form in its capabilities block.
-A chat ID means that chat's own session, never a child it launched; the same holds for
-`spawn show`, `cancel` and the other ref-taking commands. After a `/clear` or a resume
-of its native session, `spawn show` and `cancel` name the spawn that first owned the chat, while
-`spawn message` reaches the run that is live in it now. Other primary harnesses
+Every spawn command resolves a chat ID, like `spawn message` does, to the run live in
+that chat now, else the spawn that ran it; a chat ID never means a child it launched.
+After a `/clear` the run is in a new chat, so `spawn message` refuses its old chat ID
+(`show` and `cancel` still name the run through it), and the address to use is the chat
+in the sender line or `continue_chat_id`.
+`cancel` on a primary still needs `--force`. Other primary harnesses
 fail immediately because they do not yet expose a message route
 ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
 
@@ -104,7 +106,9 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 
 `--fork-fresh` is the identity-changing variant. It is useful for role/model swaps, but can reduce prompt-cache locality because the profile/system prompt may change.
 
-Session initiation modes: `--continue` resumes the same transcript, `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
+Session initiation modes: `--continue` resumes the same transcript (bare `meridian --continue`, with no ref, opens `meridian session browse` to pick one), `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
+
+Meridian follows a native `/resume` inside a running harness on a best-effort basis (commands then name the run live in the chat). `meridian --continue <chat>` and `meridian session browse` are the reliable ways to resume, because they record which run owns the chat.
 
 #### Work Precedence
 
@@ -162,7 +166,8 @@ Primary-session metadata from `primary_meta.json` (`kind`, `activity`,
 `session_config_dir`) is available in `spawn show --verbose` and structured
 JSON output, not default moderate text. JSON for `spawn show`, `status` and
 `wait` always carries the chat identity: `chat_id` (the entry chat),
-`continue_chat_id` (a finished run's verified exit chat, otherwise the entry
+`continue_chat_id` (the chat the run is in now: the one a live or verified-exit
+observation published, such as after an in-process `/clear`; otherwise the entry
 chat) and `run_boundary` (`null` when absent). The native harness session ID is
 not in JSON; `spawn show --verbose` prints it for primaries. Resolve native
 keys from the chat.
@@ -203,7 +208,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | `meridian session archive --list` | Show current/snapshot ZIPs and their registered locations |
 | `meridian session import ZIP` | Select a verified transferred ZIP snapshot for direct reads |
 | `meridian session restore REF... --archive ZIP_OR_UUID` | Restore only selected histories with fresh inert local aliases; preserve the ZIP |
-| `meridian session repair REF` | Read-only: for an unbound chat (`c123`, or its spawn `p123`), list candidate native session files with evidence and the exact bind command; for a bound chat, show its binding |
+| `meridian session repair REF` | Read-only: for an unbound chat (`c123`, its spawn `p123`, a raw harness session ID, or `@latest`/`@last-failed`/`@last-completed`), list candidate native session files with evidence and the exact bind command; for a bound chat, show its binding |
 | `meridian session repair REF --native PATH [--force]` | Bind an unbound chat to that native session file after validation; `--force` accepts a cwd mismatch or a start outside the chat's time window |
 
 Archive destinations can also come from configuration. Automation is off by
@@ -534,11 +539,23 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | ------- | ----------- |
 | `meridian mars init [--link DIR]` | Initialize mars project (`mars.toml`) and optionally create the initial link target in the same command |
 | `meridian mars add SOURCE` | Add an agent/skill package source |
+| `meridian mars remove NAME` | Remove a dependency and prune its installed items |
 | `meridian mars sync` | Compile packages into `.mars/`; materialize configured harness targets |
 | `meridian mars link DIR` | Link compiled output into a harness tool directory |
-| `meridian mars list` | Show installed agents (grouped by mode) and skills |
+| `meridian mars unlink DIR` | Remove a link target |
+| `meridian mars list` | Show installed agents, skills, and bootstrap docs by name and description |
 | `meridian mars upgrade` | Fetch latest versions and sync |
+| `meridian mars migrate [--check]` | Rewrite pre-v1 authored content to schema v1; `--check` lists the changes and exits 1 |
+| `meridian mars check [PATH]` | Validate a package's schema, structure, and plugin output |
+| `meridian mars provide <provider>@<version>=<dir>` | Install a host's own skills under `.mars/skills/`; Meridian runs this itself on launch |
+| `meridian mars repair` | Rebuild managed state from config and dependencies |
 | `meridian mars doctor` | Check for drift and integrity issues |
+
+Mars also has `adopt`, `override`, `rename`, `resolve`, `outdated`, `why`, `cache`,
+`version`, `build`, `validate`, `export`, `agents`, and `skills`; run `meridian mars <command> --help`, or read Mars's
+[CLI reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/cli/commands.md).
+The `models` commands are under
+[Configuration & Diagnostics](#configuration--diagnostics).
 
 Mars config (`mars.toml`, plus local Mars overlays) owns package dependencies,
 targets, model aliases/catalog settings, project routing defaults
@@ -563,7 +580,7 @@ hooks, harness defaults, and primary-session defaults.
 
 Meridian CLI processes default `MERIDIAN_MANAGED=1` in their environment, while preserving an explicit outer override. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc. `[settings.meridian.agent_copy] harnesses = ["claude"]` is the selective override when `.claude` is an effective managed target; it materializes qualifying Claude-native copies even under managed mode or `agent_emission = "never"`.
 
-In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only with Mars Claude `agent_copy` plus an effective `.claude` managed target. Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
+In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only when Mars installed at least one agent into `.claude` (recorded in `.mars/native-agents.json` by the last sync, whatever caused it: `agent_copy` in any Mars config layer, `agent_emission = "always"`, or a bare `mars sync` run outside Meridian). Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
 Headless Claude spawns are allowed by default. To prevent `meridian spawn -a <agent>` from launching them, set:
 
@@ -607,7 +624,16 @@ directory actually read, so a Mars-provided skill points at
 
 ## Spawn References
 
-Several commands accept symbolic spawn references in addition to literal IDs:
+Every spawn command (`show`, `status`, `children`, `wait`, `cancel`, `done`, `rearm`,
+`report`, `message`) takes a spawn ID (`p123`), a chat ID (`c123`) or a raw harness
+session ID. A chat or raw ID names the run live in that chat now (a native `/resume`
+takeover is followed on a best-effort basis), else the spawn that ran it. `spawn
+cancel` on a primary still needs `--force`. A ref that names nothing fails with one
+not-found error.
+
+Every spawn command above, `--continue`, `--fork`, `--fork-fresh`, `--from`,
+`session log`/`export`/`search` and `session repair` also accept symbolic references.
+`spawn message` is the exception and refuses them, because they name finished spawns:
 
 | Reference | Resolves to |
 | --------- | ----------- |

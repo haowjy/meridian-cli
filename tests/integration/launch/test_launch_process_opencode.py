@@ -145,7 +145,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         execution_cwd=task_cwd,
         session=SessionRequest(
             requested_harness_session_id="existing-opencode-session",
-            continue_chat_id="c-opencode",
+            continue_chat_id="c9009",
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )

@@ -289,7 +289,7 @@ def test_continue_of_superseded_spawn_refuses_live_successor(
     assert "p1 was continued as p2" in (runtime.root / "cli-2.log").read_text()
 
 
-def test_background_continue_publishes_successor_before_parent_returns(
+def test_second_continue_before_first_worker_starts_runs_one_harness(
     runtime: Runtime,
 ) -> None:
     runtime.orphan()
@@ -297,14 +297,15 @@ def test_background_continue_publishes_successor_before_parent_returns(
     first = runtime.cli(*continue_args(False, background=True))
     runtime.pid("p2.worker-gate.pid")
     assert first.wait(timeout=30) == 0
-
-    chat_id = runtime.row("p1")["chat_id"]
-    chat = chat_record(runtime.root / "runtime", chat_id)
-    assert chat is not None
-    assert chat.spawn_id == "p2"
-
+    # p2's worker has not started its session: nothing names p2 as the chat's owner yet.
+    second = runtime.cli(*continue_args(False, background=True))
+    second.wait(timeout=30)
     (runtime.root / "p2.worker-release").touch()
     runtime.started("p2")
+    (runtime.root / "p3.worker-release").touch()
+    until(lambda: runtime.row("p3")["status"] == "failed")
+    assert not (runtime.root / "p3.pid").exists(), "second continue started a harness"
+    assert alive(runtime.pid("p2.pid"))
 
 
 def test_continue_ignores_pruned_successor(runtime: Runtime) -> None:
@@ -423,20 +424,19 @@ def test_detached_session_descendant_survives_sweep(runtime: Runtime) -> None:
     assert process.wait(timeout=30) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="PR 7 keeps the source lock across continue-in-place")
 def test_concurrent_continue_of_dead_source(runtime: Runtime) -> None:
     runtime.orphan()
-    # Neither follow-up gets to finish; both compete for the dead source.
+    # Both follow-ups race through the sweep; the chat lock lets one start a harness.
     runtime.env["FAKE_RACE"] = "first"
     first = runtime.cli("spawn", "--continue", "p1", "-m", "haiku", "-p", "hold", "--bg")
     runtime.env["FAKE_RACE"] = "second"
     second = runtime.cli("spawn", "--continue", "p1", "-m", "haiku", "-p", "hold", "--bg")
-    codes = [process.wait(timeout=30) for process in (first, second)]
-    # Background CLI exit precedes worker adoption. Observe every successful
-    # launch before the expected failure so teardown owns all resulting groups.
-    for number in range(2, 2 + codes.count(0)):
-        runtime.started(f"p{number}")
-    assert sorted(codes) == [0, 1]
+    for process in (first, second):
+        assert process.wait(timeout=30) == 0
+    until(lambda: any((runtime.root / f"p{n}.pid").exists() for n in (2, 3)))
+    until(lambda: {runtime.row(f"p{n}")["status"] for n in (2, 3)} & {"failed"})
+    started = [n for n in (2, 3) if (runtime.root / f"p{n}.pid").exists()]
+    assert len(started) == 1, f"harnesses started for p{started}"
 
 
 def lock_held(path: Path) -> bool:

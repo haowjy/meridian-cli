@@ -44,7 +44,6 @@ class HookConfigLoad:
 
     config: HooksConfig
     errors: tuple[str, ...] = ()
-    warnings: tuple[str, ...] = ()
 
     def require_valid(self) -> HooksConfig:
         """Return the config or raise every invalid-row diagnostic."""
@@ -59,19 +58,18 @@ class HookConfigLoad:
 
 def _hooks_from_payload(
     payload: dict[str, object], *, source: str
-) -> tuple[tuple[Hook, ...], tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[Hook, ...], tuple[str, ...]]:
     hooks: list[Hook] = []
     errors: list[str] = []
-    warnings: list[str] = []
 
     raw_hooks = payload.get("hooks")
     if raw_hooks is None:
-        return tuple(hooks), (), ()
+        return tuple(hooks), ()
 
     try:
         rows = hook_row_values(raw_hooks, source=f"{source}.hooks")
     except ValueError as exc:
-        return (), (str(exc),), ()
+        return (), (str(exc),)
 
     for index, raw_row in enumerate(rows, start=1):
         row_source = f"{source}.hooks[{index}]"
@@ -82,12 +80,10 @@ def _hooks_from_payload(
                 source=source,
                 row_source=row_source,
             )
-            hooks.extend(loaded.hooks)
-            if loaded.warning is not None:
-                warnings.append(loaded.warning)
+            hooks.extend(loaded)
         except ValueError as exc:
             errors.append(_named_row_error(raw_row, exc))
-    return tuple(hooks), tuple(errors), tuple(warnings)
+    return tuple(hooks), tuple(errors)
 
 
 def _named_row_error(raw_row: object, exc: ValueError) -> str:
@@ -124,24 +120,21 @@ def load_hooks_config_report(
 
     hooks: list[Hook] = list(_DEFAULT_HOOKS)
     errors: list[str] = []
-    warnings: list[str] = []
     for layer in iter_config_layers(
         project_root,
         authority=authority,
         user_config=user_config,
     ):
-        layer_hooks, layer_errors, layer_warnings = _hooks_from_payload(
+        layer_hooks, layer_errors = _hooks_from_payload(
             layer.payload,
             source=layer.name,
         )
         hooks.extend(layer_hooks)
         errors.extend(layer_errors)
-        warnings.extend(layer_warnings)
 
     return HookConfigLoad(
         config=HooksConfig(hooks=_apply_name_overrides(tuple(hooks))),
         errors=tuple(errors),
-        warnings=tuple(warnings),
     )
 
 

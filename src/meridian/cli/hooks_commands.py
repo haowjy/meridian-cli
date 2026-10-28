@@ -12,7 +12,7 @@ from meridian.cli.hooks_authority import (
     manual_hook_authority_scope,
     should_suppress_manual_hook_authority,
 )
-from meridian.cli.invocation import Emitter, current_output_sink, emit
+from meridian.cli.invocation import Emitter, emit
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.hooks.types import HookEventName
@@ -38,15 +38,11 @@ def _resolved_project_root() -> str:
 def _hooks_list(emit: Emitter) -> None:
     with manual_hook_authority_scope(suppress=should_suppress_manual_hook_authority()):
         output = hooks_list_sync(HookListInput(project_root=_resolved_project_root()))
-        for warning in output.warnings:
-            current_output_sink().warning(warning)
         emit(output)
 
 
 def _hooks_check(emit: Emitter) -> None:
     output = hooks_check_sync(HookCheckInput(project_root=_resolved_project_root()))
-    for warning in output.warnings:
-        current_output_sink().warning(warning)
     emit(output)
     if not output.ok:
         raise SystemExit(1)
@@ -82,8 +78,6 @@ def _hooks_run(
                 project_root=_resolved_project_root(),
             )
         )
-        for warning in output.warnings:
-            current_output_sink().warning(warning)
         emit(output)
 
 

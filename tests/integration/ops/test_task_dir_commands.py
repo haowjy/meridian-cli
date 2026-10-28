@@ -259,9 +259,9 @@ def test_work_task_dir_ignores_spawn_scope_and_inherited_env(
         harness="codex",
         harness_session_id="session-work",
         model="gpt-5.4",
-        chat_id="chat-work",
+        chat_id="c9011",
     )
-    session_store.set_work_attachments(runtime.authority.runtime_root, {"chat-work": item.name})
+    session_store.set_work_attachments(runtime.authority.runtime_root, {"c9011": item.name})
 
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-work")
     monkeypatch.setenv("MERIDIAN_TASK_DIR", inherited.as_posix())
@@ -270,7 +270,7 @@ def test_work_task_dir_ignores_spawn_scope_and_inherited_env(
 
     output = work_task_dir_sync(
         WorkTaskDirInput(
-            chat_id="chat-work",
+            chat_id="c9011",
             project_root=project_root.as_posix(),
         )
     )

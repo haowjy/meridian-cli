@@ -37,10 +37,8 @@ class HookRegistry:
                 authority=authority,
             )
             self._config = loaded.require_valid()
-            self._warnings = loaded.warnings
         else:
             self._config = hooks_config
-            self._warnings = ()
         self._hooks = {(hook.name, hook.event): hook for hook in self._config.hooks}
         self._by_event: dict[HookEventName, list[Hook]] = {}
         self._build_event_index()
@@ -79,11 +77,6 @@ class HookRegistry:
         """Return all effective hooks after precedence/override resolution."""
 
         return list(self._config.hooks)
-
-    def get_warnings(self) -> tuple[str, ...]:
-        """Return one compatibility warning per deprecated config row."""
-
-        return self._warnings
 
     def get_hooks_for_event(self, event: HookEventName) -> list[Hook]:
         """Return enabled hooks for one event in deterministic execution order."""

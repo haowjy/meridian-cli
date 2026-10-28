@@ -34,7 +34,7 @@ def _write_v4_row(
     spawn_store.start_spawn(
         runtime_root,
         spawn_id=spawn_id,
-        chat_id=current_chat_id or "c-seed",
+        chat_id=current_chat_id or "c9001",
         model="test",
         agent="",
         harness="codex",

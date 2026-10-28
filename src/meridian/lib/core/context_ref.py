@@ -4,7 +4,6 @@ The spawn resolver (``ops.spawn.context_ref``) builds these at the request bound
 launch carries and renders them without resolving anything itself.
 """
 
-import re
 from collections.abc import Sequence
 from typing import Literal
 from uuid import UUID
@@ -52,10 +51,6 @@ class SessionContextRef(BaseModel):
 
 type ContextRef = SpawnContextRef | SessionContextRef
 
-# A chat handle (``c12``), as opposed to a spawn id or a native session id.
-CHAT_REF_RE = re.compile(r"^c\d+$")
-
-
 def resolved_context_ref_value(ref: ContextRef) -> str:
     """Return the external resolved reference value for operation output."""
 
@@ -72,11 +67,6 @@ def _render_context_ref(ref: ContextRef) -> str:
         tag_attrs = f'chat="{ref.chat_id}"'
         if ref.primary_spawn_id:
             tag_attrs += f' primary_spawn="{ref.primary_spawn_id}"'
-        transcript_ref = (
-            ref.chat_id
-            if CHAT_REF_RE.fullmatch(ref.chat_id) or ref.primary_spawn_id is None
-            else ref.primary_spawn_id
-        )
         lines = [
             f"<prior-session-context {tag_attrs}>",
             f"# Prior session: {ref.chat_id}",
@@ -90,7 +80,7 @@ def _render_context_ref(ref: ContextRef) -> str:
             [
                 "",
                 "## Explore Further",
-                f"- Session transcript: `meridian session log {transcript_ref}`",
+                f"- Session transcript: `meridian session log {ref.chat_id}`",
             ]
         )
         if ref.primary_spawn_id:
@@ -147,7 +137,6 @@ def context_ref_values(refs: Sequence[ContextRef]) -> tuple[str, ...]:
 
 
 __all__ = [
-    "CHAT_REF_RE",
     "ContextRef",
     "SessionContextRef",
     "SpawnContextRef",

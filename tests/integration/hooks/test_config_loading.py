@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.hooks.config import load_hooks_config, load_hooks_config_report
-from meridian.lib.ops.hooks import HookListInput, hooks_list_sync
 
 
 @pytest.mark.parametrize(
@@ -93,163 +92,41 @@ def test_hook_config_model_normalizes_closed_values(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("configured", "replacement", "extra_warning"),
+    ("row", "expected"),
     [
-        ("spawn.start", "spawn.started", "This row will now run"),
-        ("spawn.running", "spawn.started", None),
-        ("spawn.finalized", "spawn.finished", None),
-        ("work.start", "work.activated", "This row will now run"),
-        ("work.started", "work.activated", None),
-        ("session.responded", "notify.your_turn", None),
-        ("session.cache_expiring", "notify.cache_expiring", None),
-    ],
-)
-def test_deprecated_event_names_warn_and_register_on_their_replacement(
-    tmp_path: Path,
-    configured: str,
-    replacement: str,
-    extra_warning: str | None,
-) -> None:
-    (tmp_path / "meridian.toml").write_text(
-        "[[hooks]]\n"
-        'name = "deprecated-event"\n'
-        f'event = "{configured}"\n'
-        'command = "echo deprecated"\n',
-        encoding="utf-8",
-    )
-
-    report = load_hooks_config_report(tmp_path)
-
-    hook = next(hook for hook in report.config.hooks if hook.name == "deprecated-event")
-    assert report.errors == ()
-    assert len(report.warnings) == 1
-    assert f"`{configured}` is deprecated; use `{replacement}`." in report.warnings[0]
-    assert "It will be rejected in the next minor release." in report.warnings[0]
-    if extra_warning is not None:
-        assert extra_warning in report.warnings[0]
-    assert hook.event == replacement
-    assert hook.configured_event == configured
-    assert hook.deprecated is True
-
-    listed = next(
-        item
-        for item in hooks_list_sync(HookListInput(project_root=str(tmp_path))).hooks
-        if item.name == "deprecated-event"
-    )
-    assert listed.event == replacement
-    assert listed.status == "deprecated"
-
-
-def test_deprecated_failure_policy_warns_and_is_ignored(tmp_path: Path) -> None:
-    (tmp_path / "meridian.toml").write_text(
-        "[[hooks]]\n"
-        'name = "old-policy"\n'
-        'event = "spawn.finished"\n'
-        'command = "echo deprecated"\n'
-        'failure_policy = "abort"\n',
-        encoding="utf-8",
-    )
-
-    report = load_hooks_config_report(tmp_path)
-
-    hook = next(hook for hook in report.config.hooks if hook.name == "old-policy")
-    assert report.errors == ()
-    assert len(report.warnings) == 1
-    assert (
-        "`failure_policy` is deprecated; it has no effect and will be rejected "
-        "in the next minor release."
-    ) in report.warnings[0]
-    assert hook.deprecated is True
-
-
-@pytest.mark.parametrize(
-    ("event", "condition", "expected"),
-    [
+        ('event = "spawn.start"', "`spawn.start` was removed; use `spawn.started`"),
+        ('event = "session.responded"', "`session.responded` was removed; use `notify.your_turn`"),
         (
-            "spawn.started",
-            'status = ["success"]',
-            "condition is only available for `spawn.finished`, got `spawn.started`",
+            'event = "spawn.finished"\nfailure_policy = "abort"',
+            "`failure_policy` was removed; hook failures always continue",
         ),
         (
-            "work.activated",
-            'kind = ["child"]',
-            "condition is unavailable for `work.activated`",
+            'event = "spawn.finished"\n[hooks.when]\nstatus = ["success", "skipped"]',
+            "expected values in [cancelled, failure, success, timeout], got 'skipped'",
         ),
         (
-            "work.created",
-            'agent = "coder"',
-            "condition is unavailable for `work.created`",
+            'event = "spawn.started"\n[hooks.when]\nstatus = ["success"]',
+            "condition is only available for 'spawn.finished', got 'spawn.started'",
+        ),
+        (
+            'event = "work.activated"\n[hooks.when]\nkind = ["child"]',
+            "condition is unavailable for 'work.activated'",
         ),
     ],
 )
-def test_impossible_explicit_conditions_warn_and_skip_the_row(
-    tmp_path: Path,
-    event: str,
-    condition: str,
-    expected: str,
+def test_removed_hook_names_and_impossible_conditions_are_rejected(
+    tmp_path: Path, row: str, expected: str
 ) -> None:
     (tmp_path / "meridian.toml").write_text(
-        "[[hooks]]\n"
-        'name = "impossible"\n'
-        f'event = "{event}"\n'
-        'command = "echo impossible"\n'
-        "[hooks.when]\n"
-        f"{condition}\n",
-        encoding="utf-8",
+        f'[[hooks]]\nname = "old"\ncommand = "echo old"\n{row}\n', encoding="utf-8"
     )
 
     report = load_hooks_config_report(tmp_path)
 
-    assert report.errors == ()
-    assert len(report.warnings) == 1
-    assert expected in report.warnings[0]
-    assert "the row is skipped" in report.warnings[0]
-    assert all(hook.name != "impossible" for hook in report.config.hooks)
-
-
-def test_deprecated_skipped_status_warns_and_drops_only_that_value(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "meridian.toml").write_text(
-        "[[hooks]]\n"
-        'name = "old-status"\n'
-        'event = "spawn.finished"\n'
-        'command = "echo deprecated"\n'
-        "[hooks.when]\n"
-        'status = ["success", "skipped"]\n'
-        "\n"
-        "[[hooks]]\n"
-        'name = "only-old-spawn-status"\n'
-        'event = "spawn.finished"\n'
-        'command = "echo never"\n'
-        "[hooks.when]\n"
-        'status = ["skipped"]\n'
-        "\n"
-        "[[hooks]]\n"
-        'name = "only-old-work-status"\n'
-        'event = "work.done"\n'
-        'command = "echo never"\n'
-        "[hooks.when]\n"
-        'status = ["skipped"]\n',
-        encoding="utf-8",
-    )
-
-    report = load_hooks_config_report(tmp_path)
-
-    hook = next(hook for hook in report.config.hooks if hook.name == "old-status")
-    assert report.errors == ()
-    assert len(report.warnings) == 3
-    assert '`when.status = ["skipped"]` is deprecated' in report.warnings[0]
-    assert "has been dropped because it never matched" in report.warnings[0]
-    assert hook.when is not None
-    assert hook.when.status == ("success",)
-    assert hook.deprecated is True
-    assert all(
-        hook.name not in {"only-old-spawn-status", "only-old-work-status"}
-        for hook in report.config.hooks
-    )
-    for warning in report.warnings[1:]:
-        assert "the row is skipped because it could never match" in warning
+    assert len(report.errors) == 1
+    assert report.errors[0].startswith("hook 'old': Invalid value for ")
+    assert expected in report.errors[0]
+    assert all(hook.name != "old" for hook in report.config.hooks)
 
 
 @pytest.mark.parametrize(

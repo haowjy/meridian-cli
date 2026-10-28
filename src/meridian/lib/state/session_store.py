@@ -17,12 +17,15 @@ from meridian.lib.core.native_identity import (
     BindSource,
     NativeEntryMismatch,
     NativeKeyFields,
+    NativeSessionUnavailable,
 )
+from meridian.lib.core.refs import is_chat_id
 from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
 )
 from meridian.lib.platform.locking import (
+    FileLockTimeout,
     acquire_file_lock,
     lock_file,
     release_file_lock,
@@ -94,6 +97,7 @@ from meridian.lib.utils.json_shapes import (
 _SESSION_CHAT_ID_FIELD = re.compile(rb'"chat_id"\s*:\s*"((?:[^"\\]|\\.)*)"')
 # Only ``\u00XX`` escapes can spell a letter of ``chat_id`` (c h a t _ i d).
 _ESCAPED_CHAT_ID_KEY_LETTER = re.compile(rb"\\u00(?:6[13489]|74|5[fF])")
+_CHAT_LOCK_WAIT_SECONDS = 2.0
 
 
 def _row_may_select_chat(raw: bytes, chat_ids: Collection[str]) -> bool:
@@ -189,13 +193,6 @@ def chat_record(
     for event in chat_rows(root, chat, require_supported=require_supported):
         project_session_event(records, event)
     return records.get(chat)
-
-
-def session_exists(root: Path, chat: str) -> bool:
-    """Return whether the chat has an authoritative session record."""
-
-    normalized = chat.strip()
-    return bool(normalized) and chat_record(root, normalized) is not None
 
 
 def chat_generations(root: Path, chat: str) -> tuple[SessionRecord, ...]:
@@ -530,7 +527,7 @@ def _records_by_session(
 
 
 def _session_sort_key(chat_id: str) -> tuple[int, str]:
-    if chat_id.startswith("c") and chat_id[1:].isdigit():
+    if is_chat_id(chat_id):
         return (int(chat_id[1:]), chat_id)
     return (10**9, chat_id)
 
@@ -564,6 +561,10 @@ def _discard_expected_session_lock(
         del _SESSION_LOCK_HANDLES[key]
 
 
+class ChatBusyError(ValueError):
+    """A session start refused because a live run holds the chat."""
+
+
 def start_session(
     runtime_root: Path,
     harness: str,
@@ -592,12 +593,14 @@ def start_session(
     """Append a session start event and acquire a lifetime session lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
+    resolved_chat_id = chat_id.strip() if chat_id is not None else ""
+    if resolved_chat_id and not is_chat_id(resolved_chat_id):
+        raise ValueError(f"Chat ID '{resolved_chat_id}' is not of the form c<digits>")
     project_lifetime_handle = acquire_file_lock(
         paths.project_lifetime_flock,
         mode="shared",
         read_only_existing=True,
     )
-    resolved_chat_id = chat_id.strip() if chat_id is not None else ""
     handle: IO[bytes] | None = None
     session_instance_id = uuid.uuid4().hex
     try:
@@ -605,7 +608,23 @@ def start_session(
         if not resolved_chat_id:
             resolved_chat_id = reserve_chat_id(runtime_root)
         lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
-        handle = acquire_file_lock(lock_path)
+        try:
+            # A live run keeps its entry chat's lock until it exits, so never wait on it;
+            # the short wait covers `doctor`'s brief hold and an owner mid-exit.
+            handle = acquire_file_lock(lock_path, timeout=_CHAT_LOCK_WAIT_SECONDS)
+        except FileLockTimeout:
+            lease = _read_session_lease_data(paths, resolved_chat_id)
+            holder = (
+                f" by pid {lease.owner_pid}"
+                if lease
+                and lease.owner_pid
+                and is_process_alive_with_birth(lease.owner_pid, lease.owner_created_at_epoch)
+                else ""
+            )
+            raise ChatBusyError(
+                f"Chat {resolved_chat_id} is held{holder}; continue after it exits, "
+                f"or --fork {resolved_chat_id}"
+            ) from None
         event = SessionStartEvent(
             chat_id=ChatId(resolved_chat_id),
             kind=kind,
@@ -645,7 +664,7 @@ def start_session(
                     excluding_spawn_id=spawn_id,
                 )
                 if observer is not None:
-                    raise ValueError(f"Chat {resolved_chat_id} is in use by live run {observer}")
+                    raise ChatBusyError(f"Chat {resolved_chat_id} is in use by live run {observer}")
                 outcome = bind(existing.key_fields(), event.key_fields())
                 if isinstance(outcome, Conflict):
                     report_conflict(event.chat_id, outcome, "start")
@@ -1212,17 +1231,24 @@ def get_session_records(
     ]
 
 
-def resolve_session_ref(
+def native_generations(
     runtime_root: Path,
     ref: str,
     *,
     harness: str | None = None,
-) -> SessionRecord | None:
-    """Resolve a native ID in its harness namespace; reject ambiguous ownership."""
+) -> list[SessionRecord]:
+    """Every generation recorded under a native ID, best pick last.
+
+    The one native-ID lookup and the one pick rule, shared by resume and read: the
+    newest generation that can name its session file (a legacy binding has no native
+    store), else the newest. A native ID names one session file: ownership split across
+    harnesses or native stores is ambiguous and refused. Ties on start time go to the
+    higher chat number.
+    """
 
     normalized = ref.strip()
     if not normalized:
-        return None
+        return []
 
     matches = [
         record
@@ -1230,14 +1256,21 @@ def resolve_session_ref(
         if normalized == record.harness_session_id
         and (harness is None or record.harness == harness)
     ]
-    if not matches:
-        return None
     if len({record.harness for record in matches}) > 1:
         raise ValueError(
             "Native session reference is ambiguous across harnesses. "
             "Specify --harness or use a tracked chat/spawn reference."
         )
-    return max(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
+    if len({key for record in matches if (key := record.native_key()) is not None}) > 1:
+        raise NativeSessionUnavailable(normalized, "ambiguous_native_file")
+    return sorted(
+        matches,
+        key=lambda item: (
+            item.native_key() is not None,
+            item.started_at,
+            _session_sort_key(item.chat_id),
+        ),
+    )
 
 
 def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:

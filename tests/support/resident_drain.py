@@ -250,7 +250,7 @@ def start_row(
     spawn_store.start_spawn(
         runtime_root,
         spawn_id=SpawnId(spawn_id),
-        chat_id=spawn_id,
+        chat_id=f"c{spawn_id.removeprefix('p')}",
         parent_id=parent_id,
         model="test-model",
         agent="test-agent",

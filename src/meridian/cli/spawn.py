@@ -88,12 +88,18 @@ _SPAWN_USAGE_EPILOGUE = (
     "Harness command lifecycle ≠ meridian spawn lifecycle. The launch command\n"
     "returning or dying does not stop the spawn.\n\n"
     "If the launch was killed, reconcile with `meridian spawn wait` or\n"
-    "`meridian status`.\n"
+    "`meridian spawn status`.\n"
 )
-# Ref forms by what the command does with the target. A chat ID names that chat's own
-# session. `resolve_spawn_reference` also accepts @-selectors everywhere; they name
-# finished spawns, so help lists them only where inspecting one makes sense.
-_RUNNING_REF_FORMS = "spawn ID or chat ID (that chat's own session)"
+# Ref forms by what the command does with the target. A chat ID names the run live in
+# that chat now, else the spawn that ran it. `resolve_spawn_target` also accepts
+# @-selectors everywhere; they name finished spawns, so help lists them only where
+# inspecting one makes sense. A raw harness session ID resolves too, but help leaves it
+# to `--continue` / `--fork`, which document it.
+_RUNNING_REF_FORMS = (
+    "spawn ID or chat ID (a chat names the run live in it now, else the spawn that ran it)"
+)
+# `spawn message` has to reach a live process, so a chat names only its running session.
+_MESSAGE_REF_FORMS = "spawn ID or chat ID (that chat's running session)"
 _INSPECT_REF_FORMS = f"{_RUNNING_REF_FORMS}, or @latest / @last-failed / @last-completed"
 _SELECTORS_NOTE = "@-selectors also resolve but name finished spawns"
 
@@ -1381,7 +1387,7 @@ def _spawn_message(
         Parameter(
             show_default=False,
             help=(
-                f"Required. Session to message: {_RUNNING_REF_FORMS}. IDs are per project: "
+                f"Required. Session to message: {_MESSAGE_REF_FORMS}. IDs are per project: "
                 "use `-C <repo>` for a session elsewhere."
             ),
         ),
@@ -1398,7 +1404,7 @@ def _spawn_message(
     if spawn_id is not None:
         print(
             "warning: `--spawn-id` is deprecated and will be removed in the next minor "
-            "release; pass the ref positionally or as `--ref`.",
+            "release; pass the ref positionally.",
             file=sys.stderr,
         )
         ref = ref or spawn_id
@@ -1418,7 +1424,7 @@ def _spawn_message(
 def _spawn_inject_deprecated(
     ref: Annotated[
         str,
-        Parameter(show_default=False, help=f"Required. Session to message: {_RUNNING_REF_FORMS}."),
+        Parameter(show_default=False, help=f"Required. Session to message: {_MESSAGE_REF_FORMS}."),
     ] = "",
     message: Annotated[
         str,
@@ -1447,30 +1453,6 @@ def _spawn_log_removed(
         "`meridian spawn log` was removed. Use "
         f"`meridian session log {spawn_id}` for spawn progress or transcript output."
     )
-
-
-def _spawn_files_deprecated(
-    emit: Emitter,
-    spawn_id: Annotated[
-        str,
-        Parameter(help="Spawn id."),
-    ],
-    null: Annotated[
-        bool,
-        Parameter(name=["-0", "--null"], help="Accepted and ignored."),
-    ] = False,
-) -> None:
-    # Deprecated; removal tracked in cli/.context/TODO. No harness ever
-    # produced the manifest, so the old command always listed nothing; keep that
-    # output so `spawn files <id> | xargs git add` pipelines keep behaving.
-    _ = null
-    print(
-        "warning: `meridian spawn files` is deprecated and will be removed in the "
-        "next minor release; it never listed any files.",
-        file=sys.stderr,
-    )
-    if get_global_options().output.format == "json":
-        emit({"spawn_id": spawn_id, "written_files": []})
 
 
 def _append_spawn_help_epilogue(app: App) -> None:
@@ -1562,12 +1544,5 @@ def register_spawn_commands(app: App) -> None:
         show=False,
     )
     registered.add("spawn.log")
-    app.command(
-        partial(_spawn_files_deprecated, emit),
-        name="files",
-        help="Deprecated: never listed any files; removed in the next minor release.",
-        show=False,
-    )
-    registered.add("spawn.files")
     subcommands = frozenset(command.removeprefix("spawn.") for command in registered)
     app.default(partial(_spawn_create, subcommands, emit))

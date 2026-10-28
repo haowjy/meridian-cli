@@ -42,8 +42,8 @@ def _spawn(
     root: Path,
     name: str,
     *,
-    chat: str = "c-owner",
-    owner: str | None = "c-owner",
+    chat: str = "c9008",
+    owner: str | None = "c9008",
     parent: str | None = None,
     kind: SpawnKind = "child",
     launch_mode: LaunchMode | None = None,
@@ -163,7 +163,7 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
     targets = spawn_api._resolve_wait_targets(
         SpawnWaitInput(),
         root,
-        RuntimeContext(spawn_id=SpawnId(primary), chat_id="c-owner"),
+        RuntimeContext(spawn_id=SpawnId(primary), chat_id="c9008"),
         deadline=frozen_history_clock.monotonic() + 5,
     )
 
@@ -217,7 +217,7 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
     targets = spawn_api._resolve_wait_targets(
         SpawnWaitInput(),
         root,
-        RuntimeContext(spawn_id=SpawnId("p1"), chat_id="c-owner"),
+        RuntimeContext(spawn_id=SpawnId("p1"), chat_id="c9008"),
         deadline=frozen_history_clock.monotonic() + 5,
     )
 
@@ -245,7 +245,7 @@ def test_discovery_rereads_terminal_authority_for_active_index_row(
         lambda self, **kwargs: (stale_active_row,),
     )
 
-    rows = spawn_api._discover_pending_spawns(root, "c-owner")
+    rows = spawn_api._discover_pending_spawns(root, "c9008")
 
     assert rows == []
 
@@ -263,6 +263,6 @@ def test_discovery_does_not_use_the_unfiltered_spawn_scan(
 
     monkeypatch.setattr(spawn_api, "indexed_spawn_scan", reject_unfiltered_scan)
 
-    rows = spawn_api._discover_pending_spawns(root, "c-owner")
+    rows = spawn_api._discover_pending_spawns(root, "c9008")
 
     assert [row.id for row in rows] == [spawn_id]

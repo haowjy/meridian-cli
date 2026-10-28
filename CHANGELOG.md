@@ -6,6 +6,52 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-28
+
+### Changed
+- Spawn commands (`show`, `status`, `children`, `wait`, `cancel`, `done`, `rearm`, `report`, `message`) accept a raw harness session ID as well as a spawn ID or chat ID. A chat or raw ID names the run live in that chat now (following a native `/resume` on a best-effort basis), else the spawn that ran it. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#chat-and-session-references).
+- `--continue`, `--fork` and `session log`/`export`/`search` accept `@latest`, `@last-failed` and `@last-completed`.
+- `--from cN` names chat cN's own transcript; `--from pN` names that spawn's current chat. A handoff passes the run's spawn ID so it follows the conversation across `/clear`.
+- A `spawn message` frame gives the sender's current chat as its reply address.
+- A raw harness session ID can be recorded by several session starts (generations). Resume and read now pick the same one: the most recent start that recorded the harness's session file, or the most recent start if none did. An ID recorded under two different session files is refused as ambiguous.
+- A chat ID must be `c<digits>`; any other value is a raw harness session ID.
+
+### Fixed
+- A spawn ID, chat ID or selector that names nothing fails with one "not found" error (a raw harness ID with no Meridian record still resumes untracked through primary `--continue`/`--fork` and `spawn --fork`). Before, `spawn children <uuid>` printed `(no children)`, `--continue c99999` tried to resume an "untracked" session named `c99999`, and `spawn message ..` got past its existence check.
+- `--continue` on a chat another live run still holds fails within seconds with one error line, instead of blocking until that run exits.
+- A failed `--continue` no longer makes the failed spawn the chat's owner, and a continue refused before its session starts resumes its own chat, not the caller's.
+- `spawn --fork` inherits the forked spawn's goal for chat IDs and selectors, and for `pN` takes pN's own goal.
+- `session export cN` writes its metadata; `session export --file` no longer fails on an ambiguous native ID.
+- Chat-ref spawn commands no longer fail when the history index is behind or reports a generation mismatch.
+- Help and docs that contradicted the code: `session -h` claimed a `$MERIDIAN_CHAT_ID` default, `MERIDIAN_CHAT_ID` was called the root chat, the `--spawn-id` deprecation had no upgrade note.
+
+## [0.17.0] - 2026-10-28
+
+### Upgrade notes
+- After upgrading, run `meridian mars sync` (and `meridian mars --user sync` if you keep profiles in `~/.meridian/mars`). Launches do not sync, so until you do, profiles installed by Mars 0.20.2 keep top-level keys that meridian-cli no longer reads. See [Mars 0.23.4](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-0234).
+- Move a profile's `resident-rearm-budget` and `meridian-capabilities` under `harness-overrides.meridian-cli` (as `resident-rearm-budget` and `capabilities`); `meridian mars migrate` does it. A dependency package declaring `[package] schema = 1` that still has the old keys fails `meridian mars add`, and fails `meridian mars sync` for the whole project if installed before the upgrade. See [Mars 0.23.4](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-0234).
+- A Mars dependency narrowed by an include filter (`skills = [...]`, `agents = [...]` on its `mars.toml` entry) now contributes its MCP servers; a newly visible server replaces a hand-written entry of the same name. See [MCP servers and hooks](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mcp-servers-and-hooks).
+- A user `config.toml` (`$MARS_CONFIG_DIR/config.toml`, else the platform `mars/config.toml`) now accepts `[settings]`, `[models]`, `[agents]` and `[skills]`, ranking below `mars.toml` (`config.toml < mars.toml < mars.local.toml < CLI`). A key Mars once ignored with a warning, such as `default_model`, now applies, so fix or remove a stale one. See [User `config.toml` now applies](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#user-configtoml-now-applies-mars-0233).
+- A direct dependency's MCP servers with the default `local` visibility now register for your project; after `meridian mars sync` they appear in your MCP config and replace a hand-written entry of the same name. See [Default-visibility MCP servers register](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#default-visibility-mcp-servers-register-mars-0234).
+- Mars 0.24.0 writes MCP servers where each harness reads them: Claude in the project's `.mcp.json`, Codex in `.codex/config.toml`, Pi in `.pi/mcp.json`. It stops writing `.claude/.mcp.json` and `.codex/codex_mcp.json`; the next `meridian mars sync` removes its entries there. A `--task-dir` checkout sees the servers only if it has the file. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mcp-servers-move-to-the-files-harnesses-read).
+- A skill's own `skills:` frontmatter no longer pulls other skills, and `meridian mars outdated` fails when the dependency graph cannot resolve. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#selection-and-diagnostics).
+
+### Changed
+- `meridian hooks list`, `check`, `run` and `resolve` no longer emit a `warnings` field in their JSON output.
+- Bundled Mars is 0.24.1, up from 0.20.2 (Mars 0.22.0 renames the namespace to `meridian-cli`). Mars reserves `harness-overrides.meridian-cli`: it keeps the block in the installed profile, never writes it to a harness file, and no longer warns `unknown harness override`.
+- meridian-cli reads the resident rearm budget and Meridian capabilities only from `harness-overrides.meridian-cli`. A profile still using `harness-overrides.meridian` loses those settings silently until renamed; `meridian mars migrate` renames it.
+
+### Removed
+- `meridian spawn files` is removed. It never listed anything. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#spawn-file-listing-removed).
+- `meridian session browse --include-archives` is removed. It had no effect. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#session-browse---include-archives-removed).
+- The old hook event names (`spawn.start`, `spawn.running`, `spawn.finalized`, `work.start`, `work.started`, `session.responded`, `session.cache_expiring`), `failure_policy`, `when.status = ["skipped"]` and conditions an event cannot supply are rejected as hook config errors that name the replacement. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#removed-hook-names-and-keys).
+- A Codex launch whose profile sets `harness-overrides.codex.sandbox_workspace_write.network_access` now fails with a config error that names the profile `network` field. A session an older build recorded with the key keeps running under its stored `network`. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#codex-network_access-native-config-removed).
+
+### Fixed
+- `meridian doctor` no longer reports `updates_check_failed` for a dependency overridden by `mars.local.toml`, and no longer counts it (shown as `?`) as an available update.
+- Claude's native `Agent` tool is allowed whenever Mars installed native agents for Claude, including when `agent_copy` is set only in the user `config.toml`. Before, Meridian kept denying it. Closes #799.
+- Docs: `mars list` output, the agent inventory in the system prompt, overlay tool policy reaching the launch, the Mars command table, and dead Mars links and anchors.
+
 ## [0.16.4] - 2026-10-28
 
 ### Added

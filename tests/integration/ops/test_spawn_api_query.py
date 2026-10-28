@@ -109,7 +109,7 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
     runtime_root = _state_root(project_root)
     verified_id = spawn_store.start_spawn(
         runtime_root,
-        chat_id="c-pi-entry",
+        chat_id="c9006",
         model="test",
         agent="coder",
         harness="pi",
@@ -121,7 +121,7 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
         "pi",
         "native-entry",
         "test",
-        chat_id="c-pi-entry",
+        chat_id="c9006",
         kind="spawn",
         spawn_id=verified_id,
     )
@@ -161,7 +161,7 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id=unresolved_id)
     ).to_cli_wire()
 
-    assert verified["chat_id"] == "c-pi-entry"
+    assert verified["chat_id"] == "c9006"
     assert verified["continue_chat_id"] == "c-pi-exit"
     assert verified["run_boundary"] == {
         "status": "verified",
@@ -237,9 +237,9 @@ def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
     with LaunchSlot() as child_launch, LaunchSlot() as sibling_launch:
         spawn_store.start_spawn(
             runtime_root,
-            spawn_id="p-owner-child",
-            chat_id="c-child",
-            owner_chat_id="c-owner",
+            spawn_id="p9006",
+            chat_id="c9012",
+            owner_chat_id="c9008",
             model="gpt-5.4",
             agent="coder",
             harness="codex",
@@ -248,9 +248,9 @@ def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
         )
         spawn_store.start_spawn(
             runtime_root,
-            spawn_id="p-sibling",
+            spawn_id="p9011",
             chat_id="c-sibling",
-            owner_chat_id="c-owner",
+            owner_chat_id="c9008",
             model="gpt-5.4",
             agent="coder",
             harness="codex",
@@ -259,10 +259,10 @@ def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
         )
 
         child_only = spawn_api.spawn_stats_sync(
-            SpawnStatsInput(project_root=project_root.as_posix(), session="c-child")
+            SpawnStatsInput(project_root=project_root.as_posix(), session="c9012")
         )
         owner_family = spawn_api.spawn_stats_sync(
-            SpawnStatsInput(project_root=project_root.as_posix(), session="c-owner")
+            SpawnStatsInput(project_root=project_root.as_posix(), session="c9008")
         )
 
         assert child_only.total_runs == 1
@@ -290,7 +290,7 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
             prompt="running",
             launch_lock=launch,
         )
-        cancel_context = RuntimeContext(spawn_id="p-owner", chat_id="c11")
+        cancel_context = RuntimeContext(spawn_id="p9005", chat_id="c11")
 
         def _fake_spawn_cancel_sync(
             _payload: SpawnCancelInput,
@@ -429,7 +429,7 @@ def test_spawn_list_and_status_surface_timed_out_status(tmp_path: Path) -> None:
 
     timed_out_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-timeout",
+        spawn_id="p9013",
         chat_id="c-timeout",
         model="gpt-5.4",
         agent="coder",
@@ -445,7 +445,7 @@ def test_spawn_list_and_status_surface_timed_out_status(tmp_path: Path) -> None:
     )
     spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-running",
+        spawn_id="p9010",
         chat_id="c-running",
         model="gpt-5.4",
         agent="coder",
@@ -472,7 +472,7 @@ def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) 
     runtime_root = _state_root(project_root)
     failed_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-failed",
+        spawn_id="p9003",
         chat_id="c-wait",
         model="gpt-5.4",
         agent="coder",
@@ -483,7 +483,7 @@ def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) 
     with LaunchSlot() as pending_launch:
         pending_id = spawn_store.start_spawn(
             runtime_root,
-            spawn_id="p-pending",
+            spawn_id="p9008",
             chat_id="c-wait",
             model="gpt-5.4",
             agent="coder",
@@ -510,7 +510,7 @@ def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) 
         }
         assert (
             output.format_text().splitlines()[0]
-            == "Fail-fast: p-failed failed or timed out. Still pending: p-pending."
+            == f"Fail-fast: {failed_id} failed or timed out. Still pending: {pending_id}."
         )
 
 
@@ -523,7 +523,7 @@ def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
     runtime_root = _state_root(project_root)
     failed_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-failed",
+        spawn_id="p9003",
         chat_id="c-wait-race",
         model="gpt-5.4",
         agent="coder",
@@ -534,7 +534,7 @@ def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
     with LaunchSlot() as finishing_launch:
         finishing_id = spawn_store.start_spawn(
             runtime_root,
-            spawn_id="p-finishing",
+            spawn_id="p9004",
             chat_id="c-wait-race",
             model="gpt-5.4",
             agent="coder",
@@ -587,7 +587,7 @@ def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:
 
     spawn_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-report-toggle",
+        spawn_id="p9009",
         chat_id="c-report-toggle",
         model="gpt-5.4",
         agent="coder",
@@ -651,7 +651,7 @@ def test_spawn_show_and_list_hydrate_primary_and_pi_diagnostics(tmp_path: Path) 
 
     pi_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-cleanup",
+        spawn_id="p9002",
         chat_id="c-cleanup",
         model="gpt-5.4",
         agent="coder",
@@ -706,8 +706,8 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
 
     parent_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-parent",
-        chat_id="c-parent",
+        spawn_id="p9007",
+        chat_id="c9007",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -716,9 +716,9 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
     )
     child_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-child",
+        spawn_id="p9001",
         parent_id=str(parent_id),
-        chat_id="c-child",
+        chat_id="c9012",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -755,8 +755,8 @@ def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
 
     parent_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-parent",
-        chat_id="c-parent",
+        spawn_id="p9007",
+        chat_id="c9007",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -764,9 +764,9 @@ def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
     )
     child_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-child",
+        spawn_id="p9001",
         parent_id=str(parent_id),
-        chat_id="c-child",
+        chat_id="c9012",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -792,8 +792,8 @@ def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_p
 
     parent_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-parent",
-        chat_id="c-parent",
+        spawn_id="p9007",
+        chat_id="c9007",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -801,9 +801,9 @@ def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_p
     )
     child_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-child",
+        spawn_id="p9001",
         parent_id=str(parent_id),
-        chat_id="c-child",
+        chat_id="c9012",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -836,7 +836,7 @@ def test_spawn_show_surfaces_persisted_goal_and_distinct_task_dir(tmp_path: Path
 
     spawn_id = spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p-task-dir",
+        spawn_id="p9012",
         chat_id="c-task-dir",
         model="gpt-5.4",
         agent="coder",

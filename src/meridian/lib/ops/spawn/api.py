@@ -44,6 +44,7 @@ from meridian.lib.launch.continue_replay import (
 )
 from meridian.lib.launch.continue_sweep import sweep_before_continue
 from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
+from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.runtime import (
@@ -128,8 +129,6 @@ from .query import (
     denied_requests,
     detail_from_row,
     read_spawn_row,
-    resolve_spawn_reference,
-    resolve_spawn_references,
 )
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
@@ -144,11 +143,6 @@ class _WaitTargetDiscovery:
     # Every finished owed id seen, including rows the delivery cap held back.
     owed_candidate_ids: frozenset[str] = frozenset()
     discovery_pending: bool = False
-
-
-def _looks_like_spawn_ref(ref: str) -> bool:
-    normalized = ref.strip()
-    return len(normalized) > 1 and normalized[0] == "p" and normalized[1:].isdigit()
 
 
 def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = None) -> None:
@@ -776,7 +770,7 @@ def spawn_children_sync(
     caller_ref = _resolve_caller_spawn_id(payload.spawn_id, ctx)
     if runtime_root is None:
         return SpawnListOutput(spawns=(), text_view="children")
-    spawn_id = resolve_spawn_reference(
+    spawn_id = resolve_spawn_target(
         project_root,
         caller_ref,
         runtime_root=runtime_root,
@@ -979,13 +973,13 @@ def spawn_show_sync(
         normalized = payload.spawn_id.strip()
         raise ValueError(f"Spawn '{normalized}' not found")
     if prepared is not None:
-        spawn_id = resolve_spawn_reference(
+        spawn_id = resolve_spawn_target(
             project_root,
             payload.spawn_id,
             runtime_root=runtime_root,
         )
     else:
-        spawn_id = resolve_spawn_reference(project_root, payload.spawn_id)
+        spawn_id = resolve_spawn_target(project_root, payload.spawn_id)
     row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
@@ -1246,7 +1240,7 @@ def _resolve_signal_spawn_id(
     ctx: RuntimeContext | None,
 ) -> str:
     candidate = _resolve_caller_spawn_id(spawn_id, ctx)
-    resolved_spawn_id = resolve_spawn_reference(
+    resolved_spawn_id = resolve_spawn_target(
         project_root,
         candidate,
         runtime_root=runtime_root,
@@ -1422,13 +1416,13 @@ async def _spawn_cancel_impl(
             runtime_root,
         )
     if prepared is not None:
-        spawn_id = resolve_spawn_reference(
+        spawn_id = resolve_spawn_target(
             project_root,
             payload.spawn_id,
             runtime_root=runtime_root,
         )
     else:
-        spawn_id = resolve_spawn_reference(project_root, payload.spawn_id)
+        spawn_id = resolve_spawn_target(project_root, payload.spawn_id)
     record = spawn_store.get_spawn(runtime_root, spawn_id)
     if record is not None and record.record_mode == "historical":
         raise ValueError("Historical records cannot be cancelled")
@@ -1978,7 +1972,7 @@ def spawn_wait_sync(
         return SpawnWaitMultiOutput()
 
     if has_explicit_ids:
-        blocked_on_ids = resolve_spawn_references(
+        blocked_on_ids = resolve_spawn_targets(
             project_root,
             blocked_on_ids,
             runtime_root=runtime_root,
@@ -2157,15 +2151,12 @@ def _source_spawn_for_follow_up(
     runtime_root: Path | None = None,
     harness_hint: str | None = None,
 ) -> tuple[str, SpawnRecord, ResolvedSessionReference]:
-    ref = payload_spawn_id
-    if ref.strip().startswith("@"):
-        ref = resolve_spawn_reference(project_root, ref, runtime_root=runtime_root)
     try:
         # Resolve tracked chats in their native harness first. A requested
         # harness is not evidence that the chat belongs to that harness.
         resolved_reference = resolve_session_reference(
             project_root,
-            ref,
+            payload_spawn_id,
             runtime_root=runtime_root,
         )
     except ValueError:
@@ -2174,7 +2165,7 @@ def _source_spawn_for_follow_up(
         # An untracked native session ID may need the hint to disambiguate it.
         resolved_reference = resolve_session_reference(
             project_root,
-            ref,
+            payload_spawn_id,
             runtime_root=runtime_root,
             harness_hint=harness_hint,
         )
@@ -2418,15 +2409,7 @@ def spawn_fork_sync(
     requested_agent = payload.agent
     requested_work = payload.work.strip()
     requested_task_dir = (payload.task_dir or "").strip() or None
-    requested_goal = payload.goal
-    if requested_goal is None and _looks_like_spawn_ref(normalized_source_ref):
-        source_row = read_spawn_row(
-            project_root,
-            normalized_source_ref,
-            runtime_root=runtime_root,
-        )
-        if source_row is not None:
-            requested_goal = source_row.goal
+    requested_goal = payload.goal if payload.goal is not None else resolved_reference.source_goal
     requested_harness = (payload.harness or "").strip() or None
     source_harness = (resolved_reference.harness or "").strip() or None
 

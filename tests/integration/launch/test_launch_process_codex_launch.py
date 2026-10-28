@@ -193,7 +193,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
             extra_args=(f"--append-system-prompt={harness_id.value} passthrough system prompt",),
             session=SessionRequest(
                 requested_harness_session_id="00000000-0000-4000-8000-000000000010",
-                continue_chat_id="c-codex",
+                continue_chat_id="c9003",
                 primary_session_mode=SessionMode.RESUME.value,
             ),
         ),
@@ -257,7 +257,7 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         model="gpt-5.4",
         session=SessionRequest(
             requested_harness_session_id="00000000-0000-4000-8000-000000000010",
-            continue_chat_id="c-codex",
+            continue_chat_id="c9003",
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
@@ -350,7 +350,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         execution_cwd=task_cwd,
         session=SessionRequest(
             requested_harness_session_id="00000000-0000-4000-8000-000000000010",
-            continue_chat_id="c-codex",
+            continue_chat_id="c9003",
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
@@ -436,7 +436,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         model="gpt-5.4",
         session=SessionRequest(
             requested_harness_session_id="00000000-0000-4000-8000-000000000010",
-            continue_chat_id="c-codex",
+            continue_chat_id="c9003",
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
@@ -516,7 +516,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         model="gpt-5.4",
         session=SessionRequest(
             requested_harness_session_id="00000000-0000-4000-8000-000000000010",
-            continue_chat_id="c-codex",
+            continue_chat_id="c9003",
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
