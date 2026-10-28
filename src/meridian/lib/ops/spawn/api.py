@@ -24,7 +24,6 @@ from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.refs import is_spawn_id
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -2410,15 +2409,7 @@ def spawn_fork_sync(
     requested_agent = payload.agent
     requested_work = payload.work.strip()
     requested_task_dir = (payload.task_dir or "").strip() or None
-    requested_goal = payload.goal
-    if requested_goal is None and is_spawn_id(normalized_source_ref):
-        source_row = read_spawn_row(
-            project_root,
-            normalized_source_ref,
-            runtime_root=runtime_root,
-        )
-        if source_row is not None:
-            requested_goal = source_row.goal
+    requested_goal = payload.goal if payload.goal is not None else resolved_reference.source_goal
     requested_harness = (payload.harness or "").strip() or None
     source_harness = (resolved_reference.harness or "").strip() or None
 
