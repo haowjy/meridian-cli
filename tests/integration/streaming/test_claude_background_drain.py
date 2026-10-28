@@ -20,11 +20,20 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.semantics import NormalizedHarnessEvent
 from meridian.lib.state.spawn_signals import spawn_signal_path
+from meridian.lib.streaming import resident_drain
 from meridian.lib.streaming.drain_plan_factory import build_drain_plan
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from meridian.lib.streaming.types import InjectResult
+from tests.support.fakes import FakeClock
 from tests.support.pi import start_row
+
+
+async def _wait_for_descendant_evidence(plan: Any) -> None:
+    """Block until the descendant read has finished, so an expired deadline cannot race it."""
+    owner = plan.coordinator._coordinator._evidence._descendants
+    while owner.assessment.disposition == "unknown":
+        await asyncio.sleep(0.001)
 
 
 @pytest.mark.asyncio
@@ -35,7 +44,12 @@ from tests.support.pi import start_row
 async def test_claude_waits_for_background_snapshot_and_followup_result(
     tmp_path: Path,
     scenario: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    clock = FakeClock(1000.0)
+    # The coordinator binds `time.monotonic` at build time; swap only this module's view
+    # so the deadline expires when the test says so, not when the host is slow.
+    monkeypatch.setattr(resident_drain, "time", clock)
     delivered: list[NormalizedHarnessEvent] = []
     outcomes: list[DrainOutcome] = []
     spawn_id = SpawnId("p-claude-bg")
@@ -81,6 +95,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
             if scenario == "no_result":
                 # A stuck active native turn without done is bounded by the deadline.
                 yield frame("assistant", message={"content": []})
+                clock.advance(3600)
                 await asyncio.sleep(3600)
             if scenario.startswith("done"):
                 yield frame("assistant", message={"content": []})
@@ -89,9 +104,15 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 signal.touch()
                 yield frame("assistant", message={"content": []})
                 if scenario == "done_no_result":
+                    # done with the deadline expired publishes success even though the
+                    # active follow-up turn never produced a result.
+                    await _wait_for_descendant_evidence(plan)
+                    clock.advance(3600)
                     await asyncio.sleep(3600)
                 if scenario == "done_poll":
-                    await asyncio.sleep(0.05)  # Several directive polls between frames.
+                    # The done signal alone must not publish while the turn is active.
+                    await _wait_for_descendant_evidence(plan)
+                    await asyncio.sleep(0.05)
                     assert not outcomes
                 yield frame("result", subtype="success", result="Final done report")
                 await asyncio.sleep(3600)  # Native connection stays open after result.
@@ -141,10 +162,10 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
     try:
         await asyncio.wait_for(
             loop.run(spawn_id=spawn_id, receiver=receiver, drain_plan=plan, tracer=None),
-            timeout=3.0,
+            timeout=30.0,  # hang guard only; the fake clock decides every deadline
         )
     except TimeoutError:
-        pytest.fail("drain hung past the resident deadline")
+        pytest.fail("drain hung")
     if scenario == "stop":
         assert len(outcomes) == 1
         assert outcomes[0].error == "stream_closed_while_awaiting_done"

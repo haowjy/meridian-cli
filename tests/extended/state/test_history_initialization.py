@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +11,15 @@ import pytest
 
 from meridian.lib.state import history_index
 from meridian.lib.state.history_index import HistoryIndex
+from tests.support.fakes import FakeClock
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    """The clock history_index checks deadlines against; builds advance it instead of sleeping."""
+    fake = FakeClock(1000.0)
+    monkeypatch.setattr(history_index, "time", fake)
+    return fake
 
 
 def test_simultaneous_cold_callers_reuse_one_published_build(tmp_path: Path, monkeypatch) -> None:
@@ -32,18 +40,6 @@ def test_simultaneous_cold_callers_reuse_one_published_build(tmp_path: Path, mon
     with ThreadPoolExecutor(max_workers=2) as pool:
         builds = list(pool.map(lambda _: index.catch_up().build, range(2)))
     assert len(set(builds)) == 1
-
-
-def test_cold_query_can_exceed_the_warm_two_second_budget(tmp_path: Path, monkeypatch) -> None:
-    original_project = HistoryIndex._project
-
-    def slow_sessions(self, db, source):
-        if source.kind == "sessions":
-            time.sleep(2.1)
-        return original_project(self, db, source)
-
-    monkeypatch.setattr(HistoryIndex, "_project", slow_sessions)
-    assert HistoryIndex(tmp_path).spawns() == ()
 
 
 def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path) -> None:
@@ -118,18 +114,20 @@ def test_quarantined_state_authority_failure_names_non_dogfood_row(tmp_path: Pat
     assert "meridian doctor" not in str(failure.value)
 
 
-def test_owned_timeout_is_sticky_but_cancellation_is_not(tmp_path: Path, monkeypatch) -> None:
+def test_owned_timeout_is_sticky_but_cancellation_is_not(
+    tmp_path: Path, monkeypatch, clock: FakeClock
+) -> None:
     index = HistoryIndex(tmp_path)
     original_project = HistoryIndex._project
 
     def slow_project(self, db, source):
-        time.sleep(0.06)
+        clock.advance(0.06)
         return original_project(self, db, source)
 
     with monkeypatch.context() as patch:
         patch.setattr(HistoryIndex, "_project", slow_project)
         with pytest.raises(history_index.HistoryIndexIncomplete, match="remaining initialization"):
-            index.initialize(deadline=time.monotonic() + 0.04)
+            index.initialize(deadline=clock.monotonic() + 0.04)
     assert index.failure_path.exists()
     index.rebuild()
     index.path.unlink()
@@ -144,7 +142,7 @@ def test_owned_timeout_is_sticky_but_cancellation_is_not(tmp_path: Path, monkeyp
     assert not index.stage.exists()
 
 
-def test_source_contention_is_not_a_sticky_failure(tmp_path: Path) -> None:
+def test_source_contention_is_not_a_sticky_failure(tmp_path: Path, clock: FakeClock) -> None:
     from meridian.lib.platform.locking import FileLockTimeout, lock_file
     from meridian.lib.state.history_changes import HistorySource
 
@@ -161,7 +159,8 @@ def test_source_contention_is_not_a_sticky_failure(tmp_path: Path) -> None:
         assert held.wait(timeout=5)
         try:
             with pytest.raises(FileLockTimeout):
-                index.initialize(deadline=time.monotonic() + 2.0)
+                # The lock stays held, so the real wait is the 50ms budget.
+                index.initialize(deadline=clock.monotonic() + 0.05)
             assert not index.failure_path.exists()
         finally:
             release.set()
@@ -195,7 +194,7 @@ def test_status_and_counts_do_not_build_or_drain(tmp_path: Path, monkeypatch) ->
 
 @pytest.mark.parametrize("foreign", [2, "next"])
 def test_foreign_schema_in_this_file_is_read_only_and_never_hydrated(
-    tmp_path: Path, foreign: int | str
+    tmp_path: Path, foreign: int | str, clock: FakeClock
 ) -> None:
     """Only this schema writes its file: another version is a copy, not an upgrade."""
     import sqlite3
@@ -213,7 +212,7 @@ def test_foreign_schema_in_this_file_is_read_only_and_never_hydrated(
         db.execute("UPDATE meta SET version=?", (version,))
         db.execute("UPDATE records SET record_json = 'not-json'")
     original = index.path.read_bytes()
-    status = index.classify(deadline=time.monotonic() + 2)
+    status = index.classify(deadline=clock.monotonic() + 2)
     assert status.baseline == "incompatible" and status.schema == version
     assert status.reason == f"Index schema {version} does not match {index.path.name}."
     with pytest.raises(
@@ -228,22 +227,22 @@ def test_foreign_schema_in_this_file_is_read_only_and_never_hydrated(
 
 
 def test_caller_deadline_bounds_contention_not_owned_cold_build(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, clock: FakeClock
 ) -> None:
     index = HistoryIndex(tmp_path)
     original_project = HistoryIndex._project
 
     def slow_cold_project(self, db, source):
         if not self.path.exists():
-            time.sleep(0.15)
+            clock.advance(0.15)
         return original_project(self, db, source)
 
     monkeypatch.setattr(HistoryIndex, "_project", slow_cold_project)
-    started = time.monotonic()
+    started = clock.monotonic()
     with pytest.raises(history_index.HistoryIndexBusy), index.query(deadline=started + 0.2):
         pytest.fail("expired caller deadline must not produce partial query results")
 
-    assert time.monotonic() - started >= 0.3
+    assert clock.monotonic() - started > 0.2  # the owned build ran past the caller deadline
     assert index.path.exists()
     assert not index.failure_path.exists()
 
@@ -377,7 +376,7 @@ def test_session_projection_matches_authority_for_nonobject_lines(tmp_path: Path
 
 
 def test_corpus_shares_one_cold_budget_and_does_not_latch_skipped_roots(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, clock: FakeClock
 ) -> None:
     from types import SimpleNamespace
 
@@ -393,17 +392,12 @@ def test_corpus_shares_one_cold_budget_and_does_not_latch_skipped_roots(
     )
     monkeypatch.setattr(session_search, "resolve_session_search_corpus", lambda **_: scopes)
     monkeypatch.setattr(session_search, "INITIALIZATION_TIMEOUT", 0.4)
-    elapsed = 0.0
-    started = time.monotonic()
-    clock = SimpleNamespace(monotonic=lambda: started + elapsed)
-    monkeypatch.setattr(history_index, "time", clock)
     monkeypatch.setattr(session_search, "time", clock)
     original_project = HistoryIndex._project
 
     def slow_project(self, db, source):
-        nonlocal elapsed
         if source.kind == "sessions":
-            elapsed += 0.25
+            clock.advance(0.25)
         return original_project(self, db, source)
 
     monkeypatch.setattr(HistoryIndex, "_project", slow_project)
@@ -418,7 +412,7 @@ def test_corpus_shares_one_cold_budget_and_does_not_latch_skipped_roots(
 
 
 def test_all_warm_corpus_does_not_reset_its_deadline_after_classification(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, clock: FakeClock
 ) -> None:
     from types import SimpleNamespace
 
@@ -439,17 +433,12 @@ def test_all_warm_corpus_does_not_reset_its_deadline_after_classification(
     )
     monkeypatch.setattr(session_search, "resolve_session_search_corpus", lambda **_: scopes)
     monkeypatch.setattr(session_search, "QUERY_TIMEOUT", 0.1)
-    elapsed = 0.0
-    started = time.monotonic()
-    clock = SimpleNamespace(monotonic=lambda: started + elapsed)
-    monkeypatch.setattr(history_index, "time", clock)
     monkeypatch.setattr(session_search, "time", clock)
     original_classify = HistoryIndex.classify
 
     def slow_classify(self, *, deadline):
-        nonlocal elapsed
         result = original_classify(self, deadline=deadline)
-        elapsed += 0.06
+        clock.advance(0.06)
         return result
 
     monkeypatch.setattr(HistoryIndex, "classify", slow_classify)

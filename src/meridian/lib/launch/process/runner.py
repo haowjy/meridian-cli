@@ -287,10 +287,10 @@ def run_primary_process_with_capture(
                 name=f"meridian-primary-wait-{running.identity.pid}",
                 daemon=True,
             )
-            wait_thread.start()
             terminate_requested = False
             cancel_wait_requested = False
             try:
+                wait_thread.start()
                 while not wait_finished.wait(0.1):
                     if cancelled and not terminate_requested:
                         terminate_requested = True

@@ -38,8 +38,12 @@ describe("managed Bash tool outcomes", () => {
   it("reports an interrupted child wait as running unless the CLI already printed a terminal result", async () => {
     const { runtime } = await runtimeFor("p-parent-abort");
     const abortedAfter = (payload: unknown) => (_args: string[], _ms: number, signal: AbortSignal) =>
-      new Promise((resolve) => signal.addEventListener("abort", () =>
-        resolve({ ...(payload ? jsonResult(payload) : { stdout: "", stderr: "", exitCode: null }), error: "aborted" })));
+      new Promise((resolve) => {
+        const finish = () => resolve({ ...(payload ? jsonResult(payload) : { stdout: "", stderr: "", exitCode: null }), error: "aborted" });
+        // The abort timer can fire before the command is issued; a late listener would never hear it.
+        if (signal.aborted) finish();
+        else signal.addEventListener("abort", finish, { once: true });
+      });
 
     const pending = new AbortController();
     runMeridianCommand.mockImplementationOnce(abortedAfter(null));

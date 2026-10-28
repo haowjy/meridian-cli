@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import extension, { SpawnWatchRuntime } from './index';
 import { writeJsonAtomic } from '../../shared/json_file';
 import type { BashRecord } from '../../shared/schemas';
+import { until } from '../../shared/test_wait';
 const formatter = vi.hoisted(() => vi.fn(async (args: string[]) => ({
   exitCode: 0, stdout: args.slice(2, -1).join(' '), stderr: ''
 })));
@@ -34,14 +35,6 @@ type DeliveryOptions = {
 };
 async function pause(ms = 30) {
   await new Promise(r => setTimeout(r, ms));
-}
-async function eventually(check: () => boolean | Promise<boolean>) {
-  for (let i = 0; i < 100; i++) {
-    if (await check())
-      return;
-    await pause();
-  }
-  throw Error('delivery contract did not settle');
 }
 async function exists(filePath: string) {
   try { await readFile(filePath); return true; }
@@ -207,7 +200,7 @@ describe('durable result delivery', () => {
     }
     const h = host(true);
     const runtime = owner(h);
-    await eventually(() => exists(held[0]!.enteredPath));
+    await until(() => exists(held[0]!.enteredPath));
     h.idle = false;
     runtime.observeActive(() => h.idle);
     writeFileSync(held[0]!.releasePath, 'release');
@@ -273,7 +266,7 @@ describe('durable result delivery', () => {
     const runtime = owner(h);
 
     const boundary = runtime.deliverAtBoundary(new AbortController().signal);
-    await eventually(() => exists(chunks.firstWrittenPath));
+    await until(() => exists(chunks.firstWrittenPath));
     writeFileSync(chunks.releasePath, 'release');
     await boundary;
 
@@ -334,7 +327,7 @@ describe('durable result delivery', () => {
     const held = holdReport(root, 'p1', 'old idle report');
     const h = host(true);
     const runtime = owner(h);
-    await eventually(() => exists(held.enteredPath));
+    await until(() => exists(held.enteredPath));
 
     h.idle = false;
     runtime.observeActive(() => h.idle);
@@ -379,7 +372,7 @@ describe('durable result delivery', () => {
     const runtime = owner(h);
     const controller = new AbortController();
     const boundary = runtime.deliverAtBoundary(controller.signal);
-    await eventually(() => exists(held.enteredPath));
+    await until(() => exists(held.enteredPath));
     controller.abort();
     await rm(held.reportPath);
     writeFileSync(held.reportPath, 'report after abort');
@@ -389,7 +382,7 @@ describe('durable result delivery', () => {
 
     h.idle = true;
     runtime.observeIdle(() => h.idle);
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
     expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
   });
@@ -405,7 +398,7 @@ describe('durable result delivery', () => {
       isIdle: () => false,
       signal: new AbortController().signal,
     });
-    await eventually(() => exists(held.enteredPath));
+    await until(() => exists(held.enteredPath));
 
     first.handlers.get('session_shutdown')!({ reason: 'reload' });
     const next = host(false);
@@ -448,7 +441,7 @@ describe('durable result delivery', () => {
     owners.push(runtime);
     runtime.start();
 
-    await eventually(() => idleChecks > 0);
+    await until(() => idleChecks > 0);
     await pause(500);
     expect(h.notices).toHaveLength(0);
   });
@@ -459,7 +452,7 @@ describe('durable result delivery', () => {
     const held = holdReport(root, 'p1', 'stale idle report');
     const h = host(true);
     const runtime = owner(h);
-    await eventually(() => exists(held.enteredPath));
+    await until(() => exists(held.enteredPath));
 
     h.idle = false;
     runtime.observeActive(() => h.idle);
@@ -469,7 +462,7 @@ describe('durable result delivery', () => {
     writeFileSync(held.reportPath, 'current idle report');
     writeFileSync(held.releasePath, 'release');
 
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices).toHaveLength(1);
     expect(h.notices[0]!.content).toContain('current idle report');
     expect(h.notices[0]!.content).not.toContain('stale idle report');
@@ -487,7 +480,7 @@ describe('durable result delivery', () => {
     await child(root, 'p1');
     writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'terminal after scoped poll');
 
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
     expect(h.notices[0]!.content).toContain('terminal after scoped poll');
   });
@@ -510,12 +503,14 @@ describe('durable result delivery', () => {
       await pause(100);
       expect(h.notices).toHaveLength(0);
 
-      // At 30s the ordinary poll may already own the single flight. Let it
-      // settle, then the next 500ms tick observes the reconciliation request.
+      // At 30s the ordinary poll may already own the single flight and skip the
+      // tick that carries the reconciliation request. Keep ticking until a tick
+      // finds the flight free, however long the host takes to settle it.
       await vi.advanceTimersByTimeAsync(29_000);
-      await pause(100);
-      await vi.advanceTimersByTimeAsync(500);
-      await eventually(() => h.notices.length === 1);
+      await until(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+        return h.notices.length === 1;
+      });
       expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
     } finally {
       vi.useRealTimers();
@@ -535,7 +530,7 @@ describe('durable result delivery', () => {
     const h = host(false);
     const runtime = owner(h);
     const boundary = runtime.deliverAtBoundary();
-    await eventually(() => exists(held.enteredPath));
+    await until(() => exists(held.enteredPath));
     await mkdir(path.join(root, 'spawns', 'p-unrelated'));
     await pause();
     writeFileSync(held.releasePath, 'release');
@@ -561,7 +556,7 @@ describe('durable result delivery', () => {
     await bash(root, record('b1'));
     h.idle = true;
     runtime.observeIdle(() => h.idle);
-    await eventually(() => exists(held.enteredPath));
+    await until(() => exists(held.enteredPath));
 
     // The canonical child arrives after the correlation scan's directory listing.
     await child(root, 'p1', 'b1', { status: 'running', terminal: null });
@@ -570,12 +565,13 @@ describe('durable result delivery', () => {
     await pause();
     writeFileSync(held.releasePath, 'release');
     await pause(800);
+    if (withStableSpawn) await until(() => h.notices.length === 1);
     expect(h.notices.map(notice => notice.details.work_ids)).toEqual(withStableSpawn ? [['p2']] : []);
 
     await child(root, 'p1', 'b1');
     h.idle = true;
     runtime.observeIdle(() => h.idle);
-    await eventually(() => h.notices.length === (withStableSpawn ? 2 : 1));
+    await until(() => h.notices.length === (withStableSpawn ? 2 : 1));
     expect(h.notices.at(-1)!.details.work_ids).toEqual(['p1']);
   });
 
@@ -597,7 +593,7 @@ describe('durable result delivery', () => {
 
     await child(root, 'p1', 'b1');
     writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'child owns launcher outcome');
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
     expect(h.notices[0]!.content).toContain('child owns launcher outcome');
   });
@@ -629,9 +625,9 @@ describe('durable result delivery', () => {
 
     await child(root, 'p2');
     writeFileSync(path.join(root, 'spawns', 'p2', 'report.md'), 'repaired discovery report');
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p2']);
-    await eventually(async () => JSON.parse(
+    await until(async () => JSON.parse(
       await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8')
     ).error === null);
   });
@@ -677,7 +673,7 @@ describe('durable result delivery', () => {
     });
     const h = host();
     owner(h);
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1', 'p2']);
   });
   it('supervises a receipt write failure without claiming admission', async () => {
@@ -685,7 +681,7 @@ describe('durable result delivery', () => {
     await bash(root, record('b1'));
     const h = host();
     const runtime = owner(h);
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     const receiptsPath = path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json');
     await mkdir(receiptsPath);
     await expect(runtime.admitMessage({role: 'custom', ...h.notices[0]})).resolves.toBeUndefined();
@@ -696,7 +692,7 @@ describe('durable result delivery', () => {
     await rm(receiptsPath, {recursive: true});
     const restarted = host();
     const nextOwner = owner(restarted);
-    await eventually(() => restarted.notices.length === 1);
+    await until(() => restarted.notices.length === 1);
     await nextOwner.admitMessage({role: 'custom', ...restarted.notices[0]});
     expect(JSON.parse(await readFile(receiptsPath, 'utf8')).messages).toHaveProperty(restarted.notices[0]!.details.delivery_id);
   });
@@ -712,7 +708,7 @@ describe('durable result delivery', () => {
     }), record('b2'));
     h.idle = true;
     runtime.observeIdle(() => h.idle);
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['b2']);
     expect(h.notices[0]!.content).not.toContain('b1');
   });
@@ -735,7 +731,7 @@ describe('durable result delivery', () => {
     await bash(root, record('b1'));
     const h = host();
     const runtime = owner(h);
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     await pause(700);
     expect(h.notices).toHaveLength(1);
     await runtime.admitMessage({
@@ -760,11 +756,11 @@ describe('durable result delivery', () => {
     await bash(root, record('b1'));
     const first = host();
     const runtime = owner(first);
-    await eventually(() => first.notices.length === 1);
+    await until(() => first.notices.length === 1);
     runtime.stop();
     const next = host();
     owner(next);
-    await eventually(() => next.notices.length === 1);
+    await until(() => next.notices.length === 1);
     expect(next.notices[0]!.details.work_ids).toEqual(['b1']);
   });
   it('delivers nothing at session start, then the first turn end delivers what is owed', async () => {
@@ -780,7 +776,7 @@ describe('durable result delivery', () => {
     expect(h.notices).toHaveLength(0);
 
     h.handlers.get('agent_end')!({}, { isIdle: () => h.idle });
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
     expect(h.notices[0]!.content).toContain('owed before the resume');
     expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
@@ -799,7 +795,7 @@ describe('durable result delivery', () => {
     expect(h.notices).toHaveLength(0);
 
     h.handlers.get('agent_end')!({}, { isIdle: () => h.idle });
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
     expect(h.notices[0]!.content).toContain('result from the crashed generation');
 
@@ -912,7 +908,7 @@ describe('durable result delivery', () => {
     first.handlers.get('agent_end')!({}, {
       isIdle: () => first.idle
     });
-    await eventually(() => first.notices.length === 1);
+    await until(() => first.notices.length === 1);
     first.handlers.get('session_shutdown')!({
       reason: 'reload'
     });
@@ -956,7 +952,7 @@ describe('durable result delivery', () => {
     await observations(root, {
       ...observation, wait_reservations: {}, waiting_spawn_ids: []
     });
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
   });
   it.each([
@@ -971,13 +967,13 @@ describe('durable result delivery', () => {
     const h = host(idle);
     const runtime = owner(h);
     const delivery = idle ? undefined : runtime.deliverAtBoundary(new AbortController().signal);
-    await eventually(() => exists(held.enteredPath));
+    await until(() => exists(held.enteredPath));
     await observations(root, {
       v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_spawn_ids: ['p1'], wait_reservations: {}
     });
     writeFileSync(held.releasePath, 'release');
     await delivery;
-    await eventually(() => h.notices.length === 1);
+    await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p2']);
     expect(h.notices[0]!.content).toContain('still owed report');
     expect(h.notices[0]!.content).not.toContain('consumed report');
@@ -990,7 +986,7 @@ describe('durable result delivery', () => {
     });
     const h = host();
     owner(h);
-    await eventually(async () => {
+    await until(async () => {
       try {
         return !!JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8')).error;
       }
@@ -1000,7 +996,7 @@ describe('durable result delivery', () => {
     });
     expect(h.notices).toHaveLength(0);
     await bash(root, record('b1'));
-    await eventually(() => h.notices.length === 1);
-    await eventually(async () => JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8')).error === null);
+    await until(() => h.notices.length === 1);
+    await until(async () => JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8')).error === null);
   });
 });
