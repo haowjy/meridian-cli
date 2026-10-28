@@ -6,15 +6,17 @@ description: When checking Markdown links, a document tree's link graph, or Merm
 # Markdown Validation
 
 Run `meridian kg check PATH` after writing, moving, or linking Markdown pages, and
-`meridian mermaid check PATH` after editing a diagram. Fix every reported issue and rerun
-until the output is clean. Both exit 0 on warnings; `--strict` makes warnings fail, which
-is the right setting for a gate. `kg check` also catches leftover merge-conflict markers.
+`meridian mermaid check PATH` after editing a diagram. Both exit 0 on warnings;
+`--strict` makes warnings fail, which is the right setting for a gate. `kg check` also
+catches leftover merge-conflict markers. Fix what they report and rerun until the output
+is clean: no errors and no warnings left. A Mermaid style warning suppressed in the
+diagram with its reason beside it counts as clean. A category disabled for the whole run
+with `--disable` does not, since it hides every other instance too.
 
 `meridian kg graph PATH` prints the link tree from each page that links out but has no
-inbound links, `--depth` hops deep (default 3). A page with no links in or out does not
-appear at all, so compare the tree with the file list. Read it before restructuring a
-tree, and after a move or merge to confirm every page is still reached from where readers
-enter. `--format json` adds link clusters and missing backlinks.
+inbound links. A page with no links at all does not appear. Read it before restructuring
+a tree, and after a move or merge look for pages that lost their inbound links: they now
+show up as new roots, or not at all.
 
 `kg check` and `kg graph` take a context name as PATH: `kb`, `strategy`, or `work`
 resolve to this project's knowledge base, strategy, and active work directories. Use the
@@ -25,17 +27,19 @@ resolve them; pass the directory.
 `@mermaid-js/parser` node parser, a clean result catches less: say so when you report a
 diagram as valid.
 
-## Exclusions
+## What a Scan Skips
 
-Each validator reads a gitignore-style file at the root of the directory it scans:
-`.kgignore` for `kg`, `.mermaidignore` for `mermaid`. Nothing is excluded by name
-otherwise, apart from tool and build directories (`.git`, `node_modules`, `dist`,
-`build`, virtualenvs and caches) for `kg`. An `archive/` directory, for example, is
-validated until `.kgignore` lists it. Exclude generated, vendored, or deliberately
-unsupported material; never use an ignore file to hide a broken page that belongs to the
-tree.
+Both validators skip tool and build directories (`.git`, `node_modules`, `dist`,
+`build`, virtualenvs, caches) without saying so, and a scan that skipped everything still
+reports success. To check pages or diagrams kept inside one, pass that directory or file
+as PATH.
 
-For one run, `--exclude GLOB` (repeatable) does the same without a file.
+Each also reads a gitignore-style file at the root of the directory it scans: `.kgignore`
+for `kg` (for a single file, the file's directory), `.mermaidignore` for `mermaid` (read
+only when PATH is a directory). Nothing is excluded by name otherwise: an `archive/`
+directory is validated until `.kgignore` lists it. Exclude generated, vendored, or
+deliberately unsupported material; never use an ignore file to hide a broken page that
+belongs to the tree.
 
 ## Mermaid Style Warnings
 

@@ -1,12 +1,11 @@
 # Mermaid Style Warnings
 
-`meridian mermaid check` reports these categories. Disable one for a run with
-`--disable CATEGORY[,CATEGORY]`, or skip all style checks with `--no-style`.
+`meridian mermaid check` reports these categories.
 
 | Category | Diagrams | Fires on |
 |---|---|---|
 | `ox-edge` | flowchart | `---o` or `---x` followed directly by a lowercase letter (`A ---oauth`): Mermaid reads a circle or cross edge ending to a node named `auth`. To reach a node named `oauth`, add a space: `A --- oauth`. `---oNode` is not flagged; it reads as a deliberate circle edge to `Node`. |
-| `bare-end` | flowchart | A bare lowercase `end` outside quotes, which closes the enclosing subgraph. Write `End`, `END`, or quote it (`B["end"]`). |
+| `bare-end` | flowchart | An unquoted lowercase `end` inside another statement (`A --> end`), where Mermaid reads the subgraph terminator. Write `End`, `END`, or quote it (`B["end"]`). A line that is only `end` closes a subgraph and is not flagged. |
 | `fill-no-color` | any | An inline `style` line that sets `fill:` without `color:`, which can leave text unreadable in light or dark themes. `classDef` lines are not checked. |
 
 ## Suppressing a Deliberate Warning
