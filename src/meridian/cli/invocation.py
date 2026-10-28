@@ -36,8 +36,8 @@ class Caller(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spawn_id: str
-    project_root: Path
-    cross_project: bool
+    project_root: Path | None
+    """The caller's project, set only when it is not the target's: the reply needs ``-C``."""
 
 
 class GlobalOptions(BaseModel):

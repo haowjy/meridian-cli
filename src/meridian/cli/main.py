@@ -1038,8 +1038,11 @@ def _directory_env_scope(
     caller_spawn = os.environ.get("MERIDIAN_SPAWN_ID", "").strip()
     caller_root = os.environ.get("MERIDIAN_PROJECT_DIR", "").strip()
     caller = (
-        Caller(spawn_id=caller_spawn, project_root=Path(caller_root), cross_project=other_project)
-        if caller_spawn and caller_root
+        Caller(
+            spawn_id=caller_spawn,
+            project_root=Path(caller_root) if other_project else None,
+        )
+        if caller_spawn
         else None
     )
     if directory_explicit:

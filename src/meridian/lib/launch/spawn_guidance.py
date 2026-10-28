@@ -125,8 +125,8 @@ def build_capabilities_prompt(
     task_link: Path | None = None,
     work_link: Path | None = None,
     paths_in_user_turn: bool = False,
+    has_message_route: bool,
     chat_id: str | None = None,
-    has_message_route: bool = False,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
 ) -> str:

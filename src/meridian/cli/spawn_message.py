@@ -111,20 +111,25 @@ def _live_adopter(runtime_root: Path, chat_id: str) -> str | None:
 
 
 def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
-    """Resolve a spawn ID or chat ID to the spawn that receives the message."""
+    """Resolve a spawn ID or chat ID to the spawn that receives the message.
+
+    A chat goes to the run live in it now: one that adopted it, else its owner while
+    the owner is still in that chat.
+    """
 
     if ref.startswith("@"):
         _fail(f"spawn message takes a spawn ID or chat ID, not {ref}")
+    if CHAT_REF_RE.fullmatch(ref) and (adopter := _live_adopter(runtime_root, ref)):
+        return adopter
     target = resolve_spawn_reference(project_root, ref, runtime_root=runtime_root)
-    if CHAT_REF_RE.fullmatch(ref):
-        owner = read_derived(runtime_root, target) if target != ref else None
-        if owner is None or not is_active_spawn_status(owner.status):
-            adopter = _live_adopter(runtime_root, ref)
-            if adopter is None and owner is not None:
-                _fail(f"chat {ref} has no running session")
-            target = adopter or target
     if not (runtime_root / "spawns" / target).exists():
         _fail(f"spawn or chat not found: {ref}")
+    if CHAT_REF_RE.fullmatch(ref):
+        owner = read_derived(runtime_root, target)
+        if owner is None or not is_active_spawn_status(owner.status) or (
+            owner.current_chat_id not in (None, ref)
+        ):
+            _fail(f"chat {ref} has no running session")
     return target
 
 

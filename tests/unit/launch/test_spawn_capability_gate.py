@@ -87,6 +87,7 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         project_root=Path("/tmp/project"),
         control_root=Path("/tmp/project"),
         task_dir=Path("/tmp/checkout"),
+        has_message_route=False,
     )
     assert "as its own shell call" in capabilities
     assert "meridian spawn subagents" in capabilities
@@ -127,6 +128,7 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         project_root=Path("/tmp/project"),
         control_root=Path("/tmp/project"),
         task_dir=Path("/tmp/checkout"),
+        has_message_route=False,
     )
     assert "meridian spawn subagents" in reviewer_capabilities
     assert "meridian notify" not in reviewer_capabilities
@@ -145,6 +147,7 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         project_root=Path("/tmp/project"),
         control_root=Path("/tmp/project"),
         task_dir=Path("/tmp/checkout"),
+        has_message_route=False,
     )
     assert "meridian spawn subagents" not in leaf_capabilities
     assert "meridian notify" not in leaf_capabilities

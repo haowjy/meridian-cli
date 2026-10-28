@@ -191,7 +191,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
     assert record.skill_paths == ("/skills/one",)
     assert record.params == ("--flag",)
     assert record.active_work_id == "work-a"
-    assert record.spawn_id is None  # An observation is not another execution.
+    assert record.spawn_id == "p1"  # The observing run owns the chat it moved to.
     assert record.launch_policy_snapshot == snapshot
     assert (runtime / "sessions.jsonl").stat().st_mode & 0o777 == 0o600
     assert record.stopped_at is not None

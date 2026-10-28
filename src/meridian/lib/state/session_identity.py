@@ -12,6 +12,7 @@ from pathlib import Path
 
 from meridian.lib.core.types import SpawnId, normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -74,27 +75,38 @@ def get_owner_chat_for_session(
     return session_owner_chat_id(runtime_root, record)
 
 
-def chat_owner_spawn(runtime_root: Path, chat_id: str) -> SpawnId | None:
-    """Return the spawn that owns ``chat_id``: the one that ran it, whether or not it still runs.
+def newest_linked_spawn(runtime_root: Path, chat_id: str) -> SpawnId | None:
+    """Return the spawn linked by the newest generation of ``chat_id`` that has one.
 
-    The session record links its newest generation's spawn. A launch that failed before
-    linking leaves the newest generation unlinked, so the walk goes back to the newest
-    generation that has one, then to the newest spawn row started under this exact chat.
-    An unbound child reservation also carries its launcher's chat ID, so it never counts.
-    Which run is live in the chat right now is a different question, not asked here.
+    Reads only the session records. A launch that failed before linking leaves its
+    generation unlinked, so the walk goes back past it.
     """
     for generation in reversed(session_store.chat_generations(runtime_root, chat_id)):
         if generation.spawn_id and spawn_store.get_spawn(runtime_root, generation.spawn_id):
             return SpawnId(generation.spawn_id)
-    # Read the authoritative rows, not the rebuildable index: this path is rare
-    # (a failed pre-link launch or legacy data), and resolving a chat must survive a
-    # damaged index.
-    rows = [
-        row
-        for row in spawn_store.list_spawns(runtime_root, chat_id=chat_id).records
-        if not (row.kind == "child" and row.owner_chat_id == row.chat_id)
-    ]
-    return SpawnId(max(rows, key=lambda row: row.started_at or "").id) if rows else None
+    return None
+
+
+def chat_owner_spawn(runtime_root: Path, chat_id: str) -> SpawnId | None:
+    """Return the spawn that owns ``chat_id``: the one that ran it, whether or not it still runs.
+
+    The index's session row links the newest generation's spawn. When that generation is
+    unlinked, the record walk (:func:`newest_linked_spawn`) goes back to an earlier one;
+    a chat with no linked generation falls back to its newest spawn row. An unbound child
+    reservation also carries its launcher's chat ID, so it never counts. Which run is live
+    in the chat right now is a different question, not asked here.
+    """
+    index = HistoryIndex(runtime_root)
+    current = next(iter(index.sessions(chat_ids={chat_id})), None)
+    if current is not None:
+        if current.spawn_id and spawn_store.get_spawn(runtime_root, current.spawn_id):
+            return SpawnId(current.spawn_id)
+        if linked := newest_linked_spawn(runtime_root, chat_id):
+            return linked
+    for row in index.spawns(chat_id=chat_id):
+        if not (row.kind == "child" and row.owner_chat_id == row.chat_id):
+            return SpawnId(row.id)
+    return None
 
 
 def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
@@ -301,6 +313,7 @@ __all__ = [
     "is_tracked_chat_ref",
     "live_observer_for_chat",
     "native_identity_candidates",
+    "newest_linked_spawn",
     "session_exact_chat_id",
     "session_owner_chat_id",
     "session_records_for_spawns",

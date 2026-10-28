@@ -1379,10 +1379,11 @@ def _spawn_message(
     ref: Annotated[
         str,
         Parameter(
+            show_default=False,
             help=(
-                f"Session to message: {_RUNNING_REF_FORMS}. IDs are per project: "
+                f"Required. Session to message: {_RUNNING_REF_FORMS}. IDs are per project: "
                 "use `-C <repo>` for a session elsewhere."
-            )
+            ),
         ),
     ] = "",
     message: Annotated[
@@ -1409,9 +1410,7 @@ def _spawn_message(
             ref,
             message,
             sender_spawn_id=caller.spawn_id if caller is not None else None,
-            sender_project_root=(
-                caller.project_root if caller is not None and caller.cross_project else None
-            ),
+            sender_project_root=caller.project_root if caller is not None else None,
         )
     )
 
@@ -1419,7 +1418,7 @@ def _spawn_message(
 def _spawn_inject_deprecated(
     ref: Annotated[
         str,
-        Parameter(help=f"Session to message: {_RUNNING_REF_FORMS}."),
+        Parameter(show_default=False, help=f"Required. Session to message: {_RUNNING_REF_FORMS}."),
     ] = "",
     message: Annotated[
         str,
