@@ -98,6 +98,8 @@ _SPAWN_USAGE_EPILOGUE = (
 _RUNNING_REF_FORMS = (
     "spawn ID or chat ID (a chat names the run live in it now, else the spawn that ran it)"
 )
+# `spawn message` has to reach a live process, so a chat names only its running session.
+_MESSAGE_REF_FORMS = "spawn ID or chat ID (that chat's running session)"
 _INSPECT_REF_FORMS = f"{_RUNNING_REF_FORMS}, or @latest / @last-failed / @last-completed"
 _SELECTORS_NOTE = "@-selectors also resolve but name finished spawns"
 
@@ -1385,7 +1387,7 @@ def _spawn_message(
         Parameter(
             show_default=False,
             help=(
-                f"Required. Session to message: {_RUNNING_REF_FORMS}. IDs are per project: "
+                f"Required. Session to message: {_MESSAGE_REF_FORMS}. IDs are per project: "
                 "use `-C <repo>` for a session elsewhere."
             ),
         ),
@@ -1422,7 +1424,7 @@ def _spawn_message(
 def _spawn_inject_deprecated(
     ref: Annotated[
         str,
-        Parameter(show_default=False, help=f"Required. Session to message: {_RUNNING_REF_FORMS}."),
+        Parameter(show_default=False, help=f"Required. Session to message: {_MESSAGE_REF_FORMS}."),
     ] = "",
     message: Annotated[
         str,

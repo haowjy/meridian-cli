@@ -8,9 +8,10 @@ the projection it needs and never re-classifies the string:
 - ``resolve_transcript_source`` (``ops/session_target.py``): the transcript to read.
 - ``resolve_context_ref`` (``ops/spawn/context_ref.py``): the ``--from`` payload.
 
-A native session ID with no record is ``Untracked``: resuming or reading a session
-Meridian never saw is a feature, so only those callers accept it. Every other
-reference that names nothing is a ``RefNotFound``.
+A native session ID with no record is ``Untracked``: reading a session Meridian never
+saw, and primary ``--continue`` / ``--fork`` and ``spawn --fork``, accept it. ``spawn
+--continue`` refuses it (it needs retained spawn metadata). Every other reference that
+names nothing is a ``RefNotFound``.
 """
 
 from __future__ import annotations
