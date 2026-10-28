@@ -98,17 +98,6 @@ def chat_owner_spawn(
     return None
 
 
-def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
-    """Return whether ``ref`` is a Meridian chat/session id in this runtime root."""
-
-    normalized = normalize_optional_identity(ref)
-    if normalized is None or not normalized.startswith("c"):
-        return False
-    if normalized[1:].isdigit():
-        return True
-    return session_store.session_exists(runtime_root, normalized)
-
-
 def session_records_for_spawns(
     root: Path, records: Iterable[SpawnRecord]
 ) -> dict[str, SessionRecord]:
@@ -304,7 +293,6 @@ __all__ = [
     "chat_owner_spawn",
     "get_owner_chat_for_session",
     "get_session_record_for_spawn",
-    "is_tracked_chat_ref",
     "live_observer_for_chat",
     "native_identity_candidates",
     "session_exact_chat_id",

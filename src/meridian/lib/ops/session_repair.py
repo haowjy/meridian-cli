@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.native_identity import NativeKeyFields
+from meridian.lib.core.refs import is_chat_id, is_spawn_id
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.legacy_native_stores import (
     InvalidNativeSession,
@@ -135,9 +136,9 @@ def _excerpt(text: str | None) -> str | None:
 
 
 def _chat_id_for(runtime_root: Path, ref: str) -> str:
-    if ref.startswith("c") and ref[1:].isdigit():
+    if is_chat_id(ref):
         return ref
-    if ref.startswith("p") and ref[1:].isdigit():
+    if is_spawn_id(ref):
         spawn = spawn_store.get_spawn(runtime_root, ref)
         if spawn is not None and spawn.chat_id:
             return str(spawn.chat_id)

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from meridian.lib.core.refs import is_chat_id, is_spawn_id
 from meridian.lib.state import session_identity, session_store, spawn_store
 
 
@@ -98,11 +99,11 @@ def recover_harness_session_id(
         return None
 
     # Chat reference
-    if normalized_ref.startswith("c") and normalized_ref[1:].isdigit():
+    if is_chat_id(normalized_ref):
         return recover_recorded_chat_harness_session_id(runtime_root, normalized_ref)
 
     # Spawn reference
-    if normalized_ref.startswith("p") and normalized_ref[1:].isdigit():
+    if is_spawn_id(normalized_ref):
         result = _recover_from_spawn_row(runtime_root, normalized_ref)
         if result is not None:
             return result

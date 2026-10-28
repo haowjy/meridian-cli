@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Never, cast
 
-from meridian.lib.core.context_ref import CHAT_REF_RE
+from meridian.lib.core.refs import is_chat_id
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.harness.bundle import (
     PrimaryInboxError,
@@ -119,12 +119,12 @@ def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
 
     if ref.startswith("@"):
         _fail(f"spawn message takes a spawn ID or chat ID, not {ref}")
-    if CHAT_REF_RE.fullmatch(ref) and (adopter := _live_adopter(runtime_root, ref)):
+    if is_chat_id(ref) and (adopter := _live_adopter(runtime_root, ref)):
         return adopter
     target = resolve_spawn_reference(project_root, ref, runtime_root=runtime_root)
     if not (runtime_root / "spawns" / target).exists():
         _fail(f"spawn or chat not found: {ref}")
-    if CHAT_REF_RE.fullmatch(ref):
+    if is_chat_id(ref):
         owner = read_derived(runtime_root, target)
         if owner is None or not is_active_spawn_status(owner.status) or (
             owner.current_chat_id not in (None, ref)

@@ -23,6 +23,7 @@ from sqlalchemy import or_, select
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.native_identity import NativeKey, NativeSessionUnavailable
+from meridian.lib.core.refs import is_chat_id, is_spawn_id
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
@@ -98,14 +99,6 @@ class TranscriptSource(NamedTuple):
 class SessionLogTarget(NamedTuple):
     source: TranscriptSource
     view_label: str | None = None
-
-
-def _is_chat_ref(runtime_root: Path, value: str) -> bool:
-    return session_identity.is_tracked_chat_ref(runtime_root, value)
-
-
-def _is_spawn_ref(value: str) -> bool:
-    return value.startswith("p") and value[1:].isdigit()
 
 
 def _extract_session_id_from_path(path: Path) -> str:
@@ -426,7 +419,7 @@ def resolve_transcript_source(
     purpose: Literal["display", "capture"] = "display",
 ) -> SessionLogTarget:
     if purpose == "capture":
-        if runtime_root is None or file_path or not _is_spawn_ref(ref.strip()):
+        if runtime_root is None or file_path or not is_spawn_id(ref.strip()):
             raise ValueError("Native capture requires an exact local spawn reference")
         return _resolve_from_spawn_id(
             project_root=project_root,
@@ -441,22 +434,21 @@ def resolve_transcript_source(
     if not normalized_ref:
         raise ValueError("Session reference is required unless --file is provided")
 
-    if runtime_root is not None and _is_chat_ref(runtime_root, normalized_ref):
+    if runtime_root is not None and is_chat_id(normalized_ref):
         return _resolve_from_chat_id(
             runtime_root=runtime_root,
             chat_id=normalized_ref,
         )
 
     if runtime_root is None:
-        is_chat_id = normalized_ref.startswith("c") and normalized_ref[1:].isdigit()
-        if _is_spawn_ref(normalized_ref) or is_chat_id:
+        if is_spawn_id(normalized_ref) or is_chat_id(normalized_ref):
             raise FileNotFoundError(f"Session reference '{normalized_ref}' not found")
         return _untracked_target(
             project_root=project_root,
             session_ref=normalized_ref,
         )
 
-    if _is_spawn_ref(normalized_ref):
+    if is_spawn_id(normalized_ref):
         return _resolve_from_spawn_id(
             project_root=project_root,
             runtime_root=runtime_root,

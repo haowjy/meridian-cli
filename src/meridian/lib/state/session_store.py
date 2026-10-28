@@ -18,6 +18,7 @@ from meridian.lib.core.native_identity import (
     NativeEntryMismatch,
     NativeKeyFields,
 )
+from meridian.lib.core.refs import is_chat_id
 from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
@@ -189,13 +190,6 @@ def chat_record(
     for event in chat_rows(root, chat, require_supported=require_supported):
         project_session_event(records, event)
     return records.get(chat)
-
-
-def session_exists(root: Path, chat: str) -> bool:
-    """Return whether the chat has an authoritative session record."""
-
-    normalized = chat.strip()
-    return bool(normalized) and chat_record(root, normalized) is not None
 
 
 def chat_generations(root: Path, chat: str) -> tuple[SessionRecord, ...]:
@@ -530,7 +524,7 @@ def _records_by_session(
 
 
 def _session_sort_key(chat_id: str) -> tuple[int, str]:
-    if chat_id.startswith("c") and chat_id[1:].isdigit():
+    if is_chat_id(chat_id):
         return (int(chat_id[1:]), chat_id)
     return (10**9, chat_id)
 
@@ -598,6 +592,8 @@ def start_session(
         read_only_existing=True,
     )
     resolved_chat_id = chat_id.strip() if chat_id is not None else ""
+    if resolved_chat_id and not is_chat_id(resolved_chat_id):
+        raise ValueError(f"Chat ID '{resolved_chat_id}' is not of the form c<digits>")
     handle: IO[bytes] | None = None
     session_instance_id = uuid.uuid4().hex
     try:

@@ -4,11 +4,11 @@ import re
 from pathlib import Path
 
 from meridian.lib.core.context_ref import (
-    CHAT_REF_RE,
     ContextRef,
     SessionContextRef,
     SpawnContextRef,
 )
+from meridian.lib.core.refs import is_chat_id, is_spawn_id
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.work_attachment import resolve_active_work_id
 from meridian.lib.state import session_identity, session_store, spawn_store
@@ -20,7 +20,6 @@ from .query import (
     resolve_spawn_reference,
 )
 
-_SPAWN_REF_RE = re.compile(r"^p\d+$")
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
@@ -30,7 +29,7 @@ def _is_filesystem_path_ref(value: str) -> bool:
     normalized = value.strip()
     if not normalized or normalized.startswith("@"):
         return False
-    if _SPAWN_REF_RE.fullmatch(normalized) or CHAT_REF_RE.fullmatch(normalized):
+    if is_spawn_id(normalized) or is_chat_id(normalized):
         return False
     if normalized.startswith(("./", "../", "/", "~")):
         return True
@@ -57,13 +56,6 @@ def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> Spawn
         return None
     owner = session_identity.chat_owner_spawn(runtime_root, chat_id)
     return spawn_store.get_spawn(runtime_root, owner) if owner is not None else None
-
-
-def _is_tracked_session(project_root: Path, chat_id: str) -> bool:
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    if runtime_root is None:
-        return False
-    return bool(session_store.get_session_records(runtime_root, {chat_id}))
 
 
 def _load_report_text(project_root: Path, spawn_id: str) -> str | None:
@@ -93,13 +85,13 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
 
     _reject_filesystem_path_context_ref(normalized)
 
-    if normalized.startswith("@") or _SPAWN_REF_RE.fullmatch(normalized):
+    if normalized.startswith("@") or is_spawn_id(normalized):
         spawn_id = resolve_spawn_reference(project_root, normalized)
         spawn_row = read_spawn_row(project_root, spawn_id)
         if spawn_row is None:
             raise ValueError(f"Spawn '{spawn_id}' not found")
         return _spawn_context_ref(spawn_row, project_root)
-    if CHAT_REF_RE.fullmatch(normalized) or _is_tracked_session(project_root, normalized):
+    if is_chat_id(normalized):
         runtime_root = resolve_runtime_root_for_read(project_root)
         session = (
             session_store.chat_record(runtime_root, normalized)

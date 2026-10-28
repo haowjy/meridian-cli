@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.refs import is_chat_id, is_spawn_id
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import TranscriptMessage
@@ -196,7 +197,7 @@ def _format_duration(started_at: str | None, stopped_at: str | None) -> str | No
 
 def _session_metadata(runtime_root: Path, ref: str) -> list[str]:
     record = session_store.resolve_session_ref(runtime_root, ref)
-    spawn = spawn_store.get_spawn(runtime_root, ref) if ref.startswith("p") else None
+    spawn = spawn_store.get_spawn(runtime_root, ref) if is_spawn_id(ref) else None
     if record is None and spawn is not None and spawn.chat_id is not None:
         record = session_store.resolve_session_ref(runtime_root, spawn.chat_id)
 
@@ -228,11 +229,11 @@ def _session_scope_for_ref(
     """Return (exact_chat_id, owner_chat_id, parent_spawn_id) for export grouping."""
 
     normalized = ref.strip()
-    if session_identity.is_tracked_chat_ref(runtime_root, normalized):
+    if is_chat_id(normalized):
         exact_chat_id = normalized
         owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, exact_chat_id)
         return exact_chat_id, owner_chat_id, None
-    if normalized.startswith("p") and normalized[1:].isdigit():
+    if is_spawn_id(normalized):
         spawn = spawn_store.get_spawn(runtime_root, normalized)
         if spawn is None:
             return None, None, normalized

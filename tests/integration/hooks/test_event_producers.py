@@ -131,35 +131,35 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         harness="codex",
         harness_session_id="work-session",
         model="gpt-5.6-luna",
-        chat_id="work-chat",
+        chat_id="c9004",
         # A live session always belongs to an execution; a rename follows those.
         spawn_id=str(running_spawn_id),
     )
     created = work_start_sync(
         WorkStartInput(
             label="producer-coverage",
-            chat_id="work-chat",
+            chat_id="c9004",
             project_root=str(project_root),
         )
     )
     work_start_sync(
         WorkStartInput(
             label="producer-switch",
-            chat_id="work-chat",
+            chat_id="c9004",
             project_root=str(project_root),
         )
     )
     work_switch_sync(
         WorkSwitchInput(
             work_id=created.name,
-            chat_id="work-chat",
+            chat_id="c9004",
             project_root=str(project_root),
         )
     )
     existing = work_start_sync(
         WorkStartInput(
             label=created.name,
-            chat_id="work-chat",
+            chat_id="c9004",
             project_root=str(project_root),
         )
     )
@@ -173,12 +173,12 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         WorkRenameInput(
             work_id=created.name,
             new_name="producer-renamed",
-            chat_id="work-chat",
+            chat_id="c9004",
             project_root=str(project_root),
         )
     )
     assert (
-        session_store.get_session_active_work_id(work_runtime_root, "work-chat") == renamed.new_name
+        session_store.get_session_active_work_id(work_runtime_root, "c9004") == renamed.new_name
     )
     assert activation_count() == activations_before_rename
 
@@ -191,7 +191,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     work_switch_sync(
         WorkSwitchInput(
             work_id=renamed.new_name,
-            chat_id="work-chat",
+            chat_id="c9004",
             project_root=str(project_root),
         )
     )
@@ -203,18 +203,18 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     reopened = work_start_sync(
         WorkStartInput(
             label=renamed.new_name,
-            chat_id="work-chat",
+            chat_id="c9004",
             project_root=str(project_root),
         )
     )
     assert reopened.created is False
 
     activations_before_clear = activation_count()
-    work_clear_sync(WorkClearInput(chat_id="work-chat", project_root=str(project_root)))
-    assert session_store.get_session_active_work_id(work_runtime_root, "work-chat") is None
+    work_clear_sync(WorkClearInput(chat_id="c9004", project_root=str(project_root)))
+    assert session_store.get_session_active_work_id(work_runtime_root, "c9004") is None
     assert activation_count() == activations_before_clear
 
-    session_store.stop_session(work_runtime_root, "work-chat")
+    session_store.stop_session(work_runtime_root, "c9004")
     work_done_sync(WorkDoneInput(work_id=renamed.new_name, project_root=str(project_root)))
 
     session_store.start_session(
@@ -222,12 +222,12 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         harness="codex",
         harness_session_id="",
         model="gpt-5.6-luna",
-        chat_id="primary-work-chat",
+        chat_id="c9013",
     )
     primary_work_id = resolve_attached_work_id(
         project_root=project_root,
         runtime_root=work_runtime_root,
-        chat_id="primary-work-chat",
+        chat_id="c9013",
         explicit_work_id=renamed.new_name,
         resume_chat_id=None,
         get_session_active_work_id_fn=session_store.get_session_active_work_id,
@@ -235,7 +235,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
     )
     assert primary_work_id == renamed.new_name
     assert (
-        session_store.get_session_active_work_id(work_runtime_root, "primary-work-chat")
+        session_store.get_session_active_work_id(work_runtime_root, "c9013")
         == renamed.new_name
     )
 
@@ -261,7 +261,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         )
     assert activation_count() == activations_before_child
 
-    session_store.stop_session(work_runtime_root, "primary-work-chat")
+    session_store.stop_session(work_runtime_root, "c9013")
     sessionless = work_start_sync(
         WorkStartInput(
             label=renamed.new_name,

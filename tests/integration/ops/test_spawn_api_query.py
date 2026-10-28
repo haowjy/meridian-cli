@@ -109,7 +109,7 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
     runtime_root = _state_root(project_root)
     verified_id = spawn_store.start_spawn(
         runtime_root,
-        chat_id="c-pi-entry",
+        chat_id="c9006",
         model="test",
         agent="coder",
         harness="pi",
@@ -121,7 +121,7 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
         "pi",
         "native-entry",
         "test",
-        chat_id="c-pi-entry",
+        chat_id="c9006",
         kind="spawn",
         spawn_id=verified_id,
     )
@@ -161,7 +161,7 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id=unresolved_id)
     ).to_cli_wire()
 
-    assert verified["chat_id"] == "c-pi-entry"
+    assert verified["chat_id"] == "c9006"
     assert verified["continue_chat_id"] == "c-pi-exit"
     assert verified["run_boundary"] == {
         "status": "verified",
@@ -238,8 +238,8 @@ def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
         spawn_store.start_spawn(
             runtime_root,
             spawn_id="p-owner-child",
-            chat_id="c-child",
-            owner_chat_id="c-owner",
+            chat_id="c9012",
+            owner_chat_id="c9008",
             model="gpt-5.4",
             agent="coder",
             harness="codex",
@@ -250,7 +250,7 @@ def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
             runtime_root,
             spawn_id="p-sibling",
             chat_id="c-sibling",
-            owner_chat_id="c-owner",
+            owner_chat_id="c9008",
             model="gpt-5.4",
             agent="coder",
             harness="codex",
@@ -259,10 +259,10 @@ def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
         )
 
         child_only = spawn_api.spawn_stats_sync(
-            SpawnStatsInput(project_root=project_root.as_posix(), session="c-child")
+            SpawnStatsInput(project_root=project_root.as_posix(), session="c9012")
         )
         owner_family = spawn_api.spawn_stats_sync(
-            SpawnStatsInput(project_root=project_root.as_posix(), session="c-owner")
+            SpawnStatsInput(project_root=project_root.as_posix(), session="c9008")
         )
 
         assert child_only.total_runs == 1
@@ -707,7 +707,7 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
     parent_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p-parent",
-        chat_id="c-parent",
+        chat_id="c9007",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -718,7 +718,7 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
         runtime_root,
         spawn_id="p-child",
         parent_id=str(parent_id),
-        chat_id="c-child",
+        chat_id="c9012",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -756,7 +756,7 @@ def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
     parent_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p-parent",
-        chat_id="c-parent",
+        chat_id="c9007",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -766,7 +766,7 @@ def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
         runtime_root,
         spawn_id="p-child",
         parent_id=str(parent_id),
-        chat_id="c-child",
+        chat_id="c9012",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -793,7 +793,7 @@ def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_p
     parent_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p-parent",
-        chat_id="c-parent",
+        chat_id="c9007",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -803,7 +803,7 @@ def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_p
         runtime_root,
         spawn_id="p-child",
         parent_id=str(parent_id),
-        chat_id="c-child",
+        chat_id="c9012",
         model="gpt-5.4",
         agent="coder",
         harness="codex",

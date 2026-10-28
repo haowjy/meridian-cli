@@ -551,8 +551,7 @@ Rationale and rejected reader-side fallbacks: KB `decisions/chat-spawn-ownership
   whether an item is active, so `work done` moves at once. `write_state_locked`
   republishes the item's `work-items/<id>/{work,task}` links around every mutation, so
   nothing else repoints anything when an item moves.
-- `session_store.py` — Session event I/O, lease ownership, and the canonical
-  `session_exists()` predicate (a chat record exists; a harness ID is not required).
+- `session_store.py` — Session event I/O and lease ownership.
   `session_writes()` is the one session write epoch and `set_work_attachments()` the
   one batched attachment write.
 - `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars,

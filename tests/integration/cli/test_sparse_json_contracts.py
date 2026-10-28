@@ -335,7 +335,7 @@ def test_spawn_collect_and_ack_json_contract(
     spawn_store.start_spawn(
         runtime_root,
         spawn_id="p2",
-        chat_id="c-child",
+        chat_id="c9012",
         owner_chat_id="c-owed",
         parent_id="p1",
         model="claude-haiku-5-5",

@@ -24,6 +24,7 @@ from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import is_spawn_id
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -144,11 +145,6 @@ class _WaitTargetDiscovery:
     # Every finished owed id seen, including rows the delivery cap held back.
     owed_candidate_ids: frozenset[str] = frozenset()
     discovery_pending: bool = False
-
-
-def _looks_like_spawn_ref(ref: str) -> bool:
-    normalized = ref.strip()
-    return len(normalized) > 1 and normalized[0] == "p" and normalized[1:].isdigit()
 
 
 def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = None) -> None:
@@ -2419,7 +2415,7 @@ def spawn_fork_sync(
     requested_work = payload.work.strip()
     requested_task_dir = (payload.task_dir or "").strip() or None
     requested_goal = payload.goal
-    if requested_goal is None and _looks_like_spawn_ref(normalized_source_ref):
+    if requested_goal is None and is_spawn_id(normalized_source_ref):
         source_row = read_spawn_row(
             project_root,
             normalized_source_ref,
