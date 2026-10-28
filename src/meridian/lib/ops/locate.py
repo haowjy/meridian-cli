@@ -24,6 +24,7 @@ from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state.history_changes import HistoryCoordinationError
 from meridian.lib.state.history_index import (
     HistoryIndex,
     HistoryIndexIncomplete,
@@ -164,7 +165,7 @@ def locate_run(
     # can't answer in time, name the owner rather than fail the command.
     try:
         running = HistoryIndex(located.runtime_root).spawns(status=set(ACTIVE_SPAWN_STATUSES))
-    except HistoryIndexIncomplete:
+    except (HistoryIndexIncomplete, HistoryCoordinationError):
         running = ()
     occupant = session_identity.live_observer_for_chat(
         located.runtime_root, chat_id, records=running
