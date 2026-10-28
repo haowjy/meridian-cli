@@ -25,35 +25,28 @@ from meridian.lib.streaming.drain_plan_factory import build_drain_plan
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from meridian.lib.streaming.types import InjectResult
+from tests.support.fakes import FakeClock
 from tests.support.pi import start_row
 
 
-class _FakeClock:
-    """Monotonic clock the coordinator reads; only the test moves it."""
-
-    def __init__(self) -> None:
-        self.now = 1000.0
-        self.reads = 0
-
-    def monotonic(self) -> float:
-        self.reads += 1
-        return self.now
-
-    def expire_deadline(self) -> None:
-        self.now += 3600.0
+async def _wait_for_descendant_evidence(plan: Any) -> None:
+    """Block until the descendant read has finished, so an expired deadline cannot race it."""
+    owner = plan.coordinator._coordinator._evidence._descendants
+    while owner.assessment.disposition == "unknown":
+        await asyncio.sleep(0.001)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "scenario",
-    ["natural", "done_midturn", "done_poll", "no_result", "stop"],
+    ["natural", "done_midturn", "done_poll", "done_no_result", "no_result", "stop"],
 )
 async def test_claude_waits_for_background_snapshot_and_followup_result(
     tmp_path: Path,
     scenario: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    clock = _FakeClock()
+    clock = FakeClock(1000.0)
     # The coordinator binds `time.monotonic` at build time; swap only this module's view
     # so the deadline expires when the test says so, not when the host is slow.
     monkeypatch.setattr(resident_drain, "time", clock)
@@ -102,7 +95,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
             if scenario == "no_result":
                 # A stuck active native turn without done is bounded by the deadline.
                 yield frame("assistant", message={"content": []})
-                clock.expire_deadline()
+                clock.advance(3600)
                 await asyncio.sleep(3600)
             if scenario.startswith("done"):
                 yield frame("assistant", message={"content": []})
@@ -110,11 +103,16 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 signal.parent.mkdir(parents=True, exist_ok=True)
                 signal.touch()
                 yield frame("assistant", message={"content": []})
+                if scenario == "done_no_result":
+                    # done with the deadline expired publishes success even though the
+                    # active follow-up turn never produced a result.
+                    await _wait_for_descendant_evidence(plan)
+                    clock.advance(3600)
+                    await asyncio.sleep(3600)
                 if scenario == "done_poll":
-                    # Several coordinator evaluations between frames, counted not timed.
-                    target = clock.reads + 5
-                    while clock.reads < target:
-                        await asyncio.sleep(0.001)
+                    # The done signal alone must not publish while the turn is active.
+                    await _wait_for_descendant_evidence(plan)
+                    await asyncio.sleep(0.05)
                     assert not outcomes
                 yield frame("result", subtype="success", result="Final done report")
                 await asyncio.sleep(3600)  # Native connection stays open after result.
@@ -140,7 +138,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
             control_root=tmp_path,
             child_env={},
             resident_poll_seconds=0.01,
-            resident_deadline_seconds=0.05,  # fake clock: only bounds real idle sleeps,
+            resident_deadline_seconds=2.0,
         ),
     )
     session = cast("SpawnSession", SimpleNamespace(cancel_sent=False, started_monotonic=0.0))
@@ -164,7 +162,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
     try:
         await asyncio.wait_for(
             loop.run(spawn_id=spawn_id, receiver=receiver, drain_plan=plan, tracer=None),
-            timeout=60.0,  # hang guard only; no scenario's outcome depends on elapsed time
+            timeout=30.0,  # hang guard only; the fake clock decides every deadline
         )
     except TimeoutError:
         pytest.fail("drain hung")
@@ -172,9 +170,9 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
         assert len(outcomes) == 1
         assert outcomes[0].error == "stream_closed_while_awaiting_done"
         return
-    if scenario == "no_result":
+    if scenario in {"done_no_result", "no_result"}:
         assert len(outcomes) == 1
-        assert outcomes[0].status == "timed_out"
+        assert outcomes[0].status == ("succeeded" if scenario == "done_no_result" else "timed_out")
         reports = [
             event.raw.payload["result"] for event in delivered if event.raw.event_type == "result"
         ]

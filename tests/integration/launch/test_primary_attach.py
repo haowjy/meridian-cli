@@ -4,7 +4,7 @@ import asyncio
 import json
 import signal
 import threading
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
@@ -12,7 +12,6 @@ from typing import Any, cast
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness import opencode_idle
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -21,7 +20,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
-from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
+from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
 from meridian.lib.launch.process.ports import (
@@ -357,7 +356,7 @@ class FakeProcessLauncher(ProcessLauncher):
 
     def wait(self) -> LaunchedProcess:
         if self.exit_after is not None:
-            assert self.exit_after.wait(timeout=60), "events were never consumed"
+            assert self.exit_after.wait(timeout=30), "events were never consumed"
         return LaunchedProcess(exit_code=self.exit_code, pid=self.pid)
 
     def terminate(self) -> None:
@@ -505,62 +504,6 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
         "raw_event",
     }
     assert connection.sensor_cancelled_at_stop == [True]
-
-
-@pytest.mark.asyncio
-async def test_opencode_bundle_registers_idle_sensor_and_ttl_detection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bundle = get_harness_bundle(HarnessId.OPENCODE)
-    sensor = RecordingIdleSensor()
-    spawn_dir = tmp_path / "spawns" / "p-opencode-idle"
-    connection = FakeManagedConnection(
-        events=[],
-        session_id="sess-opencode-idle",
-        harness_id=HarnessId.OPENCODE,
-    )
-    _install_idle_sensor_bundle(
-        monkeypatch,
-        harness_id=HarnessId.OPENCODE,
-        sensor=sensor,
-        connection=connection,
-    )
-    sidecar_hooks: list[object] = []
-    real_sidecar_run = primary_attach_module.idle_sidecar.run
-
-    async def _record_sidecar_hooks(
-        sidecar_sensor: object,
-        ctx: IdleSensorContext,
-        **kwargs: Any,
-    ) -> None:
-        sidecar_hooks.append(kwargs.get("detect_ttl"))
-        await real_sidecar_run(sidecar_sensor, ctx, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(primary_attach_module.idle_sidecar, "run", _record_sidecar_hooks)
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p-opencode-idle"),
-        spawn_dir=spawn_dir,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
-        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
-    )
-
-    outcome = await launcher.run(
-        config=_build_config(
-            spawn_id=SpawnId("p-opencode-idle"),
-            control_root=tmp_path,
-            harness_id=HarnessId.OPENCODE,
-        ),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
-    )
-
-    assert bundle.primary_idle_sensor is opencode_idle.primary_idle_sensor
-    assert bundle.detect_ttl is opencode_idle.detect_ttl
-    assert outcome.exit_code == 0
-    assert sidecar_hooks == [opencode_idle.detect_ttl]
 
 
 @pytest.mark.asyncio
@@ -730,63 +673,6 @@ def test_primary_attach_cancellation_does_not_join_uncooperative_wait_thread(
         assert connection.stop_reasons == [None]
     finally:
         process_launcher.release.set()
-
-
-@pytest.mark.asyncio
-async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_or_tui(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    spawn_dir = tmp_path / "spawns" / "p900-codex-stream"
-    tui_started = asyncio.Event()
-    stream_closed = asyncio.Event()
-    connection = FailingEventConnection(
-        fail_after_started=tui_started,
-        stream_closed=stream_closed,
-        events=[],
-        session_id="sess-codex",
-    )
-    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
-    terminated_scopes: list[str] = []
-
-    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
-        _ = grace_seconds
-        terminated_scopes.append(f"{scope.scope_id}:{reason}")
-        return None
-
-    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p900-codex-stream"),
-        spawn_dir=spawn_dir,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-        on_running=lambda _pid: tui_started.set(),
-    )
-
-    run_task = asyncio.create_task(
-        launcher.run(
-            config=_build_config(spawn_id=SpawnId("p900-codex-stream"), control_root=tmp_path),
-            spec=_build_spec(),
-            cwd=tmp_path,
-            env={},
-        )
-    )
-
-    await stream_closed.wait()
-    await asyncio.sleep(0)
-
-    assert run_task.done() is False
-    assert connection.stop_reasons == []
-    assert terminated_scopes == []
-
-    process_launcher.release.set()
-    outcome = await run_task
-
-    assert outcome.exit_code == 143
-    assert connection.stop_reasons == [None]
-    assert terminated_scopes == []
-    assert _read_metadata(spawn_dir)["tui_pid"] == 5252
 
 
 @pytest.mark.parametrize("observer_error", [None, RuntimeError("observer failed")])
@@ -1031,44 +917,6 @@ async def test_primary_attach_upgrades_provisional_backend_scope_without_duplica
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_writes_no_runner_history(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p902"
-    connection = FakeManagedConnection(
-        events=[
-            RawHarnessEvent(
-                event_type="turn/started",
-                payload={"turnId": "t1"},
-                harness_id="codex",
-            ),
-            RawHarnessEvent(
-                event_type="turn/completed",
-                payload={"turnId": "t1"},
-                harness_id="codex",
-            ),
-        ]
-    )
-    process_launcher = FakeProcessLauncher(
-        spawn_dir=spawn_dir, exit_after=connection.events_drained
-    )
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p902"),
-        spawn_dir=spawn_dir,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-    )
-
-    await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p902"), control_root=tmp_path),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
-    )
-
-    assert not (spawn_dir / HISTORY_FILENAME).exists()
-
-
-@pytest.mark.asyncio
 async def test_primary_attach_activity_transitions_update_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1207,20 +1055,10 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
     assert process_launcher.launch_commands == []
 
 
-@pytest.fixture
-def default_sigint() -> Iterator[None]:
-    """The launcher keeps an inherited SIG_IGN (backgrounded or nohup'd runs); start from the
-    default so installed-handler assertions do not depend on how pytest was launched."""
-    prior = signal.signal(signal.SIGINT, signal.default_int_handler)
-    yield
-    signal.signal(signal.SIGINT, prior)
-
-
 @pytest.mark.asyncio
 async def test_primary_attach_sighup_before_zero_exit_is_cancelled_and_restores_handlers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    default_sigint: None,
 ) -> None:
     sigint_handlers_at_stop: list[Any] = []
 

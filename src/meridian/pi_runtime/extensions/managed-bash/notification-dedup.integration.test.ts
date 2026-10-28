@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { isTerminalBashStatus, type BashRecordsFile, type BashStatus } from "../shared/schemas";
 import { SpawnWatchRuntime } from "../meridian-spawn-watch/src/index";
+import { until } from "../shared/test_wait";
 import managedBashExtension from "./src/index";
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -24,13 +25,12 @@ function restoreEnv(): void {
 }
 
 async function waitForTerminalRecord(recordsPath: string, bashId: string): Promise<BashRecordsFile> {
-  const deadline = Date.now() + 1_000;
-  while (Date.now() < deadline) {
-    const file = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
-    if (file.records[bashId]?.status !== "running") return file;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`bash record did not become terminal: ${bashId}`);
+  let file: BashRecordsFile | undefined;
+  await until(async () => {
+    file = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
+    return file.records[bashId]?.status !== "running";
+  }, 10);
+  return file!;
 }
 
 type RegisteredTool = {
@@ -40,27 +40,16 @@ type RegisteredTool = {
 type BashOutputDetails = { status: BashStatus; output: string };
 
 async function waitForTerminalOutput(tool: RegisteredTool, bashId: string): Promise<BashOutputDetails> {
-  const deadline = Date.now() + 2_000;
-  let attempts = 0;
-  let lastStatus: BashStatus | undefined;
-  while (Date.now() < deadline) {
-    const result = await tool.execute("call", { action: "output", bash_id: bashId });
-    const details = result.details as BashOutputDetails;
-    attempts += 1;
-    lastStatus = details.status;
-    if (isTerminalBashStatus(details.status)) return details;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`bash output did not become terminal after ${attempts} attempts (last status: ${lastStatus ?? "missing"}): ${bashId}`);
+  let details: BashOutputDetails | undefined;
+  await until(async () => {
+    details = (await tool.execute("call", { action: "output", bash_id: bashId })).details as BashOutputDetails;
+    return isTerminalBashStatus(details.status);
+  }, 10);
+  return details!;
 }
 
 async function waitForMessages(messages: unknown[]): Promise<void> {
-  const deadline = Date.now() + 2_000;
-  while (Date.now() < deadline) {
-    if (messages.length) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw Error("terminal Bash result was not delivered");
+  await until(() => messages.length > 0, 10);
 }
 
 function makeManagedBashHost(): {

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { BashRecord, BashRecordsFile } from "../shared/schemas";
 import { BashRuntime } from "./src/bash_runtime";
+import { until } from "../shared/test_wait";
 
 type Verdict = "ok" | "fail";
 type Held = { when: (file: BashRecordsFile) => boolean; hit: (file: BashRecordsFile) => void; verdict: Promise<Verdict> };
@@ -36,11 +37,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const SPAWN = "p-coordination";
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(predicate: () => boolean | Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) { if (await predicate()) return; await pause(5); }
-  throw new Error("condition not reached");
-}
 async function stillPending(promise: Promise<unknown>): Promise<boolean> {
   const marker = Symbol("pending");
   return (await Promise.race([promise.then(() => "settled", () => "settled"), pause(40).then(() => marker)])) === marker;

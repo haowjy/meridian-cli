@@ -8,14 +8,9 @@ import { BashRuntime } from "./src/bash_runtime";
 import { readLogTail } from "./src/bash_log_store";
 import managedBashExtension from "./src/index";
 import type { BashRecord } from "../shared/schemas";
+import { until } from "../shared/test_wait";
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(fn: () => boolean | Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) { if (await fn()) return; await pause(10); }
-  throw new Error("Expected task observation did not arrive");
-}
-
 async function setup(): Promise<{ root: string; runtime: BashRuntime; recordsPath: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "pi-execution-"));
   vi.stubEnv("_MERIDIAN_PI_STATE_DIR", root);

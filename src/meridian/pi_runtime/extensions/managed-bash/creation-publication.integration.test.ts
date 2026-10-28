@@ -7,6 +7,7 @@ import type { BashRecordsFile } from "../shared/schemas";
 import { BashLogStore } from "./src/bash_log_store";
 import type { Publication } from "./src/bash_publication";
 import { BashRuntime, type BashExecuteResult } from "./src/bash_runtime";
+import { until } from "../shared/test_wait";
 
 type Verdict = "ok" | "fail";
 type Held = {
@@ -40,15 +41,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const SPAWN_ID = "p-creation-publication";
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function until(predicate: () => boolean | Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await pause(5);
-  }
-  throw new Error("condition not reached");
-}
 
 function deferred(): { promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
@@ -124,15 +116,6 @@ async function withRuntime(body: (h: Harness) => Promise<void>): Promise<void> {
   }
 }
 
-async function beforeRelease<T>(request: Promise<T>): Promise<T> {
-  const result = await Promise.race([
-    request.then((value) => ({ kind: "result" as const, value })),
-    pause(300).then(() => ({ kind: "pending" as const })),
-  ]);
-  if (result.kind === "pending") throw new Error("request did not return before creation publication was released");
-  return result.value;
-}
-
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -149,7 +132,7 @@ describe("foreground ownership before creation publication", () => {
       await until(() => readFile(h.ready).then(() => true, () => false));
 
       abort.abort();
-      const result = await beforeRelease(request);
+      const result = await request;
       expect(result).toMatchObject({
         kind: "foreground", status: "aborted", exit_code: -1,
         stdout: { kind: "available", text: expect.stringMatching(/started.*stopped$/s), truncated: false },
@@ -185,7 +168,7 @@ describe("foreground ownership before creation publication", () => {
         await until(() => readFile(h.ready).then(() => true, () => false));
 
         abort.abort();
-        expect(await beforeRelease(request)).toEqual({ exitCode: -1 });
+        expect(await request).toEqual({ exitCode: -1 });
         expect(Buffer.concat(output).toString("utf8")).toMatch(/^started/);
         expect(await readFile(row.stdout_log_path, "utf8")).toMatch(/started.*stopped$/s);
 

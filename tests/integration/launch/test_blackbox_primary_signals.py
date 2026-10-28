@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 import signal
+import sys
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -80,9 +80,24 @@ def test_signal_during_blackbox_wait_cancels_zero_exit(tmp_path: Path) -> None:
     assert running.terminate_calls == 1
 
 
+def _main_thread_is_polling_wait_loop() -> bool:
+    """True once the main thread is in the runner's wait loop, where an interrupt cancels the wait.
+
+    An interrupt landing earlier (while the wait thread is still starting) skips that cleanup.
+    """
+    frame = sys._current_frames()[threading.main_thread().ident]  # pyright: ignore[reportArgumentType]
+    in_thread_start = False
+    while frame is not None and frame.f_code.co_filename == threading.__file__:
+        in_thread_start |= frame.f_code.co_name == "start"
+        frame = frame.f_back
+    in_runner = frame is not None and frame.f_code.co_name == "run_primary_process_with_capture"
+    return in_runner and not in_thread_start
+
+
 def test_keyboard_interrupt_during_blackbox_wait_stops_wait_thread(tmp_path: Path) -> None:
     wait_started = threading.Event()
     wait_returned = threading.Event()
+    wait_cancelled = threading.Event()
 
     class FakeRunningProcess:
         identity = ProcessIdentity(pid=5678, birth_epoch=0.0, pgid=5678)
@@ -91,7 +106,7 @@ def test_keyboard_interrupt_during_blackbox_wait_stops_wait_thread(tmp_path: Pat
 
         def wait(self) -> LaunchedProcess:
             wait_started.set()
-            time.sleep(0.5)
+            assert wait_cancelled.wait(timeout=30), "cancel_wait was never called"
             wait_returned.set()
             return LaunchedProcess(exit_code=0, pid=self.identity.pid)
 
@@ -100,6 +115,7 @@ def test_keyboard_interrupt_during_blackbox_wait_stops_wait_thread(tmp_path: Pat
 
         def cancel_wait(self) -> None:
             self.cancel_wait_calls += 1
+            wait_cancelled.set()
 
     running = FakeRunningProcess()
 
@@ -118,7 +134,8 @@ def test_keyboard_interrupt_during_blackbox_wait_stops_wait_thread(tmp_path: Pat
 
     def interrupt_main_thread() -> None:
         wait_started.wait()
-        time.sleep(0.1)
+        while not _main_thread_is_polling_wait_loop():
+            threading.Event().wait(0.001)
         os.kill(os.getpid(), signal.SIGINT)
 
     sender = threading.Thread(target=interrupt_main_thread, daemon=True)
