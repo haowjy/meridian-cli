@@ -153,7 +153,7 @@ addopts = "-ra -n 4"
 asyncio_mode = "auto"
 pythonpath = ["src"]
 timeout = 60
-timeout_method = "thread"
+timeout_method = "signal"
 
 [dependency-groups]
 dev = [

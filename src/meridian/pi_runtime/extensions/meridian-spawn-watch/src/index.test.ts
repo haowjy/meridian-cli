@@ -503,12 +503,14 @@ describe('durable result delivery', () => {
       await pause(100);
       expect(h.notices).toHaveLength(0);
 
-      // At 30s the ordinary poll may already own the single flight. Let it
-      // settle, then the next 500ms tick observes the reconciliation request.
+      // At 30s the ordinary poll may already own the single flight and skip the
+      // tick that carries the reconciliation request. Keep ticking until a tick
+      // finds the flight free, however long the host takes to settle it.
       await vi.advanceTimersByTimeAsync(29_000);
-      await pause(100);
-      await vi.advanceTimersByTimeAsync(500);
-      await until(() => h.notices.length === 1);
+      await until(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+        return h.notices.length === 1;
+      });
       expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
     } finally {
       vi.useRealTimers();
@@ -563,6 +565,7 @@ describe('durable result delivery', () => {
     await pause();
     writeFileSync(held.releasePath, 'release');
     await pause(800);
+    if (withStableSpawn) await until(() => h.notices.length === 1);
     expect(h.notices.map(notice => notice.details.work_ids)).toEqual(withStableSpawn ? [['p2']] : []);
 
     await child(root, 'p1', 'b1');

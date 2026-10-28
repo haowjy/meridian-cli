@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness import opencode_idle
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -504,6 +505,59 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
         "raw_event",
     }
     assert connection.sensor_cancelled_at_stop == [True]
+
+
+@pytest.mark.asyncio
+async def test_opencode_bundle_registers_idle_sensor_and_ttl_detection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sensor = RecordingIdleSensor()
+    spawn_dir = tmp_path / "spawns" / "p-opencode-idle"
+    connection = FakeManagedConnection(
+        events=[],
+        session_id="sess-opencode-idle",
+        harness_id=HarnessId.OPENCODE,
+    )
+    _install_idle_sensor_bundle(
+        monkeypatch,
+        harness_id=HarnessId.OPENCODE,
+        sensor=sensor,
+        connection=connection,
+    )
+    sidecar_hooks: list[object] = []
+    real_sidecar_run = primary_attach_module.idle_sidecar.run
+
+    async def _record_sidecar_hooks(
+        sidecar_sensor: object,
+        ctx: IdleSensorContext,
+        **kwargs: Any,
+    ) -> None:
+        sidecar_hooks.append(kwargs.get("detect_ttl"))
+        await real_sidecar_run(sidecar_sensor, ctx, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(primary_attach_module.idle_sidecar, "run", _record_sidecar_hooks)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p-opencode-idle"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
+        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
+    )
+
+    outcome = await launcher.run(
+        config=_build_config(
+            spawn_id=SpawnId("p-opencode-idle"),
+            control_root=tmp_path,
+            harness_id=HarnessId.OPENCODE,
+        ),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={},
+    )
+
+    assert outcome.exit_code == 0
+    assert sidecar_hooks == [opencode_idle.detect_ttl]
 
 
 @pytest.mark.asyncio

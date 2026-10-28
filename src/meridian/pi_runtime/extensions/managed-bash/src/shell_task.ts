@@ -29,8 +29,18 @@ export class ShellTask {
     const code = await this.closed;
     // A shell can exit after launching background work with redirected pipes.
     // Keep ownership until that work exits too; zombies execute no further work.
-    while (await this.hasLiveGroup()) await delay(50);
-    return code;
+    // A `ps` failure is "unknown": retry for up to KILL_WAIT_MS of continuous failure before faulting the task.
+    let failingSince: number | null = null;
+    for (;;) {
+      try {
+        if (!await this.hasLiveGroup()) return code;
+        failingSince = null;
+      } catch (error) {
+        failingSince ??= performance.now();
+        if (performance.now() - failingSince > KILL_WAIT_MS) throw error;
+      }
+      await delay(50);
+    }
   }
 
   terminate(): Promise<void> {
@@ -68,8 +78,11 @@ export class ShellTask {
 
   /** A failed or timed-out `ps` (slow on a loaded host) leaves the group's state unknown: assume live and retry. */
   private async groupLooksLive(): Promise<boolean> {
-    try { return await this.hasLiveGroup(); }
-    catch (error) { this.probeError = error; return true; }
+    try {
+      const live = await this.hasLiveGroup();
+      this.probeError = undefined;
+      return live;
+    } catch (error) { this.probeError = error; return true; }
   }
 
   private async hasLiveGroup(): Promise<boolean> {
