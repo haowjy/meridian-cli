@@ -212,6 +212,12 @@ equivalent of `LaunchRuntime`. It resolves runtime root from env (`_MERIDIAN_RUN
 project state, or user home. Operations that need both project and runtime state
 use `resolve_runtime_root_and_config()`.
 
+`_MERIDIAN_RUNTIME_DIR` is honoured at every spawn depth, so a probe inside a spawn
+can target a scratch runtime. It is never inherited blindly: the launch bind seam
+sets it to each child's own runtime root, `-C` unsets it, hooks pop it. The old
+depth gate guarded only against a stale parent value redirecting `-C`; those
+unsets cover it.
+
 ### Depth Guard
 
 `ops/spawn/api.py` checks `max_depth_reached()` before executing spawns. A spawn

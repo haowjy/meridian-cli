@@ -41,28 +41,22 @@ RuntimeRootSource = Literal[
 ]
 
 
-def _runtime_override_env_root(project_root: Path) -> Path | None:
+def _runtime_override_env_root(project_root: Path, *, ignore_runtime_env: bool) -> Path | None:
+    """Return the ``_MERIDIAN_RUNTIME_DIR`` runtime root, honoured at any spawn depth.
+
+    Launchers set it for their children (``launch/context.py``), so an inherited
+    value is the launcher's explicit choice. ``-C`` unsets it at process scope and
+    hooks and ``BLOCKED_CHILD_ENV_VARS`` strip it from foreign envs; callers that
+    pass *ignore_runtime_env* (the ``-C`` flag) skip it explicitly.
+    """
+
+    if ignore_runtime_env:
+        return None
     override = os.getenv("_MERIDIAN_RUNTIME_DIR", "").strip()
     if not override:
         return None
     candidate = Path(override).expanduser()
     return candidate if candidate.is_absolute() else project_root / candidate
-
-
-def _runtime_dir_env_override_applies(*, ignore_runtime_env: bool = False) -> bool:
-    """Return whether ``_MERIDIAN_RUNTIME_DIR`` may override derived runtime roots.
-
-    Power-user override applies only at the primary Meridian root.  Nested
-    processes derive runtime from ``MERIDIAN_PROJECT_DIR``; ``-C`` unsets
-    ``_MERIDIAN_RUNTIME_DIR`` at process scope so this check is moot when
-    the flag is active.
-    """
-
-    if ignore_runtime_env:
-        return False
-    from meridian.lib.core.depth import is_nested_meridian_process
-
-    return not is_nested_meridian_process()
 
 
 def async_from_sync(sync_fn: Callable[P, T]) -> Callable[P, Coroutine[Any, Any, T]]:
@@ -196,12 +190,8 @@ def inspect_runtime_authority_for_read(
     """Resolve read authority without running migrations or writing state."""
 
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
-    override_root = (
-        _runtime_override_env_root(authority.project_root)
-        if _runtime_dir_env_override_applies(
-            ignore_runtime_env=bool(ignore_runtime_env),
-        )
-        else None
+    override_root = _runtime_override_env_root(
+        authority.project_root, ignore_runtime_env=bool(ignore_runtime_env)
     )
     identity = resolve_project_identity(authority.project_root)
     project_id = state_id(identity)
@@ -254,12 +244,8 @@ def plan_runtime_authority_for_write(
     """Resolve the runtime path a write would use without materializing identity or state."""
 
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
-    override = (
-        _runtime_override_env_root(authority.project_root)
-        if _runtime_dir_env_override_applies(
-            ignore_runtime_env=bool(ignore_runtime_env),
-        )
-        else None
+    override = _runtime_override_env_root(
+        authority.project_root, ignore_runtime_env=bool(ignore_runtime_env)
     )
     if override is not None:
         runtime_root = override

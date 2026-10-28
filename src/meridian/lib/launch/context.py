@@ -1855,6 +1855,9 @@ def bind_launch_context(
     child_context_env["MERIDIAN_TASK_DIR"] = (
         bound_task_link or directory_context.logical_task_cwd
     ).as_posix()
+    # The launcher's runtime root is explicit for the child: a scratch-runtime launch
+    # must not let the child (or its own spawns) fall back to the real runtime.
+    child_context_env["_MERIDIAN_RUNTIME_DIR"] = runtime_root.as_posix()
     if harness.id == HarnessId.PI:
         child_context_env["_MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
     runtime_override_env = (

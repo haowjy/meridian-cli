@@ -39,7 +39,8 @@ BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         "MERIDIAN_ACTIVE_WORK_DIR",
         # Launch identity is resolved per child and must never leak from its parent.
         "MERIDIAN_SESSION_AGENT",
-        # Runtime root is resolved at launch/bind; do not inherit parent override.
+        # Never inherited from the parent env; the bind seam sets the child's own
+        # runtime root explicitly (launch/context.py).
         "_MERIDIAN_RUNTIME_DIR",
         # Caller confinement is observed and set by this launcher, never inherited.
         "_MERIDIAN_CALLER_BOUNDARY",
