@@ -6,11 +6,14 @@ import subprocess
 import sys
 from contextlib import suppress
 from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from meridian.lib.state import spawn_store
+from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.reaper import recover_crashed_launches
+
+if TYPE_CHECKING:
+    import pytest
 
 _HOLD_LOCKS = """
 import fcntl, sys
@@ -64,6 +67,10 @@ def test_dead_row_behind_live_rows_and_a_failing_row_is_reached_in_two_passes(
             raise PermissionError(failing.as_posix())
 
     monkeypatch.setattr("meridian.lib.state.reaper._claim_reaper_cleanup", fail_for_p1)
+
+    # Build the index up front: a first build inside a pass can outlast the
+    # pass's query budget on a loaded machine, and the pass would skip.
+    HistoryIndex(runtime_root).spawns(status={"running"})
 
     holder = subprocess.Popen(
         [sys.executable, "-c", _HOLD_LOCKS, *(p.as_posix() for p in live)],
