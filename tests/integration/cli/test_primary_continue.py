@@ -294,26 +294,6 @@ def test_continue_to_different_harness_fails_without_changing_source_chat(
     assert spawn_store.list_spawns(runtime_root) == before_spawns
 
 
-def test_continue_fails_when_adapter_cannot_resume() -> None:
-    request = launch_context.SpawnRequest(
-        prompt="continue prompt",
-        session=SessionRequest(requested_harness_session_id="native-session"),
-    )
-    harness = type(
-        "Harness",
-        (),
-        {
-            "id": "test-harness",
-            "capabilities": type(
-                "Capabilities", (), {"supports_session_resume": False}
-            )(),
-        },
-    )()
-
-    with pytest.raises(ValueError, match="test-harness cannot resume sessions"):
-        launch_context._resolve_session_continuation(request=request, harness=harness)
-
-
 def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

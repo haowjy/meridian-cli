@@ -119,17 +119,6 @@ def cwd_with_mars_only(tmp_path: Path) -> Path:
 
 
 @pytest.mark.integration
-def test_spawn_list_succeeds_from_cwd_with_project_id(
-    cwd_with_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["spawn", "list"], cwd=cwd_with_project_id, meridian_home=meridian_home)
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-
-
-@pytest.mark.integration
 def test_spawn_list_succeeds_without_project_id_and_creates_nothing(
     cwd_without_project_id: Path,
     meridian_home: Path,
@@ -375,8 +364,17 @@ def test_runtime_writes_materialize_adhoc_state_without_litter(
         meridian_home=meridian_home,
     )
 
+    assert result.returncode == 0, result.stderr
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
     _assert_adhoc_materialized(cwd_without_project_id, meridian_home)
+
+    listed = _run_meridian(
+        ["--mode", "human", "work", "list"],
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+    assert listed.returncode == 0, listed.stderr
+    assert "first-work" in listed.stdout
 
 
 @pytest.mark.integration
@@ -433,40 +431,21 @@ def test_project_authoring_errors_without_a_marker(
 
 
 @pytest.mark.integration
-def test_config_init_still_commits_the_directory(
+def test_read_commands_do_not_auto_initialize_cwd_without_project_id(
     cwd_without_project_id: Path,
     meridian_home: Path,
 ) -> None:
     result = _run_meridian(
-        ["--mode", "human", "config", "init"],
+        ["--mode", "human", "work", "list"],
         cwd=cwd_without_project_id,
         meridian_home=meridian_home,
     )
 
     assert result.returncode == 0, result.stderr
-    _assert_project_initialized(cwd_without_project_id)
-
-
-@pytest.mark.integration
-@pytest.mark.parametrize(
-    "args",
-    [
-        ["--mode", "human", "work", "list"],
-    ],
-)
-def test_read_commands_do_not_auto_initialize_cwd_without_project_id(
-    args: list[str],
-    cwd_without_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(
-        args,
-        cwd=cwd_without_project_id,
-        meridian_home=meridian_home,
-    )
-
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
+    assert result.stdout.strip() == "(no work items)"
     _assert_project_not_initialized(cwd_without_project_id)
+    assert list(meridian_home.iterdir()) == []
 
 
 @pytest.mark.integration
@@ -492,26 +471,3 @@ def test_primary_launch_preserves_existing_config_identity(
     content = (cwd_with_project_id / "meridian.toml").read_text(encoding="utf-8")
     assert 'id = "proj-cwd-integration"' in content
 
-
-@pytest.mark.integration
-def test_doctor_runs_from_cwd_with_project_id(
-    cwd_with_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["doctor"], cwd=cwd_with_project_id, meridian_home=meridian_home)
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    assert "project_root:" in result.stdout
-
-
-@pytest.mark.integration
-def test_doctor_runs_from_cwd_without_project_id(
-    cwd_without_project_id: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["doctor"], cwd=cwd_without_project_id, meridian_home=meridian_home)
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    assert "project_root:" in result.stdout

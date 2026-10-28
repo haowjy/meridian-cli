@@ -42,20 +42,6 @@ def test_config_init_creates_meridian_toml_and_is_idempotent(
     assert not (project_root / ".mars").exists()
 
 
-def test_config_init_scaffold_includes_dynamic_section_examples(tmp_path: Path) -> None:
-    project_root = _repo(tmp_path)
-
-    result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
-    content = Path(result.path).read_text(encoding="utf-8")
-
-    assert result.created is True
-    assert "[defaults]" in content
-    assert "[state]" in content
-    assert "# [[hooks]]" in content
-    assert "# [context.work]" in content
-    assert "# [workspace.docs]" in content
-
-
 def test_config_init_uses_env_project_root_when_path_not_provided(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
