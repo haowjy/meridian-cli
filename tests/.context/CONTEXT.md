@@ -89,6 +89,16 @@ trusting a result: 0.6.7 writes `spawns/pN/history.jsonl` and rejects
 `--prune-runner-history`. Also run an old runner across the upgrade: a background
 0.6.7 spawn that is still running while the new build runs.
 
+## Caller Home Isolation
+
+`tests/conftest.py` points `HOME` at an empty per-test directory and clears the native
+store variables (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_*`, `PI_CODING_AGENT_*`,
+`XDG_*`). Launch code resolves native config and stores from those, so without the
+isolation a test reads the caller's real `~/.claude` or `~/.codex` and passes or fails
+by machine. A test that needs native config sets `HOME` (or the specific store
+variable) itself, as `test_launch_process_claude_session.py` and
+`test_owned_identity_shims.py` do.
+
 ## CI Environment
 
 Tests that spawn the real CLI (e.g. `test_spawn_prompt_input.py`) need a stub
