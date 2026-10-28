@@ -144,7 +144,7 @@ def _resolve_spawn_reference(
 
     # One selection, one resolution path: the continue target's session record
     # owns settings/work whether a hook, a verified exit or the entry chose it.
-    target_chat_id = row.continue_chat_id
+    target_chat_id = session_identity.resolve_continue_chat_id(runtime_root, row)
     target = session_store.chat_record(runtime_root, target_chat_id) if (
         target_chat_id
     ) else None
@@ -154,6 +154,10 @@ def _resolve_spawn_reference(
             spawn_id=target.spawn_id,
         )
         return replace(selected, source_spawn_id=row.id, source_goal=row.goal)
+    if target_chat_id is None and (row.unstarted_chatless_child or row.chat_is_caller_placeholder):
+        raise ValueError(
+            f"{ref} never started a session; nothing to continue, use --fork or a new spawn"
+        )
     if target_chat_id != row.chat_id:
         # A missing selected chat never falls back to an older conversation.
         raise NativeSessionUnavailable(ref, "unbound")
@@ -175,7 +179,7 @@ def _resolve_spawn_reference(
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=_normalize_optional(row.harness),
-        source_chat_id=_normalize_optional(row.chat_id),
+        source_chat_id=_normalize_optional(row.entry_chat_id),
         source_model=_normalize_optional(row.model),
         source_agent=_normalize_optional(row.agent),
         source_skills=row.skills,

@@ -81,6 +81,7 @@ def add_spawn(
         root,
         spawn_id=f"p{n}",
         chat_id=chat,
+        owner_chat_id="c0",
         harness="claude",
         model="test",
         agent="a",

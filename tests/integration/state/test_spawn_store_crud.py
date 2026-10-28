@@ -646,11 +646,12 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
             harness="codex",
             prompt="world",
             desc="desc-2",
+            work_id="w2",
         )
     )
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
-    filtered = list_spawns(runtime_root, chat_id="c2")
+    filtered = list_spawns(runtime_root, work_id="w2")
 
     assert [spawn.id for spawn in filtered.records] == [p2]
     assert filtered.records[0].prompt is None

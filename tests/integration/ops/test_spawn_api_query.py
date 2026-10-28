@@ -110,6 +110,7 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
     verified_id = spawn_store.start_spawn(
         runtime_root,
         chat_id="c9006",
+        owner_chat_id="c9000",
         model="test",
         agent="coder",
         harness="pi",
@@ -140,6 +141,7 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
     unresolved_id = spawn_store.start_spawn(
         runtime_root,
         chat_id="c-pi-unresolved",
+        owner_chat_id="c9000",
         model="test",
         agent="coder",
         harness="pi",

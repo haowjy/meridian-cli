@@ -437,13 +437,13 @@ def reclaim_session_owned_scopes_for_chats(
             record = read_state(spawns_dir, stored_spawn_id, include_prompt=False)
         except SpawnStateQuarantined:
             continue
-        if record is None or record.chat_id not in selected:
+        if record is None or record.entry_chat_id not in selected:
             continue
         candidates.append(record)
 
     results: list[CleanupResult] = []
     for record in SpawnScan.ordered(candidates, ()).records:
-        chat_id = str(record.chat_id)
+        chat_id = str(record.entry_chat_id)
         spawn_id = SpawnId(record.id)
         scopes = read_scopes_from_disk(runtime_root, spawn_id)
         for scope in scopes:

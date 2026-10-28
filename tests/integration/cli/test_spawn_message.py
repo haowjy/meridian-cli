@@ -113,6 +113,7 @@ async def test_claude_primary_posts_to_published_inbox(
         tmp_path,
         spawn_id="p2",
         chat_id="c1",
+        owner_chat_id="c9",
         model="test-model",
         agent="test-agent",
         harness="claude",

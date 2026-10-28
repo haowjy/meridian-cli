@@ -1356,7 +1356,6 @@ class HistoryIndex:
         **filters: str | set[str] | None,
     ) -> tuple[SpawnRecord, ...]:
         columns = {
-            "chat_id": RECORDS.c.chat,
             "owner_chat_id": RECORDS.c.owner,
             "parent_id": RECORDS.c.parent,
             "work_id": RECORDS.c.work,

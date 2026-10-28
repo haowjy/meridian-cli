@@ -8,7 +8,7 @@ from typing import NamedTuple, cast
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import pi_lifecycle, session_store, spawn_store
+from meridian.lib.state import pi_lifecycle, session_identity, session_store, spawn_store
 from meridian.lib.state.paths import spawn_log_subpath
 from meridian.lib.state.permission_journal import PermissionJournal
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -255,9 +255,10 @@ def spawn_session_log_available(
 ) -> bool:
     """Return whether ``meridian session log`` can resolve content for one spawn."""
     row = spawn_store.get_spawn(runtime_root, spawn_id)
-    if row is None or row.continue_chat_id is None:
+    chat_id = session_identity.resolve_continue_chat_id(runtime_root, row) if row else None
+    if chat_id is None:
         return False
-    record = session_store.chat_record(runtime_root, row.continue_chat_id)
+    record = session_store.chat_record(runtime_root, chat_id)
     return record is not None and record.native_key() is not None
 
 
@@ -302,8 +303,12 @@ def detail_from_row(
     terminal = row.terminal
     return SpawnDetailOutput(
         boundary_summary=run_boundary_summary(row),
-        chat_id=row.chat_id,
-        continue_chat_id=row.continue_chat_id,
+        chat_id=row.entry_chat_id,
+        continue_chat_id=(
+            session_identity.resolve_continue_chat_id(resolved_runtime_root, row)
+            if resolved_runtime_root is not None
+            else row.continue_chat_id
+        ),
         run_boundary=row.run_boundary,
         spawn_id=row.id,
         status=row.status,

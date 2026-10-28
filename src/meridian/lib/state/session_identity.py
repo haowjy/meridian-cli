@@ -19,9 +19,9 @@ from meridian.lib.state.spawn_status import quarantine_may_observe
 
 
 def spawn_exact_chat_id(row: SpawnRecord) -> str | None:
-    """Return the exact session chat id recorded on a spawn row."""
+    """Return the exact session chat id recorded on a spawn row, or None if it has none."""
 
-    return row.chat_id
+    return row.entry_chat_id
 
 
 def spawn_owner_chat_id(row: SpawnRecord) -> str | None:
@@ -91,7 +91,11 @@ def session_records_for_spawns(
     Do not fill nullable identity fields here: capture fingerprints, historical
     provenance and publication witnesses must detect changes to those fields too.
     """
-    records = tuple(records)
+    # A row with no session of its own (chat-less by design, or a legacy placeholder
+    # chat) has none to find; only older chat-less rows still need the full scan.
+    records = tuple(row for row in records if not _has_no_session_of_its_own(row))
+    if not records:
+        return {}
     chats = {row.chat_id for row in records if row.chat_id}
     generations = session_store.fold_session_generations(
         session_store.chats_rows(
@@ -127,6 +131,25 @@ def session_records_for_spawns(
                 raise ValueError(f"Session identity conflicts with history: {record.id}")
             result[record.id] = session
     return result
+
+
+def _has_no_session_of_its_own(row: SpawnRecord) -> bool:
+    return row.unstarted_chatless_child or row.chat_is_caller_placeholder
+
+
+def resolve_continue_chat_id(runtime_root: Path, row: SpawnRecord) -> str | None:
+    """The chat ``--continue`` or ``--from`` resumes for one spawn, or None if it has none.
+
+    A legacy placeholder row names the caller's chat, so its session is found the
+    only way it can be: the newest generation whose start event names the spawn.
+    Single-spawn callers only; batch readers use ``row.continue_chat_id`` and read
+    such rows as unbound.
+    """
+    chat_id = row.continue_chat_id
+    if chat_id is not None or not row.chat_is_caller_placeholder:
+        return chat_id
+    record = get_session_record_for_spawn(runtime_root, row.id)
+    return record.chat_id if record is not None else None
 
 
 def native_identity_candidates(
@@ -212,11 +235,14 @@ def get_session_record_for_spawn(
         return None
 
     row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-    if row is None:
+    if row is None or row.unstarted_chatless_child:
         return None
+    entry_chat_id = spawn_exact_chat_id(row)
+    # An older chat-less row or a legacy placeholder chat names no session itself:
+    # only a generation whose start event names this spawn can be its own.
     generations = (
-        session_store.chat_generations(runtime_root, row.chat_id)
-        if row.chat_id
+        session_store.chat_generations(runtime_root, entry_chat_id)
+        if entry_chat_id
         else session_store.fold_session_generations(
             session_store.chats_rows(runtime_root, None).ordered,
         )
@@ -243,11 +269,10 @@ def get_session_record_for_spawn(
             continue
         return record
 
-    exact_chat_id = spawn_exact_chat_id(row)
-    if exact_chat_id is None:
+    if entry_chat_id is None:
         return None
 
-    record = session_store.chat_record(runtime_root, exact_chat_id)
+    record = session_store.chat_record(runtime_root, entry_chat_id)
     if record is None:
         return None
     linked_spawn_id = normalize_optional_identity(record.spawn_id)
@@ -279,6 +304,7 @@ __all__ = [
     "get_session_record_for_spawn",
     "live_observer_for_chat",
     "native_identity_candidates",
+    "resolve_continue_chat_id",
     "session_exact_chat_id",
     "session_owner_chat_id",
     "session_records_for_spawns",

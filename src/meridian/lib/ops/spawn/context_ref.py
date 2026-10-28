@@ -11,7 +11,7 @@ from meridian.lib.core.context_ref import (
 from meridian.lib.core.refs import RefNotFound
 from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
 from meridian.lib.ops.work_attachment import resolve_active_work_id
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
 
 from .query import read_report, read_spawn_row
@@ -70,7 +70,7 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         row = read_spawn_row(project_root, located.spawn.id, runtime_root=root)
         if row is None:
             raise RefNotFound(located.spawn.id, "spawn")
-        return _spawn_context_ref(row, project_root)
+        return _spawn_context_ref(row, project_root, root)
 
     chat = located.chat
     owner = chat_spawn(located)
@@ -85,7 +85,7 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
     return _session_context_ref_from_record(chat)
 
 
-def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
+def _spawn_context_ref(row: SpawnRecord, project_root: Path, runtime_root: Path) -> SpawnContextRef:
     return SpawnContextRef(
         spawn_id=row.id,
         status=row.status,
@@ -95,7 +95,7 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
         harness=row.harness or "",
         report_text=_load_report_text(project_root, row.id),
         harness_session_id=row.harness_session_id,
-        chat_id=row.continue_chat_id,
+        chat_id=session_identity.resolve_continue_chat_id(runtime_root, row),
         history_id=row.history_id,
         work_id=(row.work_id or "").strip() or None,
         task_cwd=(row.task_cwd or "").strip() or None,

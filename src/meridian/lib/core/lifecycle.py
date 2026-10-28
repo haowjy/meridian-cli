@@ -589,7 +589,7 @@ class SpawnLifecycleService:
         return LifecycleCorrelation(
             spawn_id=resolved_spawn_id,
             parent_id=record.parent_id if record is not None else None,
-            chat_id=record.chat_id if record is not None else None,
+            chat_id=(record.chat_id or record.owner_chat_id) if record is not None else None,
             work_id=record.work_id if record is not None else None,
             agent=record.agent if record is not None else None,
             model=record.model if record is not None else None,
@@ -732,7 +732,7 @@ class SpawnLifecycleService:
             timestamp=datetime.now(tz=UTC),
             spawn_id=record.id,
             parent_id=record.parent_id,
-            chat_id=record.chat_id,
+            chat_id=record.chat_id or record.owner_chat_id,
             work_id=record.work_id,
             agent=record.agent,
             kind=record.kind,

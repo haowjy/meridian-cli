@@ -140,8 +140,8 @@ def _chat_id_for(located: Located) -> str:
     if isinstance(located, ChatHit):
         return str(located.chat.chat_id)
     spawn = located.spawn
-    if spawn.chat_id:
-        return str(spawn.chat_id)
+    if spawn.entry_chat_id:
+        return spawn.entry_chat_id
     for record in session_store.list_all_session_records(located.runtime_root):
         if record.spawn_id == spawn.id:
             return str(record.chat_id)

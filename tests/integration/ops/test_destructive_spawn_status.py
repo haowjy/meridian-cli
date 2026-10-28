@@ -101,6 +101,7 @@ def _old_active_spawn(
                 root,
                 spawn_id="p1",
                 chat_id="c1",
+                owner_chat_id="c0",
                 model="test",
                 agent="coder",
                 harness="claude",

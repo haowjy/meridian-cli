@@ -360,6 +360,7 @@ def test_session_export_spawn_duration_uses_last_attempt_exited_at(
         runtime_root,
         spawn_id="p42",
         chat_id="c42",
+        owner_chat_id="c41",
         model="gpt-5.4",
         agent="coder",
         harness="codex",

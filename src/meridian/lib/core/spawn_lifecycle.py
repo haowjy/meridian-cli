@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 class SpawnReservation:
     """Creation-time fields needed to persist a spawn row before announcement."""
 
-    chat_id: str
+    chat_id: str | None
     session_metadata: PrimarySessionMetadata
     prompt: str
     owner_chat_id: str | None = None

@@ -206,7 +206,7 @@ def gc_abandoned_stages(runtime_root: Path) -> None:
 def start_spawn(
     runtime_root: Path,
     *,
-    chat_id: str,
+    chat_id: str | None,
     owner_chat_id: str | None = None,
     parent_id: str | None = None,
     model: str,
@@ -282,7 +282,8 @@ def start_spawn(
         parent = (
             _read_state(paths.spawns_dir, parent_id, include_prompt=False) if parent_id else None
         )
-        owner = chat_record(runtime_root, owner_chat_id or chat_id)
+        owner_chat = owner_chat_id or chat_id
+        owner = chat_record(runtime_root, owner_chat) if owner_chat else None
         record = SpawnRecord(
             session_instance_id=owner.session_instance_id if owner and kind == "primary" else None,
             parent_history_id=parent.history_id if parent else None,
@@ -294,7 +295,7 @@ def start_spawn(
             id=str(resolved_spawn_id),
             history_id=uuid4(),
             state_revision=1,
-            chat_id=ChatId(chat_id),
+            chat_id=ChatId(chat_id) if chat_id is not None else None,
             owner_chat_id=ChatId(owner_chat_id) if owner_chat_id is not None else None,
             parent_id=parent_id,
             originating_bash_id=os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
@@ -715,7 +716,6 @@ def quarantine_hint(spawn_ids: Sequence[str]) -> str:
 def list_spawns(
     runtime_root: Path,
     *,
-    chat_id: str | None = None,
     parent_id: str | None = None,
     work_id: str | None = None,
 ) -> SpawnScan:
@@ -733,8 +733,6 @@ def list_spawns(
         if record is not None:
             spawns.append(record)
 
-    if chat_id is not None:
-        spawns = [spawn for spawn in spawns if spawn.chat_id == chat_id]
     if parent_id is not None:
         spawns = [spawn for spawn in spawns if spawn.parent_id == parent_id]
     if work_id is not None:

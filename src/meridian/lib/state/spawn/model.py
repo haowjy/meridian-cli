@@ -180,13 +180,50 @@ class SpawnRecord(SpawnStateFields):
     prompt: str | None = None
 
     @property
+    def chat_is_caller_placeholder(self) -> bool:
+        """A child row whose ``chat_id`` is the caller's chat, not a session of its own.
+
+        Releases before v0.18.0 reserved a fresh child with its caller's chat and
+        rebound it when the session started, which also sets ``session_instance_id``.
+        A child with no ``session_instance_id`` and ``chat_id`` equal to its owner
+        chat never started a session; before v0.5.0 even one that ran kept the
+        placeholder. Its ``chat_id`` is not evidence of a session.
+        """
+        return (
+            self.kind == "child"
+            and self.chat_id is not None
+            and not self.session_instance_id
+            and self.chat_id == (self.owner_chat_id or self.chat_id)
+        )
+
+    @property
+    def unstarted_chatless_child(self) -> bool:
+        """A child this build reserved with no chat that has not started its session.
+
+        ``owner_chat_id`` is what separates it from older chat-less rows (app
+        spawns, pre-v3 rows), which have neither chat and may still hold a session
+        that only the session log names.
+        """
+        return (
+            self.kind == "child"
+            and self.chat_id is None
+            and self.owner_chat_id is not None
+            and not self.session_instance_id
+        )
+
+    @property
+    def entry_chat_id(self) -> str | None:
+        """The chat this launch runs or will resume; None if it has no session yet."""
+        return None if self.chat_is_caller_placeholder else self.chat_id
+
+    @property
     def continue_chat_id(self) -> str | None:
         """Last published current chat, otherwise the immutable entry chat."""
         if self.record_mode == "historical":
             return None
         if self.run_boundary is not None and self.run_boundary.status == "mismatch":
-            return self.chat_id
-        return self.current_chat_id or self.chat_id
+            return self.entry_chat_id
+        return self.current_chat_id or self.entry_chat_id
 
 
 __all__ = [
