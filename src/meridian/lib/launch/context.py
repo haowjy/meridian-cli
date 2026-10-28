@@ -1861,7 +1861,7 @@ def bind_launch_context(
     # a nested process then derives its runtime (e.g. under its own MERIDIAN_HOME)
     # instead of inheriting one that looks like a deliberate override.
     derived_runtime_root = derive_runtime_root_from_project(resolved_control_root)
-    if derived_runtime_root is None or runtime_root != derived_runtime_root.resolve():
+    if derived_runtime_root is None or runtime_root.resolve() != derived_runtime_root.resolve():
         child_context_env["_MERIDIAN_RUNTIME_DIR"] = runtime_root.as_posix()
     if harness.id == HarnessId.PI:
         child_context_env["_MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
