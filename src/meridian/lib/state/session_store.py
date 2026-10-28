@@ -593,14 +593,14 @@ def start_session(
     """Append a session start event and acquire a lifetime session lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
+    resolved_chat_id = chat_id.strip() if chat_id is not None else ""
+    if resolved_chat_id and not is_chat_id(resolved_chat_id):
+        raise ValueError(f"Chat ID '{resolved_chat_id}' is not of the form c<digits>")
     project_lifetime_handle = acquire_file_lock(
         paths.project_lifetime_flock,
         mode="shared",
         read_only_existing=True,
     )
-    resolved_chat_id = chat_id.strip() if chat_id is not None else ""
-    if resolved_chat_id and not is_chat_id(resolved_chat_id):
-        raise ValueError(f"Chat ID '{resolved_chat_id}' is not of the form c<digits>")
     handle: IO[bytes] | None = None
     session_instance_id = uuid.uuid4().hex
     try:
