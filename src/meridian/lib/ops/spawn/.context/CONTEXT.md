@@ -70,7 +70,7 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
   results use) in one recursive index query: every primary generation of the chat for a primary,
   so background work started before a continue is waited on; the caller's own subtree for a
   nested caller. Peers that only share the chat, siblings, ancestors, and the primary are
-  excluded. A call without a spawn ID discovers nothing.
+  excluded. A call without a spawn ID fails.
 - Adds terminal results still owed to the caller. A primary uses `owed.py`'s collection scope:
   background direct children of every primary generation for `MERIDIAN_CHAT_ID`, minus
   consumption and live leases read across those generations. A nested caller owns only its own

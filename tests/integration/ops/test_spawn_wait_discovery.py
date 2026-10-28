@@ -237,3 +237,22 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
     assert tuple(row.id for row in targets.owed_rows) == (owed,)
     assert "p-sibling" not in targets.blocked_on_ids
     assert foreground not in targets.blocked_on_ids
+
+
+def test_discovery_rereads_terminal_authority_for_active_index_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, root = _runtime(tmp_path)
+    spawn_id = _spawn(root, "p-stale")
+    spawn_store.finalize_spawn(root, spawn_id, "succeeded", 0, origin="runner")
+
+    # Model a terminal transition immediately after the index selected its row.
+    # Discovery must not trust that provisional selection over state.json.
+    monkeypatch.setattr(
+        history_index.HistoryIndex,
+        "descendant_projection",
+        lambda self, roots, **kwargs: ((spawn_id, "p-root", False),),
+    )
+
+    assert spawn_api._discover_pending_spawns(root, ("p-root",)) == []
