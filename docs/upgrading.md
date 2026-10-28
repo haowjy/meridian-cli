@@ -115,7 +115,7 @@ spawn ID and a raw harness session ID mean the same thing everywhere.
   the holder (`Chat c1 is held by pid 4242; continue after it exits, or --fork c1`);
   continue after it exits, or `--fork` the chat. It used to wait on the lock. A
   continue's run becomes the chat's owner only when its session starts; until then
-  `spawn show cN` names the previous run. See
+  `spawn show`, `wait`, `cancel` and `message` by chat ID name the previous run. See
   [Troubleshooting](troubleshooting.md#continue-refuses-the-chat-is-held).
 
 `meridian [-C REPO] spawn message REF` accepts a chat ID and reaches the session
