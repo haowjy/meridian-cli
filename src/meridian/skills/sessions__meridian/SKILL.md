@@ -11,13 +11,16 @@ before the next implementation or documentation step starts. Skip mining when yo
 brief already carries the rationale; otherwise skim current artifacts and mine only
 the gaps.
 
-## Start at the Root
+## Start at Your Launcher
 
 `$MERIDIAN_CHAT_ID` is the chat of the conversation that launched you: your own chat
 if you are a primary session, your parent's chat if you are a spawn, so it is not the
 root at depth two or more. A primary's capabilities block gives its `cNNN` value; a
 spawn's `# Meridian run` block gives its launcher's. Use that literal in restricted
-shells. To read the root or another session, pass its chat or spawn ID explicitly. Begin with recent context:
+shells. To reach the root, walk up: `meridian spawn show <spawn ID>` prints a `Parent`
+line, so repeat on each parent until it has none; the last spawn's chat is the
+root's. Pass any chat or spawn ID you find to `session log`. If the chain is cut
+or the brief names a different session, ask your caller. Begin with recent context:
 
 ```bash
 meridian session log cNNN --tail 20

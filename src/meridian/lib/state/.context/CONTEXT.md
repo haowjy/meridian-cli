@@ -523,7 +523,8 @@ A chat runs as one or more generations, one start event each: a launch, a
 `--continue`, or the new chat a running primary moves into after `/clear`. Every start
 event names the spawn that runs that generation (`spawn_id`) when it is written. `session_identity.chat_owner_spawn` relies on it: it returns the newest
 generation's spawn that has a row, with no scan and no fallback, so a writer that links
-late or not at all makes the chat unresolvable by chat ID.
+late or not at all leaves spawn commands unable to name the chat's owner ("Chat cN has no
+spawn"); resume, read and `--from` still work on the chat.
 
 - Children write the spawn row first, then start the session.
 - The primary runner reserves its ID (`spawn_store.reserve_spawn_id`) before

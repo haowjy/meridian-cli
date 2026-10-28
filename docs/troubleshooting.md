@@ -139,7 +139,7 @@ Primary `--continue REF` / `--fork [REF]` / `--fork-fresh [REF]` and spawn fork 
 meridian --continue 01JABCDEF1234567890
 ```
 
-When a primary session ends, the quit message now shows the chat ID (e.g. `c123`) as the preferred `--continue` reference. Chat IDs are stable and human-friendly; UUIDs still work but are no longer the default suggestion.
+When a primary session ends, the quit message shows the chat ID (e.g. `c123`) as the preferred `--continue` reference. Chat IDs are stable and human-friendly; UUIDs still work but are not the default suggestion.
 
 `--continue` resumes the same session. `--fork` starts a new session seeded from prior context while preserving source agent/model/skills. `--fork-fresh` starts a new fork and allows agent/model/skills overrides. `--from [REF]` starts an independent session with prior context as reference material (no transcript lineage). Bare `--from` defaults to `$MERIDIAN_SPAWN_ID`.
 
@@ -158,6 +158,23 @@ To find which spawns belong to a work item:
 meridian work                      # dashboard with attached spawns
 meridian spawn report search "keyword"   # search across all spawn reports
 ```
+
+## `--continue` refuses: the chat is held
+
+```text
+Chat c123 is held by pid 4242; continue after it exits, or --fork c123
+p45 moved to c130 but still holds c123 until it exits; continue after it exits, or --fork c123
+```
+
+A run that started in chat `c123` keeps that chat's lock until its process exits, even
+after `/clear` moves the conversation into a new chat (`c130`). `--continue` waits about
+two seconds, then refuses and names the holder (the pid is omitted when the holder
+has already died). Either wait for the process to exit and run `--continue` again, or
+start a branch from the chat with `meridian --fork c123`.
+
+A ref that names nothing fails with a not-found error (`Chat 'c99999' not found`)
+rather than resuming. Chat refs are `c<digits>`; any other value is treated as a native
+session ID. `@latest`, `@last-failed` and `@last-completed` also work with `--continue`.
 
 ## Spawn shows as `finalizing`
 

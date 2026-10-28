@@ -228,9 +228,9 @@ rejects any other shape), selector (`@latest`, `@last-failed`, `@last-completed`
 dispatch on that kind: selector → spawn, spawn → that spawn, chat → that chat, native ID →
 its newest-start generation (`session_store.native_generations`, refusing ambiguity across
 harnesses or native stores) → its chat. A miss is `RefNotFound` (a `ValueError`); only a
-native ID with no record is `Untracked`, which resume (`--continue`, `--fork`,
-`spawn continue`) and read (`session log/export/search`) accept and every other caller
-rejects. Read keeps fallbacks that resume refuses (history index for reclaimed spawns and
+native ID with no record is `Untracked`, which primary `--continue`/`--fork`, spawn `--fork`
+and read (`session log/export/search`) accept; spawn `--continue` and every other caller
+reject it. Read keeps fallbacks that resume refuses (history index for reclaimed spawns and
 archive aliases, portable history UUIDs, restored historical records).
 
 Projections: inspect/act commands (`locate_run`) take a spawn ref's spawn, and for a chat
@@ -249,9 +249,9 @@ Session browse has a narrower authority question: whether a primary chat has a
 durably recorded harness session id and may therefore resume or fork.
 `session_list.py` uses the batch
 `recover_recorded_chat_harness_session_ids()` and `session_reentry.py` uses its
-single-chat counterpart from `reference_recovery.py`. Both check the session
-store, primary spawn row, and `primary_meta.json`, but never perform native
-transcript discovery. `session_list.py` orders and limits lightweight session
+single-chat counterpart from `reference_recovery.py`. Both check only the session
+record, but never read spawn rows or `primary_meta.json` and never perform
+native transcript discovery. `session_list.py` orders and limits lightweight session
 records before enriching the visible page. Recovery and subset search replay the
 session journal once, use recorded primary `spawn_id` relationships for direct
 reads, and perform at most one fallback global spawn scan for missing or invalid
