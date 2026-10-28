@@ -234,16 +234,17 @@ that `read_derived()` projects: cancel intent yields `cancelled`, otherwise runn
 disappearance yields `failed`/`crashed`. Origin and timestamps may differ. It never
 finalizes a lockless legacy row.
 
+Before finalization it snapshots exact cleanup targets into
+`reaper_cleanup_claim.json`; after finalization it terminates the claimed scopes. This
+finalize-first order makes state convergence independent of slow cleanup; a crash
+leaves a durable claim for the next doctor pass.
+
 The background repair on primary launch is `recover_crashed_launches()`, not a row walk:
 one pass at a time under `locks/repair.lock`, candidates are the history index's active
 rows in spawn-ID order resuming after `repair-cursor`, at most 64 launch-lock attempts
 and 32 recoveries per pass, lockless rows untouched, and a busy index skips the pass.
 Only doctor still reads every `state.json` (`iter_repair_candidates`), and only doctor
 resolves a terminal row's leftover reaper claim.
-Before finalization it snapshots exact cleanup targets into
-`reaper_cleanup_claim.json`; after finalization it terminates the claimed scopes. This
-finalize-first order makes state convergence independent of slow cleanup; a crash
-leaves a durable claim for the next doctor pass.
 
 Cancel convergence uses the same launch-lock claim for lock-backed rows. A report or
 runner-exit breadcrumb is not an outcome: when the runner is gone, cancel intent still
@@ -480,16 +481,16 @@ only `Claimed` authorizes `SpawnApplicationService.finalize_dead_launch()`, the 
 writer of a dead lock-backed launch's outcome.
 
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
-background repair and fails closed outside root depth. It delegates persistence to
+and fails closed outside root depth. It delegates persistence to
 `finalize_dead_launch()`, which retains the claimed runner-lifetime `launch.lock`;
 lockless legacy rows are never finalized here. The repairer snapshots a cleanup claim,
 persists the derived outcome while retaining the launch lock, then terminates the
 claimed, birth-validated scopes. A separate stable
 cleanup lock prevents concurrent repairers from double-signalling; terminal rows
-retain failed claims for the next doctor pass. Startup candidate discovery streams
-authoritative spawn rows directly, selecting active rows and rows with a cleanup
-claim; it does not trust the disposable history index or retain a corpus-sized scan.
-Orphan primaries are captured only after the whole pass: the capture guard defers
+retain failed claims for the next doctor pass. Doctor's candidate discovery streams
+authoritative spawn rows directly, selecting active rows and rows with a cleanup claim;
+the background pass instead takes its candidates from the history index. Doctor
+captures orphan primaries only after its whole walk: the capture guard defers
 while any row bound to the same native session is active, and crashed `--continue`
 generations share one. Primary scope termination additionally requires positive
 runner-death evidence against the recorded birth, with the same one-second clock

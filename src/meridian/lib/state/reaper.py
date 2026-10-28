@@ -7,6 +7,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
 
+import structlog
+
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES
@@ -134,7 +136,7 @@ def _claim_reaper_cleanup(
 
 
 def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
-    """Resolve a durable claim once, retaining failed targets for a later pass."""
+    """Resolve a durable claim once, retaining failed targets for doctor to retry."""
     spawn_id = SpawnId(record.id)
     with lock_file(cleanup_lock_path(runtime_root, spawn_id), reentrant=False):
         claimed = read_cleanup_claim(runtime_root, spawn_id)
@@ -180,6 +182,8 @@ def iter_repair_candidates(runtime_root: Path) -> Iterator[SpawnRecord]:
             yield record
 
 
+logger = structlog.get_logger(__name__)
+
 _MAX_LOCK_ATTEMPTS_PER_PASS = 64
 _MAX_RECOVERIES_PER_PASS = 32
 
@@ -192,7 +196,7 @@ def _spawn_number(spawn_id: str) -> int:
 def _read_cursor(path: Path) -> int:
     try:
         return _spawn_number(path.read_text(encoding="utf-8").strip())
-    except OSError:
+    except (OSError, ValueError):
         return -1
 
 
@@ -212,6 +216,7 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
         try:
             rows = HistoryIndex(runtime_root).spawns(status=set(ACTIVE_SPAWN_STATUSES))
         except HistoryIndexIncomplete:
+            logger.debug("repair_pass_skipped", reason="history_index_unavailable")
             return ()
         candidates = sorted(
             (row for row in rows if row.record_mode != "historical"),
@@ -223,32 +228,35 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
             row for row in candidates if _spawn_number(row.id) <= cursor
         ]
         service = build_spawn_application_service_from_roots(project_root, runtime_root)
+        claimed_ids: set[str] = set()
 
         def claim_cleanup(stored: SpawnRecord) -> None:
+            # Runs only after this pass won the dead-launch claim.
             _claim_reaper_cleanup(
                 runtime_root, stored, read_primary_metadata(runtime_root, stored.id)
             )
+            claimed_ids.add(stored.id)
 
         async def run() -> tuple[SpawnRecord, ...]:
             recovered: list[SpawnRecord] = []
             last: str | None = None
-            for row in ordered[:_MAX_LOCK_ATTEMPTS_PER_PASS]:
-                last = row.id
-                result = await service.finalize_dead_launch(
-                    SpawnId(row.id), origin="reconciler", before_finalize=claim_cleanup
-                )
-                # A Settled claim (the index lagged) returns a terminal row too;
-                # only our own terminal counts as a recovery.
-                if (
-                    isinstance(result, SpawnRecord)
-                    and result.terminal is not None
-                    and result.terminal.origin == "reconciler"
-                ):
-                    recovered.append(_cleanup_after_finalize(runtime_root, result))
+            try:
+                for row in ordered[:_MAX_LOCK_ATTEMPTS_PER_PASS]:
+                    last = row.id
+                    try:
+                        result = await service.finalize_dead_launch(
+                            SpawnId(row.id), origin="reconciler", before_finalize=claim_cleanup
+                        )
+                        if isinstance(result, SpawnRecord) and result.id in claimed_ids:
+                            recovered.append(_cleanup_after_finalize(runtime_root, result))
+                    except Exception:
+                        logger.exception("repair_row_failed", spawn_id=row.id)
+                        continue
                     if len(recovered) >= _MAX_RECOVERIES_PER_PASS:
                         break
-            if last is not None:
-                atomic_write_text(cursor_path, last)
+            finally:
+                if last is not None:
+                    atomic_write_text(cursor_path, last)
             return tuple(recovered)
 
         return asyncio.run(run())
