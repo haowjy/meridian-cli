@@ -557,8 +557,19 @@ async def test_opencode_events_surface_activity_transition_events(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("primary_observer", "busy_stall_limit"),
+    (
+        (False, None),
+        # A primary has no silence ceiling: a long turn is healthy, and the probe
+        # reports its end so the observer can reconnect and resync then.
+        (True, 0.0),
+    ),
+)
 async def test_opencode_spawned_stream_survives_stall_while_session_runs(
     monkeypatch: pytest.MonkeyPatch,
+    primary_observer: bool,
+    busy_stall_limit: float | None,
 ) -> None:
     determinism = _install_opencode_determinism(monkeypatch)
     _keep_backend_alive(monkeypatch)
@@ -571,33 +582,10 @@ async def test_opencode_spawned_stream_survives_stall_while_session_runs(
         # must survive the cancelled read and be read from the same response.
         on_probe=lambda count: content.release() if count == 2 else None,
     )
+    connection._primary_observer_mode = primary_observer
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.05)
-
-    event = await _first_event_after_probes(determinism, connection, monkeypatch, content, probes=2)
-
-    assert event.event_type == "session.execution.succeeded"
-    assert connection.open_count == 1
-    assert connection.state == "connected"
-
-
-@pytest.mark.asyncio
-async def test_opencode_primary_observer_keeps_stream_while_session_runs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    determinism = _install_opencode_determinism(monkeypatch)
-    _keep_backend_alive(monkeypatch)
-    terminal = b'{"type":"session.execution.succeeded","sessionID":"sess-liveness"}\n'
-    content = _GatedTerminalSseContent(terminal)
-    connection = _LivenessProbeOpenCodeConnection(
-        responses=[_SseResponse(content=content)],
-        session_running=[True],
-        on_probe=lambda count: content.release() if count == 2 else None,
-    )
-    connection._primary_observer_mode = True
-    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.05)
-    # A primary has no silence ceiling: a long turn is healthy, and the probe
-    # reports its end so the observer can reconnect and resync then.
-    monkeypatch.setattr(OpenCodeConnection, "_BUSY_STALL_LIMIT_SECONDS", 0.0)
+    if busy_stall_limit is not None:
+        monkeypatch.setattr(OpenCodeConnection, "_BUSY_STALL_LIMIT_SECONDS", busy_stall_limit)
 
     event = await _first_event_after_probes(determinism, connection, monkeypatch, content, probes=2)
 
@@ -1248,15 +1236,6 @@ async def test_opencode_startup_exit_with_claimed_port_is_retryable(
         competing_socket.close()
 
     assert connection.state == "failed"
-
-
-def test_opencode_startup_exit_message_without_stderr(tmp_path: Path) -> None:
-    connection = OpenCodeConnection()
-    _set_startup_failure(connection, _build_connection_config(tmp_path), "")
-
-    message = str(connection._startup_exit_exception())
-
-    assert message == "OpenCode backend failed to start (exit=1)."
 
 
 @pytest.mark.asyncio

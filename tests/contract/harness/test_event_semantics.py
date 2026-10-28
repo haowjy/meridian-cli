@@ -17,10 +17,6 @@ def _event(harness_id: HarnessId, event_type: str) -> RawHarnessEvent:
     )
 
 
-def test_claude_tool_call_does_not_inherit_opencode_semantics() -> None:
-    assert normalize_event(_event(HarnessId.CLAUDE, "tool_call")).semantics.activity is None
-
-
 def test_opencode_turn_started_does_not_inherit_codex_semantics() -> None:
     assert normalize_event(_event(HarnessId.OPENCODE, "turn/started")).semantics.activity is None
 

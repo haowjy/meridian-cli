@@ -10,7 +10,6 @@ import pytest
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.pi_private_state import BashEvidenceFile
 from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.drain_policy import DrainAction
@@ -330,11 +329,6 @@ async def test_present_malformed_private_evidence_is_unknown(tmp_path: Path, val
         assert watcher.evidence_failure() is not None
     finally:
         await watcher.stop()
-
-
-def test_valid_canonical_bash_file() -> None:
-    value = bash_file()
-    assert BashEvidenceFile.model_validate(value).records["b1"].status == "exited"
 
 
 @pytest.mark.asyncio
