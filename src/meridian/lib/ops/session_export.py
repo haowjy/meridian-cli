@@ -14,7 +14,7 @@ from meridian.lib.core.refs import RefNotFound, parse_ref
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import TranscriptMessage
-from meridian.lib.ops.locate import Located, locate
+from meridian.lib.ops.locate import ChatHit, Located, SpawnHit, locate
 from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_identity
@@ -207,21 +207,20 @@ def _locate_export_subject(project_root: Path, runtime_root: Path, ref: str) -> 
         located = locate(project_root, ref, runtime_root=runtime_root)
     except (RefNotFound, NativeIdentityError):
         return None
-    return located if isinstance(located, Located) else None
+    return located if isinstance(located, SpawnHit | ChatHit) else None
 
 
 def _session_metadata(subject: Located | None) -> list[str]:
     lines: list[str] = []
     if subject is None:
         return lines
-    spawn, record = subject.spawn, subject.chat
-    if spawn is not None:
-        started_at, stopped_at = spawn.started_at, spawn.last_attempt_exited_at
-        model, harness = spawn.model, spawn.harness
-    else:
-        assert record is not None
-        started_at, stopped_at = record.started_at, record.stopped_at
-        model, harness = record.model, record.harness
+    match subject:
+        case SpawnHit(spawn=spawn):
+            started_at, stopped_at = spawn.started_at, spawn.last_attempt_exited_at
+            model, harness = spawn.model, spawn.harness
+        case ChatHit(chat=record):
+            started_at, stopped_at = record.started_at, record.stopped_at
+            model, harness = record.model, record.harness
     if started_at:
         lines.append(f"- Date: {started_at}")
     if model:
@@ -242,13 +241,12 @@ def _session_scope(
     if subject is None:
         # An archived spawn is gone locally, but its children are not.
         return None, None, ref if parse_ref(ref).kind == "spawn" else None
-    if subject.spawn is not None:
+    if isinstance(subject, SpawnHit):
         return (
             session_identity.spawn_exact_chat_id(subject.spawn),
             session_identity.spawn_owner_chat_id(subject.spawn),
             subject.spawn.id,
         )
-    assert subject.chat is not None
     return (
         session_identity.session_exact_chat_id(subject.chat),
         session_identity.session_owner_chat_id(subject.runtime_root, subject.chat),

@@ -34,9 +34,24 @@ def outcome(function, *args, **kwargs):
         return (type(exc).__name__, str(exc))
 
 
-def newest_native_generation(root: Path, native: str, *, harness: str | None = None):
+def best_native_generation(root: Path, native: str, *, harness: str | None = None):
     matches = s.native_generations(root, native, harness=harness)
     return matches[-1] if matches else None
+
+
+def oracle_pick(root: Path, native: str, *, harness: str | None = None):
+    """The old resolver's newest generation, except that a newest one with no native
+    store yields to an older one that has one: the rule resume and read now share."""
+    picked = old.resolve_session_ref(root, native, harness=harness)
+    if picked is not None and picked.native_key() is None:
+        keyed = [
+            record
+            for record in s.native_generations(root, native, harness=harness)
+            if record.native_key() is not None
+        ]
+        if keyed:
+            return keyed[-1]
+    return picked
 
 
 def compare_reads(root: Path, chats: list[str], identities: set[tuple[str, str]]) -> dict[str, int]:
@@ -53,13 +68,11 @@ def compare_reads(root: Path, chats: list[str], identities: set[tuple[str, str]]
             assert actual == expected, (name, harness, native, actual, expected)
         counts[name] = len(identities)
     for harness, native in sorted(identities):
-        assert outcome(newest_native_generation, root, native, harness=harness) == outcome(
-            old.resolve_session_ref, root, native, harness=harness
+        assert outcome(best_native_generation, root, native, harness=harness) == outcome(
+            oracle_pick, root, native, harness=harness
         ), ("resolve_session_ref", harness, native)
     for native in sorted({native for _, native in identities}):
-        assert outcome(newest_native_generation, root, native) == outcome(
-            old.resolve_session_ref, root, native
-        )
+        assert outcome(best_native_generation, root, native) == outcome(oracle_pick, root, native)
     counts["resolve_session_ref"] = len(identities) + len({native for _, native in identities})
     return counts
 

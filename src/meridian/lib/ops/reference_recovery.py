@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state import session_identity, session_store
+from meridian.lib.state.spawn.model import SpawnRecord
 
 
 class RecoveryProvenance(StrEnum):
@@ -68,34 +69,16 @@ def _recover_from_session_record(
     )
 
 
-def _recover_from_spawn_row(runtime_root: Path, spawn_id: str) -> RecoveryResult | None:
-    row = spawn_store.get_spawn(runtime_root, spawn_id)
-    if row is None:
-        return None
-    session_id = _normalize(row.harness_session_id)
+def recover_harness_session_id(runtime_root: Path, spawn: SpawnRecord) -> RecoveryResult | None:
+    """Read the exact recorded identity of a spawn; never infer it from native files."""
+    session_id = _normalize(spawn.harness_session_id)
     if session_id:
         return RecoveryResult(
             harness_session_id=session_id,
             provenance=RecoveryProvenance.SPAWN_ROW,
         )
-    return None
-
-
-def recover_harness_session_id(
-    runtime_root: Path, *, spawn_id: str | None = None, chat_id: str | None = None
-) -> RecoveryResult | None:
-    """Read the exact recorded identity of a spawn or chat; never infer it from native files."""
-    if chat_id is not None:
-        return recover_recorded_chat_harness_session_id(runtime_root, chat_id)
-    if spawn_id is None:
-        return None
-    result = _recover_from_spawn_row(runtime_root, spawn_id)
-    if result is not None:
-        return result
-    if spawn_store.get_spawn(runtime_root, spawn_id) is None:
-        return None
     linked_record = session_identity.get_session_record_for_spawn(
-        runtime_root, spawn_id, require_harness_session_id=True
+        runtime_root, spawn.id, require_harness_session_id=True
     )
     session_id = _normalize(linked_record.harness_session_id) if linked_record else None
     if linked_record is None or not session_id:

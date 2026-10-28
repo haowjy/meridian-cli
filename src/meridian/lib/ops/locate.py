@@ -36,17 +36,28 @@ from meridian.lib.state.spawn_status import overlay_derived
 
 
 @dataclass(frozen=True)
-class Located:
-    """What a reference names: a spawn (spawn ref, selector) or a chat (chat ref, native ID)."""
+class SpawnHit:
+    """A spawn ref or selector: the spawn it names."""
 
     ref: Ref
     runtime_root: Path
-    spawn: SpawnRecord | None = None
+    spawn: SpawnRecord
+
+
+@dataclass(frozen=True)
+class ChatHit:
+    """A chat ref or a native ID that has records: the chat it names."""
+
+    ref: Ref
+    runtime_root: Path
     # A chat ref names the chat's newest record; a native ID names the generation
-    # recorded under it.
-    chat: session_store.SessionRecord | None = None
+    # ``native_generations`` ranks best.
+    chat: session_store.SessionRecord
     # Other chats recorded under the same native ID.
     also_bound: tuple[str, ...] = ()
+
+
+Located = SpawnHit | ChatHit
 
 
 @dataclass(frozen=True)
@@ -57,25 +68,12 @@ class Untracked:
 
 
 
-def _select_latest_spawn_id(
-    project_root: Path,
-    *,
-    statuses: tuple[str, ...] | None,
-    runtime_root: Path | None = None,
-) -> str | None:
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
-        return None
-    spawns = overlay_derived(
-        resolved_runtime_root,
-        indexed_spawn_scan(resolved_runtime_root).records,
-    )
+def _select_latest_spawn_id(runtime_root: Path, statuses: tuple[str, ...] | None) -> str | None:
+    spawns = overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)
     if statuses is not None:
         wanted = set(statuses)
         spawns = [item for item in spawns if item.status in wanted]
-    if not spawns:
-        return None
-    return spawns[-1].id
+    return spawns[-1].id if spawns else None
 
 
 def locate(
@@ -96,23 +94,21 @@ def locate(
 
     match parsed.kind:
         case "selector":
-            spawn_id = _select_latest_spawn_id(
-                project_root, statuses=SELECTORS[parsed.value], runtime_root=root
-            )
+            spawn_id = _select_latest_spawn_id(root, SELECTORS[parsed.value])
             spawn = spawn_store.get_spawn(root, spawn_id) if spawn_id is not None else None
             if spawn is None:
                 raise RefNotFound(parsed.value, "selector")
-            return Located(parsed, root, spawn=spawn)
+            return SpawnHit(parsed, root, spawn)
         case "spawn":
             spawn = spawn_store.get_spawn(root, parsed.value)
             if spawn is None:
                 raise RefNotFound(parsed.value, "spawn")
-            return Located(parsed, root, spawn=spawn)
+            return SpawnHit(parsed, root, spawn)
         case "chat":
             chat = session_store.chat_record(root, parsed.value)
             if chat is None:
                 raise RefNotFound(parsed.value, "chat")
-            return Located(parsed, root, chat=chat)
+            return ChatHit(parsed, root, chat)
         case "native":
             generations = session_store.native_generations(root, parsed.value, harness=harness)
             if not generations:
@@ -121,18 +117,17 @@ def locate(
             other_chats = dict.fromkeys(
                 record.chat_id for record in reversed(generations) if record.chat_id != chat.chat_id
             )
-            return Located(parsed, root, chat=chat, also_bound=tuple(other_chats))
+            return ChatHit(parsed, root, chat, tuple(other_chats))
 
 
-def chat_spawn(located: Located) -> SpawnId | None:
+def chat_spawn(hit: ChatHit) -> SpawnId | None:
     """The spawn that owns the located chat: the one that ran it."""
 
-    assert located.chat is not None
     # Only a chat ref carries the chat's newest record, the fast path for a linked chat.
     return session_identity.chat_owner_spawn(
-        located.runtime_root,
-        located.chat.chat_id,
-        newest=located.chat if located.ref.kind == "chat" else None,
+        hit.runtime_root,
+        hit.chat.chat_id,
+        newest=hit.chat if hit.ref.kind == "chat" else None,
     )
 
 
@@ -157,9 +152,8 @@ def locate_run(
     located = locate(project_root, ref, runtime_root=runtime_root)
     if isinstance(located, Untracked):
         raise RefNotFound(located.native_id, "native")
-    if located.spawn is not None:
+    if isinstance(located, SpawnHit):
         return RunTarget(SpawnId(located.spawn.id))
-    assert located.chat is not None
     chat_id = located.chat.chat_id
     # Only running rows can hold a chat, so read the index for those, never every
     # spawn's state file. Following a native /resume is best effort: when the index
@@ -195,8 +189,10 @@ def resolve_spawn_targets(
 
 
 __all__ = [
+    "ChatHit",
     "Located",
     "RunTarget",
+    "SpawnHit",
     "Untracked",
     "chat_spawn",
     "locate",

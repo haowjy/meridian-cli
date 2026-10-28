@@ -33,7 +33,7 @@ from meridian.lib.ops.legacy_native_import import (
     configured_archive_destination,
     retained_chat_facts,
 )
-from meridian.lib.ops.locate import Located, Untracked, locate
+from meridian.lib.ops.locate import ChatHit, Located, Untracked, locate
 from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Conflict
@@ -137,10 +137,9 @@ def _excerpt(text: str | None) -> str | None:
 
 
 def _chat_id_for(located: Located) -> str:
-    if located.chat is not None:
+    if isinstance(located, ChatHit):
         return str(located.chat.chat_id)
     spawn = located.spawn
-    assert spawn is not None
     if spawn.chat_id:
         return str(spawn.chat_id)
     for record in session_store.list_all_session_records(located.runtime_root):

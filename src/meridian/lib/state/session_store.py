@@ -1239,9 +1239,11 @@ def native_generations(
 ) -> list[SessionRecord]:
     """Every generation recorded under a native ID, best pick last.
 
-    The one native-ID lookup. A native ID names one session file: ownership split
-    across harnesses or native stores is ambiguous and refused. Ties on start time
-    go to the higher chat number.
+    The one native-ID lookup and the one pick rule, shared by resume and read: the
+    newest generation that can name its session file (a legacy binding has no native
+    store), else the newest. A native ID names one session file: ownership split across
+    harnesses or native stores is ambiguous and refused. Ties on start time go to the
+    higher chat number.
     """
 
     normalized = ref.strip()
@@ -1261,7 +1263,14 @@ def native_generations(
         )
     if len({key for record in matches if (key := record.native_key()) is not None}) > 1:
         raise NativeSessionUnavailable(normalized, "ambiguous_native_file")
-    return sorted(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
+    return sorted(
+        matches,
+        key=lambda item: (
+            item.native_key() is not None,
+            item.started_at,
+            _session_sort_key(item.chat_id),
+        ),
+    )
 
 
 def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:

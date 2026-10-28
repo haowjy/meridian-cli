@@ -10,7 +10,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
-from meridian.lib.ops.locate import Untracked, chat_spawn, locate
+from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
 from meridian.lib.ops.reference_recovery import (
     RecoveryResult,
     recover_harness_session_id,
@@ -256,18 +256,17 @@ def resolve_session_reference(
         return _resolve_untracked_reference(project_root, located.native_id, harness_hint)
 
     root = located.runtime_root
-    if located.spawn is not None:
+    if isinstance(located, SpawnHit):
         result = _resolve_spawn_reference(root, located.spawn, project_root)
         if (
             result.missing_harness_session_id
             and _normalize_optional(result.harness_session_id) is None
         ):
-            recovery = recover_harness_session_id(root, spawn_id=located.spawn.id)
+            recovery = recover_harness_session_id(root, located.spawn)
             if recovery is not None:
                 return replace(result, recovery=recovery)
         return result
     chat = located.chat
-    assert chat is not None
     if located.ref.kind == "native" and harness_hint is None:
         inferred = infer_harness_from_untracked_session_ref(project_root, located.ref.value)
         if inferred is not None and chat.harness and str(inferred) != chat.harness:

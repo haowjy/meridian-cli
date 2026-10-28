@@ -28,7 +28,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.harness.transcript import reject_runner_history
-from meridian.lib.ops.locate import Located, Untracked, locate
+from meridian.lib.ops.locate import ChatHit, SpawnHit, Untracked, locate
 from meridian.lib.ops.run_boundary import spawn_view_label
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.query import read_stored_spawn_row
@@ -409,24 +409,13 @@ def resolve_transcript_source(
             root, indexed, ref=normalized_ref, project_root=project_root, deadline=deadline
         )
 
-    if isinstance(located, Located):
-        if located.spawn is not None:
-            return _spawn_source(located.runtime_root, located.spawn)
-        assert located.chat is not None
+    if isinstance(located, SpawnHit):
+        return _spawn_source(located.runtime_root, located.spawn)
+    if isinstance(located, ChatHit):
         if located.ref.kind == "chat":
             return _chat_target(located.runtime_root, located.chat)
         chat = located.chat
         key = chat.native_key()
-        if key is None and located.ref.kind == "native":
-            # The newest generation may predate the native store; an older one can still
-            # name the file.
-            generations = session_store.native_generations(
-                located.runtime_root, located.ref.value
-            )
-            for older in reversed(generations):
-                if (key := older.native_key()) is not None:
-                    chat = older
-                    break
         # A legacy binding with no native store can't name its file: read it as untracked.
         if key is not None:
             target = _native_target(key, chat)

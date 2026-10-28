@@ -9,7 +9,7 @@ from meridian.lib.core.context_ref import (
     SpawnContextRef,
 )
 from meridian.lib.core.refs import RefNotFound
-from meridian.lib.ops.locate import Untracked, chat_spawn, locate
+from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
 from meridian.lib.ops.work_attachment import resolve_active_work_id
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -66,14 +66,13 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
     if isinstance(located, Untracked):
         raise RefNotFound(located.native_id, "native")
     root = located.runtime_root
-    if located.spawn is not None:
+    if isinstance(located, SpawnHit):
         row = read_spawn_row(project_root, located.spawn.id, runtime_root=root)
         if row is None:
             raise RefNotFound(located.spawn.id, "spawn")
         return _spawn_context_ref(row, project_root)
 
     chat = located.chat
-    assert chat is not None
     owner = chat_spawn(located)
     owner_row = spawn_store.get_spawn(root, owner) if owner is not None else None
     if owner_row is not None:
