@@ -1,5 +1,6 @@
 [dependencies.meridian-dev-workflow]
 url = "https://github.com/haowjy/meridian-dev-workflow"
+version = "v0.15.17"
 
 [dependencies.meridian-prompter]
 url = "https://github.com/haowjy/meridian-prompter"
