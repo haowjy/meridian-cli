@@ -50,7 +50,6 @@ class HookListOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     hooks: tuple[HookListItem, ...] = ()
-    warnings: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -93,7 +92,6 @@ class HookCheckOutput(BaseModel):
 
     ok: bool
     checks: tuple[HookCheckItem, ...] = ()
-    warnings: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -146,7 +144,6 @@ class HookRunOutput(BaseModel):
     event: HookEventName
     result: HookRunResult
     include_output: bool = False
-    warnings: tuple[str, ...] = ()
 
     def to_cli_wire(self) -> dict[str, object]:
         """Project hook outcome, optionally including captured process output."""
@@ -161,7 +158,6 @@ class HookRunOutput(BaseModel):
             "error": self.result.error,
             "exit_code": self.result.exit_code,
             "duration_ms": self.result.duration_ms,
-            "warnings": list(self.warnings),
         }
         if self.include_output:
             wire["stdout"] = self.result.stdout
@@ -232,7 +228,6 @@ class HookResolveOutput(BaseModel):
 
     event: HookEventName
     hooks: tuple[HookResolveItem, ...] = ()
-    warnings: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -292,8 +287,6 @@ def _hook_type(hook: Hook) -> str:
 
 
 def _hook_status(hook: Hook) -> str:
-    if hook.deprecated:
-        return "deprecated" if hook.enabled else "disabled (deprecated)"
     return "enabled" if hook.enabled else "disabled"
 
 
@@ -335,13 +328,14 @@ def hooks_list_sync(payload: HookListInput) -> HookListOutput:
         )
         for hook in registry.get_all_hooks()
     )
-    return HookListOutput(hooks=hooks, warnings=registry.get_warnings())
+    return HookListOutput(hooks=hooks)
 
 
 def hooks_check_sync(payload: HookCheckInput) -> HookCheckOutput:
     authority = resolve_project_authority(payload.project_root)
     load_config(authority.project_root, authority=authority)
-    registry = HookRegistry(authority.project_root, authority=authority)
+    # Constructing the registry validates every hook row.
+    HookRegistry(authority.project_root, authority=authority)
 
     checks: list[HookCheckItem] = []
     all_ok = True
@@ -361,7 +355,6 @@ def hooks_check_sync(payload: HookCheckInput) -> HookCheckOutput:
     return HookCheckOutput(
         ok=all_ok,
         checks=tuple(checks),
-        warnings=registry.get_warnings(),
     )
 
 
@@ -467,11 +460,7 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
                 f"Builtin hook {builtin.name!r} supports only [{supported}], not {run_event!r}."
             )
     if run_event != effective_hook.event:
-        effective_hook = replace(
-            effective_hook,
-            event=run_event,
-            configured_event=None,
-        )
+        effective_hook = replace(effective_hook, event=run_event)
 
     dispatcher = HookDispatcher(
         authority.project_root,
@@ -501,7 +490,6 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
         event=effective_hook.event,
         result=_result_to_output(result),
         include_output=payload.include_output,
-        warnings=registry.get_warnings(),
     )
 
 
@@ -526,7 +514,6 @@ def hooks_resolve_sync(payload: HookResolveInput) -> HookResolveOutput:
     return HookResolveOutput(
         event=payload.event,
         hooks=hooks,
-        warnings=registry.get_warnings(),
     )
 
 

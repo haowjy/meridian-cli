@@ -51,7 +51,7 @@ class ChatHit:
     ref: Ref
     runtime_root: Path
     # A chat ref names the chat's newest record; a native ID names the generation
-    # ``native_generations`` ranks best.
+    # ``native_generations`` picks: newest with a native session key, else newest.
     chat: session_store.SessionRecord
     # Other chats recorded under the same native ID.
     also_bound: tuple[str, ...] = ()

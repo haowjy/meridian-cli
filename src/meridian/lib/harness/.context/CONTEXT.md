@@ -40,9 +40,8 @@ Per-harness mapping:
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
 - **Claude native-agent boundary**: unless `[harness.claude]
   allow_builtin_agents = true`, Meridian injects scoped built-in-agent denies through
-  `compile_claude_permissions()`. Generic `Agent` is gated by Mars
-  `[settings.meridian.agent_copy]`: allowed when
-  `harnesses = ["claude"]` and `.claude` is a target. Also retained when
+  `compile_claude_permissions()`. Generic `Agent` is gated by what Mars
+  installed: allowed when `.mars/native-agents.json` lists Claude for at least one agent. Also retained when
   `allow_builtin_agents = true`: Claude cannot deny generic `Agent` without disabling
   built-ins, so that part of the platform rule is reported partial. Passthrough `--allowedTools` is
   merged in that compile; profile allowlists and platform denies stay authoritative. The
@@ -274,14 +273,14 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
   `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`.
   `[harness.claude] allow_builtin_agents = true` removes this platform rule.
 
-- **Generic `Agent` follows the Mars agent-copy boundary.** Meridian reads
-  `mars.toml` to check whether `[settings.meridian.agent_copy] harnesses = ["claude"]` AND
-  `.claude` is in `targets`. If both hold, generic `Agent` is allowed (Claude's
-  native agent surface is Meridian-owned through agent copy). Otherwise, generic
+- **Generic `Agent` follows the Mars agent-copy boundary.** Meridian reads Mars's
+  `.mars/native-agents.json` ledger (rewritten on every sync) and allows generic `Agent`
+  when it lists Claude for at least one agent (Claude's native agent surface is
+  Meridian-owned through agent copy, set in any Mars config layer). Otherwise, generic
   `Agent` is denied by default and delegation routes through `meridian spawn`.
 
 The detection runs in `bind_launch_context()` through `agent_copy_enabled(project_root,
-harness_id)` in `lib/catalog/agent_copy.py` (reads `mars.toml` and `mars.local.toml`; any
+harness_id)` in `lib/catalog/agent_copy.py` (reads `.mars/native-agents.json`; missing, malformed, or unknown-version means off; any
 harness, not only Claude). The result decides whether `launch_permission_rules()` adds the
 platform `agent` deny (named by Mars's `tools.capability_natives`); without agent copies it
 always does, and it overrides the profile's agent rules. `compile_claude_permissions()` reads

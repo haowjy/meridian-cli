@@ -349,6 +349,8 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         native_config: Mapping[str, object],
     ) -> str | None: ...
 
+    def reject_removed_native_config(self, native_config: Mapping[str, object]) -> None: ...
+
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str: ...
 
     def env_defaults(self, *, run: SpawnParams, env: Mapping[str, str]) -> dict[str, str]: ...
@@ -648,6 +650,11 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
         _ = child_env, child_cwd
         return ()
+
+    def reject_removed_native_config(self, native_config: Mapping[str, object]) -> None:
+        """Fail a fresh launch on native keys whose deprecation window has closed."""
+
+        _ = native_config
 
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy()

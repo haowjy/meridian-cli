@@ -507,7 +507,7 @@ lock, while observed-chat starts mint a new chat and immediately stop it.
 Historical multi-ID arrays are ignored on read. Chat IDs are `c<digits>` by shape
 (`core/refs.is_chat_id`): `reserve_chat_id` mints them and `start_session` rejects a
 caller-supplied ID of any other shape. `native_generations` is the one native-ID lookup: it
-finds a native ID on any generation and refuses an ID recorded under two harnesses or two
+finds a native ID on any generation, picks the newest with a native session key (else the newest), and refuses an ID recorded under two harnesses or two
 native stores.
 
 Fork and context-source ancestry belong to the chat, not its latest generation:
@@ -535,8 +535,7 @@ spawn"); resume, read and `--from` still work on the chat.
 - An observed (`/clear`) chat's start event names the observing run.
 - An exact continue writes no link until its session starts: the start event is the only
   writer of a chat's owner. Until then `spawn show cN` names the previous run, and a
-  racing continue is refused by the chat lock (`ChatBusyError`) in its worker, not by a
-  pre-published link.
+  racing continue is refused by the chat lock (`ChatBusyError`) in its worker.
 
 A crash between reservation and row write leaves a link to no row; readers skip it.
 `history_id` is the relocation-stable ID of a spawn's history. Only the generation a

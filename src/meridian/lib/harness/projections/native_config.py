@@ -39,6 +39,7 @@ CODEX_RESERVED_NATIVE_CONFIG_KEYS: frozenset[str] = frozenset(
         CODEX_CONFIG_SANDBOX_MODE_KEY,
         CODEX_CONFIG_APPROVAL_POLICY_KEY,
         CODEX_CONFIG_WRITABLE_ROOTS_KEY,
+        CODEX_CONFIG_NETWORK_ACCESS_KEY,
         CODEX_CONFIG_NOTIFY_KEY,
         CODEX_CONFIG_WEB_SEARCH_KEY,
         CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY,
@@ -158,6 +159,21 @@ def _reserved_codex_key(key: str) -> bool:
     )
 
 
+def reject_removed_codex_native_config(config: NativeConfig) -> None:
+    """Fail a fresh launch on Codex native keys whose deprecation window has closed.
+
+    Replayed snapshots skip this; the reserved-key set drops the key for them.
+    """
+
+    for segments, _value in flatten_native_config(config):
+        if ".".join(segments) == CODEX_CONFIG_NETWORK_ACCESS_KEY:
+            raise ValueError(
+                f"`harness-overrides.codex.{CODEX_CONFIG_NETWORK_ACCESS_KEY}` was "
+                "removed; use the profile `network` field. See docs/upgrading.md"
+                "#codex-network_access-native-config-removed."
+            )
+
+
 def project_codex_native_config(
     config: NativeConfig,
 ) -> tuple[tuple[str, ...], EnforcementReport]:
@@ -198,16 +214,6 @@ def project_codex_native_config(
             )
             continue
         element = f"native_config: {key} = {literal}"
-        if key == CODEX_CONFIG_NETWORK_ACCESS_KEY and not isinstance(value, bool):
-            lines.append(
-                ReportLine(
-                    element,
-                    "unsupported",
-                    "ignored because Codex network_access requires a boolean; use the "
-                    "profile network field",
-                )
-            )
-            continue
         if _reserved_codex_key(key):
             lines.append(
                 ReportLine(
@@ -220,11 +226,6 @@ def project_codex_native_config(
         override = f"{key}={literal}"
         arguments.extend(("-c", override))
         note = f"-c {override}"
-        if key == CODEX_CONFIG_NETWORK_ACCESS_KEY:
-            note += (
-                "; deprecated: use profile network instead; this passthrough wins for this "
-                "release and becomes a Meridian-reserved key in the next release"
-            )
         lines.append(ReportLine(element, "native", note))
     return tuple(arguments), tuple(lines)
 
@@ -266,5 +267,6 @@ __all__ = [
     "codex_toml_literal",
     "flatten_native_config",
     "project_codex_native_config",
+    "reject_removed_codex_native_config",
     "unsupported_native_config_report",
 ]

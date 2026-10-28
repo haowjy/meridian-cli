@@ -19,7 +19,7 @@ Change source packages or use Mars config overlays instead.
 To list installed profiles:
 
 ```bash
-meridian mars list        # grouped by mode (primary / subagent)
+meridian mars list        # installed agents and skills
 meridian mars list --json # machine-readable
 ```
 
@@ -61,13 +61,13 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `network-deny` | list[str] | `[]` | Hosts denied under `allow` or `allowlist`. Plain lists add and denies win; see the [merge rules](#permissions-by-harness) |
 | `effort` | str | — | Effort level: `none` (reasoning off), `low`, `medium`, `high`, `xhigh`, or `max`. What each harness does with it: [Effort by harness](#effort-by-harness) |
 | `approval` | str | — | When the harness stops to ask: `default`, `confirm`, `auto`, or `never`. Write `never`: schema v1 rejects `yolo` in a `mars.toml` overlay or an installed profile (`meridian mars migrate` rewrites authored profiles). Meridian's `--approval yolo`, `--yolo` and `MERIDIAN_APPROVAL=yolo` still mean `never`. See [Permissions by harness](#permissions-by-harness) |
-| `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited. Meridian reads it from the installed profile; Mars reports it as an unknown field on every sync |
-| `harness-overrides` | map | `{}` | Harness-native launch config selected for the resolved harness; see [Harness-native passthrough](#harness-native-passthrough) |
+| `harness-overrides` | map | `{}` | Config for the resolved harness, plus Meridian's own `meridian-cli` namespace; see [Harness-native passthrough](#harness-native-passthrough) and [Meridian settings](#meridian-settings) |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
 
 ## `mode`
 
-Controls how agents are grouped in `meridian mars list` and in the startup system prompt.
+Controls whether the agent is listed under `## Primary` or `## Subagent` in the
+startup system prompt's [agent inventory](#agent-inventory-in-the-system-prompt).
 Primary-mode profiles also receive the lead-only bundled skill triggers and the
 `meridian notify` capability, including when launched as a spawn; see
 [Skills](#skills-and-skill-variants).
@@ -75,18 +75,6 @@ Primary-mode profiles also receive the lead-only bundled skill triggers and the
 ```yaml
 mode: primary    # top-level orchestrators, primary sessions
 mode: subagent   # spawned workers (default)
-```
-
-`meridian mars list` output:
-
-```
-AGENTS
-- design-lead: Heavy design with research and adversarial review | Model: claude-opus-4-6
-- product-manager: Dev workflow entry point | Model: claude-opus-4-6
-
-## Subagent
-- coder: Implementation tasks | Model: gpt55 | Fan-out: gpt55, codex
-- reviewer: Adversarial review | Model: gpt-5.4 | Fan-out: gpt, opus
 ```
 
 ## `model-policies`
@@ -132,9 +120,9 @@ deletes `harness`, `autocompact` and `autocompact_pct` from authored profile rul
 Set compaction on the model alias ([Compaction](#compaction-by-harness)) and `harness`
 on the profile or the alias.
 
-`resident-rearm-budget` is a top-level profile default, not a model-policy
-override. The Mars launch-bundle schema does not currently expose a per-model
-resident rearm budget.
+`harness-overrides.meridian-cli.resident-rearm-budget` is a profile-level default, not a
+model-policy override. The Mars launch-bundle schema does not currently expose a
+per-model resident rearm budget.
 
 Spawn timeout is not an agent-profile field. Set the runtime ceiling in minutes
 with `--timeout`, `MERIDIAN_TIMEOUT`, or Meridian's `primary.timeout` config.
@@ -150,7 +138,7 @@ CLI flag / ENV var  >  Mars agent overlay  >  model-policies match  >  profile d
 Agent overlays (`[agents.<name>]` in Mars config such as `mars.toml`) prepend
 their `model-policies` rules before profile rules to form one effective ordered
 list. Legacy `[agents]` sections in `meridian.toml` / `meridian.local.toml` are
-unsupported. See [configuration.md — Mars-Owned Routing and Agent Runtime](configuration/mars.md#model-policies).
+unsupported. See [configuration.md — Mars-Owned Routing and Agent Runtime](configuration/mars.md#model-policy-rules).
 
 ## Implicit Fallback Ordering in `model-policies`
 
@@ -229,33 +217,45 @@ in Codex's config, including providers and MCP server commands. Installing a pac
 carries harness overrides is therefore installing code you trust. Blocks in already-installed
 packages that older Meridian builds left inert now take effect. Codex flattens nested mappings
 to dotted config keys and emits TOML-compatible scalar, array, and inline-table values as
-`-c` overrides. The following native spelling for network access is deprecated; use the
-profile's `network: allow` field instead:
-
-```yaml
-harness-overrides:
-  codex:
-    sandbox_workspace_write:
-      network_access: true
-```
+`-c` overrides. Network access is not one of them: a profile that sets
+`sandbox_workspace_write.network_access` fails to launch; use the profile's `network` field.
 
 Meridian-owned Codex settings win: native entries that collide with its model, effort,
-sandbox, approval, writable-root, tool-switch, agent, feature, or notification config are
-skipped. For this compatibility release only,
-`sandbox_workspace_write.network_access` is an exception: Meridian warns, applies a
-well-formed boolean after the profile projection, and that native value wins. It becomes
-reserved and skipped like `writable_roots` in the following release. A non-boolean,
-unencodable, or unaddressable value is warned, reported as ignored, and does not suppress
-the portable profile projection. Meridian does not synthesize Codex MCP config,
+sandbox, approval, network, writable-root, tool-switch, agent, feature, or notification config are
+skipped. Meridian does not synthesize Codex MCP config,
 so `mcp_servers.*` entries pass through like other native config. A key segment containing
 `.`, `=`, whitespace, or quotes cannot be addressed by Codex's `-c` syntax and is reported
 as unsupported and ignored. `--dry-run` shows each applied or skipped key, for example
-`[native] native_config: sandbox_workspace_write.network_access = true -> -c sandbox_workspace_write.network_access=true`.
+`[native] native_config: some_key = true -> -c some_key=true`.
 Claude, OpenCode, Pi, and Cursor do not apply native config; their report lists the key
 names as `[unsupported] native_config: ... -> not applied for <Harness>`.
 
 The selected harness block is the config tree. A key named `native-config` inside it is a
 literal root key and is flattened like any other key; Meridian does not unwrap it.
+
+## Meridian settings
+
+`harness-overrides.meridian-cli` is not a harness. Mars keeps the block in
+`.mars/agents/<name>.md`, never lowers it into a harness file, and never selects it
+for a launch; Meridian reads it from the installed profile.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited |
+| `capabilities` | map | — | Meridian runtime capabilities. `spawn: false` withholds spawning even when `subagents:` is non-empty |
+
+```yaml
+harness-overrides:
+  meridian-cli:
+    resident-rearm-budget: 3
+    capabilities:
+      spawn: false
+```
+
+Meridian reads only this location. Mars 0.22.0 moves old top-level
+`resident-rearm-budget` and `meridian-capabilities` keys into it in the installed copy of a
+pre-v1 profile and rejects them in a `schema = 1` package; `meridian mars migrate` rewrites the
+source. See [the upgrade notes](upgrading.md#mars-0234).
 
 ## Skills and Skill Variants
 
@@ -318,7 +318,7 @@ directory).
 |---|---|
 | `load` (or the flat list) | The skill's full text, in the system prompt after the profile body, when the conversation starts. An exact `--continue` recomposes the prompt from the launch snapshot, so profile and skill edits take effect on the next fresh launch, not mid-conversation. |
 | `--skills NAME` on `meridian spawn` or `meridian start` | Same as `load`, for that launch |
-| `available` | The skill's name and description under `# Available Skills`, grouped by [type](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#type). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
+| `available` | The skill's name and description under `# Available Skills`, grouped by [`metadata.type`](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#metadata). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
 
 **Loaded skills ignore the skill's `model-invocable`.** A skill's own
 `model-invocable: false` only keeps it out of the harness's skill list, the list
@@ -358,7 +358,7 @@ Mars launch-bundle → skills.loaded[{name, skill_type, source_path, body}]
 
 Meridian receives already-resolved content and:
 - Renders type-group headers (`## Principle`, `## Guardrail`, etc.) for loaded skills
-- Lists available skills by name and description, grouped by type, with a load nudge
+- Lists available skills by name and description, grouped by `metadata.type`, with a load nudge
 - Unknown skill names produce a warning, not a failed launch
 
 **Variant selection** happens inside Mars. If a skill has
@@ -368,21 +368,31 @@ variants (`variants/<harness>/<model>/`) are not supported.
 
 See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md) for the skill authoring format.
 
-## Agent Listing
+## Agent inventory in the system prompt
 
-`meridian mars list` renders installed profiles grouped by `mode`:
+A spawn-capable agent (one with a non-empty `subagents:` list and no
+`harness-overrides.meridian-cli.capabilities.spawn: false`) has Mars's `# Meridian Agents`
+inventory in its system prompt, grouped by `mode`. It lists only the agents named in the
+profile's `subagents:` list; agents native to the harness get their own section. The example is
+abridged:
 
 ```
-## Primary
-- my-orchestrator: Main orchestrator | Model: claude-opus-4-6
+# Meridian Agents
 
 ## Subagent
-- coder: Implementation tasks | Model: gpt55 | Fan-out: gpt55, codex
-- reviewer: Adversarial review | Model: gpt-5.4 | Fan-out: gpt, opus
+- `meridian spawn -a coder`: Implementation tasks | Model: gpt55 | Declared backups: gpt55, codex
+- `meridian spawn -a reviewer`: Adversarial review | Model: gpt-5.4
+
+## Primary
+- `meridian spawn -a design-lead`: Heavy design with research and adversarial review | Model: claude-opus-4-6
 ```
 
-Each line shows: name, description, default model, and fallback-chain aliases
-(deduplicated by resolved model ID).
+Each line gives the spawn command, the description, the default model, the declared
+backup models, and the model guide when the profile has one. Profiles with
+`model-invocable: false` are left out.
+
+`meridian mars list` is a separate catalog of installed agents, skills, and bootstrap
+docs, showing names and descriptions (`--json` for structured output).
 
 ## Harness Availability Fallback
 
@@ -480,7 +490,8 @@ wins over `PATH`. It never falls back to a harness network default.
 The same harness limits apply when `approval` or `sandbox` comes from a CLI flag,
 environment variable, [Mars agent overlay](configuration/mars.md#agent-runtime-overlays),
 or [Meridian config](configuration.md). `network` can also come from a Mars agent overlay
-or model policy. `tools` comes from the profile.
+or model policy. `tools` comes from the profile, plus any `[agents.<name>.tools]` overlay;
+Mars merges them into the rules the launch bundle carries.
 
 ### Capability names
 

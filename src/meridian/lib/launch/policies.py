@@ -502,6 +502,9 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         network_input,
         final_sandbox or "default",
     )
+    surface.harness_registry.get_subprocess_harness(resolved_harness).reject_removed_native_config(
+        bundle_result.execution_policy.native_config
+    )
     resolved_execution_policy = ResolvedExecutionPolicy(
         effort=resolved_execution_policy_overrides.effort,
         sandbox=final_sandbox,

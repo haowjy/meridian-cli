@@ -1,5 +1,49 @@
 # Upgrade notes
 
+## Removed hook names and keys
+
+Hook config that the event-name migration deprecated is now rejected. `meridian hooks
+check` and `hooks list` report each row as invalid, naming the replacement; runtime
+dispatch drops invalid rows and keeps the valid ones.
+
+| Rejected | Use instead |
+| --- | --- |
+| `event = "spawn.start"`, `"spawn.running"` | `spawn.started` |
+| `event = "spawn.finalized"` | `spawn.finished` |
+| `event = "work.start"`, `"work.started"` | `work.activated` |
+| `event = "session.responded"` | `notify.your_turn` |
+| `event = "session.cache_expiring"` | `notify.cache_expiring` |
+| `failure_policy` | delete it; hook failures always continue |
+| `when.status = ["skipped"]` | delete the value; it never matched |
+| `when.status` on an event other than `spawn.finished`, or `when.agent` / `when.kind` on a work event | delete the condition, or move the row to an event that supplies it |
+
+A row that used to run under an old name received that name in `event_name` and
+`MERIDIAN_HOOK_EVENT`; after you rename it, it receives the new name, so update scripts
+that compare against the old one. Rows named `spawn.start` or `work.start` never fired
+before the window opened, and will start firing once renamed. `hooks list` no longer
+shows a `deprecated` status. See [Hook event names](#hook-event-names) for the
+original rename.
+
+## Spawn file listing removed
+
+`meridian spawn files` is removed. It never listed anything. Delete it from scripts,
+including `meridian spawn files <id> | xargs git add`; stage changes with `git add`.
+
+## Session browse `--include-archives` removed
+
+`meridian session browse --include-archives` is removed; passing it is now an unknown
+option error. It had no effect. Use `--status archived`, or Status: Archived in the
+picker.
+
+## Codex `network_access` native config removed
+
+`harness-overrides.codex.sandbox_workspace_write.network_access` is a Meridian-owned key.
+It used to override the network value Meridian projected, with a deprecation warning. A
+fresh Codex launch whose profile sets it now fails with a config error naming the `network`
+field. A continued session that an older build recorded with the key runs under its stored
+`network`; the key is dropped. Replace the override with `network:` in
+the profile (see [agent profiles](agent-profiles.md)).
+
 ## Per-chat work and checkout links
 
 Each live session, primary or spawned, now reaches its work directory and source
@@ -50,9 +94,10 @@ spawn ID and a raw harness session ID mean the same thing everywhere.
   treated as a native session ID; only one with no Meridian record resumes untracked, and
   only through primary `--continue`/`--fork` and spawn `--fork`. Spawn `--continue`
   requires retained spawn metadata and refuses it.
-- A raw harness session ID names the chat of the newest generation that recorded it.
-  Before, it named the lowest-numbered chat, so `session log <id>` on a session recorded
-  under two chats now reads the newer one. An ID recorded under two native stores (or
+- A raw harness session ID names the chat of the newest generation that has a native
+  session key, else the newest generation. Resume and read share this rule. Before, it
+  named the lowest-numbered chat, so `session log <id>` on a session recorded under two
+  chats now reads the newer one. An ID recorded under two native stores (or
   two harnesses) is refused as ambiguous; pass the chat ID instead.
 - `--continue`, `--fork`, `--fork-fresh`, `session log`/`export`/`search` and
   `session repair` accept `@latest`, `@last-failed` and `@last-completed`, as the
@@ -68,7 +113,9 @@ spawn ID and a raw harness session ID mean the same thing everywhere.
   `cancel`, but `spawn message` refuses it.
 - `--continue` on a chat a live run still holds fails within about two seconds, naming
   the holder (`Chat c1 is held by pid 4242; continue after it exits, or --fork c1`);
-  continue after it exits, or `--fork` the chat. It used to wait on the lock. See
+  continue after it exits, or `--fork` the chat. It used to wait on the lock. A
+  continue's run becomes the chat's owner only when its session starts; until then
+  `spawn show cN` names the previous run. See
   [Troubleshooting](troubleshooting.md#continue-refuses-the-chat-is-held).
 
 `meridian [-C REPO] spawn message REF` accepts a chat ID and reaches the session
@@ -78,12 +125,143 @@ IDs count per project.
 `--spawn-id` on `spawn message` and `spawn inject` is deprecated: it warns on stderr
 and works until the next minor release. Pass the ref positionally instead.
 
+## Mars 0.24.1
+
+Meridian pins `mars-agents==0.24.1`, up from 0.23.4. Run `meridian mars sync` after upgrading
+(and `meridian mars --user sync` for a user root).
+
+### MCP servers move to the files harnesses read
+
+Mars now writes MCP servers where each harness reads them: Claude in the project's `.mcp.json`,
+Codex in `.codex/config.toml`, and Pi in `.pi/mcp.json`. It no longer writes `.claude/.mcp.json`
+or `.codex/codex_mcp.json`, which neither harness read; the next `meridian mars sync` removes
+Mars's entries from them and deletes a file only if that leaves it empty. Meridian itself
+passes no MCP flags, so a spawn sees the servers its harness finds from its working directory.
+
+- Claude asks you to approve a project `.mcp.json` server the first time you run `claude` there.
+- A spawn launched with `--task-dir` sees `.mcp.json` only if the checkout has it: commit the
+  file, or run `meridian mars sync` in that checkout.
+- A server that ships its own files (`${MARS_MCP_DIR}`) is written with an absolute path, so a
+  committed `.mcp.json` shows per-machine diffs.
+- Mars keeps a same-named MCP entry it did not write and warns; `meridian mars sync --force`
+  adopts it. Remote servers (`url`, `headers`) are supported in `mcp.toml`.
+
+### Selection and diagnostics
+
+- A skill's own `skills:` frontmatter no longer pulls other skills; an agent's `skills` still do.
+- `meridian mars outdated` fails when the dependency graph cannot resolve, and
+  `meridian doctor` reports that as `updates_check_failed`. A dependency overridden by
+  `mars.local.toml` shows `?` and is not counted as an available update.
+- Diagnostic codes renamed: `mcp-invalid-name` is `mcp.name-invalid`,
+  `plugin-codex-mcp-env-rename` is `mcp-lossy`; `import.mcp-not-converted` is gone.
+- Hook config files (`.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json`)
+  are written through symlinks, keep their permissions and key order, and end with a newline.
+
+Mars's [0.24.0](https://github.com/haowjy/mars-agents/releases/tag/v0.24.0) and
+[0.24.1](https://github.com/haowjy/mars-agents/releases/tag/v0.24.1) release notes list the rest.
+
+## Mars 0.23.4
+
+Meridian pins `mars-agents==0.23.4`, up from 0.20.2. Two profile keys moved
+(`resident-rearm-budget` and `meridian-capabilities`), and three changes may alter what you
+get without an edit: a user `config.toml` now applies keys it once ignored, narrowed
+dependencies contribute MCP servers, and a direct dependency's default-visibility MCP servers
+now register. The rest needs nothing from you.
+
+**After upgrading, run `meridian mars sync`** (and `meridian mars --user sync` if you use a user
+root). Launches do not sync, so until you do, installed profiles keep the old top-level keys,
+which Meridian no longer reads, and their settings are ignored without a message.
+
+### If your profiles set `resident-rearm-budget` or `meridian-capabilities`
+
+Both keys moved under the `harness-overrides.meridian-cli` block, as
+`harness-overrides.meridian-cli.resident-rearm-budget` and `harness-overrides.meridian-cli.capabilities`.
+Meridian reads only the new location. `meridian-cli` is a reserved consumer namespace, like
+`meridian-flow` (Meridian Flow's):
+Mars keeps the block in the installed profile, raises no `unknown harness override` warning for
+it, and never writes it to a harness file.
+
+What happens to an old top-level key depends on where the profile comes from:
+
+| Profile source | `meridian mars sync` | Launch |
+|---|---|---|
+| `.mars-src/` or `~/.meridian/mars/.mars-src/` (`--user`), no `[package] schema` | exit 0, warns ``authored `.mars-src` content uses the pre-v1 format (1 file to upgrade); run `mars migrate` `` | Works: sync moves the keys in the installed copy, so the budget and `spawn: false` apply. The file in `.mars-src/` keeps the old keys |
+| Dependency without `schema` (a pre-v1 package) | exit 0, warns ``package `<name>` uses the pre-v1 format (N files to upgrade); run `mars migrate` in its repository`` | Works, as above |
+| Dependency declaring `[package] schema = 1`, new | `meridian mars add` exits 2 and adds nothing: ``[field.removed] <name>: agents/<file>.md: `resident-rearm-budget` was removed; move it under `harness-overrides.meridian-cli.resident-rearm-budget` `` | The dependency is not installed |
+| Dependency declaring `[package] schema = 1`, already installed under Mars 0.20.2 | The same `field.removed` error, exit 2, for the whole project: nothing updates, including other dependencies and `.mars-src/` items | The installed copy keeps the old keys, so its budget and `spawn: false` are lost silently until you fix it |
+
+The warning in the first two rows repeats on every sync until the source is migrated. For the
+last row, upgrade the dependency to a release that migrated, override it with a migrated copy,
+or ask its maintainer to run `mars migrate`. A project that is itself a `schema = 1` package
+(it has its own `agents/` directory) hits the same error; run `meridian mars migrate` in it.
+
+`meridian mars migrate` moves both keys, values and order unchanged, in every row above
+(`meridian mars migrate --check` lists the edit and exits 1; add `--user` for `~/.meridian/mars`).
+On a schema 1 package it also adds `requires-mars = ">=0.20.0"` when none is declared; a
+package that relies on these settings should declare `requires-mars = ">=0.22.0"` instead,
+because Mars 0.20.2 only warns about the `meridian-cli` block and older Meridian never reads it. If a
+profile already sets one of these keys under `harness-overrides.meridian-cli`, that value wins and the
+top-level twin is dropped with a note; the keys it does not set move over. Package authors: Mars's
+[migration guide](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md#what-it-changes)
+lists what the migration changes.
+
+**Renamed namespace.** Mars 0.22.0 reports a
+`harness-overrides.meridian` block (and `harness-overrides.flow`, now `meridian-flow`) as
+``[field.removed] ... `harness-overrides.meridian` was renamed; use `harness-overrides.meridian-cli` ``.
+Meridian reads only `meridian-cli`, so a profile still using `meridian` loses its
+`resident-rearm-budget` and `capabilities` (including `spawn: false`) without a message
+until the block is renamed. `meridian mars migrate` renames it in place, in schema 1 files too.
+If the profile already has both blocks, they merge key by key: a key only the old block sets moves
+over, and where both set a key the `meridian-cli` value wins and the old one is dropped with a note
+(`field.restriction-lost` for a `capabilities` entry).
+
+### MCP servers and hooks
+
+- A dependency narrowed by an include filter (`agents`, `skills`, `only_skills`, `only_agents`)
+  now contributes its MCP servers; before, sync silently dropped them. A newly visible server
+  replaces a hand-written entry with the same name in that target's MCP config, so rename your
+  entry if you want to keep it.
+- `${MARS_MCP_DIR}` in an MCP server's `command` or `args` names that server's own `mcp/<name>/`
+  files, which sync installs beside each target that writes MCP config.
+- Unmanaged content at `<target>/hooks/<name>/` no longer fails sync. It warns, stays untouched,
+  and withholds that target's hook entry; `meridian mars sync --force` adopts and overwrites it.
+
+### User `config.toml` now applies (Mars 0.23.3)
+
+The user `config.toml` (`$MARS_CONFIG_DIR/config.toml`, else the platform `mars/config.toml`)
+now accepts the same `[settings]`, `[models]`, `[agents]` and `[skills]` sections as
+`mars.local.toml`, so one file can replace per-project copies. Precedence, lowest to highest:
+user `config.toml` < `mars.toml` < `mars.local.toml` < CLI. `[overrides]` is rejected there
+with an error pointing to the project's `mars.local.toml`.
+
+A key that Mars once ignored with a warning, such as `default_model` under `[settings]`, now
+takes effect. If your user `config.toml` holds a stale value of that kind, it starts applying
+after the upgrade; remove or fix it. Unknown keys no longer warn, as in `mars.local.toml`.
+
+### Default-visibility MCP servers register (Mars 0.23.4)
+
+A direct dependency's MCP servers with the default `local` visibility are now registered for
+its consumer; before, only `exported` servers were. After `meridian mars sync`, every
+default-visibility server from a direct dependency appears in your MCP config, and one with the
+same name as a hand-written entry replaces it, so rename your entry to keep it. Transitive
+dependencies still contribute only `exported` servers.
+
+Smaller fixes: `mars check` reads dependency model aliases from `mars.lock` (0.23.2) and Claude
+plugin import link warnings are accurate (0.23.1); `mars build plugin` registers agents in the
+OpenCode plugin (0.23.0, package authors only).
+
+Mars's docs also stopped describing `.agents/` as a default target: with nothing linked, sync
+writes only to `.mars/`, and `meridian mars link DIR` adds a target. Meridian never depended on
+`.agents/`. The MCP filter fix landed in Mars 0.20.5, and `${MARS_MCP_DIR}` and the hooks change
+in 0.20.4. Mars's [0.20.3 through 0.23.4](https://github.com/meridian-flow/mars-agents/blob/main/CHANGELOG.md)
+changelog lists the rest, including plugin-build fixes that affect only package authors.
+
 ## Mars 0.20.0 (schema v1)
 
-Meridian pins `mars-agents==0.20.2`, up from 0.18.4. Mars 0.20 reads and writes schema v1,
+Meridian 0.15.0 pinned `mars-agents==0.20.2`, up from 0.18.4. Mars 0.20 reads and writes schema v1,
 and it carries 0.19.0's changes too, which the old pin skipped. Mars documents the format
-([schema v1](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/schema-v1.md),
-[migrating a package](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/migrating-to-schema-v1.md))
+([schema v1](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/schema-v1.md),
+[migrating a package](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md))
 and each change in its [0.20.2](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.2),
 [0.20.1](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.1), [0.20.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.20.0)
 and [0.19.0](https://github.com/meridian-flow/mars-agents/releases/tag/v0.19.0) release notes.
@@ -108,7 +286,7 @@ Run `meridian mars sync` once. Sync rewrites installed `.mars/` content as schem
 
 Mars checks `[agents.<name>]` overlays when `mars.toml` loads. A bad value fails every
 `meridian mars` command and every launch, not only sync.
-Mars's [overlay reference](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/mars-toml.md#agentsname-overlay)
+Mars's [overlay reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/mars-toml.md#agentsname-overlay)
 lists the accepted keys.
 
 | You have | Mars 0.20.0 does | Change it to |
@@ -123,7 +301,7 @@ run as `never`. Only `mars.toml` and profile files lost `yolo`.
 
 Mars now takes compaction only from the model alias. Set `autocompact` or `autocompact_pct` under
 `[models.<alias>]` in `mars.toml` (see Mars's
-[`[models]` reference](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/mars-toml.md#models)),
+[`[models]` reference](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/mars-toml.md#models)),
 so it applies to every launch that uses the alias, or set `primary.autocompact` /
 `primary.autocompact_pct` in `meridian.toml` for the primary session only. An alias that sets
 its own value wins over `primary.autocompact`.
@@ -150,15 +328,14 @@ In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the pack
   `[models.<alias>]`, fan-out candidates in
   [`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing), MCP grants as
   `mcp(server): allow` entries in `tools`.
-- **Still read, now warned:** `resident-rearm-budget` and `meridian-capabilities` stay in the
-  installed profile and Meridian still reads them, but Mars warns ``unknown field `...` is kept in
-  the file but written to no native file`` on every sync.
+- **Moved:** `resident-rearm-budget` and `meridian-capabilities` now live under
+  `harness-overrides.meridian-cli`. See [Mars 0.23.4](#mars-0234).
 
 A package you publish with `[package] schema = 1` is read strictly: a removed key fails sync with
 exit 2 and changes nothing. `mars migrate` also adds `requires-mars = ">=0.20.0"` to a package
 that declares no requirement, and `meridian mars check` warns when a `schema = 1` package has no
 requirement or one that allows an older Mars. Package maintainers: see Mars's
-[migration guide](https://github.com/meridian-flow/mars-agents/blob/v0.20.0/docs/config/migrating-to-schema-v1.md).
+[migration guide](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md).
 
 ### If you depend on packages
 
@@ -173,7 +350,7 @@ requirement or one that allows an older Mars. Package maintainers: see Mars's
 - Mars 0.20.0 and 0.20.1 refused `mars check <path> --root <dir>`, which is how
   `meridian mars check <path>` reaches Mars, and failed to sync a dependency without a
   `mars.toml` whose `skills/` directory holds a stray file such as `__init__.py` or `README.md`
-  (`Not a directory`). Mars 0.20.2, the pinned version, fixes both; they behave as they did on
+  (`Not a directory`). Mars 0.20.2 and later fix both; they behave as they did on
   0.18.4 and need nothing from you.
 - Mars 0.19.0 orders hooks by shortest dependency depth, which changes the order only when a
   direct dependency is also reached transitively; Codex may ask you to re-trust moved hooks once
@@ -360,9 +537,9 @@ rather than silently leaving the harness at its native network default. Meridian
 its bundled Mars over a separate executable on `PATH`.
 
 Replace Codex `harness-overrides.codex.sandbox_workspace_write.network_access` with the
-portable profile field. A well-formed boolean native value is deprecated in this release
-and still wins over the projected value; invalid values are ignored. The key becomes
-reserved and skipped in the following release.
+portable profile field. A well-formed boolean native value was deprecated in this release.
+Launch now fails with a config error; see
+[Codex `network_access` native config removed](#codex-network_access-native-config-removed).
 
 ## Child guardrail follows the harness
 
@@ -654,8 +831,7 @@ transcripts, so nothing is lost; `Space` opens the full transcript.
 `session browse --plain --format json` rows drop `live`, `historical`,
 `native_status` and `history_id`. `reentry.kind` (`resume`, `fork` or `blocked`)
 replaces `live` as what Enter does; an archived row's `chat_id` is its history id.
-The plain table columns are now STALE, TMUX, AGENT, IDLE (time since last turn), WORK. For
-`--include-archives` see [below](#session-browse---include-archives).
+The plain table columns are now STALE, TMUX, AGENT, IDLE (time since last turn), WORK.
 
 **Rolling back**
 
@@ -693,19 +869,18 @@ older builds ignore the new file, so rolling back works; an older CLI's
 
 ## Session browse `--include-archives`
 
-`meridian session browse --include-archives` is deprecated and has no effect. It
+`meridian session browse --include-archives` was deprecated and had no effect; it is
+now removed (see [Session browse `--include-archives` removed](#session-browse---include-archives-removed)). It
 duplicated Status: Archived: the picker's `/` transcript search now covers the
 rows the Status view shows, so switch Status to Archived (Tab, then left/right) or
 start with `--status archived` to search archived chats. It never searched ZIP
-contents and still does not. The flag is still accepted and prints a warning on
-stderr; it becomes an error in the next minor release. Nothing needs doing before
-or after upgrading.
+contents and still does not.
 
 ## Hook event names
 
 Hook event names now identify the persisted moment when they fire. This release
-opens a one-minor compatibility window: the new binary accepts both the old and
-new names, while warning once for each row that still needs migration.
+opened a one-minor compatibility window in which the binary accepted both the old and
+new names, warning once for each row that still needed migration. The window has closed.
 
 | Old | New |
 | --- | --- |
@@ -717,20 +892,8 @@ new names, while warning once for each row that still needs migration.
 | `session.responded` | `notify.your_turn` |
 | `session.cache_expiring` | `notify.cache_expiring` |
 
-Run `meridian hooks check` after upgrading. It exits successfully when these
-are the only findings and lists each deprecated row with its replacement.
-`meridian hooks list` shows the registration on the new event and marks it
-`deprecated`. Rename rows at leisure during this window; the old names stop
-loading in the next minor release.
-
-A row that still uses an old name is registered on the new event, but receives
-its configured old name in `HookContext.event_name`, JSON `event_name`, and
-`MERIDIAN_HOOK_EVENT`. This keeps existing command scripts working while their
-config is migrated. A row configured with the new name receives the new name.
-
-Rows configured with `spawn.start` or `work.start` were accepted previously but
-never fired. They now register on the live `spawn.started` and `work.activated`
-events, so the warning also says that the row will begin running.
+The old names and keys are now rejected; see
+[Removed hook names and keys](#removed-hook-names-and-keys).
 
 `work.created` is a separate new event that fires only when `work start`
 creates an item. `work.activated` fires whenever `work start` or `work switch`
@@ -750,17 +913,8 @@ code that constructed contexts through it should call `HookContext.from_roots`
 with the authority's `project_root` and `runtime_root`. The new `when.kind` list
 accepts `child`, `primary`, and `streaming`.
 
-The corresponding config transitions share the one-minor window:
-
-- `failure_policy` loads with a warning, has no effect, and will be rejected in
-  the next minor release. Hook failures always log and continue.
-- `when.status = ["skipped"]` warns and drops `skipped`; any other status values
-  in the list continue to filter normally. If no status remains, the row is
-  skipped instead of widening to match every status.
-- A row that explicitly names an event but sets a condition that event cannot
-  supply warns that it can never match and is skipped. In the next minor release
-  the same row becomes a config error. Because the skipped row does not register,
-  it no longer shadows a lower-file row with the same name and event.
+`failure_policy`, `when.status = ["skipped"]`, and a condition its event cannot
+supply were accepted with a warning in the same window and are now rejected too.
 
 For an unevented builtin row, Meridian enables only default events that can
 match its `when` conditions. Incompatible defaults remain as disabled
@@ -1409,11 +1563,8 @@ not touched.
 
 ## Spawn file listing
 
-`meridian spawn files` is deprecated: no harness produced its manifest, so it
-always returned an empty result. It still prints that empty result, with a
-warning on stderr, and becomes an error in the next minor release. Remove it
-from scripts, including `meridian spawn files <id> | xargs git add`; stage
-changes with `git add` directly.
+`meridian spawn files` was deprecated because no harness produced its manifest; it
+is now removed (see [Spawn file listing removed](#spawn-file-listing-removed)).
 
 ## Spawn message rename
 

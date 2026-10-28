@@ -226,7 +226,7 @@ digits), chat (`c` + digits; `reserve_chat_id` is the only producer, and `start_
 rejects any other shape), selector (`@latest`, `@last-failed`, `@last-completed`; any other
 `@…` is an error), else a native session ID. `ops/locate.py` `locate()` is the only
 dispatch on that kind: selector → spawn, spawn → that spawn, chat → that chat, native ID →
-its newest-start generation (`session_store.native_generations`, refusing ambiguity across
+its generation (`session_store.native_generations`: the newest with a native session key, else the newest; refusing ambiguity across
 harnesses or native stores) → its chat. A miss is `RefNotFound` (a `ValueError`); only a
 native ID with no record is `Untracked`, which primary `--continue`/`--fork`, spawn `--fork`
 and read (`session log/export/search`) accept; spawn `--continue` and every other caller

@@ -207,6 +207,13 @@ def test_primary_surface_denies_agent_but_not_task(
     assert _TASK_DENIES.isdisjoint(disallowed)
 
 
+def _write_native_agents(mars_root: Path) -> None:
+    (mars_root / "mars.toml").write_text("[settings]\n", encoding="utf-8")
+    ledger = mars_root / ".mars" / "native-agents.json"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text('{"version": 1, "agents": {"scratch": ["claude"]}}', encoding="utf-8")
+
+
 def test_agent_copy_exception_keeps_generic_agent_only(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -221,12 +228,7 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         ),
         platform_tool_rules=_CLAUDE_PLATFORM_RULES,
     )
-    (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n\n'
-        "[settings.meridian.agent_copy]\n"
-        'harnesses = ["claude"]\n',
-        encoding="utf-8",
-    )
+    _write_native_agents(tmp_path)
     context = build_launch_context(
         spawn_id="p-agent-copy",
         request=SpawnRequest(
@@ -261,14 +263,10 @@ def test_agent_copy_exception_keeps_generic_agent_only(
 def test_agent_copy_setting_comes_from_ancestor_mars_root(tmp_path: Path) -> None:
     nested = tmp_path / "repo" / "subdirectory"
     nested.mkdir(parents=True)
-    (tmp_path / "repo" / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n\n'
-        "[settings.meridian.agent_copy]\n"
-        'harnesses = ["claude"]\n',
-        encoding="utf-8",
-    )
+    _write_native_agents(tmp_path / "repo")
 
     assert agent_copy_enabled(nested, HarnessId.CLAUDE)
+    assert not agent_copy_enabled(nested, HarnessId.CODEX)
 
 
 def test_allow_builtin_agents_claude_cross_module_contract(
