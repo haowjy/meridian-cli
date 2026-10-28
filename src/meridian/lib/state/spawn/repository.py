@@ -113,6 +113,29 @@ def read_quarantined_chat_id(report: SpawnStateQuarantineReport) -> QuarantinedC
     )
 
 
+def newer_format_chat_ids(report: SpawnStateQuarantineReport) -> frozenset[str] | None:
+    """Chats a newer-format row observes, or None when the row is not newer-format.
+
+    Newer format: the file parses as a JSON object whose ``v`` is an int above 3, i.e. a
+    row a later build wrote. Truncated, corrupt or invalid-v3 rows return None.
+    """
+
+    try:
+        payload = json_object(json.loads(report.state_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
+    if payload is None:
+        return None
+    version = payload.get("v")
+    if isinstance(version, bool) or not isinstance(version, int) or version <= 3:
+        return None
+    return frozenset(
+        value
+        for value in (payload.get("current_chat_id"), payload.get("chat_id"))
+        if isinstance(value, str)
+    )
+
+
 @dataclass(frozen=True)
 class Decline:
     """A locked mutator's decision to preserve the current state."""
@@ -372,6 +395,7 @@ __all__ = [
     "StoredSpawnState",
     "is_safe_spawn_dir_name",
     "iter_spawn_ids",
+    "newer_format_chat_ids",
     "read_prompt",
     "read_quarantined_chat_id",
     "read_state",

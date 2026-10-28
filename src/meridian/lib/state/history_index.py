@@ -74,6 +74,7 @@ from meridian.lib.state.session_store import parse_model_observation
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
     SpawnStateQuarantined,
+    newer_format_chat_ids,
     read_state,
     scan_spawn_ids,
 )
@@ -526,7 +527,18 @@ class HistoryIndex:
         old = db.exec_driver_sql(
             "SELECT history_id, record_json FROM locations WHERE source_id = ?", (source_id,)
         ).first()
-        record = read_state(self.root / "spawns", key, include_prompt=False)
+        try:
+            record = read_state(self.root / "spawns", key, include_prompt=False)
+        except SpawnStateQuarantined as exc:
+            if newer_format_chat_ids(exc.report) is None:
+                raise
+            # A later build wrote this row: treat it as absent (delete-and-refresh below).
+            logger.warning(
+                "Spawn %s was written by a newer Meridian and is skipped; "
+                "run `meridian doctor` for details",
+                key,
+            )
+            record = None
         active = record is not None and (
             record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
         )

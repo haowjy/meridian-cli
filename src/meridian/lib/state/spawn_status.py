@@ -24,6 +24,7 @@ from meridian.lib.state.spawn.repository import (
     QuarantinedChatIdStatus,
     SpawnStateQuarantined,
     SpawnStateQuarantineReport,
+    newer_format_chat_ids,
     read_quarantined_chat_id,
     read_state,
 )
@@ -190,6 +191,9 @@ def quarantine_may_observe(
     """Conservatively decide whether a quarantined row may observe one chat."""
 
     lock_path = runtime_root / "spawns" / report.spawn_id / "launch.lock"
+    newer = newer_format_chat_ids(report)
+    if newer is not None:
+        return chat_id in newer  # Empty observes nothing; the lock says nothing about chats.
     with shared_hold(lock_path) as lock_free:
         current_chat_id = read_quarantined_chat_id(report)
         if current_chat_id is QuarantinedChatIdStatus.UNREADABLE:
