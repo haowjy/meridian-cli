@@ -57,7 +57,7 @@ _GROUP_HELP: dict[str, GroupHelp] = {
     ),
     "session": GroupHelp(
         summary='Browse sessions or inspect transcripts and progress logs.',
-        long_help="Read back what a session did — its conversation and progress logs — to recover a subagent's reasoning or find what was decided.\n\nRefs take four forms: chat ids (c123), spawn ids (p123), raw harness session ids, or a history UUID. `log` and `export` need a ref (or `--file`); omitting it is an error. `search` without a ref searches the whole project's sessions instead of one. A chat id names that chat's own session; pass a spawn id to read one spawn's transcript.",
+        long_help="Read back what a session did — its conversation and progress logs — to recover a subagent's reasoning or find what was decided.\n\nRefs take five forms: chat ids (c123), spawn ids (p123), raw harness session ids, a history UUID, or @latest / @last-failed / @last-completed. `log` and `export` need a ref (or `--file`); omitting it is an error. `search` without a ref searches the whole project's sessions instead of one. A chat id names that chat's own session; pass a spawn id to read one spawn's transcript.",
         agent_notes="Use `session search` to find transcript text; each hit prints a deterministic Open command you can run directly. Cross compaction boundaries with `session log --segment previous` or `--global --around N`.\n\nRecover decisions across a work item's sessions with `meridian work sessions WORK_ID --all`.",
         agent_subcommands=('browse', 'log', 'search', 'export', 'archive', 'import', 'restore', 'index'),
         agent_core_subcommands=('browse', 'log', 'search', 'export'),

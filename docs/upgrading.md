@@ -42,6 +42,30 @@ chat ID resolved to the newest spawn in the chat's family, which could be a chil
 had launched. Scripts that relied on that to reach the newest child must pass the
 child's `pN` ID.
 
+References resolve the same way everywhere:
+
+- Every spawn command (`show`, `status`, `children`, `wait`, `cancel`, `done`, `rearm`,
+  `report`, `message`) takes a spawn ID, a chat ID or a raw harness session ID. A chat or
+  raw ID names the run live in that chat now (a native `/resume` takeover, followed on a
+  best-effort basis), else the spawn that ran it. `cancel` on a primary still needs
+  `--force`.
+- `--continue`, `--fork` and `session log`/`export`/`search` accept `@latest`,
+  `@last-failed` and `@last-completed`, as `spawn show` and `--from` already did.
+  `spawn message` refuses them.
+- A ref that names nothing fails with one not-found error, instead of falling through
+  to the harness as an untracked session ID. Only a raw session ID with no Meridian
+  record still resumes untracked.
+- `--from cN` names chat `cN` itself, and `--from pN` the spawn's current chat, not its
+  entry chat.
+- A message's reply command names the sender's current chat, so it still reaches a
+  primary after a `/clear`.
+- Chat IDs must have the form `c<digits>`; `--continue` on any other value is rejected.
+- `--continue` on a chat a live run still holds fails within about two seconds, naming
+  the holder; continue after it exits, or `--fork` the chat. It used to wait on the
+  lock.
+- After a `/clear`, prefer `meridian --continue <chat>` or `meridian session browse`
+  to a native `/resume`.
+
 `meridian [-C REPO] spawn message REF` accepts a chat ID and reaches the session
 running in that chat now; `-C` addresses a session in another project. Chat and spawn
 IDs count per project.

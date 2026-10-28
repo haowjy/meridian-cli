@@ -46,10 +46,11 @@ message opens with a `[Meridian]` line naming the sending spawn and chat and, wh
 sender can receive one, the command that answers it: `meridian spawn message <sender chat ID>`,
 with `-C <sender project root>` when the sender is in another project. A primary whose
 harness has a message route states its own address in that form in its capabilities block.
-A chat ID means that chat's own session, never a child it launched; the same holds for
-`spawn show`, `cancel` and the other ref-taking commands. After a `/clear` or a resume
-of its native session, `spawn show` and `cancel` name the spawn that first owned the chat, while
-`spawn message` reaches the run that is live in it now. Other primary harnesses
+Every spawn command resolves a chat ID, like `spawn message` does, to the run live in
+that chat now, else the spawn that ran it; a chat ID never means a child it launched.
+After a `/clear` the run is in a new chat, so its old chat ID names the run only until
+then, and the address to use is the chat in the sender line or `continue_chat_id`.
+`cancel` on a primary still needs `--force`. Other primary harnesses
 fail immediately because they do not yet expose a message route
 ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
 
@@ -106,7 +107,7 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 
 Session initiation modes: `--continue` resumes the same transcript (bare `meridian --continue`, with no ref, opens `meridian session browse` to pick one), `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
 
-Meridian follows a native `/resume` inside a running harness on a best-effort basis. `meridian --continue <chat>` and `meridian session browse` are the reliable ways to resume, because they record which run owns the chat.
+Meridian follows a native `/resume` inside a running harness on a best-effort basis (commands then name the run live in the chat). `meridian --continue <chat>` and `meridian session browse` are the reliable ways to resume, because they record which run owns the chat.
 
 #### Work Precedence
 
@@ -610,7 +611,16 @@ directory actually read, so a Mars-provided skill points at
 
 ## Spawn References
 
-Several commands accept symbolic spawn references in addition to literal IDs:
+Every spawn command (`show`, `status`, `children`, `wait`, `cancel`, `done`, `rearm`,
+`report`, `message`) takes a spawn ID (`p123`), a chat ID (`c123`) or a raw harness
+session ID. A chat or raw ID names the run live in that chat now (a native `/resume`
+takeover is followed on a best-effort basis), else the spawn that ran it. `spawn
+cancel` on a primary still needs `--force`. A ref that names nothing fails with one
+not-found error.
+
+`--continue`, `--fork`, `--fork-fresh`, `--from` and `session log`/`export`/`search`
+also accept symbolic references. `spawn message` refuses them, because they name
+finished spawns:
 
 | Reference | Resolves to |
 | --------- | ----------- |

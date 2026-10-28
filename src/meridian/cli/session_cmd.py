@@ -185,7 +185,7 @@ def _session_log(
         Parameter(
             help=(
                 "Session reference: chat id (c123), spawn id (p123), harness session id, "
-                "or history UUID."
+                "history UUID, or @latest / @last-failed / @last-completed."
             )
         ),
     ] = "",
@@ -316,7 +316,7 @@ def _session_export(
         Parameter(
             help=(
                 "Session reference: chat id (c123), spawn id (p123), harness session id, "
-                "or history UUID."
+                "history UUID, or @latest / @last-failed / @last-completed."
             )
         ),
     ] = "",
