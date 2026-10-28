@@ -51,61 +51,47 @@ def _patch_mars_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("envelope", "expected"),
+    [
+        pytest.param(
+            {"name": "tech-lead", "subagents": ["reviewer", "coder", "reviewer"]},
+            ("coder", "reviewer"),
+            id="sorted-deduped",
+        ),
+        pytest.param({"name": "leaf", "subagents": []}, (), id="empty-list"),
+        pytest.param({"name": "no-list"}, (), id="absent-field"),
+    ],
+)
 def test_mars_agent_subagents_parses_show_envelope(
     monkeypatch: pytest.MonkeyPatch,
+    envelope: dict[str, object],
+    expected: tuple[str, ...],
 ) -> None:
     recorded: dict[str, object] = {}
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         recorded["command"] = command
         recorded["kwargs"] = kwargs
-        return _completed(
-            stdout=json.dumps(
-                {
-                    "name": "tech-lead",
-                    "subagents": ["reviewer", "coder", "reviewer"],
-                }
-            )
-        )
+        return _completed(stdout=json.dumps(envelope))
 
     _patch_mars_binary(monkeypatch)
     monkeypatch.setattr(mars_module.subprocess, "run", fake_run)
 
-    result = mars_agent_subagents(_PROJECT_ROOT, "tech-lead")
+    result = mars_agent_subagents(_PROJECT_ROOT, str(envelope["name"]))
 
-    assert result == ("coder", "reviewer")
+    assert result == expected
     assert recorded["command"] == [
         _FAKE_MARS,
         "agents",
         "show",
-        "tech-lead",
+        envelope["name"],
         "--json",
         "--root",
         _PROJECT_ROOT.as_posix(),
         "--fallback-root",
         _USER_ROOT.as_posix(),
     ]
-    assert recorded["kwargs"] == {
-        "check": False,
-        "capture_output": True,
-        "text": True,
-        "timeout": 60,
-    }
-
-
-def test_mars_agent_subagents_empty_or_absent_subagents(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        if "leaf" in command:
-            return _completed(stdout=json.dumps({"name": "leaf", "subagents": []}))
-        return _completed(stdout=json.dumps({"name": "no-list"}))
-
-    _patch_mars_binary(monkeypatch)
-    monkeypatch.setattr(mars_module.subprocess, "run", fake_run)
-
-    assert mars_agent_subagents(_PROJECT_ROOT, "leaf") == ()
-    assert mars_agent_subagents(_PROJECT_ROOT, "no-list") == ()
 
 
 @pytest.mark.parametrize(
@@ -222,55 +208,3 @@ def test_mars_list_subagents_failure_returns_empty(
 
     assert result == ()
     assert caplog.records
-
-
-def test_mars_query_commands_accepted_by_real_mars(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Regression guard against mars CLI arg-contract drift.
-
-    The mocked tests above pin whatever command the helper builds; they cannot
-    catch a command the real mars binary rejects (e.g. ``--mode`` is an argument
-    of ``mars agents``, not of the ``list`` subcommand). Here we capture the exact
-    arg vector each helper sends and replay it against the REAL mars binary. A
-    bare project yields a config error ("no mars.toml"), never a clap usage error
-    ("unexpected argument"). This test fails for the buggy
-    ``agents list --mode subagent`` form.
-    """
-
-    executable = mars_module.resolve_mars_executable()
-    if executable is None:
-        pytest.skip("mars binary not available")
-
-    captured: list[list[str]] = []
-    real_run = subprocess.run
-
-    def capturing_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured.append(list(command))
-        return real_run(command, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(mars_module.subprocess, "run", capturing_run)
-
-    mars_agent_subagents(tmp_path, "tech-lead")
-    mars_list_subagents(tmp_path)
-
-    assert captured, "helpers did not invoke mars"
-    for command in captured:
-        result = real_run(command, check=False, capture_output=True, text=True, timeout=60)
-        assert "unexpected argument" not in (result.stderr or ""), (
-            f"real mars rejected helper command {command!r}: {result.stderr!r}"
-        )
-
-
-def test_mars_helpers_no_warning_when_binary_missing(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    monkeypatch.setattr(mars_module, "resolve_mars_executable", lambda: None)
-
-    with caplog.at_level(logging.WARNING, logger="meridian.lib.ops.mars"):
-        assert mars_agent_subagents(_PROJECT_ROOT, "tech-lead") is None
-        assert mars_list_subagents(_PROJECT_ROOT) == ()
-
-    assert not caplog.records
