@@ -6,6 +6,25 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-28
+
+### Changed
+- Spawn commands (`show`, `status`, `children`, `wait`, `cancel`, `done`, `rearm`, `report`, `message`) accept a raw harness session ID as well as a spawn ID or chat ID. A chat or raw ID names the run live in that chat now (following a native `/resume` on a best-effort basis), else the spawn that ran it. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#chat-and-session-references).
+- `--continue`, `--fork` and `session log`/`export`/`search` accept `@latest`, `@last-failed` and `@last-completed`.
+- `--from cN` names chat cN's own transcript; `--from pN` names that spawn's current chat. A handoff passes the run's spawn ID so it follows the conversation across `/clear`.
+- A `spawn message` frame gives the sender's current chat as its reply address.
+- A raw harness session ID can be recorded by several session starts (generations). Resume and read now pick the same one: the most recent start that recorded the harness's session file, or the most recent start if none did. An ID recorded under two different session files is refused as ambiguous.
+- A chat ID must be `c<digits>`; any other value is a raw harness session ID.
+
+### Fixed
+- A spawn ID, chat ID or selector that names nothing fails with one "not found" error (a raw harness ID with no Meridian record still resumes untracked through primary `--continue`/`--fork` and `spawn --fork`). Before, `spawn children <uuid>` printed `(no children)`, `--continue c99999` tried to resume an "untracked" session named `c99999`, and `spawn message ..` got past its existence check.
+- `--continue` on a chat another live run still holds fails within seconds with one error line, instead of blocking until that run exits.
+- A failed `--continue` no longer makes the failed spawn the chat's owner, and a continue refused before its session starts resumes its own chat, not the caller's.
+- `spawn --fork` inherits the forked spawn's goal for chat IDs and selectors, and for `pN` takes pN's own goal.
+- `session export cN` writes its metadata; `session export --file` no longer fails on an ambiguous native ID.
+- Chat-ref spawn commands no longer fail when the history index is behind or reports a generation mismatch.
+- Help and docs that contradicted the code: `session -h` claimed a `$MERIDIAN_CHAT_ID` default, `MERIDIAN_CHAT_ID` was called the root chat, the `--spawn-id` deprecation had no upgrade note.
+
 ## [0.17.0] - 2026-10-28
 
 ### Upgrade notes
