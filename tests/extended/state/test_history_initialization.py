@@ -14,6 +14,23 @@ from meridian.lib.state import history_index
 from meridian.lib.state.history_index import HistoryIndex
 
 
+class _Clock:
+    """Deadline clock for history_index; builds advance it instead of sleeping."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    fake = _Clock()
+    monkeypatch.setattr(history_index, "time", fake)
+    return fake
+
+
 def test_simultaneous_cold_callers_reuse_one_published_build(tmp_path: Path, monkeypatch) -> None:
     index = HistoryIndex(tmp_path)
     rendezvous = threading.Barrier(2)
@@ -34,12 +51,14 @@ def test_simultaneous_cold_callers_reuse_one_published_build(tmp_path: Path, mon
     assert len(set(builds)) == 1
 
 
-def test_cold_query_can_exceed_the_warm_two_second_budget(tmp_path: Path, monkeypatch) -> None:
+def test_cold_query_can_exceed_the_warm_two_second_budget(
+    tmp_path: Path, monkeypatch, clock: _Clock
+) -> None:
     original_project = HistoryIndex._project
 
     def slow_sessions(self, db, source):
         if source.kind == "sessions":
-            time.sleep(2.1)
+            clock.now += 2.1
         return original_project(self, db, source)
 
     monkeypatch.setattr(HistoryIndex, "_project", slow_sessions)
@@ -118,18 +137,20 @@ def test_quarantined_state_authority_failure_names_non_dogfood_row(tmp_path: Pat
     assert "meridian doctor" not in str(failure.value)
 
 
-def test_owned_timeout_is_sticky_but_cancellation_is_not(tmp_path: Path, monkeypatch) -> None:
+def test_owned_timeout_is_sticky_but_cancellation_is_not(
+    tmp_path: Path, monkeypatch, clock: _Clock
+) -> None:
     index = HistoryIndex(tmp_path)
     original_project = HistoryIndex._project
 
     def slow_project(self, db, source):
-        time.sleep(0.06)
+        clock.now += 0.06
         return original_project(self, db, source)
 
     with monkeypatch.context() as patch:
         patch.setattr(HistoryIndex, "_project", slow_project)
         with pytest.raises(history_index.HistoryIndexIncomplete, match="remaining initialization"):
-            index.initialize(deadline=time.monotonic() + 0.04)
+            index.initialize(deadline=clock.now + 0.04)
     assert index.failure_path.exists()
     index.rebuild()
     index.path.unlink()
@@ -144,7 +165,7 @@ def test_owned_timeout_is_sticky_but_cancellation_is_not(tmp_path: Path, monkeyp
     assert not index.stage.exists()
 
 
-def test_source_contention_is_not_a_sticky_failure(tmp_path: Path) -> None:
+def test_source_contention_is_not_a_sticky_failure(tmp_path: Path, clock: _Clock) -> None:
     from meridian.lib.platform.locking import FileLockTimeout, lock_file
     from meridian.lib.state.history_changes import HistorySource
 
@@ -161,7 +182,7 @@ def test_source_contention_is_not_a_sticky_failure(tmp_path: Path) -> None:
         assert held.wait(timeout=5)
         try:
             with pytest.raises(FileLockTimeout):
-                index.initialize(deadline=time.monotonic() + 2.0)
+                index.initialize(deadline=clock.now + 0.05)  # lock stays held; real wait is 50ms
             assert not index.failure_path.exists()
         finally:
             release.set()
@@ -228,22 +249,22 @@ def test_foreign_schema_in_this_file_is_read_only_and_never_hydrated(
 
 
 def test_caller_deadline_bounds_contention_not_owned_cold_build(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, clock: _Clock
 ) -> None:
     index = HistoryIndex(tmp_path)
     original_project = HistoryIndex._project
 
     def slow_cold_project(self, db, source):
         if not self.path.exists():
-            time.sleep(0.15)
+            clock.now += 0.15
         return original_project(self, db, source)
 
     monkeypatch.setattr(HistoryIndex, "_project", slow_cold_project)
-    started = time.monotonic()
+    started = clock.now
     with pytest.raises(history_index.HistoryIndexBusy), index.query(deadline=started + 0.2):
         pytest.fail("expired caller deadline must not produce partial query results")
 
-    assert time.monotonic() - started >= 0.3
+    assert clock.now - started > 0.2  # the owned build ran past the caller deadline
     assert index.path.exists()
     assert not index.failure_path.exists()
 

@@ -224,9 +224,13 @@ describe("managed Bash execution ownership", () => {
     const listener = (error: unknown): void => { unhandled.push(error); };
     process.on("unhandledRejection", listener);
     try {
-      const started = await runtime.execute({ command: "sleep 0.1; head -c 8388608 /dev/zero; sleep 2", background: true }, undefined) as { bash_id: string };
+      // The task emits output only after the log path is swapped for a directory: output
+      // appended earlier would recreate the file and race the mkdir.
+      const gate = path.join(root, "output-gate");
+      const started = await runtime.execute({ command: `while [ ! -e '${gate}' ]; do sleep 0.01; done; head -c 8388608 /dev/zero; sleep 30`, background: true }, undefined) as { bash_id: string };
       const { log_path } = runtime.list(true).find((row) => row.bash_id === started.bash_id)!;
       await rm(log_path); await mkdir(log_path);
+      await writeFile(gate, "");
       await until(() => runtime.list(true).some((row) => row.bash_id === started.bash_id && row.execution_error != null));
       await until(() => runtime.list(true).some((row) => row.bash_id === started.bash_id && row.status === "killed"));
       await pause(30);

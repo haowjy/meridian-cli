@@ -4,8 +4,7 @@ import asyncio
 import json
 import signal
 import threading
-import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
@@ -193,6 +192,7 @@ class FakeManagedConnection:
         self._subprocess_pid = subprocess_pid
         self._port_bind_failures = port_bind_failures
         self._stop_event = asyncio.Event()
+        self.events_drained = threading.Event()
         self.stop_called = False
         self.stop_reasons: list[str | None] = []
         self.idle_sensor: RecordingIdleSensor | None = None
@@ -315,6 +315,7 @@ class FakeManagedConnection:
         for event in self._events:
             yield event
             await asyncio.sleep(0)
+        self.events_drained.set()
         await self._stop_event.wait()
 
 
@@ -323,7 +324,8 @@ class FakeProcessLauncher(ProcessLauncher):
     spawn_dir: Path
     pid: int = 4242
     exit_code: int = 0
-    pause_seconds: float = 0.05
+    # Held until set, so a TUI exit cannot outrun the events a test asserts on.
+    exit_after: threading.Event | None = None
     launch_commands: list[tuple[str, ...]] = field(default_factory=list)
     launch_envs: list[dict[str, str]] = field(default_factory=list)
     output_log_paths: list[Path | None] = field(default_factory=list)
@@ -354,7 +356,8 @@ class FakeProcessLauncher(ProcessLauncher):
         return self
 
     def wait(self) -> LaunchedProcess:
-        time.sleep(self.pause_seconds)
+        if self.exit_after is not None:
+            assert self.exit_after.wait(timeout=60), "events were never consumed"
         return LaunchedProcess(exit_code=self.exit_code, pid=self.pid)
 
     def terminate(self) -> None:
@@ -478,7 +481,9 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
         spawn_dir=spawn_dir,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
+        process_launcher=FakeProcessLauncher(
+            spawn_dir=spawn_dir, exit_after=connection.events_drained
+        ),
     )
 
     outcome = await launcher.run(
@@ -610,8 +615,7 @@ async def test_primary_attach_observer_end_waits_for_tui(
         )
     )
     try:
-        async with asyncio.timeout(1.0):
-            await stream_closed.wait()
+        await stream_closed.wait()
         await asyncio.sleep(0)
         assert not run_task.done()
         assert connection.stop_reasons == []
@@ -1043,7 +1047,9 @@ async def test_primary_attach_writes_no_runner_history(tmp_path: Path) -> None:
             ),
         ]
     )
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir, pause_seconds=0.08)
+    process_launcher = FakeProcessLauncher(
+        spawn_dir=spawn_dir, exit_after=connection.events_drained
+    )
     launcher = PrimaryAttachLauncher(
         spawn_id=SpawnId("p902"),
         spawn_dir=spawn_dir,
@@ -1099,7 +1105,9 @@ async def test_primary_attach_activity_transitions_update_metadata(
             ),
         ]
     )
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir, pause_seconds=0.08)
+    process_launcher = FakeProcessLauncher(
+        spawn_dir=spawn_dir, exit_after=connection.events_drained
+    )
     launcher = PrimaryAttachLauncher(
         spawn_id=SpawnId("p903"),
         spawn_dir=spawn_dir,
@@ -1199,10 +1207,20 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
     assert process_launcher.launch_commands == []
 
 
+@pytest.fixture
+def default_sigint() -> Iterator[None]:
+    """The launcher keeps an inherited SIG_IGN (backgrounded or nohup'd runs); start from the
+    default so installed-handler assertions do not depend on how pytest was launched."""
+    prior = signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    signal.signal(signal.SIGINT, prior)
+
+
 @pytest.mark.asyncio
 async def test_primary_attach_sighup_before_zero_exit_is_cancelled_and_restores_handlers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    default_sigint: None,
 ) -> None:
     sigint_handlers_at_stop: list[Any] = []
 

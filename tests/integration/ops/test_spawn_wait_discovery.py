@@ -1,8 +1,8 @@
 """SQL-scoped no-argument spawn-wait discovery."""
 
 import json
-import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +16,19 @@ from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import LaunchMode, SpawnKind, SpawnRecord
 from tests.support.resident_drain import start_row
+
+
+@pytest.fixture(autouse=True)
+def frozen_history_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Freeze the clock history_index checks deadlines against.
+
+    The wait deadline then never expires on a loaded host; these tests assert on discovery
+    results, not on how fast they arrive.
+    """
+    monkeypatch.setattr(history_index, "time", SimpleNamespace(monotonic=lambda: _NOW))
+
+
+_NOW = 1000.0
 
 
 def _runtime(tmp_path: Path) -> tuple[Path, Path]:
@@ -151,7 +164,7 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
         SpawnWaitInput(),
         root,
         RuntimeContext(spawn_id=SpawnId(primary), chat_id="c-owner"),
-        deadline=time.monotonic() + 5,
+        deadline=_NOW + 5,
     )
 
     assert not targets.discovery_pending
@@ -204,7 +217,7 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
         SpawnWaitInput(),
         root,
         RuntimeContext(spawn_id=SpawnId("p1"), chat_id="c-owner"),
-        deadline=time.monotonic() + 5,
+        deadline=_NOW + 5,
     )
 
     assert targets.blocked_on_ids == ("p3",)
