@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.native_identity import NativeKeyFields
-from meridian.lib.core.refs import is_chat_id, is_spawn_id
+from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.legacy_native_stores import (
     InvalidNativeSession,
@@ -33,8 +33,9 @@ from meridian.lib.ops.legacy_native_import import (
     configured_archive_destination,
     retained_chat_facts,
 )
-from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.ops.locate import Located, Untracked, locate
+from meridian.lib.ops.runtime import async_from_sync
+from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Conflict
 from meridian.lib.state.session_binding import session_bindings
 
@@ -135,18 +136,17 @@ def _excerpt(text: str | None) -> str | None:
     return flat if len(flat) <= EXCERPT else flat[: EXCERPT - 1] + "…"
 
 
-def _chat_id_for(runtime_root: Path, ref: str) -> str:
-    if is_chat_id(ref):
-        return ref
-    if is_spawn_id(ref):
-        spawn = spawn_store.get_spawn(runtime_root, ref)
-        if spawn is not None and spawn.chat_id:
-            return str(spawn.chat_id)
-        for record in session_store.list_all_session_records(runtime_root):
-            if record.spawn_id == ref:
-                return str(record.chat_id)
-        raise ValueError(f"Spawn {ref} has no recorded chat.")
-    raise ValueError("session repair takes a chat (c123) or spawn (p123) reference.")
+def _chat_id_for(located: Located) -> str:
+    if located.chat is not None:
+        return str(located.chat.chat_id)
+    spawn = located.spawn
+    assert spawn is not None
+    if spawn.chat_id:
+        return str(spawn.chat_id)
+    for record in session_store.list_all_session_records(located.runtime_root):
+        if record.spawn_id == spawn.id:
+            return str(record.chat_id)
+    raise ValueError(f"Spawn {spawn.id} has no recorded chat.")
 
 
 def _candidate_dirs(record: session_store.SessionRecord, fact: RetainedChatFacts) -> list[Path]:
@@ -194,10 +194,11 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
         Path(payload.project_root).expanduser().resolve() if payload.project_root else None
     )
     resolution = resolve_project_root_resolution(explicit_root)
-    runtime_root = resolve_runtime_root_for_read(resolution.project_root)
-    if runtime_root is None:
-        raise ValueError(f"Session reference '{ref}' not found.")
-    chat_id = _chat_id_for(runtime_root, ref)
+    located = locate(resolution.project_root, ref)
+    if isinstance(located, Untracked):
+        raise RefNotFound(located.native_id, "native")
+    runtime_root = located.runtime_root
+    chat_id = _chat_id_for(located)
     records = {str(r.chat_id): r for r in session_store.list_all_session_records(runtime_root)}
     record = records.get(chat_id)
     if record is None:

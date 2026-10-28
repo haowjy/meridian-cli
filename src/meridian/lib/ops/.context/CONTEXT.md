@@ -122,7 +122,7 @@ automatically counted without Python model changes.
 
 ### session_target.py / session_transcript.py — Exact Native Sources
 
-`resolve_transcript_source` maps ref → chat → accepted `native_key()` → exact
+`resolve_transcript_source` maps `locate(ref)` → chat → accepted `native_key()` → exact
 harness reader. `parse_session_target` parses that one source, including empty
 views. It never falls back to runner history or a different native session.
 The metadata index maps reclaimed spawn references to their chat; it does not
@@ -221,18 +221,29 @@ gets `depth_exceeded_output()` instead of a new spawn. The reaper also checks
 
 ### Session Reference Resolution
 
-`ops/reference.py` exposes `resolve_session_reference()` → `ResolvedSessionReference`.
-This resolves spawn IDs (e.g., `p123`), chat IDs, and bare references to canonical
-spawn rows. Operations that accept `--from` or `-f` go through this.
+`core/refs.py` `parse_ref` classifies a reference by shape alone: spawn (`p` + ASCII
+digits), chat (`c` + digits; `reserve_chat_id` is the only producer, and `start_session`
+rejects any other shape), selector (`@latest`, `@last-failed`, `@last-completed`; any other
+`@…` is an error), else a native session ID. `ops/locate.py` `locate()` is the only
+dispatch on that kind: selector → spawn, spawn → that spawn, chat → that chat, native ID →
+its newest-start generation (`session_store.native_generations`, refusing ambiguity across
+harnesses or native stores) → its chat. A miss is `RefNotFound` (a `ValueError`); only a
+native ID with no record is `Untracked`, which resume (`--continue`, `--fork`,
+`spawn continue`) and read (`session log/export/search`) accept and every other caller
+rejects. Read keeps fallbacks that resume refuses (history index for reclaimed spawns and
+archive aliases, portable history UUIDs, restored historical records).
 
-A chat ID names the spawn that ran that chat, never a child it launched, in every
-command (owner's ruling). `resolve_spawn_ref`, `_resolve_chat_reference` and `--from`'s
-primary selection all get the chat's spawn from `session_identity.chat_owner_spawn`, a
-walk of the chat's session generations; do not add a second chat→spawn rule, a spawn-row
-scan, or an index read beside it. A chat whose generations name no existing spawn is
-unresolved: the fix for a missing link is in the writer that started the generation
-(`lib/state/.context/CONTEXT.md`, "Chat→spawn link"), not a reader fallback. Which run is
-live in a chat is a separate question that only `spawn message` asks.
+Projections: inspect/act commands (`locate_run`) take a spawn ref's spawn, and for a chat
+or native ID the run live in that chat now (`live_observer_for_chat` over the running rows
+of the history index), else `chat_owner_spawn`. A chat with no owning spawn is "chat cN has
+no spawn", not a miss. Resume takes a spawn's `continue_chat_id` or the named chat. `--from`
+names the chat itself for a chat ref and the spawn's report for a spawn ref. Native `/resume`
+into a chat another run owns is best-effort: docs steer to `--continue` and `session browse`.
+
+Do not add a second chat→spawn rule, a spawn-row scan, or an index read beside
+`chat_owner_spawn` (the occupant query is the one index read). A chat whose generations name
+no existing spawn has no owner: the fix for a missing link is in the writer that started the
+generation (`lib/state/.context/CONTEXT.md`, "Chat→spawn link"), not a reader fallback.
 
 Session browse has a narrower authority question: whether a primary chat has a
 durably recorded harness session id and may therefore resume or fork.

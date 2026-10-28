@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from meridian.lib.core.refs import is_chat_id, is_spawn_id
 from meridian.lib.state import session_identity, session_store, spawn_store
 
 
@@ -83,50 +82,29 @@ def _recover_from_spawn_row(runtime_root: Path, spawn_id: str) -> RecoveryResult
 
 
 def recover_harness_session_id(
-    *,
-    project_root: Path,
-    runtime_root: Path,
-    ref: str,
-    recorded_harness_session_id: str | None = None,
-    recorded_harness: str | None = None,
+    runtime_root: Path, *, spawn_id: str | None = None, chat_id: str | None = None
 ) -> RecoveryResult | None:
-    """Read exact recorded identity only. Never infer a chat binding from native files."""
-    if recorded_harness_session_id and recorded_harness_session_id.strip():
+    """Read the exact recorded identity of a spawn or chat; never infer it from native files."""
+    if chat_id is not None:
+        return recover_recorded_chat_harness_session_id(runtime_root, chat_id)
+    if spawn_id is None:
         return None
-
-    normalized_ref = ref.strip()
-    if not normalized_ref:
+    result = _recover_from_spawn_row(runtime_root, spawn_id)
+    if result is not None:
+        return result
+    if spawn_store.get_spawn(runtime_root, spawn_id) is None:
         return None
-
-    # Chat reference
-    if is_chat_id(normalized_ref):
-        return recover_recorded_chat_harness_session_id(runtime_root, normalized_ref)
-
-    # Spawn reference
-    if is_spawn_id(normalized_ref):
-        result = _recover_from_spawn_row(runtime_root, normalized_ref)
-        if result is not None:
-            return result
-
-        row = spawn_store.get_spawn(runtime_root, normalized_ref)
-        if row is not None:
-            linked_record = session_identity.get_session_record_for_spawn(
-                runtime_root,
-                normalized_ref,
-                require_harness_session_id=True,
-            )
-            if linked_record is not None:
-                session_id = _normalize(linked_record.harness_session_id)
-                if session_id:
-                    return RecoveryResult(
-                        harness_session_id=session_id,
-                        provenance=RecoveryProvenance.SESSION_STORE,
-                        supporting_chat_id=linked_record.chat_id,
-                    )
-
+    linked_record = session_identity.get_session_record_for_spawn(
+        runtime_root, spawn_id, require_harness_session_id=True
+    )
+    session_id = _normalize(linked_record.harness_session_id) if linked_record else None
+    if linked_record is None or not session_id:
         return None
-
-    return None
+    return RecoveryResult(
+        harness_session_id=session_id,
+        provenance=RecoveryProvenance.SESSION_STORE,
+        supporting_chat_id=linked_record.chat_id,
+    )
 
 
 __all__ = [

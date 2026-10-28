@@ -23,6 +23,9 @@ SELECTORS: dict[str, tuple[str, ...] | None] = {
 type RefKind = Literal["spawn", "chat", "selector", "native"]
 
 
+_KIND_LABEL: dict[RefKind, str] = {"spawn": "Spawn", "chat": "Chat", "native": "Session"}
+
+
 class RefNotFound(ValueError):
     """A spawn, chat or selector reference names nothing.
 
@@ -32,15 +35,11 @@ class RefNotFound(ValueError):
     def __init__(self, ref: str, kind: RefKind) -> None:
         self.ref = ref
         self.kind: RefKind = kind
-        super().__init__(f"{_KIND_LABEL[kind]} '{ref}' not found")
-
-
-_KIND_LABEL: dict[RefKind, str] = {
-    "spawn": "Spawn",
-    "chat": "Chat",
-    "selector": "Reference",
-    "native": "Session",
-}
+        super().__init__(
+            f"No spawn matches '{ref}'"
+            if kind == "selector"
+            else f"{_KIND_LABEL[kind]} '{ref}' not found"
+        )
 
 
 @dataclass(frozen=True)

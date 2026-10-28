@@ -88,12 +88,16 @@ _SPAWN_USAGE_EPILOGUE = (
     "Harness command lifecycle ≠ meridian spawn lifecycle. The launch command\n"
     "returning or dying does not stop the spawn.\n\n"
     "If the launch was killed, reconcile with `meridian spawn wait` or\n"
-    "`meridian status`.\n"
+    "`meridian spawn status`.\n"
 )
-# Ref forms by what the command does with the target. A chat ID names that chat's own
-# session. `resolve_spawn_reference` also accepts @-selectors everywhere; they name
-# finished spawns, so help lists them only where inspecting one makes sense.
-_RUNNING_REF_FORMS = "spawn ID or chat ID (that chat's own session)"
+# Ref forms by what the command does with the target. A chat ID names the run live in
+# that chat now, else the spawn that ran it. `resolve_spawn_target` also accepts
+# @-selectors everywhere; they name finished spawns, so help lists them only where
+# inspecting one makes sense. A raw harness session ID resolves too, but help leaves it
+# to `--continue` / `--fork`, which document it.
+_RUNNING_REF_FORMS = (
+    "spawn ID or chat ID (a chat names the run live in it now, else the spawn that ran it)"
+)
 _INSPECT_REF_FORMS = f"{_RUNNING_REF_FORMS}, or @latest / @last-failed / @last-completed"
 _SELECTORS_NOTE = "@-selectors also resolve but name finished spawns"
 
@@ -1398,7 +1402,7 @@ def _spawn_message(
     if spawn_id is not None:
         print(
             "warning: `--spawn-id` is deprecated and will be removed in the next minor "
-            "release; pass the ref positionally or as `--ref`.",
+            "release; pass the ref positionally.",
             file=sys.stderr,
         )
         ref = ref or spawn_id

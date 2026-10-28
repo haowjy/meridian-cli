@@ -8,17 +8,13 @@ from meridian.lib.core.context_ref import (
     SessionContextRef,
     SpawnContextRef,
 )
-from meridian.lib.core.refs import is_chat_id, is_spawn_id
-from meridian.lib.ops.runtime import resolve_runtime_root_for_read
+from meridian.lib.core.refs import RefNotFound
+from meridian.lib.ops.locate import Untracked, chat_spawn, locate
 from meridian.lib.ops.work_attachment import resolve_active_work_id
-from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
 
-from .query import (
-    read_report,
-    read_spawn_row,
-    resolve_spawn_reference,
-)
+from .query import read_report, read_spawn_row
 
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -28,8 +24,6 @@ def _is_filesystem_path_ref(value: str) -> bool:
 
     normalized = value.strip()
     if not normalized or normalized.startswith("@"):
-        return False
-    if is_spawn_id(normalized) or is_chat_id(normalized):
         return False
     if normalized.startswith(("./", "../", "/", "~")):
         return True
@@ -50,34 +44,17 @@ def _reject_filesystem_path_context_ref(value: str) -> None:
     )
 
 
-def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> SpawnRecord | None:
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    if runtime_root is None:
-        return None
-    owner = session_identity.chat_owner_spawn(runtime_root, chat_id)
-    return spawn_store.get_spawn(runtime_root, owner) if owner is not None else None
-
-
 def _load_report_text(project_root: Path, spawn_id: str) -> str | None:
     _, report_text = read_report(project_root, spawn_id)
     return report_text
 
 
-def _session_context_from(
-    project_root: Path,
-    chat_id: str,
-    session: session_store.SessionRecord | None,
-) -> SessionContextRef | None:
-    primary_row = _select_primary_spawn_for_session(project_root, chat_id)
-    if primary_row is not None:
-        return _session_context_ref(primary_row, project_root)
-    if session is not None:
-        return _session_context_ref_from_record(session)
-    return None
-
-
 def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
-    """Resolve one --from value to concrete prior context payload."""
+    """Resolve one --from value to concrete prior context payload.
+
+    A spawn ref (or selector) names that spawn's report; a chat ref or native ID
+    names that chat's own session.
+    """
 
     normalized = ref.strip()
     if not normalized:
@@ -85,47 +62,28 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
 
     _reject_filesystem_path_context_ref(normalized)
 
-    if normalized.startswith("@") or is_spawn_id(normalized):
-        spawn_id = resolve_spawn_reference(project_root, normalized)
-        spawn_row = read_spawn_row(project_root, spawn_id)
-        if spawn_row is None:
-            raise ValueError(f"Spawn '{spawn_id}' not found")
-        return _spawn_context_ref(spawn_row, project_root)
-    if is_chat_id(normalized):
-        runtime_root = resolve_runtime_root_for_read(project_root)
-        session = (
-            session_store.chat_record(runtime_root, normalized)
-            if runtime_root is not None
-            else None
+    located = locate(project_root, normalized)
+    if isinstance(located, Untracked):
+        raise RefNotFound(located.native_id, "native")
+    root = located.runtime_root
+    if located.spawn is not None:
+        row = read_spawn_row(project_root, located.spawn.id, runtime_root=root)
+        if row is None:
+            raise RefNotFound(located.spawn.id, "spawn")
+        return _spawn_context_ref(row, project_root)
+
+    chat = located.chat
+    assert chat is not None
+    owner = chat_spawn(located)
+    owner_row = spawn_store.get_spawn(root, owner) if owner is not None else None
+    if owner_row is not None:
+        return _session_context_ref(owner_row, chat, project_root, root)
+    if not (chat.harness_session_id or "").strip():
+        raise ValueError(
+            f"Session '{chat.chat_id}' exists but no transcript is available yet "
+            "(no harness session id recorded)."
         )
-        context_ref = _session_context_from(project_root, normalized, session)
-        if context_ref is not None:
-            if context_ref.primary_spawn_id is None and not (
-                session and (session.harness_session_id or "").strip()
-            ):
-                raise ValueError(
-                    f"Session '{normalized}' exists but no transcript is available yet "
-                    "(no harness session id recorded)."
-                )
-            return context_ref
-        raise ValueError(f"No primary spawn found for session '{normalized}'")
-
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    session = (
-        session_store.resolve_session_ref(runtime_root, normalized)
-        if runtime_root is not None
-        else None
-    )
-    if session is not None:
-        context_ref = _session_context_from(project_root, session.chat_id, session)
-        assert context_ref is not None
-        return context_ref
-
-    spawn_id = resolve_spawn_reference(project_root, normalized)
-    row = read_spawn_row(project_root, spawn_id)
-    if row is None:
-        raise ValueError(f"Spawn '{spawn_id}' not found")
-    return _spawn_context_ref(row, project_root)
+    return _session_context_ref_from_record(chat)
 
 
 def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
@@ -138,42 +96,31 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
         harness=row.harness or "",
         report_text=_load_report_text(project_root, row.id),
         harness_session_id=row.harness_session_id,
-        chat_id=row.chat_id,
+        chat_id=row.continue_chat_id,
         history_id=row.history_id,
         work_id=(row.work_id or "").strip() or None,
         task_cwd=(row.task_cwd or "").strip() or None,
     )
 
 
-def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> SessionContextRef:
-    """Name the conversation the primary is in now, not the one it launched on.
+def _session_context_ref(
+    primary_row: SpawnRecord,
+    record: session_store.SessionRecord,
+    project_root: Path,
+    runtime_root: Path,
+) -> SessionContextRef:
+    """Name the session ``record`` as its owner ran it: a chat ID names its own session."""
 
-    ``--from <entry chat>`` after a Claude ``/clear`` must continue the live
-    conversation: the entry chat's own transcript stops where the rotation happened.
-    """
-
-    chat_id = (primary_row.continue_chat_id or primary_row.chat_id or "").strip()
-    if not chat_id:
-        raise ValueError(f"Primary spawn '{primary_row.id}' has no associated session")
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    if runtime_root is None:
-        raise ValueError(f"Primary spawn '{primary_row.id}' has no runtime state")
-    record = session_store.chat_record(runtime_root, chat_id)
     return SessionContextRef(
-        chat_id=chat_id,
+        chat_id=record.chat_id,
         primary_spawn_id=primary_row.id,
-        history_id=(record.history_id if record is not None else None) or primary_row.history_id,
+        history_id=record.history_id or primary_row.history_id,
         status=primary_row.status,
         agent=primary_row.agent or "",
         model=primary_row.model or "",
         harness=primary_row.harness or "",
-        harness_session_id=(
-            (record.harness_session_id or "").strip()
-            if record is not None
-            else primary_row.harness_session_id
-        )
-        or None,
-        work_id=resolve_active_work_id(project_root, runtime_root, chat_id=chat_id),
+        harness_session_id=(record.harness_session_id or "").strip() or None,
+        work_id=resolve_active_work_id(project_root, runtime_root, chat_id=record.chat_id),
         task_cwd=(primary_row.task_cwd or "").strip() or None,
     )
 

@@ -15,6 +15,7 @@ from typing import cast
 from pydantic import BaseModel, ValidationError
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
@@ -467,6 +468,8 @@ def resolve_session_ref(
             "Native session reference is ambiguous across harnesses. "
             "Specify --harness or use a tracked chat/spawn reference."
         )
+    if len({key for record in matches if (key := record.native_key()) is not None}) > 1:
+        raise NativeSessionUnavailable(normalized, "ambiguous_native_file")
     return max(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
 
 

@@ -8,17 +8,16 @@ from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.refs import is_chat_id, is_spawn_id
-from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
+from meridian.lib.ops.locate import Untracked, chat_spawn, locate
 from meridian.lib.ops.reference_recovery import (
     RecoveryResult,
     recover_harness_session_id,
 )
-from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.spawn.model import SpawnRecord
 
 
 @dataclass(frozen=True)
@@ -74,17 +73,6 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
-
-
-def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
-    """Resolve a spawn reference: a spawn id, or the spawn that owns a chat."""
-
-    spawn = spawn_store.get_spawn(runtime_root, ref)
-    if spawn is not None:
-        return SpawnId(spawn.id)
-    if is_chat_id(ref):
-        return session_identity.chat_owner_spawn(runtime_root, ref)
-    return None
 
 
 def _resolve_untracked_reference(
@@ -148,11 +136,9 @@ def _build_tracked_reference(
 
 
 def _resolve_spawn_reference(
-    runtime_root: Path, ref: str, project_root: Path
+    runtime_root: Path, row: SpawnRecord, project_root: Path
 ) -> ResolvedSessionReference:
-    row = spawn_store.get_spawn(runtime_root, ref)
-    if row is None:
-        return _resolve_untracked_reference(project_root, ref)
+    ref = row.id
     if row.record_mode == "historical":
         raise ValueError("Historical sessions are inert; read or export the transcript instead.")
 
@@ -251,60 +237,6 @@ def _reference_from_session(
     )
 
 
-def _resolve_chat_reference(
-    runtime_root: Path, ref: str, project_root: Path
-) -> ResolvedSessionReference:
-    records = session_store.get_session_records(runtime_root, {ref})
-    if not records:
-        return _resolve_untracked_reference(project_root, ref)
-    session = records[0]
-    owner = session_identity.chat_owner_spawn(runtime_root, ref, newest=session)
-    return _reference_from_session(
-        runtime_root,
-        session,
-        project_root,
-        _normalize_optional(session.harness_session_id),
-        spawn_id=str(owner) if owner is not None else None,
-    )
-
-
-def _resolve_harness_session_reference(
-    runtime_root: Path, ref: str, project_root: Path, harness_hint: str | None = None,
-) -> ResolvedSessionReference:
-    session = session_store.resolve_session_ref(runtime_root, ref, harness=harness_hint)
-    if session is None:
-        return _resolve_untracked_reference(project_root, ref, harness_hint)
-    if harness_hint is None:
-        inferred = infer_harness_from_untracked_session_ref(project_root, ref)
-        if inferred is not None and session.harness and str(inferred) != session.harness:
-            raise ValueError(
-                "Native session reference is ambiguous across harnesses; specify --harness."
-            )
-    return _reference_from_session(
-        runtime_root, session, project_root, ref, spawn_id=session.spawn_id
-    )
-
-
-def _try_recover(
-    project_root: Path,
-    runtime_root: Path,
-    ref: str,
-    recorded_harness_session_id: str | None,
-    recorded_harness: str | None,
-) -> RecoveryResult | None:
-    """Attempt recovery only when recorded ID is missing."""
-
-    if recorded_harness_session_id and recorded_harness_session_id.strip():
-        return None
-    return recover_harness_session_id(
-        project_root=project_root,
-        runtime_root=runtime_root,
-        ref=ref,
-        recorded_harness_session_id=recorded_harness_session_id,
-        recorded_harness=recorded_harness,
-    )
-
-
 def resolve_session_reference(
     project_root: Path,
     ref: str,
@@ -312,51 +244,52 @@ def resolve_session_reference(
     runtime_root: Path | None = None,
     harness_hint: str | None = None,
 ) -> ResolvedSessionReference:
-    """Resolve a session/spawn reference to harness session ID and source metadata."""
+    """Resolve a reference to the session to resume, with its source metadata.
 
-    normalized = ref.strip()
+    A spawn ref (or selector) resumes that spawn's continue chat; a chat ref or native
+    ID resumes that chat. A native ID with no record resumes untracked.
+    """
+
     harness_hint = _normalize_optional(harness_hint)
-    if not normalized:
-        raise ValueError("Session reference is required.")
+    located = locate(project_root, ref, runtime_root=runtime_root, harness=harness_hint)
+    if isinstance(located, Untracked):
+        return _resolve_untracked_reference(project_root, located.native_id, harness_hint)
 
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
-        if not is_spawn_id(normalized) and not is_chat_id(normalized):
-            return _resolve_untracked_reference(project_root, normalized, harness_hint)
-        raise ValueError(f"Session reference '{normalized}' not found")
-    if is_spawn_id(normalized):
-        result = _resolve_spawn_reference(resolved_runtime_root, normalized, project_root)
-        if result.missing_harness_session_id:
-            recovery = _try_recover(
-                project_root=project_root,
-                runtime_root=resolved_runtime_root,
-                ref=normalized,
-                recorded_harness_session_id=result.harness_session_id,
-                recorded_harness=result.harness,
-            )
-            if recovery is not None:
-                return replace(result, recovery=recovery)
-        return result
-    if is_chat_id(normalized):
-        result = _resolve_chat_reference(resolved_runtime_root, normalized, project_root)
-        if result.missing_harness_session_id:
-            recovery = _try_recover(
-                project_root=project_root,
-                runtime_root=resolved_runtime_root,
-                ref=normalized,
-                recorded_harness_session_id=result.harness_session_id,
-                recorded_harness=result.harness,
-            )
-            if recovery is not None:
-                return replace(result, recovery=recovery)
-        return result
-    return _resolve_harness_session_reference(
-        resolved_runtime_root, normalized, project_root, harness_hint,
-    )
+    root = located.runtime_root
+    if located.spawn is not None:
+        result = _resolve_spawn_reference(root, located.spawn, project_root)
+        recover = {"spawn_id": located.spawn.id}
+    else:
+        chat = located.chat
+        assert chat is not None
+        if located.ref.kind == "native" and harness_hint is None:
+            inferred = infer_harness_from_untracked_session_ref(project_root, located.ref.value)
+            if inferred is not None and chat.harness and str(inferred) != chat.harness:
+                raise ValueError(
+                    "Native session reference is ambiguous across harnesses; specify --harness."
+                )
+        owner = chat_spawn(located)
+        result = _reference_from_session(
+            root,
+            chat,
+            project_root,
+            _normalize_optional(chat.harness_session_id),
+            spawn_id=str(owner) if owner is not None else None,
+        )
+        recover = {"chat_id": chat.chat_id}
+    # A native ID is found by its recorded session ID, so there is nothing to recover.
+    if (
+        located.ref.kind != "native"
+        and result.missing_harness_session_id
+        and _normalize_optional(result.harness_session_id) is None
+    ):
+        recovery = recover_harness_session_id(root, **recover)
+        if recovery is not None:
+            return replace(result, recovery=recovery)
+    return result
 
 
 __all__ = [
     "ResolvedSessionReference",
     "resolve_session_reference",
-    "resolve_spawn_ref",
 ]

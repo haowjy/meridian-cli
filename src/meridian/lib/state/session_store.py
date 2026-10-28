@@ -17,6 +17,7 @@ from meridian.lib.core.native_identity import (
     BindSource,
     NativeEntryMismatch,
     NativeKeyFields,
+    NativeSessionUnavailable,
 )
 from meridian.lib.core.refs import is_chat_id
 from meridian.lib.core.types import (
@@ -1208,17 +1209,22 @@ def get_session_records(
     ]
 
 
-def resolve_session_ref(
+def native_generations(
     runtime_root: Path,
     ref: str,
     *,
     harness: str | None = None,
-) -> SessionRecord | None:
-    """Resolve a native ID in its harness namespace; reject ambiguous ownership."""
+) -> list[SessionRecord]:
+    """Every generation recorded under a native ID, best pick last.
+
+    The one native-ID lookup. A native ID names one session file: ownership split
+    across harnesses or native stores is ambiguous and refused. Ties on start time
+    go to the higher chat number.
+    """
 
     normalized = ref.strip()
     if not normalized:
-        return None
+        return []
 
     matches = [
         record
@@ -1226,14 +1232,26 @@ def resolve_session_ref(
         if normalized == record.harness_session_id
         and (harness is None or record.harness == harness)
     ]
-    if not matches:
-        return None
     if len({record.harness for record in matches}) > 1:
         raise ValueError(
             "Native session reference is ambiguous across harnesses. "
             "Specify --harness or use a tracked chat/spawn reference."
         )
-    return max(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
+    if len({key for record in matches if (key := record.native_key()) is not None}) > 1:
+        raise NativeSessionUnavailable(normalized, "ambiguous_native_file")
+    return sorted(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
+
+
+def resolve_session_ref(
+    runtime_root: Path,
+    ref: str,
+    *,
+    harness: str | None = None,
+) -> SessionRecord | None:
+    """The generation a native ID resolves to, or ``None``."""
+
+    matches = native_generations(runtime_root, ref, harness=harness)
+    return matches[-1] if matches else None
 
 
 def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:

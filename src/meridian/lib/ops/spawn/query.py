@@ -6,23 +6,16 @@ from pathlib import Path
 from typing import NamedTuple, cast
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import pi_lifecycle, session_store, spawn_store
-from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import spawn_log_subpath
 from meridian.lib.state.permission_journal import PermissionJournal
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_status import overlay_derived, read_derived
+from meridian.lib.state.spawn_status import read_derived
 
 from .models import DeniedRequestOutput, SpawnDetailOutput
 
-_SPAWN_REFERENCE_STATUS_FILTERS: dict[str, tuple[str, ...] | None] = {
-    "@latest": None,
-    "@last-failed": ("failed",),
-    "@last-completed": ("succeeded",),
-}
 _RUNNING_LOG_MESSAGE_LIMIT = 120
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
@@ -31,73 +24,6 @@ class _PiCleanupTelemetry(NamedTuple):
     phase: str | None
     reason: str | None
     error: str | None
-
-
-def _select_latest_spawn_id(
-    project_root: Path,
-    *,
-    statuses: tuple[str, ...] | None,
-    runtime_root: Path | None = None,
-) -> str | None:
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
-        return None
-    spawns = overlay_derived(
-        resolved_runtime_root,
-        indexed_spawn_scan(resolved_runtime_root).records,
-    )
-    if statuses is not None:
-        wanted = set(statuses)
-        spawns = [item for item in spawns if item.status in wanted]
-    if not spawns:
-        return None
-    return spawns[-1].id
-
-
-def resolve_spawn_reference(
-    project_root: Path,
-    ref: str,
-    *,
-    runtime_root: Path | None = None,
-) -> str:
-    normalized = ref.strip()
-    if not normalized:
-        raise ValueError("spawn_id is required")
-    if not normalized.startswith("@"):
-        resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-        if resolved_runtime_root is None:
-            return normalized
-        resolved = resolve_spawn_ref(resolved_runtime_root, normalized)
-        return str(resolved) if resolved is not None else normalized
-
-    status_filter = _SPAWN_REFERENCE_STATUS_FILTERS.get(normalized)
-    if normalized not in _SPAWN_REFERENCE_STATUS_FILTERS:
-        supported = ", ".join(sorted(_SPAWN_REFERENCE_STATUS_FILTERS))
-        raise ValueError(
-            f"Unknown spawn reference '{normalized}'. Supported references: {supported}"
-        )
-
-    resolved = _select_latest_spawn_id(
-        project_root,
-        statuses=status_filter,
-        runtime_root=runtime_root,
-    )
-    if resolved is None:
-        raise ValueError(f"No spawns found for reference '{normalized}'")
-    return resolved
-
-
-def resolve_spawn_references(
-    project_root: Path,
-    refs: tuple[str, ...],
-    *,
-    runtime_root: Path | None = None,
-) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            resolve_spawn_reference(project_root, ref, runtime_root=runtime_root) for ref in refs
-        )
-    )
 
 
 def read_spawn_row(
@@ -439,7 +365,5 @@ __all__ = [
     "extract_last_assistant_message",
     "read_report",
     "read_spawn_row",
-    "resolve_spawn_reference",
-    "resolve_spawn_references",
     "spawn_session_log_available",
 ]

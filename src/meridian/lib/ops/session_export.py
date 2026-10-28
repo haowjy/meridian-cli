@@ -9,13 +9,14 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.refs import is_chat_id, is_spawn_id
+from meridian.lib.core.refs import RefNotFound, parse_ref
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import TranscriptMessage
+from meridian.lib.ops.locate import Located, locate
 from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
-from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state import session_identity
 from meridian.lib.state.history_index import indexed_spawn_scan
 
 _TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)
@@ -195,21 +196,27 @@ def _format_duration(started_at: str | None, stopped_at: str | None) -> str | No
     return f"{remainder}s"
 
 
-def _session_metadata(runtime_root: Path, ref: str) -> list[str]:
-    record = session_store.resolve_session_ref(runtime_root, ref)
-    spawn = spawn_store.get_spawn(runtime_root, ref) if is_spawn_id(ref) else None
-    if record is None and spawn is not None and spawn.chat_id is not None:
-        record = session_store.resolve_session_ref(runtime_root, spawn.chat_id)
+def _locate_export_subject(project_root: Path, runtime_root: Path, ref: str) -> Located | None:
+    """What the exported ref names locally; ``None`` for archived, untracked or missing."""
+    try:
+        located = locate(project_root, ref, runtime_root=runtime_root)
+    except RefNotFound:
+        return None
+    return located if isinstance(located, Located) else None
 
+
+def _session_metadata(subject: Located | None) -> list[str]:
     lines: list[str] = []
-    started_at = record.started_at if record is not None else (spawn.started_at if spawn else None)
-    stopped_at = (
-        record.stopped_at
-        if record is not None
-        else (spawn.last_attempt_exited_at if spawn else None)
-    )
-    model = record.model if record is not None else (spawn.model if spawn else None)
-    harness = record.harness if record is not None else (spawn.harness if spawn else None)
+    if subject is None:
+        return lines
+    spawn, record = subject.spawn, subject.chat
+    if spawn is not None:
+        started_at, stopped_at = spawn.started_at, spawn.last_attempt_exited_at
+        model, harness = spawn.model, spawn.harness
+    else:
+        assert record is not None
+        started_at, stopped_at = record.started_at, record.stopped_at
+        model, harness = record.model, record.harness
     if started_at:
         lines.append(f"- Date: {started_at}")
     if model:
@@ -222,32 +229,24 @@ def _session_metadata(runtime_root: Path, ref: str) -> list[str]:
     return lines
 
 
-def _session_scope_for_ref(
-    runtime_root: Path,
-    ref: str,
+def _session_scope(
+    subject: Located | None, ref: str
 ) -> tuple[str | None, str | None, str | None]:
     """Return (exact_chat_id, owner_chat_id, parent_spawn_id) for export grouping."""
 
-    normalized = ref.strip()
-    if is_chat_id(normalized):
-        exact_chat_id = normalized
-        owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, exact_chat_id)
-        return exact_chat_id, owner_chat_id, None
-    if is_spawn_id(normalized):
-        spawn = spawn_store.get_spawn(runtime_root, normalized)
-        if spawn is None:
-            return None, None, normalized
+    if subject is None:
+        # An archived spawn is gone locally, but its children are not.
+        return None, None, ref if parse_ref(ref).kind == "spawn" else None
+    if subject.spawn is not None:
         return (
-            session_identity.spawn_exact_chat_id(spawn),
-            session_identity.spawn_owner_chat_id(spawn),
-            normalized,
+            session_identity.spawn_exact_chat_id(subject.spawn),
+            session_identity.spawn_owner_chat_id(subject.spawn),
+            subject.spawn.id,
         )
-    record = session_store.resolve_session_ref(runtime_root, normalized)
-    if record is None:
-        return None, None, None
+    assert subject.chat is not None
     return (
-        session_identity.session_exact_chat_id(record),
-        session_identity.session_owner_chat_id(runtime_root, record),
+        session_identity.session_exact_chat_id(subject.chat),
+        session_identity.session_owner_chat_id(subject.runtime_root, subject.chat),
         None,
     )
 
@@ -320,11 +319,12 @@ def session_export_sync(
     )
     ref = payload.ref.strip() or transcript.target.source.session_id
     runtime_root = transcript.runtime_root
-    exact_chat_id, owner_chat_id, parent_id = (
-        _session_scope_for_ref(runtime_root, ref)
+    subject = (
+        _locate_export_subject(transcript.project_root, runtime_root, ref)
         if runtime_root is not None
-        else (None, None, None)
+        else None
     )
+    exact_chat_id, owner_chat_id, parent_id = _session_scope(subject, ref)
     appendices = (
         _spawn_appendices(
             runtime_root,
@@ -338,7 +338,7 @@ def session_export_sync(
     markdown = _render_markdown(
         session_id=transcript.target.source.session_id,
         source=transcript.target.source.source_label,
-        metadata=_session_metadata(runtime_root, ref) if runtime_root is not None else [],
+        metadata=_session_metadata(subject),
         messages=_flatten_segments(transcript.segments, transcript.segment_setups),
         appendices=appendices,
     )

@@ -11,21 +11,19 @@ import time
 from pathlib import Path
 from typing import Never, cast
 
-from meridian.lib.core.refs import is_chat_id
-from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
+from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.bundle import (
     PrimaryInboxError,
     post_to_primary,
     primary_accepts_messages,
 )
+from meridian.lib.ops.locate import locate_run
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
     resolve_runtime_root_for_read,
 )
-from meridian.lib.ops.spawn.query import resolve_spawn_reference
-from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.session_identity import live_observer_for_chat
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.control_socket import control_socket_path
@@ -60,18 +58,18 @@ def framed_message(
         provenance = "[Meridian] Message with no sender identity; it has no reply address."
     elif sender is None or not _can_receive_reply(sender):
         where = f"spawn {sender_spawn_id}"
-        if sender is not None and sender.chat_id:
-            where += f" (chat {sender.chat_id})"
+        if sender is not None and sender.continue_chat_id:
+            where += f" (chat {sender.continue_chat_id})"
         provenance = f"[Meridian] Message from {where}; it has no reply route here."
     else:
-        # The chat ID names the sender's session across generations.
-        address = sender.chat_id or sender.id
+        # The sender's current chat: after a /clear the entry chat is a past session.
+        address = sender.continue_chat_id or sender.id
         via = ""
         if sender_project_root is not None:
             via = f"-C {shlex.quote(sender_project_root.as_posix())} "
         where = f"spawn {sender.id}"
-        if sender.chat_id:
-            where += f" (chat {sender.chat_id})"
+        if sender.continue_chat_id:
+            where += f" (chat {sender.continue_chat_id})"
         provenance = (
             f"[Meridian] Message from {where}. To answer, run "
             f'`meridian {via}spawn message {address} --message "..."`.'
@@ -99,17 +97,6 @@ def _can_receive_reply(sender: SpawnRecord) -> bool:
     return sender.kind != "primary" or primary_accepts_messages(sender)
 
 
-def _live_adopter(runtime_root: Path, chat_id: str) -> str | None:
-    """Find a running spawn that adopted ``chat_id`` mid-run through native ``/resume``.
-
-    Only running rows can hold a chat, so the scan reads the index for those and never
-    every spawn's state file.
-    """
-
-    running = HistoryIndex(runtime_root).spawns(status=set(ACTIVE_SPAWN_STATUSES))
-    return live_observer_for_chat(runtime_root, chat_id, records=running)
-
-
 def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
     """Resolve a spawn ID or chat ID to the spawn that receives the message.
 
@@ -117,20 +104,19 @@ def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
     the owner is still in that chat.
     """
 
-    if ref.startswith("@"):
-        _fail(f"spawn message takes a spawn ID or chat ID, not {ref}")
-    if is_chat_id(ref) and (adopter := _live_adopter(runtime_root, ref)):
-        return adopter
-    target = resolve_spawn_reference(project_root, ref, runtime_root=runtime_root)
-    if not (runtime_root / "spawns" / target).exists():
-        _fail(f"spawn or chat not found: {ref}")
-    if is_chat_id(ref):
-        owner = read_derived(runtime_root, target)
+    try:
+        if parse_ref(ref).kind == "selector":
+            _fail(f"spawn message takes a spawn ID or chat ID, not {ref}")
+        target = locate_run(project_root, ref, runtime_root=runtime_root)
+    except ValueError as exc:
+        _fail(str(exc))
+    if target.chat_id is not None and not target.occupant:
+        owner = read_derived(runtime_root, target.spawn_id)
         if owner is None or not is_active_spawn_status(owner.status) or (
-            owner.current_chat_id not in (None, ref)
+            owner.current_chat_id not in (None, target.chat_id)
         ):
-            _fail(f"chat {ref} has no running session")
-    return target
+            _fail(f"chat {target.chat_id} has no running session")
+    return str(target.spawn_id)
 
 
 async def _send_and_receive(

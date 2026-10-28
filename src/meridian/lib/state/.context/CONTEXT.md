@@ -504,7 +504,11 @@ inverts accepted chat records without discarding aliases or doing I/O. A later
 accepted start projects every earlier unstopped live generation of that chat as
 stopped at the new start time: ordinary starts hold the chat's exclusive lifetime
 lock, while observed-chat starts mint a new chat and immediately stop it.
-Historical multi-ID arrays are ignored on read.
+Historical multi-ID arrays are ignored on read. Chat IDs are `c<digits>` by shape
+(`core/refs.is_chat_id`): `reserve_chat_id` mints them and `start_session` rejects a
+caller-supplied ID of any other shape. `native_generations` is the one native-ID lookup: it
+finds a native ID on any generation and refuses an ID recorded under two harnesses or two
+native stores.
 
 Fork and context-source ancestry belong to the chat, not its latest generation:
 accepted starts carry both parent identities and original creation time forward.
